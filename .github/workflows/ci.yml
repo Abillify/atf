@@ -1,0 +1,214 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUN_VERSION: 1.3.14
+  NODE_VERSION: 26
+
+jobs:
+  # Cheap, fast gates. Kept separate so a missing SPDX header or a stale generated artifact
+  # reports in under a minute instead of behind the test matrix.
+  hygiene:
+    name: Hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install
+        run: bun install --frozen-lockfile
+
+      # Runs without a redaction rule set: structural rules apply and literal redaction is
+      # skipped with a warning. The rule set is confidential and is only present on the machine
+      # that publishes a release, which runs `verify:public:release` instead.
+      - name: Public-tree verification
+        run: bun run verify:public
+
+      - name: SPDX headers
+        run: bun run verify:spdx
+
+      - name: Third-party notices, SBOM, and license policy
+        run: bun run supply-chain:check
+
+      - name: Configuration reference is current
+        run: bun run config-reference:check
+
+      # A regression gate, not a zero-findings gate. The tree carries pre-existing Biome
+      # findings recorded in .biome-baseline.json; this fails only when they grow. The formatter
+      # is intentionally excluded — see scripts/check-lint-baseline.ts.
+      - name: Lint regression gate
+        run: bun run lint:baseline
+
+      - name: Flow examples validate
+        working-directory: apps/runtime
+        run: bun run scripts/cli.ts validate ../../deploy/examples/flows/
+
+  typecheck:
+    name: Typecheck
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+
+  test:
+    name: Test (${{ matrix.workspace }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        workspace:
+          - "@atf/runtime"
+          - "@atf/control"
+          - "@atf/search"
+          - "@atf/gate"
+          - "@atf/system-integration"
+    services:
+      postgres:
+        image: pgvector/pgvector:0.8.1-pg18
+        env:
+          POSTGRES_DB: atf_test
+          POSTGRES_USER: atf
+          POSTGRES_PASSWORD: atf-ci-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U atf -d atf_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      TEST_POSTGRES_URL: postgres://atf:atf-ci-only@127.0.0.1:5432/atf_test
+      POSTGRES_URL: postgres://atf:atf-ci-only@127.0.0.1:5432/atf_test
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter ${{ matrix.workspace }} test
+
+  contracts:
+    name: Contract packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+      - name: Contract package tests
+        run: |
+          for package in identity-contract transaction-contract evidence-contract \
+                         schema-compatibility contract-adapter; do
+            bun run --filter "@atf/$package" test
+          done
+      - name: Cross-contract lifecycle
+        run: bun run test:contracts
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Build all workspaces
+        env:
+          NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:3000
+        run: bun run build
+
+      - name: Search Node.js artifact
+        run: bun run --filter @atf/search build:node
+
+      - name: Artifact size budgets
+        run: bun run check:budgets:ci
+
+      # The dependency inventory is platform-specific: optional native prebuilds differ between
+      # macOS and Linux. Release images are Linux, so a Linux-generated SBOM is retained as the
+      # authoritative one for deployment.
+      - name: Linux SBOM
+        run: bun run supply-chain
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sbom-linux
+          path: |
+            sbom.cdx.json
+            THIRD_PARTY_NOTICES.md
+          retention-days: 90
+
+  compose:
+    name: Quickstart stack
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Compose file is valid
+        run: |
+          docker compose --env-file deploy/examples/.env.example \
+            -f deploy/examples/compose.yaml config --quiet
+
+      - name: Start the stack
+        run: |
+          docker compose --env-file deploy/examples/.env.example \
+            -f deploy/examples/compose.yaml up --build -d --wait --wait-timeout 600
+
+      - name: Smoke the documented endpoints
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error http://127.0.0.1:3000/health/ready > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:3002/health > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:3003/readyz > /dev/null
+          curl --fail --silent --show-error http://127.0.0.1:3001/ > /dev/null
+          curl --fail-with-body --silent --show-error \
+            http://127.0.0.1:3000/v1/chat/completions \
+            -H 'Content-Type: application/json' \
+            -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}'
+
+      - name: Logs on failure
+        if: failure()
+        run: |
+          docker compose --env-file deploy/examples/.env.example \
+            -f deploy/examples/compose.yaml logs --no-color --tail 200
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose --env-file deploy/examples/.env.example \
+            -f deploy/examples/compose.yaml down --volumes

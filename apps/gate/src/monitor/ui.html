@@ -1,0 +1,983 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>mcpgate · monitor</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0f1115;
+        --panel: #171a21;
+        --border: #262b36;
+        --text: #e6e9ef;
+        --muted: #8b93a7;
+        --ok: #3fb950;
+        --err: #f85149;
+        --accent: #58a6ff;
+        --warn: #ffa657;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        background: var(--bg);
+        color: var(--text);
+        height: 100vh;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 20px;
+        background: var(--panel);
+        border-bottom: 1px solid var(--border);
+        flex-shrink: 0;
+        z-index: 10;
+      }
+      h1 { font-size: 15px; margin: 0; font-weight: 600; white-space: nowrap; }
+      h1 span { color: var(--accent); }
+      .tabs { display: flex; gap: 2px; padding-left: 10px; border-left: 1px solid var(--border); }
+      .tab {
+        font: inherit;
+        background: none;
+        color: var(--muted);
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 4px 12px;
+        cursor: pointer;
+        font-size: 13px;
+      }
+      .tab:hover { color: var(--text); }
+      .tab.active { color: var(--accent); background: var(--bg); border-color: var(--border); }
+      .spacer { flex: 1; }
+      .status { display: flex; align-items: center; gap: 6px; color: var(--muted); white-space: nowrap; }
+      .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+      .dot.on { background: var(--ok); }
+      .dot.off { background: var(--err); }
+      input, button, select, textarea {
+        font: inherit;
+        background: var(--bg);
+        color: var(--text);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 9px;
+      }
+      input:focus, select:focus, textarea:focus { outline: none; border-color: var(--accent); }
+      button { cursor: pointer; }
+      button:hover:not(:disabled) { border-color: var(--accent); }
+      /* ── Live Monitor ──────────────────────────────────────────────────── */
+      #view-monitor { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+      .stats {
+        display: flex; gap: 18px; padding: 9px 20px;
+        color: var(--muted); border-bottom: 1px solid var(--border); flex-shrink: 0;
+      }
+      .stats b { color: var(--text); }
+      .table-scroll { flex: 1; overflow-y: auto; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 8px 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; z-index: 1; }
+      #view-monitor td, #view-monitor th { padding: 4px 10px; font-size: 12.5px; }
+      td.mono { white-space: pre-wrap; word-break: break-word; max-width: 420px; color: var(--muted); }
+      .tag { padding: 2px 8px; border-radius: 999px; font-size: 12px; border: 1px solid var(--border); }
+      .t-connection, .t-auth { color: var(--accent); }
+      .t-tool_call { color: #d2a8ff; }
+      .t-transaction { color: #e3b341; }
+      .t-tool_result { color: var(--ok); }
+      .t-approval_requested { color: #ffa657; }
+      .t-approval_resolved { color: #79c0ff; }
+      .pending { color: #ffa657; }
+      .approved { color: var(--ok); }
+      .denied { color: var(--err); }
+      .t-llm_request { color: #79c0ff; }
+      .t-llm_response { color: #a5d6ff; }
+      .t-router { color: var(--warn); }
+      .t-error, .t-auth_failure { color: var(--err); }
+      .t-disconnection { color: var(--muted); }
+      .ok { color: var(--ok); }
+      .error { color: var(--err); }
+      tr:hover td { background: #1c2029; }
+      .empty { padding: 40px; text-align: center; color: var(--muted); }
+      td.actions { white-space: nowrap; }
+      .mon-action {
+        font-size: 11px; padding: 3px 8px; border-radius: 6px;
+        background: none; color: var(--accent); border: 1px solid var(--border);
+        white-space: nowrap;
+      }
+      .mon-action:hover { border-color: var(--accent); background: var(--panel); }
+      /* ── Tool Playground ───────────────────────────────────────────────── */
+      #view-playground { flex: 1; display: flex; overflow: hidden; }
+      .pg-sidebar {
+        width: 270px; flex-shrink: 0;
+        border-right: 1px solid var(--border);
+        display: flex; flex-direction: column; overflow: hidden;
+      }
+      .pg-search-wrap { padding: 10px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+      #pg-search { width: 100%; font-size: 13px; }
+      #pg-list { flex: 1; overflow-y: auto; padding: 6px; }
+      .pg-card {
+        padding: 9px 11px; border-radius: 7px; cursor: pointer;
+        margin-bottom: 3px; border: 1px solid transparent;
+        transition: background .1s, border-color .1s;
+      }
+      .pg-card:hover { background: var(--panel); border-color: var(--border); }
+      .pg-card.active { background: var(--panel); border-color: var(--accent); }
+      .pg-card-name { font-weight: 600; font-size: 13px; }
+      .pg-card-desc {
+        font-size: 12px; color: var(--muted); margin-top: 2px;
+        overflow: hidden; display: -webkit-box;
+        -webkit-line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.4;
+      }
+      .pg-card-foot { display: flex; gap: 4px; margin-top: 6px; flex-wrap: wrap; }
+      .badge { font-size: 11px; padding: 1px 7px; border-radius: 999px; border: 1px solid var(--border); white-space: nowrap; }
+      .badge-database { color: #79c0ff; border-color: #79c0ff44; }
+      .badge-http     { color: var(--warn); border-color: #ffa65744; }
+      .badge-inline   { color: #a5d6ff; border-color: #a5d6ff44; }
+      .badge-read     { color: var(--ok);  border-color: #3fb95044; }
+      .badge-write    { color: var(--err); border-color: #f8514944; }
+      .badge-hidden   { color: var(--muted); border-color: var(--border); }
+      .pg-detail { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+      .pg-placeholder {
+        flex: 1; display: flex; align-items: center;
+        justify-content: center; color: var(--muted); font-size: 15px;
+      }
+      .pg-panel { padding: 22px 26px 40px; max-width: 800px; }
+      .pg-panel-title { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+      .pg-tool-name { font-size: 17px; font-weight: 700; }
+      .pg-badges { display: flex; gap: 5px; flex-wrap: wrap; }
+      .pg-tool-desc { color: var(--muted); font-size: 13px; line-height: 1.6; margin-bottom: 22px; white-space: pre-wrap; }
+      .pg-section-title {
+        font-size: 11px; font-weight: 700; color: var(--muted);
+        text-transform: uppercase; letter-spacing: .07em;
+        margin-bottom: 12px; padding-bottom: 6px; border-bottom: 1px solid var(--border);
+      }
+      .pg-fields { display: flex; flex-direction: column; gap: 14px; margin-bottom: 20px; }
+      .pg-field-label { display: flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; margin-bottom: 3px; }
+      .pg-field-label .req { color: var(--err); font-size: 14px; line-height: 1; }
+      .pg-field-typehint { font-size: 11px; color: var(--muted); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-weight: 400; }
+      .pg-field-desc { font-size: 12px; color: var(--muted); margin-bottom: 5px; line-height: 1.5; white-space: pre-wrap; }
+      .pg-field input, .pg-field select, .pg-field textarea {
+        width: 100%; background: var(--panel); border-color: var(--border); font-size: 13px; border-radius: 6px;
+      }
+      .pg-field input:focus, .pg-field select:focus, .pg-field textarea:focus { border-color: var(--accent); outline: none; }
+      .pg-field textarea { resize: vertical; min-height: 72px; }
+      .pg-no-params { color: var(--muted); font-size: 13px; font-style: italic; margin-bottom: 20px; }
+      #pg-run {
+        background: var(--accent); color: #0d1117; border-color: var(--accent);
+        font-weight: 700; padding: 7px 20px; font-size: 13px; border-radius: 7px;
+      }
+      #pg-run:hover:not(:disabled) { background: #79b8ff; border-color: #79b8ff; color: #0d1117; }
+      #pg-run:disabled { opacity: .5; cursor: not-allowed; }
+      .pg-running { color: var(--muted); font-size: 13px; margin-top: 14px; display: flex; align-items: center; gap: 8px; }
+      .pg-output { margin-top: 24px; }
+      .pg-result-meta { display: flex; align-items: center; gap: 10px; margin-bottom: 9px; flex-wrap: wrap; }
+      .pg-result-ok  { color: var(--ok);  font-weight: 700; font-size: 13px; }
+      .pg-result-err { color: var(--err); font-weight: 700; font-size: 13px; }
+      .pg-result-dur { color: var(--muted); font-size: 12px; }
+      .pg-truncated {
+        color: #d29922; font-size: 12px; margin-bottom: 9px;
+        padding: 6px 9px; border: 1px solid #d29922; border-radius: 6px;
+        background: rgba(210,153,34,.08);
+      }
+      .pg-toggle { font-size: 12px; padding: 2px 8px; color: var(--muted); border-radius: 4px; background: none; margin-left: auto; }
+      .pg-toggle:hover { color: var(--text); border-color: var(--muted); }
+      .pg-pre {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+        padding: 14px 16px; font-size: 13px; overflow-x: auto;
+        white-space: pre-wrap; word-break: break-word;
+        max-height: 520px; overflow-y: auto; margin: 0;
+      }
+      .json-key  { color: #79c0ff; }
+      .json-str  { color: #a5d6ff; }
+      .json-num  { color: #f2cc60; }
+      .json-bool { color: var(--warn); }
+      .json-null { color: var(--muted); }
+      .pg-error-text { color: var(--err); }
+      /* ── Instructions ──────────────────────────────────────────────────── */
+      #view-instructions { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
+      .instr-toolbar {
+        display: flex; align-items: center; gap: 10px;
+        padding: 9px 20px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+      }
+      .instr-meta { color: var(--muted); font-size: 12px; flex: 1; }
+      #instr-refresh {
+        font-size: 12px; padding: 4px 12px; border-radius: 6px;
+        background: none; color: var(--accent); border-color: var(--accent);
+      }
+      #instr-refresh:hover { background: var(--panel); }
+      .instr-scroll { flex: 1; overflow-y: auto; padding: 20px 26px 40px; }
+      #instr-text {
+        background: var(--panel); border: 1px solid var(--border); border-radius: 8px;
+        padding: 16px 20px; font-size: 13px; line-height: 1.7;
+        white-space: pre-wrap; word-break: break-word; margin: 0;
+        color: var(--text); max-width: 900px;
+      }
+      #instr-empty { color: var(--muted); font-size: 13px; font-style: italic; padding: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>mcp<span>gate</span></h1>
+      <nav class="tabs">
+        <button type="button" id="tab-monitor" class="tab active" onclick="switchTab('monitor')">Live Monitor</button>
+        <button type="button" id="tab-playground" class="tab" onclick="switchTab('playground')">Tool Playground</button>
+        <button type="button" id="tab-instructions" class="tab" onclick="switchTab('instructions')">Instructions</button>
+      </nav>
+      <div class="spacer"></div>
+      <input id="token" type="password" placeholder="monitor token (if required)" size="24" />
+      <button type="button" id="connect">connect</button>
+      <button type="button" id="clear">clear</button>
+      <a id="logout" href="/monitor/logout" style="display:none">logout</a>
+      <div class="status"><span id="dot" class="dot"></span><span id="state">disconnected</span></div>
+    </header>
+
+    <!-- ── Live Monitor ──────────────────────────────────────────────────── -->
+    <div id="view-monitor">
+      <div class="stats">
+        <div>events <b id="count">0</b></div>
+        <div>tool calls <b id="calls">0</b></div>
+        <div>errors <b id="errors">0</b></div>
+        <div>active sessions <b id="sessions">0</b></div>
+      </div>
+      <div class="table-scroll">
+        <table>
+          <thead>
+            <tr>
+              <th style="width:88px">time</th>
+              <th style="width:120px">type</th>
+              <th style="width:130px">user</th>
+              <th style="width:150px">tool</th>
+              <th style="width:70px">status</th>
+              <th style="width:58px">ms</th>
+              <th style="width:104px"></th>
+              <th>detail</th>
+            </tr>
+          </thead>
+          <tbody id="rows">
+            <tr><td class="empty" colspan="8">Not connected. Enter a token if required and press connect.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- ── Tool Playground ────────────────────────────────────────────────── -->
+    <div id="view-playground" style="display:none">
+      <div class="pg-sidebar">
+        <div class="pg-search-wrap">
+          <input id="pg-search" type="search" placeholder="filter tools…" />
+        </div>
+        <div id="pg-list">
+          <div style="padding:16px;color:var(--muted);font-size:13px">
+            Switch to this tab to load tools.
+          </div>
+        </div>
+      </div>
+
+      <div class="pg-detail">
+        <div class="pg-placeholder" id="pg-placeholder">← select a tool to test it</div>
+
+        <div class="pg-panel" id="pg-panel" style="display:none">
+          <div class="pg-panel-title">
+            <span class="pg-tool-name" id="pg-name"></span>
+            <div class="pg-badges" id="pg-badges"></div>
+          </div>
+          <div class="pg-tool-desc" id="pg-desc"></div>
+
+          <div class="pg-section-title">Parameters</div>
+          <div class="pg-fields" id="pg-fields"></div>
+          <div class="pg-no-params" id="pg-no-params" style="display:none">
+            This tool has no input parameters.
+          </div>
+
+          <button type="button" id="pg-run">&#9654; Run</button>
+
+          <div class="pg-running" id="pg-running" style="display:none">
+            <span>running…</span>
+          </div>
+
+          <div class="pg-output" id="pg-output" style="display:none">
+            <div class="pg-result-meta">
+              <span id="pg-result-status"></span>
+              <span class="pg-result-dur" id="pg-result-dur"></span>
+              <button type="button" class="pg-toggle" id="pg-toggle" onclick="toggleRaw()">show raw JSON</button>
+              <button type="button" class="pg-toggle" id="pg-download" onclick="downloadResult()" style="display:none">download full</button>
+            </div>
+            <div class="pg-truncated" id="pg-truncated" style="display:none"></div>
+            <pre class="pg-pre" id="pg-result-text"></pre>
+            <pre class="pg-pre" id="pg-result-raw" style="display:none"></pre>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Instructions ──────────────────────────────────────────────────── -->
+    <div id="view-instructions" style="display:none">
+      <div class="instr-toolbar">
+        <span class="instr-meta" id="instr-meta">—</span>
+        <button type="button" id="instr-refresh" onclick="loadInstructions()">&#8635; Refresh</button>
+      </div>
+      <div class="instr-scroll">
+        <pre id="instr-text"></pre>
+        <div id="instr-empty" style="display:none">No instructions configured.</div>
+      </div>
+    </div>
+
+    <script>window.__MCPGATE_AUTH__ = { oidc: __MCPGATE_OIDC_ENABLED__ };</script>
+    <script>
+      /* ─── Shared ──────────────────────────────────────────────────────── */
+      const $ = (id) => document.getElementById(id);
+      const rows = $('rows');
+      const savedToken = localStorage.getItem('mcpgate_monitor_token');
+      if (savedToken) $('token').value = savedToken;
+
+      // When OIDC is the configured login method, the session lives in an
+      // HttpOnly cookie (sent automatically) — hide the token field and show
+      // a logout link instead.
+      if (window.__MCPGATE_AUTH__.oidc) {
+        $('token').style.display = 'none';
+        $('connect').style.display = 'none';
+        $('logout').style.display = '';
+      }
+
+      let es = null;
+      let count = 0, calls = 0, errors = 0;
+      const active = new Set();
+      let cleared = true;
+
+      /* ─── Tab switching ───────────────────────────────────────────────── */
+      let currentTab = 'monitor';
+
+      function switchTab(name) {
+        currentTab = name;
+        $('tab-monitor').classList.toggle('active', name === 'monitor');
+        $('tab-playground').classList.toggle('active', name === 'playground');
+        $('tab-instructions').classList.toggle('active', name === 'instructions');
+        $('view-monitor').style.display      = name === 'monitor'      ? 'flex' : 'none';
+        $('view-playground').style.display   = name === 'playground'   ? 'flex' : 'none';
+        $('view-instructions').style.display = name === 'instructions' ? 'flex' : 'none';
+        if (name === 'playground') ensureToolsLoaded();
+        if (name === 'instructions') loadInstructions();
+      }
+
+      /* ─── Live Monitor ────────────────────────────────────────────────── */
+      function setStatus(on) {
+        $('dot').className = 'dot ' + (on ? 'on' : 'off');
+        $('state').textContent = on ? 'connected' : 'disconnected';
+      }
+
+      function fmtTime(iso) {
+        try { return new Date(iso).toLocaleTimeString(); } catch { return iso; }
+      }
+
+      function detail(ev) {
+        if (ev.message) return ev.message;
+        if (ev.meta) {
+          try {
+            // SQL text/bindings are intentionally omitted here — they're large,
+            // noisy in a live feed, and already captured in the audit log file
+            // (monitoring.audit) when enabled.
+            const rest = Object.assign({}, ev.meta);
+            delete rest.query; delete rest.content;
+            return Object.keys(rest).length ? JSON.stringify(rest) : '';
+          } catch { return ''; }
+        }
+        return '';
+      }
+
+      // Stable color per sessionId so related events (one session's auth →
+      // tool_call → tool_result → … stream) are visually grouped via a colored
+      // left edge, without merging or reordering rows.
+      const SESSION_PALETTE = ['#79c0ff','#d2a8ff','#3fb950','#ffa657','#f85149','#a5d6ff','#56d4dd','#e3b341'];
+      const sessionColors = new Map();
+      function colorFor(sessionId) {
+        if (!sessionId) return 'transparent';
+        let c = sessionColors.get(sessionId);
+        if (!c) {
+          c = SESSION_PALETTE[sessionColors.size % SESSION_PALETTE.length];
+          sessionColors.set(sessionId, c);
+        }
+        return c;
+      }
+
+      function escHtml(s) {
+        return String(s).replace(/[&<>"']/g, (c) =>
+          ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' })[c]);
+      }
+
+      function eventLabel(type) {
+        return {
+          auth: 'Authentifiziert',
+          auth_failure: 'Auth fehlgeschlagen',
+          tool_call: 'Tool angefordert',
+          transaction: 'Transaktion',
+          tool_result: 'Tool-Ergebnis',
+          approval_requested: 'Freigabe angefragt',
+          approval_resolved: 'Freigabe entschieden',
+        }[type] ?? type;
+      }
+
+      function statusLabel(status) {
+        return {
+          pending: 'ausstehend',
+          approved: 'erteilt',
+          denied: 'abgelehnt',
+        }[status] ?? status ?? '';
+      }
+
+      function render(ev) {
+        if (cleared) { rows.innerHTML = ''; cleared = false; }
+        if (ev.type === 'connection'    && ev.sessionId) active.add(ev.sessionId);
+        if (ev.type === 'disconnection' && ev.sessionId) active.delete(ev.sessionId);
+        if (ev.type === 'tool_call') calls++;
+        if (ev.type === 'error' || ev.type === 'auth_failure' || ev.status === 'error') errors++;
+        count++;
+        $('count').textContent    = count;
+        $('calls').textContent    = calls;
+        $('errors').textContent   = errors;
+        $('sessions').textContent = active.size;
+        const tr = document.createElement('tr');
+        const sc = ["ok", "error", "pending", "approved", "denied"].includes(ev.status) ? ev.status : '';
+        const args = (ev.type === 'tool_call' && ev.meta && ev.meta.arguments && typeof ev.meta.arguments === 'object')
+          ? ev.meta.arguments : null;
+        const actionCell = (args && ev.tool)
+          ? '<button class="mon-action" title="Load these parameters into the Tool Playground"' +
+            ' data-tool="' + escHtml(ev.tool) + '"' +
+            ' data-args="' + escHtml(JSON.stringify(args)) + '"' +
+            ' onclick="toPlayground(this)">&#8594; Playground</button>'
+          : '';
+        tr.innerHTML =
+          '<td style="border-left:3px solid ' + colorFor(ev.sessionId) + '">' + fmtTime(ev.ts) + '</td>' +
+          '<td><span class="tag t-' + ev.type + '">' + escHtml(eventLabel(ev.type)) + '</span></td>' +
+          '<td>' + escHtml(ev.username ?? '') + '</td>' +
+          '<td>' + escHtml(ev.tool ?? '') + '</td>' +
+          '<td class="' + sc + '">' + escHtml(statusLabel(ev.status)) + '</td>' +
+          '<td>' + escHtml(ev.durationMs ?? '') + '</td>' +
+          '<td class="actions">' + actionCell + '</td>' +
+          '<td class="mono">' + escHtml(detail(ev)) + '</td>';
+        rows.insertBefore(tr, rows.firstChild);
+        while (rows.childNodes.length > 500) rows.removeChild(rows.lastChild);
+      }
+
+      function connect() {
+        if (es) es.close();
+        const token = $('token').value.trim();
+        if (token) localStorage.setItem('mcpgate_monitor_token', token);
+        else        localStorage.removeItem('mcpgate_monitor_token');
+        const url = '/monitor/stream' + (token ? '?token=' + encodeURIComponent(token) : '');
+        es = new EventSource(url);
+        es.onopen   = () => setStatus(true);
+        es.onerror  = () => setStatus(false);
+        es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
+      }
+
+      $('connect').addEventListener('click', connect);
+      $('clear').addEventListener('click', () => {
+        rows.innerHTML = '<tr><td class="empty" colspan="8">cleared</td></tr>';
+        cleared = true; count = 0; calls = 0; errors = 0;
+        $('count').textContent = 0; $('calls').textContent = 0; $('errors').textContent = 0;
+      });
+
+      connect(); // auto-connect on load
+
+      /* ─── Instructions ───────────────────────────────────────────────── */
+      async function loadInstructions() {
+        $('instr-meta').textContent = 'Loading…';
+        $('instr-text').style.display  = 'none';
+        $('instr-empty').style.display = 'none';
+        try {
+          const token = getToken();
+          const url = '/monitor/instructions' + (token ? '?token=' + encodeURIComponent(token) : '');
+          const res = await fetch(url);
+          if (!res.ok) throw new Error('HTTP ' + res.status);
+          const data = await res.json();
+          if (data.text) {
+            $('instr-text').textContent   = data.text;
+            $('instr-text').style.display = 'block';
+            $('instr-empty').style.display = 'none';
+          } else {
+            $('instr-text').style.display  = 'none';
+            $('instr-empty').style.display = 'block';
+          }
+          const ts = data.cachedAt ? new Date(data.cachedAt).toLocaleTimeString() : '—';
+          $('instr-meta').textContent = 'fetched at ' + ts +
+            (data.text ? ' · ' + data.text.length + ' chars' : '');
+        } catch (err) {
+          $('instr-text').textContent   = 'Error: ' + err;
+          $('instr-text').style.display = 'block';
+          $('instr-meta').textContent   = 'failed';
+        }
+      }
+
+      /* ─── Tool Playground: load & list ───────────────────────────────── */
+      let allTools    = [];
+      let selectedTool = null;
+      let showingRaw  = false;
+
+      function getToken() { return $('token').value.trim(); }
+
+      // Loads the tool list at most once; the cached promise lets callers
+      // (tab switch, "→ Playground" action) await readiness. On failure the
+      // cache is cleared so a later attempt retries.
+      let toolsLoadPromise = null;
+      function ensureToolsLoaded() {
+        if (!toolsLoadPromise) {
+          toolsLoadPromise = loadTools().catch((err) => {
+            toolsLoadPromise = null;
+            $('pg-list').innerHTML =
+              '<div style="padding:16px;color:var(--err);font-size:13px">Failed to load tools: ' +
+              escHtml(String(err)) + '</div>';
+            throw err;
+          });
+        }
+        return toolsLoadPromise;
+      }
+
+      async function loadTools() {
+        const list = $('pg-list');
+        list.innerHTML = '<div style="padding:16px;color:var(--muted);font-size:13px">Loading…</div>';
+        const token = getToken();
+        const url = '/monitor/tools' + (token ? '?token=' + encodeURIComponent(token) : '');
+        const res = await fetch(url);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        allTools = await res.json();
+        renderList(allTools);
+      }
+
+      function renderList(tools) {
+        const list = $('pg-list');
+        if (!tools.length) {
+          list.innerHTML = '<div style="padding:16px;color:var(--muted);font-size:13px">No tools found.</div>';
+          return;
+        }
+        list.innerHTML = '';
+        for (const tool of tools) {
+          const card = document.createElement('div');
+          card.className = 'pg-card' + (selectedTool && selectedTool.name === tool.name ? ' active' : '');
+          card.dataset.name = tool.name;
+          const desc = (tool.description || '').replace(/\s+/g, ' ').trim();
+          let foot = '';
+          if (tool.type)   foot += '<span class="badge badge-' + tool.type + '">' + tool.type + '</span>';
+          if (tool.access) foot += '<span class="badge badge-' + tool.access + '">' + tool.access + '</span>';
+          if (tool.expose === false) foot += '<span class="badge badge-hidden">hidden</span>';
+          card.innerHTML =
+            '<div class="pg-card-name">' + escHtml(tool.name) + '</div>' +
+            (desc ? '<div class="pg-card-desc">' + escHtml(desc) + '</div>' : '') +
+            (foot  ? '<div class="pg-card-foot">' + foot + '</div>' : '');
+          card.addEventListener('click', () => selectTool(tool));
+          list.appendChild(card);
+        }
+      }
+
+      $('pg-search').addEventListener('input', (e) => {
+        const q = e.target.value.toLowerCase();
+        const filtered = q
+          ? allTools.filter(t => t.name.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q))
+          : allTools;
+        renderList(filtered);
+        if (selectedTool) {
+          const card = $('pg-list').querySelector('[data-name="' + selectedTool.name + '"]');
+          if (card) card.classList.add('active');
+        }
+      });
+
+      /* ─── Tool Playground: select & render form ──────────────────────── */
+      function selectTool(tool) {
+        selectedTool = tool;
+        showingRaw = false;
+
+        $('pg-list').querySelectorAll('.pg-card').forEach(c => {
+          c.classList.toggle('active', c.dataset.name === tool.name);
+        });
+
+        $('pg-placeholder').style.display = 'none';
+        $('pg-panel').style.display       = 'block';
+        $('pg-output').style.display      = 'none';
+        $('pg-running').style.display     = 'none';
+
+        $('pg-name').textContent = tool.name;
+        $('pg-desc').textContent = tool.description || '';
+
+        const badges = $('pg-badges');
+        badges.innerHTML = '';
+        if (tool.type) {
+          const b = document.createElement('span');
+          b.className = 'badge badge-' + tool.type;
+          b.textContent = tool.type;
+          badges.appendChild(b);
+        }
+        if (tool.access) {
+          const b = document.createElement('span');
+          b.className = 'badge badge-' + tool.access;
+          b.textContent = tool.access;
+          badges.appendChild(b);
+        }
+        if (tool.expose === false) {
+          const b = document.createElement('span');
+          b.className = 'badge badge-hidden';
+          b.textContent = 'not exposed';
+          badges.appendChild(b);
+        }
+
+        buildForm(tool);
+      }
+
+      function buildForm(tool) {
+        const fields   = $('pg-fields');
+        const noParams = $('pg-no-params');
+        fields.innerHTML = '';
+        const props    = (tool.inputSchema && tool.inputSchema.properties) || {};
+        const required = new Set((tool.inputSchema && tool.inputSchema.required) || []);
+        const entries  = Object.entries(props);
+
+        if (entries.length === 0) {
+          fields.style.display    = 'none';
+          noParams.style.display  = 'block';
+        } else {
+          fields.style.display    = 'flex';
+          noParams.style.display  = 'none';
+          for (const [name, schema] of entries) {
+            fields.appendChild(buildField(name, schema, required.has(name)));
+          }
+        }
+      }
+
+      function buildField(name, schema, isRequired) {
+        const wrap = document.createElement('div');
+        wrap.className = 'pg-field';
+
+        const type = Array.isArray(schema.type) ? schema.type[0] : (schema.type || 'string');
+        let typeLabel = type;
+        if (type === 'array' && schema.items && schema.items.type) typeLabel = type + ' of ' + schema.items.type;
+
+        const labelRow = document.createElement('div');
+        labelRow.className = 'pg-field-label';
+        labelRow.innerHTML =
+          escHtml(name) +
+          (isRequired ? ' <span class="req" title="required">*</span>' : '') +
+          ' <span class="pg-field-typehint">' + escHtml(typeLabel) + '</span>';
+        wrap.appendChild(labelRow);
+
+        if (schema.description) {
+          const desc = document.createElement('div');
+          desc.className = 'pg-field-desc';
+          desc.textContent = schema.description.replace(/\s+/g, ' ').trim();
+          wrap.appendChild(desc);
+        }
+
+        let input;
+        const enumVals = schema.enum ?? (schema.items && schema.items.enum);
+
+        if (Array.isArray(schema.enum)) {
+          // Enum → <select>
+          input = document.createElement('select');
+          const emptyOpt = document.createElement('option');
+          emptyOpt.value = '';
+          emptyOpt.textContent = isRequired ? '— select —' : '— (unset) —';
+          input.appendChild(emptyOpt);
+          for (const v of schema.enum) {
+            const opt = document.createElement('option');
+            opt.value = String(v);
+            opt.textContent = String(v);
+            input.appendChild(opt);
+          }
+        } else if (type === 'boolean') {
+          // Boolean → <select>
+          input = document.createElement('select');
+          input.innerHTML =
+            '<option value="">— (unset) —</option>' +
+            '<option value="true">true</option>' +
+            '<option value="false">false</option>';
+        } else if (type === 'array' || type === 'object') {
+          // Array / Object → textarea (JSON)
+          input = document.createElement('textarea');
+          input.rows = 3;
+          input.placeholder = type === 'array' ? '["value1", "value2"]' : '{"key": "value"}';
+        } else if (type === 'integer' || type === 'number') {
+          // Number → <input type="number">
+          input = document.createElement('input');
+          input.type = 'number';
+          if (type === 'integer') input.step = '1';
+          if (schema.minimum !== undefined) input.min = schema.minimum;
+          if (schema.maximum !== undefined) input.max = schema.maximum;
+        } else {
+          // String (default) → single-line or multi-line
+          const isLong = schema.description && schema.description.length > 80;
+          if (isLong) {
+            input = document.createElement('textarea');
+            input.rows = 2;
+          } else {
+            input = document.createElement('input');
+            input.type = 'text';
+          }
+          input.placeholder = schema.example ? String(schema.example) : '';
+        }
+
+        input.dataset.field = name;
+        input.dataset.type  = type;
+        input.dataset.isEnum = Array.isArray(schema.enum) ? '1' : '0';
+        wrap.appendChild(input);
+        return wrap;
+      }
+
+      /* ─── Live Monitor → Playground hand-off ─────────────────────────── */
+      // Triggered by the "→ Playground" button on a tool_call row. Switches to
+      // the playground, selects the matching tool and pre-fills its form with
+      // the exact arguments that were captured, so a call can be replayed and
+      // debugged without re-typing the parameters.
+      async function toPlayground(btn) {
+        const toolName = btn.dataset.tool;
+        let args = {};
+        try { args = JSON.parse(btn.dataset.args || '{}'); } catch { args = {}; }
+
+        switchTab('playground');
+        try {
+          await ensureToolsLoaded();
+        } catch {
+          return; // load error already surfaced in the tool list
+        }
+
+        const tool = allTools.find(t => t.name === toolName);
+        if (!tool) {
+          $('pg-placeholder').style.display = 'flex';
+          $('pg-placeholder').textContent =
+            'Tool "' + toolName + '" is not available in the playground.';
+          $('pg-panel').style.display = 'none';
+          return;
+        }
+
+        selectTool(tool);
+        fillForm(args);
+        $('pg-panel').scrollIntoView({ block: 'start' });
+      }
+
+      // Writes captured argument values back into the rendered form inputs,
+      // matching the encoding that collectArgs expects on the way out.
+      function fillForm(args) {
+        if (!args || typeof args !== 'object') return;
+        const inputs = $('pg-fields').querySelectorAll('[data-field]');
+        for (const input of inputs) {
+          const name = input.dataset.field;
+          if (!Object.hasOwn(args, name)) continue;
+          const val = args[name];
+          if (val === null || val === undefined) { input.value = ''; continue; }
+          const type = input.dataset.type;
+          if (type === 'array' || type === 'object' || typeof val === 'object') {
+            input.value = JSON.stringify(val);
+          } else {
+            input.value = String(val);
+          }
+        }
+      }
+
+      /* ─── Tool Playground: collect args & run ────────────────────────── */
+      function collectArgs(tool) {
+        const args    = {};
+        const props   = (tool.inputSchema && tool.inputSchema.properties) || {};
+        const panel   = $('pg-fields');
+        const inputs  = panel.querySelectorAll('[data-field]');
+
+        for (const input of inputs) {
+          const name   = input.dataset.field;
+          const type   = input.dataset.type;
+          const isEnum = input.dataset.isEnum === '1';
+          const raw    = (input.value ?? '').trim();
+
+          if (raw === '') continue; // skip empty optional fields
+
+          if (isEnum || type === 'boolean') {
+            if (type === 'boolean') {
+              if (raw === 'true')  { args[name] = true;  continue; }
+              if (raw === 'false') { args[name] = false; continue; }
+            } else {
+              // enum: try to coerce to number if the original schema values are numbers
+              const n = Number(raw);
+              args[name] = isNaN(n) ? raw : n;
+            }
+            continue;
+          }
+
+          if (type === 'integer') { args[name] = parseInt(raw, 10);  continue; }
+          if (type === 'number')  { args[name] = parseFloat(raw);    continue; }
+
+          if (type === 'array' || type === 'object') {
+            let parsed;
+            try { parsed = JSON.parse(raw); }
+            catch { throw new Error('Field "' + name + '": invalid JSON – ' + raw.slice(0, 60)); }
+            args[name] = parsed;
+            continue;
+          }
+
+          args[name] = raw; // string
+        }
+        return args;
+      }
+
+      $('pg-run').addEventListener('click', async () => {
+        if (!selectedTool) return;
+        let args;
+        try {
+          args = collectArgs(selectedTool);
+        } catch (err) {
+          showOutput(false, 0, String(err), null);
+          return;
+        }
+
+        $('pg-run').disabled     = true;
+        $('pg-running').style.display = 'flex';
+        $('pg-output').style.display  = 'none';
+
+        try {
+          const token = getToken();
+          const url   = '/monitor/tools/' + encodeURIComponent(selectedTool.name) + '/run' +
+                        (token ? '?token=' + encodeURIComponent(token) : '');
+          const res   = await fetch(url, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ args }),
+          });
+          const data  = await res.json();
+          showOutput(data.ok, data.durationMs, null, data);
+        } catch (err) {
+          showOutput(false, 0, String(err), null);
+        } finally {
+          $('pg-run').disabled          = false;
+          $('pg-running').style.display = 'none';
+        }
+      });
+
+      /* ─── Tool Playground: render output ─────────────────────────────── */
+      // Above this many characters we skip JSON syntax-highlighting and the
+      // pretty-print pass and render plain, truncated text instead. The regex
+      // highlighter builds one DOM <span> per token, which freezes the tab on
+      // large payloads (a single result can be hundreds of KiB). The full,
+      // untruncated payload stays available via the "download full" button.
+      const PG_RENDER_LIMIT = 80000;   // ~80 KB of text rendered inline
+      const PG_DISPLAY_CHARS = 20000;  // chars actually shown when truncating
+
+      let pgContentStr = '';   // full extracted text content (for download/raw)
+      let pgRawStr = '';       // full raw JSON string (for download/raw)
+      let pgRawRendered = false;
+
+      function pgByteLen(s) {
+        try { return new Blob([s]).size; } catch { return s.length; }
+      }
+
+      // Render `text` into `el`, highlighting only when small enough; otherwise
+      // show a truncated, plain-text preview. Returns true when truncated.
+      function pgRenderInto(el, text, asJson) {
+        if (text.length <= PG_RENDER_LIMIT) {
+          if (asJson) el.innerHTML = syntaxHL(text);
+          else el.textContent = text || '(empty response)';
+          return false;
+        }
+        el.textContent = text.slice(0, PG_DISPLAY_CHARS) + '\n\n… [truncated for display] …';
+        return true;
+      }
+
+      function showOutput(ok, durationMs, errorMsg, rawData) {
+        showingRaw = false;
+        pgRawRendered = false;
+        $('pg-result-raw').style.display = 'none';
+        $('pg-result-text').style.display = 'block';
+        $('pg-toggle').textContent = 'show raw JSON';
+        $('pg-truncated').style.display = 'none';
+        $('pg-download').style.display = 'none';
+
+        pgContentStr = '';
+        pgRawStr = rawData ? JSON.stringify(rawData, null, 2) : '';
+
+        const statusEl = $('pg-result-status');
+        let truncated = false;
+
+        if (errorMsg) {
+          statusEl.className   = 'pg-result-err';
+          statusEl.textContent = '✗ error';
+          $('pg-result-text').innerHTML = '<span class="pg-error-text">' + escHtml(errorMsg) + '</span>';
+        } else if (ok) {
+          statusEl.className   = 'pg-result-ok';
+          statusEl.textContent = '✓ ok';
+          // Extract text content from the MCP result
+          const content = (rawData.content || []).map(c => c.text || '').join('');
+          pgContentStr = content;
+          // Pretty-print only when small; parsing+re-stringifying a huge blob
+          // is itself costly, so skip it past the render limit.
+          let displayed = content, asJson = false;
+          if (content.length <= PG_RENDER_LIMIT) {
+            try { displayed = JSON.stringify(JSON.parse(content), null, 2); asJson = true; }
+            catch { /* not JSON, render as-is */ }
+          }
+          truncated = pgRenderInto($('pg-result-text'), displayed, asJson);
+        } else {
+          statusEl.className   = 'pg-result-err';
+          statusEl.textContent = '✗ error';
+          const content = (rawData.content || []).map(c => c.text || '').join('');
+          pgContentStr = content || rawData.error || 'Unknown error';
+          truncated = pgRenderInto($('pg-result-text'), pgContentStr, false);
+        }
+
+        $('pg-result-dur').textContent = durationMs ? durationMs + ' ms' : '';
+
+        if (truncated) {
+          const kib = (pgByteLen(pgContentStr) / 1024).toFixed(0);
+          $('pg-truncated').textContent =
+            'Large result (' + kib + ' KiB) — showing the first ' +
+            PG_DISPLAY_CHARS.toLocaleString() + ' characters. Use "download full" for everything.';
+          $('pg-truncated').style.display = 'block';
+        }
+
+        // Raw pane is rendered lazily on first toggle (see toggleRaw) so we
+        // never highlight a huge payload that the user may never open.
+        $('pg-toggle').style.display = rawData ? 'inline-block' : 'none';
+        $('pg-download').style.display = (pgContentStr || pgRawStr) ? 'inline-block' : 'none';
+
+        $('pg-output').style.display = 'block';
+      }
+
+      function toggleRaw() {
+        showingRaw = !showingRaw;
+        if (showingRaw && !pgRawRendered) {
+          pgRenderInto($('pg-result-raw'), pgRawStr, true);
+          pgRawRendered = true;
+        }
+        $('pg-result-text').style.display = showingRaw ? 'none'         : 'block';
+        $('pg-result-raw').style.display  = showingRaw ? 'block'        : 'none';
+        $('pg-toggle').textContent        = showingRaw ? 'show content' : 'show raw JSON';
+      }
+
+      // Download the full, untruncated payload (raw JSON when the raw pane is
+      // open, otherwise the extracted content) as a file.
+      function downloadResult() {
+        const showRaw = showingRaw;
+        const text = showRaw ? pgRawStr : (pgContentStr || pgRawStr);
+        const name = (selectedTool ? selectedTool.name : 'result') +
+                     (showRaw ? '.raw.json' : '.txt');
+        const blob = new Blob([text], { type: 'application/octet-stream' });
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      }
+
+      /* ─── JSON syntax highlighting ────────────────────────────────────── */
+      function syntaxHL(json) {
+        return escHtml(json).replace(
+          /(&quot;(?:\\.|[^&])*&quot;)(\s*:)|(&quot;(?:\\.|[^&])*&quot;)|(\b-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b)|(\btrue\b|\bfalse\b)|(\bnull\b)/g,
+          (m, key, colon, str, num, bool, nil) => {
+            if (key)  return '<span class="json-key">'  + key  + '</span>' + (colon || '');
+            if (str)  return '<span class="json-str">'  + str  + '</span>';
+            if (num)  return '<span class="json-num">'  + num  + '</span>';
+            if (bool) return '<span class="json-bool">' + bool + '</span>';
+            if (nil)  return '<span class="json-null">' + nil  + '</span>';
+            return m;
+          }
+        );
+      }
+    </script>
+  </body>
+</html>

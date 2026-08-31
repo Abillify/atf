@@ -1,0 +1,28 @@
+id: support-assistant
+name: Support Assistant
+metadata:
+  version: 1.2.0
+dataClasses: [personal]
+
+nodes:
+  - id: classify
+    type: classifier
+    classifierSchema:
+      classKey: intent
+      schema:
+        type: object
+        properties:
+          intent: { type: string, enum: [question, action] }
+        required: [intent]
+
+  - id: answer
+    type: retrieval
+    config: { collection: handbook, topK: 6 }
+
+  - id: act
+    type: llm
+    tools: [gate:ticket_create]
+
+edges:
+  - { source: classify, target: answer, conditions: "classification.intent == 'question'" }
+  - { source: classify, target: act, conditions: "classification.intent == 'action'" }

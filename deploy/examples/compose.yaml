@@ -1,0 +1,131 @@
+name: atf-quickstart
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg18
+    environment:
+      POSTGRES_DB: atf_search
+      POSTGRES_USER: atf
+      POSTGRES_PASSWORD: atf-local-only
+      PGDATA: /pg/18/data
+    volumes:
+      - postgres-data:/pg
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atf -d atf_search"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  model-mock:
+    image: python:3.13-alpine
+    command: ["python", "/mock/model-mock.py"]
+    volumes:
+      - ./model-mock.py:/mock/model-mock.py:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  runtime:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: runtime
+    environment:
+      PORT: "3000"
+      APP_ENV: development
+      FLOWS_DIR: /config/flows
+      AUTHN_MODE: disabled
+      AUTHZ_ENABLED: "false"
+      TENANT_ISOLATION_ENABLED: "false"
+      MONITORING_AUTH: "false"
+      METRICS_AUTH: "false"
+      CORS_ORIGINS: http://localhost:3001,http://127.0.0.1:3001
+      PROVIDERS: '[{"name":"quickstart","protocol":"openai","url":"http://model-mock:8080/v1","apiKey":"local-placeholder","local":true}]'
+      DEFAULT_LLM: '{"provider":"quickstart","model":"example-chat"}'
+    ports:
+      - "${ATF_RUNTIME_PORT:-3000}:3000"
+    volumes:
+      - ./flows:/config/flows:ro
+    depends_on:
+      model-mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  control:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: control
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_BACKEND_URL: http://127.0.0.1:${ATF_RUNTIME_PORT:-3000}
+      CONTROL_CSP_MODE: legacy
+    ports:
+      - "${ATF_CONTROL_PORT:-3001}:3001"
+    depends_on:
+      runtime:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3001/').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  search:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: search
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      POSTGRES_URL: postgres://atf:atf-local-only@postgres:5432/atf_search
+      EMBED_URL: http://model-mock:8080/v1/embeddings
+      EMBED_MODEL: example-embedding
+      EMBED_MODEL_REVISION: example-embedding-v1
+      EMBED_INPUT_FIELD: input
+      EMBED_EXPECTED_DIMENSION: "3"
+      AUTHN_MODE: disabled
+      AUTHZ_ENABLED: "false"
+      TENANT_ISOLATION_ENABLED: "false"
+      ACL_REQUIRE_IDENTITY: "false"
+      TRANSACTION_ENFORCEMENT: off
+    ports:
+      - "${ATF_SEARCH_PORT:-3002}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      model-mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  gate:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: gate
+    environment:
+      MCPGATE_CONFIG_DIR: /config
+      MCPGATE_ENV: development
+    ports:
+      - "${ATF_GATE_PORT:-3003}:3000"
+    volumes:
+      - ./gate:/config:ro
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  postgres-data:

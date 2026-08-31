@@ -1,0 +1,33 @@
+{
+  "name": "aiperator-trust-fabric",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Aiperator Trust Fabric (ATF)",
+  "author": "Abillify Technology GmbH <info@abillify.me>",
+  "license": "Elastic-2.0",
+  "packageManager": "bun@1.3.14",
+  "workspaces": ["apps/*", "packages/*", "integration/*"],
+  "scripts": {
+    "verify:public": "bun run scripts/verify-public-tree.ts",
+    "verify:public:release": "bun run scripts/verify-public-tree.ts --require-rules",
+    "spdx": "bun run scripts/apply-spdx-headers.ts",
+    "verify:spdx": "bun run scripts/apply-spdx-headers.ts --check",
+    "supply-chain": "bun run scripts/generate-supply-chain.ts",
+    "supply-chain:check": "bun run scripts/generate-supply-chain.ts --check",
+    "config-reference": "bun run scripts/generate-config-reference.ts",
+    "config-reference:check": "bun run scripts/generate-config-reference.ts --check",
+    "test:contracts": "bun run --filter @atf/system-integration test",
+    "lint": "bunx biome lint --max-diagnostics=10000 .",
+    "lint:baseline": "bun run scripts/check-lint-baseline.ts",
+    "format": "bunx biome format --write",
+    "check:budgets": "bun run scripts/report-budgets.ts --report",
+    "check:budgets:ci": "bun run scripts/report-budgets.ts --enforce",
+    "smoke:model-capabilities": "bun run --filter @atf/runtime smoke:model-capabilities",
+    "typecheck": "bun run --filter '*' typecheck",
+    "test": "bun run --filter '*' test",
+    "build": "bun run --filter '*' build"
+  },
+  "devDependencies": {"@biomejs/biome": "2.5.6", "@types/bun": "1.3.14", "bun-types": "1.3.14", "typescript": "7.0.2"},
+  "overrides": {"adm-zip": "0.6.0", "postcss": "8.5.26", "sharp": "0.35.3"},
+  "engines": {"bun": ">=1.3.14 <2", "node": ">=26 <27"}
+}

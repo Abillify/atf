@@ -1,0 +1,73 @@
+name: Feature request
+description: Propose a capability or a change in behaviour
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        For open-ended ideas, [Discussions](../../discussions) is usually the better starting
+        point. Use this template when you have a concrete proposal.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - runtime
+        - control
+        - search
+        - gate
+        - contract package
+        - build, CI, or tooling
+        - documentation
+        - cross-cutting
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: >-
+        What are you trying to do that is currently hard or impossible? Describe the situation,
+        not the solution.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposal
+      description: >-
+        What should ATF do instead? If it needs configuration, name the variables or the YAML
+        shape you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: >-
+        Including whatever you are doing today as a workaround. This is often the most useful
+        part of a proposal.
+
+  - type: textarea
+    id: impact
+    attributes:
+      label: Compatibility and security impact
+      description: >-
+        Would this change a default, weaken a fail-closed path, cross a service boundary, or
+        alter a contract package? Say so explicitly.
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and discussions
+          required: true
+        - label: >-
+            I understand ATF is source-available under the Elastic License 2.0 and that a
+            contribution would be accepted under that license
+          required: true

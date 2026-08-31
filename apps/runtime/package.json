@@ -1,0 +1,55 @@
+{
+  "name": "@atf/runtime",
+  "version": "0.1.0",
+  "private": true,
+  "author": "Abillify Technology GmbH <info@abillify.me>",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "scripts": {
+    "start": "bun run src/index.ts",
+    "dev": "bun --watch run src/index.ts",
+    "test": "bun test src",
+    "test:integration:models": "bun test src/graph/__tests__/integration/",
+    "eval:run": "bun run src/eval/run.ts",
+    "eval:generate-dataset": "bun run src/eval/generate-dataset.ts",
+    "eval:pii-recall": "bun run src/eval/pii-recall-run.ts",
+    "smoke:ner": "bun run scripts/ner-smoke.ts",
+    "smoke:gemini": "bun run scripts/smoke-gemini.ts",
+    "smoke:ollama:chat": "bun run scripts/smoke-ollama-chat.ts",
+    "smoke:ollama:embed": "bun run scripts/smoke-ollama-embed.ts",
+    "smoke:reasoning": "bun run scripts/smoke-reasoning.ts",
+    "smoke:model-capabilities": "bun run scripts/smoke-model-capabilities.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/index.ts --outdir ./dist --target bun"
+  },
+  "engines": {
+    "bun": ">=1.3.14 <2",
+    "node": ">=26 <27"
+  },
+  "dependencies": {
+    "@ai-sdk/amazon-bedrock": "5.0.30",
+    "@ai-sdk/anthropic": "4.0.19",
+    "@ai-sdk/azure": "4.0.21",
+    "@ai-sdk/google": "4.0.23",
+    "@ai-sdk/openai": "4.0.20",
+    "@ai-sdk/provider": "3.0.1",
+    "@atf/schema-compatibility": "workspace:1.0.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1094.0",
+    "@huggingface/transformers": "4.2.0",
+    "@langchain/core": "1.2.3",
+    "@langchain/langgraph": "1.4.8",
+    "@langchain/langgraph-checkpoint": "1.1.3",
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "ai": "7.0.37",
+    "chokidar": "5.0.0",
+    "hono": "4.13.2",
+    "jose": "6.2.4",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.3.14",
+    "fast-check": "4.9.0",
+    "typescript": "7.0.2"
+  }
+}

@@ -1,0 +1,56 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * E2E: full-page accessibility sweep across every dashboard route.
+ *
+ * Runs axe-core over the whole page for all 27 destinations and fails on any
+ * `critical`/`serious` WCAG 2 A/AA violation. (The shell-scoped test in
+ * a11y-responsive.spec.ts asserts *zero* violations on nav/header; this broader
+ * sweep guards the page bodies against high-impact regressions without being
+ * brittle to lower-severity, content-dependent findings.)
+ */
+
+import { test, expect } from "@playwright/test";
+import AxeBuilder from "@axe-core/playwright";
+import { mockBackend, setTestToken } from "./helpers/mock-backend";
+
+const ROUTES = [
+  "/studio", "/rag", "/memory", "/eval", "/optimizer", "/canary", "/autopilot",
+  "/graph", "/traces", "/history", "/approvals", "/shadow", "/security",
+  "/flows", "/flow-diff", "/triggers", "/assistants", "/providers", "/guardrails", "/pii-vault", "/compliance", "/mcp",
+  "/cost", "/limits", "/tenants", "/models", "/jobs",
+];
+
+test.describe("Full-page a11y sweep", () => {
+  test.beforeEach(async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await mockBackend(page);
+    await setTestToken(page);
+  });
+
+  for (const route of ROUTES) {
+    test(`no critical/serious axe violations: ${route}`, async ({ page }) => {
+      await page.goto(route);
+      await expect(page.getByRole("main")).toBeVisible();
+      // let client data settle into empty/error/loaded state
+      await page.waitForTimeout(400);
+
+      const results = await new AxeBuilder({ page })
+        .withTags(["wcag2a", "wcag2aa"])
+        // The React Flow canvas (third-party) renders nodes as role="button"
+        // with nested interactive content — a known library limitation we don't
+        // control. Exclude it; our own chrome/content is still fully scanned.
+        .exclude(".react-flow")
+        .analyze();
+
+      const serious = results.violations.filter(
+        (v) => v.impact === "critical" || v.impact === "serious",
+      );
+      const summary = serious.map(
+        (v) => `${v.id} (${v.impact}) x${v.nodes.length}: ${v.help}`,
+      );
+      expect(summary, summary.join("\n")).toEqual([]);
+    });
+  }
+});

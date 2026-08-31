@@ -1,0 +1,18 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/abillify/atf/security/advisories/new
+    about: >-
+      Report privately, never as a public issue. See SECURITY.md for response targets and scope.
+
+  - name: Question or idea
+    url: https://github.com/abillify/atf/discussions
+    about: >-
+      Usage questions, configuration help, and design proposals belong in Discussions.
+
+  - name: Commercial licensing
+    url: mailto:licensing@abillify.me
+    about: >-
+      Managed hosting, SaaS, OEM, or white-label use. See LICENSING.md for what the
+      Elastic License 2.0 already permits without an agreement.

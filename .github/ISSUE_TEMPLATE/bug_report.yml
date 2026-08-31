@@ -1,0 +1,95 @@
+name: Bug report
+description: Something behaves differently than documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: >-
+        Do not report a security vulnerability here. Use private reporting — see
+        [SECURITY.md](../blob/main/SECURITY.md).
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - runtime
+        - control
+        - search
+        - gate
+        - contract package
+        - build, CI, or tooling
+        - documentation
+        - not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: Link the documentation or configuration that led you to expect it, if any.
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened
+      description: >-
+        Include the error and any relevant log lines. Redact secrets, real hostnames, and
+        personal data before pasting.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+      description: >-
+        Smallest set of steps that shows the problem. A minimal flow YAML or curl command is
+        ideal. Use synthetic data only.
+      placeholder: |
+        1. Start the quickstart stack
+        2. curl ...
+        3. Observe ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: configuration
+    attributes:
+      label: Relevant configuration
+      description: >-
+        Much of ATF's behaviour is configuration-dependent. Include the variables that matter
+        (for example AUTHN_MODE, APPROVAL_GATE_ENABLED, PROFILE) with values redacted where
+        sensitive.
+      render: shell
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      placeholder: "commit sha, or the flow_version from a debug trace"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      placeholder: "Bun 1.3.14, Linux x86_64, Docker Compose / bare metal / Kubernetes"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: This is not a security vulnerability
+          required: true
+        - label: I removed all secrets, real endpoints, and personal data from this report
+          required: true

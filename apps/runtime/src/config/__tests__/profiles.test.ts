@@ -1,0 +1,110 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * Tests for configuration profiles / presets (`src/config/profiles.ts`).
+ *
+ * Core invariant: explicit env > profile default > built-in default. A profile
+ * only fills variables the operator has NOT set, and never mutates the input.
+ */
+
+import { describe, it, expect } from "bun:test";
+import {
+  applyProfile,
+  listProfiles,
+  PROFILES,
+  type RawEnv,
+} from "../profiles.js";
+
+describe("applyProfile", () => {
+  it("returns the env unchanged when no PROFILE is set", () => {
+    const env: RawEnv = { PORT: "3000" };
+    const r = applyProfile(env);
+    expect(r.profile).toBeUndefined();
+    expect(r.applied).toEqual([]);
+    expect(r.env).toEqual({ PORT: "3000" });
+  });
+
+  it("fills defaults for unset variables from the named profile", () => {
+    const r = applyProfile({ PROFILE: "regulated" });
+    expect(r.profile).toBe("regulated");
+    expect(r.env.PII_VAULT_ENABLED).toBe("true");
+    expect(r.env.PII_VAULT_MULTIMODAL_MODE).toBe("block");
+    expect(r.env.MONITORING_AUTH).toBe("true");
+    expect(r.env.INPUT_GUARDRAIL_MODE).toBe("block");
+    expect(r.applied).toContain("PII_VAULT_ENABLED");
+  });
+
+  it("never overrides an explicitly-set variable (explicit env wins)", () => {
+    const r = applyProfile({
+      PROFILE: "regulated",
+      PII_VAULT_MULTIMODAL_MODE: "redact", // operator override
+      APP_ENV: "development",
+    });
+    expect(r.env.PII_VAULT_MULTIMODAL_MODE).toBe("redact");
+    expect(r.env.APP_ENV).toBe("development");
+    expect(r.applied).not.toContain("PII_VAULT_MULTIMODAL_MODE");
+    expect(r.applied).not.toContain("APP_ENV");
+  });
+
+  it("treats an explicit empty string as set (does not fill it)", () => {
+    const r = applyProfile({ PROFILE: "regulated", MONITORING_AUTH: "" });
+    expect(r.env.MONITORING_AUTH).toBe("");
+    expect(r.applied).not.toContain("MONITORING_AUTH");
+  });
+
+  it("does not mutate the input env object", () => {
+    const env: RawEnv = { PROFILE: "regulated" };
+    const before = { ...env };
+    applyProfile(env);
+    expect(env).toEqual(before);
+  });
+
+  it("adds tenant isolation + BYOK only in the multitenant profile", () => {
+    const single = applyProfile({ PROFILE: "regulated" });
+    const multi = applyProfile({ PROFILE: "regulated-multitenant" });
+    expect(single.env.TENANT_MANAGEMENT_ENABLED).toBeUndefined();
+    expect(multi.env.TENANT_MANAGEMENT_ENABLED).toBe("true");
+    expect(multi.env.BYOK_ENABLED).toBe("true");
+    expect(multi.env.TENANT_RLS_REQUIRED).toBe("true");
+  });
+
+  it("performance profile toggles only caches, no posture changes", () => {
+    const r = applyProfile({ PROFILE: "performance" });
+    expect(r.env.RESPONSE_CACHE_ENABLED).toBe("true");
+    expect(r.env.SEMANTIC_CACHE_ENABLED).toBe("true");
+    expect(r.env.EMBEDDING_CACHE_ENABLED).toBe("true");
+    expect(r.env.APP_ENV).toBeUndefined();
+    expect(r.env.PII_VAULT_ENABLED).toBeUndefined();
+  });
+
+  it("dev profile sets development env + debug logging", () => {
+    const r = applyProfile({ PROFILE: "dev" });
+    expect(r.env.APP_ENV).toBe("development");
+    expect(r.env.LOG_LEVEL).toBe("debug");
+  });
+
+  it("reports an error for an unknown profile instead of silently ignoring it", () => {
+    const r = applyProfile({ PROFILE: "regulateed" }); // typo
+    expect(r.error).toBeDefined();
+    expect(r.error).toContain("Unknown PROFILE");
+    expect(r.error).toContain("regulated-multitenant"); // lists valid names
+    expect(r.applied).toEqual([]);
+  });
+
+  it("trims and ignores a blank PROFILE", () => {
+    expect(applyProfile({ PROFILE: "   " }).profile).toBeUndefined();
+    expect(applyProfile({ PROFILE: "  regulated " }).profile).toBe("regulated");
+  });
+
+  it("every shipped profile only contains keys that are strings", () => {
+    for (const name of listProfiles()) {
+      const profile = PROFILES[name];
+      if (profile === undefined) throw new Error(`expected a profile for "${name}"`);
+      for (const [k, v] of Object.entries(profile)) {
+        expect(typeof k).toBe("string");
+        expect(typeof v).toBe("string");
+      }
+    }
+  });
+});

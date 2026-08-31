@@ -1,0 +1,1090 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * Execution audit / history store (`src/monitoring/execution-store.ts`)
+ *
+ * Persists the node-execution event stream so the dashboard "History" tab and
+ * any audit tooling can show past runs — not just whatever happened to be live
+ * in the current browser session.
+ *
+ * Two implementations behind one interface:
+ *   - {@link InMemoryExecutionStore}: a bounded ring buffer. Always present so
+ *     the history endpoint works without a database (session-scoped, per replica).
+ *   - {@link PostgresExecutionStore}: durable, cross-replica audit log in the
+ *     `executions` + `node_events` tables.
+ *
+ * `recordEvent` is fire-and-forget (never blocks or throws into the hot path).
+ *
+ * No `any` at module boundaries.
+ */
+
+import type { NodeExecutionEvent } from "../types/monitoring.js";
+import type { Database } from "../db/database.js";
+import type { Logger } from "../observability/logger.js";
+
+/** Per-request rollup derived from the node-event stream. */
+export interface ExecutionSummary {
+  execution_id: string;
+  flow_id: string | null;
+  tenant_id: string | null;
+  status: "running" | "completed" | "error";
+  node_count: number;
+  error_count: number;
+  total_latency_ms: number | null;
+  /**
+   * Total estimated USD cost of this run — the sum of every node's `cost`.
+   * Null when no priced LLM call was recorded.
+   */
+  total_cost: number | null;
+  started_at: string;
+  finished_at: string | null;
+  /** Display name (or email/id) of the user who triggered the run. */
+  user_name: string | null;
+  /** The user's prompt text (last user message), truncated. */
+  user_prompt: string | null;
+  conversation_id?: string | null;
+  chat_id?: string | null;
+  session_id?: string | null;
+}
+
+/**
+ * Query parameters for a paginated, filterable history listing.
+ */
+export interface HistoryQuery {
+  /** Page size (rows to return). */
+  limit: number;
+  /** Rows to skip from the newest end (for pagination). Default 0. */
+  offset?: number;
+  /** Included flow ids. Empty/undefined includes every flow. */
+  includeFlows?: string[];
+  /** Excluded flow ids. Exclusion takes precedence over inclusion. */
+  excludeFlows?: string[];
+  /** When set, only executions triggered by this user (display name) are returned. */
+  userName?: string;
+}
+
+/** A single page of execution history plus the total matching count. */
+export interface HistoryPage {
+  executions: ExecutionSummary[];
+  /** Total number of rows matching the filters (ignoring limit/offset). */
+  total: number;
+}
+
+/** Distinct filter values available for the history view. */
+export interface HistoryFacets {
+  /** Distinct flow ids seen in the history, sorted. */
+  flows: string[];
+  /** Distinct user display names seen in the history, sorted. */
+  users: string[];
+}
+
+/** Extra context attached when persisting an event. */
+export interface ExecutionEventMeta {
+  flowId?: string;
+  tenantId?: string;
+  conversationId?: string;
+  chatId?: string;
+  sessionId?: string;
+}
+
+/**
+ * One permanent per-request token-usage record — the essential cost info kept
+ * indefinitely (independent of execution-history retention). One row per
+ * request, accumulated across all of the run's LLM calls.
+ */
+export interface UsageLogEntry {
+  execution_id: string;
+  /** Flow that ran. */
+  flow_id: string | null;
+  tenant_id: string | null;
+  /** Stable user id (may be null when the request was anonymous). */
+  user_id: string | null;
+  /** User display name/email captured at request time. */
+  user_label: string | null;
+  /** Last LLM model used in the request (provider/model). */
+  model: string | null;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  /** Estimated total cost of the request (null when no priced call ran). */
+  cost: number | null;
+  /** Summed node wall-clock duration in ms (mirrors executions.total_latency_ms). */
+  duration_ms: number | null;
+  /** First N characters of the user's prompt. */
+  prompt_preview: string | null;
+  /** Request timestamp (ISO-8601). */
+  created_at: string;
+  finished_at: string | null;
+}
+
+export interface ExecutionStore {
+  /** Records a single node-execution event. Fire-and-forget. */
+  recordEvent(event: NodeExecutionEvent, meta?: ExecutionEventMeta): void;
+  /**
+   * Forces any internally batched/queued writes out immediately. A no-op for
+   * implementations with no write buffering (e.g. {@link InMemoryExecutionStore}).
+   * Called on graceful shutdown so a killed process does not drop the tail of
+   * an in-flight batch window, and by any read path that needs to observe a
+   * just-recorded event with no delay.
+   */
+  flush?(): Promise<void>;
+  /** Returns the most recent executions, newest first. */
+  listRecent(limit: number): Promise<ExecutionSummary[]>;
+  /**
+   * Returns a filterable, paginated page of executions (newest first) together
+   * with the total number of rows matching the filters. Powers the dashboard
+   * history view's pagination and flow/user filters.
+   */
+  listHistory(query: HistoryQuery): Promise<HistoryPage>;
+  /** Returns the distinct flow ids and user names present in the history. */
+  listHistoryFacets(): Promise<HistoryFacets>;
+  /**
+   * Returns the most recent permanent per-request token-usage records, newest
+   * first. Unlike {@link listRecent}, these survive retention purges.
+   */
+  listRecentUsage(limit: number): Promise<UsageLogEntry[]>;
+  /** Returns all node events for one execution, oldest first. */
+  listEvents(executionId: string): Promise<NodeExecutionEvent[]>;
+  /**
+   * Clears the entire execution history (all executions and their events).
+   * Operator action exposed via DELETE /monitoring/history. Returns the number
+   * of executions removed.
+   */
+  clear(): Promise<number>;
+  /**
+   * Retention: deletes executions (and their events) started strictly before
+   * the ISO cutoff. Returns the number of executions removed.
+   */
+  purgeOlderThan(cutoffIso: string): Promise<number>;
+  /**
+   * Right-to-be-forgotten: deletes executions attributable to the subject's
+   * tenant. (Execution rows are tenant-scoped, not user-scoped, so a user-only
+   * subject matches nothing here.) Returns the number of executions removed.
+   */
+  eraseSubject(subject: {
+    tenantId?: string;
+    userId?: string;
+  }): Promise<number>;
+}
+
+const DEFAULT_TENANT_ID = "default";
+
+const isTerminal = (s: NodeExecutionEvent["status"]): boolean =>
+  s === "completed" || s === "error";
+
+// ---------------------------------------------------------------------------
+// In-memory ring buffer (default)
+// ---------------------------------------------------------------------------
+
+interface MemExecution extends ExecutionSummary {
+  events: NodeExecutionEvent[];
+  /** Accumulated token usage across the run's LLM calls (for the usage log). */
+  prompt_tokens: number;
+  completion_tokens: number;
+  /** Last LLM model seen in the run. */
+  model: string | null;
+  /** Stable user id (from the request boundary event), when known. */
+  user_id: string | null;
+}
+
+/** Bounded in-memory store. Evicts the oldest execution when full. */
+export class InMemoryExecutionStore implements ExecutionStore {
+  private readonly byId = new Map<string, MemExecution>();
+  private readonly order: string[] = [];
+
+  constructor(private readonly maxExecutions = 500) {}
+
+  recordEvent(event: NodeExecutionEvent, meta?: ExecutionEventMeta): void {
+    let exec = this.byId.get(event.execution_id);
+    if (exec === undefined) {
+      exec = {
+        execution_id: event.execution_id,
+        flow_id: meta?.flowId ?? null,
+        tenant_id: meta?.tenantId ?? null,
+        status: "running",
+        node_count: 0,
+        error_count: 0,
+        total_latency_ms: null,
+        total_cost: null,
+        started_at: event.start_time,
+        finished_at: null,
+        user_name: event.user_name ?? null,
+        user_prompt: event.user_prompt ?? null,
+        conversation_id: meta?.conversationId ?? null,
+        chat_id: meta?.chatId ?? null,
+        session_id: meta?.sessionId ?? null,
+        events: [],
+        prompt_tokens: 0,
+        completion_tokens: 0,
+        model: null,
+        user_id: event.user_id ?? null,
+      };
+      this.byId.set(event.execution_id, exec);
+      this.order.push(event.execution_id);
+      this.evictIfNeeded();
+    }
+    if (meta?.flowId && exec.flow_id === null) exec.flow_id = meta.flowId;
+    if (meta?.tenantId && exec.tenant_id === null)
+      exec.tenant_id = meta.tenantId;
+    if (meta?.conversationId && exec.conversation_id === null)
+      exec.conversation_id = meta.conversationId;
+    if (meta?.chatId && exec.chat_id === null) exec.chat_id = meta.chatId;
+    if (meta?.sessionId && exec.session_id === null)
+      exec.session_id = meta.sessionId;
+    // Backfill identity/prompt from whichever event carries them (the
+    // `__request__` boundary node), without overwriting an existing value.
+    if (event.user_name && exec.user_name === null)
+      exec.user_name = event.user_name;
+    if (event.user_prompt && exec.user_prompt === null)
+      exec.user_prompt = event.user_prompt;
+    if (event.user_id && exec.user_id === null) exec.user_id = event.user_id;
+    exec.events.push(event);
+
+    // Synthetic tool nodes are excluded from the rollup: their time is already
+    // contained in the issuing node's latency (see PostgresExecutionStore).
+    if (isTerminal(event.status) && event.kind !== "tool") {
+      exec.node_count += 1;
+      if (event.status === "error") {
+        exec.error_count += 1;
+        exec.status = "error";
+      } else if (exec.status !== "error") {
+        exec.status = "completed";
+      }
+      if (event.latency_ms !== null) {
+        exec.total_latency_ms = (exec.total_latency_ms ?? 0) + event.latency_ms;
+      }
+      if (event.cost !== undefined) {
+        exec.total_cost = (exec.total_cost ?? 0) + event.cost;
+      }
+      // Accumulate token usage + capture the model for the permanent usage log.
+      if (event.input_tokens !== undefined)
+        exec.prompt_tokens += event.input_tokens;
+      if (event.output_tokens !== undefined)
+        exec.completion_tokens += event.output_tokens;
+      if (event.model !== undefined && event.model !== "")
+        exec.model = event.model;
+      if (event.end_time !== null) exec.finished_at = event.end_time;
+    }
+  }
+
+  private evictIfNeeded(): void {
+    while (this.order.length > this.maxExecutions) {
+      const oldest = this.order.shift();
+      if (oldest !== undefined) this.byId.delete(oldest);
+    }
+  }
+
+  async listRecent(limit: number): Promise<ExecutionSummary[]> {
+    const out: ExecutionSummary[] = [];
+    for (const id of this.order.toReversed()) {
+      if (out.length >= limit) break;
+      const exec = this.byId.get(id);
+      if (exec !== undefined) out.push(stripEvents(exec));
+    }
+    return out;
+  }
+
+  async listHistory(query: HistoryQuery): Promise<HistoryPage> {
+    const limit = Math.max(query.limit, 0);
+    const offset = Math.max(query.offset ?? 0, 0);
+    const matches: ExecutionSummary[] = [];
+    // Newest-first, applying the flow/user filters.
+    for (const id of this.order.toReversed()) {
+      const exec = this.byId.get(id);
+      if (exec === undefined) continue;
+      const flowId = exec.flow_id ?? "";
+      if (
+        query.includeFlows !== undefined &&
+        query.includeFlows.length > 0 &&
+        !query.includeFlows.includes(flowId)
+      )
+        continue;
+      if (query.excludeFlows?.includes(flowId) === true) continue;
+      if (
+        query.userName !== undefined &&
+        (exec.user_name ?? "") !== query.userName
+      )
+        continue;
+      matches.push(stripEvents(exec));
+    }
+    const executions = matches.slice(offset, offset + limit);
+    return { executions, total: matches.length };
+  }
+
+  async listHistoryFacets(): Promise<HistoryFacets> {
+    const flows = new Set<string>();
+    const users = new Set<string>();
+    for (const exec of this.byId.values()) {
+      if (exec.flow_id !== null) flows.add(exec.flow_id);
+      if (exec.user_name !== null && exec.user_name !== "")
+        users.add(exec.user_name);
+    }
+    return {
+      flows: [...flows].sort((a, b) => a.localeCompare(b)),
+      users: [...users].sort((a, b) => a.localeCompare(b)),
+    };
+  }
+
+  async listRecentUsage(limit: number): Promise<UsageLogEntry[]> {
+    const out: UsageLogEntry[] = [];
+    for (const id of this.order.toReversed()) {
+      if (out.length >= limit) break;
+      const exec = this.byId.get(id);
+      if (exec !== undefined) out.push(memToUsage(exec));
+    }
+    return out;
+  }
+
+  async listEvents(executionId: string): Promise<NodeExecutionEvent[]> {
+    return this.byId.get(executionId)?.events.slice() ?? [];
+  }
+
+  async clear(): Promise<number> {
+    const removed = this.order.length;
+    this.byId.clear();
+    this.order.length = 0;
+    return removed;
+  }
+
+  async purgeOlderThan(cutoffIso: string): Promise<number> {
+    let removed = 0;
+    for (const [id, exec] of this.byId) {
+      if (exec.started_at < cutoffIso) {
+        this.byId.delete(id);
+        removed++;
+      }
+    }
+    if (removed > 0) this.rebuildOrder();
+    return removed;
+  }
+
+  async eraseSubject(subject: {
+    tenantId?: string;
+    userId?: string;
+  }): Promise<number> {
+    // Execution rows are tenant-scoped only.
+    if (subject.tenantId === undefined) return 0;
+    let removed = 0;
+    for (const [id, exec] of this.byId) {
+      if (exec.tenant_id === subject.tenantId) {
+        this.byId.delete(id);
+        removed++;
+      }
+    }
+    if (removed > 0) this.rebuildOrder();
+    return removed;
+  }
+
+  private rebuildOrder(): void {
+    const kept = this.order.filter((id) => this.byId.has(id));
+    this.order.length = 0;
+    this.order.push(...kept);
+  }
+}
+
+function stripEvents(e: MemExecution): ExecutionSummary {
+  const { events: _events, ...summary } = e;
+  void _events;
+  return summary;
+}
+
+/** Projects an in-memory execution into a permanent-log-shaped usage entry. */
+function memToUsage(e: MemExecution): UsageLogEntry {
+  return {
+    execution_id: e.execution_id,
+    flow_id: e.flow_id,
+    tenant_id: e.tenant_id,
+    user_id: e.user_id,
+    user_label: e.user_name,
+    model: e.model,
+    prompt_tokens: e.prompt_tokens,
+    completion_tokens: e.completion_tokens,
+    total_tokens: e.prompt_tokens + e.completion_tokens,
+    cost: e.total_cost,
+    duration_ms: e.total_latency_ms,
+    prompt_preview: e.user_prompt,
+    created_at: e.started_at,
+    finished_at: e.finished_at,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Postgres store (durable, cross-replica)
+// ---------------------------------------------------------------------------
+
+/** One row queued for a batched `node_events` insert. */
+interface QueuedNodeEventRow {
+  execution_id: string;
+  node_id: string;
+  status: NodeExecutionEvent["status"];
+  start_time: string;
+  end_time: string | null;
+  latency_ms: number | null;
+  error_message: string | null;
+  sequence: number | null;
+  model: string | null;
+  input_tokens: number | null;
+  output_tokens: number | null;
+  cost: number | null;
+  tool_calls: string | null;
+  prompt: string | null;
+  response: string | null;
+  user_name: string | null;
+  user_prompt: string | null;
+  kind: string | null;
+  parent_node_id: string | null;
+  label: string | null;
+}
+
+export class PostgresExecutionStore implements ExecutionStore {
+  /**
+   * Bounded write queue for `node_events` INSERTs, flushed as one multi-row
+   * statement instead of one INSERT per event.
+   *
+   * `node_events` is the one table here whose row count scales with node
+   * count, not request count: a 10-node flow emits roughly 2 events per node
+   * (start + terminal) plus synthetic tool-call events, so a single chat
+   * request can queue 20-40 rows. Batching these into one INSERT (rather than
+   * `executions`/`token_usage_log`, which are small per-execution UPSERTs with
+   * COALESCE-based backfill semantics that a batch would have to reproduce
+   * carefully) removes the dominant share of round-trips without touching
+   * that backfill logic at all.
+   *
+   * Flushed on whichever comes first: `flushIntervalMs` elapsed, or
+   * `maxBatchSize` rows queued — bounding both the write latency (a dashboard
+   * "live-ish" tail) and the memory a burst of events can hold before landing.
+   */
+  private readonly writeQueue: QueuedNodeEventRow[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | undefined;
+  private readonly flushIntervalMs: number;
+  private readonly maxBatchSize: number;
+  /** Serialises flushes so two concurrent triggers never race the same rows. */
+  private flushChain: Promise<void> = Promise.resolve();
+
+  constructor(
+    private readonly db: Database,
+    private readonly logger?: Logger,
+    options: { flushIntervalMs?: number; maxBatchSize?: number } = {},
+  ) {
+    this.flushIntervalMs = options.flushIntervalMs ?? 250;
+    this.maxBatchSize = Math.max(1, options.maxBatchSize ?? 200);
+  }
+
+  /**
+   * Runs writes under a tenant context even for anonymous requests. The
+   * default tenant is also used by cost_ledger, so this keeps legacy
+   * tenant-less traffic compatible with enforced RLS without inserting NULL.
+   */
+  private scoped<T>(
+    tenantId: string | undefined,
+    cb: (db: Database) => Promise<T>,
+  ): Promise<T> {
+    const effectiveTenantId = tenantId ?? DEFAULT_TENANT_ID;
+    if (this.db.withTenant) {
+      return this.db.withTenant(effectiveTenantId, cb);
+    }
+    return cb(this.db);
+  }
+
+  /**
+   * In-flight `persist()` calls not yet resolved. `recordEvent` is
+   * fire-and-forget, so a row is only actually PUSHED onto `writeQueue`
+   * partway through `persist()` (after the `executions`/`token_usage_log`
+   * upserts) — `flush()` must wait for these too, or it can drain an empty
+   * queue while a `persist()` call is still on its way to enqueueing a row.
+   * Entries remove themselves on settle, so this never grows unbounded.
+   */
+  private readonly pendingPersists = new Set<Promise<void>>();
+
+  recordEvent(event: NodeExecutionEvent, meta?: ExecutionEventMeta): void {
+    const p = this.persist(event, meta).catch((err) => {
+      this.logger?.warn("Failed to persist execution event", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
+    this.pendingPersists.add(p);
+    void p.finally(() => this.pendingPersists.delete(p));
+  }
+
+  private async persist(
+    event: NodeExecutionEvent,
+    meta?: ExecutionEventMeta,
+  ): Promise<void> {
+    await this.scoped(meta?.tenantId, async (db) => {
+      // Ensure the parent execution row exists (idempotent). When a later event
+      // (the `__request__` boundary) carries identity/prompt, backfill them
+      // without clobbering values already set.
+      await db.query(
+        `INSERT INTO executions
+           (execution_id, flow_id, tenant_id, user_name, user_prompt, conversation_id, chat_id, session_id, status, started_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9)
+         ON CONFLICT (execution_id) DO UPDATE
+           SET user_name      = COALESCE(executions.user_name, EXCLUDED.user_name),
+               user_prompt    = COALESCE(executions.user_prompt, EXCLUDED.user_prompt),
+               conversation_id = COALESCE(executions.conversation_id, EXCLUDED.conversation_id),
+               chat_id        = COALESCE(executions.chat_id, EXCLUDED.chat_id),
+               session_id     = COALESCE(executions.session_id, EXCLUDED.session_id)`,
+        [
+          event.execution_id,
+          meta?.flowId ?? null,
+          meta?.tenantId ?? DEFAULT_TENANT_ID,
+          event.user_name ?? null,
+          event.user_prompt ?? null,
+          meta?.conversationId ?? null,
+          meta?.chatId ?? null,
+          meta?.sessionId ?? null,
+          event.start_time,
+        ],
+      );
+
+      // Permanent per-request usage log (survives retention purges). Insert the
+      // row on the first event; identity/prompt/flow arrive on the `__request__`
+      // boundary event and are backfilled without clobbering existing values.
+      // Token/cost/duration totals are rolled forward on terminal events below.
+      await db.query(
+        `INSERT INTO token_usage_log
+           (execution_id, flow_id, tenant_id, user_id, user_label, prompt_preview, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (execution_id) DO UPDATE
+           SET flow_id        = COALESCE(token_usage_log.flow_id, EXCLUDED.flow_id),
+               tenant_id      = COALESCE(token_usage_log.tenant_id, EXCLUDED.tenant_id),
+               user_id        = COALESCE(token_usage_log.user_id, EXCLUDED.user_id),
+               user_label     = COALESCE(token_usage_log.user_label, EXCLUDED.user_label),
+               prompt_preview = COALESCE(token_usage_log.prompt_preview, EXCLUDED.prompt_preview)`,
+        [
+          event.execution_id,
+          meta?.flowId ?? null,
+          meta?.tenantId ?? DEFAULT_TENANT_ID,
+          event.user_id ?? null,
+          event.user_name ?? null,
+          event.user_prompt ?? null,
+          event.start_time,
+        ],
+      );
+
+      // Append the raw event for a full audit trail, including the per-node
+      // detail the dashboard renders (order, model/tokens, tool calls,
+      // prompt/response) and the request boundary's user identity/prompt.
+      // Queued rather than inserted immediately — see `enqueueNodeEvent`.
+      this.enqueueNodeEvent({
+        execution_id: event.execution_id,
+        node_id: event.node_id,
+        status: event.status,
+        start_time: event.start_time,
+        end_time: event.end_time,
+        latency_ms: event.latency_ms,
+        error_message: event.error_message ?? null,
+        sequence: event.sequence ?? null,
+        model: event.model ?? null,
+        input_tokens: event.input_tokens ?? null,
+        output_tokens: event.output_tokens ?? null,
+        cost: event.cost ?? null,
+        tool_calls:
+          event.tool_calls !== undefined
+            ? JSON.stringify(event.tool_calls)
+            : null,
+        prompt: event.prompt ?? null,
+        response: event.response ?? null,
+        user_name: event.user_name ?? null,
+        user_prompt: event.user_prompt ?? null,
+        kind: event.kind ?? null,
+        parent_node_id: event.parent_node_id ?? null,
+        label: event.label ?? null,
+      });
+
+      // Roll the per-execution summary forward on terminal node events.
+      // Synthetic tool nodes are excluded: their wall-clock time is already
+      // contained in the issuing node's latency, so counting them would inflate
+      // node_count and double-count total_latency_ms.
+      if (isTerminal(event.status) && event.kind !== "tool") {
+        await db.query(
+          `UPDATE executions
+              SET node_count = node_count + 1,
+                  error_count = error_count + $2,
+                  total_latency_ms = COALESCE(total_latency_ms, 0) + $3,
+                  total_cost = CASE WHEN $5::double precision IS NULL THEN total_cost
+                                        ELSE COALESCE(total_cost, 0) + $5 END,
+                  status = CASE WHEN $4 = 'error' THEN 'error'
+                                WHEN status = 'error' THEN 'error'
+                                ELSE 'completed' END,
+                  finished_at = now()
+            WHERE execution_id = $1`,
+          [
+            event.execution_id,
+            event.status === "error" ? 1 : 0,
+            event.latency_ms ?? 0,
+            event.status,
+            event.cost ?? null,
+          ],
+        );
+
+        // Roll the permanent usage log forward: accumulate tokens/cost/duration
+        // and keep the last non-null model. `finished_at` marks the last event.
+        await db.query(
+          `UPDATE token_usage_log
+              SET prompt_tokens     = prompt_tokens + $2,
+                  completion_tokens = completion_tokens + $3,
+                  total_tokens      = total_tokens + $2 + $3,
+                  duration_ms       = duration_ms + $4,
+                  cost              = CASE WHEN $5::double precision IS NULL THEN cost
+                                           ELSE cost + $5 END,
+                  model             = COALESCE($6, model),
+                  finished_at       = now()
+            WHERE execution_id = $1`,
+          [
+            event.execution_id,
+            event.input_tokens ?? 0,
+            event.output_tokens ?? 0,
+            event.latency_ms ?? 0,
+            event.cost ?? null,
+            event.model ?? null,
+          ],
+        );
+      }
+    });
+  }
+
+  /**
+   * Queues a `node_events` row and schedules (or immediately triggers) a
+   * flush. Never awaited by the caller — `recordEvent` is fire-and-forget by
+   * contract, so a queued-but-not-yet-flushed row is exactly as durable as an
+   * in-flight single INSERT was before (i.e. not durable across a crash
+   * between enqueue and flush; this trades a small window of that pre-existing
+   * risk for a large reduction in database round-trips).
+   */
+  private enqueueNodeEvent(row: QueuedNodeEventRow): void {
+    this.writeQueue.push(row);
+    if (this.writeQueue.length >= this.maxBatchSize) {
+      if (this.flushTimer !== undefined) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = undefined;
+      }
+      this.scheduleFlush();
+      return;
+    }
+    if (this.flushTimer === undefined) {
+      this.flushTimer = setTimeout(() => {
+        this.flushTimer = undefined;
+        this.scheduleFlush();
+      }, this.flushIntervalMs);
+      this.flushTimer.unref?.();
+    }
+  }
+
+  /** Chains onto `flushChain` so overlapping triggers flush sequentially, never concurrently. */
+  private scheduleFlush(): void {
+    this.flushChain = this.flushChain.then(() => this.flushNodeEvents());
+  }
+
+  /** Drains the current queue and inserts it as one multi-row statement. */
+  private async flushNodeEvents(): Promise<void> {
+    if (this.writeQueue.length === 0) return;
+    const batch = this.writeQueue.splice(0, this.writeQueue.length);
+    const cols = [
+      "execution_id",
+      "node_id",
+      "status",
+      "start_time",
+      "end_time",
+      "latency_ms",
+      "error_message",
+      "sequence",
+      "model",
+      "input_tokens",
+      "output_tokens",
+      "cost",
+      "tool_calls",
+      "prompt",
+      "response",
+      "user_name",
+      "user_prompt",
+      "kind",
+      "parent_node_id",
+      "label",
+    ] as const;
+    const params: unknown[] = [];
+    const valueGroups: string[] = [];
+    for (const row of batch) {
+      const placeholders: string[] = [];
+      for (const col of cols) {
+        params.push(row[col]);
+        placeholders.push(`$${params.length}`);
+      }
+      valueGroups.push(`(${placeholders.join(", ")})`);
+    }
+    const sql = `INSERT INTO node_events (${cols.join(", ")}) VALUES ${valueGroups.join(", ")}`;
+    try {
+      await this.db.query(sql, params);
+    } catch (err) {
+      this.logger?.warn("Failed to flush batched node_events insert", {
+        rows: batch.length,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Flushes any queued `node_events` rows immediately. Exposed for graceful
+   * shutdown (so a killed process does not drop the tail of an in-flight
+   * batch window) and for tests that need to observe writes synchronously.
+   */
+  async flush(): Promise<void> {
+    // Wait for every in-flight persist() to reach the point where it has
+    // either enqueued its row or failed — otherwise a flush racing a fresh
+    // recordEvent() could drain the queue before that event's row lands in it.
+    if (this.pendingPersists.size > 0) {
+      await Promise.allSettled([...this.pendingPersists]);
+    }
+    if (this.flushTimer !== undefined) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = undefined;
+    }
+    this.scheduleFlush();
+    await this.flushChain;
+  }
+
+  // listRecent / listEvents / purgeOlderThan below are operator-plane or
+  // system (retention) reads that span tenants by design. They are NOT tenant
+  // scoped and require a BYPASSRLS role under enforced RLS (see ADR-0005).
+  async listRecent(limit: number): Promise<ExecutionSummary[]> {
+    const rows = await this.db.withOperator((db) =>
+      db.query<ExecutionRow>(
+        `SELECT execution_id, flow_id, tenant_id, status, node_count, error_count,
+                total_latency_ms, total_cost, started_at, finished_at, user_name, user_prompt,
+                conversation_id, chat_id, session_id
+           FROM executions
+          ORDER BY started_at DESC
+          LIMIT $1`,
+        [limit],
+      ),
+    );
+    return rows.map(rowToSummary);
+  }
+
+  // Filterable, paginated history read (operator-plane, cross-tenant by design
+  // — same RLS caveat as listRecent). Builds a dynamic WHERE from the flow/user
+  // filters and returns both the page and the total matching count.
+  async listHistory(query: HistoryQuery): Promise<HistoryPage> {
+    const limit = Math.max(query.limit, 0);
+    const offset = Math.max(query.offset ?? 0, 0);
+
+    const conditions: string[] = [];
+    const filterParams: unknown[] = [];
+    if (query.includeFlows !== undefined && query.includeFlows.length > 0) {
+      filterParams.push(query.includeFlows);
+      conditions.push(`flow_id = ANY($${filterParams.length}::text[])`);
+    }
+    if (query.excludeFlows !== undefined && query.excludeFlows.length > 0) {
+      filterParams.push(query.excludeFlows);
+      conditions.push(`NOT (flow_id = ANY($${filterParams.length}::text[]))`);
+    }
+    if (query.userName !== undefined) {
+      filterParams.push(query.userName);
+      conditions.push(`user_name = $${filterParams.length}`);
+    }
+    const where =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+    return this.db.withOperator(async (db) => {
+      const countRows = await db.query<{ total: number | string }>(
+        `SELECT COUNT(*)::bigint AS total FROM executions ${where}`,
+        filterParams,
+      );
+      const total = Number(countRows[0]?.total ?? 0);
+
+      const rows = await db.query<ExecutionRow>(
+        `SELECT execution_id, flow_id, tenant_id, status, node_count, error_count,
+                total_latency_ms, total_cost, started_at, finished_at, user_name, user_prompt,
+                conversation_id, chat_id, session_id
+           FROM executions
+           ${where}
+          ORDER BY started_at DESC
+          LIMIT $${filterParams.length + 1} OFFSET $${filterParams.length + 2}`,
+        [...filterParams, limit, offset],
+      );
+      return { executions: rows.map(rowToSummary), total };
+    });
+  }
+
+  async listHistoryFacets(): Promise<HistoryFacets> {
+    return this.db.withOperator(async (db) => {
+      const flowRows = await db.query<{ flow_id: string }>(
+        `SELECT DISTINCT flow_id FROM executions
+          WHERE flow_id IS NOT NULL
+          ORDER BY flow_id ASC`,
+        [],
+      );
+      const userRows = await db.query<{ user_name: string }>(
+        `SELECT DISTINCT user_name FROM executions
+          WHERE user_name IS NOT NULL AND user_name <> ''
+          ORDER BY user_name ASC`,
+        [],
+      );
+      return {
+        flows: flowRows.map((r) => r.flow_id),
+        users: userRows.map((r) => r.user_name),
+      };
+    });
+  }
+
+  // Permanent usage log read (operator-plane, cross-tenant by design — same RLS
+  // caveat as listRecent). Reads the durable token_usage_log, newest first.
+  async listRecentUsage(limit: number): Promise<UsageLogEntry[]> {
+    const rows = await this.db.withOperator((db) =>
+      db.query<UsageLogRow>(
+        `SELECT execution_id, flow_id, tenant_id, user_id, user_label, model,
+                prompt_tokens, completion_tokens, total_tokens, cost,
+                duration_ms, prompt_preview, created_at, finished_at
+           FROM token_usage_log
+          ORDER BY created_at DESC
+          LIMIT $1`,
+        [limit],
+      ),
+    );
+    return rows.map(rowToUsage);
+  }
+
+  async listEvents(executionId: string): Promise<NodeExecutionEvent[]> {
+    // Force out any queued-but-not-yet-flushed node_events rows first — a
+    // caller asking for THIS execution's events almost always does so right
+    // after it finished (the dashboard detail view, the explainability card),
+    // exactly when a batch window might still be open. Without this, a read
+    // immediately after a run could show a truncated event trail.
+    await this.flush();
+    // Fetching all events for a specific execution is an operator-plane read
+    // (the dashboard history detail view). Cross-tenant by design — the
+    // execution_id is the only selector, not the tenant — so we use the
+    // operator pool under enforced RLS.
+    const rows = await this.db.withOperator((db) =>
+      db.query<NodeEventRow>(
+        `SELECT execution_id, node_id, status, start_time, end_time, latency_ms, error_message,
+                sequence, model, input_tokens, output_tokens, cost, tool_calls, prompt, response,
+                user_name, user_prompt, kind, parent_node_id, label
+           FROM node_events
+          WHERE execution_id = $1
+          ORDER BY sequence ASC NULLS LAST, created_at ASC`,
+        [executionId],
+      ),
+    );
+    return rows.map((r) => ({
+      execution_id: r.execution_id,
+      node_id: r.node_id,
+      status: r.status,
+      start_time: toIso(r.start_time),
+      end_time: r.end_time === null ? null : toIso(r.end_time),
+      latency_ms: r.latency_ms,
+      ...(r.error_message !== null ? { error_message: r.error_message } : {}),
+      ...(r.sequence !== null && r.sequence !== undefined
+        ? { sequence: Number(r.sequence) }
+        : {}),
+      ...(r.model !== null && r.model !== undefined ? { model: r.model } : {}),
+      ...(r.input_tokens !== null && r.input_tokens !== undefined
+        ? { input_tokens: Number(r.input_tokens) }
+        : {}),
+      ...(r.output_tokens !== null && r.output_tokens !== undefined
+        ? { output_tokens: Number(r.output_tokens) }
+        : {}),
+      ...(r.cost !== null && r.cost !== undefined
+        ? { cost: Number(r.cost) }
+        : {}),
+      ...((): { tool_calls?: NodeExecutionEvent["tool_calls"] } => {
+        const tc = parseToolCalls(r.tool_calls);
+        return tc !== undefined ? { tool_calls: tc } : {};
+      })(),
+      ...(r.prompt !== null && r.prompt !== undefined
+        ? { prompt: r.prompt }
+        : {}),
+      ...(r.response !== null && r.response !== undefined
+        ? { response: r.response }
+        : {}),
+      ...(r.user_name !== null && r.user_name !== undefined
+        ? { user_name: r.user_name }
+        : {}),
+      ...(r.user_prompt !== null && r.user_prompt !== undefined
+        ? { user_prompt: r.user_prompt }
+        : {}),
+      ...(r.kind === "tool" ? { kind: "tool" as const } : {}),
+      ...(r.parent_node_id !== null && r.parent_node_id !== undefined
+        ? { parent_node_id: r.parent_node_id }
+        : {}),
+      ...(r.label !== null && r.label !== undefined ? { label: r.label } : {}),
+    }));
+  }
+
+  async purgeOlderThan(cutoffIso: string): Promise<number> {
+    // Retention purge spans all tenants — operator-plane, requires BYPASSRLS.
+    return this.db.withOperator(async (db) => {
+      await db.query(
+        `DELETE FROM node_events WHERE execution_id IN
+           (SELECT execution_id FROM executions WHERE started_at < $1)`,
+        [cutoffIso],
+      );
+      const rows = await db.query<{ execution_id: string }>(
+        `DELETE FROM executions WHERE started_at < $1 RETURNING execution_id`,
+        [cutoffIso],
+      );
+      return rows.length;
+    });
+  }
+
+  async eraseSubject(subject: {
+    tenantId?: string;
+    userId?: string;
+  }): Promise<number> {
+    if (subject.tenantId === undefined) return 0;
+    const tenantId = subject.tenantId;
+    return this.scoped(tenantId, async (db) => {
+      await db.query(
+        `DELETE FROM node_events WHERE execution_id IN
+           (SELECT execution_id FROM executions WHERE tenant_id = $1)`,
+        [tenantId],
+      );
+      // The permanent usage log carries the prompt preview (PII), so a
+      // right-to-be-forgotten erase must clear it too — it is otherwise never
+      // pruned. Tenant-scoped, matching the execution erase above.
+      await db.query(`DELETE FROM token_usage_log WHERE tenant_id = $1`, [
+        tenantId,
+      ]);
+      const rows = await db.query<{ execution_id: string }>(
+        `DELETE FROM executions WHERE tenant_id = $1 RETURNING execution_id`,
+        [tenantId],
+      );
+      return rows.length;
+    });
+  }
+
+  async clear(): Promise<number> {
+    // Operator-plane clear of the whole audit log. Spans tenants by design and
+    // requires the BYPASSRLS operator connection under enforced RLS (ADR-0005).
+    return this.db.withOperator(async (db) => {
+      await db.query(`DELETE FROM node_events`);
+      const rows = await db.query<{ execution_id: string }>(
+        `DELETE FROM executions RETURNING execution_id`,
+      );
+      return rows.length;
+    });
+  }
+}
+
+interface ExecutionRow {
+  execution_id: string;
+  flow_id: string | null;
+  tenant_id: string | null;
+  status: ExecutionSummary["status"];
+  node_count: number | string;
+  error_count: number | string;
+  total_latency_ms: number | string | null;
+  total_cost: number | string | null;
+  started_at: string | Date;
+  finished_at: string | Date | null;
+  user_name: string | null;
+  user_prompt: string | null;
+  conversation_id: string | null;
+  chat_id: string | null;
+  session_id: string | null;
+}
+
+interface NodeEventRow {
+  execution_id: string;
+  node_id: string;
+  status: NodeExecutionEvent["status"];
+  start_time: string | Date;
+  end_time: string | Date | null;
+  latency_ms: number | null;
+  error_message: string | null;
+  sequence: number | string | null;
+  model: string | null;
+  input_tokens: number | string | null;
+  output_tokens: number | string | null;
+  cost: number | string | null;
+  tool_calls: unknown;
+  prompt: string | null;
+  response: string | null;
+  user_name: string | null;
+  user_prompt: string | null;
+  kind: string | null;
+  parent_node_id: string | null;
+  label: string | null;
+}
+
+/**
+ * Reconstructs the `tool_calls` array from a JSONB column. The driver may
+ * return it already parsed (object/array) or as a JSON string — handle both,
+ * and fall back to undefined on anything unusable.
+ */
+function parseToolCalls(v: unknown): NodeExecutionEvent["tool_calls"] {
+  if (v === null || v === undefined) return undefined;
+  let value: unknown = v;
+  if (typeof v === "string") {
+    try {
+      value = JSON.parse(v);
+    } catch {
+      return undefined;
+    }
+  }
+  return Array.isArray(value)
+    ? (value as NonNullable<NodeExecutionEvent["tool_calls"]>)
+    : undefined;
+}
+
+function rowToSummary(r: ExecutionRow): ExecutionSummary {
+  return {
+    execution_id: r.execution_id,
+    flow_id: r.flow_id,
+    tenant_id: r.tenant_id,
+    status: r.status,
+    node_count: Number(r.node_count),
+    error_count: Number(r.error_count),
+    total_latency_ms:
+      r.total_latency_ms === null ? null : Number(r.total_latency_ms),
+    total_cost: r.total_cost === null ? null : Number(r.total_cost),
+    started_at: toIso(r.started_at),
+    finished_at: r.finished_at === null ? null : toIso(r.finished_at),
+    user_name: r.user_name,
+    user_prompt: r.user_prompt,
+    conversation_id: r.conversation_id,
+    chat_id: r.chat_id,
+    session_id: r.session_id,
+  };
+}
+
+function toIso(v: string | Date): string {
+  return v instanceof Date ? v.toISOString() : v;
+}
+
+interface UsageLogRow {
+  execution_id: string;
+  flow_id: string | null;
+  tenant_id: string | null;
+  user_id: string | null;
+  user_label: string | null;
+  model: string | null;
+  prompt_tokens: number | string;
+  completion_tokens: number | string;
+  total_tokens: number | string;
+  cost: number | string | null;
+  duration_ms: number | string | null;
+  prompt_preview: string | null;
+  created_at: string | Date;
+  finished_at: string | Date | null;
+}
+
+function rowToUsage(r: UsageLogRow): UsageLogEntry {
+  return {
+    execution_id: r.execution_id,
+    flow_id: r.flow_id,
+    tenant_id: r.tenant_id,
+    user_id: r.user_id,
+    user_label: r.user_label,
+    model: r.model,
+    prompt_tokens: Number(r.prompt_tokens),
+    completion_tokens: Number(r.completion_tokens),
+    total_tokens: Number(r.total_tokens),
+    cost: r.cost === null ? null : Number(r.cost),
+    duration_ms: r.duration_ms === null ? null : Number(r.duration_ms),
+    prompt_preview: r.prompt_preview,
+    created_at: toIso(r.created_at),
+    finished_at: r.finished_at === null ? null : toIso(r.finished_at),
+  };
+}

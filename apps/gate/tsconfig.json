@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"lib":["ESNext","DOM"],"types":["bun","node"],"moduleDetection":"force","esModuleInterop":true,"allowSyntheticDefaultImports":true,"noUncheckedIndexedAccess":true},"include":["src/**/*.ts"],"exclude":["node_modules","dist"]}

@@ -1,0 +1,23 @@
+# Every pull request is reviewed by a maintainer.
+*                           @abillify/maintainers
+
+# Licensing, copyright, trademarks, and the release guard change the project's legal position,
+# so they need an explicit owner rather than inheriting the catch-all above.
+/LICENSE.md                 @abillify/maintainers
+/LICENSING.md               @abillify/maintainers
+/COPYRIGHT.md               @abillify/maintainers
+/TRADEMARKS.md              @abillify/maintainers
+/AUTHORS.md                 @abillify/maintainers
+/scripts/verify-public-tree.ts       @abillify/maintainers
+/scripts/generate-supply-chain.ts    @abillify/maintainers
+/THIRD_PARTY_NOTICES.md     @abillify/maintainers
+/sbom.cdx.json              @abillify/maintainers
+/licenses/                  @abillify/maintainers
+
+# Security posture and CI gates.
+/SECURITY.md                @abillify/maintainers
+/.github/                   @abillify/maintainers
+
+# Cross-service contracts. A change here can break every application at once.
+/packages/                  @abillify/maintainers
+/integration/               @abillify/maintainers

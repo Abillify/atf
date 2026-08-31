@@ -1,0 +1,1 @@
+{"extends":"../../tsconfig.base.json","compilerOptions":{"lib":["dom","dom.iterable","esnext"],"allowJs":true,"jsx":"react-jsx","isolatedModules":true,"plugins":[{"name":"next"}],"paths":{"@/*":["./src/*"]}},"include":["next-env.d.ts","src/**/*.ts","src/**/*.tsx"],"exclude":["node_modules","src/**/__tests__/**","src/**/*.test.ts","src/**/*.test.tsx","src/test-setup.ts"]}

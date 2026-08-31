@@ -1,0 +1,38 @@
+{
+  "vcs": {
+    "enabled": true,
+    "clientKind": "git",
+    "useIgnoreFile": true
+  },
+  "files": {
+    "ignoreUnknown": true,
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/dist-node",
+      "!**/.next",
+      "!**/coverage",
+      "!**/playwright-report",
+      "!**/test-results",
+      "!**/*.snap",
+      "!**/bun.lock",
+      "!sbom.cdx.json",
+      "!THIRD_PARTY_NOTICES.md",
+      "!docs/CONFIGURATION.md",
+      "!licenses",
+      "!biome-report.json"
+    ]
+  },
+  "css": {
+    "parser": {
+      "tailwindDirectives": true
+    }
+  },
+  "linter": {
+    "enabled": true
+  },
+  "formatter": {
+    "enabled": true
+  }
+}
