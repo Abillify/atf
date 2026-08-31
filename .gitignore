@@ -1,0 +1,34 @@
+# Dependency and build artifacts
+node_modules/
+dist/
+dist-node/
+.next/
+coverage/
+# Playwright artifacts (reports, screenshots, videos, traces)
+playwright-report/
+test-results/
+semantic-review/
+# Produced by `next build` / `next dev`; this workspace uses bun.lock exclusively
+pnpm-lock.yaml
+*.log
+*.tsbuildinfo
+
+# Local and restricted material
+.env
+.env.*
+!.env.example
+live/
+production/
+secrets/
+private/
+internal/
+analysis/
+reports/
+report/
+*.production.*
+
+# Python, tooling and operating-system files
+__pycache__/
+*.py[cod]
+.git/
+.DS_Store

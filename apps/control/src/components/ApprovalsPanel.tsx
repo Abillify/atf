@@ -1,0 +1,135 @@
+"use client";
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+import React, { useState } from "react";
+import type { PendingApproval } from "../types/control";
+import { Badge, Button } from "../lib/ui";
+
+export interface ApprovalsPanelProps {
+  pending: PendingApproval[];
+  isLoading?: boolean;
+  error?: string | null;
+  onResolve: (
+    id: string,
+    approved: boolean,
+    opts?: { reason?: string; by?: string },
+  ) => Promise<boolean> | void;
+}
+
+function age(iso: string): string {
+  const ms = Date.now() - new Date(iso).getTime();
+  if (Number.isNaN(ms)) return "—";
+  const s = Math.max(0, Math.floor(ms / 1000));
+  if (s < 60) return `${s}s ago`;
+  return `${Math.floor(s / 60)}m ${s % 60}s ago`;
+}
+
+function ApprovalCard({
+  item,
+  onResolve,
+}: {
+  item: PendingApproval;
+  onResolve: ApprovalsPanelProps["onResolve"];
+}): React.JSX.Element {
+  const [busy, setBusy] = useState(false);
+
+  const act = async (approved: boolean): Promise<void> => {
+    setBusy(true);
+    try {
+      await onResolve(item.id, approved, { by: "dashboard" });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <Badge variant="warning">awaiting approval</Badge>
+            <span className="font-mono text-sm font-semibold text-foreground">
+              {item.tool}
+            </span>
+          </div>
+          <div className="mt-1 text-xs text-muted-foreground">
+            node <span className="font-mono">{item.nodeId}</span>
+            {item.tenantId ? (
+              <>
+                {" · tenant "}
+                <span className="font-mono">{item.tenantId}</span>
+              </>
+            ) : null}
+            {" · "}
+            {age(item.requestedAt)}
+          </div>
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button
+            variant="primary"
+            size="sm"
+            disabled={busy}
+            onClick={() => void act(true)}
+          >
+            Approve
+          </Button>
+          <Button
+            variant="destructive"
+            size="sm"
+            disabled={busy}
+            onClick={() => void act(false)}
+          >
+            Deny
+          </Button>
+        </div>
+      </div>
+      {Object.keys(item.args).length > 0 && (
+        <pre className="mt-3 max-h-40 overflow-auto rounded bg-white/70 p-2 text-xs text-foreground">
+          {JSON.stringify(item.args, null, 2)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Reviewer inbox for human-in-the-loop tool approvals. A consequential tool call
+ * pauses until approved here; on timeout the backend auto-denies (fail-closed).
+ */
+export function ApprovalsPanel({
+  pending,
+  isLoading,
+  error,
+  onResolve,
+}: ApprovalsPanelProps): React.JSX.Element {
+  return (
+    <section className="space-y-3">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-foreground">
+          Pending approvals{" "}
+          <span className="font-normal text-muted-foreground">({pending.length})</span>
+        </h3>
+        {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+      </div>
+      {isLoading && pending.length === 0 ? (
+        <p className="py-10 text-center text-sm text-muted-foreground">Loading…</p>
+      ) : pending.length === 0 ? (
+        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card py-12 text-center">
+          <p className="text-sm text-muted-foreground">
+            No tool calls are awaiting approval.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Flagged consequential tools will appear here for review.
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {pending.map((p) => (
+            <ApprovalCard key={p.id} item={p} onResolve={onResolve} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}

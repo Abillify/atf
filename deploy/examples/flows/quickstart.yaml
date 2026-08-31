@@ -1,0 +1,11 @@
+id: quickstart
+name: ATF Quickstart
+metadata:
+  version: 0.1.0
+description: Synthetic unauthenticated local smoke flow.
+nodes:
+  - id: answer
+    type: llm
+    systemPrompt: >-
+      Return a concise confirmation that the ATF quickstart is running.
+edges: []

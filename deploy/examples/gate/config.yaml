@@ -1,0 +1,13 @@
+server:
+  host: 0.0.0.0
+  port: 3000
+  name: atf-quickstart-gate
+auth:
+  mode: disabled
+authorization:
+  enabled: false
+tenantIsolation:
+  enabled: false
+monitoring:
+  enabled: true
+tools: []

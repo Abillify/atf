@@ -1,0 +1,128 @@
+/*
+ * Tailwind v4: the three `@tailwind` directives are replaced by a single
+ * `@import "tailwindcss"`. The existing `tailwind.config.ts` (JS config,
+ * darkMode: "class", theme.extend colors/radius) is kept as-is via the `@config`
+ * directive — v4 still loads a JS config when one is explicitly referenced,
+ * so this upgrade does not require rewriting the design tokens into CSS
+ * `@theme` blocks.
+ */
+@import "tailwindcss";
+@config "../../tailwind.config.ts";
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 222 47% 11%;
+
+    --primary: 222 47% 11%;
+    --primary-foreground: 210 40% 98%;
+
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+
+    --muted: 210 40% 96%;
+    /* 40% L keeps "muted" secondary text but clears WCAG AA (4.5:1) on both
+       card (white) and muted (96% L) backgrounds. */
+    --muted-foreground: 215 20% 40%;
+
+    --accent: 221 83% 53%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 221 83% 53%;
+
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 222 47% 11%;
+    --foreground: 210 40% 98%;
+
+    --card: 223 47% 13%;
+    --card-foreground: 210 40% 98%;
+
+    --popover: 223 47% 13%;
+    --popover-foreground: 210 40% 98%;
+
+    --primary: 210 40% 98%;
+    --primary-foreground: 222 47% 11%;
+
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+
+    --muted: 217 33% 17%;
+    --muted-foreground: 215 20% 65%;
+
+    --accent: 224 76% 48%;
+    --accent-foreground: 210 40% 98%;
+
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 224 76% 48%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /*
+   * UI density tokens (UI-STYLE-GUIDE.md §11). "comfortable" is the default and
+   * matches the prior look; "compact" tightens data-dense surfaces (cards,
+   * table rows) for power users. Driven by `data-density` on <html> via the
+   * DensityProvider; theme-independent.
+   */
+  :root {
+    --ui-card-p: 1rem; /* Card padding (comfortable = p-4) */
+    --ui-cell-py: 0.5rem; /* Table cell vertical padding (= py-2) */
+    --ui-cell-h: 2.5rem; /* Table header cell height (= h-10) */
+  }
+
+  [data-density="compact"] {
+    --ui-card-p: 0.625rem;
+    --ui-cell-py: 0.25rem;
+    --ui-cell-h: 2rem;
+  }
+}
+
+@layer utilities {
+  /* Route-transition entrance (Next.js template.tsx). Reduced-motion aware. */
+  @keyframes ui-route-in {
+    from {
+      opacity: 0;
+      transform: translateY(4px);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+
+  .animate-route-in {
+    animation: ui-route-in 180ms ease-out;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .animate-route-in {
+      animation: none;
+    }
+  }
+}

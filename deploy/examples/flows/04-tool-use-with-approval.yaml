@@ -1,0 +1,47 @@
+id: tool-use-with-approval
+name: Tool Use With Human Approval
+description: >-
+  An agentic step that may call tools exposed by Gate. Read tools run freely; the write tool
+  requires a human decision. Requires Gate to be reachable with tools named
+  ticket_lookup and ticket_create, and Runtime started with APPROVAL_GATE_ENABLED=true and
+  APPROVAL_REQUIRE_TOOLS covering the write tool. The quickstart Gate config declares no tools,
+  so add them before expecting a tool call.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+  - personal
+
+nodes:
+  - id: assist
+    type: llm
+    label: Assist with tools
+    # Tool names are Gate tool identifiers. The model chooses whether to call them; it cannot
+    # invent one, and it cannot exceed the scopes the caller's token carries. Gate injects the
+    # verified identity into the query, so a lookup returns only this caller's rows regardless
+    # of what the model asks for.
+    tools:
+      - gate:ticket_lookup
+      - gate:ticket_create
+    systemPrompt: >-
+      Help the user with their support tickets.
+
+      Look up existing tickets before creating a new one. When you create a ticket, state that
+      it is awaiting human approval and do not claim it exists yet.
+
+      Never state that an action succeeded unless a tool result confirms it.
+
+edges: []
+
+# Approval behaviour is deployment configuration, not flow configuration, so that a reviewer
+# cannot be removed by editing a flow file:
+#
+#   APPROVAL_GATE_ENABLED=true
+#   APPROVAL_REQUIRE_TOOLS=gate:ticket_create
+#   APPROVAL_TIMEOUT_MS=300000
+#
+# On timeout the call is REJECTED. Silence never becomes an action. Pending approvals appear in
+# Control's reviewer inbox and, for compatible frontends, inline in the chat message.
+#
+# The same effect can be declared centrally in compliance-policy.yaml via approvalRules, which
+# applies across every entry path including webhook triggers and replay, not only chat.

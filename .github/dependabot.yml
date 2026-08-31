@@ -1,0 +1,57 @@
+version: 2
+
+updates:
+  # Bun workspaces resolve from the root lockfile, so a single npm entry covers every workspace.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 10
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(deps)"
+      prefix-development: "chore(deps-dev)"
+    groups:
+      # Framework majors need a coordinated review across the whole app, so keep them together
+      # rather than opening a pull request per package.
+      next-react:
+        patterns: ["next", "react", "react-dom", "@types/react", "@types/react-dom"]
+      ai-sdk:
+        patterns: ["ai", "@ai-sdk/*"]
+      langchain:
+        patterns: ["@langchain/*", "langsmith"]
+      aws:
+        patterns: ["@aws-sdk/*", "@smithy/*", "@aws-crypto/*"]
+      testing:
+        patterns: ["vitest", "@vitest/*", "@playwright/*", "@axe-core/*", "@testing-library/*"]
+        update-types: [minor, patch]
+      types:
+        patterns: ["@types/*"]
+        update-types: [minor, patch]
+    ignore:
+      # Pinned deliberately and upgraded together with the toolchain, not by a bot:
+      # packageManager, engines, .nvmrc, .node-version, and the CI workflow all state versions.
+      - dependency-name: typescript
+      - dependency-name: "@types/bun"
+      - dependency-name: bun-types
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [ci]
+    commit-message:
+      prefix: "chore(ci)"
+
+  - package-ecosystem: docker
+    directory: /deploy/examples
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(deps)"

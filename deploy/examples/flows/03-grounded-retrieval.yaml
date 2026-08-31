@@ -1,0 +1,44 @@
+id: grounded-retrieval
+name: Grounded Retrieval
+description: >-
+  Retrieve from Search before answering, and cite the sources. Requires Search to be reachable
+  and a collection named "handbook" to contain documents. The quickstart stack starts Search but
+  ingests nothing, so this flow returns an ungrounded answer until you add documents.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+
+nodes:
+  # A parallel node with a ragProfiles plan is the data-driven way to retrieve: sources are
+  # declared, not coded, and each one can be gated by a condition. `select` picks a profile at
+  # request time; `shared` sources always run.
+  - id: gather
+    type: parallel
+    label: Gather sources
+    config:
+      ragProfiles:
+        default: handbook
+        profiles:
+          handbook:
+            - collection: handbook
+              limit: 6
+              hybrid: true
+              rerank: true
+              minScore: 0.2
+              groupByDocument: true
+        rerank:
+          topN: 6
+        maxDocuments: 12
+
+  - id: answer
+    type: llm
+    label: Answer from sources
+    systemPrompt: >-
+      Answer using only the provided sources. Cite them with bracketed numbers such as [1].
+      If the sources do not contain the answer, say that explicitly rather than filling the gap
+      from prior knowledge.
+
+edges:
+  - source: gather
+    target: answer

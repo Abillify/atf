@@ -1,0 +1,202 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * GraphLayoutEngine — pure, side-effect-free layout functions for the graph.
+ *
+ * Contains:
+ *   - computeDagreLayout   : top-down hierarchical layout using dagre
+ *   - computeChronologicalLayout : waterfall / timeline layout
+ *
+ * Both functions are pure (same input → same output) and carry no React imports,
+ * which makes them straightforward to unit-test.
+ *
+ * Requirements: 11.2
+ */
+
+import dagre from "@dagrejs/dagre";
+
+// ---------------------------------------------------------------------------
+// Layout constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Nominal node height used for Dagre layout spacing. The actual rendered box
+ * uses this as a MIN height (it can grow for long labels/extra info rows) —
+ * see NodeRenderer.tsx. Widened previously (72px) caused long node labels
+ * (e.g. German multi-word titles) to render at a fixed, cramped height with
+ * text clipped to 2 lines with no room to breathe.
+ */
+export const NODE_H = 96;
+/**
+ * Fixed node width used for Dagre layout and as min-width in timeline mode.
+ * Widened from 180 to 220 so longer labels wrap to fewer lines before being
+ * clamped/truncated.
+ */
+export const NODE_W = 220;
+/** Vertical gap between lanes in timeline mode. */
+const LANE_GAP = 30;
+/** Minimum horizontal gap between two boxes sharing a lane in timeline mode. */
+const MIN_X_GAP = 20;
+/** Target pixel width for the full timeline span. */
+const TARGET_TRACE_WIDTH = 1400;
+/** Scale clamps for the timeline px-per-ms conversion. */
+const MIN_PX_PER_MS = 0.02;
+const MAX_PX_PER_MS = 2;
+
+// ---------------------------------------------------------------------------
+// Dagre layout
+// ---------------------------------------------------------------------------
+
+export interface DagrePosition {
+  x: number;
+  y: number;
+}
+
+/**
+ * Computes a top-down hierarchical layout using Dagre.
+ * Returns a map of nodeId → {x, y} (top-left corner, matching React Flow convention).
+ *
+ * This is a pure function: no global state is mutated; calling it twice with the
+ * same arguments produces identical output.
+ */
+export function computeDagreLayout(
+  nodeIds: string[],
+  edges: Array<{ source: string; target: string }>,
+): Map<string, DagrePosition> {
+  const g = new dagre.graphlib.Graph();
+  g.setDefaultEdgeLabel(() => ({}));
+  g.setGraph({
+    rankdir: "TB", // top → bottom
+    nodesep: 70, // horizontal gap between nodes in the same rank
+    ranksep: 90, // vertical gap between ranks
+    marginx: 40,
+    marginy: 40,
+  });
+
+  for (const id of nodeIds) {
+    g.setNode(id, { width: NODE_W, height: NODE_H });
+  }
+  for (const e of edges) {
+    // Only add edges where both endpoints are in the graph
+    if (g.hasNode(e.source) && g.hasNode(e.target)) {
+      g.setEdge(e.source, e.target);
+    }
+  }
+
+  dagre.layout(g);
+
+  const positions = new Map<string, DagrePosition>();
+  for (const id of nodeIds) {
+    const n = g.node(id);
+    if (n) {
+      // Dagre returns centre coordinates; React Flow expects top-left
+      positions.set(id, { x: n.x - NODE_W / 2, y: n.y - NODE_H / 2 });
+    } else {
+      positions.set(id, { x: 0, y: 0 });
+    }
+  }
+  return positions;
+}
+
+// ---------------------------------------------------------------------------
+// Chronological (waterfall / timeline) layout
+// ---------------------------------------------------------------------------
+
+export interface LayoutTiming {
+  id: string;
+  start: number | null;
+  end: number | null;
+}
+
+export interface LayoutBox {
+  x: number;
+  y: number;
+  /** Pixel width proportional to node duration (min: NODE_W). */
+  width: number;
+  /** True scaled duration without the NODE_W floor — drawn as top-edge bar. */
+  barWidth: number;
+}
+
+export interface LayoutMeta {
+  t0: number;
+  pxPerMs: number;
+  spanMs: number;
+}
+
+export interface ChronologicalLayoutResult {
+  positions: Map<string, LayoutBox>;
+  meta: LayoutMeta | null;
+}
+
+/**
+ * Computes a chronological waterfall layout where each node's horizontal
+ * position is proportional to its start time and its width reflects its
+ * duration.  Nodes without timing info are stacked at the right edge.
+ *
+ * Pure function: no side effects, deterministic output.
+ */
+export function computeChronologicalLayout(
+  nodes: LayoutTiming[],
+): ChronologicalLayoutResult {
+  const positions = new Map<string, LayoutBox>();
+  const laneY = (lane: number): number => lane * (NODE_H + LANE_GAP);
+
+  const timed = nodes.filter(
+    (n): n is LayoutTiming & { start: number } => n.start != null,
+  );
+  const untimed = nodes.filter((n) => n.start == null);
+
+  if (timed.length === 0) {
+    nodes.forEach((n, i) =>
+      positions.set(n.id, { x: 0, y: laneY(i), width: NODE_W, barWidth: 0 }),
+    );
+    return { positions, meta: null };
+  }
+
+  const t0 = Math.min(...timed.map((n) => n.start));
+  const maxEnd = Math.max(...timed.map((n) => n.end ?? n.start));
+  const spanMs = Math.max(0, maxEnd - t0);
+  const pxPerMs =
+    spanMs > 0
+      ? Math.min(
+          MAX_PX_PER_MS,
+          Math.max(MIN_PX_PER_MS, TARGET_TRACE_WIDTH / spanMs),
+        )
+      : MAX_PX_PER_MS;
+
+  const sorted = [...timed].sort(
+    (a, b) => a.start - b.start || (a.end ?? a.start) - (b.end ?? b.start),
+  );
+
+  const lanes: Array<{ rightX: number }> = [];
+  for (const n of sorted) {
+    const end = n.end ?? n.start;
+    const x = (n.start - t0) * pxPerMs;
+    const barWidth = (end - n.start) * pxPerMs;
+    const width = Math.max(NODE_W, barWidth);
+    let laneIdx = lanes.findIndex((l) => x >= l.rightX + MIN_X_GAP);
+    if (laneIdx === -1) {
+      laneIdx = lanes.length;
+      lanes.push({ rightX: -Infinity });
+    }
+    lanes[laneIdx]!.rightX = x + width;
+    positions.set(n.id, { x, y: laneY(laneIdx), width, barWidth });
+  }
+
+  const maxRight = Math.max(
+    0,
+    ...[...positions.values()].map((p) => p.x + p.width),
+  );
+  const untimedX = maxRight + 120;
+  untimed.forEach((n, i) =>
+    positions.set(n.id, {
+      x: untimedX,
+      y: laneY(i),
+      width: NODE_W,
+      barWidth: 0,
+    }),
+  );
+
+  return { positions, meta: { t0, pxPerMs, spanMs } };
+}

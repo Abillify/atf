@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "variables": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    },
+    "pricing": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "number",
+            "minimum": 0
+          },
+          "completion": {
+            "type": "number",
+            "minimum": 0
+          }
+        },
+        "required": [
+          "prompt",
+          "completion"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "dataClasses": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "public",
+          "internal",
+          "confidential",
+          "personal",
+          "sensitive",
+          "financial",
+          "legal",
+          "health"
+        ]
+      }
+    },
+    "requiredScopes": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 256,
+        "pattern": "\\S"
+      }
+    },
+    "recovery": {
+      "type": "object",
+      "properties": {
+        "retry": {
+          "type": "boolean"
+        },
+        "maxAttempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10
+        }
+      },
+      "required": [
+        "retry"
+      ],
+      "additionalProperties": false
+    },
+    "nodes": {
+      "minItems": 1,
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "type": {
+            "type": "string",
+            "minLength": 1
+          },
+          "label": {
+            "type": "string"
+          },
+          "llm": {
+            "type": "object",
+            "properties": {
+              "provider": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "openai",
+                      "google",
+                      "ollama",
+                      "azure",
+                      "bedrock",
+                      "anthropic"
+                    ]
+                  },
+                  {
+                    "type": "string",
+                    "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
+                  }
+                ]
+              },
+              "model": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "parameters": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              }
+            },
+            "required": [
+              "provider",
+              "model"
+            ],
+            "additionalProperties": false
+          },
+          "tools": {
+            "maxItems": 50,
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 128
+            }
+          },
+          "config": {
+            "type": "object",
+            "propertyNames": {
+              "type": "string"
+            },
+            "additionalProperties": {}
+          },
+          "classifierSchema": {
+            "type": "object",
+            "properties": {
+              "schema": {
+                "type": "object",
+                "propertyNames": {
+                  "type": "string"
+                },
+                "additionalProperties": {}
+              },
+              "classKey": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "schema",
+              "classKey"
+            ],
+            "additionalProperties": false
+          },
+          "systemPrompt": {
+            "type": "string",
+            "maxLength": 65536
+          },
+          "overrides": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "whenClass": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "whenClaim": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "whenParam": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 1024
+                },
+                "whenPlan": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "whenGroup": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "whenLanguage": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "llm": {
+                  "type": "object",
+                  "properties": {
+                    "provider": {
+                      "anyOf": [
+                        {
+                          "type": "string",
+                          "enum": [
+                            "openai",
+                            "google",
+                            "ollama",
+                            "azure",
+                            "bedrock",
+                            "anthropic"
+                          ]
+                        },
+                        {
+                          "type": "string",
+                          "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
+                        }
+                      ]
+                    },
+                    "model": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 256
+                    },
+                    "parameters": {
+                      "type": "object",
+                      "propertyNames": {
+                        "type": "string"
+                      },
+                      "additionalProperties": {}
+                    }
+                  },
+                  "required": [
+                    "provider",
+                    "model"
+                  ],
+                  "additionalProperties": false
+                },
+                "tools": {
+                  "maxItems": 50,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "maxLength": 128
+                  }
+                },
+                "systemPrompt": {
+                  "type": "string",
+                  "maxLength": 65536
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "parallelNodes": {
+            "maxItems": 20,
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "node": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "condition": {
+                      "type": "string",
+                      "maxLength": 1024
+                    }
+                  },
+                  "required": [
+                    "node"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          }
+        },
+        "required": [
+          "id",
+          "type"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "edges": {
+      "minItems": 0,
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "string",
+            "minLength": 1
+          },
+          "conditions": {
+            "type": "string",
+            "maxLength": 1024
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "source",
+          "target"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "propertyNames": {
+        "type": "string"
+      },
+      "additionalProperties": {}
+    }
+  },
+  "required": [
+    "id",
+    "name",
+    "nodes",
+    "edges"
+  ],
+  "additionalProperties": false,
+  "$id": "https://aiperator.dev/schemas/flow.schema.json",
+  "title": "aiperator Flow Definition",
+  "description": "Structural schema for aiperator flow YAML/JSON files (flows/*.yaml). Generated from the Zod FlowDefinitionSchema — do not edit by hand; run `bun run scripts/export-flow-schema.ts`. Cross-field validation (node type/config compatibility, override well-formedness, edge reference integrity) is enforced at runtime, not by this schema — use `bun run scripts/cli.ts validate <file>` for full validation."
+}

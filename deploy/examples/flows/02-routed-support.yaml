@@ -1,0 +1,64 @@
+id: routed-support
+name: Routed Support Assistant
+description: >-
+  Classify an incoming request, then route it to a branch tuned for that intent.
+  Runs against the quickstart mock model; no external services required.
+metadata:
+  version: 1.0.0
+dataClasses:
+  - internal
+
+nodes:
+  # A classifier produces structured JSON rather than prose. The result is written to
+  # state.classification under `classKey`, which edge conditions can then read. This is what
+  # keeps routing deterministic: the branch depends on a validated field, not on parsing an
+  # LLM's free text.
+  - id: triage
+    type: classifier
+    label: Triage
+    systemPrompt: >-
+      Classify the user's request. Use "question" when they want information,
+      "action" when they want something changed, and "other" otherwise.
+    classifierSchema:
+      classKey: intent
+      schema:
+        type: object
+        properties:
+          intent:
+            type: string
+            enum: [question, action, other]
+            description: What the user wants
+        required: [intent]
+
+  - id: answer
+    type: llm
+    label: Answer a question
+    systemPrompt: >-
+      Answer concisely. If you are not certain, say so instead of guessing.
+
+  - id: plan
+    type: llm
+    label: Plan an action
+    systemPrompt: >-
+      Describe the steps required, then state clearly that no action has been taken
+      because this flow has no tools attached.
+
+  - id: fallback
+    type: llm
+    label: Ask for clarification
+    systemPrompt: >-
+      Ask one short question that would let you classify the request.
+
+edges:
+  - source: triage
+    target: answer
+    conditions: "classification.intent == 'question'"
+    label: question
+  - source: triage
+    target: plan
+    conditions: "classification.intent == 'action'"
+    label: action
+  - source: triage
+    target: fallback
+    conditions: "classification.intent == 'other'"
+    label: other

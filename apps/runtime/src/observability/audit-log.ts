@@ -1,0 +1,557 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * Operator audit log (`src/observability/audit-log.ts`)
+ *
+ * Records every consequential action on the operator plane — who (actor +
+ * role), what (action + target), when, and the outcome — so a deployment has an
+ * accountable trail of flow publishes/rollbacks/deletes, tool-call approvals and
+ * denials, and time-travel replays. Reads back via `GET /monitoring/audit`.
+ *
+ * Two backends behind one interface: an in-memory ring (always on, per replica)
+ * and a durable Postgres `audit_log` table (cross-replica, survives restarts)
+ * when a database is configured. Recording is best-effort and never throws into
+ * the request path — an audit write failure must not fail the operation it logs.
+ *
+ * No `any` at module boundaries.
+ */
+
+import { createHash, createHmac } from "node:crypto";
+import type { Database } from "../db/database.js";
+import type { Logger } from "./logger.js";
+
+export interface AuditEntry {
+  actor: string;
+  role?: string;
+  /** Dotted action id, e.g. "flows.publish", "approvals.resolve", "replay.run". */
+  action: string;
+  /** What was acted on (flow id, approval id, execution id, …). */
+  target?: string;
+  outcome?: "success" | "denied" | "error";
+  details?: Record<string, unknown>;
+}
+
+export interface AuditRecord extends AuditEntry {
+  id: number;
+  at: string;
+  /**
+   * SHA-256 hash chaining this record to the one before it:
+   * `hash = SHA256(prevHash + canonicalize(this record's AuditEntry fields + id + at))`.
+   * Tamper-evidence: changing (or deleting/reordering) any historical record
+   * changes its hash, which no longer matches the `prevHash` the NEXT record
+   * was chained against — {@link verifyAuditChain} surfaces exactly that
+   * mismatch. This is integrity verification, not encryption or non-repudiation
+   * (no external anchoring by itself proves the chain wasn't rebuilt from
+   * scratch — see {@link AuditChainAnchor} for that additional guarantee).
+   */
+  hash: string;
+  /** Hash of the previous record in the chain, or the fixed genesis value for the first record. */
+  prevHash: string;
+}
+
+export interface AuditQuery {
+  limit?: number;
+  /** Filter by actor name. */
+  actor?: string;
+  /** Filter by action prefix (e.g. "flows."). */
+  actionPrefix?: string;
+}
+
+export interface AuditLog {
+  /** Records an entry (best-effort; never throws). */
+  record(entry: AuditEntry): void;
+  /** Returns recent entries, newest first. */
+  list(query?: AuditQuery): Promise<AuditRecord[]>;
+  /**
+   * Fetches a single record by its id (targeted lookup — does not depend on a
+   * bounded newest-first page). Used by external anchoring to re-verify the
+   * anchored tip regardless of how many records have accrued since. Optional on
+   * the interface; callers fall back to a scan when absent.
+   */
+  getById?(id: number): Promise<AuditRecord | undefined>;
+  /**
+   * Verifies the hash chain over the full history (or the last `limit`
+   * records, when provided — see the caveat on partial verification in
+   * {@link verifyAuditChain}'s doc comment). Fetches records in ASCENDING id
+   * order internally regardless of `list()`'s newest-first ordering.
+   */
+  verifyChain(limit?: number): Promise<AuditChainVerification>;
+  /**
+   * Resolves once every `record()` call issued so far has been durably
+   * persisted (or has failed and been logged). `record()` is deliberately
+   * fire-and-forget on the request path; `flush()` exists for tests and
+   * graceful-shutdown paths that need a synchronization point. Optional on
+   * the interface — the in-memory backend has nothing to flush.
+   */
+  flush?(): Promise<void>;
+}
+
+const DEFAULT_LIMIT = 100;
+const MAX_LIMIT = 1000;
+
+function clampLimit(limit?: number): number {
+  if (limit === undefined || !Number.isFinite(limit)) return DEFAULT_LIMIT;
+  return Math.max(1, Math.min(MAX_LIMIT, Math.floor(limit)));
+}
+
+function matches(rec: AuditRecord, q?: AuditQuery): boolean {
+  if (q === undefined) return true;
+  if (q.actor !== undefined && rec.actor !== q.actor) return false;
+  if (q.actionPrefix !== undefined && !rec.action.startsWith(q.actionPrefix))
+    return false;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Hash chain
+// ---------------------------------------------------------------------------
+
+/**
+ * Fixed hash used as `prevHash` for the very first record in a chain — makes
+ * the genesis record verifiable the same way as every subsequent one (no
+ * special-cased "id === 1" branch in {@link verifyAuditChain}).
+ */
+export const AUDIT_CHAIN_GENESIS_HASH = "0".repeat(64);
+
+/**
+ * Deterministic, field-order-independent serialization of the fields that go
+ * into a record's hash. Using `JSON.stringify` on a fixed key order (rather
+ * than the raw object) means the hash does not depend on how the caller built
+ * the object — only its actual field VALUES.
+ */
+function canonicalizeForHash(
+  rec: Pick<AuditRecord, "id" | "at" | "actor" | "role" | "action" | "target" | "outcome" | "details">,
+): string {
+  return JSON.stringify({
+    id: rec.id,
+    at: rec.at,
+    actor: rec.actor,
+    role: rec.role ?? null,
+    action: rec.action,
+    target: rec.target ?? null,
+    outcome: rec.outcome ?? "success",
+    details: rec.details ?? null,
+  });
+}
+
+/** Computes the SHA-256 chain hash for a record given the previous record's hash. */
+export function computeAuditHash(
+  prevHash: string,
+  rec: Pick<AuditRecord, "id" | "at" | "actor" | "role" | "action" | "target" | "outcome" | "details">,
+): string {
+  return createHash("sha256")
+    .update(prevHash)
+    .update(canonicalizeForHash(rec))
+    .digest("hex");
+}
+
+export interface AuditChainVerification {
+  /** True when every record's stored hash matches its recomputed hash AND chains correctly to the previous one. */
+  valid: boolean;
+  /** Number of records verified. */
+  checked: number;
+  /**
+   * The first record (in ascending id order) where verification failed, plus
+   * why. `undefined` when `valid` is true.
+   */
+  brokenAt?: {
+    id: number;
+    reason: "hash_mismatch" | "prev_hash_mismatch";
+  };
+}
+
+/**
+ * Walks a list of records in ASCENDING id order and verifies the hash chain:
+ * each record's stored `hash` must equal `computeAuditHash(prevHash, record)`,
+ * and its stored `prevHash` must equal the previous record's stored `hash`
+ * (or {@link AUDIT_CHAIN_GENESIS_HASH} for the first record in the list).
+ *
+ * Pure function — no I/O. Callers (`AuditLog.verifyChain`) are responsible for
+ * fetching the full ordered record set first.
+ *
+ * Note: verifying only a PAGE of records (rather than the full history from
+ * the genesis record) can only detect tampering WITHIN that page — a
+ * consistent rewrite of an entire early segment (recomputing every subsequent
+ * hash to match) would not be caught without also verifying back to genesis or
+ * checking against an external anchor (see {@link verifyAuditAnchor}).
+ */
+export function verifyAuditChain(
+  records: readonly AuditRecord[],
+): AuditChainVerification {
+  let expectedPrevHash: string | undefined;
+  for (const rec of records) {
+    const recomputed = computeAuditHash(rec.prevHash, rec);
+    if (recomputed !== rec.hash) {
+      return { valid: false, checked: records.length, brokenAt: { id: rec.id, reason: "hash_mismatch" } };
+    }
+    if (expectedPrevHash !== undefined && rec.prevHash !== expectedPrevHash) {
+      return { valid: false, checked: records.length, brokenAt: { id: rec.id, reason: "prev_hash_mismatch" } };
+    }
+    expectedPrevHash = rec.hash;
+  }
+  return { valid: true, checked: records.length };
+}
+
+// ---------------------------------------------------------------------------
+// External anchoring
+// ---------------------------------------------------------------------------
+
+export interface AuditChainAnchor {
+  /** Id of the last record covered by this anchor. */
+  uptoId: number;
+  /** That record's chain hash (i.e. the tip of the chain at anchor time). */
+  tipHash: string;
+  /** HMAC-SHA256 of `tipHash` under a secret the operator controls, base64url. */
+  signature: string;
+  /** ISO timestamp the anchor was produced. */
+  anchoredAt: string;
+}
+
+/**
+ * Produces a signed anchor for the current tip of the chain — a periodic,
+ * externally-stored (e.g. exported to a separate system, printed to an
+ * append-only log shipper, or committed to a ticket) checkpoint that lets an
+ * auditor detect a wholesale chain rewrite even if an attacker had database
+ * write access long enough to recompute every hash consistently.
+ *
+ * The HMAC secret must be kept OUTSIDE the database the audit log lives in —
+ * anchoring against a secret stored next to the data it protects provides no
+ * additional guarantee over the hash chain alone.
+ */
+export function signAuditAnchor(
+  tip: Pick<AuditRecord, "id" | "hash">,
+  secret: string,
+): AuditChainAnchor {
+  const signature = createHmac("sha256", secret)
+    .update(tip.hash)
+    .digest("base64url");
+  return {
+    uptoId: tip.id,
+    tipHash: tip.hash,
+    signature,
+    anchoredAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Verifies a previously-produced anchor against the CURRENT chain: the record
+ * at `anchor.uptoId` must still exist and its stored hash must still equal
+ * `anchor.tipHash`, and the anchor's signature must still verify under the
+ * secret. A mismatch means the chain was altered after the anchor was taken
+ * (or the wrong secret/anchor was supplied).
+ */
+export function verifyAuditAnchor(
+  anchor: AuditChainAnchor,
+  currentTipAtAnchorId: Pick<AuditRecord, "id" | "hash"> | undefined,
+  secret: string,
+): { valid: boolean; reason?: "record_not_found" | "hash_mismatch" | "signature_mismatch" } {
+  if (currentTipAtAnchorId === undefined) {
+    return { valid: false, reason: "record_not_found" };
+  }
+  if (currentTipAtAnchorId.hash !== anchor.tipHash) {
+    return { valid: false, reason: "hash_mismatch" };
+  }
+  const expectedSig = createHmac("sha256", secret)
+    .update(anchor.tipHash)
+    .digest("base64url");
+  if (expectedSig !== anchor.signature) {
+    return { valid: false, reason: "signature_mismatch" };
+  }
+  return { valid: true };
+}
+
+// ---------------------------------------------------------------------------
+// In-memory ring
+// ---------------------------------------------------------------------------
+
+export class InMemoryAuditLog implements AuditLog {
+  private readonly entries: AuditRecord[] = [];
+  private seq = 0;
+  /** Tip hash of the chain — `undefined` before the first record. */
+  private tipHash: string | undefined;
+
+  constructor(private readonly maxEntries = 5000) {
+    this.maxEntries = Math.max(1, maxEntries);
+  }
+
+  record(entry: AuditEntry): void {
+    const id = ++this.seq;
+    const base = {
+      id,
+      at: new Date().toISOString(),
+      outcome: "success" as const,
+      ...entry,
+    };
+    const prevHash = this.tipHash ?? AUDIT_CHAIN_GENESIS_HASH;
+    const hash = computeAuditHash(prevHash, base);
+    this.tipHash = hash;
+    this.entries.push({ ...base, hash, prevHash });
+    while (this.entries.length > this.maxEntries) this.entries.shift();
+  }
+
+  async list(query?: AuditQuery): Promise<AuditRecord[]> {
+    const limit = clampLimit(query?.limit);
+    const out: AuditRecord[] = [];
+    for (const rec of this.entries.toReversed()) {
+      if (out.length >= limit) break;
+      if (matches(rec, query)) out.push(rec);
+    }
+    return out;
+  }
+
+  async verifyChain(limit?: number): Promise<AuditChainVerification> {
+    // `entries` is already stored in ascending-id order.
+    const records =
+      limit !== undefined ? this.entries.slice(-Math.max(1, limit)) : this.entries;
+    return verifyAuditChain(records);
+  }
+
+  async getById(id: number): Promise<AuditRecord | undefined> {
+    return this.entries.find((e) => e.id === id);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Postgres backend (durable) — mirrors writes to an in-memory ring for fast,
+// always-available reads even during a brief DB outage.
+// ---------------------------------------------------------------------------
+
+interface AuditRow {
+  id: number | string;
+  actor: string;
+  role: string | null;
+  action: string;
+  target: string | null;
+  outcome: string;
+  details: unknown;
+  created_at: string | Date;
+  hash: string;
+  prev_hash: string;
+}
+
+function rowToRecord(r: AuditRow): AuditRecord {
+  return {
+    id: Number(r.id),
+    actor: r.actor,
+    ...(r.role !== null ? { role: r.role } : {}),
+    action: r.action,
+    ...(r.target !== null ? { target: r.target } : {}),
+    outcome: (r.outcome as AuditRecord["outcome"]) ?? "success",
+    ...(r.details != null ? { details: parseDetails(r.details) } : {}),
+    at: r.created_at instanceof Date ? r.created_at.toISOString() : r.created_at,
+    hash: r.hash,
+    prevHash: r.prev_hash,
+  };
+}
+
+export class PostgresAuditLog implements AuditLog {
+  private readonly mirror = new InMemoryAuditLog(1000);
+  /**
+   * Cached tip hash so consecutive `record()` calls chain correctly without a
+   * read round-trip per write. Lazily initialised from the database on the
+   * first `record()` call (or explicit `primeTipHash()`), since a fresh
+   * process restart does not know the persisted chain's current tip.
+   */
+  private tipHashPromise: Promise<string> | undefined;
+
+  constructor(
+    private readonly db: Database,
+    private readonly logger?: Logger,
+  ) {}
+
+  /** Loads the current chain tip from the database (last record's hash), or the genesis hash if empty. */
+  private async loadTipHash(): Promise<string> {
+    try {
+      const rows = await this.db.withOperator((db) =>
+        db.query<{ hash: string }>(
+          `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`,
+        ),
+      );
+      return rows[0]?.hash ?? AUDIT_CHAIN_GENESIS_HASH;
+    } catch {
+      return AUDIT_CHAIN_GENESIS_HASH;
+    }
+  }
+
+  private tipHash(): Promise<string> {
+    if (this.tipHashPromise === undefined) {
+      this.tipHashPromise = this.loadTipHash();
+    }
+    return this.tipHashPromise;
+  }
+
+  /**
+   * Serializes writes within this process: two concurrent `record()` calls
+   * (e.g. two admins publishing at once) must not both read the same tip hash
+   * before either writes — that would fork the chain (two records chained
+   * against the same `prevHash`). Chaining every write onto this promise
+   * guarantees in-process writes are strictly sequential. This does NOT
+   * protect against concurrent writes from a DIFFERENT replica/process — a
+   * multi-replica deployment needing that guarantee should route audit writes
+   * through a single writer or add a DB-side serialization point (e.g. an
+   * advisory lock around the insert), which is out of scope for this
+   * best-effort, never-throws-into-the-request-path log.
+   */
+  private writeQueue: Promise<void> = Promise.resolve();
+
+  record(entry: AuditEntry): void {
+    this.writeQueue = this.writeQueue
+      .catch(() => {
+        /* a prior failure must not block subsequent writes */
+      })
+      .then(() =>
+        this.recordAsync(entry).catch((err) => {
+          this.logger?.warn("Failed to persist audit entry", {
+            action: entry.action,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }),
+      );
+  }
+
+  /** Waits for every `record()` call issued so far to finish (success or logged failure). */
+  async flush(): Promise<void> {
+    await this.writeQueue;
+  }
+
+  private async recordAsync(entry: AuditEntry): Promise<void> {
+    const prevHash = await this.tipHash();
+    // Reserve the id/timestamp from the mirror so the Postgres row and the
+    // in-memory fallback describe the exact same logical event; the DB
+    // sequence is the source of truth for `id` once persisted, but chaining
+    // needs a stable value BEFORE the insert returns it, so we compute the
+    // hash using the DB's nextval instead of guessing an id client-side.
+    const idRows = await this.db.query<{ id: number | string }>(
+      `SELECT nextval(pg_get_serial_sequence('audit_log', 'id')) AS id`,
+    );
+    const idRow = idRows[0];
+    if (idRow === undefined) {
+      // Unreachable: SELECT nextval(...) always returns exactly one row.
+      throw new Error("Failed to reserve audit log id from sequence.");
+    }
+    const id = Number(idRow.id);
+    const at = new Date().toISOString();
+    const base = { id, at, outcome: entry.outcome ?? "success", ...entry };
+    const hash = computeAuditHash(prevHash, base);
+
+    await this.db.query(
+      `INSERT INTO audit_log (id, actor, role, action, target, outcome, details, hash, prev_hash, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+      [
+        id,
+        entry.actor,
+        entry.role ?? null,
+        entry.action,
+        entry.target ?? null,
+        entry.outcome ?? "success",
+        entry.details !== undefined ? JSON.stringify(entry.details) : null,
+        hash,
+        prevHash,
+        at,
+      ],
+    );
+    // Only advance the cached tip after a successful insert — a failed write
+    // must not desync the in-process tip from what is actually persisted.
+    this.tipHashPromise = Promise.resolve(hash);
+    this.mirror.record(entry);
+  }
+
+  async list(query?: AuditQuery): Promise<AuditRecord[]> {
+    const limit = clampLimit(query?.limit);
+    const conditions: string[] = [];
+    const params: unknown[] = [];
+    if (query?.actor !== undefined) {
+      params.push(query.actor);
+      conditions.push(`actor = $${params.length}`);
+    }
+    if (query?.actionPrefix !== undefined) {
+      params.push(`${query.actionPrefix}%`);
+      conditions.push(`action LIKE $${params.length}`);
+    }
+    params.push(limit);
+    const where =
+      conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+    try {
+      // Audit log reads are operator-plane (cross-tenant by design); run on the
+      // BYPASSRLS pool so enforced RLS doesn't filter them to empty.
+      const rows = await this.db.withOperator((db) =>
+        db.query<AuditRow>(
+          `SELECT id, actor, role, action, target, outcome, details, created_at, hash, prev_hash
+             FROM audit_log ${where}
+            ORDER BY id DESC
+            LIMIT $${params.length}`,
+          params,
+        ),
+      );
+      return rows.map(rowToRecord);
+    } catch (err) {
+      this.logger?.warn("Audit query failed; serving in-memory mirror", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return this.mirror.list(query);
+    }
+  }
+
+  async getById(id: number): Promise<AuditRecord | undefined> {
+    try {
+      const rows = await this.db.withOperator((db) =>
+        db.query<AuditRow>(
+          `SELECT id, actor, role, action, target, outcome, details, created_at, hash, prev_hash
+             FROM audit_log WHERE id = $1`,
+          [id],
+        ),
+      );
+      const row = rows[0];
+      return row !== undefined ? rowToRecord(row) : undefined;
+    } catch {
+      return this.mirror.getById(id);
+    }
+  }
+
+  async verifyChain(limit?: number): Promise<AuditChainVerification> {
+    try {
+      const rows = await this.db.withOperator((db) =>
+        limit !== undefined
+          ? db.query<AuditRow>(
+              `SELECT id, actor, role, action, target, outcome, details, created_at, hash, prev_hash
+                 FROM audit_log ORDER BY id DESC LIMIT $1`,
+              [limit],
+            )
+          : db.query<AuditRow>(
+              `SELECT id, actor, role, action, target, outcome, details, created_at, hash, prev_hash
+                 FROM audit_log ORDER BY id ASC`,
+            ),
+      );
+      // The LIMIT-ed query returns newest-first; verifyAuditChain requires
+      // ascending order regardless of which branch produced the rows.
+      const ordered = limit !== undefined ? rows.slice().reverse() : rows;
+      return verifyAuditChain(ordered.map(rowToRecord));
+    } catch (err) {
+      this.logger?.warn("Audit chain verification query failed; verifying in-memory mirror instead", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return this.mirror.verifyChain(limit);
+    }
+  }
+}
+
+function parseDetails(v: unknown): Record<string, unknown> | undefined {
+  if (v === null || v === undefined) return undefined;
+  if (typeof v === "string") {
+    try {
+      return JSON.parse(v) as Record<string, unknown>;
+    } catch {
+      return undefined;
+    }
+  }
+  if (typeof v === "object") return v as Record<string, unknown>;
+  return undefined;
+}
+
+/** Builds the durable audit log when a database is present, else in-memory. */
+export function createAuditLog(db?: Database, logger?: Logger): AuditLog {
+  return db !== undefined
+    ? new PostgresAuditLog(db, logger)
+    : new InMemoryAuditLog();
+}

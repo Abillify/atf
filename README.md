@@ -1,0 +1,275 @@
+<h1 align="center">Aiperator Trust Fabric</h1>
+
+<p align="center">
+  <strong>Self-hosted AI orchestration you can put in front of an auditor.</strong>
+</p>
+
+<p align="center">
+  <a href="https://github.com/abillify/atf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/abillify/atf/actions/workflows/ci.yml/badge.svg"></a>
+  <a href="LICENSE"><img alt="License: Elastic-2.0" src="https://img.shields.io/badge/license-Elastic--2.0-blue"></a>
+  <a href="CHANGELOG.md"><img alt="Release: 0.1.0" src="https://img.shields.io/badge/release-0.1.0-orange"></a>
+  <img alt="Bun 1.3.14" src="https://img.shields.io/badge/bun-1.3.14-black">
+  <img alt="Node 26" src="https://img.shields.io/badge/node-26-brightgreen">
+  <img alt="TypeScript 7" src="https://img.shields.io/badge/typescript-7.0.2-3178c6">
+  <a href="sbom.cdx.json"><img alt="SBOM: CycloneDX 1.6" src="https://img.shields.io/badge/SBOM-CycloneDX%201.6-informational"></a>
+</p>
+
+---
+
+ATF is a platform for building and operating AI assistants and agents on your own
+infrastructure, where the interesting problem is not calling a model but everything around it:
+keeping personal data out of a provider's hands, requiring a human to approve consequential
+actions, proving to a regulator what happened, and knowing what it cost.
+
+Four applications, connected by explicit versioned contracts and open protocols. Each one is
+deployable on its own.
+
+> **Project status:** ATF is at `0.1.0`: complete enough to evaluate end to end, but still
+> pre-1.0. Contract packages already carry explicit compatibility guarantees; flow fields,
+> environment variables, and HTTP routes may still change with documented migrations. See the
+> [changelog](CHANGELOG.md) for the exact stability boundary.
+
+ATF grew out of production engineering for regulated environments, where audit evidence,
+identity, data residency, and approval controls are deployment requirements rather than roadmap
+items. This public repository contains the reusable platform only — no customer configuration,
+credentials, or environment-specific operations material.
+
+## Why this exists
+
+Most AI platforms are either a hosted SaaS, which means your data leaves the building, or a
+toolkit, which means you build governance yourself. ATF is production plumbing for the case
+where neither is acceptable: run it on-premises or in your own cloud, connect it to systems you
+already have, and get cost, access, and quality measurable from the first request.
+
+Concretely, ATF is opinionated about four things most orchestrators leave to you:
+
+**Personal data never reaches the provider in plaintext.** The PII vault detects personal data
+and replaces it with meaningless placeholders *before* the request leaves, then restores the
+real values in the response. The provider sees tokens. This is a stronger guarantee than
+redacting the output, because the data does not leave your deployment at all.
+
+**A human decides what matters.** Consequential tool calls pause and wait for approval, in the
+chat message or in a reviewer inbox. If nobody answers within the timeout, the action is
+**rejected**. Silence never becomes an action.
+
+**Compliance is evidence, not assertion.** The audit log is hash-chained and anchored, evidence
+bundles are signed, and a single generated dossier collects the active policy, the chain
+verification result, executed erasures, retention windows, evaluation results, and the red-team
+posture score.
+
+**Fail closed everywhere.** Authorization, approvals, guardrails, and policy default to denying.
+With `APP_ENV=production`, Runtime refuses to start on open CORS, unverified JWTs, or an
+unauthenticated metrics endpoint.
+
+### What ATF is not
+
+It is not a hosted service — there is no signup, and operating it for third parties is the one
+use the license reserves. It is not a research or agent-authoring framework; flows are YAML
+that operators review, not a Python DSL. And it is not a thin proxy in front of a model API:
+the retrieval, policy, and evidence layers are the product, which is also why the deployment
+footprint is PostgreSQL plus four services rather than a single binary.
+
+### When to use something else
+
+ATF optimizes for governed operation, not for winning every orchestration use case:
+
+| If your primary need is… | Start with… |
+| --- | --- |
+| Fast Python experiments and custom agent research | A code-first agent SDK such as LangGraph |
+| Visual business automation across SaaS tools | n8n, Flowise, or Dify |
+| A hosted model gateway with no infrastructure to operate | A managed AI platform |
+| Self-hosted assistants with policy, approvals, evidence, tenant isolation, and cost controls as one runtime | **ATF** |
+
+The point is not to replace those tools. ATF is the operational boundary you choose when the
+answer to “who approved this, what data left the system, and can we prove it?” must come from the
+platform rather than application-specific glue.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    client["Chat frontend<br/>SDK · webhook"] --> runtime
+    control["<b>Control</b><br/>operator UI"] -.->|HTTP + SSE| runtime
+    runtime["<b>Runtime</b><br/>orchestration<br/>OpenAI-compatible API"]
+    runtime -->|HTTP| search["<b>Search</b><br/>pgvector retrieval"]
+    runtime -->|MCP| gate["<b>Gate</b><br/>governed tool access"]
+    runtime --> models["Model providers"]
+    gate --> systems["Your databases<br/>and services"]
+    search --> pg[("PostgreSQL<br/>pgvector")]
+```
+
+| Application | Role |
+| --- | --- |
+| [`apps/runtime`](apps/runtime) | Executes flow graphs, enforces policy, guardrails, approvals, and the PII vault. Serves an OpenAI-compatible API |
+| [`apps/control`](apps/control) | Operator and governance UI. A pure client of Runtime's API |
+| [`apps/search`](apps/search) | Semantic and hybrid retrieval on PostgreSQL/pgvector. No separate vector database |
+| [`apps/gate`](apps/gate) | MCP gateway. Turns YAML into governed, identity-aware tools |
+
+Shared messages that cross service boundaries live in versioned contract packages under
+[`packages/`](packages), and `integration/system` exercises their combined lifecycle so a
+contract break fails in CI rather than at deployment. See
+[ARCHITECTURE.md](ARCHITECTURE.md) for the request path and the design rules.
+
+## Control at a glance
+
+Control makes the operational surface visible instead of hiding it behind configuration files:
+flow authoring and diffs, live graph execution, traces, approvals, evaluation runs, canaries,
+security posture, providers, budgets, and compliance evidence share one operator UI.
+
+<p align="center">
+  <img src="apps/control/e2e/visual.spec.ts-snapshots/sidebar-desktop-chromium-linux.png" width="260" alt="ATF Control desktop navigation showing Studio, RAG, evaluation, live graph, traces, approvals, security, flows, assistants, and providers">
+</p>
+<p align="center"><em>Control desktop navigation; this image is also maintained as a visual-regression snapshot.</em></p>
+
+## Quickstart
+
+Requirements: Docker with Compose v2, roughly 6 GB free memory and 10 GB disk for the build.
+
+```bash
+git clone https://github.com/abillify/atf.git && cd atf
+docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
+```
+
+This starts all four applications plus PostgreSQL/pgvector and a deterministic mock model, so
+it needs no API key. Once the health checks pass:
+
+- Control — <http://localhost:3001>
+- Runtime readiness — <http://localhost:3000/health/ready>
+- Search health — <http://localhost:3002/health>
+- Gate readiness — <http://localhost:3003/readyz>
+
+Run a flow through the OpenAI-compatible endpoint:
+
+```bash
+curl --fail-with-body http://localhost:3000/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}'
+```
+
+> **This stack is unauthenticated on purpose.** It is for local functional testing and is not a
+> production template. Do not expose it. See
+> [deploy/examples/README.md](deploy/examples/README.md).
+
+Example flows in [`deploy/examples/flows/`](deploy/examples/flows/) go from a single node up to
+retrieval, tool use with an approval gate, and a routed multi-step graph.
+
+## Flows
+
+A flow is a YAML graph, validated on load and hot-reloaded without a restart. It is
+reviewable and versionable like source code.
+
+```yaml
+id: support-assistant
+name: Support Assistant
+metadata:
+  version: 1.2.0
+dataClasses: [personal]
+
+nodes:
+  - id: classify
+    type: classifier
+    classifierSchema:
+      classKey: intent
+      schema:
+        type: object
+        properties:
+          intent: { type: string, enum: [question, action] }
+        required: [intent]
+
+  - id: answer
+    type: retrieval
+    config: { collection: handbook, topK: 6 }
+
+  - id: act
+    type: llm
+    tools: [gate:ticket_create]
+
+edges:
+  - { source: classify, target: answer, conditions: "classification.intent == 'question'" }
+  - { source: classify, target: act, conditions: "classification.intent == 'action'" }
+```
+
+This exact flow is checked in as
+[`deploy/examples/flows/05-support-assistant.yaml`](deploy/examples/flows/05-support-assistant.yaml)
+and validated by CI, so the README cannot silently drift away from the executable schema.
+
+Node types: `llm`, `tool`, `router`, `classifier`, `parallel`, `retrieval`, `memory`,
+`agent-harness`, `transform`, `trigger`, `assistant-context`, `assistant-learn`, plus any
+plugin-provided type.
+
+## What's in the box
+
+One line each; [docs/CAPABILITIES.md](docs/CAPABILITIES.md) has every capability and the
+setting that governs it.
+
+- **Models** — cloud and local providers side by side, as named instances validated at startup
+  and selectable per node.
+- **Retrieval** — hybrid dense plus full-text on pgvector, RRF-fused and reranked, with
+  embedding-revision drift protection.
+- **Tool access** — MCP tools declared in YAML over SQL, HTTP, MQTT, MCP proxy, and webhooks.
+  Parameters are bound, never interpolated.
+- **Channels** — an OpenAI-compatible API, webhooks, and a Rocket.Chat integration with
+  per-user OIDC consent.
+- **Safety** — guardrails on input and output, egress DLP, tool *output* checked for injected
+  instructions, scheduled red teaming, sandboxed plugins.
+- **Governance** — approvals that reject on timeout, `compliance-policy.yaml` enforced as code,
+  hash-chained audit log, signed evidence bundles, generated dossier.
+- **Quality** — datasets with judge scoring, canary promotion, replay, and shadow mode that
+  measures a candidate against real traffic without ever showing a user a worse answer.
+- **Cost** — objective-driven routing, fallback chains with circuit breakers, three cache
+  layers, hard per-tenant budgets, FinOps forecasting with CO2 accounting.
+- **Operations** — multi-tenancy on PostgreSQL row-level security, BYOK, OIDC and RBAC,
+  OpenTelemetry and Prometheus, per-execution debug traces, durable execution.
+
+## Development
+
+```bash
+bun install --frozen-lockfile
+bun run typecheck
+bun run test
+bun run build
+```
+
+Bun 1.3.14 is the only package manager and task runner; npm, pnpm, and yarn are not supported.
+Node.js 26 is the supported Node major. Target one workspace with
+`bun run --filter @atf/runtime test`.
+
+The gates CI enforces:
+
+```bash
+bun run verify:public       # no secrets or forbidden paths in the tree
+bun run verify:spdx         # every source file carries an SPDX header
+bun run supply-chain:check  # third-party notices and SBOM are current
+bun run config-reference:check
+```
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Documentation
+
+| Document | Contents |
+| --- | --- |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Applications, contracts, request path, design rules |
+| [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | Every capability and the settings that govern it |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Generated configuration reference (418 variables in this release) |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Production requirements and the supported boundary |
+| [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
+| [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |
+| [docs/adr/](docs/adr/) | Architecture decisions with their trade-offs |
+| [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
+
+## License
+
+ATF is source-available under the [Elastic License 2.0](LICENSE). Run it, modify it,
+self-host it, embed it in your product, redistribute it. The one reserved use is offering ATF
+itself to third parties as a hosted or managed service.
+
+**ATF is not open source** under the OSI definition, and we do not describe it as such. The
+rights matrix and the commercial licensing path are in [LICENSING.md](LICENSING.md).
+
+Third-party dependencies remain under their own licenses; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the CycloneDX SBOM in
+[sbom.cdx.json](sbom.cdx.json), both generated by `bun run supply-chain`. Trademark terms are
+separate from the code license; see [TRADEMARKS.md](TRADEMARKS.md).
+
+Copyright © 2026 Abillify Technology GmbH. Authorship in [AUTHORS.md](AUTHORS.md).
