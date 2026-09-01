@@ -1,58 +1,65 @@
 {
-  "$comment": [
-    "Template for the redaction rule set consumed by scripts/verify-public-tree.ts.",
-    "Copy this file to internal/redaction-rules.json and fill in the real values.",
-    "internal/ is gitignored, so the real rule set never enters the repository.",
-    "Never commit a populated copy of this file.",
-    "",
-    "rules[].pattern is a JavaScript regular expression source string.",
-    "rules[].flags defaults to \"i\".",
-    "",
-    "Writing patterns: leave literals unanchored here. These rules only",
-    "*detect*, so a substring match is the conservative choice -- it also",
-    "catches a name embedded in a longer identifier or hostname.",
-    "",
-    "The opposite is true when you *substitute* a literal while scrubbing a",
-    "tree for release: there, anchor with \\b on both sides. An unanchored",
-    "four-letter name also matches inside ordinary English words, so the",
-    "replacement lands mid-word and glues the placeholder into them. The",
-    "result reveals precisely which literal was replaced, which is worse than",
-    "no redaction at all. The structural \"redaction damage\" rule in",
-    "scripts/verify-public-tree.ts catches that mistake; fix the words rather",
-    "than silencing it with an allowlist entry.",
-    "forbiddenFileNames matches base file names case-insensitively.",
-    "allowlist maps a repository-relative path to the rule labels tolerated in it.",
-    "Synthetic credential fixtures are already covered by structuralAllowlist in",
-    "scripts/verify-public-tree.ts, so allowlist is usually empty here."
-  ],
-  "rules": [
-    {
-      "label": "internal Git host",
-      "pattern": "git\\.internal\\.example\\.test"
-    },
-    {
-      "label": "internal registry host",
-      "pattern": "registry\\.internal\\.example\\.test"
-    },
-    {
-      "label": "private deployment repository path",
-      "pattern": "example-private-deployment"
-    },
-    {
-      "label": "former organization",
-      "pattern": "ExampleFormerOrg"
-    },
-    {
-      "label": "former customer or project",
-      "pattern": "ExampleCustomerName"
-    },
-    {
-      "label": "former personal identifier",
-      "pattern": "example\\.person"
-    }
-  ],
-  "forbiddenFileNames": [
-    "example-internal-assessment.md"
-  ],
-  "allowlist": {}
+	"$comment": [
+		"Template for the redaction rule set consumed by scripts/verify-public-tree.ts.",
+		"Copy this file to internal/redaction-rules.json and fill in the real values.",
+		"internal/ is gitignored, so the real rule set never enters the repository.",
+		"Never commit a populated copy of this file.",
+		"",
+		"rules[].pattern is a JavaScript regular expression source string.",
+		"rules[].flags defaults to \"i\".",
+		"rules[].testValue is a confidential proof value that must match pattern.",
+		"It is mandatory under --require-rules and prevents impossible rules from",
+		"satisfying the release gate. Never use a production credential as a test value.",
+		"",
+		"Writing patterns: leave literals unanchored here. These rules only",
+		"*detect*, so a substring match is the conservative choice -- it also",
+		"catches a name embedded in a longer identifier or hostname.",
+		"",
+		"The opposite is true when you *substitute* a literal while scrubbing a",
+		"tree for release: there, anchor with \\b on both sides. An unanchored",
+		"four-letter name also matches inside ordinary English words, so the",
+		"replacement lands mid-word and glues the placeholder into them. The",
+		"result reveals precisely which literal was replaced, which is worse than",
+		"no redaction at all. The structural \"redaction damage\" rule in",
+		"scripts/verify-public-tree.ts catches that mistake; fix the words rather",
+		"than silencing it with an allowlist entry.",
+		"forbiddenFileNames matches base file names case-insensitively.",
+		"allowlist maps a repository-relative path to the rule labels tolerated in it.",
+		"Synthetic credential fixtures are already covered by structuralAllowlist in",
+		"scripts/verify-public-tree.ts, so allowlist is usually empty here."
+	],
+	"rules": [
+		{
+			"label": "internal Git host",
+			"pattern": "git\\.internal\\.example\\.test",
+			"testValue": "git.internal.example.test"
+		},
+		{
+			"label": "internal registry host",
+			"pattern": "registry\\.internal\\.example\\.test",
+			"testValue": "registry.internal.example.test"
+		},
+		{
+			"label": "private deployment repository path",
+			"pattern": "example-private-deployment",
+			"testValue": "example-private-deployment"
+		},
+		{
+			"label": "former organization",
+			"pattern": "ExampleFormerOrg",
+			"testValue": "ExampleFormerOrg"
+		},
+		{
+			"label": "former customer or project",
+			"pattern": "ExampleCustomerName",
+			"testValue": "ExampleCustomerName"
+		},
+		{
+			"label": "former personal identifier",
+			"pattern": "example\\.person",
+			"testValue": "example.person"
+		}
+	],
+	"forbiddenFileNames": ["example-internal-assessment.md"],
+	"allowlist": {}
 }

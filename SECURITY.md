@@ -74,6 +74,7 @@ gate as a safety net, not as a substitute for the review described in
 Never commit secrets, real endpoints, production flows, customer data, or internal
 assessments. `.env.example` files contain placeholders only.
 
-Run `bun run verify:public` before sharing or pushing a tree. Maintainers preparing a release
-run `bun run verify:public:release`, which additionally requires the redaction rule set to be
-present so that literal redaction is actually verified rather than silently skipped.
+Run `bun run verify:public` before sharing or pushing a tree. The tag-release workflow runs the
+same verifier with `--require-rules` against the exact tag commit and requires the confidential
+`ATF_REDACTION_RULES_JSON` repository Actions secret, so missing rules or literal matches block
+publication.

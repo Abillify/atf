@@ -14,6 +14,7 @@
     "verify:spdx": "bun run scripts/apply-spdx-headers.ts --check",
     "supply-chain": "bun run scripts/generate-supply-chain.ts",
     "supply-chain:check": "bun run scripts/generate-supply-chain.ts --check",
+    "supply-chain:images": "bun run scripts/generate-image-supply-chain.ts",
     "config-reference": "bun run scripts/generate-config-reference.ts",
     "config-reference:check": "bun run scripts/generate-config-reference.ts --check",
     "test:contracts": "bun run --filter @atf/system-integration test",

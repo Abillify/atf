@@ -20,5 +20,7 @@ Copyright notices embedded in third-party or adapted material must be preserved.
 third-party code, prompts, documentation, fixtures, or media to this repository unless its
 provenance and license compatibility are documented; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Contributors retain copyright in their contributions and license them under the Elastic
-License 2.0 through the Developer Certificate of Origin sign-off described in [DCO](DCO).
+Contributors retain copyright in their contributions and license them for inclusion in ATF
+under the Elastic License 2.0 through the project-specific
+[ATF Source-Available Contribution Certificate](CONTRIBUTION_CERTIFICATE.md). The certificate
+is not a CLA and grants no right to relicense a contribution under different terms.
