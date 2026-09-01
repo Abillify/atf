@@ -3357,18 +3357,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/denque@2.1.0",
-      "name": "denque",
-      "version": "2.1.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/denque@2.1.0"
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/depd@2.0.0",
       "name": "depd",
       "version": "2.0.0",
@@ -5001,15 +4989,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/mysql2@3.22.5",
+      "bom-ref": "pkg:npm/mysql2@3.24.2",
       "name": "mysql2",
-      "version": "3.22.5",
+      "version": "3.24.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/mysql2@3.22.5"
+      "purl": "pkg:npm/mysql2@3.24.2"
     },
     {
       "type": "library",
