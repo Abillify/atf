@@ -4817,15 +4817,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/lucide-react@1.26.0",
+      "bom-ref": "pkg:npm/lucide-react@1.35.0",
       "name": "lucide-react",
-      "version": "1.26.0",
+      "version": "1.35.0",
       "licenses": [
         {
           "expression": "ISC"
         }
       ],
-      "purl": "pkg:npm/lucide-react@1.26.0"
+      "purl": "pkg:npm/lucide-react@1.35.0"
     },
     {
       "type": "library",
