@@ -2091,16 +2091,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fpg@8.20.0",
+      "bom-ref": "pkg:npm/%40types%2Fpg@8.23.1",
       "group": "@types",
       "name": "pg",
-      "version": "8.20.0",
+      "version": "8.23.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Fpg@8.20.0"
+      "purl": "pkg:npm/%40types%2Fpg@8.23.1"
     },
     {
       "type": "library",
@@ -5489,27 +5489,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/pg@8.21.0",
+      "bom-ref": "pkg:npm/pg@8.23.0",
       "name": "pg",
-      "version": "8.21.0",
+      "version": "8.23.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/pg@8.21.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/pg@8.22.0",
-      "name": "pg",
-      "version": "8.22.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/pg@8.22.0"
+      "purl": "pkg:npm/pg@8.23.0"
     },
     {
       "type": "library",
