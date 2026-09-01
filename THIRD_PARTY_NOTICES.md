@@ -395,7 +395,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | long | 5.3.2 | Apache-2.0 | yes |
 | lru-cache | 10.4.3 | ISC | yes |
 | lru.min | 1.1.4 | MIT | yes |
-| lucide-react | 1.26.0 | ISC | yes |
+| lucide-react | 1.35.0 | ISC | yes |
 | lz-string | 1.5.0 | MIT | yes |
 | magic-string | 0.30.21 | MIT | yes |
 | matcher | 3.0.0 | MIT | yes |
@@ -13867,7 +13867,7 @@ Apache License
    limitations under the License.
 ```
 
-### lucide-react@1.26.0
+### lucide-react@1.35.0
 
 Source files: LICENSE; SHA-256: `ee35498e6684b30c9efaae009415884772f4450b3f6a3ae49103cd550a2c8ceb`
 
