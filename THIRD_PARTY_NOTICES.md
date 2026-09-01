@@ -52,7 +52,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @aws-sdk/util-locate-window | 3.965.10 | Apache-2.0 | yes |
 | @aws-sdk/xml-builder | 3.972.39 | Apache-2.0 | yes |
 | @aws/lambda-invoke-store | 0.3.0 | Apache-2.0 | yes |
-| @axe-core/playwright | 4.12.1 | MPL-2.0 | yes |
+| @axe-core/playwright | 4.13.0 | MPL-2.0 | yes |
 | @babel/code-frame | 7.29.7 | MIT | yes |
 | @babel/helper-validator-identifier | 7.29.7 | MIT | yes |
 | @babel/runtime | 7.29.7 | MIT | yes |
@@ -95,7 +95,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @oxc-project/types | 0.144.0 | MIT | yes |
 | @paralleldrive/cuid2 | 2.3.1 | MIT | yes |
 | @pinojs/redact | 0.4.0 | MIT | yes |
-| @playwright/test | 1.61.1 | Apache-2.0 | yes |
+| @playwright/test | 1.62.1 | Apache-2.0 | yes |
 | @protobufjs/aspromise | 1.1.2 | BSD-3-Clause | yes |
 | @protobufjs/base64 | 1.1.2 | BSD-3-Clause | yes |
 | @protobufjs/codegen | 2.0.5 | BSD-3-Clause | yes |
@@ -137,8 +137,8 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @tanstack/react-query | 5.101.4 | MIT | yes |
 | @testing-library/dom | 10.4.1 | MIT | yes |
 | @testing-library/jest-dom | 6.9.1 | MIT | yes |
-| @testing-library/react | 16.3.2 | MIT | yes |
-| @testing-library/user-event | 14.6.1 | MIT | yes |
+| @testing-library/react | 16.3.3 | MIT | yes |
+| @testing-library/user-event | 14.6.6 | MIT | yes |
 | @types/aria-query | 5.0.4 | MIT | yes |
 | @types/body-parser | 1.19.6 | MIT | yes |
 | @types/bun | 1.3.14 | MIT | yes |
@@ -186,13 +186,13 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @types/ws | 8.18.1 | MIT | yes |
 | @typescript/typescript-linux-x64 | 7.0.2 | Apache-2.0 | yes |
 | @vercel/oidc | 3.2.0 | Apache-2.0 | yes |
-| @vitest/expect | 4.1.10 | MIT | yes |
-| @vitest/mocker | 4.1.10 | MIT | yes |
-| @vitest/pretty-format | 4.1.10 | MIT | yes |
-| @vitest/runner | 4.1.10 | MIT | yes |
-| @vitest/snapshot | 4.1.10 | MIT | yes |
-| @vitest/spy | 4.1.10 | MIT | yes |
-| @vitest/utils | 4.1.10 | MIT | yes |
+| @vitest/expect | 4.1.11 | MIT | yes |
+| @vitest/mocker | 4.1.11 | MIT | yes |
+| @vitest/pretty-format | 4.1.11 | MIT | yes |
+| @vitest/runner | 4.1.11 | MIT | yes |
+| @vitest/snapshot | 4.1.11 | MIT | yes |
+| @vitest/spy | 4.1.11 | MIT | yes |
+| @vitest/utils | 4.1.11 | MIT | yes |
 | @workflow/serde | 4.1.0 | Apache-2.0 | yes |
 | @xyflow/react | 12.11.2 | MIT | yes |
 | @xyflow/system | 0.0.79 | MIT | yes |
@@ -215,7 +215,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | atomic-sleep | 1.0.0 | MIT | yes |
 | aws-ssl-profiles | 1.1.2 | MIT | yes |
 | aws4fetch | 1.0.20 | MIT | yes |
-| axe-core | 4.12.1 | MPL-2.0 | yes |
+| axe-core | 4.13.0 | MPL-2.0 | yes |
 | base64-js | 1.5.1 | MIT | yes |
 | baseline-browser-mapping | 2.11.14 | Apache-2.0 | yes |
 | bl | 6.1.6 | MIT | yes |
@@ -469,8 +469,8 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | pino-std-serializers | 7.1.0 | MIT | yes |
 | pkce-challenge | 5.0.1 | MIT | yes |
 | platform | 1.3.6 | MIT | yes |
-| playwright | 1.61.1 | Apache-2.0 | yes |
-| playwright-core | 1.61.1 | Apache-2.0 | yes |
+| playwright | 1.62.1 | Apache-2.0 | yes |
+| playwright-core | 1.62.1 | Apache-2.0 | yes |
 | postcss | 8.5.26 | MIT | yes |
 | postgres-array | 2.0.0 | MIT | yes |
 | postgres-bytea | 1.0.1 | MIT | yes |
@@ -583,7 +583,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | vary | 1.1.2 | MIT | yes |
 | victory-vendor | 37.3.6 | MIT AND ISC | no |
 | vite | 8.2.1 | MIT | yes |
-| vitest | 4.1.10 | MIT | yes |
+| vitest | 4.1.11 | MIT | yes |
 | w3c-xmlserializer | 5.0.0 | MIT | yes |
 | webidl-conversions | 7.0.0 | BSD-2-Clause | yes |
 | whatwg-encoding | 3.1.1 | MIT | yes |
@@ -4791,7 +4791,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### @playwright/test@1.61.1, playwright-core@1.61.1, playwright@1.61.1
+### @playwright/test@1.62.1, playwright-core@1.62.1, playwright@1.62.1
 
 Source files: LICENSE; SHA-256: `5b475effab78d12623dfa54915387571ec075e7f7e026cc0a196cfce2d764049`
 
@@ -7293,7 +7293,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### @playwright/test@1.61.1, playwright-core@1.61.1, playwright@1.61.1
+### @playwright/test@1.62.1, playwright-core@1.62.1, playwright@1.62.1
 
 Source files: NOTICE; SHA-256: `7b1444e03705067d36e59fc8cd3260daf245b8d06006cad06d462578fb92eab5`
 
@@ -7596,7 +7596,7 @@ TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
 SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### @axe-core/playwright@4.12.1, axe-core@4.12.1
+### @axe-core/playwright@4.13.0, axe-core@4.13.0
 
 Source files: LICENSE; SHA-256: `812e9d96e900a093ae4d1d3f22c5f82f568a0a0461c3007a99d00573d41c5461`
 
@@ -10270,7 +10270,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### @testing-library/user-event@14.6.1
+### @testing-library/user-event@14.6.6
 
 Source files: LICENSE; SHA-256: `bd6e425667753d399fc84200579b0254c27c9f23ef82e8fec611c694f997b394`
 
@@ -10391,7 +10391,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### axe-core@4.12.1
+### axe-core@4.13.0
 
 Source files: LICENSE-3RD-PARTY.txt; SHA-256: `bf6435466edde88447522fe364837caa8ef0f547bcf759664ec7b13dd516e873`
 
@@ -10907,7 +10907,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### @vitest/expect@4.1.10, @vitest/mocker@4.1.10, @vitest/pretty-format@4.1.10, @vitest/runner@4.1.10, @vitest/snapshot@4.1.10, @vitest/spy@4.1.10, @vitest/utils@4.1.10
+### @vitest/expect@4.1.11, @vitest/mocker@4.1.11, @vitest/pretty-format@4.1.11, @vitest/runner@4.1.11, @vitest/snapshot@4.1.11, @vitest/spy@4.1.11, @vitest/utils@4.1.11
 
 Source files: LICENSE; SHA-256: `c7d2b1c2fc0202ec4cf87374860210f4432634cc8a1fc1f1ade41798c59fc247`
 
@@ -12304,7 +12304,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### vitest@4.1.10
+### vitest@4.1.11
 
 Source files: LICENSE.md; SHA-256: `ddf26045289f089392d30ba7a05d85f458f43e7fc24c70407ed5c7c068e0cede`
 
@@ -13573,7 +13573,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### @testing-library/react@16.3.2
+### @testing-library/react@16.3.3
 
 Source files: LICENSE; SHA-256: `e94a669dc61a9245296a7fffed8099c405e8fc54b3fb6bea9f8e87464b99542b`
 
