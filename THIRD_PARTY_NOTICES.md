@@ -88,9 +88,9 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @langchain/langgraph-sdk | 1.9.29 | MIT | yes |
 | @langchain/protocol | 0.0.18 | MIT | yes |
 | @modelcontextprotocol/sdk | 1.30.0 | MIT | yes |
-| @next/env | 16.3.1 | MIT | no |
-| @next/swc-linux-x64-gnu | 16.3.1 | MIT | no |
-| @next/swc-linux-x64-musl | 16.3.1 | MIT | no |
+| @next/env | 16.3.3 | MIT | no |
+| @next/swc-linux-x64-gnu | 16.3.3 | MIT | no |
+| @next/swc-linux-x64-musl | 16.3.3 | MIT | no |
 | @noble/hashes | 1.8.0 | MIT | yes |
 | @oxc-project/types | 0.144.0 | MIT | yes |
 | @paralleldrive/cuid2 | 2.3.1 | MIT | yes |
@@ -173,8 +173,8 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @types/pg | 8.20.0 | MIT | yes |
 | @types/qs | 6.15.1 | MIT | yes |
 | @types/range-parser | 1.2.7 | MIT | yes |
-| @types/react | 19.2.17 | MIT | yes |
-| @types/react-dom | 19.2.3 | MIT | yes |
+| @types/react | 19.2.18 | MIT | yes |
+| @types/react-dom | 19.2.5 | MIT | yes |
 | @types/readable-stream | 4.0.24 | MIT | yes |
 | @types/send | 0.17.6 | MIT | yes |
 | @types/send | 1.2.1 | MIT | yes |
@@ -424,7 +424,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | nanoid | 3.3.18 | MIT | yes |
 | negotiator | 0.6.3 | MIT | yes |
 | negotiator | 1.0.0 | MIT | yes |
-| next | 16.3.1 | MIT | yes |
+| next | 16.3.3 | MIT | yes |
 | number-allocator | 1.0.14 | MIT | yes |
 | nwsapi | 2.2.24 | MIT | yes |
 | object-assign | 4.1.1 | MIT | yes |
@@ -2072,7 +2072,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 ```
 
-### next@16.3.1
+### next@16.3.3
 
 Source files: license.md; SHA-256: `25afff58f46401f460b24a90cfa0ecb316f9fc0151e60feb2c488f37df2be986`
 
@@ -16953,7 +16953,7 @@ ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ```
 
-### @types/aria-query@5.0.4, @types/body-parser@1.19.6, @types/bun@1.3.14, @types/chai@5.2.3, @types/connect@3.4.38, @types/cookiejar@2.1.5, @types/cors@2.8.19, @types/d3-array@3.2.2, @types/d3-color@3.1.3, @types/d3-drag@3.0.7, @types/d3-ease@3.0.2, @types/d3-interpolate@3.0.4, @types/d3-path@3.1.1, @types/d3-scale@4.0.9, @types/d3-selection@3.0.11, @types/d3-shape@3.1.8, @types/d3-time@3.0.4, @types/d3-timer@3.0.2, @types/d3-transition@3.0.9, @types/d3-zoom@3.0.8, @types/deep-eql@4.0.2, @types/estree@1.0.9, @types/express-serve-static-core@4.19.9, @types/express-serve-static-core@5.1.3, @types/express@4.17.25, @types/express@5.0.6, @types/http-errors@2.0.5, @types/json-schema@7.0.15, @types/methods@1.1.4, @types/mime@1.3.5, @types/node@26.1.1, @types/pg@8.20.0, @types/qs@6.15.1, @types/range-parser@1.2.7, @types/react-dom@19.2.3, @types/react@19.2.17, @types/readable-stream@4.0.24, @types/send@0.17.6, @types/send@1.2.1, @types/serve-static@1.15.10, @types/serve-static@2.2.0, @types/superagent@8.1.11, @types/supertest@7.2.1, @types/use-sync-external-store@0.0.6, @types/ws@8.18.1
+### @types/aria-query@5.0.4, @types/body-parser@1.19.6, @types/bun@1.3.14, @types/chai@5.2.3, @types/connect@3.4.38, @types/cookiejar@2.1.5, @types/cors@2.8.19, @types/d3-array@3.2.2, @types/d3-color@3.1.3, @types/d3-drag@3.0.7, @types/d3-ease@3.0.2, @types/d3-interpolate@3.0.4, @types/d3-path@3.1.1, @types/d3-scale@4.0.9, @types/d3-selection@3.0.11, @types/d3-shape@3.1.8, @types/d3-time@3.0.4, @types/d3-timer@3.0.2, @types/d3-transition@3.0.9, @types/d3-zoom@3.0.8, @types/deep-eql@4.0.2, @types/estree@1.0.9, @types/express-serve-static-core@4.19.9, @types/express-serve-static-core@5.1.3, @types/express@4.17.25, @types/express@5.0.6, @types/http-errors@2.0.5, @types/json-schema@7.0.15, @types/methods@1.1.4, @types/mime@1.3.5, @types/node@26.1.1, @types/pg@8.20.0, @types/qs@6.15.1, @types/range-parser@1.2.7, @types/react-dom@19.2.5, @types/react@19.2.18, @types/readable-stream@4.0.24, @types/send@0.17.6, @types/send@1.2.1, @types/serve-static@1.15.10, @types/serve-static@2.2.0, @types/superagent@8.1.11, @types/supertest@7.2.1, @types/use-sync-external-store@0.0.6, @types/ws@8.18.1
 
 Source files: LICENSE; SHA-256: `ff82c90f84945c60601e96b43246009b9bc589f3ebe1cd8a0fd39a3520d8c310`
 
