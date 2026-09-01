@@ -8,14 +8,14 @@
  * the deployment can reach, each under an operator-chosen NAME:
  *
  *   PROVIDERS=[
- *     {"name":"macminilmstudio","protocol":"openai","url":"http://10.0.0.1:1234/v1"},
- *     {"name":"gpuvllm","protocol":"openai","url":"http://10.0.0.2:8000/v1"},
- *     {"name":"macminiollama","protocol":"ollama","url":"http://10.0.0.1:11434"},
- *     {"name":"awseu","protocol":"bedrock","region":"eu-central-1", ...}
+ *     {"name":"local-studio","protocol":"openai","url":"http://192.0.2.10:1234/v1"},
+ *     {"name":"gpu-cluster","protocol":"openai","url":"http://192.0.2.20:8000/v1"},
+ *     {"name":"local-ollama","protocol":"ollama","url":"http://192.0.2.10:11434"},
+ *     {"name":"cloud-bedrock","protocol":"bedrock","region":"eu-central-1", ...}
  *   ]
  *
  * Flows, `DEFAULT_LLM`, `FALLBACK_LLM`, `EMBEDDING_MODEL` and every other
- * LlmConfig then reference the NAME (`{"provider":"gpuvllm","model":"..."}`).
+ * LlmConfig then reference the NAME (`{"provider":"gpu-cluster","model":"..."}`).
  *
  * Why a name/protocol split rather than a fixed provider enum: the enum made
  * "which wire protocol do I speak" and "which server do I talk to" the same

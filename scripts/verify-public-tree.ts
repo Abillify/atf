@@ -125,7 +125,12 @@ interface RedactionRuleSet {
 }
 
 interface RedactionRuleFile {
-	rules?: { label?: string; pattern?: string; flags?: string }[];
+	rules?: {
+		label?: string;
+		pattern?: string;
+		flags?: string;
+		testValue?: string;
+	}[];
 	forbiddenFileNames?: string[];
 	allowlist?: Record<string, string[]>;
 }
@@ -143,42 +148,132 @@ async function loadRedactionRules(): Promise<RedactionRuleSet> {
 		const file = Bun.file(path);
 		if (!(await file.exists())) continue;
 
-		let parsed: RedactionRuleFile;
+		let raw: unknown;
 		try {
-			parsed = (await file.json()) as RedactionRuleFile;
+			raw = await file.json();
 		} catch (error) {
 			throw new Error(
 				`Redaction rule set ${candidate} is not valid JSON: ${(error as Error).message}`,
 			);
 		}
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+			throw new Error(
+				`Redaction rule set ${candidate}: root must be a JSON object`,
+			);
+		}
+		const parsed = raw as RedactionRuleFile;
+		if (parsed.rules !== undefined && !Array.isArray(parsed.rules)) {
+			throw new Error(
+				`Redaction rule set ${candidate}: "rules" must be an array`,
+			);
+		}
+		if (
+			parsed.forbiddenFileNames !== undefined &&
+			(!Array.isArray(parsed.forbiddenFileNames) ||
+				!parsed.forbiddenFileNames.every(
+					(name) =>
+						typeof name === "string" &&
+						name.trim() === name &&
+						name.length > 0 &&
+						!name.includes("\0") &&
+						basename(name) === name &&
+						name !== "." &&
+						name !== "..",
+				))
+		) {
+			throw new Error(
+				`Redaction rule set ${candidate}: "forbiddenFileNames" must contain non-empty base file names without surrounding whitespace or path components`,
+			);
+		}
+		if (
+			parsed.allowlist !== undefined &&
+			(typeof parsed.allowlist !== "object" ||
+				parsed.allowlist === null ||
+				Array.isArray(parsed.allowlist))
+		) {
+			throw new Error(
+				`Redaction rule set ${candidate}: "allowlist" must be an object`,
+			);
+		}
 
 		const rules: ContentRule[] = [];
 		for (const [index, entry] of (parsed.rules ?? []).entries()) {
-			if (!entry.pattern) {
+			if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
 				throw new Error(
-					`Redaction rule set ${candidate}: rules[${index}] is missing "pattern".`,
+					`Redaction rule set ${candidate}: rules[${index}] must be an object`,
+				);
+			}
+			if (typeof entry.pattern !== "string" || entry.pattern === "") {
+				throw new Error(
+					`Redaction rule set ${candidate}: rules[${index}] is missing a non-empty string "pattern"`,
+				);
+			}
+			if (entry.label !== undefined && typeof entry.label !== "string") {
+				throw new Error(
+					`Redaction rule set ${candidate}: rules[${index}].label must be a string`,
+				);
+			}
+			if (entry.flags !== undefined && typeof entry.flags !== "string") {
+				throw new Error(
+					`Redaction rule set ${candidate}: rules[${index}].flags must be a string`,
+				);
+			}
+			if (
+				entry.testValue !== undefined &&
+				typeof entry.testValue !== "string"
+			) {
+				throw new Error(
+					`Redaction rule set ${candidate}: rules[${index}].testValue must be a string`,
+				);
+			}
+			if (requireRules && entry.testValue === undefined) {
+				throw new Error(
+					`Redaction rule set ${candidate}: rules[${index}] needs a "testValue" under --require-rules`,
 				);
 			}
 			const label = entry.label ?? `redaction rule ${index}`;
+			let pattern: RegExp;
 			try {
-				rules.push({ label, pattern: new RegExp(entry.pattern, entry.flags ?? "i") });
+				pattern = new RegExp(entry.pattern, entry.flags ?? "i");
 			} catch (error) {
 				throw new Error(
 					`Redaction rule set ${candidate}: rules[${index}] (${label}) has an invalid pattern: ${(error as Error).message}`,
 				);
 			}
+			if (entry.testValue !== undefined && !pattern.test(entry.testValue)) {
+				throw new Error(
+					`Redaction rule set ${candidate}: rules[${index}] (${label}) does not match its "testValue"`,
+				);
+			}
+			pattern.lastIndex = 0;
+			rules.push({ label, pattern });
 		}
 
 		const allowlist = new Map<string, Set<string>>();
 		for (const [path_, labels] of Object.entries(parsed.allowlist ?? {})) {
+			if (
+				!Array.isArray(labels) ||
+				!labels.every((label) => typeof label === "string")
+			) {
+				throw new Error(
+					`Redaction rule set ${candidate}: allowlist[${JSON.stringify(path_)}] must be an array of strings`,
+				);
+			}
 			allowlist.set(path_, new Set(labels));
+		}
+
+		const forbiddenFileNames = new Set(
+			(parsed.forbiddenFileNames ?? []).map((name) => name.toLowerCase()),
+		);
+		if (requireRules && rules.length === 0 && forbiddenFileNames.size === 0) {
+			throw new Error(
+				`Redaction rule set ${candidate}: --require-rules needs at least one content rule or forbidden file name`,
+			);
 		}
 
 		return {
 			rules,
-			forbiddenFileNames: new Set(
-				(parsed.forbiddenFileNames ?? []).map((name) => name.toLowerCase()),
-			),
+			forbiddenFileNames,
 			allowlist,
 			source: candidate,
 		};

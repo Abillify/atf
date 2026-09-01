@@ -37,7 +37,7 @@ Tests added or updated:
 
 ## Checklist
 
-- [ ] Commits are signed off (`git commit -s`) — see [DCO](../DCO)
+- [ ] Every commit carries `ATF-Contribution-Certified-by: Full Name <email>` — see [the contribution certificate](../CONTRIBUTION_CERTIFICATE.md)
 - [ ] Conventional Commit messages
 - [ ] New source files carry an SPDX header (`bun run spdx`)
 - [ ] Documentation updated where behaviour or configuration changed

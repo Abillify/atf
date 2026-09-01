@@ -60,13 +60,39 @@ The gate covers settings a process can inspect about itself. It cannot verify TL
 network policy, backup restores, secret rotation, or least-privilege database grants. Those
 remain deployment review items, which is why the list above is longer than what the gate checks.
 
-### SBOM per platform
+### Supply-chain inventories per artifact and platform
 
-`sbom.cdx.json` and `THIRD_PARTY_NOTICES.md` describe the platform they were generated on,
-because optional native prebuilds resolve differently per platform. The committed copies are
-generated on a maintainer machine; the artifacts to retain alongside a release image are the
-ones CI produces on Linux. Both record the platform in the notices header and in the SBOM's
-`metadata.properties` as `atf:inventory:platform`.
+The committed root `sbom.cdx.json` and `THIRD_PARTY_NOTICES.md` are the byte-stable
+**Linux x64 workspace reference**. Their Git SHA identifies the commit that last changed
+`bun.lock`; Linux CI regenerates the reference with that value and compares both files
+byte-for-byte. Do not regenerate these root files on macOS while labeling them as Linux.
+
+Every CI run also creates commit-specific workspace inventories natively on `linux-x64` and
+`darwin-arm64`. Their directory and artifact names include the exact `github.sha`; the macOS
+inventory is a separate release artifact and never replaces the committed Linux reference.
+Both notices and CycloneDX metadata record project version, commit, platform, artifact kind/name,
+and the SHA-256 of `bun.lock`.
+
+The Dockerfile under `deploy/examples` is Quickstart-only. After its in-image `bun install`,
+each final target (`runtime`, `control`, `search`, and `gate`) generates an inventory from that
+image's own `/workspace/node_modules/.bun` under `/usr/share/doc/atf`. CI builds the exact
+checkout, inspects the resulting image platform and ID/digest, extracts those embedded files,
+and publishes a per-target `image.json` plus a combined `index.json`. These inventories must
+not be replaced with host `node_modules` output.
+
+LGPL, MPL, and CC-BY components carry explicit artifact-specific compliance entries. The
+Quickstart inventories distinguish source forms from native executable prebuilds: readable
+`axe-core` and `@axe-core/playwright` JavaScript source remains in each installed package, while
+Lightning CSS native prebuilds link each installed version to a commit-pinned upstream
+corresponding-source archive. `/workspace` itself must not be described as containing the Rust
+source for those prebuilds. libvips remains a dynamically loaded, replaceable shared library with its LGPL text. Caniuse data retains its CC-BY
+attribution link and unmodified status. These statements describe only the repository's Quickstart
+artifacts; they do not assert compliance for separately built production images.
+
+Tag releases attach a checksummed bundle containing both native workspace inventories and all
+four Quickstart image inventories. The release workflow publishes no OCI image. Production
+images remain deployment-owned and require their own inventory, source-availability,
+replaceability, attribution, scanning, and immutable-digest review.
 
 ## Configuration
 

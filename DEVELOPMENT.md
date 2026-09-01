@@ -37,22 +37,43 @@ documented health endpoints. Two gates behave differently from how they read:
   and the gate fails only when they grow, so `bunx biome ci .` will report findings that CI
   tolerates. Use `bun run lint` to see them all, and `bun run lint:baseline -- --update` to
   tighten the baseline after reducing them.
-- `verify:public` runs without the confidential redaction rule set in CI, so it applies only its
-  structural rules there. A release is published from a machine that has the rule set and runs
-  `bun run verify:public:release`, which refuses to skip literal redaction.
+- `verify:public` runs without the confidential redaction rule set in ordinary CI, so it applies
+  only its structural rules there. The tag-release workflow requires the repository Actions
+  secret `ATF_REDACTION_RULES_JSON` and runs the release guard against the exact tag commit; a
+  missing, malformed, or matching rule set blocks publication.
 
 Regenerate after the relevant change, and commit the result:
 
 ```bash
 bun run spdx              # after adding source files
-bun run supply-chain      # after any dependency or lockfile change
+bun run supply-chain      # Linux x64 only: refresh the committed workspace reference
 bun run config-reference  # after adding or changing a configuration variable
 ```
 
+The root notices and SBOM are the committed Linux x64 workspace reference; do not regenerate
+them on macOS with a Linux platform label. `--platform` records the target and
+`--assert-host-platform` makes native CI fail if the runner is not that platform. CI separately
+generates commit-specific `linux-x64` and `darwin-arm64` workspace artifacts and inventories
+the four final Quickstart image targets from inside each image. For an intentional local
+platform artifact, use an isolated output directory, for example:
+
+```bash
+bun run supply-chain --inventory-root "$PWD" --output-dir artifacts/local-darwin-arm64 \
+  --platform darwin-arm64 --assert-host-platform --artifact-kind workspace \
+  --artifact-name local-darwin-arm64 --git-sha "$(git rev-parse HEAD)"
+```
+
+A dependency is not accepted unless every component has a complete text. Resolution uses the
+package first, then reviewed package-embedded sections, exact-repository/exact-license installed
+monorepo text, explicit supplemental rules, and only the exact-version declared-license
+fallbacks documented in `licenses/README.md`.
+
 `verify:public` warns and passes when the confidential redaction rule set is absent, which is
-the normal case for contributors and for public CI. Maintainers preparing a release run
-`bun run verify:public:release`, which fails instead, so literal redaction is actually verified
-rather than silently skipped. See `scripts/redaction-rules.example.json` for the format.
+the normal case for contributors and ordinary CI. Before enabling tag publication, configure
+the repository Actions secret `ATF_REDACTION_RULES_JSON` with the JSON rule document described
+by `scripts/redaction-rules.example.json`. The tag workflow writes it to a mode-restricted runner
+temporary file and invokes `verify-public-tree.ts --require-rules`; it never publishes when the
+secret is absent or invalid.
 
 ## Working in one workspace
 
