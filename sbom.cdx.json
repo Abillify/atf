@@ -50,133 +50,120 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.30",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.67",
       "group": "@ai-sdk",
       "name": "amazon-bedrock",
-      "version": "5.0.30",
+      "version": "5.0.67",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.30"
+      "purl": "pkg:npm/%40ai-sdk%2Famazon-bedrock@5.0.67"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.19",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.45",
       "group": "@ai-sdk",
       "name": "anthropic",
-      "version": "4.0.19",
+      "version": "4.0.45",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.19"
+      "purl": "pkg:npm/%40ai-sdk%2Fanthropic@4.0.45"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.21",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fazure@4.0.53",
       "group": "@ai-sdk",
       "name": "azure",
-      "version": "4.0.21",
+      "version": "4.0.53",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.21"
+      "purl": "pkg:npm/%40ai-sdk%2Fazure@4.0.53"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.13",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.36",
       "group": "@ai-sdk",
       "name": "deepseek",
-      "version": "3.0.13",
+      "version": "3.0.36",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.13"
+      "purl": "pkg:npm/%40ai-sdk%2Fdeepseek@3.0.36"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.28",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgateway@4.0.68",
       "group": "@ai-sdk",
       "name": "gateway",
-      "version": "4.0.28",
+      "version": "4.0.68",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.28"
+      "purl": "pkg:npm/%40ai-sdk%2Fgateway@4.0.68"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.23",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.57",
       "group": "@ai-sdk",
       "name": "google",
-      "version": "4.0.23",
+      "version": "4.0.57",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.23"
+      "purl": "pkg:npm/%40ai-sdk%2Fgoogle@4.0.57"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.20",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fopenai@4.0.51",
       "group": "@ai-sdk",
       "name": "openai",
-      "version": "4.0.20",
+      "version": "4.0.51",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.20"
+      "purl": "pkg:npm/%40ai-sdk%2Fopenai@4.0.51"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@3.0.1",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@4.0.8",
       "group": "@ai-sdk",
       "name": "provider",
-      "version": "3.0.1",
+      "version": "4.0.8",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider@3.0.1"
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider@4.0.8"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider@4.0.3",
-      "group": "@ai-sdk",
-      "name": "provider",
-      "version": "4.0.3",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider@4.0.3"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.12",
+      "bom-ref": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.33",
       "group": "@ai-sdk",
       "name": "provider-utils",
-      "version": "5.0.12",
+      "version": "5.0.33",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.12"
+      "purl": "pkg:npm/%40ai-sdk%2Fprovider-utils@5.0.33"
     },
     {
       "type": "library",
@@ -479,16 +466,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40axe-core%2Fplaywright@4.12.1",
+      "bom-ref": "pkg:npm/%40axe-core%2Fplaywright@4.13.0",
       "group": "@axe-core",
       "name": "playwright",
-      "version": "4.12.1",
+      "version": "4.13.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
         }
       ],
-      "purl": "pkg:npm/%40axe-core%2Fplaywright@4.12.1"
+      "purl": "pkg:npm/%40axe-core%2Fplaywright@4.13.0"
     },
     {
       "type": "library",
@@ -648,29 +635,29 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40dagrejs%2Fdagre@3.0.0",
+      "bom-ref": "pkg:npm/%40dagrejs%2Fdagre@3.1.1",
       "group": "@dagrejs",
       "name": "dagre",
-      "version": "3.0.0",
+      "version": "3.1.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40dagrejs%2Fdagre@3.0.0"
+      "purl": "pkg:npm/%40dagrejs%2Fdagre@3.1.1"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.1",
+      "bom-ref": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.5",
       "group": "@dagrejs",
       "name": "graphlib",
-      "version": "4.0.1",
+      "version": "4.0.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.1"
+      "purl": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.5"
     },
     {
       "type": "library",
@@ -856,55 +843,55 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.2.3",
+      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.2.9",
       "group": "@langchain",
       "name": "core",
-      "version": "1.2.3",
+      "version": "1.2.9",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Fcore@1.2.3"
+      "purl": "pkg:npm/%40langchain%2Fcore@1.2.9"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.4.8",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.4.13",
       "group": "@langchain",
       "name": "langgraph",
-      "version": "1.4.8",
+      "version": "1.4.13",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph@1.4.8"
+      "purl": "pkg:npm/%40langchain%2Flanggraph@1.4.13"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.1.3",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.1.5",
       "group": "@langchain",
       "name": "langgraph-checkpoint",
-      "version": "1.1.3",
+      "version": "1.1.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.1.3"
+      "purl": "pkg:npm/%40langchain%2Flanggraph-checkpoint@1.1.5"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.9.29",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.10.0",
       "group": "@langchain",
       "name": "langgraph-sdk",
-      "version": "1.9.29",
+      "version": "1.10.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.9.29"
+      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.10.0"
     },
     {
       "type": "library",
@@ -921,6 +908,19 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40langchain%2Fprotocol@0.0.19",
+      "group": "@langchain",
+      "name": "protocol",
+      "version": "0.0.19",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40langchain%2Fprotocol@0.0.19"
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.30.0",
       "group": "@modelcontextprotocol",
       "name": "sdk",
@@ -934,42 +934,42 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.1",
+      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.3",
       "group": "@next",
       "name": "env",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fenv@16.3.1"
+      "purl": "pkg:npm/%40next%2Fenv@16.3.3"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.1",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.3",
       "group": "@next",
       "name": "swc-linux-x64-gnu",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.1"
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.3"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.1",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.3",
       "group": "@next",
       "name": "swc-linux-x64-musl",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.1"
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.3"
     },
     {
       "type": "library",
@@ -1025,16 +1025,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40playwright%2Ftest@1.61.1",
+      "bom-ref": "pkg:npm/%40playwright%2Ftest@1.62.1",
       "group": "@playwright",
       "name": "test",
-      "version": "1.61.1",
+      "version": "1.62.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40playwright%2Ftest@1.61.1"
+      "purl": "pkg:npm/%40playwright%2Ftest@1.62.1"
     },
     {
       "type": "library",
@@ -1545,29 +1545,29 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40testing-library%2Freact@16.3.2",
+      "bom-ref": "pkg:npm/%40testing-library%2Freact@16.3.3",
       "group": "@testing-library",
       "name": "react",
-      "version": "16.3.2",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40testing-library%2Freact@16.3.2"
+      "purl": "pkg:npm/%40testing-library%2Freact@16.3.3"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40testing-library%2Fuser-event@14.6.1",
+      "bom-ref": "pkg:npm/%40testing-library%2Fuser-event@14.6.6",
       "group": "@testing-library",
       "name": "user-event",
-      "version": "14.6.1",
+      "version": "14.6.6",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40testing-library%2Fuser-event@14.6.1"
+      "purl": "pkg:npm/%40testing-library%2Fuser-event@14.6.6"
     },
     {
       "type": "library",
@@ -2013,29 +2013,29 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Freact@19.2.17",
+      "bom-ref": "pkg:npm/%40types%2Freact@19.2.18",
       "group": "@types",
       "name": "react",
-      "version": "19.2.17",
+      "version": "19.2.18",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Freact@19.2.17"
+      "purl": "pkg:npm/%40types%2Freact@19.2.18"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Freact-dom@19.2.3",
+      "bom-ref": "pkg:npm/%40types%2Freact-dom@19.2.5",
       "group": "@types",
       "name": "react-dom",
-      "version": "19.2.3",
+      "version": "19.2.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Freact-dom@19.2.3"
+      "purl": "pkg:npm/%40types%2Freact-dom@19.2.5"
     },
     {
       "type": "library",
@@ -2182,94 +2182,94 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fexpect@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Fexpect@4.1.11",
       "group": "@vitest",
       "name": "expect",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fexpect@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Fexpect@4.1.11"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fmocker@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Fmocker@4.1.11",
       "group": "@vitest",
       "name": "mocker",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fmocker@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Fmocker@4.1.11"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fpretty-format@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Fpretty-format@4.1.11",
       "group": "@vitest",
       "name": "pretty-format",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fpretty-format@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Fpretty-format@4.1.11"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Frunner@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Frunner@4.1.11",
       "group": "@vitest",
       "name": "runner",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Frunner@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Frunner@4.1.11"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fsnapshot@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Fsnapshot@4.1.11",
       "group": "@vitest",
       "name": "snapshot",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fsnapshot@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Fsnapshot@4.1.11"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fspy@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Fspy@4.1.11",
       "group": "@vitest",
       "name": "spy",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fspy@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Fspy@4.1.11"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Futils@4.1.10",
+      "bom-ref": "pkg:npm/%40vitest%2Futils@4.1.11",
       "group": "@vitest",
       "name": "utils",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Futils@4.1.10"
+      "purl": "pkg:npm/%40vitest%2Futils@4.1.11"
     },
     {
       "type": "library",
@@ -2372,15 +2372,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/ai@7.0.37",
+      "bom-ref": "pkg:npm/ai@7.0.84",
       "name": "ai",
-      "version": "7.0.37",
+      "version": "7.0.84",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/ai@7.0.37"
+      "purl": "pkg:npm/ai@7.0.84"
     },
     {
       "type": "library",
@@ -2540,15 +2540,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/axe-core@4.12.1",
+      "bom-ref": "pkg:npm/axe-core@4.13.0",
       "name": "axe-core",
-      "version": "4.12.1",
+      "version": "4.13.0",
       "licenses": [
         {
           "expression": "MPL-2.0"
         }
       ],
-      "purl": "pkg:npm/axe-core@4.12.1"
+      "purl": "pkg:npm/axe-core@4.13.0"
     },
     {
       "type": "library",
@@ -4700,15 +4700,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/lucide-react@1.26.0",
+      "bom-ref": "pkg:npm/lucide-react@1.35.0",
       "name": "lucide-react",
-      "version": "1.26.0",
+      "version": "1.35.0",
       "licenses": [
         {
           "expression": "ISC"
         }
       ],
-      "purl": "pkg:npm/lucide-react@1.26.0"
+      "purl": "pkg:npm/lucide-react@1.35.0"
     },
     {
       "type": "library",
@@ -5048,15 +5048,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/next@16.3.1",
+      "bom-ref": "pkg:npm/next@16.3.3",
       "name": "next",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/next@16.3.1"
+      "purl": "pkg:npm/next@16.3.3"
     },
     {
       "type": "library",
@@ -5588,27 +5588,27 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/playwright@1.61.1",
+      "bom-ref": "pkg:npm/playwright@1.62.1",
       "name": "playwright",
-      "version": "1.61.1",
+      "version": "1.62.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/playwright@1.61.1"
+      "purl": "pkg:npm/playwright@1.62.1"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/playwright-core@1.61.1",
+      "bom-ref": "pkg:npm/playwright-core@1.62.1",
       "name": "playwright-core",
-      "version": "1.61.1",
+      "version": "1.62.1",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/playwright-core@1.61.1"
+      "purl": "pkg:npm/playwright-core@1.62.1"
     },
     {
       "type": "library",
@@ -6836,6 +6836,18 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/undici@7.29.0",
+      "name": "undici",
+      "version": "7.29.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/undici@7.29.0"
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/undici-types@8.3.0",
       "name": "undici-types",
       "version": "8.3.0",
@@ -6944,15 +6956,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/vitest@4.1.10",
+      "bom-ref": "pkg:npm/vitest@4.1.11",
       "name": "vitest",
-      "version": "4.1.10",
+      "version": "4.1.11",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/vitest@4.1.10"
+      "purl": "pkg:npm/vitest@4.1.11"
     },
     {
       "type": "library",
