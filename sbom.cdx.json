@@ -2091,6 +2091,19 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fnode@26.4.0",
+      "group": "@types",
+      "name": "node",
+      "version": "26.4.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fnode@26.4.0"
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40types%2Fpg@8.20.0",
       "group": "@types",
       "name": "pg",
