@@ -13,16 +13,15 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | Package | Version | Declared license | License/notice text found |
 | --- | --- | --- | --- |
 | @adobe/css-tools | 4.5.0 | MIT | yes |
-| @ai-sdk/amazon-bedrock | 5.0.30 | Apache-2.0 | yes |
-| @ai-sdk/anthropic | 4.0.19 | Apache-2.0 | yes |
-| @ai-sdk/azure | 4.0.21 | Apache-2.0 | yes |
-| @ai-sdk/deepseek | 3.0.13 | Apache-2.0 | yes |
-| @ai-sdk/gateway | 4.0.28 | Apache-2.0 | yes |
-| @ai-sdk/google | 4.0.23 | Apache-2.0 | yes |
-| @ai-sdk/openai | 4.0.20 | Apache-2.0 | yes |
-| @ai-sdk/provider | 3.0.1 | Apache-2.0 | yes |
-| @ai-sdk/provider | 4.0.3 | Apache-2.0 | yes |
-| @ai-sdk/provider-utils | 5.0.12 | Apache-2.0 | no |
+| @ai-sdk/amazon-bedrock | 5.0.67 | Apache-2.0 | yes |
+| @ai-sdk/anthropic | 4.0.45 | Apache-2.0 | yes |
+| @ai-sdk/azure | 4.0.53 | Apache-2.0 | yes |
+| @ai-sdk/deepseek | 3.0.36 | Apache-2.0 | yes |
+| @ai-sdk/gateway | 4.0.68 | Apache-2.0 | yes |
+| @ai-sdk/google | 4.0.57 | Apache-2.0 | yes |
+| @ai-sdk/openai | 4.0.51 | Apache-2.0 | yes |
+| @ai-sdk/provider | 4.0.8 | Apache-2.0 | yes |
+| @ai-sdk/provider-utils | 5.0.33 | Apache-2.0 | no |
 | @alloc/quick-lru | 5.2.0 | MIT | yes |
 | @asamuzakjp/css-color | 3.2.0 | MIT | yes |
 | @aws-crypto/sha256-browser | 5.2.0 | Apache-2.0 | yes |
@@ -201,7 +200,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | accepts | 2.0.0 | MIT | yes |
 | adm-zip | 0.6.0 | MIT | yes |
 | agent-base | 7.1.4 | MIT | yes |
-| ai | 7.0.37 | Apache-2.0 | yes |
+| ai | 7.0.84 | Apache-2.0 | yes |
 | ajv | 8.20.0 | MIT | yes |
 | ajv-formats | 3.0.1 | MIT | yes |
 | ansi-regex | 5.0.1 | MIT | yes |
@@ -573,6 +572,7 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | type-is | 2.1.0 | MIT | yes |
 | typedarray | 0.0.6 | MIT | yes |
 | typescript | 7.0.2 | Apache-2.0 | yes |
+| undici | 7.29.0 | MIT | yes |
 | undici-types | 8.3.0 | MIT | yes |
 | unpipe | 1.0.0 | MIT | yes |
 | use-sync-external-store | 1.6.0 | MIT | yes |
@@ -10032,7 +10032,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### @ai-sdk/amazon-bedrock@5.0.30, @ai-sdk/anthropic@4.0.19, @ai-sdk/azure@4.0.21, @ai-sdk/deepseek@3.0.13, @ai-sdk/gateway@4.0.28, @ai-sdk/google@4.0.23, @ai-sdk/openai@4.0.20, @ai-sdk/provider@3.0.1, @ai-sdk/provider@4.0.3, ai@7.0.37
+### @ai-sdk/amazon-bedrock@5.0.67, @ai-sdk/anthropic@4.0.45, @ai-sdk/azure@4.0.53, @ai-sdk/deepseek@3.0.36, @ai-sdk/gateway@4.0.68, @ai-sdk/google@4.0.57, @ai-sdk/openai@4.0.51, @ai-sdk/provider@4.0.8, ai@7.0.84
 
 Source files: LICENSE; SHA-256: `b4f9adb7c568904834d0dd6cc98d16c390d21ca32fc17ae7a267715269bd5529`
 
@@ -16746,7 +16746,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
-### undici-types@8.3.0
+### undici-types@8.3.0, undici@7.29.0
 
 Source files: LICENSE; SHA-256: `fe64958bfaef10b1c9628b4ee9f1c48170b0219bd4b2a7ef4a0c41aebd920c9e`
 
