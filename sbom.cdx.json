@@ -739,29 +739,29 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40dagrejs%2Fdagre@3.0.0",
+      "bom-ref": "pkg:npm/%40dagrejs%2Fdagre@3.1.1",
       "group": "@dagrejs",
       "name": "dagre",
-      "version": "3.0.0",
+      "version": "3.1.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40dagrejs%2Fdagre@3.0.0"
+      "purl": "pkg:npm/%40dagrejs%2Fdagre@3.1.1"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.1",
+      "bom-ref": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.5",
       "group": "@dagrejs",
       "name": "graphlib",
-      "version": "4.0.1",
+      "version": "4.0.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.1"
+      "purl": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.5"
     },
     {
       "type": "library",
