@@ -34,7 +34,7 @@
     "@ai-sdk/openai": "4.0.20",
     "@ai-sdk/provider": "3.0.1",
     "@atf/schema-compatibility": "workspace:1.0.0",
-    "@aws-sdk/client-bedrock-agent-runtime": "3.1094.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1121.0",
     "@huggingface/transformers": "4.2.0",
     "@langchain/core": "1.2.3",
     "@langchain/langgraph": "1.4.8",
