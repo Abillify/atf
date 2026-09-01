@@ -65,8 +65,8 @@ Platforms covered by this inventory: **linux-x64**. Optional platform-specific p
 | @csstools/css-color-parser | 3.1.0 | MIT | yes |
 | @csstools/css-parser-algorithms | 3.0.5 | MIT | yes |
 | @csstools/css-tokenizer | 3.0.4 | MIT | yes |
-| @dagrejs/dagre | 3.0.0 | MIT | yes |
-| @dagrejs/graphlib | 4.0.1 | MIT | yes |
+| @dagrejs/dagre | 3.1.1 | MIT | yes |
+| @dagrejs/graphlib | 4.0.5 | MIT | yes |
 | @hono/node-server | 2.1.1 | MIT | yes |
 | @huggingface/jinja | 0.5.9 | MIT | yes |
 | @huggingface/tokenizers | 0.1.3 | Apache-2.0 | yes |
@@ -2047,7 +2047,7 @@ The above copyright notice and this permission notice shall be included in all c
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 ```
 
-### @dagrejs/dagre@3.0.0, @dagrejs/graphlib@4.0.1
+### @dagrejs/dagre@3.1.1, @dagrejs/graphlib@4.0.5
 
 Source files: LICENSE; SHA-256: `25add1a0136af5d3bbae590f3a04d6da2820e06913282012855fb34c0d8632e7`
 
