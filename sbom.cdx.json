@@ -193,354 +193,263 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-crypto%2Fsha256-browser@5.2.0",
-      "group": "@aws-crypto",
-      "name": "sha256-browser",
-      "version": "5.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-crypto%2Fsha256-browser@5.2.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-crypto%2Fsha256-js@5.2.0",
-      "group": "@aws-crypto",
-      "name": "sha256-js",
-      "version": "5.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-crypto%2Fsha256-js@5.2.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-crypto%2Fsupports-web-crypto@5.2.0",
-      "group": "@aws-crypto",
-      "name": "supports-web-crypto",
-      "version": "5.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-crypto%2Fsupports-web-crypto@5.2.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-crypto%2Futil@5.2.0",
-      "group": "@aws-crypto",
-      "name": "util",
-      "version": "5.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-crypto%2Futil@5.2.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1094.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1121.0",
       "group": "@aws-sdk",
       "name": "client-bedrock-agent-runtime",
-      "version": "3.1094.0",
+      "version": "3.1121.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1094.0"
+      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-agent-runtime@3.1121.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1072.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1121.0",
       "group": "@aws-sdk",
       "name": "client-bedrock-runtime",
-      "version": "3.1072.0",
+      "version": "3.1121.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1072.0"
+      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1121.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1094.0",
-      "group": "@aws-sdk",
-      "name": "client-bedrock-runtime",
-      "version": "3.1094.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fclient-bedrock-runtime@3.1094.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcore@3.977.8",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcore@3.977.9",
       "group": "@aws-sdk",
       "name": "core",
-      "version": "3.977.8",
+      "version": "3.977.9",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcore@3.977.8"
+      "purl": "pkg:npm/%40aws-sdk%2Fcore@3.977.9"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.69",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.70",
       "group": "@aws-sdk",
       "name": "credential-provider-env",
-      "version": "3.972.69",
+      "version": "3.972.70",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.69"
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-env@3.972.70"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.71",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.72",
       "group": "@aws-sdk",
       "name": "credential-provider-http",
-      "version": "3.972.71",
+      "version": "3.972.72",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.71"
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-http@3.972.72"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.14",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.15",
       "group": "@aws-sdk",
       "name": "credential-provider-ini",
+      "version": "3.973.15",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.15"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.77",
+      "group": "@aws-sdk",
+      "name": "credential-provider-login",
+      "version": "3.972.77",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.77"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.82",
+      "group": "@aws-sdk",
+      "name": "credential-provider-node",
+      "version": "3.972.82",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.82"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.70",
+      "group": "@aws-sdk",
+      "name": "credential-provider-process",
+      "version": "3.972.70",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.70"
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.14",
+      "group": "@aws-sdk",
+      "name": "credential-provider-sso",
       "version": "3.973.14",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-ini@3.973.14"
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.14"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.76",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.76",
       "group": "@aws-sdk",
-      "name": "credential-provider-login",
+      "name": "credential-provider-web-identity",
       "version": "3.972.76",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-login@3.972.76"
+      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.76"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.80",
-      "group": "@aws-sdk",
-      "name": "credential-provider-node",
-      "version": "3.972.80",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-node@3.972.80"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.69",
-      "group": "@aws-sdk",
-      "name": "credential-provider-process",
-      "version": "3.972.69",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-process@3.972.69"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.13",
-      "group": "@aws-sdk",
-      "name": "credential-provider-sso",
-      "version": "3.973.13",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-sso@3.973.13"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.75",
-      "group": "@aws-sdk",
-      "name": "credential-provider-web-identity",
-      "version": "3.972.75",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Fcredential-provider-web-identity@3.972.75"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.33",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.34",
       "group": "@aws-sdk",
       "name": "eventstream-handler-node",
-      "version": "3.972.33",
+      "version": "3.972.34",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.33"
+      "purl": "pkg:npm/%40aws-sdk%2Feventstream-handler-node@3.972.34"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.28",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.29",
       "group": "@aws-sdk",
       "name": "middleware-eventstream",
-      "version": "3.972.28",
+      "version": "3.972.29",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.28"
+      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-eventstream@3.972.29"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.51",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.52",
       "group": "@aws-sdk",
       "name": "middleware-websocket",
-      "version": "3.972.51",
+      "version": "3.972.52",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.51"
+      "purl": "pkg:npm/%40aws-sdk%2Fmiddleware-websocket@3.972.52"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.43",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.44",
       "group": "@aws-sdk",
       "name": "nested-clients",
-      "version": "3.997.43",
+      "version": "3.997.44",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.43"
+      "purl": "pkg:npm/%40aws-sdk%2Fnested-clients@3.997.44"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.45",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.46",
       "group": "@aws-sdk",
       "name": "signature-v4-multi-region",
-      "version": "3.996.45",
+      "version": "3.996.46",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.45"
+      "purl": "pkg:npm/%40aws-sdk%2Fsignature-v4-multi-region@3.996.46"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1072.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1116.0",
       "group": "@aws-sdk",
       "name": "token-providers",
-      "version": "3.1072.0",
+      "version": "3.1116.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1072.0"
+      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1116.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1094.0",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1121.0",
       "group": "@aws-sdk",
       "name": "token-providers",
-      "version": "3.1094.0",
+      "version": "3.1121.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1094.0"
+      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1121.0"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1111.0",
-      "group": "@aws-sdk",
-      "name": "token-providers",
-      "version": "3.1111.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftoken-providers@3.1111.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Ftypes@3.974.4",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Ftypes@3.974.5",
       "group": "@aws-sdk",
       "name": "types",
-      "version": "3.974.4",
+      "version": "3.974.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Ftypes@3.974.4"
+      "purl": "pkg:npm/%40aws-sdk%2Ftypes@3.974.5"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Futil-locate-window@3.965.10",
-      "group": "@aws-sdk",
-      "name": "util-locate-window",
-      "version": "3.965.10",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40aws-sdk%2Futil-locate-window@3.965.10"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40aws-sdk%2Fxml-builder@3.972.39",
+      "bom-ref": "pkg:npm/%40aws-sdk%2Fxml-builder@3.972.40",
       "group": "@aws-sdk",
       "name": "xml-builder",
-      "version": "3.972.39",
+      "version": "3.972.40",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40aws-sdk%2Fxml-builder@3.972.39"
+      "purl": "pkg:npm/%40aws-sdk%2Fxml-builder@3.972.40"
     },
     {
       "type": "library",
@@ -1376,6 +1285,19 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40smithy%2Fcore@3.33.3",
+      "group": "@smithy",
+      "name": "core",
+      "version": "3.33.3",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/%40smithy%2Fcore@3.33.3"
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40smithy%2Fcredential-provider-imds@4.5.2",
       "group": "@smithy",
       "name": "credential-provider-imds",
@@ -1415,29 +1337,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Fis-array-buffer@2.2.0",
-      "group": "@smithy",
-      "name": "is-array-buffer",
-      "version": "2.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40smithy%2Fis-array-buffer@2.2.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Fnode-http-handler@4.11.2",
+      "bom-ref": "pkg:npm/%40smithy%2Fnode-http-handler@4.12.0",
       "group": "@smithy",
       "name": "node-http-handler",
-      "version": "4.11.2",
+      "version": "4.12.0",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40smithy%2Fnode-http-handler@4.11.2"
+      "purl": "pkg:npm/%40smithy%2Fnode-http-handler@4.12.0"
     },
     {
       "type": "library",
@@ -1464,32 +1373,6 @@
         }
       ],
       "purl": "pkg:npm/%40smithy%2Ftypes@4.17.2"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Futil-buffer-from@2.2.0",
-      "group": "@smithy",
-      "name": "util-buffer-from",
-      "version": "2.2.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40smithy%2Futil-buffer-from@2.2.0"
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40smithy%2Futil-utf8@2.3.0",
-      "group": "@smithy",
-      "name": "util-utf8",
-      "version": "2.3.0",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/%40smithy%2Futil-utf8@2.3.0"
     },
     {
       "type": "library",
