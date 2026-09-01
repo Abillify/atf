@@ -1025,42 +1025,42 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.1",
+      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.3",
       "group": "@next",
       "name": "env",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fenv@16.3.1"
+      "purl": "pkg:npm/%40next%2Fenv@16.3.3"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.1",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.3",
       "group": "@next",
       "name": "swc-linux-x64-gnu",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.1"
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.3"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.1",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.3",
       "group": "@next",
       "name": "swc-linux-x64-musl",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.1"
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.3"
     },
     {
       "type": "library",
@@ -2130,29 +2130,29 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Freact@19.2.17",
+      "bom-ref": "pkg:npm/%40types%2Freact@19.2.18",
       "group": "@types",
       "name": "react",
-      "version": "19.2.17",
+      "version": "19.2.18",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Freact@19.2.17"
+      "purl": "pkg:npm/%40types%2Freact@19.2.18"
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Freact-dom@19.2.3",
+      "bom-ref": "pkg:npm/%40types%2Freact-dom@19.2.5",
       "group": "@types",
       "name": "react-dom",
-      "version": "19.2.3",
+      "version": "19.2.5",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Freact-dom@19.2.3"
+      "purl": "pkg:npm/%40types%2Freact-dom@19.2.5"
     },
     {
       "type": "library",
@@ -5165,15 +5165,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/next@16.3.1",
+      "bom-ref": "pkg:npm/next@16.3.3",
       "name": "next",
-      "version": "16.3.1",
+      "version": "16.3.3",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/next@16.3.1"
+      "purl": "pkg:npm/next@16.3.3"
     },
     {
       "type": "library",
