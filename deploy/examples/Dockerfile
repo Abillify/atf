@@ -1,4 +1,4 @@
-FROM oven/bun:1.3.14 AS workspace
+FROM oven/bun:1.4.0 AS workspace
 WORKDIR /workspace
 COPY . .
 RUN bun install --frozen-lockfile
