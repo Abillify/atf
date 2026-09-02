@@ -63,11 +63,11 @@ can bump); and results from automated scanners without a demonstrated impact.
 
 ## Deployment security
 
-ATF ships with fail-closed defaults, but a deployment is only as safe as its configuration.
-A production readiness gate refuses to start under unsafe settings when `APP_ENV=production`,
-for example open CORS, unverified JWTs, or an unauthenticated monitoring endpoint. Treat that
-gate as a safety net, not as a substitute for the review described in
-[DEPLOYMENT.md](DEPLOYMENT.md).
+ATF provides production-readiness gates and multiple fail-closed controls, but individual
+features and fail modes remain configuration-dependent. Runtime refuses to start under selected
+unsafe settings when `APP_ENV=production`, for example open CORS, unverified JWTs, or an
+unauthenticated monitoring endpoint. Treat that gate as a safety net, not as a substitute for
+the review described in [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ## Contributing securely
 

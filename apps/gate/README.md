@@ -8,14 +8,17 @@ do what the configuration permits, always as the authenticated caller.
 
 ## Run it
 
+From the repository root:
+
 ```bash
-cp .env.example .env
+cp apps/gate/.env.example apps/gate/.env
 bun run --filter @atf/gate dev
 ```
 
-Gate reads its tools and policies from YAML in `MCPGATE_CONFIG_DIR`, not from the environment.
-See [`deploy/examples/gate/config.yaml`](../../deploy/examples/gate/config.yaml) for a minimal
-file.
+The example environment points `MCPGATE_CONFIG_DIR` at
+[`deploy/examples/gate/`](../../deploy/examples/gate/), which contains a minimal `config.yaml`.
+Gate reads tools and policies from that directory, not from environment variables. Verify the
+standalone service with `curl --fail http://127.0.0.1:3003/readyz`.
 
 ```bash
 bun run --filter @atf/gate test

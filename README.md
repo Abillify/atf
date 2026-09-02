@@ -24,10 +24,11 @@ actions, proving to a regulator what happened, and knowing what it cost.
 Four applications, connected by explicit versioned contracts and open protocols. Each one is
 deployable on its own.
 
-> **Project status:** ATF is at `0.1.0`: complete enough to evaluate end to end, but still
-> pre-1.0. Contract packages already carry explicit compatibility guarantees; flow fields,
-> environment variables, and HTTP routes may still change with documented migrations. See the
-> [changelog](CHANGELOG.md) for the exact stability boundary.
+> **Project status:** ATF is at `0.1.0`: complete enough to evaluate the local service wiring
+> end to end, but still pre-1.0. Governed capabilities require explicit configuration and
+> verification for each deployment. Contract packages already carry compatibility guarantees;
+> flow fields, environment variables, and HTTP routes may still change with documented
+> migrations. See the [changelog](CHANGELOG.md) for the exact stability boundary.
 
 ATF grew out of production engineering for regulated environments, where audit evidence,
 identity, data residency, and approval controls are deployment requirements rather than roadmap
@@ -43,23 +44,27 @@ already have, and get cost, access, and quality measurable from the first reques
 
 Concretely, ATF is opinionated about four things most orchestrators leave to you:
 
-**Personal data never reaches the provider in plaintext.** The PII vault detects personal data
-and replaces it with meaningless placeholders *before* the request leaves, then restores the
-real values in the response. The provider sees tokens. This is a stronger guarantee than
-redacting the output, because the data does not leave your deployment at all.
+**Tokenize detected personal data before provider calls.** When the PII vault is enabled and its
+detectors are configured for the deployment, it replaces detected values with meaningless
+placeholders before a provider call and restores them in the response. A fail-closed detector
+mode and an explicit multimodal policy are required when those guarantees matter; the feature is
+off in the unauthenticated local quickstart. See
+[Privacy and the PII vault](docs/CAPABILITIES.md#privacy-and-the-pii-vault) for the boundaries.
 
-**A human decides what matters.** Consequential tool calls pause and wait for approval, in the
-chat message or in a reviewer inbox. If nobody answers within the timeout, the action is
-**rejected**. Silence never becomes an action.
+**A human decides what matters.** When approval controls are enabled for a consequential tool,
+the call pauses and waits for approval in the chat message or reviewer inbox. If nobody answers
+within the timeout, the action is **rejected**. Silence never becomes an action.
 
-**Compliance is evidence, not assertion.** The audit log is hash-chained and anchored, evidence
-bundles are signed, and a single generated dossier collects the active policy, the chain
-verification result, executed erasures, retention windows, evaluation results, and the red-team
-posture score.
+**Compliance is evidence, not assertion.** When configured, the audit log is hash-chained and
+anchored, evidence bundles are signed, and a generated dossier collects the active policy, the
+chain verification result, executed erasures, retention windows, evaluation results, and the
+red-team posture score.
 
-**Fail closed everywhere.** Authorization, approvals, guardrails, and policy default to denying.
-With `APP_ENV=production`, Runtime refuses to start on open CORS, unverified JWTs, or an
-unauthenticated metrics endpoint.
+**Production gates reject selected unsafe settings.** With `APP_ENV=production`, Runtime refuses
+to start on configurations such as open CORS, unverified JWTs, or an unauthenticated metrics
+endpoint. Individual guardrails and policies remain explicit deployment choices; their defaults
+and prerequisites are documented in [Capabilities](docs/CAPABILITIES.md) and
+[Configuration](docs/CONFIGURATION.md).
 
 ### What ATF is not
 
@@ -238,7 +243,7 @@ The gates CI enforces:
 
 ```bash
 bun run verify:public       # no secrets or forbidden paths in the tree
-bun run verify:spdx         # every source file carries an SPDX header
+bun run verify:spdx         # tracked TypeScript source carries the project SPDX header
 bun run supply-chain:check  # third-party notices and SBOM are current
 bun run config-reference:check
 ```

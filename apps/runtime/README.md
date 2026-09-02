@@ -2,21 +2,27 @@
 
 The orchestration engine and the only public entry point for AI traffic. Bun + Hono.
 
-Runtime executes flow graphs, resolves models through named provider instances, enforces
-guardrails, compliance policy, approvals, and the PII vault, and records cost, traces, and
-audit entries. It exposes an OpenAI-compatible API so existing chat clients and SDKs work
-without an adapter, plus administrative and monitoring APIs consumed by
+Runtime executes flow graphs, resolves models through named provider instances, applies enabled
+guardrails, compliance policy, approvals, and PII controls, and records configured cost, trace,
+and audit data. It exposes OpenAI-compatible chat, Responses, model-listing, and embedding
+endpoints; compatibility is scoped to the documented routes and fields rather than the complete
+OpenAI API. Administrative and monitoring APIs are consumed by
 [`@atf/control`](../control).
 
 ## Run it
 
+From the repository root:
+
 ```bash
-cp .env.example .env          # then set PROVIDERS and DEFAULT_LLM
+cp apps/runtime/.env.example apps/runtime/.env
+# Set PROVIDERS and DEFAULT_LLM in apps/runtime/.env.
 bun run --filter @atf/runtime dev
 ```
 
-Or use the four-service stack in [`deploy/examples/`](../../deploy/examples/), which brings its
-own PostgreSQL and a deterministic mock model.
+The example environment loads the checked-in example flows. Verify Runtime with
+`curl --fail http://127.0.0.1:3000/health/ready`. Alternatively, use the four-service stack in
+[`deploy/examples/`](../../deploy/examples/), which brings its own PostgreSQL and a deterministic
+mock model.
 
 ```bash
 bun run --filter @atf/runtime test
@@ -64,8 +70,8 @@ bad value. Provider references are resolved at boot too, so a typo in any model 
 startup error.
 
 - [`.env.example`](.env.example) — annotated starting point
-- [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) — all 264 variables, generated from
-  `src/config/schema.ts`
+- [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md) — the current generated reference;
+  avoid copying variable counts into hand-written documents because the schema evolves
 - `PROFILE` applies a bundle of defaults (`dev`, `secure`, `regulated`,
   `regulated-multitenant`, `performance`); explicit variables always win
 - With `APP_ENV=production` a readiness gate refuses to start under unsafe settings such as

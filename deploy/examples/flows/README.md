@@ -23,9 +23,11 @@ customer data.
 | [`04-tool-use-with-approval.yaml`](04-tool-use-with-approval.yaml) | Agentic tool use where the write path needs a human decision | Gate with `ticket_lookup` and `ticket_create` tools; `APPROVAL_GATE_ENABLED=true` |
 | [`05-support-assistant.yaml`](05-support-assistant.yaml) | The complete flow shown in the root README: classification, conditional retrieval, and an action branch | A `handbook` collection for questions; Gate with `ticket_create` for actions |
 
-The quickstart stack starts Search and Gate but ingests no documents and declares no tools, so
-flows 3 through 5 load and run without infrastructure errors — their retrieval and tool branches
-just have nothing to retrieve or call until you add the stated collection or tools.
+The quickstart stack starts Search and Gate but ingests no documents and declares no tools.
+Flows 3 through 5 therefore validate and load, but their retrieval or tool branches are not a
+successful governed demo until you add the stated collection or tools. Depending on the branch,
+execution can return no context, a tool-not-found result, or an execution error; use
+`quickstart.yaml` and `02-routed-support.yaml` for infrastructure-free runs.
 
 ## Things worth noticing
 
