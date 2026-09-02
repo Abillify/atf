@@ -119,8 +119,8 @@ export interface PersistenceResult {
 }
 
 /**
- * Tables that MUST have RLS enabled and enforced in production (from
- * `deploy/postgres-rls.sql`).
+ * Tables that MUST have RLS enabled and enforced in production. The setup and
+ * status commands use the canonical list in `db/rls-onboarding.ts`.
  */
 const RLS_TENANT_TABLES = [
   "cost_ledger",

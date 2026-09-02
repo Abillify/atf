@@ -2,10 +2,11 @@
 
 The operator and governance interface. Next.js 16, React 19, Tailwind 4.
 
-Control is a **pure client** of [`@atf/runtime`](../runtime)'s HTTP API and SSE monitoring
-stream. It holds no private configuration, talks to no database, and reaches no model provider.
-That boundary is deliberate: Control can be deployed behind a different ingress, restricted to
-an internal network, or omitted entirely without affecting Runtime.
+Control uses [`@atf/runtime`](../runtime)'s HTTP API and SSE monitoring stream. Its Next.js
+server supplies the web application and optional response headers, but it holds no provider or
+database credentials, talks to no database, and reaches no model provider. That boundary is
+deliberate: Control can be deployed behind a different ingress, restricted to an internal
+network, or omitted entirely without affecting Runtime.
 
 ## Run it
 
@@ -16,9 +17,9 @@ cp apps/control/.env.example apps/control/.env
 PORT=3001 bun run --filter @atf/control dev
 ```
 
-Control is then available at <http://127.0.0.1:3001> and expects Runtime at the
-`NEXT_PUBLIC_BACKEND_URL` configured in `apps/control/.env`. The simplest way to run both is
-[`deploy/examples/`](../../deploy/examples/).
+Control is then available at <http://127.0.0.1:3001>. The example environment sets
+`NEXT_PUBLIC_BACKEND_URL=http://127.0.0.1:3000` for development without a proxy. The simplest way
+to run the services together is [`deploy/examples/`](../../deploy/examples/).
 
 ```bash
 bun run --filter @atf/control test        # Vitest unit and component tests
@@ -43,13 +44,16 @@ bun run --filter @atf/control build
 
 ## Configuration
 
-Two variables, both in [`.env.example`](.env.example):
+Two optional variables are documented in [`.env.example`](.env.example):
 
-- `NEXT_PUBLIC_BACKEND_URL` — Runtime's base URL **as reached from the browser**, not from
-  inside a container. Next.js inlines `NEXT_PUBLIC_*` at build time, so it must be set for
-  `bun run build`, not only at start.
-- `CONTROL_CSP_MODE` — `strict` (default) sends a hardened Content-Security-Policy. `legacy`
-  relaxes it and exists for the local quickstart only.
+- `NEXT_PUBLIC_BACKEND_URL` — explicit development or cross-origin Runtime base URL as reached
+  from the browser. Next.js freezes `NEXT_PUBLIC_*` into the browser bundle at build time. Omit
+  it in production to use relative same-origin URLs; the deployment's reverse proxy must then
+  route Runtime paths because Control has no built-in API rewrite.
+- `CONTROL_CSP_MODE` — `legacy` (default) emits no CSP header. `report-only` emits
+  `Content-Security-Policy-Report-Only` so operators can observe violations before deciding on
+  an enforcement policy at their ingress. Control currently never emits an enforcement
+  `Content-Security-Policy` header.
 
 ## Testing
 

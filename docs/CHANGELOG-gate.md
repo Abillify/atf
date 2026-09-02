@@ -22,7 +22,7 @@ this file.
 
 ## Capabilities
 
-These are present on the `0.1.0` development line. They do not constitute a
+These are present on the pre-1.0 development line. They do not constitute a
 stable `1.0.0` release until package metadata, release notes, artifacts, and
 compatibility commitments are updated together.
 

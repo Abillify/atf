@@ -2,12 +2,13 @@
 
 Contributions are welcome: bug reports, reproductions, documentation fixes, tests, and code.
 
-ATF is licensed under the [Elastic License 2.0](LICENSE.md). Contributions are accepted under
-that license. There is no Contributor License Agreement; every commit instead carries the
-project-specific [ATF Source-Available Contribution Certificate](CONTRIBUTION_CERTIFICATE.md)
-trailer. The certificate records provenance and the Elastic-2.0 grant without describing ATF as
-open source or granting future relicensing rights. See [LICENSING.md](LICENSING.md) for the
-reasoning and for what would change if that ever needed to be revisited.
+ATF is source-available under the [Elastic License 2.0](LICENSE.md). Before contributing, each
+individual or legal entity must separately execute the versioned
+[ATF Contributor Copyright Assignment Agreement 1.0](CONTRIBUTOR_ASSIGNMENT_AGREEMENT.md).
+Each commit carries a trailer documenting coverage by that existing Agreement; the trailer does
+not execute the Agreement or replace any required legal form. The assignment enables Abillify
+Technology GmbH to license accepted Contributions under Elastic-2.0 and other terms, including
+commercial and dual- or multi-license terms. See [LICENSING.md](LICENSING.md).
 
 ## Before you start
 
@@ -75,23 +76,26 @@ fix(gate): preserve calendar semantics in the PostgreSQL DATE parser
 docs(readme): document the quickstart port overrides
 ```
 
-Every commit must carry the project-specific contribution certification trailer:
+Every commit must carry the contributor-assignment acceptance trailer:
 
 ```text
-ATF-Contribution-Certified-by: Full Name <name@example.com>
+ATF-Contributor-Assignment-Accepted: 1.0, Full Name <name@example.com>
 ```
 
 Add it with:
 
 ```bash
-git commit --trailer "ATF-Contribution-Certified-by: Full Name <name@example.com>"
+git commit --trailer "ATF-Contributor-Assignment-Accepted: 1.0, Full Name <name@example.com>"
 ```
 
-Use your real name and an address you can be reached at. By adding the trailer you accept the
-[ATF Source-Available Contribution Certificate](CONTRIBUTION_CERTIFICATE.md), which is tailored
-to Elastic-2.0 and is neither the Linux Foundation DCO nor a CLA. Pull-request CI validates the
-trailer on every commit introduced by the PR; configure that Hygiene check as a required branch
-protection status.
+Use your real name and a reachable address. The trailer documents that you are covered by a
+separately executed [ATF Contributor Copyright Assignment Agreement
+1.0](CONTRIBUTOR_ASSIGNMENT_AGREEMENT.md); it does not execute the Agreement or replace a
+signature or other legally required form. Execute either the Individual Agreement or, for
+organizational contributions, a Corporate Agreement identifying the legal entity, authorized
+representative, and covered contributor identities before contributing. Pull-request CI uses
+`git interpret-trailers` to validate the exact versioned trailer on every commit introduced by
+the PR; configure that Hygiene check as a required branch-protection status.
 
 ## Code expectations
 
@@ -124,17 +128,26 @@ personal data, credentials, real endpoints, production traces, or internal analy
 enforced by `bun run verify:public`, but the check is a safety net, not a substitute for
 judgment.
 
-## Third-party material
+## Third-party and AI-generated material
 
-Do not copy code, prompts, documentation, fixtures, or media into ATF unless its provenance
-and license compatibility are documented in the pull request. Preserve third-party copyright
-and license notices. If you used a code generation tool, you are still certifying under the
-[ATF Source-Available Contribution Certificate](CONTRIBUTION_CERTIFICATE.md) that you have the
-right to submit the result.
+Do not copy code, prompts, documentation, fixtures, or media into ATF unless its provenance and
+license compatibility are documented in the pull request. Preserve all third-party copyright,
+attribution, license, and other notices: the Contributor Agreement transfers only rights held by
+the Contributor and does not change third-party terms.
+
+Disclose material produced with generative-AI or other automated tools, including relevant tool
+and output provenance. Review the applicable terms and output sufficiently to confirm that the
+covered rights holder can submit it under the Contributor Agreement. A bot, service account, or
+generated contribution must be tied to an individual or corporate rights holder whose separately
+executed Agreement covers that contributor identity; a bot cannot accept the Agreement for
+itself.
 
 ## Review
 
 Maintainers review for correctness, security posture, contract boundaries, and test coverage.
+Before merge, they also verify that every contributor identity is covered by a separately
+executed Individual or Corporate Agreement 1.0 and that corporate authority and schedule details
+are adequate.
 Expect questions about failure modes. A pull request that changes defaults, adds a dependency,
 or touches authentication, authorization, tenancy, or the compliance path will get a closer
 look and may take longer.

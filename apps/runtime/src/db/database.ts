@@ -47,9 +47,9 @@ export interface Database {
    * When tenant scoping is disabled (the default) this is a pure pass-through
    * — `cb` runs against the shared client with no transaction and no GUC — so
    * behaviour is byte-for-byte identical to a direct `query`. The RLS policies
-   * in `deploy/postgres-rls.sql` only take effect once both the GUC is set
-   * (TENANT_RLS_ENABLED=true) and the script has been applied with a
-   * least-privilege app role. See docs/adr/0005-tenant-data-isolation.md.
+   * installed by `bun run scripts/cli.ts rls-setup --confirm` only take effect
+   * once the GUC is set (`TENANT_RLS_ENABLED=true`) and the application uses a
+   * least-privilege role. See docs/adr/0005-tenant-data-isolation.md.
    *
    * Only tenant-scoped data paths should use this. Cross-tenant/privileged
    * paths (API-key authentication lookup, the operator history/audit plane,

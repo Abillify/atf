@@ -17,8 +17,11 @@
  *   - modelRules:  which models / providers are allowed or blocked per tenant /
  *                  data-classification context.
  *
- * The schema is validated at load time (Zod). A malformed policy fails closed:
- * all requests are rejected until the policy is repaired or disabled.
+ * The loader validates the schema when a policy file is present. A malformed
+ * file is rejected by the loader, which currently disables the policy and
+ * therefore behaves allow-all; `failClosed` applies only to exceptions raised
+ * while evaluating an already loaded policy. Deployments that require policy
+ * enforcement must monitor the loaded state.
  *
  * No `any` at module boundaries.
  */

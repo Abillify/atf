@@ -7,7 +7,7 @@
 <p align="center">
   <a href="https://github.com/abillify/atf/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/abillify/atf/actions/workflows/ci.yml/badge.svg"></a>
   <a href="LICENSE"><img alt="License: Elastic-2.0" src="https://img.shields.io/badge/license-Elastic--2.0-blue"></a>
-  <a href="CHANGELOG.md"><img alt="Release: 0.1.0" src="https://img.shields.io/badge/release-0.1.0-orange"></a>
+  <a href="CHANGELOG.md"><img alt="Release: 0.1.1" src="https://img.shields.io/badge/release-0.1.1-orange"></a>
   <img alt="Bun 1.3.14" src="https://img.shields.io/badge/bun-1.3.14-black">
   <img alt="Node 26" src="https://img.shields.io/badge/node-26-brightgreen">
   <img alt="TypeScript 7" src="https://img.shields.io/badge/typescript-7.0.2-3178c6">
@@ -24,7 +24,7 @@ actions, proving to a regulator what happened, and knowing what it cost.
 Four applications, connected by explicit versioned contracts and open protocols. Each one is
 deployable on its own.
 
-> **Project status:** ATF is at `0.1.0`: complete enough to evaluate the local service wiring
+> **Project status:** ATF is at `0.1.1`: complete enough to evaluate the local service wiring
 > end to end, but still pre-1.0. Governed capabilities require explicit configuration and
 > verification for each deployment. Contract packages already carry compatibility guarantees;
 > flow fields, environment variables, and HTTP routes may still change with documented
@@ -106,7 +106,7 @@ flowchart LR
 | Application | Role |
 | --- | --- |
 | [`apps/runtime`](apps/runtime) | Executes flow graphs, enforces policy, guardrails, approvals, and the PII vault. Serves an OpenAI-compatible API |
-| [`apps/control`](apps/control) | Operator and governance UI. A pure client of Runtime's API |
+| [`apps/control`](apps/control) | Operator and governance UI. Uses Runtime's HTTP API and SSE stream; deployment routing remains external |
 | [`apps/search`](apps/search) | Semantic and hybrid retrieval on PostgreSQL/pgvector. No separate vector database |
 | [`apps/gate`](apps/gate) | MCP gateway. Turns YAML into governed, identity-aware tools |
 
@@ -217,14 +217,16 @@ setting that governs it.
   per-user OIDC consent.
 - **Safety** — guardrails on input and output, egress DLP, tool *output* checked for injected
   instructions, scheduled red teaming, sandboxed plugins.
-- **Governance** — approvals that reject on timeout, `compliance-policy.yaml` enforced as code,
-  hash-chained audit log, signed evidence bundles, generated dossier.
+- **Governance** — approvals that reject on timeout, an explicitly loaded
+  `compliance-policy.yaml`, hash-chained audit records, signed evidence bundles, and a generated
+  dossier when their required controls are configured.
 - **Quality** — datasets with judge scoring, canary promotion, replay, and shadow mode that
   measures a candidate against real traffic without ever showing a user a worse answer.
 - **Cost** — objective-driven routing, fallback chains with circuit breakers, three cache
   layers, hard per-tenant budgets, FinOps forecasting with CO2 accounting.
-- **Operations** — multi-tenancy on PostgreSQL row-level security, BYOK, OIDC and RBAC,
-  OpenTelemetry and Prometheus, per-execution debug traces, durable execution.
+- **Operations** — application-scoped multi-tenancy with optional PostgreSQL row-level-security
+  hardening, BYOK, OIDC and RBAC, OpenTelemetry and Prometheus, per-execution debug traces, and
+  optional durable execution.
 
 ## Development
 
@@ -256,7 +258,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | --- | --- |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Applications, contracts, request path, design rules |
 | [docs/CAPABILITIES.md](docs/CAPABILITIES.md) | Every capability and the settings that govern it |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Generated configuration reference (418 variables in this release) |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Generated configuration reference; the current count is recorded in that generated file |
 | [DEPLOYMENT.md](DEPLOYMENT.md) | Production requirements and the supported boundary |
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |

@@ -94,7 +94,8 @@ function envSchemaBody(source: string): string {
 		);
 	}
 	const open = source.indexOf("z.object({", start);
-	if (open === -1) throw new Error("EnvSchema is no longer a z.object literal.");
+	if (open === -1)
+		throw new Error("EnvSchema is no longer a z.object literal.");
 
 	let depth = 0;
 	let index = open + "z.object(".length;
@@ -145,7 +146,8 @@ function lastAdjacentDocBlock(text: string): string | undefined {
 function normalizeDefault(raw: string): string {
 	const value = raw.replace(/\s+/g, " ").trim();
 	const unquoted = value.replace(/^["'`]|["'`]$/g, "");
-	if (/^-?[\d_]+(\.[\d_]+)?$/.test(unquoted)) return unquoted.replaceAll("_", "");
+	if (/^-?[\d_]+(\.[\d_]+)?$/.test(unquoted))
+		return unquoted.replaceAll("_", "");
 	return unquoted;
 }
 
@@ -174,8 +176,10 @@ function parseRuntime(source: string): Variable[] {
 		const optional = /\.optional\(\)/.test(entry);
 
 		let type = "string";
-		if (/z\s*\.\s*coerce\s*\.\s*number|z\s*\.\s*number/.test(entry)) type = "number";
-		else if (/z\s*\.\s*coerce\s*\.\s*boolean|z\s*\.\s*boolean/.test(entry)) type = "boolean";
+		if (/z\s*\.\s*coerce\s*\.\s*number|z\s*\.\s*number/.test(entry))
+			type = "number";
+		else if (/z\s*\.\s*coerce\s*\.\s*boolean|z\s*\.\s*boolean/.test(entry))
+			type = "boolean";
 		else if (enumMatch) type = "enum";
 		else if (/z\s*\.\s*array/.test(entry)) type = "list";
 		if (/JSON\.parse/.test(entry)) type = "JSON";
@@ -210,7 +214,9 @@ function parseRuntime(source: string): Variable[] {
 	}
 
 	if (variables.length === 0) {
-		throw new Error("Parsed zero Runtime variables; the EnvSchema parser is broken.");
+		throw new Error(
+			"Parsed zero Runtime variables; the EnvSchema parser is broken.",
+		);
 	}
 	return variables;
 }
@@ -239,9 +245,11 @@ function parseSearch(source: string): Variable[] {
 	}
 	const body = source.slice(open, end);
 
-	// e.g. `embedUrl: string; // EMBED_URL (required)`
+	// e.g. `embedUrl: string; // EMBED_URL (required)`. Keep every whitespace
+	// matcher line-local: `\s` would cross into the following JSDoc and previously
+	// misparsed the final `T` in `NODE_ENV` as an environment variable.
 	const pattern =
-		/^\s*(\w+)\??\s*:\s*([^;]+);\s*\/\/\s*([A-Z][A-Z0-9_]*)\s*(?:\(([^)]*)\))?/gm;
+		/^[\t ]*(\w+)\??[\t ]*:[\t ]*([^;\n]+);[\t ]*\/\/[\t ]*([A-Z][A-Z0-9_]*)[\t ]*(?:\(([^)\n]*)\))?/gm;
 	const seen = new Set<string>();
 	const variables: Variable[] = [];
 
@@ -260,9 +268,10 @@ function parseSearch(source: string): Variable[] {
 		else if (/\[\]/.test(tsType)) type = "list";
 		else if (/\|/.test(tsType) && /"/.test(tsType)) type = "enum";
 
-		const allowed = /\|/.test(tsType) && tsType.includes('"')
-			? [...tsType.matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
-			: undefined;
+		const allowed =
+			/\|/.test(tsType) && tsType.includes('"')
+				? [...tsType.matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
+				: undefined;
 
 		variables.push({
 			name,
@@ -274,8 +283,42 @@ function parseSearch(source: string): Variable[] {
 		});
 	}
 
+	// A small number of members document their environment contract in the
+	// adjacent JSDoc instead of a trailing comment (notably NODE_ENV).
+	const docPattern =
+		/\/\*\*([\s\S]*?)\*\/[\t \r\n]+(\w+)\??[\t ]*:[\t ]*([^;\n]+);/g;
+	for (const match of body.matchAll(docPattern)) {
+		const [, doc, member, tsType] = match;
+		const annotations = [
+			...doc.matchAll(
+				/\b([A-Z][A-Z0-9_]{2,})[\t ]*\((required|default:[^)]*)\)/g,
+			),
+		];
+		const annotation = annotations.at(-1);
+		if (!annotation) continue;
+		const [, name, note] = annotation;
+		if (seen.has(name)) continue;
+		seen.add(name);
+
+		const defaultMatch = /default:\s*(.+)$/i.exec(note);
+		let type = "string";
+		if (/number/.test(tsType)) type = "number";
+		else if (/boolean/.test(tsType)) type = "boolean";
+		else if (/\[\]/.test(tsType)) type = "list";
+
+		variables.push({
+			name,
+			type,
+			required: /^required$/i.test(note.trim()),
+			default: defaultMatch?.[1]?.trim().replace(/^["']|["']$/g, ""),
+			description: `Config member \`${member}\``,
+		});
+	}
+
 	if (variables.length === 0) {
-		throw new Error("Parsed zero Search variables; the Config parser is broken.");
+		throw new Error(
+			"Parsed zero Search variables; the Config parser is broken.",
+		);
 	}
 	return variables;
 }
@@ -362,10 +405,14 @@ function renderTable(variables: Variable[]): string[] {
 		"| Variable | Type | Required | Default | Notes |",
 		"| --- | --- | --- | --- | --- |",
 	];
-	for (const variable of [...variables].sort((a, b) => a.name.localeCompare(b.name))) {
+	for (const variable of [...variables].sort((a, b) =>
+		a.name.localeCompare(b.name),
+	)) {
 		const notes: string[] = [];
 		if (variable.allowed?.length) {
-			notes.push(`one of ${variable.allowed.map((v) => `\`${v}\``).join(", ")}`);
+			notes.push(
+				`one of ${variable.allowed.map((v) => `\`${v}\``).join(", ")}`,
+			);
 		}
 		if (variable.unvalidated) {
 			notes.push("**read directly — not validated at startup**");
@@ -389,7 +436,10 @@ function renderTable(variables: Variable[]): string[] {
 }
 
 function render(sections: Section[]): string {
-	const total = sections.reduce((sum, section) => sum + section.variables.length, 0);
+	const total = sections.reduce(
+		(sum, section) => sum + section.variables.length,
+		0,
+	);
 	const lines = [
 		"# Configuration reference",
 		"",
@@ -434,8 +484,8 @@ function render(sections: Section[]): string {
 		"```bash",
 		'PROVIDERS=\'[{"name":"eu-openai","protocol":"openai","url":"https://…/v1","apiKey":"…"},',
 		'            {"name":"local","protocol":"openai","url":"http://127.0.0.1:1234/v1","local":true}]\'',
-		"DEFAULT_LLM='{\"provider\":\"eu-openai\",\"model\":\"a-chat-model\"}'",
-		"FALLBACK_LLM='{\"provider\":\"local\",\"model\":\"a-local-model\"}'",
+		'DEFAULT_LLM=\'{"provider":"eu-openai","model":"a-chat-model"}\'',
+		'FALLBACK_LLM=\'{"provider":"local","model":"a-local-model"}\'',
 		"```",
 		"",
 		"Optional provider fields: `url`, `apiKey`, `region`, `accessKeyId`, `secretAccessKey`, `sessionToken`, `resourceName`, `apiVersion`, `local`. Supported `protocol` values are `openai`, `google`, `anthropic`, `azure`, `bedrock`, and `ollama`.",
@@ -506,19 +556,20 @@ const sections: Section[] = [
 	},
 	{
 		service: "Control",
-		source: "apps/control/src (environment reads)",
+		source:
+			"apps/control/src (environment reads) and apps/control/next.config.ts",
 		intro:
-			"Control is a client of Runtime's HTTP API and holds no private configuration. `NEXT_PUBLIC_BACKEND_URL` is baked in at build time by Next.js, so it must be set for the build, not only at runtime.",
+			"Control uses Runtime's HTTP API and SSE stream. Relative same-origin Runtime URLs are the production default; the deployment must provide the reverse-proxy routing because Control has no internal API rewrite. `NEXT_PUBLIC_BACKEND_URL` is an explicit development or cross-origin override frozen into the browser bundle at build time.",
 		variables: [
 			...(await parseEnvReads(["apps/control/src"])),
 			{
 				name: "CONTROL_CSP_MODE",
 				type: "enum",
 				required: false,
-				default: "strict",
-				allowed: ["strict", "legacy"],
+				default: "legacy",
+				allowed: ["legacy", "report-only"],
 				description:
-					"Read by `next.config.ts` at build and start time. `legacy` relaxes the Content-Security-Policy and is intended for the local quickstart only",
+					"Read by `next.config.ts`. `legacy` emits no CSP header; `report-only` emits only `Content-Security-Policy-Report-Only`. Control never emits an enforcement CSP header",
 			},
 		],
 	},

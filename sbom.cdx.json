@@ -10,22 +10,22 @@
           "type": "application",
           "author": "Abillify Technology GmbH <info@abillify.me>",
           "name": "ATF supply-chain generator",
-          "version": "2.1.0"
+          "version": "3.0.0"
         }
       ]
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.1.0",
+      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.1.1",
       "group": "Abillify Technology GmbH",
       "name": "aiperator-trust-fabric",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "licenses": [
         {
           "expression": "Elastic-2.0"
         }
       ],
-      "purl": "pkg:npm/aiperator-trust-fabric@0.1.0"
+      "purl": "pkg:npm/aiperator-trust-fabric@0.1.1"
     },
     "properties": [
       {
@@ -42,11 +42,11 @@
       },
       {
         "name": "atf:git:sha",
-        "value": "1ab60e0f57bde32de714871837c4ada6faf2b345"
+        "value": "unknown"
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "e91627b63acb22cf9e442f82d595c0cfe166d4890d981dcb27d3b854439045b2"
+        "value": "dc47b06a71e16e4324b805d87a6aff2be5b5997c50019f5356cebbc4a987eef4"
       }
     ]
   },

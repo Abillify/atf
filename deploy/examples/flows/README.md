@@ -29,6 +29,13 @@ successful governed demo until you add the stated collection or tools. Depending
 execution can return no context, a tool-not-found result, or an execution error; use
 `quickstart.yaml` and `02-routed-support.yaml` for infrastructure-free runs.
 
+[`compliance-policy.example.yaml`](compliance-policy.example.yaml) is a synthetic policy starting
+point and is intentionally ignored by both the flow validator and policy loader. Review and adapt
+its provider/model names, regions, tool patterns, retention periods, and approval prerequisites,
+then copy it to `FLOWS_DIR/compliance-policy.yaml` to activate it. A missing or invalid active
+policy currently disables policy enforcement, so verify Runtime's loaded-policy status rather
+than assuming the filename alone establishes a control.
+
 ## Things worth noticing
 
 **No `llm` block.** None of these flows pins a provider or model. They inherit `DEFAULT_LLM`, so

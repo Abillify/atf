@@ -54,9 +54,11 @@ need adaptation.
   protocols cover OpenAI-compatible endpoints, Google, Anthropic, Azure OpenAI, AWS Bedrock,
   and local servers such as Ollama or LM Studio. Provider references are validated at
   startup, not at first use.
-- **Streaming and multimodality.** Token streaming over SSE, image and file inputs, vision
-  models, and image generation. Reasoning output from thinking models is surfaced separately
-  from the answer.
+- **Streaming and multimodality.** Token streaming over SSE, image and file inputs, and vision
+  models. Image generation is available only when an `llm` node declares a `config.mediaTools`
+  generation tool (or a configured provider returns native generated media); generated files
+  are served through Runtime's transient media route. There is no standalone `/images` API.
+  Reasoning output from thinking models is surfaced separately from the answer.
 - **Agentic tool use.** A flow step can let the model select and call tools over MCP, then
   incorporate the results. `MAX_TOOL_STEPS` bounds the loop.
 - **Flow as MCP server.** A flow can itself be exposed as an MCP tool, which lets one ATF
@@ -92,8 +94,11 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
 
 - **Tools from configuration.** A YAML description becomes a validated MCP tool. No code is
   required to expose a query or an action.
-- **Database coverage.** PostgreSQL, MySQL, SQLite, SQL Server, and Oracle through Knex, plus
-  HTTP, MCP proxy, webhook, MQTT, and composite tool types.
+- **Database coverage.** Knex supports PostgreSQL, MySQL, SQLite, SQL Server, and Oracle
+  configurations. This repository installs and validates `pg` and `mysql2`; deployments using
+  SQLite, SQL Server, or Oracle must supply a Knex-compatible driver (`sqlite3` or
+  `better-sqlite3`, `tedious`, or `oracledb`) in the built artifact and verify it themselves.
+  Gate also supports HTTP, MCP proxy, webhook, MQTT, and composite tool types.
 - **Parameter binding only.** User input is always bound as a parameter and never
   interpolated into SQL.
 - **Identity-aware queries.** The verified caller identity flows into the query, so a tool
@@ -170,18 +175,30 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   forwarded (`PII_VAULT_MULTIMODAL_MODE`).
 - **Per-flow configuration.** Which detectors run and which types a flow tokenizes is set per
   flow, not only globally (`PII_VAULT_TYPES`, `PII_DETECTOR_FAIL_MODE`).
-- **Reversible by design.** This is stronger than output-only redaction, because the data
-  never leaves the deployment in plaintext in the first place.
+- **Reversible by design.** For values a configured detector successfully identifies, this is
+  stronger than output-only redaction because those detected values are replaced before the
+  provider call. It is not a blanket guarantee for undetected types, detector failures, or
+  unconfigured multimodal inputs.
 
 ## Compliance and evidence
 
-- **Policy as code.** `compliance-policy.yaml` declares per-tenant model blocklists, data
-  residency rules, and approval rules. Enforcement is automatic and blocking: a request to a
-  blocked model is refused before the graph engine starts, and approval rules fire across
-  every entry path, not only chat.
+- **Policy as code, with an explicit activation boundary.** A valid
+  `compliance-policy.yaml` in `FLOWS_DIR` can declare model allow/block rules, provider/data
+  rules, approval requirements, retention, and audit rules. Missing, unreadable, or
+  schema-invalid policy files currently disable this policy and therefore allow execution;
+  `failClosed` controls exceptions during evaluation, not loading. Deployments that rely on it
+  must validate the file and monitor Runtime's policy-loaded status. Start from
+  [`deploy/examples/flows/compliance-policy.example.yaml`](../deploy/examples/flows/compliance-policy.example.yaml).
+- **Enforcement points and limits.** Model/data admission is applied by the centralized
+  execution-admission path and chat preflight before graph execution; tool approval rules are
+  checked when configured `llm` and deterministic `tool` nodes invoke a tool. Approval rules
+  require the human approval gate to be enabled. A provider outside an allowlist or a known
+  disallowed region blocks; a required but unknown provider region is advisory rather than
+  blocking, so operators must supply region metadata when residency is a hard requirement.
 - **Explicit data classes.** A flow declares the data classes it processes. Classification is
-  deliberately declarative rather than inferred from request text, so a misclassification
-  cannot silently block legitimate traffic.
+  deliberately declarative rather than inferred from request text. Missing or incorrect
+  declarations prevent the corresponding data rule from matching, so flow review remains part
+  of the control.
 - **Tamper-evident audit log.** Audit entries are hash-chained and periodically anchored, so
   later modification is detectable (`AUDIT_ANCHOR_SECRET`, `AUDIT_ANCHOR_INTERVAL_MS`).
 - **Retention and erasure.** Configurable retention sweeps and targeted erasure support

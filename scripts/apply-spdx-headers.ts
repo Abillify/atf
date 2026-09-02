@@ -27,7 +27,11 @@ const HEADER_LINES = [
 const HEADER = `${HEADER_LINES.join("\n")}\n`;
 
 const IDENTIFIER_PATTERN = /^\/\/\s*SPDX-License-Identifier:\s*(.+?)\s*$/m;
-const COPYRIGHT_PATTERN = /^\/\/\s*SPDX-FileCopyrightText:\s*(.+?)\s*$/m;
+const COPYRIGHT_PATTERN = /^\/\/\s*SPDX-FileCopyrightText:\s*(.+?)\s*$/gm;
+
+function copyrightMatches(source: string): RegExpMatchArray[] {
+	return [...source.matchAll(COPYRIGHT_PATTERN)];
+}
 
 const SOURCE_GLOBS = ["*.ts", "*.tsx"];
 const EXCLUDED_PATH =
@@ -85,25 +89,37 @@ type Outcome = "ok" | "inserted" | "corrected" | "missing" | "wrong";
 async function applyHeader(path: string): Promise<Outcome> {
 	const source = await readFile(path, "utf8");
 	const identifier = IDENTIFIER_PATTERN.exec(source);
-	const copyright = COPYRIGHT_PATTERN.exec(source);
+	const copyrights = copyrightMatches(source);
+	const hasRequiredCopyright = copyrights.some(
+		(match) => match[1] === COPYRIGHT,
+	);
 
-	if (identifier?.[1] === LICENSE_ID && copyright?.[1] === COPYRIGHT) return "ok";
+	if (identifier?.[1] === LICENSE_ID && hasRequiredCopyright) return "ok";
 
-	// A header exists but states something else: correct it in place rather than adding a
-	// second, contradictory header.
-	if (identifier || copyright) {
+	// Correct only the project license identifier. Existing copyright holders are evidence of
+	// file provenance and must never be replaced or removed; add Abillify alongside them.
+	if (identifier || copyrights.length > 0) {
 		if (checkOnly) return "wrong";
 		let updated = source;
-		updated = identifier
-			? updated.replace(IDENTIFIER_PATTERN, HEADER_LINES[0])
-			: updated;
-		updated = copyright
-			? updated.replace(COPYRIGHT_PATTERN, HEADER_LINES[1])
-			: updated;
-		if (!identifier) {
-			updated = updated.replace(COPYRIGHT_PATTERN, HEADER_LINES.join("\n"));
-		} else if (!copyright) {
-			updated = updated.replace(IDENTIFIER_PATTERN, HEADER_LINES.join("\n"));
+		if (identifier) {
+			updated = updated.replace(IDENTIFIER_PATTERN, HEADER_LINES[0]);
+		} else {
+			const firstCopyright = copyrightMatches(updated)[0];
+			const index = firstCopyright?.index;
+			if (index === undefined) throw new Error(`Unable to locate copyright in ${path}`);
+			updated = `${updated.slice(0, index)}${HEADER_LINES[0]}\n${updated.slice(index)}`;
+		}
+
+		if (!hasRequiredCopyright) {
+			const updatedCopyrights = copyrightMatches(updated);
+			const lastCopyright = updatedCopyrights.at(-1);
+			const index = lastCopyright?.index;
+			if (index === undefined) {
+				updated = updated.replace(IDENTIFIER_PATTERN, HEADER_LINES.join("\n"));
+			} else {
+				const end = index + lastCopyright[0].length;
+				updated = `${updated.slice(0, end)}\n${HEADER_LINES[1]}${updated.slice(end)}`;
+			}
 		}
 		await writeFile(path, updated);
 		return "corrected";

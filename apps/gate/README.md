@@ -43,9 +43,12 @@ bun run --filter @atf/gate build
 A tool is a YAML declaration: its backend, its parameter schema, and the scopes required to
 invoke it. No code.
 
-Backends: **SQL** through Knex (PostgreSQL, MySQL, SQLite, SQL Server, Oracle), **HTTP**,
-**MQTT**, **MCP proxy** to another server, **webhook**, **inline** built-in handlers,
-**composite** tools that combine several of the above, and one purpose-built backend,
+Backends: **SQL** through Knex, with `pg` and `mysql2` installed by this repository. Knex can
+also target SQLite, SQL Server, or Oracle when the deployment supplies the corresponding
+compatible driver (`sqlite3`/`better-sqlite3`, `tedious`, or `oracledb`) in the built artifact;
+those combinations are not covered by this repository's installed dependency set. Other
+backends are **HTTP**, **MQTT**, **MCP proxy** to another server, **webhook**, **inline** built-in
+handlers, **composite** tools that combine several of the above, and one purpose-built backend,
 [**`taigaApi`**](#the-taigaapi-backend).
 
 ```yaml

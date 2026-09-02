@@ -63,15 +63,17 @@ remain deployment review items, which is why the list above is longer than what 
 ### Supply-chain inventories per artifact and platform
 
 The committed root `sbom.cdx.json` and `THIRD_PARTY_NOTICES.md` are the byte-stable
-**Linux x64 workspace reference**. Their Git SHA identifies the commit that last changed
-`bun.lock`; Linux CI regenerates the reference with that value and compares both files
-byte-for-byte. Do not regenerate these root files on macOS while labeling them as Linux.
+**Linux x64 workspace reference**. They deliberately record Git SHA `unknown`: embedding the
+commit that changes a committed generated file would create a self-referential two-commit
+artifact cycle. The project version and SHA-256 of `bun.lock` identify the reference inputs;
+Linux CI regenerates with the same stable metadata and compares both files byte-for-byte. Do
+not regenerate these root files on macOS while labeling them as Linux.
 
 Every CI run also creates commit-specific workspace inventories natively on `linux-x64` and
 `darwin-arm64`. Their directory and artifact names include the exact `github.sha`; the macOS
 inventory is a separate release artifact and never replaces the committed Linux reference.
-Both notices and CycloneDX metadata record project version, commit, platform, artifact kind/name,
-and the SHA-256 of `bun.lock`.
+Commit-specific notices and CycloneDX metadata record the exact commit; all inventories record
+project version, platform, artifact kind/name, and the SHA-256 of `bun.lock`.
 
 The Dockerfile under `deploy/examples` is Quickstart-only. After its in-image `bun install`,
 each final target (`runtime`, `control`, `search`, and `gate`) generates an inventory from that
@@ -103,6 +105,11 @@ schemas themselves. Per-service annotated templates:
 [`apps/gate/.env.example`](apps/gate/.env.example),
 [`apps/control/.env.example`](apps/control/.env.example).
 
-One deployment-time trap worth calling out: Next.js inlines `NEXT_PUBLIC_*` at **build** time, so
-`NEXT_PUBLIC_BACKEND_URL` must be set when Control is built, not only when it starts. It must
-also be the URL the **browser** can reach, not an in-cluster service name.
+Control defaults to relative Runtime URLs in production. An external same-origin reverse proxy
+must route the Runtime paths used by the browser (including `/v1/*`, `/monitoring/*`, and health
+requests) to Runtime; Control does not provide an internal Next.js rewrite or proxy.
+
+`NEXT_PUBLIC_BACKEND_URL` is an explicit development or cross-origin escape hatch. When set,
+Next.js freezes this public value into the browser bundle at **build** time, so it must be the URL
+the browser can reach, not an in-cluster service name. Omit it from reusable production builds
+to preserve relative same-origin routing.

@@ -4,10 +4,10 @@
 /**
  * RLS onboarding helper (`src/db/rls-onboarding.ts`)
  *
- * Turns the manual, easy-to-skip "apply deploy/postgres-rls.sql yourself"
- * step into an explicit, scriptable onboarding action with a clear
- * multi-tenant risk signal — so a Row-Level-Security rollout is a guided
- * checklist item rather than a documentation page an operator can miss.
+ * Turns the manual, easy-to-skip RLS DDL step into an explicit, scriptable
+ * onboarding action with a clear multi-tenant risk signal — so a
+ * Row-Level-Security rollout is a guided checklist item rather than a
+ * documentation page an operator can miss.
  *
  * Backs `bun run scripts/cli.ts rls-status` / `rls-setup` (see scripts/cli.ts)
  * and is unit-tested against a fake {@link Database} — no real Postgres is
@@ -20,11 +20,9 @@
  *     WHY this matters for their specific deployment, not just an abstract
  *     recommendation.
  *   - `applyRlsOnboarding` is the only function that mutates the database. It
- *     requires an explicit `confirm: true` — the CLI only sets this after the
- *     operator has seen the plan and (in interactive mode) typed a
- *     confirmation. It executes the same statements as
- *     `deploy/postgres-rls.sql` (kept in sync manually — see the module-level
- *     comment on {@link RLS_SETUP_STATEMENTS}) and re-verifies afterwards.
+ *     requires an explicit `confirm: true` — the CLI only sets this with
+ *     `--confirm` after printing the plan. The reviewed DDL is defined in this
+ *     module so the CLI has one executable source of truth.
  *
  * No `any` at module boundaries.
  */
@@ -222,13 +220,11 @@ export async function applyRlsOnboarding(
 }
 
 /**
- * The DDL applied by {@link applyRlsOnboarding}. Kept in sync with
- * `deploy/postgres-rls.sql` MANUALLY — that file is the canonical,
- * human-reviewed reference (it also documents the `api_keys` exclusion and
- * the BYPASSRLS operator-role rationale in full); this array exists so the
- * same statements can be run programmatically from the CLI without shelling
- * out to `psql`. Every statement is idempotent (`IF NOT EXISTS` / safe
- * `DROP ... IF EXISTS`), so this can be re-run safely.
+ * The reviewed DDL applied by {@link applyRlsOnboarding}. This array is the
+ * executable source of truth used by the CLI; the public ADR documents the
+ * plan, activation sequence, and residual deployment responsibilities.
+ * Every statement is idempotent (`IF NOT EXISTS` / safe `DROP ... IF EXISTS`),
+ * so the setup can be re-run after an upgrade and then re-verified.
  */
 const RLS_SETUP_STATEMENTS: readonly string[] = [
   `DO $$

@@ -68,6 +68,8 @@ body:
         - label: I searched existing issues and discussions
           required: true
         - label: >-
-            I understand ATF is source-available under the Elastic License 2.0 and that a
-            contribution would be accepted under that license
+            I understand ATF is source-available under the Elastic License 2.0 and that accepted
+            contributions require a separately executed Contributor Copyright Assignment to
+            Abillify, enabling proprietary, commercial, and dual- or multi-license use while
+            leaving mandatory inalienable rights and third-party material unaffected
           required: true
