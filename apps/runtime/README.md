@@ -87,9 +87,9 @@ Flows are YAML documents in `FLOWS_DIR`, validated against
 [`schemas/flow.schema.json`](schemas/flow.schema.json) and reloaded without a restart.
 
 Node types: `llm`, `tool`, `router`, `classifier`, `parallel`, `retrieval`, `memory`,
-`agent-harness`. Any other type string resolves through the plugin node-handler registry. Edges
-carry conditions evaluated by a safe expression evaluator against run state and classifier
-output.
+`agent-harness`, `transform`, `trigger`, `assistant-context`, and `assistant-learn`. Any other
+type string resolves through the plugin node-handler registry. Edges carry conditions evaluated
+by a safe expression evaluator against run state and classifier output.
 
 Examples: [`deploy/examples/flows/`](../../deploy/examples/flows/).
 

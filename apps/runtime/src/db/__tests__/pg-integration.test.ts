@@ -610,7 +610,7 @@ suite("Postgres — cluster-wide semantic cache (pgvector)", () => {
 
 suite("Postgres — enforced RLS tenant isolation", () => {
   // RLS is bypassed for superusers/table owners, so we connect as a dedicated
-  // least-privilege role (exactly what deploy/postgres-rls.sql provisions) with
+  // least-privilege role (matching what the RLS onboarding CLI provisions) with
   // tenant scoping on — what a TENANT_RLS_ENABLED=true deployment uses.
   let scopedDb: Database;
   const APP_ROLE = "rls_app_test";
@@ -736,7 +736,7 @@ suite("Postgres — BYPASSRLS operator pool", () => {
          END IF;
        END $$`,
     );
-    // Operator role WITH BYPASSRLS (what deploy/postgres-rls.sql provisions).
+    // Operator role WITH BYPASSRLS (matching what the RLS onboarding CLI provisions).
     await db.query(
       `DO $$ BEGIN
          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${OP_ROLE}') THEN

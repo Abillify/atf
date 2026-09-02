@@ -1,15 +1,18 @@
 # Vendored license texts
 
-The supply-chain gate requires a complete license text for every recognized standard license family in every installed component's declared expression. Resolution is fail-closed and occurs in this order:
+The supply-chain gate accepts only syntactically valid SPDX expressions that normalize to the explicit allowlist in `scripts/generate-supply-chain.ts`. It requires a plausible complete text for every license identifier in an accepted expression, including every `OR` branch. Resolution is fail-closed and occurs in this order:
 
 1. top-level `LICENSE`, `LICENCE`, `COPYING`, and package-specific `NOTICE` files shipped by the package;
 2. exact package/version/repository-bound license sections embedded in another shipped file through `PACKAGE_EMBEDDED_LICENSE_RULES`;
 3. repository-root `LICENSE`, `LICENCE`, or `COPYING` files reused only through an explicit `REPOSITORY_LICENSE_REUSE_RULES` entry;
 4. package- or genuine upstream-project-family files registered in `SUPPLEMENTAL_RULES`;
 5. exact-version declared-license fallbacks registered in `DECLARED_LICENSE_FALLBACK_RULES`, only when reviewed upstream artifacts omit both the complete text and copyright notice;
-6. the canonical Apache-2.0 family text, added to every expression containing `Apache-2.0`.
+6. exact package/version/license/repository-bound missing expression branches registered in `EXPRESSION_LICENSE_SUPPLEMENT_RULES`;
+7. the canonical Apache License 2.0 standard text, added to every expression containing `Apache-2.0` and protected by a fixed SHA-256 guard.
 
-Package-embedded and repository-reuse rules never accept arbitrary prose or copy `NOTICE` from another package. Every rule fixes the target package, declared license, source and rationale; embedded and fallback rules additionally fix the exact version and normalized repository URL. A changed version, license, repository, source package, filename, or section fails generation. Declared-license fallbacks state the missing upstream copyright notice explicitly and never infer a holder or year.
+The canonical Apache text is the unmodified Apache License 2.0 standard text, including the standard Appendix placeholder; it has no AWS or other package provenance. Package-specific `NOTICE` and attribution files remain separate and are retained independently.
+
+Package-embedded, repository-reuse, expression-supplement, and fallback rules never accept arbitrary prose or copy `NOTICE` from another package. Every rule fixes the target package, declared license, source and rationale; embedded, expression-supplement, and fallback rules additionally fix the exact version and normalized repository URL. A changed version, license, repository, source package, filename, or section fails generation. Declared-license fallbacks state the missing upstream copyright notice explicitly and never infer a holder or year.
 
 ## Reviewed package-embedded license sections
 
@@ -30,13 +33,20 @@ Package-embedded and repository-reuse rules never accept arbitrary prose or copy
 
 The reused bytes come from the named installed source package, so the lockfile fixes the exact source version. Reviewed repository roots: [Vercel AI](https://github.com/vercel/ai/tree/82bd64aa07c97dd53db2b7f5143cb93720b51869), [AWS SDK v3](https://github.com/aws/aws-sdk-js-v3/tree/e80cab3d6831ad16c976bd65ba28a3467e1163e6), [Biome](https://github.com/biomejs/biome/tree/f4e5ebb40e64d4488166bf0f2b7d8d96a6118016), [Rolldown](https://github.com/rolldown/rolldown/tree/4e92ff35a6ab2904114c82e808b0b4f7a3ac0170), and [cookie-signature](https://github.com/visionmedia/node-cookie-signature/tree/b7bd4cb9500bfa5e696143f51d61e5f24f7a625d).
 
+## Reviewed missing expression branches
+
+| Package | Version | Expected license | Repository | Vendored text | Reason |
+| --- | --- | --- | --- | --- | --- |
+| `type-fest` | `0.13.1` | `(MIT OR CC0-1.0)` | `sindresorhus/type-fest` | `CC0-1.0.txt` | The published package supplies its MIT text but omits the CC0-1.0 branch. The exact immutable package identity receives the complete CC0 legal code; any version, expression, or repository change fails closed. |
+
 ## Vendored files
 
-Each file below is copied verbatim from the linked authoritative upstream file. `Applies to` is the exact package regex; generation also requires the exact license expression.
+Each file below is sourced from the linked authoritative upstream text. `Applies to` is the exact package regex; generation also requires the exact license expression.
 
 | File | Applies to | Expected license | Exact upstream source |
 | --- | --- | --- | --- |
-| `Apache-2.0.txt` | every package whose expression contains `Apache-2.0` | expression contains `Apache-2.0` | [AWS SDK v3 `LICENSE`](https://github.com/aws/aws-sdk-js-v3/blob/e80cab3d6831ad16c976bd65ba28a3467e1163e6/LICENSE) |
+| `Apache-2.0.txt` | every package whose expression contains `Apache-2.0` | expression contains `Apache-2.0` | [Apache License, Version 2.0 canonical text](https://www.apache.org/licenses/LICENSE-2.0.txt) |
+| `CC0-1.0.txt` | exact `type-fest@0.13.1` expression-supplement rule only | `(MIT OR CC0-1.0)` | [Creative Commons CC0 1.0 Universal legal code](https://creativecommons.org/publicdomain/zero/1.0/legalcode.txt) |
 | `LGPL-3.0.txt` | `^@img/sharp-libvips(?:-\|$)` | `LGPL-3.0-or-later` | [SPDX `LGPL-3.0-or-later.txt`](https://github.com/spdx/license-list-data/blob/a3cbf2e897d54bccec0c35469c691521d089ef53/text/LGPL-3.0-or-later.txt) |
 | `cfworker-json-schema-MIT.txt` | `^@cfworker/json-schema$` | `MIT` | [cfworker `LICENSE.md`](https://github.com/cfworker/cfworker/blob/53401039978aaacc5961d6fc0f2c64f7927ea260/LICENSE.md) |
 | `nextjs-MIT.txt` | `^@next/(?:env\|swc-.+)$` | `MIT` | [Next.js `license.md`](https://github.com/vercel/next.js/blob/9c626ac94b8bcd8195e4f4d789824f90e0c95fe5/license.md) |

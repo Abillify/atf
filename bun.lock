@@ -13,7 +13,7 @@
     },
     "apps/control": {
       "name": "@atf/control",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@dagrejs/dagre": "3.1.1",
         "@swc/helpers": "0.5.23",
@@ -44,7 +44,7 @@
     },
     "apps/gate": {
       "name": "@atf/gate",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@atf/schema-compatibility": "workspace:1.0.0",
         "@aws-sdk/client-bedrock-runtime": "3.1121.0",
@@ -72,7 +72,7 @@
     },
     "apps/runtime": {
       "name": "@atf/runtime",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@ai-sdk/amazon-bedrock": "5.0.67",
         "@ai-sdk/anthropic": "4.0.45",
@@ -102,7 +102,7 @@
     },
     "apps/search": {
       "name": "@atf/search",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "3.1121.0",
         "@modelcontextprotocol/sdk": "1.30.0",
@@ -128,7 +128,7 @@
     },
     "integration/system": {
       "name": "@atf/system-integration",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "dependencies": {
         "@atf/contract-adapter": "workspace:1.0.0",
         "@atf/evidence-contract": "workspace:1.1.0",

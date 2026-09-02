@@ -31,7 +31,12 @@ curl --fail-with-body http://localhost:3000/v1/chat/completions \
   -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}'
 ```
 
-The response comes from `model-mock.py`; it demonstrates wiring, not model quality. Search embeddings are likewise deterministic three-dimensional smoke vectors and must never be used for relevance evaluation.
+The response comes from `model-mock.py`; it demonstrates the Runtime-to-model wiring, not model
+quality. The health checks confirm that Search and Gate start, but this curl does not exercise
+either service. The quickstart does not preload retrieval documents or governed tools; see
+[`flows/README.md`](flows/README.md) before running examples that depend on them. Search
+embeddings are deterministic three-dimensional smoke vectors and must never be used for
+relevance evaluation.
 
 ## Stop
 

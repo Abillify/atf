@@ -168,8 +168,9 @@ export function checkProductionReadiness(
     if (!rlsOptedOut) {
       warnings.push(
         "TENANT_RLS_ENABLED is not set — Postgres Row-Level Security (defense-in-depth " +
-          "tenant isolation) is disabled. For multi-tenant production deployments, apply " +
-          "deploy/postgres-rls.sql and set TENANT_RLS_ENABLED=true + TENANT_RLS_REQUIRED=true. " +
+          "tenant isolation) is disabled. For multi-tenant production deployments, run " +
+          "`bun run scripts/cli.ts rls-setup --confirm` and set " +
+          "TENANT_RLS_ENABLED=true + TENANT_RLS_REQUIRED=true. " +
           "Set TENANT_RLS_REQUIRED=false to silence this warning when RLS is intentionally omitted.",
       );
     }
@@ -373,7 +374,7 @@ export function checkProductionReadiness(
           fatal.push(
             "RLS (Row Level Security) is not verified as active for tenant tables. " +
               "Tenant data isolation cannot be guaranteed. " +
-              "Run `bun run scripts/cli.ts rls-setup --confirm` (or apply deploy/postgres-rls.sql manually) " +
+              "Run `bun run scripts/cli.ts rls-setup --confirm` " +
               "so the database reports relrowsecurity/relforcerowsecurity as enabled for all tenant-scoped " +
               `tables.${tenantNote}`,
           );

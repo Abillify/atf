@@ -503,7 +503,7 @@ export class PostgresTenantStore implements TenantStore {
   // lookupByApiKey resolves identity FROM the key, so it must search across all
   // tenants BEFORE a tenant is known — it cannot be tenant scoped. Under
   // enforced RLS, api_keys is excluded from the forced-RLS table set (or this
-  // path runs as a BYPASSRLS role); see deploy/postgres-rls.sql and ADR-0005.
+  // path runs as a BYPASSRLS role); see the RLS onboarding CLI and ADR-0005.
   async lookupByApiKey(rawKey: string): Promise<Tenant | undefined> {
     const hash = hashApiKey(rawKey);
     // `expires_at IS NULL OR expires_at > now()` is evaluated IN the query

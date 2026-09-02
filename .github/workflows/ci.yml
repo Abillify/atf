@@ -33,7 +33,7 @@ jobs:
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
 
-      - name: Verify contribution certificate trailers
+      - name: Verify contributor assignment acceptance trailers
         if: github.event_name == 'pull_request'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
@@ -46,10 +46,15 @@ jobs:
           git rev-list "$BASE_SHA..$HEAD_SHA" > "$commits_file"
           test -s "$commits_file"
           while IFS= read -r commit; do
-            if ! git show -s --format=%B "$commit" \
-              | git interpret-trailers --parse \
-              | grep -Eq '^ATF-Contribution-Certified-by: .+ <[^ <>]+@[^ <>]+>$'; then
-              echo "Missing or invalid ATF contribution certificate trailer: $commit" >&2
+            trailers="$(git show -s --format=%B "$commit" | git interpret-trailers --parse)"
+            assignment_count="$(printf '%s\n' "$trailers" \
+              | grep -Ec '^ATF-Contributor-Assignment-Accepted:' || true)"
+            valid_count="$(printf '%s\n' "$trailers" \
+              | grep -Ec '^ATF-Contributor-Assignment-Accepted: 1\.0, [^ <>][^<>]* <[^ <>@]+@[^ <>@]+>$' || true)"
+            if [[ "$assignment_count" -ne 1 || "$valid_count" -ne 1 ]]; then
+              echo "Missing or invalid contributor assignment trailer on commit $commit." >&2
+              echo "Expected exactly: ATF-Contributor-Assignment-Accepted: 1.0, Full Name <name@example.com>" >&2
+              echo "The trailer records a separately executed Agreement 1.0; it does not execute the Agreement." >&2
               failed=1
             fi
           done < "$commits_file"
@@ -76,7 +81,7 @@ jobs:
           bun run supply-chain:check --inventory-root "$GITHUB_WORKSPACE"
           --output-dir "$GITHUB_WORKSPACE" --platform linux-x64 --assert-host-platform
           --artifact-kind workspace --artifact-name workspace-linux-x64
-          --git-sha "$(git log -1 --format=%H -- bun.lock)"
+          --git-sha unknown
 
       - name: Configuration reference is current
         run: bun run config-reference:check
@@ -231,7 +236,7 @@ jobs:
           bun run supply-chain:check --inventory-root "$GITHUB_WORKSPACE"
           --output-dir "$GITHUB_WORKSPACE" --platform linux-x64 --assert-host-platform
           --artifact-kind workspace --artifact-name workspace-linux-x64
-          --git-sha "$(git log -1 --format=%H -- bun.lock)"
+          --git-sha unknown
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         if: always()

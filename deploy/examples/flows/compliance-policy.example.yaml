@@ -1,0 +1,42 @@
+# Synthetic policy example. This filename is intentionally not loaded.
+# Review and adapt provider/model names, regions, tool patterns, and retention
+# periods, then copy it to FLOWS_DIR/compliance-policy.yaml to activate it.
+# Runtime treats a missing or invalid active policy as disabled/allow-all, so
+# monitor startup logs and the policy status endpoint in deployments that rely on it.
+version: "1"
+description: Synthetic starting point; not legal or regulatory advice.
+failClosed: true
+
+dataRules:
+  - dataClass: personal
+    allowedProviders:
+      - provider: eu-inference
+        allowedRegions: [eu-central-1]
+    enforceOutputScan: true
+    description: Replace with provider instances and regions verified by the operator.
+  - dataClass: sensitive
+    allowedProviders: []
+    description: Block model processing until an explicit deployment decision is reviewed.
+
+modelRules:
+  - tenant: "*"
+    blockedModels:
+      - provider: legacy-provider
+        model: "legacy-*"
+    description: Example global block; use named provider instances from PROVIDERS.
+
+approvalRules:
+  - toolPatterns: ["*-write", "*-delete"]
+    exemptRoles: [security-admin]
+    timeoutMs: 300000
+    description: Requires APPROVAL_GATE_ENABLED and a working reviewer path.
+
+retentionRules:
+  - dataClass: personal
+    maxAgeDays: 30
+    description: Example only; derive the real period from your obligations.
+
+auditRules:
+  - actionPrefix: "approvals."
+    verbosity: minimal
+    description: Record approval events without requesting full payload capture.

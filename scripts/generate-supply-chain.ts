@@ -8,7 +8,9 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 
 const PROJECT_LICENSE = "Elastic-2.0";
 const PROJECT_AUTHOR = "Abillify Technology GmbH <info@abillify.me>";
-const GENERATOR_VERSION = "2.1.0";
+const GENERATOR_VERSION = "3.0.0";
+const APACHE_2_0_SHA256 =
+	"283ea6cc2997a1a70da0049e09adf9317bb60ca1b51279b65196b83a69e1996b";
 const NOTICE_NAMES = /^(?:licen[cs]e|copying|notice)(?:[._-].*)?$/i;
 
 type ArtifactKind = "workspace" | "image";
@@ -74,11 +76,22 @@ type DeclaredLicenseFallbackRule = {
 	files: string[];
 	reason: string;
 };
+type ExpressionLicenseSupplementRule = {
+	packagePattern: RegExp;
+	expectedVersion: string;
+	expectedLicense: string;
+	expectedRepository: string;
+	files: string[];
+	attribution: string;
+	reason: string;
+};
 type StandardLicenseFamily = {
-	name: string;
-	expressionPattern: RegExp;
+	id: string;
 	textPattern: RegExp;
 };
+type LicenseExpression =
+	| { type: "id"; id: string }
+	| { type: "and" | "or"; left: LicenseExpression; right: LicenseExpression };
 
 const SUPPLEMENTAL_RULES: SupplementalRule[] = [
 	{
@@ -265,47 +278,78 @@ const DECLARED_LICENSE_FALLBACK_RULES: DeclaredLicenseFallbackRule[] = [
 	},
 ];
 
+const EXPRESSION_LICENSE_SUPPLEMENT_RULES: ExpressionLicenseSupplementRule[] = [
+	{
+		packagePattern: /^type-fest$/,
+		expectedVersion: "0.13.1",
+		expectedLicense: "(MIT OR CC0-1.0)",
+		expectedRepository: "sindresorhus/type-fest",
+		files: ["licenses/CC0-1.0.txt"],
+		attribution: "Creative Commons CC0 1.0 Universal legal code",
+		reason:
+			"The published package supplies the MIT branch but omits the CC0-1.0 branch of its declared expression.",
+	},
+];
+
 const STANDARD_LICENSE_FAMILIES: StandardLicenseFamily[] = [
 	{
-		name: "Apache-2.0",
-		expressionPattern: /\bApache-2\.0\b/i,
+		id: "Apache-2.0",
 		textPattern:
 			/Apache License[\s\S]*Version 2\.0[\s\S]*TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION[\s\S]*END OF TERMS AND CONDITIONS/i,
 	},
 	{
-		name: "MIT",
-		expressionPattern: /\bMIT\b/i,
+		id: "MIT",
 		textPattern:
-			/Permission is hereby granted, free of charge,[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
+			/^(?=[\s\S]*Permission is hereby granted, free of charge,)(?=[\s\S]*The above copyright notice and this permission notice\s+shall be[\s\S]*included)(?=[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"'])[\s\S]*$/i,
 	},
 	{
-		name: "ISC",
-		expressionPattern: /\bISC\b/i,
+		id: "MIT-0",
 		textPattern:
-			/Permission to use, copy, modify,[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
+			/MIT No Attribution \(MIT-0\)[\s\S]*Permission is hereby granted, free of charge,[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
 	},
 	{
-		name: "BSD-2-Clause/BSD-3-Clause",
-		expressionPattern: /\bBSD-(?:2|3)-Clause\b/i,
+		id: "0BSD",
 		textPattern:
-			/Redistribution and use in source and binary forms[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED/i,
+			/Permission to use, copy, modify, and\/or distribute this software for any[\s\S]*purpose with or without fee is hereby granted\.[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
 	},
 	{
-		name: "MPL-2.0",
-		expressionPattern: /\bMPL-2\.0\b/i,
+		id: "ISC",
+		textPattern:
+			/^(?=[\s\S]*Permission to use, copy, modify, and\/or distribute this software[\s\S]*with or without fee is hereby granted, provided that)(?=[\s\S]*copyright notice[\s\S]*and this permission notice appear in all copies)(?=[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"'])[\s\S]*$/i,
+	},
+	{
+		id: "BSD-2-Clause",
+		textPattern:
+			/^(?![\s\S]*(?:Neither[\s\S]*may\s+be\s+used\s+to|may\s+not\s+be\s+used\s+to)[\s\S]*endorse or promote)(?=[\s\S]*Redistribution and use in source and binary forms)(?=[\s\S]*Redistributions? of source code)(?=[\s\S]*Redistributions? in binary form)(?=[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED)[\s\S]*$/i,
+	},
+	{
+		id: "BSD-3-Clause",
+		textPattern:
+			/^(?=[\s\S]*Redistribution and use in source and binary forms)(?=[\s\S]*Redistributions? of source code)(?=[\s\S]*Redistributions? in binary form)(?=[\s\S]*(?:Neither[\s\S]*may\s+be\s+used\s+to|may\s+not\s+be\s+used\s+to)[\s\S]*endorse or promote)(?=[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED)[\s\S]*$/i,
+	},
+	{
+		id: "MPL-2.0",
 		textPattern: /Mozilla Public License,? version 2\.0[\s\S]*1\. Definitions/i,
 	},
 	{
-		name: "LGPL-3.0",
-		expressionPattern: /\bLGPL-3\.0(?:-only|-or-later)?\b/i,
+		id: "LGPL-3.0-or-later",
 		textPattern:
 			/GNU LESSER GENERAL PUBLIC LICENSE[\s\S]*Version 3[\s\S]*GNU GENERAL PUBLIC LICENSE/i,
 	},
 	{
-		name: "CC-BY-4.0",
-		expressionPattern: /\bCC-BY-4\.0\b/i,
+		id: "CC-BY-4.0",
 		textPattern:
 			/Creative Commons Attribution 4\.0 International Public License/i,
+	},
+	{
+		id: "AFL-2.1",
+		textPattern:
+			/The Academic Free License, v\. 2\.1:[\s\S]*Grant of Copyright License[\s\S]*This license is Copyright \(C\) 2003-2004 Lawrence E\. Rosen/i,
+	},
+	{
+		id: "CC0-1.0",
+		textPattern:
+			/CC0 1\.0 Universal[\s\S]*Statement of Purpose[\s\S]*1\. Copyright and Related Rights[\s\S]*2\. Waiver[\s\S]*3\. Public License Fallback[\s\S]*4\. Limitations and Disclaimers/i,
 	},
 ];
 
@@ -317,6 +361,158 @@ const DENIED_LICENSE_PATTERNS = [
 	/\bCC-BY-NC|\bCPAL-|\bOSL-|\bEUPL-|\bWTFPL/i,
 	/\bJSON\b.*license/i,
 ];
+
+const ALLOWED_LICENSE_IDS = new Set(
+	STANDARD_LICENSE_FAMILIES.map((family) => family.id),
+);
+const ALLOWED_LICENSE_EXPRESSIONS = new Map<string, string>([
+	["id:Apache-2.0", "Apache-2.0"],
+	["id:MIT", "MIT"],
+	["id:MIT-0", "MIT-0"],
+	["id:0BSD", "0BSD"],
+	["id:ISC", "ISC"],
+	["id:BSD-2-Clause", "BSD-2-Clause"],
+	["id:BSD-3-Clause", "BSD-3-Clause"],
+	["id:MPL-2.0", "MPL-2.0"],
+	["id:LGPL-3.0-or-later", "LGPL-3.0-or-later"],
+	["id:CC-BY-4.0", "CC-BY-4.0"],
+	["and(id:MIT,id:ISC)", "MIT AND ISC"],
+	["or(id:MIT,id:Apache-2.0)", "MIT OR Apache-2.0"],
+	["or(id:AFL-2.1,id:BSD-3-Clause)", "(AFL-2.1 OR BSD-3-Clause)"],
+	["or(id:MIT,id:CC0-1.0)", "(MIT OR CC0-1.0)"],
+]);
+
+type LicenseToken =
+	| { type: "id"; value: string; offset: number }
+	| { type: "and" | "or" | "left" | "right"; offset: number };
+
+function tokenizeLicenseExpression(value: string): LicenseToken[] {
+	const tokens: LicenseToken[] = [];
+	let offset = 0;
+	while (offset < value.length) {
+		if (/\s/.test(value[offset])) {
+			offset++;
+			continue;
+		}
+		if (value[offset] === "(" || value[offset] === ")") {
+			tokens.push({
+				type: value[offset] === "(" ? "left" : "right",
+				offset,
+			});
+			offset++;
+			continue;
+		}
+		const match = value.slice(offset).match(/^[A-Za-z0-9][A-Za-z0-9.-]*/);
+		if (!match)
+			throw new Error(
+				`invalid SPDX syntax at offset ${offset}: ${JSON.stringify(value[offset])}`,
+			);
+		const tokenValue = match[0];
+		if (tokenValue === "AND" || tokenValue === "OR") {
+			tokens.push({
+				type: tokenValue === "AND" ? "and" : "or",
+				offset,
+			});
+		} else {
+			if (tokenValue === "WITH" || tokenValue.startsWith("LicenseRef-"))
+				throw new Error(`${tokenValue} is not permitted`);
+			if (!ALLOWED_LICENSE_IDS.has(tokenValue)) {
+				const diagnostic = matches(tokenValue, DENIED_LICENSE_PATTERNS)
+					? "denied"
+					: "unknown or unsupported";
+				throw new Error(`${diagnostic} SPDX license identifier ${tokenValue}`);
+			}
+			tokens.push({ type: "id", value: tokenValue, offset });
+		}
+		offset += tokenValue.length;
+	}
+	if (tokens.length === 0) throw new Error("empty SPDX license expression");
+	return tokens;
+}
+
+function licenseExpressionKey(expression: LicenseExpression): string {
+	if (expression.type === "id") return `id:${expression.id}`;
+	return `${expression.type}(${licenseExpressionKey(expression.left)},${licenseExpressionKey(expression.right)})`;
+}
+
+function parseLicenseExpression(value: string): LicenseExpression {
+	const tokens = tokenizeLicenseExpression(value);
+	let index = 0;
+	const parsePrimary = (): LicenseExpression => {
+		const token = tokens[index];
+		if (!token) throw new Error("incomplete SPDX license expression");
+		if (token.type === "id") {
+			index++;
+			return { type: "id", id: token.value };
+		}
+		if (token.type !== "left")
+			throw new Error(
+				`expected a license identifier at offset ${token.offset}`,
+			);
+		index++;
+		const expression = parseOr();
+		const closing = tokens[index];
+		if (closing?.type !== "right")
+			throw new Error(`unclosed parenthesis at offset ${token.offset}`);
+		index++;
+		return expression;
+	};
+	const parseAnd = (): LicenseExpression => {
+		let expression = parsePrimary();
+		while (tokens[index]?.type === "and") {
+			index++;
+			expression = {
+				type: "and",
+				left: expression,
+				right: parsePrimary(),
+			};
+		}
+		return expression;
+	};
+	const parseOr = (): LicenseExpression => {
+		let expression = parseAnd();
+		while (tokens[index]?.type === "or") {
+			index++;
+			expression = {
+				type: "or",
+				left: expression,
+				right: parseAnd(),
+			};
+		}
+		return expression;
+	};
+	const expression = parseOr();
+	const trailing = tokens[index];
+	if (trailing)
+		throw new Error(`unexpected token at offset ${trailing.offset}`);
+	return expression;
+}
+
+function canonicalLicenseExpression(value: string): string {
+	const expression = parseLicenseExpression(value);
+	const canonical = ALLOWED_LICENSE_EXPRESSIONS.get(
+		licenseExpressionKey(expression),
+	);
+	if (!canonical)
+		throw new Error(
+			`SPDX expression is not allowlisted: ${JSON.stringify(value.trim())}`,
+		);
+	return canonical;
+}
+
+function licenseIds(value: string): Set<string> {
+	const ids = new Set<string>();
+	const visit = (expression: LicenseExpression): void => {
+		if (expression.type === "id") {
+			ids.add(expression.id);
+			return;
+		}
+		visit(expression.left);
+		visit(expression.right);
+	};
+	visit(parseLicenseExpression(value));
+	return ids;
+}
 
 const MPL_SOURCE_BY_VERSION = new Map([
 	[
@@ -596,7 +792,16 @@ async function loadComponents(
 				);
 			}
 		}
-		const license = licenseValue(manifest);
+		const declaredLicense = licenseValue(manifest);
+		let license: string;
+		try {
+			license = canonicalLicenseExpression(declaredLicense);
+		} catch (error) {
+			discoveryErrors.push(
+				`${identity}: invalid or disallowed license ${JSON.stringify(declaredLicense)}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			continue;
+		}
 		byIdentity.set(identity, {
 			name: manifest.name,
 			version: manifest.version,
@@ -753,18 +958,57 @@ async function loadComponents(
 			});
 		}
 	}
-	const apacheText = normalizeText(
-		await readFile(join(repoRoot, "licenses/Apache-2.0.txt"), "utf8"),
+	for (const component of components) {
+		const rule = EXPRESSION_LICENSE_SUPPLEMENT_RULES.find((candidate) =>
+			candidate.packagePattern.test(component.name),
+		);
+		if (!rule) continue;
+		if (component.version !== rule.expectedVersion) {
+			throw new Error(
+				`${component.name}@${component.version}: expression supplement expects version ${rule.expectedVersion}`,
+			);
+		}
+		if (component.license !== rule.expectedLicense) {
+			throw new Error(
+				`${component.name}@${component.version}: expression supplement expects ${rule.expectedLicense}, package declares ${component.license}`,
+			);
+		}
+		if (component.repository !== rule.expectedRepository) {
+			throw new Error(
+				`${component.name}@${component.version}: expression supplement expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
+			);
+		}
+		for (const file of rule.files) {
+			const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
+			if (!text)
+				throw new Error(
+					`${component.name}@${component.version}: expression supplement file is empty: ${file}`,
+				);
+			component.noticeTexts.push({
+				file: `${file} (expression supplement)`,
+				text,
+				provenance: `${rule.attribution}; ${rule.reason}`,
+			});
+		}
+	}
+	const apacheSource = await readFile(
+		join(repoRoot, "licenses/Apache-2.0.txt"),
 	);
+	const apacheDigest = digest(apacheSource);
+	if (apacheDigest !== APACHE_2_0_SHA256)
+		throw new Error(
+			`Canonical Apache-2.0 text SHA-256 mismatch: expected ${APACHE_2_0_SHA256}, received ${apacheDigest}`,
+		);
+	const apacheText = normalizeText(apacheSource.toString("utf8"));
 	if (!apacheText)
 		throw new Error("Apache-2.0 family text is empty: licenses/Apache-2.0.txt");
 	for (const component of components) {
-		if (!/\bApache-2\.0\b/i.test(component.license)) continue;
+		if (!licenseIds(component.license).has("Apache-2.0")) continue;
 		component.noticeTexts.push({
 			file: "licenses/Apache-2.0.txt (standard license family)",
 			text: apacheText,
 			provenance:
-				"Canonical complete Apache-2.0 text from the AWS SDK for JavaScript v3 upstream LICENSE",
+				"Canonical Apache License 2.0 standard text; package-specific NOTICE files remain separate",
 		});
 	}
 	return components;
@@ -848,12 +1092,8 @@ function generateNotices(
 	}
 	return `${lines.join("\n").trimEnd()}\n`;
 }
-function licenseEntry(
-	value: string,
-): { expression: string } | { license: { name: string } } {
-	return value === "NOASSERTION"
-		? { license: { name: value } }
-		: { expression: value };
+function licenseEntry(value: string): { expression: string } {
+	return { expression: value };
 }
 function purl(name: string, version: string): string {
 	return `pkg:npm/${encodeURIComponent(name)}@${encodeURIComponent(version)}`;
@@ -965,23 +1205,20 @@ try {
 	const failures: string[] = [];
 	for (const component of components) {
 		const identity = `${component.name}@${component.version}`;
-		if (component.license === "NOASSERTION")
-			failures.push(`${identity}: no license metadata`);
 		if (component.noticeTexts.length === 0)
 			failures.push(
 				`${identity}: no complete license/notice text; add a reviewed repository reuse rule or authoritative package/project-family supplemental rule`,
 			);
-		if (matches(component.license, DENIED_LICENSE_PATTERNS))
-			failures.push(`${identity}: denied license ${component.license}`);
+		const declaredIds = licenseIds(component.license);
 		for (const family of STANDARD_LICENSE_FAMILIES) {
-			if (!family.expressionPattern.test(component.license)) continue;
+			if (!declaredIds.has(family.id)) continue;
 			if (
 				!component.noticeTexts.some((notice) =>
 					family.textPattern.test(notice.text),
 				)
 			) {
 				failures.push(
-					`${identity}: declared ${family.name} family is missing a plausibly complete matching license text`,
+					`${identity}: declared ${family.id} family is missing a plausibly complete matching license text`,
 				);
 			}
 		}

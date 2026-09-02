@@ -352,7 +352,7 @@ than hardcoding padding, so they respond to the toggle for free.
   `Badge`/token.
 - New pages start from the **Page shell** (§9).
 - CI gates: `bun run --filter @atf/control typecheck`, `bun run --filter @atf/control test`, and `bun run --filter @atf/control build` must pass. Verify the
-  four responsive checkpoints before merging UI changes.
+  three responsive checkpoints before merging UI changes.
 
 ---
 
@@ -368,18 +368,19 @@ The full SOTA interaction + tooling layer is implemented and enforced:
 - **⌘K command palette**, header **breadcrumbs**, a **collapsible/pinnable**
   desktop icon sidebar (persisted), and a **density** toggle
   (comfortable/compact, persisted) — all driven by one nav/token source.
-- **Automated a11y in CI:** axe-core with **zero WCAG A/AA violations** on the
-  shell (`e2e/a11y-responsive.spec.ts`) **and a full-page sweep across all 22
-  routes** with zero critical/serious violations (`e2e/a11y-sweep.spec.ts`; the
-  third-party React Flow canvas is the only documented exclusion).
-- **Visual-regression** snapshots of the shell (sidebar, command palette, mobile
-  drawer) via Playwright (`e2e/visual.spec.ts`,
-  baselines in `e2e/visual.spec.ts-snapshots/`).
-- **Unit tests** (vitest) for the palette, breadcrumbs, modal behavior, and
-  density.
+- Automated accessibility suites are available locally: axe-core checks the shell and sweep the
+  current dashboard routes in `e2e/a11y-responsive.spec.ts` and `e2e/a11y-sweep.spec.ts` (the
+  third-party React Flow canvas is the documented exclusion). These Playwright suites are not
+  part of the repository's default CI workflow; run and review them for UI changes.
+- Visual-regression snapshots of the shell (sidebar, command palette, mobile drawer) are
+  available through `e2e/visual.spec.ts`, with baselines in
+  `e2e/visual.spec.ts-snapshots/`. They are likewise an explicit local/release check rather
+  than a default CI gate.
+- **Unit tests** (vitest) for the palette, breadcrumbs, modal behavior, and density.
 
-**CI gates:** `tsc --noEmit`, `vitest`, `next build`, and the Playwright suites
-(`test:e2e`) must pass.
+**Repository CI gates:** `tsc --noEmit`, `vitest`, and `next build`. For UI changes, additionally
+run the relevant Playwright suites (`test:e2e`) and inspect visual diffs; availability of a suite
+does not mean the default CI workflow executes it.
 
 Truly optional future ideas (not gaps): cross-platform visual baselines
 (Docker/Chromatic), and per-component axe assertions in unit tests.

@@ -37,7 +37,7 @@ Tests added or updated:
 
 ## Checklist
 
-- [ ] Every commit carries `ATF-Contribution-Certified-by: Full Name <email>` — see [the contribution certificate](../CONTRIBUTION_CERTIFICATE.md)
+- [ ] Every commit carries `ATF-Contributor-Assignment-Accepted: 1.0, Full Name <name@example.com>` and is covered by a separately executed [Individual or Corporate Agreement](../CONTRIBUTOR_ASSIGNMENT_AGREEMENT.md)
 - [ ] Conventional Commit messages
 - [ ] New source files carry an SPDX header (`bun run spdx`)
 - [ ] Documentation updated where behaviour or configuration changed

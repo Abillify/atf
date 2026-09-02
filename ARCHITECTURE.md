@@ -51,8 +51,11 @@ flowchart TB
     gate --> pg
 ```
 
-Solid lines are required paths. Dashed lines are optional: without Redis, Runtime and Gate
-degrade to per-replica state rather than failing.
+Solid lines show configured request or persistence paths; they are not all mandatory for every
+deployment or flow. Dashed lines are explicitly optional coordination paths. Runtime can run
+without Search, Gate, or PostgreSQL for flows that do not require those capabilities, with
+in-memory/per-replica trade-offs described below. Without Redis, Runtime and Gate degrade to
+per-replica coordination rather than failing.
 
 ## Applications
 
@@ -73,9 +76,12 @@ Route groups: `/v1/*` (OpenAI-compatible chat, responses, models, embeddings), `
 
 The operator and governance interface. Next.js 16, React 19.
 
-A client of Runtime's HTTP API and SSE monitoring stream. It holds no private configuration
-and reaches `NEXT_PUBLIC_BACKEND_URL`. Because it is a pure client, it can be deployed
-separately, behind a different ingress, or omitted entirely.
+Control uses Runtime's HTTP API and SSE monitoring stream. Its Next.js server delivers the
+web application and optional response headers, but it imports no Runtime source and holds no
+provider or database credentials. Production browser calls use relative same-origin URLs by
+default and require deployment-owned reverse-proxy routing; an explicit
+`NEXT_PUBLIC_BACKEND_URL` is a build-time development/cross-origin override. Control can be
+deployed separately, behind a different ingress, or omitted entirely.
 
 ### Search (`apps/search`)
 
@@ -163,17 +169,21 @@ sequenceDiagram
     R->>R: audit entry, cost ledger, debug trace
 ```
 
-Every stage is configurable and most default to enabled-and-strict. The ordering is
-deliberate: policy runs before the engine starts so a blocked request costs nothing,
-tokenization happens before any provider call, and detokenization happens after the last
-guardrail so no stage sees plaintext it does not need.
+Stages are independently configured and many governance features are opt-in. The sequence above
+shows the ordering when those controls are enabled: policy admission precedes graph execution,
+PII tokenization precedes provider calls, and restoration follows output checks. A missing or
+invalid `compliance-policy.yaml` currently disables that policy and allows execution; the
+policy's `failClosed` field applies to evaluator exceptions only. Deployments that depend on the
+policy must validate and monitor that it is loaded.
 
 ## State
 
-**PostgreSQL** is the durable store. Runtime uses it for the cost ledger, audit log, jobs,
-approvals, tenants, and checkpoints; Search uses it for documents, chunks, and vector indexes
-via pgvector. Tenant isolation is enforced with row-level security when `TENANT_RLS_ENABLED`
-is set, using a separate operator connection (`DATABASE_OPERATOR_URL`) for privileged work.
+**PostgreSQL**, when configured, is the durable store. Runtime uses it for the cost ledger,
+audit log, jobs, approvals, tenants, and checkpoints; Search requires PostgreSQL/pgvector for
+documents, chunks, and vector indexes. Runtime's tenant isolation combines application query
+scoping with optional database row-level security. Enforced RLS requires the guided
+`rls-setup --confirm` onboarding, `TENANT_RLS_ENABLED=true`, a least-privilege application
+connection, and a separate `DATABASE_OPERATOR_URL` for privileged cross-tenant work.
 
 **Redis** is optional and used only for coordination that must span replicas: pending
 approvals, distributed rate limits, cluster-wide budgets, and Gate's transport session state.
@@ -193,8 +203,12 @@ These are enforced in review and, where possible, in tests:
 
 1. **Contracts over shared code.** Cross-service messages live in a contract package. An
    application never imports another application's source.
-2. **Fail closed.** Authorization, approvals, guardrails, and policy default to denying. A
-   path that can fail open needs an explicit documented reason.
+2. **Fail-closed boundaries are explicit.** Authentication, authorization, approvals, and
+   configured policy checks deny on the failure modes documented for them. Exceptions are also
+   explicit: no/invalid compliance-policy file disables that policy, PII detector failures
+   default to open unless configured otherwise, and optional state can degrade to per-replica
+   behavior. A path must not be called fail-closed without its configuration and fallback being
+   stated.
 3. **Configuration is validated at startup.** Runtime parses the environment declared in its
    Zod `EnvSchema` and exits with the full list of problems rather than failing at first use.
    Provider references are resolved and checked at boot. A few subsystems that accept an
@@ -207,8 +221,9 @@ These are enforced in review and, where possible, in tests:
    leak or block real traffic.
 5. **Degradation is designed.** Every optional dependency has a defined fallback and a stated
    trade-off; see ADR 0002.
-6. **Evidence is verifiable.** Audit entries are hash-chained and evidence bundles are signed,
-   so a compliance claim can be checked rather than trusted.
+6. **Evidence is verifiable when enabled.** Configured audit entries are hash-chained and
+   configured evidence bundles are signed, so those records can be checked rather than merely
+   trusted. Enabling the mechanisms does not by itself establish regulatory compliance.
 
 ## Further reading
 

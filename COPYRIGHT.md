@@ -22,7 +22,11 @@ Copyright notices embedded in third-party or adapted material must be preserved.
 third-party code, prompts, documentation, fixtures, or media to this repository unless its
 provenance and license compatibility are documented; see [CONTRIBUTING.md](CONTRIBUTING.md).
 
-Contributors retain copyright in their contributions and license them for inclusion in ATF
-under the Elastic License 2.0 through the project-specific
-[ATF Source-Available Contribution Certificate](CONTRIBUTION_CERTIFICATE.md). The certificate
-is not a CLA and grants no right to relicense a contribution under different terms.
+Under the prospective
+[ATF Contributor Copyright Assignment Agreement 1.0](CONTRIBUTOR_ASSIGNMENT_AGREEMENT.md),
+contributors assign copyright in accepted Contributions to Abillify Technology GmbH to the
+fullest extent legally possible. Where assignment is unavailable, Abillify receives exclusive
+exploitation rights sufficient to use and freely relicense the Contribution, including under
+proprietary, commercial, and dual- or multi-license terms. Mandatory inalienable contributor
+rights and all ownership, license terms, and notices in identified third-party material remain
+unaffected.
