@@ -118,14 +118,17 @@ export function buildOpenApiSpec(serverUrl: string) {
   return {
     openapi: "3.1.0",
     info: {
-      title: "vectorsearch",
-      version: "1.0.0",
+      title: "Aiperator Trust Fabric Search",
+      version: "0.1.0",
       description:
-        "Semantic search service backed by PostgreSQL + pgvector. " +
+        "ATF semantic search service backed by PostgreSQL + pgvector. " +
         "Supports dense, hybrid (dense + PostgreSQL FTS/ts_rank + SPLADE), and FTS-only search " +
         "with optional cross-encoder reranking, HyDE query expansion, " +
         "document versioning, and fine-grained access control.",
-      license: { name: "MIT" },
+      license: {
+        name: "Elastic License 2.0",
+        identifier: "Elastic-2.0",
+      },
     },
     servers: [{ url: serverUrl }],
     tags: [

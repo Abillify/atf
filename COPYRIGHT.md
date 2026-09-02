@@ -14,7 +14,9 @@ The repository is licensed under the Elastic License 2.0; see [LICENSE.md](LICEN
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 ```
 
-`bun run verify:spdx` checks that every source file carries this header.
+`bun run verify:spdx` checks that every tracked TypeScript and TSX source file covered by the
+SPDX tool carries this header. Other file types remain governed by the repository license and
+must preserve any file-specific notices.
 
 Copyright notices embedded in third-party or adapted material must be preserved. Do not add
 third-party code, prompts, documentation, fixtures, or media to this repository unless its

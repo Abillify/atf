@@ -36,7 +36,7 @@ Run the same gates CI runs:
 
 ```bash
 bun run verify:public           # no secrets or forbidden paths in the tree
-bun run verify:spdx             # every source file carries an SPDX header
+bun run verify:spdx             # tracked TypeScript source carries the project SPDX header
 bun run supply-chain:check      # third-party notices and SBOM are current
 bun run config-reference:check  # docs/CONFIGURATION.md is regenerated
 bun run lint:baseline           # Biome findings have not grown past the baseline

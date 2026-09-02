@@ -9,12 +9,15 @@ an internal network, or omitted entirely without affecting Runtime.
 
 ## Run it
 
+From the repository root:
+
 ```bash
-cp .env.example .env          # set NEXT_PUBLIC_BACKEND_URL
-bun run --filter @atf/control dev
+cp apps/control/.env.example apps/control/.env
+PORT=3001 bun run --filter @atf/control dev
 ```
 
-Control expects a reachable Runtime. The simplest way to get one is
+Control is then available at <http://127.0.0.1:3001> and expects Runtime at the
+`NEXT_PUBLIC_BACKEND_URL` configured in `apps/control/.env`. The simplest way to run both is
 [`deploy/examples/`](../../deploy/examples/).
 
 ```bash

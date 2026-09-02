@@ -8,13 +8,18 @@ directly by models and agents over MCP.
 
 ## Run it
 
+From the repository root:
+
 ```bash
-cp .env.example .env    # POSTGRES_URL, EMBED_URL, and EMBED_MODEL are required
+cp apps/search/.env.example apps/search/.env
+# Set POSTGRES_URL, EMBED_URL, EMBED_MODEL, and the embedding contract values.
 bun run --filter @atf/search dev
 ```
 
-Needs PostgreSQL with the `vector` extension and an embedding endpoint. Both are provided by
-[`deploy/examples/`](../../deploy/examples/).
+The example sets `PORT=3002`, matching the documented multi-service layout. Search needs
+PostgreSQL with the `vector` extension and an embedding endpoint. Both are provided by
+[`deploy/examples/`](../../deploy/examples/). Verify a standalone instance with
+`curl --fail http://127.0.0.1:3002/health`.
 
 ```bash
 bun run --filter @atf/search test
@@ -25,16 +30,20 @@ bun run --filter @atf/search build:node   # optional Node 26 artifact
 
 ## API surface
 
+The generated documents at `GET /openapi.json` and `GET /openapi.yaml` are the detailed API
+reference. The principal routes are:
+
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /documents` | Ingest documents; batch and streaming |
-| `GET /documents`, `/document` | List and fetch, with score-keyset pagination |
-| `GET /documents/content` | Retrieve stored content |
-| `GET /collections`, `/collection-stats` | Collection management and statistics |
-| `GET /folders` | Hierarchical browsing |
-| `POST /summary`, `GET /summaries` | Generated document summaries |
-| `/mcp` | MCP endpoint for models and agents |
-| `/openapi.json`, `/openapi.yaml` | Generated OpenAPI document |
+| `POST /ingest`, `/ingest-batch`, `/ingest-stream` | Ingest single, batch, and streaming documents |
+| `POST /search` | Dense, hybrid, sparse, and optionally reranked retrieval |
+| `POST /evaluations/retrieval` | Evaluate retrieval results |
+| `DELETE /delete` | Delete indexed content |
+| `GET /documents`, `/document`, `/documents/content` | List and fetch documents, with score-keyset pagination |
+| `GET /folders`, `/summary`, `/summaries` | Read folders and generated summaries |
+| `GET /collections`, `/collection-stats` | Collection listing and statistics |
+| `DELETE /collections/:name`, `POST /collections/:name/rename` | Collection administration |
+| `/mcp`, `/mcp/v2026` | MCP endpoints for models and agents |
 | `/admin/stats` | Operational statistics |
 | `/auth/login`, `/auth/callback`, `/auth/logout` | OIDC browser session for the test UI |
 | `/health`, `/metrics` | Health and Prometheus metrics |

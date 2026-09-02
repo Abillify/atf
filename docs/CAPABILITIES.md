@@ -26,8 +26,10 @@ still depends on the operator enabling and verifying it. See
 
 ## Orchestration and model access
 
-Runtime executes AI workflows defined as declarative graphs and exposes them behind an
-OpenAI-compatible HTTP API, so existing chat clients and SDKs work without a custom adapter.
+Runtime executes AI workflows defined as declarative graphs and exposes OpenAI-compatible
+endpoints for chat completions, Responses, model listing, and embeddings. Compatibility is
+limited to the documented routes and fields; clients that rely on other OpenAI API surfaces may
+need adaptation.
 
 - **Flows as files.** Workflows are YAML documents validated against
   `apps/runtime/schemas/flow.schema.json` and loaded from `FLOWS_DIR`. Changes are picked up
@@ -151,9 +153,13 @@ Consequential actions can require a human decision before they execute.
 
 ## Privacy and the PII vault
 
-The PII vault replaces personal data with meaningless placeholders *before* a request leaves
-for a model provider, and restores the real values in the response. The provider never sees
-the plaintext; only the mapping is stored, encrypted, for the duration of the request.
+When enabled, the PII vault replaces values detected by its configured detectors with
+meaningless placeholders before a model-provider call and restores mapped values in the
+response. This is a conditional control, not a system-wide default: `PII_VAULT_ENABLED` is off
+unless configured, detector failures default to `open`, and multimodal handling defaults to
+`off`. Deployments that require a no-plaintext-egress guarantee must select the detector set,
+use `PII_DETECTOR_FAIL_MODE=closed`, choose an explicit multimodal policy, and verify coverage
+for their data. Only the request-scoped mapping is stored, encrypted, for restoration.
 
 - **Structured detection.** Pattern and checksum detection for email addresses, phone
   numbers, IBANs, tax identifiers, and similar formats.
@@ -249,8 +255,9 @@ the plaintext; only the mapping is stored, encrypted, for the duration of the re
 
 ## Channels
 
-The primary interface is the OpenAI-compatible API, so any chat client or SDK works without an
-adapter. Two additional inbound paths exist.
+The primary interface provides OpenAI-compatible chat, Responses, model-listing, and embedding
+endpoints. Clients using those documented surfaces can often connect without an adapter; this is
+not a claim of compatibility with the complete OpenAI API. Two additional inbound paths exist.
 
 - **Webhooks.** A `trigger` node accepts a signed inbound call and starts a flow.
 - **Rocket.Chat.** A direct-message assistant, off by default (`ROCKETCHAT_ENABLED`).

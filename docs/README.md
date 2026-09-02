@@ -25,7 +25,9 @@
 
 Contract packages: [identity](../packages/identity-contract/README.md),
 [transaction](../packages/transaction-contract/README.md),
-[evidence](../packages/evidence-contract/README.md).
+[evidence](../packages/evidence-contract/README.md),
+[schema compatibility](../packages/schema-compatibility/README.md), and
+[contract adapter](../packages/contract-adapter/README.md).
 
 ## Reference
 
