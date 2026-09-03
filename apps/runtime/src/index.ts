@@ -738,6 +738,16 @@ if (import.meta.main) {
       trigger: runTrigger,
       userInitiated: run.origin === "rocket-chat",
     });
+    let authorityClaims: Record<string, unknown> | undefined;
+    if (authority.token.length > 0) {
+      if (!(await jwtVerifier.verify(authority.token))) {
+        throw new Error("Resolved assistant authority token failed JWT verification.");
+      }
+      authorityClaims = jwtVerifier.decodePayload(authority.token) ?? undefined;
+      if (authorityClaims === undefined) {
+        throw new Error("Resolved assistant authority token has no decodable JWT payload.");
+      }
+    }
     const responseParts: string[] = [];
     let finalResponse = "";
     const rocketChat =
@@ -751,15 +761,12 @@ if (import.meta.main) {
     };
     const executionContext = {
       ssoToken: authority.token,
-      // Durable assistant runs carry a delegated bearer rather than entering
-      // through the HTTP auth middleware, so no decoded claims existed here.
-      // Preserve the consented OIDC scope returned by the authority resolver.
-      // TransactionOrchestrator derives signed envelope scopes exclusively
-      // from ctx.claims.scope/scp; this forwards the authority as issued and
-      // does not add legacy tools:read or tools:write scopes.
-      ...(authority.scope !== undefined
-        ? { claims: { scope: authority.scope } }
-        : {}),
+      // Durable assistant runs bypass the HTTP auth middleware. Verify the
+      // resolved bearer above and preserve its complete JWT payload so custom
+      // permission claims (for example `tools`) can be attested by the signed
+      // transaction envelope instead of being reduced to the OAuth response's
+      // generic `scope` string.
+      ...(authorityClaims !== undefined ? { claims: authorityClaims } : {}),
       executionId: run.id,
       clientId: run.scope.tenantId,
       userId: run.scope.userId,
