@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "a601b4af9797fb4a2b05f07650b7549dd852259c21914e396696da3acffc00e0"
+        "value": "28944733f4ae27cb5bbd66278573d2ad1fdfc20dc4187562f3166ef381df408a"
       }
     ]
   },
@@ -6160,6 +6160,24 @@
         }
       ],
       "purl": "pkg:npm/hono@4.13.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/hono@4.13.5",
+      "name": "hono",
+      "version": "4.13.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/hono@4.13.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
