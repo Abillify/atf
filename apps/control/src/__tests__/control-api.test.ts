@@ -107,7 +107,15 @@ describe("control-api", () => {
         .mockResolvedValueOnce(new Response("binary")),
     );
     await expect(text("/api/text")).resolves.toBe("hello");
-    await expect(blob("/api/blob")).resolves.toBeInstanceOf(Blob);
+    // Assert Blob shape and content rather than `toBeInstanceOf(Blob)`: under
+    // vitest 5 the jsdom test realm and the Response's own realm expose
+    // distinct Blob constructors, so an identity-based instanceof check is
+    // unreliable. Duck-typing the Blob interface plus the decoded body verifies
+    // the same guarantee without depending on cross-realm constructor identity.
+    const result = await blob("/api/blob");
+    expect(typeof result.arrayBuffer).toBe("function");
+    expect(typeof result.size).toBe("number");
+    await expect(result.text()).resolves.toBe("binary");
   });
 
   test("streamSse survives UTF-8 chunk boundaries, CRLF, and multiline data", async () => {
