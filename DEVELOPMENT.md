@@ -2,7 +2,7 @@
 
 ## Toolchain
 
-- Bun 1.3.14 — the only package manager and task runner
+- Bun 1.4.0 — the only package manager and task runner
 - Node.js 26 — the supported compatibility baseline and the runtime for Node-backed artifacts
 - TypeScript 7.0.2 — pinned as a workspace dependency
 - Docker with Compose v2 — for the local multi-service stack

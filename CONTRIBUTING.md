@@ -20,7 +20,7 @@ Security issues do **not** belong in a public issue. See [SECURITY.md](SECURITY.
 
 ## Toolchain
 
-- Bun 1.3.14 (the only package manager and task runner; do not use npm, pnpm, or yarn)
+- Bun 1.4.0 (the only package manager and task runner; do not use npm, pnpm, or yarn)
 - Node.js 26
 - TypeScript 7.0.2 through the workspace dependency
 - Docker with Compose v2 for the local stack

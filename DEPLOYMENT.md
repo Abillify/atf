@@ -12,7 +12,7 @@ Use `deploy/examples/README.md`. Its auth-off settings, deterministic mock model
 
 ## Application artifacts
 
-- Runtime and Gate are Bun 1.3.14 applications.
+- Runtime and Gate are Bun 1.4.0 applications.
 - Search is Bun-native and additionally supports `bun run --filter @atf/search build:node` for a Node.js 26 artifact.
 - Control is built with Bun and deployed on Node.js 26 from the Next.js standalone output.
 
