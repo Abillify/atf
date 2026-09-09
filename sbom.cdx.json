@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "dc47b06a71e16e4324b805d87a6aff2be5b5997c50019f5356cebbc4a987eef4"
+        "value": "7300c0ef6a62f72f7b749aa7deb77efe48bce7b3e65c72597410f2ece2a14d01"
       }
     ]
   },
@@ -1060,16 +1060,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.2",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.3",
       "group": "@img",
       "name": "sharp-libvips-linux-x64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "licenses": [
         {
           "expression": "LGPL-3.0-or-later"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.2",
+      "purl": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1079,16 +1079,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.2",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.3",
       "group": "@img",
       "name": "sharp-libvips-linuxmusl-x64",
-      "version": "1.3.2",
+      "version": "1.3.3",
       "licenses": [
         {
           "expression": "LGPL-3.0-or-later"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.2",
+      "purl": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1098,16 +1098,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.3",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.4",
       "group": "@img",
       "name": "sharp-linux-x64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.3",
+      "purl": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1117,16 +1117,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.3",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.4",
       "group": "@img",
       "name": "sharp-linuxmusl-x64",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.3",
+      "purl": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5665,15 +5665,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-uri@3.1.5",
+      "bom-ref": "pkg:npm/fast-uri@3.1.6",
       "name": "fast-uri",
-      "version": "3.1.5",
+      "version": "3.1.6",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
         }
       ],
-      "purl": "pkg:npm/fast-uri@3.1.5",
+      "purl": "pkg:npm/fast-uri@3.1.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9319,15 +9319,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/sharp@0.35.3",
+      "bom-ref": "pkg:npm/sharp@0.35.4",
       "name": "sharp",
-      "version": "0.35.3",
+      "version": "0.35.4",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/sharp@0.35.3",
+      "purl": "pkg:npm/sharp@0.35.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
