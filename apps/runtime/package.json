@@ -42,7 +42,7 @@
     "@modelcontextprotocol/sdk": "1.30.0",
     "ai": "7.0.93",
     "chokidar": "5.0.0",
-    "hono": "4.13.2",
+    "hono": "4.13.5",
     "jose": "6.2.4",
     "yaml": "2.9.0",
     "zod": "4.4.3"
