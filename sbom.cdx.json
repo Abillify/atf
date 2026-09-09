@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "3d7b62befc86143e6d3850a4477651ff5a4303895e11c4231ef487bfa315b272"
+        "value": "72bb85789ae41d75ae42cbb709378c44e7363c23db6b9ef90a38db1734d7db0b"
       }
     ]
   },
@@ -2314,16 +2314,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fbun@1.3.14",
+      "bom-ref": "pkg:npm/%40types%2Fbun@1.4.0",
       "group": "@types",
       "name": "bun",
-      "version": "1.3.14",
+      "version": "1.4.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40types%2Fbun@1.3.14",
+      "purl": "pkg:npm/%40types%2Fbun@1.4.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3693,15 +3693,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/bun-types@1.3.14",
+      "bom-ref": "pkg:npm/bun-types@1.4.0",
       "name": "bun-types",
-      "version": "1.3.14",
+      "version": "1.4.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/bun-types@1.3.14",
+      "purl": "pkg:npm/bun-types@1.4.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7806,24 +7806,6 @@
         }
       ],
       "purl": "pkg:npm/playwright@1.63.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/playwright-core@1.62.1",
-      "name": "playwright-core",
-      "version": "1.62.1",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/playwright-core@1.62.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
