@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "28944733f4ae27cb5bbd66278573d2ad1fdfc20dc4187562f3166ef381df408a"
+        "value": "4323921a85e1e012a7baee7585e4725e1ca57a03fec48cab90f8abc8aa3a0669"
       }
     ]
   },
@@ -2694,25 +2694,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fexpress@4.17.25",
-      "group": "@types",
-      "name": "express",
-      "version": "4.17.25",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40types%2Fexpress@4.17.25",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/%40types%2Fexpress@5.0.6",
       "group": "@types",
       "name": "express",
@@ -2723,25 +2704,6 @@
         }
       ],
       "purl": "pkg:npm/%40types%2Fexpress@5.0.6",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fexpress-serve-static-core@4.19.9",
-      "group": "@types",
-      "name": "express-serve-static-core",
-      "version": "4.19.9",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40types%2Fexpress-serve-static-core@4.19.9",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2818,25 +2780,6 @@
         }
       ],
       "purl": "pkg:npm/%40types%2Fmethods@1.1.4",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fmime@1.3.5",
-      "group": "@types",
-      "name": "mime",
-      "version": "1.3.5",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40types%2Fmime@1.3.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3017,25 +2960,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fsend@0.17.6",
-      "group": "@types",
-      "name": "send",
-      "version": "0.17.6",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40types%2Fsend@0.17.6",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/%40types%2Fsend@1.2.1",
       "group": "@types",
       "name": "send",
@@ -3046,25 +2970,6 @@
         }
       ],
       "purl": "pkg:npm/%40types%2Fsend@1.2.1",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40types%2Fserve-static@1.15.10",
-      "group": "@types",
-      "name": "serve-static",
-      "version": "1.15.10",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40types%2Fserve-static@1.15.10",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3415,24 +3320,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/accepts@1.3.8",
-      "name": "accepts",
-      "version": "1.3.8",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/accepts@1.3.8",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/accepts@2.0.0",
       "name": "accepts",
       "version": "2.0.0",
@@ -3613,24 +3500,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/array-flatten@1.1.1",
-      "name": "array-flatten",
-      "version": "1.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/array-flatten@1.1.1",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/asap@2.0.6",
       "name": "asap",
       "version": "2.0.6",
@@ -3802,24 +3671,6 @@
         }
       ],
       "purl": "pkg:npm/bl@6.1.6",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/body-parser@1.20.6",
-      "name": "body-parser",
-      "version": "1.20.6",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/body-parser@1.20.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4243,24 +4094,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/content-disposition@0.5.4",
-      "name": "content-disposition",
-      "version": "0.5.4",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/content-disposition@0.5.4",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/content-disposition@1.1.0",
       "name": "content-disposition",
       "version": "1.1.0",
@@ -4342,24 +4175,6 @@
         }
       ],
       "purl": "pkg:npm/cookie@0.7.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/cookie-signature@1.0.7",
-      "name": "cookie-signature",
-      "version": "1.0.7",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/cookie-signature@1.0.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4801,24 +4616,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/debug@2.6.9",
-      "name": "debug",
-      "version": "2.6.9",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/debug@2.6.9",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/debug@4.3.4",
       "name": "debug",
       "version": "4.3.4",
@@ -4972,24 +4769,6 @@
         }
       ],
       "purl": "pkg:npm/dequal@2.0.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/destroy@1.2.0",
-      "name": "destroy",
-      "version": "1.2.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/destroy@1.2.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5539,24 +5318,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/express@4.22.2",
-      "name": "express",
-      "version": "4.22.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/express@4.22.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/express@5.2.1",
       "name": "express",
       "version": "5.2.1",
@@ -5701,24 +5462,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/finalhandler@1.3.2",
-      "name": "finalhandler",
-      "version": "1.3.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/finalhandler@1.3.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/finalhandler@2.1.1",
       "name": "finalhandler",
       "version": "2.1.1",
@@ -5800,24 +5543,6 @@
         }
       ],
       "purl": "pkg:npm/forwarded@0.2.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/fresh@0.5.2",
-      "name": "fresh",
-      "version": "0.5.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/fresh@0.5.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6250,24 +5975,6 @@
         }
       ],
       "purl": "pkg:npm/https-proxy-agent@7.0.6",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/iconv-lite@0.4.24",
-      "name": "iconv-lite",
-      "version": "0.4.24",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/iconv-lite@0.4.24",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7069,24 +6776,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/media-typer@0.3.0",
-      "name": "media-typer",
-      "version": "0.3.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/media-typer@0.3.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/media-typer@1.1.1",
       "name": "media-typer",
       "version": "1.1.1",
@@ -7096,24 +6785,6 @@
         }
       ],
       "purl": "pkg:npm/media-typer@1.1.1",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/merge-descriptors@1.0.3",
-      "name": "merge-descriptors",
-      "version": "1.0.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/merge-descriptors@1.0.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7150,24 +6821,6 @@
         }
       ],
       "purl": "pkg:npm/methods@1.1.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/mime@1.6.0",
-      "name": "mime",
-      "version": "1.6.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/mime@1.6.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7339,24 +6992,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/ms@2.0.0",
-      "name": "ms",
-      "version": "2.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/ms@2.0.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/ms@2.1.2",
       "name": "ms",
       "version": "2.1.2",
@@ -7456,24 +7091,6 @@
         }
       ],
       "purl": "pkg:npm/nanoid@3.3.18",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/negotiator@0.6.3",
-      "name": "negotiator",
-      "version": "0.6.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/negotiator@0.6.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7924,24 +7541,6 @@
         }
       ],
       "purl": "pkg:npm/path-parse@1.0.7",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/path-to-regexp@0.1.13",
-      "name": "path-to-regexp",
-      "version": "0.1.13",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/path-to-regexp@0.1.13",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8635,24 +8234,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/raw-body@2.5.3",
-      "name": "raw-body",
-      "version": "2.5.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/raw-body@2.5.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/raw-body@3.0.2",
       "name": "raw-body",
       "version": "3.0.2",
@@ -9247,24 +8828,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/send@0.19.2",
-      "name": "send",
-      "version": "0.19.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/send@0.19.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/send@1.2.1",
       "name": "send",
       "version": "1.2.1",
@@ -9292,24 +8855,6 @@
         }
       ],
       "purl": "pkg:npm/serialize-error@7.0.1",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/serve-static@1.16.3",
-      "name": "serve-static",
-      "version": "1.16.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/serve-static@1.16.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -10111,24 +9656,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/type-is@1.6.18",
-      "name": "type-is",
-      "version": "1.6.18",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/type-is@1.6.18",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/type-is@2.1.0",
       "name": "type-is",
       "version": "2.1.0",
@@ -10264,24 +9791,6 @@
         }
       ],
       "purl": "pkg:npm/util-deprecate@1.0.2",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/utils-merge@1.0.1",
-      "name": "utils-merge",
-      "version": "1.0.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/utils-merge@1.0.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
