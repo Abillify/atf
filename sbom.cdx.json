@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "4323921a85e1e012a7baee7585e4725e1ca57a03fec48cab90f8abc8aa3a0669"
+        "value": "3d7b62befc86143e6d3850a4477651ff5a4303895e11c4231ef487bfa315b272"
       }
     ]
   },
@@ -3112,35 +3112,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fexpect@4.1.11",
-      "group": "@vitest",
-      "name": "expect",
-      "version": "4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40vitest%2Fexpect@4.1.11",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fmocker@4.1.11",
+      "bom-ref": "pkg:npm/%40vitest%2Fmocker@5.0.0",
       "group": "@vitest",
       "name": "mocker",
-      "version": "4.1.11",
+      "version": "5.0.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fmocker@4.1.11",
+      "purl": "pkg:npm/%40vitest%2Fmocker@5.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3150,92 +3131,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fpretty-format@4.1.11",
-      "group": "@vitest",
-      "name": "pretty-format",
-      "version": "4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40vitest%2Fpretty-format@4.1.11",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Frunner@4.1.11",
-      "group": "@vitest",
-      "name": "runner",
-      "version": "4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40vitest%2Frunner@4.1.11",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fsnapshot@4.1.11",
-      "group": "@vitest",
-      "name": "snapshot",
-      "version": "4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40vitest%2Fsnapshot@4.1.11",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Fspy@4.1.11",
+      "bom-ref": "pkg:npm/%40vitest%2Fspy@5.0.0",
       "group": "@vitest",
       "name": "spy",
-      "version": "4.1.11",
+      "version": "5.0.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40vitest%2Fspy@4.1.11",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/%40vitest%2Futils@4.1.11",
-      "group": "@vitest",
-      "name": "utils",
-      "version": "4.1.11",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/%40vitest%2Futils@4.1.11",
+      "purl": "pkg:npm/%40vitest%2Fspy@5.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4148,24 +4053,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/convert-source-map@2.0.0",
-      "name": "convert-source-map",
-      "version": "2.0.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/convert-source-map@2.0.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/cookie@0.7.2",
       "name": "cookie",
       "version": "0.7.2",
@@ -4994,15 +4881,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/es-module-lexer@2.3.1",
+      "bom-ref": "pkg:npm/es-module-lexer@2.3.2",
       "name": "es-module-lexer",
-      "version": "2.3.1",
+      "version": "2.3.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/es-module-lexer@2.3.1",
+      "purl": "pkg:npm/es-module-lexer@2.3.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6740,6 +6627,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/magic-string@1.2.3",
+      "name": "magic-string",
+      "version": "1.2.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/magic-string@1.2.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/matcher@3.0.0",
       "name": "matcher",
       "version": "3.0.0",
@@ -7568,24 +7473,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/pathe@2.0.3",
-      "name": "pathe",
-      "version": "2.0.3",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/pathe@2.0.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/pg@8.23.0",
       "name": "pg",
       "version": "8.23.0",
@@ -7775,6 +7662,24 @@
         }
       ],
       "purl": "pkg:npm/picomatch@4.0.5",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/picomatch@4.0.7",
+      "name": "picomatch",
+      "version": "4.0.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/picomatch@4.0.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9458,15 +9363,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/tinybench@2.9.0",
+      "bom-ref": "pkg:npm/tinybench@6.1.4",
       "name": "tinybench",
-      "version": "2.9.0",
+      "version": "6.1.4",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/tinybench@2.9.0",
+      "purl": "pkg:npm/tinybench@6.1.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9503,24 +9408,6 @@
         }
       ],
       "purl": "pkg:npm/tinyglobby@0.2.17",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/tinyrainbow@3.1.1",
-      "name": "tinyrainbow",
-      "version": "3.1.1",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/tinyrainbow@3.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9872,15 +9759,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/vitest@4.1.11",
+      "bom-ref": "pkg:npm/vitest@5.0.0",
       "name": "vitest",
-      "version": "4.1.11",
+      "version": "5.0.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/vitest@4.1.11",
+      "purl": "pkg:npm/vitest@5.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
