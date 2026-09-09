@@ -107,7 +107,14 @@ describe("control-api", () => {
         .mockResolvedValueOnce(new Response("binary")),
     );
     await expect(text("/api/text")).resolves.toBe("hello");
-    await expect(blob("/api/blob")).resolves.toBeInstanceOf(Blob);
+    // Under vitest 5 with jsdom, Response.blob() returns a Blob from a different
+    // realm/module than the test's global Blob (see vitest-dev/vitest#6741 and
+    // #1703). That breaks `toBeInstanceOf(Blob)`, and the returned object's own
+    // methods (arrayBuffer/text) are not consistently present across the jsdom
+    // and node runtimes. The stable, realm-independent signal is the internal
+    // brand exposed via Object.prototype.toString, so assert on that instead.
+    const result = await blob("/api/blob");
+    expect(Object.prototype.toString.call(result)).toBe("[object Blob]");
   });
 
   test("streamSse survives UTF-8 chunk boundaries, CRLF, and multiline data", async () => {
