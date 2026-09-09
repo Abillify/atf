@@ -192,7 +192,7 @@ than blocking. Multi-replica deployments that rely on any of those behaviors nee
 
 ## Toolchain
 
-Bun 1.3.14 is the repository toolchain, the task runner, and the runtime for Bun-native
+Bun 1.4.0 is the repository toolchain, the task runner, and the runtime for Bun-native
 services. Node.js 26 is the single supported Node major and the runtime for Node-backed
 artifacts. TypeScript 7.0.2 is pinned as a workspace dependency. There is no separate build
 orchestrator; Bun workspaces and `--filter` provide it.
