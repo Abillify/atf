@@ -18,6 +18,7 @@ import { readHeader, parseBooleanHeader } from "./header-utils.js";
 import { validateFtsLanguage } from "./collection-ddl.js";
 import type { ChunkingOptions } from "./ingest-jobs.js";
 import type { IngestDefaults } from "./handlers/ingest.js";
+import type { SummaryMode } from "./document-structure.js";
 
 // ─── Individual header parsers ────────────────────────────────────────────────
 
@@ -118,6 +119,24 @@ export function parseSummarizeHeader(
   return parseBooleanHeader(header);
 }
 
+export function parseDocumentStructureHeader(
+  header: string | undefined,
+): "auto" | "off" | null | undefined {
+  if (header === undefined || header.trim() === "") return undefined;
+  const value = header.trim().toLowerCase();
+  return value === "auto" || value === "off" ? value : null;
+}
+
+export function parseSummaryModeHeader(
+  header: string | undefined,
+): SummaryMode | null | undefined {
+  if (header === undefined || header.trim() === "") return undefined;
+  const value = header.trim().toLowerCase();
+  return value === "auto" || value === "generate" || value === "embedded" || value === "off"
+    ? value
+    : null;
+}
+
 /**
  * Parse the X-Chapter-Split-Max-Chunks header.
  *   undefined        — absent/empty → use server default
@@ -148,6 +167,11 @@ export function resolveChunkingOptions(
   contextPrefixSizeOverride?: number,
   useSummarization = false,
   chapterSplitMaxChunksOverride?: number,
+  documentStructure: "auto" | "off" = "auto",
+  summaryMode: SummaryMode = "auto",
+  pageMarkers = true,
+  figureChunks = true,
+  normalizeTables = true,
 ): ChunkingOptions | { error: string } {
   let chunkingEnabled = false;
   let chunkSize = 0;
@@ -238,6 +262,11 @@ export function resolveChunkingOptions(
     breakpointPercentile,
     useSummarization,
     chapterSplitMaxChunks,
+    documentStructure,
+    summaryMode,
+    pageMarkers: documentStructure === "auto" && pageMarkers,
+    figureChunks: documentStructure === "auto" && figureChunks,
+    normalizeTables: documentStructure === "auto" && normalizeTables,
   };
 }
 
@@ -257,6 +286,11 @@ export interface ParsedIngestHeaders {
   contextPrefixSizeOverride: number | undefined;
   summarizeOverride: boolean | undefined;
   chapterSplitMaxChunksOverride: number | undefined;
+  documentStructure: "auto" | "off";
+  summaryMode: SummaryMode;
+  pageMarkers: boolean;
+  figureChunks: boolean;
+  normalizeTables: boolean;
   /** Set when a header value is invalid; caller should return HTTP 400. */
   validationError?: string;
 }
@@ -291,6 +325,11 @@ export function parseIngestHeaders(
     contextPrefixSizeOverride: undefined,
     summarizeOverride: undefined,
     chapterSplitMaxChunksOverride: undefined,
+    documentStructure: "auto",
+    summaryMode: "auto",
+    pageMarkers: true,
+    figureChunks: true,
+    normalizeTables: true,
     validationError,
   });
 
@@ -364,6 +403,26 @@ export function parseIngestHeaders(
       "X-Chapter-Split-Max-Chunks must be a non-negative integer (0 to disable)",
     );
 
+  const documentStructure = parseDocumentStructureHeader(readHeader(req, "x-document-structure"));
+  if (documentStructure === null)
+    return errReturn('X-Document-Structure must be "auto" or "off"');
+  const summaryMode = parseSummaryModeHeader(readHeader(req, "x-summary-mode"));
+  if (summaryMode === null)
+    return errReturn('X-Summary-Mode must be one of: auto, generate, embedded, off');
+
+  const parseStructureBoolean = (header: string, label: string): boolean | ParsedIngestHeaders => {
+    const parsed = parseBooleanHeader(readHeader(req, header));
+    return parsed === null
+      ? errReturn(`${label} must be one of: 1/0, true/false, yes/no, on/off`)
+      : (parsed ?? true);
+  };
+  const pageMarkers = parseStructureBoolean("x-page-markers", "X-Page-Markers");
+  if (typeof pageMarkers !== "boolean") return pageMarkers;
+  const figureChunks = parseStructureBoolean("x-figure-chunks", "X-Figure-Chunks");
+  if (typeof figureChunks !== "boolean") return figureChunks;
+  const normalizeTables = parseStructureBoolean("x-normalize-tables", "X-Normalize-Tables");
+  if (typeof normalizeTables !== "boolean") return normalizeTables;
+
   return {
     rawChunkSize,
     rawChunkOverlap,
@@ -378,5 +437,10 @@ export function parseIngestHeaders(
     contextPrefixSizeOverride: contextPrefixParsed ?? undefined,
     summarizeOverride: summarizeParsed ?? undefined,
     chapterSplitMaxChunksOverride: chapterSplitParsed ?? undefined,
+    documentStructure: documentStructure ?? "auto",
+    summaryMode: summaryMode ?? "auto",
+    pageMarkers,
+    figureChunks,
+    normalizeTables,
   };
 }

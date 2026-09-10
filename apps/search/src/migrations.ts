@@ -131,7 +131,7 @@ async function recordMigration(
  * Current version of the global (system-table) schema.
  * Increment when adding a step to GLOBAL_MIGRATIONS.
  */
-export const GLOBAL_SCHEMA_VERSION = 3;
+export const GLOBAL_SCHEMA_VERSION = 4;
 
 interface MigrationStep {
   toVersion: number;
@@ -178,6 +178,29 @@ const GLOBAL_MIGRATIONS: MigrationStep[] = [
       // buffer performs its first flush. Harden the tables synchronously so a
       // tenant-filtered /ui/admin/stats request can never race legacy DDL.
       await ensureStatsTables(client);
+    },
+  },
+  {
+    toVersion: 4,
+    description: "Add tenant-isolated original document assets",
+    up: async (client) => {
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS vs_document_assets (
+          tenant_id TEXT NOT NULL,
+          collection TEXT NOT NULL,
+          asset_id TEXT NOT NULL,
+          document_reference TEXT NOT NULL,
+          figure_id TEXT NOT NULL,
+          mime_type TEXT NOT NULL,
+          data BYTEA NOT NULL,
+          checksum TEXT,
+          created TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          modified TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          PRIMARY KEY (tenant_id, collection, asset_id)
+        )
+      `);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_vs_document_assets_document ON vs_document_assets(tenant_id, collection, document_reference)`);
+      await client.query(`CREATE INDEX IF NOT EXISTS idx_vs_document_assets_figure ON vs_document_assets(tenant_id, collection, document_reference, figure_id)`);
     },
   },
 

@@ -105,6 +105,11 @@ export interface VerifiedEvidence {
     title?: string;
     source?: string;
     link?: string;
+    assetUrl?: string;
+    modality?: "image";
+    figureId?: string;
+    assetId?: string;
+    bbox?: [number, number, number, number];
     chunk: {
       index: number;
       total?: number;
@@ -293,6 +298,11 @@ export function buildVerifiedEvidencePack(
         ...(result.title ? { title: result.title } : {}),
         ...(result.source ? { source: result.source } : {}),
         ...(result.link ? { link: result.link } : {}),
+        ...(result.asset_url ? { assetUrl: result.asset_url } : {}),
+        ...(result.evidence?.modality ? { modality: result.evidence.modality } : {}),
+        ...(result.evidence?.figure_id ? { figureId: result.evidence.figure_id } : {}),
+        ...(result.evidence?.asset_id ? { assetId: result.evidence.asset_id } : {}),
+        ...(result.evidence?.bbox ? { bbox: result.evidence.bbox } : {}),
         chunk: {
           index: chunkIndex,
           ...(chunkTotal !== undefined ? { total: chunkTotal } : {}),

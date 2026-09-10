@@ -68,6 +68,15 @@ export interface RagChunk {
   documentId?: string;
   version?: string;
   page?: string | number;
+  /** Inclusive page range supplied by document evidence. */
+  pageStart?: number;
+  pageEnd?: number;
+  /** Image provenance retained from vectorsearch evidence. */
+  modality?: "image";
+  figureId?: string;
+  assetId?: string;
+  bbox?: [number, number, number, number];
+  assetUrl?: string;
   section?: string;
   charStart?: number;
   charEnd?: number;
@@ -544,13 +553,40 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
         ? evidence.chunk_id
         : undefined);
     const evidencePage = evidence.page_start;
-    const resolvedPage =
-      page ??
-      (typeof evidencePage === "number" &&
+    const pageStart =
+      typeof evidencePage === "number" &&
       Number.isFinite(evidencePage) &&
       evidencePage >= 0
         ? Math.floor(evidencePage)
-        : undefined);
+        : undefined;
+    const rawPageEnd = evidence.page_end;
+    const pageEnd =
+      typeof rawPageEnd === "number" &&
+      Number.isFinite(rawPageEnd) &&
+      rawPageEnd >= 0
+        ? Math.floor(rawPageEnd)
+        : undefined;
+    const modality = evidence.modality === "image" ? "image" as const : undefined;
+    const figureId =
+      typeof evidence.figure_id === "string" && evidence.figure_id.trim() !== ""
+        ? evidence.figure_id
+        : undefined;
+    const assetId =
+      typeof evidence.asset_id === "string" && evidence.asset_id.trim() !== ""
+        ? evidence.asset_id
+        : undefined;
+    const rawBbox = evidence.bbox;
+    const bbox =
+      Array.isArray(rawBbox) &&
+      rawBbox.length === 4 &&
+      rawBbox.every((value) => typeof value === "number" && Number.isFinite(value))
+        ? rawBbox as [number, number, number, number]
+        : undefined;
+    const assetUrl =
+      typeof item.asset_url === "string" && item.asset_url.trim() !== ""
+        ? item.asset_url
+        : undefined;
+    const resolvedPage = page ?? pageStart;
     chunks.push({
       id: typeof item.id === "string" ? (item.id as string) : String(i),
       title: String(title),
@@ -563,6 +599,13 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       ...(documentId !== undefined ? { documentId } : {}),
       ...(version !== undefined ? { version } : {}),
       ...(resolvedPage !== undefined ? { page: resolvedPage } : {}),
+      ...(pageStart !== undefined ? { pageStart } : {}),
+      ...(pageEnd !== undefined ? { pageEnd } : {}),
+      ...(modality !== undefined ? { modality } : {}),
+      ...(figureId !== undefined ? { figureId } : {}),
+      ...(assetId !== undefined ? { assetId } : {}),
+      ...(bbox !== undefined ? { bbox } : {}),
+      ...(assetUrl !== undefined ? { assetUrl } : {}),
       ...(section !== undefined ? { section } : {}),
       ...(charStart !== undefined ? { charStart } : {}),
       ...(charEnd !== undefined ? { charEnd } : {}),

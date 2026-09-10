@@ -73,6 +73,7 @@ export function createCollectionAccessMiddleware(
       const acl = await requireCollectionAccess(postgresClient, collection, scope);
       res.locals["accessScope"] = scope;
       res.locals["collectionAcl"] = acl;
+      res.locals["resolvedCollection"] = collection;
       next();
     } catch (err) {
       if (err instanceof AccessDeniedError) {

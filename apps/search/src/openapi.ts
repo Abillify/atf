@@ -98,8 +98,26 @@ const searchResultSchema = {
     evidence: {
       type: "object",
       nullable: true,
-      description: "Citation coordinates for the hit (chunk id, original character/page/section span).",
-      additionalProperties: true,
+      description: "Citation coordinates and optional image evidence identity.",
+      properties: {
+        chunk_id: { type: "string" },
+        reference: { type: "string" },
+        root_document_id: { type: "string" },
+        char_start: { type: "integer" },
+        char_end: { type: "integer" },
+        page_start: { type: "integer" },
+        page_end: { type: "integer" },
+        section_path: { type: "array", items: { type: "string" } },
+        modality: { type: "string", enum: ["image"] },
+        figure_id: { type: "string" },
+        asset_id: { type: "string" },
+        bbox: { type: "array", minItems: 4, maxItems: 4, items: { type: "number" } },
+      },
+    },
+    asset_url: {
+      type: "string",
+      nullable: true,
+      description: "Relative authenticated URL for the original figure image.",
     },
     created: { type: "string", format: "date-time" },
     modified: { type: "string", format: "date-time" },
@@ -477,7 +495,8 @@ export function buildOpenApiSpec(serverUrl: string) {
           description:
             "Embeds and stores a single document or, when chunking is configured, " +
             "splits it into chunks first. Supports versioning, sparse vectors, " +
-            "semantic chunking, late chunking, and LLM-based summarization.",
+            "semantic chunking, late chunking, and LLM-based summarization. " +
+            "Structured summary/page/figure/table extraction applies when chunking is enabled.",
           requestBody: {
             required: true,
             content: {
@@ -592,6 +611,21 @@ export function buildOpenApiSpec(serverUrl: string) {
               "X-Summarize",
               "Generate an LLM summary for the context prefix (requires SUMMARY_MODEL).",
             ),
+            {
+              name: "X-Document-Structure",
+              in: "header",
+              description: "Enable automatic summary/page/figure/table extraction. Default: auto.",
+              schema: { type: "string", enum: ["auto", "off"], default: "auto" },
+            },
+            {
+              name: "X-Summary-Mode",
+              in: "header",
+              description: "Select embedded/generated summary precedence. `generate` permits generation but still requires X-Summarize=true and a configured SUMMARY_MODEL.",
+              schema: { type: "string", enum: ["auto", "generate", "embedded", "off"], default: "auto" },
+            },
+            booleanHeader("X-Page-Markers", "Extract ## Seite/Page markers (default true in auto mode)."),
+            booleanHeader("X-Figure-Chunks", "Create independent image-description chunks (default true in auto mode)."),
+            booleanHeader("X-Normalize-Tables", "Convert HTML tables, including row/column spans, to Markdown (default true in auto mode)."),
             {
               name: "X-Allowed-Users",
               in: "header",
@@ -719,6 +753,11 @@ export function buildOpenApiSpec(serverUrl: string) {
               "X-Semantic-Chunking",
               "Use semantic chunking for all documents in the batch.",
             ),
+            { name: "X-Document-Structure", in: "header", schema: { type: "string", enum: ["auto", "off"], default: "auto" } },
+            { name: "X-Summary-Mode", in: "header", schema: { type: "string", enum: ["auto", "generate", "embedded", "off"], default: "auto" } },
+            booleanHeader("X-Page-Markers", "Extract Markdown page markers."),
+            booleanHeader("X-Figure-Chunks", "Create independent figure-description chunks."),
+            booleanHeader("X-Normalize-Tables", "Convert HTML tables to Markdown."),
           ],
           responses: {
             "200": {
@@ -770,6 +809,11 @@ export function buildOpenApiSpec(serverUrl: string) {
               in: "header",
               schema: { type: "string", enum: ["replace", "version"] },
             },
+            { name: "X-Document-Structure", in: "header", schema: { type: "string", enum: ["auto", "off"], default: "auto" } },
+            { name: "X-Summary-Mode", in: "header", schema: { type: "string", enum: ["auto", "generate", "embedded", "off"], default: "auto" } },
+            booleanHeader("X-Page-Markers", "Extract Markdown page markers."),
+            booleanHeader("X-Figure-Chunks", "Create independent figure-description chunks."),
+            booleanHeader("X-Normalize-Tables", "Convert HTML tables to Markdown."),
           ],
           responses: {
             "200": {
@@ -790,6 +834,53 @@ export function buildOpenApiSpec(serverUrl: string) {
             "400": { description: "Parse error" },
             "401": { description: "Unauthorized" },
             "502": { description: "Embedding or database error" },
+          },
+        },
+      },
+
+      "/document-assets/{assetId}": {
+        put: {
+          tags: ["Ingest"],
+          operationId: "putDocumentAsset",
+          summary: "Store or replace an original figure image",
+          parameters: [
+            { name: "assetId", in: "path", required: true, schema: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+            { name: "X-Collection", in: "header", schema: { type: "string", default: "documents" } },
+            { name: "X-Document-Reference", in: "header", required: true, schema: { type: "string" } },
+            { name: "X-Figure-Id", in: "header", required: true, schema: { type: "string" } },
+          ],
+          requestBody: {
+            required: true,
+            description: "Raw image bytes, maximum 20 MiB. assetId must equal SHA-256(document reference + newline + figure ID).",
+            content: {
+              "image/png": { schema: { type: "string", format: "binary" } },
+              "image/jpeg": { schema: { type: "string", format: "binary" } },
+              "image/webp": { schema: { type: "string", format: "binary" } },
+              "image/gif": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          responses: {
+            "200": { description: "Asset replaced" },
+            "201": { description: "Asset created" },
+            "400": { description: "Missing header or mismatched asset ID" },
+            "403": { description: "Collection or tenant access denied" },
+            "413": { description: "Image exceeds 20 MiB" },
+            "415": { description: "Unsupported image type" },
+          },
+        },
+        get: {
+          tags: ["Query"],
+          operationId: "getDocumentAsset",
+          summary: "Fetch an original figure image when its text document is visible",
+          parameters: [
+            { name: "assetId", in: "path", required: true, schema: { type: "string", pattern: "^[a-f0-9]{64}$" } },
+            { name: "collection", in: "query", schema: { type: "string", default: "documents" } },
+            { name: "X-Collection", in: "header", schema: { type: "string" } },
+          ],
+          responses: {
+            "200": { description: "Original image bytes with Content-Type, ETag and private Cache-Control headers" },
+            "304": { description: "ETag not modified" },
+            "404": { description: "Asset absent or associated text document not visible" },
           },
         },
       },

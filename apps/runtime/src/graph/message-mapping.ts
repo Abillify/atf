@@ -204,6 +204,112 @@ export interface AiToolResultPart {
   output: unknown; // ai@6.x (was `result` in ai@4.x)
 }
 
+export type AiToolResultOutput =
+  | { type: "text"; value: string }
+  | { type: "error-text"; value: string }
+  | {
+      type: "content";
+      value: Array<
+        | { type: "text"; text: string }
+        | {
+            type: "file";
+            data: { type: "data"; data: string };
+            mediaType: string;
+          }
+      >;
+    };
+
+const MAX_MCP_IMAGE_BYTES = 20 * 1024 * 1024;
+const MCP_IMAGE_MEDIA_TYPES = new Set([
+  "image/png",
+  "image/jpeg",
+  "image/webp",
+  "image/gif",
+]);
+
+/** Convert MCP text/image content into provider-neutral AI SDK tool output. */
+export function mcpToolResultToModelOutput(content: unknown): AiToolResultOutput {
+  if (!Array.isArray(content)) {
+    return {
+      type: "text",
+      value:
+        typeof content === "string"
+          ? content
+          : JSON.stringify(content) ?? String(content),
+    };
+  }
+  const value: Array<
+    | { type: "text"; text: string }
+    | { type: "file"; data: { type: "data"; data: string }; mediaType: string }
+  > = [];
+  for (const raw of content) {
+    if (raw === null || typeof raw !== "object") continue;
+    const item = raw as Record<string, unknown>;
+    if (item.type === "text" && typeof item.text === "string") {
+      value.push({ type: "text", text: item.text });
+      continue;
+    }
+    if (item.type === "image") {
+      const mediaType = typeof item.mimeType === "string" ? item.mimeType : "";
+      const data = typeof item.data === "string" ? item.data : "";
+      const normalized = data.replace(/\s+/g, "");
+      const validBase64 =
+        normalized.length > 0 &&
+        normalized.length % 4 === 0 &&
+        /^[A-Za-z0-9+/]*={0,2}$/.test(normalized);
+      const decodedBytes = validBase64
+        ? Buffer.byteLength(normalized, "base64")
+        : Number.POSITIVE_INFINITY;
+      if (
+        !MCP_IMAGE_MEDIA_TYPES.has(mediaType) ||
+        !validBase64 ||
+        decodedBytes > MAX_MCP_IMAGE_BYTES
+      ) {
+        return {
+          type: "error-text",
+          value: "MCP image content was rejected because its MIME type, base64 payload, or decoded size is invalid.",
+        };
+      }
+      value.push({
+        type: "file",
+        data: { type: "data", data: normalized },
+        mediaType,
+      });
+    }
+  }
+  if (value.some((part) => part.type === "file")) {
+    return { type: "content", value };
+  }
+  const text = value
+    .filter((part): part is { type: "text"; text: string } => part.type === "text")
+    .map((part) => part.text)
+    .join("\n");
+  return { type: "text", value: text || JSON.stringify(content) };
+}
+
+/** True when provider-bound messages contain a real image/file input. */
+export function modelMessagesContainImages(messages: readonly ModelMessage[]): boolean {
+  const containsImagePart = (value: unknown): boolean => {
+    if (!Array.isArray(value)) return false;
+    return value.some((raw) => {
+      if (raw === null || typeof raw !== "object") return false;
+      const part = raw as Record<string, unknown>;
+      if (part.type === "image") return true;
+      if (part.type === "file" && typeof part.mediaType === "string") {
+        return part.mediaType.startsWith("image/");
+      }
+      if (part.type === "tool-result") {
+        const output = part.output;
+        if (output !== null && typeof output === "object") {
+          return containsImagePart((output as Record<string, unknown>).value);
+        }
+      }
+      return false;
+    });
+  };
+  return messages.some((message) => containsImagePart(message.content));
+}
+
 /**
  * Validates tool call/result pairing and filters orphaned messages.
  *
@@ -422,25 +528,11 @@ export function baseMessagesToModelMessages(
           continue;
         }
 
-        // MCP content array - convert to AI SDK format
-        // MCP content items have { type: "text", text: string } or { type: "image", data: string, mimeType: string }
-        const textParts = content
-          .filter(
-            (item) =>
-              item !== null && typeof item === "object" && item.type === "text",
-          )
-          .map((item) => (item as { text?: string }).text ?? "")
-          .filter((text) => text.length > 0);
-
-        const textValue =
-          textParts.length > 0 ? textParts.join("\n") : JSON.stringify(content);
-
         const part: AiToolResultPart = {
           type: "tool-result",
           toolCallId,
           toolName,
-          // ai@6.x ToolResultOutput: { type: "text", value: string }
-          output: { type: "text", value: textValue },
+          output: mcpToolResultToModelOutput(content),
         };
         result.push({
           role: "tool",
@@ -454,6 +546,7 @@ export function baseMessagesToModelMessages(
         typeof content === "string" ? content : JSON.stringify(content);
 
       let parsedParts: unknown[] | undefined;
+      let parsedMcpContent: unknown[] | undefined;
       try {
         const parsed = JSON.parse(raw);
         if (
@@ -467,9 +560,16 @@ export function baseMessagesToModelMessages(
           )
         ) {
           parsedParts = parsed;
+        } else if (
+          Array.isArray(parsed) &&
+          parsed.some(
+            (p) => p !== null && typeof p === "object" && p.type === "image",
+          )
+        ) {
+          parsedMcpContent = parsed;
         }
       } catch {
-        // Not a JSON array of tool result/approval parts
+        // Not a JSON array of tool result/approval or MCP content parts
       }
 
       if (parsedParts !== undefined) {
@@ -484,8 +584,10 @@ export function baseMessagesToModelMessages(
         type: "tool-result",
         toolCallId,
         toolName,
-        // ai@6.x ToolResultOutput: { type: "text", value: string }
-        output: { type: "text", value: raw },
+        output:
+          parsedMcpContent !== undefined
+            ? mcpToolResultToModelOutput(parsedMcpContent)
+            : { type: "text", value: raw },
       };
       result.push({ role: "tool", content: [part] } as unknown as ModelMessage);
       continue;

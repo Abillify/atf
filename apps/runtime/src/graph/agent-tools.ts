@@ -59,6 +59,7 @@ import {
   parseVectorSearchSummaries,
 } from "./reranker.js";
 import { buildCitationEntries } from "./rag-grounding.js";
+import { mcpToolResultToModelOutput } from "./message-mapping.js";
 import {
   getTransactionOrchestrator,
   thrownToolOutcome,
@@ -338,6 +339,9 @@ export async function buildAiTools(
           ? { required: filtered.inputSchema.required }
           : {}),
       }),
+      // Preserve MCP image content as an actual AI SDK file/image part in the
+      // next agent step instead of JSON-stringifying the base64 payload.
+      toModelOutput: ({ output }) => mcpToolResultToModelOutput(output),
       execute: async (
         modelArgs: Record<string, unknown>,
         toolOptions: ToolExecutionOptions<never>,

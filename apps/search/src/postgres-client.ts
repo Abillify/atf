@@ -247,6 +247,11 @@ export interface ChunkInfo {
    * rather than mechanically sliced from the document beginning.
    */
   summary?: boolean;
+  summary_source?: "embedded" | "generated";
+  modality?: "image";
+  figure_id?: string;
+  asset_id?: string;
+  bbox?: [number, number, number, number];
 }
 
 export interface SearchFilter {
@@ -262,6 +267,10 @@ export interface SearchEvidence {
   page_start?: number;
   page_end?: number;
   section_path?: string[];
+  modality?: "image";
+  figure_id?: string;
+  asset_id?: string;
+  bbox?: [number, number, number, number];
 }
 
 export interface SearchResult {
@@ -285,6 +294,8 @@ export interface SearchResult {
   link?: string;
   title?: string;
   tags?: string[];
+  /** Relative authenticated endpoint for an image evidence asset. */
+  asset_url?: string;
   created: Date;
   modified: Date;
 }
@@ -600,7 +611,40 @@ export interface SearchExecutionPlan {
   sparseApplied: boolean;
 }
 
+export interface DocumentAsset {
+  assetId: string;
+  documentReference: string;
+  figureId: string;
+  mimeType: string;
+  data: Buffer;
+  checksum?: string;
+  created: Date;
+  modified: Date;
+}
+
+export interface DocumentAssetUpsert {
+  tenantId: string;
+  collection: string;
+  assetId: string;
+  documentReference: string;
+  figureId: string;
+  mimeType: string;
+  data: Buffer;
+  checksum?: string;
+}
+
 export interface PostgresClient {
+  upsertDocumentAsset(
+    asset: DocumentAssetUpsert,
+    scope: AccessScope,
+  ): Promise<PostgresResponse<{ created: boolean } | null>>;
+
+  getDocumentAsset(
+    collection: string,
+    assetId: string,
+    scope: AccessScope,
+  ): Promise<PostgresResponse<DocumentAsset | null>>;
+
   upsert(
     point: DocumentPoint,
     collection: string,
@@ -1409,6 +1453,100 @@ export function createPostgresClient(
 
   // ── Public client ─────────────────────────────────────────────────────────
   return {
+    async upsertDocumentAsset(
+      asset: DocumentAssetUpsert,
+      scope: AccessScope,
+    ): Promise<PostgresResponse<{ created: boolean } | null>> {
+      if (!asset.tenantId.trim() || asset.tenantId !== scope.tenantId) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const table = collectionTableName(asset.collection);
+      return withClient(async (client) => {
+        const params: unknown[] = [
+          asset.tenantId,
+          asset.collection,
+          asset.assetId,
+          normalizeReference(asset.documentReference),
+          asset.figureId,
+          asset.mimeType,
+          asset.data,
+          asset.checksum ?? null,
+        ];
+        const access = scopedWhere(scope, params, "d");
+        const result = await client.query<{ inserted: boolean }>(
+          `INSERT INTO vs_document_assets
+             (tenant_id, collection, asset_id, document_reference, figure_id, mime_type, data, checksum)
+           SELECT $1, $2, $3, $4, $5, $6, $7, $8
+           WHERE EXISTS (
+             SELECT 1 FROM "${table}" d
+              WHERE d.tenant_id = $1 AND d.is_latest = TRUE
+                AND d.chunk->>'asset_id' = $3
+                AND d.chunk->>'parent_ref' = $4
+                ${access.sql}
+           )
+           ON CONFLICT (tenant_id, collection, asset_id) DO UPDATE SET
+             document_reference = EXCLUDED.document_reference,
+             figure_id = EXCLUDED.figure_id,
+             mime_type = EXCLUDED.mime_type,
+             data = EXCLUDED.data,
+             checksum = EXCLUDED.checksum,
+             modified = NOW()
+           RETURNING (xmax = 0) AS inserted`,
+          access.params,
+        );
+        const row = result.rows[0];
+        return row ? { created: row.inserted === true } : null;
+      });
+    },
+
+    async getDocumentAsset(
+      collection: string,
+      assetId: string,
+      scope: AccessScope,
+    ): Promise<PostgresResponse<DocumentAsset | null>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      return withClient(async (client) => {
+        const access = scopedWhere(scope, [assetId, collection, scope.tenantId], "d");
+        const result = await client.query<{
+          asset_id: string;
+          document_reference: string;
+          figure_id: string;
+          mime_type: string;
+          data: Buffer;
+          checksum: string | null;
+          created: Date;
+          modified: Date;
+        }>(
+          `SELECT a.asset_id, a.document_reference, a.figure_id, a.mime_type,
+                  a.data, a.checksum, a.created, a.modified
+             FROM vs_document_assets a
+            WHERE a.asset_id = $1 AND a.collection = $2 AND a.tenant_id = $3
+              AND EXISTS (
+                SELECT 1 FROM "${table}" d
+                 WHERE d.is_latest = TRUE
+                   AND d.chunk->>'asset_id' = a.asset_id
+                   AND d.chunk->>'parent_ref' = a.document_reference
+                   ${access.sql}
+              )`,
+          access.params,
+        );
+        const row = result.rows[0];
+        return row ? {
+          assetId: row.asset_id,
+          documentReference: row.document_reference,
+          figureId: row.figure_id,
+          mimeType: row.mime_type,
+          data: row.data,
+          ...(row.checksum ? { checksum: row.checksum } : {}),
+          created: row.created,
+          modified: row.modified,
+        } : null;
+      });
+    },
+
     async queryInvocationLedger(
       sql: string,
       params: readonly unknown[] = [],
@@ -1917,6 +2055,10 @@ export function createPostgresClient(
                 ...(chunk?.page_start !== undefined ? { page_start: chunk.page_start } : {}),
                 ...(chunk?.page_end !== undefined ? { page_end: chunk.page_end } : {}),
                 ...(chunk?.section_path ? { section_path: chunk.section_path } : {}),
+                ...(chunk?.modality ? { modality: chunk.modality } : {}),
+                ...(chunk?.figure_id ? { figure_id: chunk.figure_id } : {}),
+                ...(chunk?.asset_id ? { asset_id: chunk.asset_id } : {}),
+                ...(chunk?.bbox ? { bbox: chunk.bbox } : {}),
               };
             })(),
             reference: row.reference as string,
@@ -1925,6 +2067,9 @@ export function createPostgresClient(
             link: row.link as string | undefined,
             title: row.title as string | undefined,
             tags: row.tags as string[] | undefined,
+            ...((row.chunk as ChunkInfo | null)?.asset_id
+              ? { asset_url: `/document-assets/${encodeURIComponent((row.chunk as ChunkInfo).asset_id!)}?collection=${encodeURIComponent(collection)}` }
+              : {}),
             created: row.created as Date,
             modified: row.modified as Date,
           }));
@@ -1948,19 +2093,39 @@ export function createPostgresClient(
       reference?: string,
     ): Promise<PostgresResponse<{ deleted: number }>> {
       const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
       return withClient(async (client) => {
         const baseParams: unknown[] = reference
           ? [normalizeReference(reference)]
           : [JSON.stringify(filter)];
         const access = scopedWhere(scope, baseParams);
         const target = reference
-          ? `(base_ref = $1 OR reference = $1)`
+          ? `(base_ref = $1 OR reference = $1 OR chunk->>'parent_ref' = $1)`
           : `metadata @> $1`;
-        const result = await client.query(
-          `DELETE FROM "${table}" WHERE ${target}${access.sql}`,
-          access.params,
-        );
-        return { deleted: result.rowCount ?? 0 };
+        await client.query("BEGIN");
+        try {
+          const result = await client.query<{ root_ref: string }>(
+            `DELETE FROM "${table}" WHERE ${target}${access.sql}
+             RETURNING COALESCE(chunk->>'parent_ref', base_ref) AS root_ref`,
+            access.params,
+          );
+          const rootRefs = [...new Set(result.rows.map((row) => row.root_ref))];
+          if (rootRefs.length > 0) {
+            await client.query(
+              `DELETE FROM vs_document_assets
+               WHERE tenant_id = $1 AND collection = $2
+                 AND document_reference = ANY($3)`,
+              [scope.tenantId, collection, rootRefs],
+            );
+          }
+          await client.query("COMMIT");
+          return { deleted: result.rowCount ?? 0 };
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw error;
+        }
       });
     },
 
@@ -2116,18 +2281,32 @@ export function createPostgresClient(
                   : "update") as "insert" | "update",
             );
 
-            // Delete stale chunks: rows sharing a base_ref but whose reference
-            // is no longer part of the new ingest (e.g. chunk count shrank).
-            const baseRefsInBatch = [
-              ...new Set(points.map((p) => p.baseRef ?? p.reference)),
+            // Delete stale chunks and removed chapter/figure units belonging to
+            // any root document represented in this replacement batch.
+            const rootRefsInBatch = [
+              ...new Set(
+                points.map((point) =>
+                  point.chunk?.parent_ref ?? point.baseRef ?? point.reference,
+                ),
+              ),
             ];
-            const refsInBatch = points.map((p) => p.reference);
+            const refsInBatch = points.map((point) => point.reference);
             await client.query(
               `DELETE FROM "${table}"
-               WHERE base_ref = ANY($1)
+               WHERE (base_ref = ANY($1) OR chunk->>'parent_ref' = ANY($1))
                  AND reference != ALL($2)
                  AND tenant_id = $3`,
-              [baseRefsInBatch, refsInBatch, batchTenantId],
+              [rootRefsInBatch, refsInBatch, batchTenantId],
+            );
+            const assetIdsInBatch = points.flatMap((point) =>
+              point.chunk?.asset_id ? [point.chunk.asset_id] : [],
+            );
+            await client.query(
+              `DELETE FROM vs_document_assets
+               WHERE tenant_id = $1 AND collection = $2
+                 AND document_reference = ANY($3)
+                 AND asset_id != ALL($4)`,
+              [batchTenantId, collection, rootRefsInBatch, assetIdsInBatch],
             );
           } else {
             // Version mode
@@ -3678,11 +3857,22 @@ export function createPostgresClient(
         };
       }
       return withClient(async (client) => {
-        await client.query(`DROP TABLE IF EXISTS "${table}"`);
-        await client.query(
-          `DELETE FROM vs_collection_config WHERE collection_table = $1`,
-          [table],
-        );
+        await client.query("BEGIN");
+        try {
+          await client.query(`DROP TABLE IF EXISTS "${table}"`);
+          await client.query(
+            `DELETE FROM vs_collection_config WHERE collection_table = $1`,
+            [table],
+          );
+          await client.query(
+            `DELETE FROM vs_document_assets WHERE collection = $1`,
+            [collection],
+          );
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw error;
+        }
         ensuredCollections.delete(table);
         ensureCollectionLocks.delete(table);
         return { dropped: true };
@@ -3765,6 +3955,10 @@ export function createPostgresClient(
              SET collection_table = $1, updated_at = NOW()
              WHERE collection_table = $2`,
             [newTable, oldTable],
+          );
+          await client.query(
+            `UPDATE vs_document_assets SET collection = $1, modified = NOW() WHERE collection = $2`,
+            [newName, oldName],
           );
           await client.query("COMMIT");
         } catch (err) {

@@ -108,6 +108,7 @@ export function buildCitationEntries(
   summaries: readonly RagSummary[],
 ): CitationEntry[] {
   const byKey = new Map<string, Citation>();
+  const conflictedTopLevelFields = new Map<string, Set<string>>();
   const order: string[] = [];
   const evidenceKey = (evidence: CitationEvidence): string =>
     evidence.chunk_id ??
@@ -115,6 +116,12 @@ export function buildCitationEntries(
       evidence.document_id,
       evidence.version,
       evidence.page,
+      evidence.page_start,
+      evidence.page_end,
+      evidence.modality,
+      evidence.figure_id,
+      evidence.asset_id,
+      evidence.bbox?.join(","),
       evidence.section,
       evidence.char_start,
       evidence.char_end,
@@ -134,11 +141,31 @@ export function buildCitationEntries(
       existing.snippet = cand.snippet;
     }
     if (existing.url === "" && cand.url !== "") existing.url = cand.url;
-    for (const field of ["citation_id", "document_id", "version", "page", "section", "char_start", "char_end", "chunk_id"] as const) {
-      if (existing[field] === undefined && cand[field] !== undefined) {
+    const topLevelFields = ["citation_id", "document_id", "version", "page", "page_start", "page_end", "modality", "figure_id", "asset_id", "bbox", "asset_url", "section", "char_start", "char_end", "chunk_id"] as const;
+    const conflictSensitive = new Set<string>([
+      "page",
+      "page_start",
+      "page_end",
+      "modality",
+      "figure_id",
+      "asset_id",
+      "bbox",
+      "asset_url",
+    ]);
+    const conflicts = conflictedTopLevelFields.get(key) ?? new Set<string>();
+    for (const field of topLevelFields) {
+      if (conflicts.has(field) || cand[field] === undefined) continue;
+      if (existing[field] === undefined) {
         (existing as unknown as Record<string, unknown>)[field] = cand[field];
+      } else if (
+        conflictSensitive.has(field) &&
+        JSON.stringify(existing[field]) !== JSON.stringify(cand[field])
+      ) {
+        delete (existing as unknown as Record<string, unknown>)[field];
+        conflicts.add(field);
       }
     }
+    if (conflicts.size > 0) conflictedTopLevelFields.set(key, conflicts);
     if (cand.evidence !== undefined) {
       const merged = existing.evidence ?? [];
       const seen = new Set(merged.map(evidenceKey));
@@ -179,6 +206,13 @@ export function buildCitationEntries(
       ...(c.documentId !== undefined ? { document_id: c.documentId } : {}),
       ...(c.version !== undefined ? { version: c.version } : {}),
       ...(c.page !== undefined ? { page: c.page } : {}),
+      ...(c.pageStart !== undefined ? { page_start: c.pageStart } : {}),
+      ...(c.pageEnd !== undefined ? { page_end: c.pageEnd } : {}),
+      ...(c.modality !== undefined ? { modality: c.modality } : {}),
+      ...(c.figureId !== undefined ? { figure_id: c.figureId } : {}),
+      ...(c.assetId !== undefined ? { asset_id: c.assetId } : {}),
+      ...(c.bbox !== undefined ? { bbox: c.bbox } : {}),
+      ...(c.assetUrl !== undefined ? { asset_url: c.assetUrl } : {}),
       ...(c.section !== undefined ? { section: c.section } : {}),
       ...(c.charStart !== undefined ? { char_start: c.charStart } : {}),
       ...(c.charEnd !== undefined ? { char_end: c.charEnd } : {}),
@@ -196,6 +230,13 @@ export function buildCitationEntries(
       ...(c.documentId !== undefined ? { document_id: c.documentId } : {}),
       ...(c.version !== undefined ? { version: c.version } : {}),
       ...(c.page !== undefined ? { page: c.page } : {}),
+      ...(c.pageStart !== undefined ? { page_start: c.pageStart } : {}),
+      ...(c.pageEnd !== undefined ? { page_end: c.pageEnd } : {}),
+      ...(c.modality !== undefined ? { modality: c.modality } : {}),
+      ...(c.figureId !== undefined ? { figure_id: c.figureId } : {}),
+      ...(c.assetId !== undefined ? { asset_id: c.assetId } : {}),
+      ...(c.bbox !== undefined ? { bbox: c.bbox } : {}),
+      ...(c.assetUrl !== undefined ? { asset_url: c.assetUrl } : {}),
       ...(c.section !== undefined ? { section: c.section } : {}),
       ...(c.charStart !== undefined ? { char_start: c.charStart } : {}),
       ...(c.charEnd !== undefined ? { char_end: c.charEnd } : {}),
@@ -281,13 +322,13 @@ export function buildGroundingSections(
 
   // Group the retrieved chunk TEXT by the SAME document key used for [n], so a
   // passage block is labelled with its document's citation number.
-  const contentByDocKey = new Map<string, string[]>();
+  const contentByDocKey = new Map<string, RagChunk[]>();
   for (const c of chunks) {
     if (c.content.trim() === "") continue;
     const key = docKeyOf({ reference: c.baseRef, url: c.url, title: c.title });
     const list = contentByDocKey.get(key);
-    if (list) list.push(c.content);
-    else contentByDocKey.set(key, [c.content]);
+    if (list) list.push(c);
+    else contentByDocKey.set(key, [c]);
   }
 
   const sections: string[] = [];
@@ -404,7 +445,27 @@ export function buildGroundingSections(
     const sourceBlocks = passageKeys.map((key) => {
       const n = indexByKey.get(key);
       const title = byKey.get(key)?.title ?? key;
-      const body = (contentByDocKey.get(key) ?? []).join("\n\n").trim();
+      const passages = contentByDocKey.get(key) ?? [];
+      const body = passages
+        .map((chunk) => {
+          const page =
+            chunk.pageStart !== undefined
+              ? chunk.pageEnd !== undefined && chunk.pageEnd !== chunk.pageStart
+                ? `S. ${chunk.pageStart}–${chunk.pageEnd}`
+                : `S. ${chunk.pageStart}`
+              : undefined;
+          const provenance = [
+            chunk.baseRef !== undefined ? `Ref: ${chunk.baseRef}` : undefined,
+            page,
+            chunk.modality !== undefined ? `Modalität: ${chunk.modality}` : undefined,
+            chunk.figureId !== undefined ? `Abbildung: ${chunk.figureId}` : undefined,
+            chunk.assetId !== undefined ? `Asset: ${chunk.assetId}` : undefined,
+            chunk.bbox !== undefined ? `BBox: [${chunk.bbox.join(", ")}]` : undefined,
+          ].filter((value): value is string => value !== undefined);
+          return `${provenance.length > 0 ? `(${provenance.join("; ")})\n` : ""}${chunk.content}`;
+        })
+        .join("\n\n")
+        .trim();
       return body !== "" ? `[${n}] ${title}\n${body}` : `[${n}] ${title}`;
     });
     sections.push(

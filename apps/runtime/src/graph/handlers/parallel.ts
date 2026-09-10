@@ -32,6 +32,7 @@ import {
   docKeyOf,
   type RagChunk,
 } from "../reranker.js";
+import { buildCitationEntries } from "../rag-grounding.js";
 import { createToolNodeHandler } from "./tool.js";
 import { Semaphore } from "../semaphore.js";
 import {
@@ -701,15 +702,7 @@ export function createParallelNodeHandler(
         // later self-search of the same document reuse the same `[n]`. Falls
         // back to positional `[1..k]` + onCitations when the registry is not
         // wired (e.g. in unit tests).
-        const citationEntries = selected.map((c) => ({
-          key: docKeyOf({ reference: c.baseRef, url: c.url, title: c.title }),
-          citation: {
-            title: c.title,
-            url: c.url,
-            snippet: c.content.slice(0, 500),
-            similarity_score: Math.max(0, Math.min(1, c.retrievalScore)),
-          },
-        }));
+        const citationEntries = buildCitationEntries(selected, []);
         let indices: number[] = selected.map((_, i) => i + 1);
         try {
           if (runtime.registerCitations !== undefined) {
@@ -720,10 +713,27 @@ export function createParallelNodeHandler(
         } catch {
           /* ignore client disconnect */
         }
+        const evidenceLine = (c: RagChunk): string => {
+          const page =
+            c.pageStart !== undefined
+              ? c.pageEnd !== undefined && c.pageEnd !== c.pageStart
+                ? `S. ${c.pageStart}–${c.pageEnd}`
+                : `S. ${c.pageStart}`
+              : undefined;
+          const fields = [
+            c.baseRef !== undefined ? `Ref: ${c.baseRef}` : undefined,
+            page,
+            c.modality !== undefined ? `Modalität: ${c.modality}` : undefined,
+            c.figureId !== undefined ? `Abbildung: ${c.figureId}` : undefined,
+            c.assetId !== undefined ? `Asset: ${c.assetId}` : undefined,
+            c.bbox !== undefined ? `BBox: [${c.bbox.join(", ")}]` : undefined,
+          ].filter((value): value is string => value !== undefined);
+          return fields.length > 0 ? `\nEvidence: ${fields.join("; ")}` : "";
+        };
         const numbered = selected
           .map(
             (c, i) =>
-              `[${indices[i]}]${provenance(c)} ${c.title}\n${c.content}${metaLine(c)}`,
+              `[${indices[i]}]${provenance(c)} ${c.title}${evidenceLine(c)}\n${c.content}${metaLine(c)}`,
           )
           .join("\n\n");
         const header =

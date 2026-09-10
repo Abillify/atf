@@ -35,6 +35,7 @@
  *   list_folders     — explore the folder structure
  *   find_folders     — resolve a folder name to its path anywhere in the tree
  *   get_document     — reassemble one document from its chunks
+ *   get_document_asset — fetch one authorized original figure as MCP image content
  *   get_documents    — reassemble every document beneath a folder
  *   get_summary      — stored summary of one document
  *   get_summaries    — stored summaries across a collection/folder
@@ -86,6 +87,7 @@ import {
 } from "../ingest-jobs.js";
 import type { EmbedFn } from "../semantic-chunker.js";
 import type { SummaryClient } from "../summary-client.js";
+import { DOCUMENT_ASSET_MIME_TYPES } from "./document-assets.js";
 import { FILTER_V2, normalizeFilterV2, normalizeMetadata } from "../metadata.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
@@ -311,13 +313,13 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       },
       budgets: ["maxDurationMs","maxRetrievalDocuments"],
       scopeMatrix: {
-        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_documents","get_summary","get_summaries"], anyOf: ["retrieve","search","read","tool:<name>"] },
+        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_document_asset","get_documents","get_summary","get_summaries"], anyOf: ["retrieve","search","read","tool:<name>"] },
         ingest: { tools: ["ingest"], anyOf: ["write","ingest","tool:ingest"] },
         delete: { tools: ["delete_document"], anyOf: ["write","delete","tool:delete_document"] },
         legacyOptionalCalls: "unchanged",
       },
       idempotency: { supported: true, key: ["principal","executionId","invocationId"], fingerprint: "sha256(tool+stableArgs+executionId)", committedReplay: true, mismatchConflict: true, inFlightConflict: true, mutatingUnknownOutcome: "outcome_unknown", states: ["pending","running","committed","failed","outcome_unknown","compensated"], durability: opts.invocationLedger!.durability },
-      tools: { retrieve_evidence: { readOnly: true, aclFiltered: true, provenance: "sha256" }, verified_evidence_pack: { readOnly: true, aclFiltered: true, provenance: "sha256", contentTrust: "untrusted" }, ingest: { readOnly: false, idempotent: true }, delete_document: { readOnly: false, idempotent: true } },
+      tools: { retrieve_evidence: { readOnly: true, aclFiltered: true, provenance: "sha256" }, verified_evidence_pack: { readOnly: true, aclFiltered: true, provenance: "sha256", contentTrust: "untrusted" }, get_document_asset: { readOnly: true, aclFiltered: true, contentType: "image" }, ingest: { readOnly: false, idempotent: true }, delete_document: { readOnly: false, idempotent: true } },
     }) }] }),
   );
 
@@ -347,7 +349,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         const chunk = hit.chunk?.chunk_index ?? 0;
         const version = typeof hit.metadata?.["version"] === "string" ? hit.metadata["version"] : hit.modified.toISOString();
         const contentHash = stableHash(hit.content);
-        return { evidenceId: stableHash(`${col}\n${hit.reference}\n${chunk}\n${version}\n${contentHash}`), collection: col, reference: hit.reference, chunk, version, score: hit.score, content: hit.content, contentHash, queryHash, retrievedAt, invocationId: transaction?.invocationId, executionId: transaction?.executionId, traceId: transaction?.trace.traceId };
+        return { evidenceId: stableHash(`${col}\n${hit.reference}\n${chunk}\n${version}\n${contentHash}`), collection: col, reference: hit.reference, chunk, version, score: hit.score, content: hit.content, contentHash, queryHash, retrievedAt, evidence: hit.evidence, asset_url: hit.asset_url, invocationId: transaction?.invocationId, executionId: transaction?.executionId, traceId: transaction?.trace.traceId };
       });
       emitQueryActivity({ tool: "retrieve_evidence", summary: `${evidence.length} evidence items from ${col}`, status: "ok", startTime, detail: { collection: col, count: evidence.length, queryHash, evidenceIds: evidence.map((item) => item.evidenceId) } });
       return { content: [{ type: "text", text: JSON.stringify({ evidence, count: evidence.length, queryHash, retrievedAt, ...(transaction ? { actionContractHash: canonicalActionContractHash(transaction) } : {}), ...transactionCorrelation() }) }] };
@@ -934,6 +936,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         content: r.content,
         chunk: r.chunk ?? null,
         evidence: r.evidence ?? null,
+        asset_url: r.asset_url ?? null,
         metadata: r.metadata,
         modified: r.modified,
       }));
@@ -1865,6 +1868,98 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       return {
         content: [
           { type: "text", text: JSON.stringify(result.result, null, 2) },
+        ],
+      };
+    },
+  );
+
+  // ── Tool: get_document_asset ─────────────────────────────────────────────
+  server.tool(
+    "get_document_asset",
+    "Fetch an authorized original document figure as MCP image content. Use the asset_id from a search result; optional expected document/figure fields fail closed when evidence and asset metadata do not match.",
+    {
+      asset_id: z.string().min(1).describe("Asset ID from search evidence"),
+      collection: z
+        .string()
+        .optional()
+        .describe(`Collection to read from (default: "${defaultCollection}")`),
+      expected_document_reference: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Optional expected document reference from the search hit"),
+      expected_figure_id: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Optional expected figure ID from the search evidence"),
+    },
+    async ({ asset_id, collection, expected_document_reference, expected_figure_id }) => {
+      const startTime = Date.now();
+      const col = collection ?? defaultCollection;
+      await authorize(col);
+      const result = await postgresClient.getDocumentAsset(
+        col,
+        asset_id,
+        accessScopeForMcp(),
+      );
+      const fail = (reason: "lookup_failed" | "not_found" | "metadata_mismatch" | "unsupported_mime") => {
+        emitQueryActivity({
+          tool: "get_document_asset",
+          summary: `${asset_id}${col !== "documents" ? " in " + col : ""} — unavailable`,
+          status: "error",
+          startTime,
+          detail: { collection: col, assetId: asset_id, reason },
+        });
+        return {
+          content: [{ type: "text" as const, text: `No authorized image asset found for "${asset_id}" in collection "${col}".` }],
+          isError: true,
+        };
+      };
+      if (!result.ok) return fail("lookup_failed");
+      const asset = result.result;
+      if (asset === null) return fail("not_found");
+      if (
+        (expected_document_reference !== undefined &&
+          asset.documentReference !== expected_document_reference) ||
+        (expected_figure_id !== undefined && asset.figureId !== expected_figure_id)
+      ) {
+        return fail("metadata_mismatch");
+      }
+      if (!DOCUMENT_ASSET_MIME_TYPES.has(asset.mimeType)) {
+        return fail("unsupported_mime");
+      }
+      emitQueryActivity({
+        tool: "get_document_asset",
+        summary: `${asset.assetId}${col !== "documents" ? " in " + col : ""}`,
+        status: "ok",
+        startTime,
+        detail: {
+          collection: col,
+          assetId: asset.assetId,
+          documentReference: asset.documentReference,
+          figureId: asset.figureId,
+          mimeType: asset.mimeType,
+          bytes: asset.data.length,
+        },
+      });
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              asset_id: asset.assetId,
+              document_reference: asset.documentReference,
+              figure_id: asset.figureId,
+              mime_type: asset.mimeType,
+              ...(asset.checksum !== undefined ? { checksum: asset.checksum } : {}),
+            }),
+          },
+          {
+            type: "image" as const,
+            data: asset.data.toString("base64"),
+            mimeType: asset.mimeType,
+          },
         ],
       };
     },

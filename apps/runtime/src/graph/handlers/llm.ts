@@ -48,6 +48,7 @@ import {
   applyAnthropicPromptCache,
   applyBedrockPromptCache,
   coreMessagesToText,
+  modelMessagesContainImages,
 } from "../message-mapping.js";
 import { getModelCapabilities } from "../model-capabilities.js";
 import {
@@ -1602,12 +1603,17 @@ export function createLlmNodeHandler(
         continue;
       }
 
-      // Prompt-cache scheme comes from the capability registry (same source the
-      // classifier uses), not a hardcoded provider/model check.
-      const cacheMode = getModelCapabilities(
+      // Prompt-cache and multimodal capabilities come from the same registry.
+      // A deployment can explicitly attest a local model with
+      // `parameters.visionInput: true`; unknown models otherwise fail closed.
+      const candidateCapabilities = getModelCapabilities(
         candidate.provider,
         candidate.model,
-      ).promptCache;
+      );
+      const cacheMode = candidateCapabilities.promptCache;
+      const visionInput =
+        candidateCapabilities.visionInput ||
+        candidate.parameters?.visionInput === true;
       // Gemini 3 requires the opaque thought signature returned with every
       // historical function call. OpenAI-compatible clients cannot replay that
       // Google-only metadata, so remove only those unsigned call/result pairs;
@@ -1616,6 +1622,16 @@ export function createLlmNodeHandler(
         messagesWithSystemPrompt,
         candidate,
       );
+      if (modelMessagesContainImages(providerSafeMessages) && !visionInput) {
+        lastErrMsg = `Model ${candidate.provider}/${candidate.model} does not declare vision input support`;
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "error",
+          code: "vision_not_supported",
+          message: lastErrMsg,
+          details: { provider: candidate.provider, model: candidate.model },
+        });
+        continue;
+      }
       const streamParams: Parameters<typeof streamText>[0] = {
         model,
         allowSystemInMessages: true,
@@ -1702,6 +1718,15 @@ export function createLlmNodeHandler(
               { node: node.id },
               budgeted.stats.charsSaved,
             );
+          }
+          if (modelMessagesContainImages(budgeted.messages) && !visionInput) {
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "error",
+              code: "vision_not_supported",
+              message: `Tool output contains an image, but ${candidate.provider}/${candidate.model} does not declare vision input support.`,
+              details: { provider: candidate.provider, model: candidate.model },
+            });
+            throw new Error("VISION_INPUT_NOT_SUPPORTED");
           }
           const effectiveStepMaxTokens = clampMaxOutputTokens(
             budgeted.messages,

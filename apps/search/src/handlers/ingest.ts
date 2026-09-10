@@ -129,6 +129,11 @@ export function createIngestHandler(
         contextPrefixSizeOverride,
         summarizeOverride,
         chapterSplitMaxChunksOverride,
+        documentStructure,
+        summaryMode,
+        pageMarkers,
+        figureChunks,
+        normalizeTables,
       } = parsed;
 
       // Summarization active only when explicitly requested via header.
@@ -147,6 +152,11 @@ export function createIngestHandler(
         contextPrefixSizeOverride,
         useSummarization,
         chapterSplitMaxChunksOverride,
+        documentStructure,
+        summaryMode,
+        pageMarkers,
+        figureChunks,
+        normalizeTables,
       );
       if ("error" in chunking) {
         res.status(400).json({ error: chunking.error });

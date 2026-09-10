@@ -65,6 +65,12 @@ import { createRetrievalEvaluationHandler } from "./handlers/evaluation.js";
 import { HttpMetrics } from "./http-metrics.js";
 import { createMcpHandlers, createMcp2026Handlers } from "./handlers/mcp.js";
 import { createQueryHandlers } from "./handlers/query.js";
+import {
+  createGetDocumentAssetHandler,
+  createPutDocumentAssetHandler,
+  DOCUMENT_ASSET_MIME_TYPES,
+  MAX_DOCUMENT_ASSET_BYTES,
+} from "./handlers/document-assets.js";
 import { createRenameCollectionHandler } from "./handlers/admin.js";
 import { createBackfillSummariesHandler } from "./handlers/admin.js";
 import {
@@ -567,6 +573,8 @@ export function createApp(
   const queryHandlers = createQueryHandlers(postgresClient, logger, {
     defaultCollection: config.defaultCollection,
   });
+  const putDocumentAssetHandler = createPutDocumentAssetHandler(postgresClient, logger);
+  const getDocumentAssetHandler = createGetDocumentAssetHandler(postgresClient, logger);
 
   // MCP (Model Context Protocol) — Streamable HTTP transport.
   // Three routes on the same path, distinguished by HTTP method.
@@ -646,6 +654,13 @@ export function createApp(
   const collectionAccessQuery = createCollectionAccessMiddleware(
     postgresClient,
     collectionFromQuery,
+    { defaultCollection: config.defaultCollection, logger },
+  );
+  const collectionAccessAsset = createCollectionAccessMiddleware(
+    postgresClient,
+    (req) =>
+      (typeof req.query["collection"] === "string" ? req.query["collection"] : undefined) ??
+      collectionFromHeader(req),
     { defaultCollection: config.defaultCollection, logger },
   );
   const collectionAccessParam = createCollectionAccessMiddleware(
@@ -794,6 +809,27 @@ export function createApp(
   );
   app.use("/ui", ui);
 
+  app.put(
+    "/document-assets/:assetId",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessAsset,
+    express.raw({
+      type: [...DOCUMENT_ASSET_MIME_TYPES],
+      limit: MAX_DOCUMENT_ASSET_BYTES,
+    }),
+    putDocumentAssetHandler,
+  );
+  app.get(
+    "/document-assets/:assetId",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessAsset,
+    getDocumentAssetHandler,
+  );
+
   app.post(
     "/ingest",
     rateLimiter.middleware,
@@ -907,6 +943,11 @@ export function createApp(
   app.delete(mcp2026Handlers.path, authMiddleware, mcp2026Handlers.delete);
 
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+    const bodyError = err as { type?: string; status?: number };
+    if (bodyError.type === "entity.too.large" || bodyError.status === 413) {
+      res.status(413).json({ error: "Request body exceeds the configured size limit" });
+      return;
+    }
     const code =
       err instanceof Error && "code" in err
         ? (err as NodeJS.ErrnoException).code

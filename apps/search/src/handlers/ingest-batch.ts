@@ -132,6 +132,11 @@ export function createIngestBatchHandler(
         contextPrefixSizeOverride,
         summarizeOverride,
         chapterSplitMaxChunksOverride,
+        documentStructure,
+        summaryMode,
+        pageMarkers,
+        figureChunks,
+        normalizeTables,
       } = parsed;
 
       const scope = (res.locals as { accessScope?: import("../access-scope.js").AccessScope }).accessScope;
@@ -151,6 +156,11 @@ export function createIngestBatchHandler(
         contextPrefixSizeOverride,
         useSummarization,
         chapterSplitMaxChunksOverride,
+        documentStructure,
+        summaryMode,
+        pageMarkers,
+        figureChunks,
+        normalizeTables,
       );
       if ("error" in chunking) {
         res.status(400).json({ error: chunking.error });

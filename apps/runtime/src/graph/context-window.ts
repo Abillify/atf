@@ -118,44 +118,57 @@ export function effectiveInputBudget(
   return budget > 0 ? budget : contextLength;
 }
 
-/** Serialises a message's content to text for estimation purposes. */
-function serializeForEstimate(content: unknown): string {
-  if (typeof content === "string") return content;
-  if (content === null || content === undefined) return "";
-  if (Array.isArray(content)) {
-    const parts: string[] = [];
-    for (const raw of content) {
-      const part = raw as { type?: string; text?: string };
-      if (typeof part.text === "string") {
-        parts.push(part.text);
-        continue;
-      }
-      try {
-        parts.push(JSON.stringify(raw) ?? "");
-      } catch {
-        /* unserialisable part — contributes nothing */
-      }
-    }
-    return parts.join("\n");
-  }
+/**
+ * Conservative token reservation for one multimodal image part.
+ *
+ * Provider SDKs transmit an inline data URL as image input, not as ordinary
+ * prompt text. Counting its base64 bytes at CHARS_PER_TOKEN can overestimate a
+ * single screenshot by hundreds of thousands of tokens and collapse the
+ * completion allowance to one token. Actual visual-token accounting is
+ * provider/model dependent, so reserve a bounded value instead. The image
+ * payload itself remains untouched in the model request.
+ */
+export const IMAGE_PART_ESTIMATE_TOKENS = 8_192;
+
+function serializedTokenEstimate(content: unknown): number {
   try {
-    return JSON.stringify(content) ?? "";
+    return estimateTokensFromText(JSON.stringify(content) ?? "");
   } catch {
-    return "";
+    return 0;
   }
+}
+
+/** Estimates text and multimodal content without treating image bytes as text. */
+function estimateContentTokens(content: unknown): number {
+  if (typeof content === "string") return estimateTokensFromText(content);
+  if (content === null || content === undefined) return 0;
+  if (!Array.isArray(content)) return serializedTokenEstimate(content);
+
+  let total = 0;
+  for (const raw of content) {
+    const part = raw as { type?: string; text?: string };
+    if (part.type === "image" || part.type === "image_url") {
+      total += IMAGE_PART_ESTIMATE_TOKENS;
+      continue;
+    }
+    if (typeof part.text === "string") {
+      total += estimateTokensFromText(part.text);
+      continue;
+    }
+    total += serializedTokenEstimate(raw);
+  }
+  return total;
 }
 
 /** Coarse token estimate for a single message, including role overhead. */
 export function estimateMessageTokens(message: ModelMessage): number {
-  const body = serializeForEstimate((message as { content?: unknown }).content);
-  const toolCalls = (message as { toolCalls?: unknown }).toolCalls;
-  const extra =
-    toolCalls === undefined ? "" : serializeForEstimate(toolCalls);
-  return (
-    estimateTokensFromText(body) +
-    estimateTokensFromText(extra) +
-    PER_MESSAGE_OVERHEAD_TOKENS
+  const bodyTokens = estimateContentTokens(
+    (message as { content?: unknown }).content,
   );
+  const toolCalls = (message as { toolCalls?: unknown }).toolCalls;
+  const extraTokens =
+    toolCalls === undefined ? 0 : estimateContentTokens(toolCalls);
+  return bodyTokens + extraTokens + PER_MESSAGE_OVERHEAD_TOKENS;
 }
 
 /** Coarse token estimate for a whole message list. */

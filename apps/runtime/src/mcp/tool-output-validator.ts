@@ -178,6 +178,18 @@ function sanitiseValue(
   }
 
   if (value !== null && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    // MCP image payloads are binary data encoded as base64, not natural-language
+    // tool text. Never clip or prompt-injection-scan `data`: clipping corrupts
+    // the image. MIME/base64/decoded-size validation happens at the dedicated
+    // multimodal mapping boundary before a provider can receive it.
+    if (
+      record.type === "image" &&
+      typeof record.data === "string" &&
+      typeof record.mimeType === "string"
+    ) {
+      return { value, flagged: false, modified: 0, signals: [] };
+    }
     const out: Record<string, unknown> = {};
     let flagged = false;
     let modified = 0;

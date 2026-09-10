@@ -71,6 +71,8 @@ export interface ModelCapabilities {
    * (`sonnet-5`) deprecated `temperature`. Empty for models with no such quirk.
    */
   unsupportedParameters: string[];
+  /** Whether the model accepts image/file inputs. Unknown models fail closed. */
+  visionInput: boolean;
   /**
    * Total context window in tokens (input + output share it), or `undefined`
    * when it cannot be known from the provider/model id alone.
@@ -103,6 +105,7 @@ const GLOBAL_DEFAULT: ModelCapabilities = {
   promptCache: "none",
   allowSystemInMessages: true,
   unsupportedParameters: [],
+  visionInput: false,
 };
 
 /**
@@ -131,7 +134,7 @@ const RULES: readonly CapabilityRule[] = [
     caps: { structuredOutput: "response_format", allowSystemInMessages: true },
   },
   // Google — native structured output via responseSchema (generateObject).
-  { provider: "google", caps: { structuredOutput: "generateObject" } },
+  { provider: "google", caps: { structuredOutput: "generateObject", visionInput: true } },
   // Bedrock (Claude) — native tool-use structured output + Bedrock cache points.
   {
     provider: "bedrock",
@@ -139,6 +142,7 @@ const RULES: readonly CapabilityRule[] = [
       structuredOutput: "generateObject",
       promptCache: "bedrock",
       allowSystemInMessages: true,
+      visionInput: true,
       // Every Claude generation on Bedrock so far is a 200K window.
       contextLength: 200_000,
     },
@@ -162,6 +166,7 @@ const RULES: readonly CapabilityRule[] = [
       structuredOutput: "generateObject",
       promptCache: "anthropic",
       allowSystemInMessages: true,
+      visionInput: true,
       contextLength: 200_000,
     },
   },
@@ -186,7 +191,7 @@ const RULES: readonly CapabilityRule[] = [
   // lower. Anything that must not overshoot should set
   // `llm.parameters.contextLength` explicitly — it always wins.
   // -------------------------------------------------------------------------
-  { provider: "openai", modelPattern: "gpt-4o*", caps: { contextLength: 128_000 } },
+  { provider: "openai", modelPattern: "gpt-4o*", caps: { contextLength: 128_000, visionInput: true } },
   {
     provider: "openai",
     modelPattern: "gpt-4-turbo*",

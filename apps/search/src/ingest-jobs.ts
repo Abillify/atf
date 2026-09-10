@@ -22,6 +22,14 @@ import { blendVectors } from "./vector-utils.js";
 import type { SparseVector } from "./sparse-embedding-client.js";
 import type { SummaryClient } from "./summary-client.js";
 import { splitDocumentIntoChapters } from "./chapter-splitter.js";
+import {
+  normalizeDocumentStructure,
+  pagesForRange,
+  type FigureStructure,
+  type NormalizedDocumentStructure,
+  type PageSpan,
+  type SummaryMode,
+} from "./document-structure.js";
 
 /**
  * Minimal structured-logger shape used across the ingest pipeline. Satisfied by
@@ -96,6 +104,12 @@ export interface ChunkingOptions {
    * null = disabled (index the document as a single unit).
    */
   chapterSplitMaxChunks: number | null;
+  /** Structured extraction is additive and defaults to auto for older callers. */
+  documentStructure?: "auto" | "off";
+  summaryMode?: SummaryMode;
+  pageMarkers?: boolean;
+  figureChunks?: boolean;
+  normalizeTables?: boolean;
 }
 
 // ─── Ingest unit (a document or one of its chapters) ──────────────────────────
@@ -128,6 +142,30 @@ interface IngestUnit {
   sourceCharStart: number;
   pageStart?: number;
   pageEnd?: number;
+  pageSpans: PageSpan[];
+  providedSummary?: string;
+  summarySource?: "embedded" | "generated";
+  isFigure: boolean;
+  figure?: FigureStructure;
+}
+
+interface StructuredIngestDocument extends IngestDocument {
+  structure: NormalizedDocumentStructure;
+}
+
+function normalizeIngestDocument(
+  doc: IngestDocument,
+  chunking: ChunkingOptions,
+): StructuredIngestDocument {
+  const enabled = (chunking.documentStructure ?? "auto") === "auto";
+  const structure = enabled
+    ? normalizeDocumentStructure(doc.content, doc.reference, {
+        pageMarkers: chunking.pageMarkers ?? true,
+        figureChunks: chunking.figureChunks ?? true,
+        normalizeTables: chunking.normalizeTables ?? true,
+      })
+    : { content: doc.content, pageSpans: [], figures: [] };
+  return { ...doc, content: structure.content, structure };
 }
 
 /**
@@ -139,7 +177,7 @@ interface IngestUnit {
  * suffix, e.g. `<docRef>/1. Beteiligte Parteien`.
  */
 function expandDocumentToUnits(
-  doc: IngestDocument,
+  doc: StructuredIngestDocument,
   docIndex: number,
   sharedMetadata: Metadata,
   chunking: ChunkingOptions,
@@ -149,7 +187,12 @@ function expandDocumentToUnits(
     { ...sharedMetadata, ...(doc.metadata ?? {}) },
     doc.version,
   );
-  const page = typeof docMetadata.page === "number" ? docMetadata.page : undefined;
+  const metadataPage = typeof docMetadata.page === "number" ? docMetadata.page : undefined;
+  const summaryMode = chunking.summaryMode ?? "auto";
+  const providedSummary =
+    (summaryMode === "auto" || summaryMode === "embedded")
+      ? doc.structure.embeddedSummary
+      : undefined;
   const base = {
     docIndex,
     metadata: docMetadata,
@@ -162,34 +205,28 @@ function expandDocumentToUnits(
     rootDocumentId: typeof docMetadata.document_id === "string" ? docMetadata.document_id : doc.reference,
     sectionPath: [] as string[],
     sourceCharStart: 0,
-    pageStart: page,
-    pageEnd: page,
+    pageStart: metadataPage,
+    pageEnd: metadataPage,
+    pageSpans: doc.structure.pageSpans,
+    providedSummary,
+    summarySource: providedSummary ? "embedded" as const : undefined,
+    isFigure: false,
   };
 
-  if (!chunking.chapterSplitMaxChunks) {
-    return [
-      { ...base, reference: doc.reference, version: doc.version, content: doc.content },
-    ];
-  }
+  const parts = chunking.chapterSplitMaxChunks
+    ? splitDocumentIntoChapters(doc.content, {
+        maxChunks: chunking.chapterSplitMaxChunks,
+        chunkSize: chunking.chunkSize,
+        overlapSize: chunking.overlapSize,
+        sizeFallback: true,
+      })
+    : [{ content: doc.content, charStart: 0, refSuffix: "" }];
 
-  const parts = splitDocumentIntoChapters(doc.content, {
-    maxChunks: chunking.chapterSplitMaxChunks,
-    chunkSize: chunking.chunkSize,
-    overlapSize: chunking.overlapSize,
-    // Large documents without any Markdown headings (e.g. extracted PDFs) would
-    // otherwise stay whole and overflow the summary model — split them by size.
-    sizeFallback: true,
-  });
-
-  const units = parts.map((part) => ({
+  const textUnits: IngestUnit[] = parts.map((part) => ({
     ...base,
-    reference: part.refSuffix
-      ? `${doc.reference}/${part.refSuffix}`
-      : doc.reference,
+    reference: part.refSuffix ? `${doc.reference}/${part.refSuffix}` : doc.reference,
     version: doc.version
-      ? part.refSuffix
-        ? `${doc.version}/${part.refSuffix}`
-        : doc.version
+      ? part.refSuffix ? `${doc.version}/${part.refSuffix}` : doc.version
       : undefined,
     content: part.content,
     sourceCharStart: part.charStart,
@@ -197,24 +234,41 @@ function expandDocumentToUnits(
     sectionPath: part.refSuffix ? part.refSuffix.split("/") : [],
   }));
 
-  if (units.length > 1) {
+  const figureUnits: IngestUnit[] = doc.structure.figures.map((figure) => ({
+    ...base,
+    reference: `${doc.reference}/figures/${figure.id}`,
+    version: doc.version ? `${doc.version}/figures/${figure.id}` : undefined,
+    content: figure.description,
+    metadata: normalizeMetadata({
+      ...docMetadata,
+      modality: "image",
+      figure_id: figure.id,
+      asset_id: figure.assetId,
+    }, doc.version),
+    parentRef: doc.reference,
+    sectionPath: ["figures", figure.id],
+    sourceCharStart: 0,
+    pageStart: figure.page ?? metadataPage,
+    pageEnd: figure.page ?? metadataPage,
+    pageSpans: [],
+    providedSummary: undefined,
+    summarySource: undefined,
+    isFigure: true,
+    figure,
+  }));
+
+  if (textUnits.length > 1) {
     logger?.info?.(
       {
         reference: doc.reference,
         chapterSplitMaxChunks: chunking.chapterSplitMaxChunks,
-        chapters: units.length,
-        chapterRefs: units.map((u) => u.reference),
+        chapters: textUnits.length,
+        chapterRefs: textUnits.map((unit) => unit.reference),
       },
-      `Ingest: split document into ${units.length} chapters`,
-    );
-  } else {
-    logger?.info?.(
-      { reference: doc.reference },
-      "Ingest: document not split (below chapter threshold)",
+      `Ingest: split document into ${textUnits.length} chapters`,
     );
   }
-
-  return units;
+  return [...textUnits, ...figureUnits];
 }
 
 // ─── ChunkInfo builder ────────────────────────────────────────────────────────
@@ -237,6 +291,11 @@ function buildChunkInfo(
 ): ChunkInfo {
   const charStart = unit.sourceCharStart + chunk.charStart;
   const charEnd = unit.sourceCharStart + chunk.charEnd;
+  const pages = unit.isFigure
+    ? { pageStart: unit.pageStart, pageEnd: unit.pageEnd }
+    : pagesForRange(unit.pageSpans, charStart, charEnd);
+  const pageStart = pages.pageStart ?? unit.pageStart;
+  const pageEnd = pages.pageEnd ?? unit.pageEnd;
   const chunkId = createHash("sha256")
     .update(`${unit.rootDocumentId}\n${unit.reference}\n${charStart}\n${charEnd}\n${chunk.content}`)
     .digest("hex");
@@ -245,13 +304,18 @@ function buildChunkInfo(
     chunk_total: totalChunks,
     chunk_size: chunking.chunkSize,
     chunk_id: chunkId,
-    char_start: charStart,
-    char_end: charEnd,
+    ...(!unit.isFigure ? { char_start: charStart, char_end: charEnd } : {}),
     root_document_id: unit.rootDocumentId,
     ...(unit.parentRef ? { parent_ref: unit.parentRef } : {}),
     ...(unit.sectionPath.length ? { section_path: unit.sectionPath } : {}),
-    ...(unit.pageStart !== undefined ? { page_start: unit.pageStart } : {}),
-    ...(unit.pageEnd !== undefined ? { page_end: unit.pageEnd } : {}),
+    ...(pageStart !== undefined ? { page_start: pageStart } : {}),
+    ...(pageEnd !== undefined ? { page_end: pageEnd } : {}),
+    ...(unit.figure ? {
+      modality: "image" as const,
+      figure_id: unit.figure.id,
+      asset_id: unit.figure.assetId,
+      ...(unit.figure.bbox ? { bbox: unit.figure.bbox } : {}),
+    } : {}),
     // Omit overlap fields for semantic chunking (always 0, no information value).
     ...(!chunking.useSemanticChunking && {
       chunk_overlap: chunking.overlapSize,
@@ -269,10 +333,10 @@ function buildChunkInfo(
       : {}),
     // Set for ALL chunks when context prefix is active, so consumers know
     // that chunk 0 of this document contains the summary in context_prefix.
-    ...(chunking.contextPrefixSize || chunking.useSummarization
+    ...(!unit.isFigure && (chunking.contextPrefixSize || unit.summarySource)
       ? {
           context_prefix_size: chunking.contextPrefixSize ?? undefined,
-          ...(chunking.useSummarization ? { summary: true } : {}),
+          ...(unit.summarySource ? { summary: true, summary_source: unit.summarySource } : {}),
         }
       : {}),
   };
@@ -433,9 +497,20 @@ async function buildJobsFromUnits(
   const resolvedPrefixes: Array<{
     text: string | undefined;
     isSummary: boolean;
+    source?: "embedded" | "generated";
   }> = await Promise.all(
     units.map(async (unit) => {
-      if (chunking.useSummarization && summaryClient !== null) {
+      if (unit.providedSummary) {
+        return { text: unit.providedSummary, isSummary: true, source: "embedded" as const };
+      }
+      const summaryMode = chunking.summaryMode ?? "auto";
+      const mayGenerate =
+        !unit.isFigure &&
+        chunking.useSummarization &&
+        summaryClient !== null &&
+        summaryMode !== "embedded" &&
+        summaryMode !== "off";
+      if (mayGenerate) {
         logger?.info?.(
           { reference: unit.reference, contentLength: unit.content.length },
           "Ingest: summarizing",
@@ -446,14 +521,14 @@ async function buildJobsFromUnits(
             { reference: unit.reference, summaryLength: summaryRes.result.length },
             "Ingest: summary generated",
           );
-          return { text: summaryRes.result, isSummary: true };
+          return { text: summaryRes.result, isSummary: true, source: "generated" as const };
         }
         logger?.warn(
           { error: summaryRes.error, ref: unit.reference },
           "Summary failed; falling back to text-slice prefix",
         );
       }
-      if (chunking.contextPrefixSize) {
+      if (!unit.isFigure && chunking.contextPrefixSize) {
         return {
           text: unit.content.slice(0, chunking.contextPrefixSize),
           isSummary: false,
@@ -467,8 +542,9 @@ async function buildJobsFromUnits(
   for (let ui = 0; ui < units.length; ui++) {
     const unit = units[ui]!;
     const chunks = unitChunks[ui]!;
-    const { text: resolvedPrefix, isSummary: isSummaryPrefix } =
+    const { text: resolvedPrefix, isSummary: isSummaryPrefix, source: summarySource } =
       resolvedPrefixes[ui]!;
+    unit.summarySource = summarySource;
 
     for (const chunk of chunks) {
       const embedInput = buildEmbedInput(
@@ -541,8 +617,9 @@ export async function buildJobsForDocument(
     return [buildUnchunkedJob(doc, docIndex, sharedMetadata)];
   }
 
+  const structuredDoc = normalizeIngestDocument(doc, chunking);
   const units = expandDocumentToUnits(
-    doc,
+    structuredDoc,
     docIndex,
     sharedMetadata,
     chunking,
@@ -585,7 +662,8 @@ export async function buildJobsForBatch(
     );
   }
 
-  const units = documents.flatMap((doc, docIndex) =>
+  const structuredDocuments = documents.map((doc) => normalizeIngestDocument(doc, chunking));
+  const units = structuredDocuments.flatMap((doc, docIndex) =>
     expandDocumentToUnits(doc, docIndex, sharedMetadata, chunking, logger),
   );
   return buildJobsFromUnits(units, chunking, embedFn, summaryClient, logger);

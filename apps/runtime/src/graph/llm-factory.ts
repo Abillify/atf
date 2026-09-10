@@ -300,8 +300,12 @@ export function filterLlmParameters(
   model: string,
 ): Record<string, unknown> | undefined {
   if (parameters === undefined) return undefined;
-  const unsupported = getModelCapabilities(provider, model).unsupportedParameters;
-  if (unsupported.length === 0) return parameters;
+  const unsupported = [
+    ...getModelCapabilities(provider, model).unsupportedParameters,
+    // Runtime-only declaration used by fail-closed multimodal dispatch. It is
+    // never a provider inference parameter.
+    "visionInput",
+  ];
   const rest = { ...parameters };
   let changed = false;
   for (const key of unsupported) {
