@@ -1191,9 +1191,16 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       }
 
       // Ensure collection exists (uses the first vector's dimension).
+      const firstVector = vectors[0];
+      if (firstVector === undefined) {
+        return {
+          content: [{ type: "text", text: "Embedding server returned no vectors" }],
+          isError: true,
+        };
+      }
       const ensureResult = await postgresClient.ensureCollection(
         col,
-        vectors[0]!.length,
+        firstVector.length,
         {
           ...(opts.embeddingModel ? { embeddingModel: opts.embeddingModel } : {}),
           ...(opts.embeddingModelRevision ? { embeddingModelRevision: opts.embeddingModelRevision } : {}),

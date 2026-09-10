@@ -29,7 +29,6 @@ import {
   parseVectorSearchResults,
   selectRerankedChunks,
   selectByRetrievalScore,
-  docKeyOf,
   type RagChunk,
 } from "../reranker.js";
 import { buildCitationEntries } from "../rag-grounding.js";

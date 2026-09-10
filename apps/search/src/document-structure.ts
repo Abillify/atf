@@ -100,13 +100,15 @@ function tokenizeHtml(html: string): HtmlToken[] {
       continue;
     }
     const close = /^<\s*\/\s*([\w:-]+)/.exec(raw);
-    if (close) {
-      tokens.push({ kind: "close", name: close[1]!.toLowerCase() });
+    const closeName = close?.[1];
+    if (closeName !== undefined) {
+      tokens.push({ kind: "close", name: closeName.toLowerCase() });
       continue;
     }
     const open = /^<\s*([\w:-]+)([\s\S]*?)\/?\s*>$/.exec(raw);
-    if (open) {
-      tokens.push({ kind: "open", name: open[1]!.toLowerCase(), attrs: parseAttributes(open[2] ?? "") });
+    const openName = open?.[1];
+    if (openName !== undefined) {
+      tokens.push({ kind: "open", name: openName.toLowerCase(), attrs: parseAttributes(open?.[2] ?? "") });
     }
   }
   return tokens;
@@ -139,16 +141,29 @@ export function htmlTableToMarkdown(html: string): string {
   const occupied: boolean[][] = [];
   rows.forEach((sourceRow, rowIndex) => {
     matrix[rowIndex] ??= [];
-    occupied[rowIndex] ??= [];
+    let occupiedRow = occupied[rowIndex];
+    if (occupiedRow === undefined) {
+      occupiedRow = [];
+      occupied[rowIndex] = occupiedRow;
+    }
     let column = 0;
     for (const sourceCell of sourceRow) {
-      while (occupied[rowIndex]![column]) column++;
+      while (occupiedRow[column]) column++;
       for (let y = 0; y < sourceCell.rowspan; y++) {
-        matrix[rowIndex + y] ??= [];
-        occupied[rowIndex + y] ??= [];
+        const targetRowIndex = rowIndex + y;
+        let matrixRow = matrix[targetRowIndex];
+        if (matrixRow === undefined) {
+          matrixRow = [];
+          matrix[targetRowIndex] = matrixRow;
+        }
+        let targetOccupiedRow = occupied[targetRowIndex];
+        if (targetOccupiedRow === undefined) {
+          targetOccupiedRow = [];
+          occupied[targetRowIndex] = targetOccupiedRow;
+        }
         for (let x = 0; x < sourceCell.colspan; x++) {
-          matrix[rowIndex + y]![column + x] = sourceCell.text;
-          occupied[rowIndex + y]![column + x] = true;
+          matrixRow[column + x] = sourceCell.text;
+          targetOccupiedRow[column + x] = true;
         }
       }
       column += sourceCell.colspan;
@@ -157,7 +172,9 @@ export function htmlTableToMarkdown(html: string): string {
   const width = Math.max(...matrix.map((r) => r.length));
   const escaped = matrix.map((r) => Array.from({ length: width }, (_, i) => (r[i] ?? "").replace(/\|/g, "\\|")));
   const line = (r: string[]) => `| ${r.join(" | ")} |`;
-  return [line(escaped[0]!), line(Array.from({ length: width }, () => "---")), ...escaped.slice(1).map(line)].join("\n");
+  const header = escaped[0];
+  if (header === undefined) return normalizeInlineText(html);
+  return [line(header), line(Array.from({ length: width }, () => "---")), ...escaped.slice(1).map(line)].join("\n");
 }
 
 export function normalizeHtmlTables(content: string): string {
@@ -184,8 +201,11 @@ function parseBbox(
   const raw = match?.[1] ?? match?.[2] ?? match?.[3] ?? match?.[4] ?? attrs["bbox"] ?? attrs["data-bbox"];
   if (!raw) return undefined;
   const values = raw.replace(/^\[|\]$/g, "").split(/[\s,;]+/).filter(Boolean).map(Number);
-  return values.length === 4 && values.every(Number.isFinite)
-    ? [values[0]!, values[1]!, values[2]!, values[3]!]
+  const [x1, y1, x2, y2] = values;
+  return values.length === 4 &&
+    x1 !== undefined && y1 !== undefined && x2 !== undefined && y2 !== undefined &&
+    values.every(Number.isFinite)
+    ? [x1, y1, x2, y2]
     : undefined;
 }
 
@@ -194,7 +214,8 @@ function pageAt(content: string, position: number): number | undefined {
   let page: number | undefined;
   for (const match of content.matchAll(pattern)) {
     if ((match.index ?? 0) > position) break;
-    page = Number.parseInt(match[1]!, 10);
+    const rawPage = match[1];
+    if (rawPage !== undefined) page = Number.parseInt(rawPage, 10);
   }
   return page;
 }
@@ -202,7 +223,7 @@ function pageAt(content: string, position: number): number | undefined {
 export function extractPageSpans(content: string): PageSpan[] {
   const markers = [...content.matchAll(/^##\s+(?:Seite|Page)\s+(\d+)\s*$/gim)];
   return markers.map((marker, index) => ({
-    page: Number.parseInt(marker[1]!, 10),
+    page: Number.parseInt(marker[1] ?? "", 10),
     charStart: marker.index ?? 0,
     charEnd: markers[index + 1]?.index ?? content.length,
   }));
@@ -215,7 +236,10 @@ export function pagesForRange(
 ): { pageStart?: number; pageEnd?: number } {
   const overlap = spans.filter((span) => span.charStart < charEnd && span.charEnd > charStart);
   if (overlap.length === 0) return {};
-  return { pageStart: overlap[0]!.page, pageEnd: overlap.at(-1)!.page };
+  const first = overlap[0];
+  const last = overlap.at(-1);
+  if (first === undefined || last === undefined) return {};
+  return { pageStart: first.page, pageEnd: last.page };
 }
 
 /** Deterministically extract embedded structure and return a cleaned indexing body. */
@@ -237,7 +261,7 @@ export function normalizeDocumentStructure(
   const figures: FigureStructure[] = [];
   const figureIdOccurrences = new Map<string, number>();
   let ordinal = 0;
-  body = body.replace(/<figure\b([^>]*)>([\s\S]*?)<\/figure\s*>/gi, (all, rawAttrs: string, inner: string, offset: number) => {
+  body = body.replace(/<figure\b([^>]*)>([\s\S]*?)<\/figure\s*>/gi, (_all, rawAttrs: string, inner: string, offset: number) => {
     ordinal++;
     if (!figureChunks) return "";
     const attrs = parseAttributes(rawAttrs);
