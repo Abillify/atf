@@ -16,16 +16,16 @@
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.1.4",
+      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.2.0",
       "group": "Abillify Technology GmbH",
       "name": "aiperator-trust-fabric",
-      "version": "0.1.4",
+      "version": "0.2.0",
       "licenses": [
         {
           "expression": "Elastic-2.0"
         }
       ],
-      "purl": "pkg:npm/aiperator-trust-fabric@0.1.4"
+      "purl": "pkg:npm/aiperator-trust-fabric@0.2.0"
     },
     "properties": [
       {
@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "4dbe1d1c3ae1883789d0a6e7e6d43f37961032f81eefe1e7b418658988a63585"
+        "value": "c448ce3f91db02ceacbf4c0edae4cfff55fcaeae9daa762c1f5fd4733bc32a8c"
       }
     ]
   },
@@ -2295,6 +2295,25 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fbmp-js@0.1.2",
+      "group": "@types",
+      "name": "bmp-js",
+      "version": "0.1.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fbmp-js@0.1.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40types%2Fbody-parser@1.19.6",
       "group": "@types",
       "name": "body-parser",
@@ -3613,6 +3632,24 @@
         }
       ],
       "purl": "pkg:npm/bl@6.1.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/bmp-js@0.1.0",
+      "name": "bmp-js",
+      "version": "0.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/bmp-js@0.1.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
