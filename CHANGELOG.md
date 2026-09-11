@@ -20,7 +20,27 @@ releases:
 
 Nothing yet.
 
-## [0.1.2] — 2026-09-11
+## [0.1.3] — 2026-09-11
+
+Security patch for the upload path introduced in 0.1.2. No contract-package or executable flow
+version changed, and no migration runs.
+
+### Security
+
+- **`multer` 2.1.1 → 2.3.0** in Extract, closing five advisories against the multipart upload
+  parser, three of them high severity: denial of service via crafted multipart field names, via
+  an oversized array index in a field name, and via deeply nested field names, plus a file-size
+  limit bypass through an async `fileFilter` race and incomplete cleanup on abort. Extract
+  reaches this parser from four routes — `POST /v1/convert` and `POST /v1/ingest`, plus the
+  browser equivalents under `/ui` — whenever the request is `multipart/form-data`, so the fix
+  matters for any deployment an untrusted client can reach. The upgrade
+  is API-compatible: `multer` 2.3.0 carries the same dependencies, and Extract uses only
+  `memoryStorage`, `limits`, `single()` and the documented `LIMIT_*` error codes.
+
+### Changed
+
+- `bun.lock` now records the workspace versions that `package.json` declares. They had drifted
+  because Bun only rewrites them when dependency resolution itself changes.
 
 Adds a fifth application and an as-of dimension to retrieval. Read the migration notes: one
 collection migration runs automatically, and evidence-pack hashes change for unchanged content.
@@ -164,7 +184,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/abillify/atf/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/abillify/atf/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/abillify/atf/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/abillify/atf/releases/tag/v0.1.0
