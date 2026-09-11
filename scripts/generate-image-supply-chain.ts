@@ -5,7 +5,12 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
-const TARGETS = ["runtime", "control", "search", "gate"] as const;
+/**
+ * Every image target in `deploy/examples/Dockerfile` that produces an inventory
+ * under `/usr/share/doc/atf`. Keep in sync with that file: a target missing here
+ * ships without an inventory in the release bundle.
+ */
+const TARGETS = ["runtime", "control", "search", "gate", "extract"] as const;
 
 type Options = { outputDir: string; gitSha: string; platform: string };
 type CommandResult = { stdout: string; stderr: string; exitCode: number };

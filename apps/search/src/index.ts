@@ -52,6 +52,10 @@ import { createCircuitBreaker } from "./retry.js";
 import { createIngestHandler } from "./handlers/ingest.js";
 import { createIngestBatchHandler } from "./handlers/ingest-batch.js";
 import { createIngestStreamHandler } from "./handlers/ingest-stream.js";
+import {
+  CONVERTIBLE_MIME_TYPES,
+  createIngestFileHandler,
+} from "./handlers/ingest-file.js";
 import { createSearchHandler } from "./handlers/search.js";
 import { createDeleteHandler } from "./handlers/delete.js";
 import {
@@ -839,6 +843,41 @@ export function createApp(
     collectionAccessHeader,
     ingestHandler,
   );
+  // ── Binary document ingest via the converter (opt-in) ─────────────────────
+  // Mounted only when CONVERTER_URL is configured, so a deployment without a
+  // converter answers 404 rather than 502 from an address that was never set.
+  //
+  // `metadataMiddleware` deliberately does NOT appear in this chain. The proxy
+  // merges converter provenance into X-Metadata *after* the conversion, so the
+  // header must be parsed after that — the composed handler below runs it in the
+  // right order instead.
+  if (config.converter !== null) {
+    const ingestAfterMetadata: RequestHandler = (req, res, next) => {
+      metadataMiddleware(req, res, (err?: unknown) => {
+        if (err !== undefined) {
+          next(err);
+          return;
+        }
+        ingestHandler(req, res, next);
+      });
+    };
+    app.post(
+      "/ingest-file",
+      rateLimiter.middleware,
+      authMiddleware,
+      authorizeWrite,
+      collectionAccessHeader,
+      express.raw({
+        type: [...CONVERTIBLE_MIME_TYPES],
+        limit: config.converter.uploadLimit,
+      }),
+      createIngestFileHandler({
+        converter: config.converter,
+        logger,
+        ingestHandler: ingestAfterMetadata,
+      }),
+    );
+  }
   app.post(
     "/ingest-batch",
     rateLimiter.middleware,

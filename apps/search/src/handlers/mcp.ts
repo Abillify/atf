@@ -54,6 +54,7 @@ import { z } from "zod";
 import type { RequestHandler, Request, Response } from "express";
 import type { Logger } from "pino";
 import { getPrincipal, runWithPrincipal } from "../request-principal.js";
+import { parseRfc3339DateTime } from "../rfc3339.js";
 import {
   accessScopeForMcp,
   accessScopeFromPrincipal,
@@ -332,15 +333,17 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       limit: z.number().int().min(1).max(100).optional(),
       filter: z.record(z.string(), z.unknown()).optional(),
       path_prefix: z.string().optional(),
+      include_all_versions: z.boolean().optional().describe("Return all eligible historical versions instead of one version per logical document"),
+      valid_at: z.string().datetime({ offset: true }).optional().describe("RFC 3339 instant with timezone used for as-of version selection"),
     },
-    async ({ query, collection, limit = 10, filter, path_prefix }) => {
+    async ({ query, collection, limit = 10, filter, path_prefix, include_all_versions, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       enforceRetrievalBudget(limit);
       const embedding = await embeddingClient.embed(query);
       if (!embedding.ok) return { content: [{ type: "text", text: JSON.stringify({ code: "EMBEDDING_FAILED", category: "internal", retryable: true, outcome: "failed", ...transactionCorrelation() }) }], isError: true };
-      const result = await postgresClient.search(query, embedding.result.vector, limit, col, accessScopeForMcp(), filter as Record<string, unknown> | undefined, hybridSearchDefault, false, 0, candidateMultiplier, undefined, undefined, undefined, false, undefined, path_prefix);
+      const result = await postgresClient.search(query, embedding.result.vector, limit, col, accessScopeForMcp(), filter as Record<string, unknown> | undefined, hybridSearchDefault, include_all_versions ?? false, 0, candidateMultiplier, undefined, undefined, undefined, false, undefined, path_prefix, undefined, undefined, undefined, parseRfc3339DateTime(valid_at));
       if (!result.ok) return { content: [{ type: "text", text: JSON.stringify({ code: "RETRIEVAL_FAILED", category: "internal", retryable: true, outcome: "failed", ...transactionCorrelation() }) }], isError: true };
       const transaction = getTransactionContext()?.envelope;
       const retrievedAt = new Date().toISOString();
@@ -349,7 +352,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         const chunk = hit.chunk?.chunk_index ?? 0;
         const version = typeof hit.metadata?.["version"] === "string" ? hit.metadata["version"] : hit.modified.toISOString();
         const contentHash = stableHash(hit.content);
-        return { evidenceId: stableHash(`${col}\n${hit.reference}\n${chunk}\n${version}\n${contentHash}`), collection: col, reference: hit.reference, chunk, version, score: hit.score, content: hit.content, contentHash, queryHash, retrievedAt, evidence: hit.evidence, asset_url: hit.asset_url, invocationId: transaction?.invocationId, executionId: transaction?.executionId, traceId: transaction?.trace.traceId };
+        return { evidenceId: stableHash(`${col}\n${hit.reference}\n${chunk}\n${version}\n${contentHash}\n${hit.effective_valid_from.toISOString()}`), collection: col, reference: hit.reference, chunk, version, score: hit.score, content: hit.content, contentHash, queryHash, retrievedAt, valid_from: hit.valid_from?.toISOString() ?? null, effective_valid_from: hit.effective_valid_from.toISOString(), temporal_mode: { include_all_versions: include_all_versions ?? false, valid_at: parseRfc3339DateTime(valid_at) ?? null }, evidence: hit.evidence, asset_url: hit.asset_url, invocationId: transaction?.invocationId, executionId: transaction?.executionId, traceId: transaction?.trace.traceId };
       });
       emitQueryActivity({ tool: "retrieve_evidence", summary: `${evidence.length} evidence items from ${col}`, status: "ok", startTime, detail: { collection: col, count: evidence.length, queryHash, evidenceIds: evidence.map((item) => item.evidenceId) } });
       return { content: [{ type: "text", text: JSON.stringify({ evidence, count: evidence.length, queryHash, retrievedAt, ...(transaction ? { actionContractHash: canonicalActionContractHash(transaction) } : {}), ...transactionCorrelation() }) }] };
@@ -392,7 +395,12 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       include_all_versions: z
         .boolean()
         .optional()
-        .describe("Include historical document versions; the pack then reports observed versions"),
+        .describe("Include every version eligible at valid_at (or all versions when valid_at is omitted)"),
+      valid_at: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe("RFC 3339 instant with an explicit timezone for reproducible as-of evidence"),
       hyde: z
         .boolean()
         .optional()
@@ -411,6 +419,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       path_prefix,
       tags,
       include_all_versions,
+      valid_at,
       hyde,
       rerank,
     }) => {
@@ -515,6 +524,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         (plan) => {
           sparseApplied = plan.sparseApplied;
         },
+        parseRfc3339DateTime(valid_at),
       );
       if (!result.ok) {
         logger.warn({ error: result.error }, "[MCP] Evidence Pack retrieval failed");
@@ -570,6 +580,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         hydeApplied,
         reranked,
         includeAllVersions: include_all_versions ?? false,
+        validAt: parseRfc3339DateTime(valid_at),
         filter: filter as Record<string, unknown> | undefined,
         tags: effectiveTags,
         pathPrefix: effectivePathPrefix || undefined,
@@ -670,7 +681,12 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       include_all_versions: z
         .boolean()
         .optional()
-        .describe("Include superseded document versions (default: false)"),
+        .describe("Include every eligible historical version; default false selects one version per document"),
+      valid_at: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe("RFC 3339 instant with timezone; combines orthogonally with include_all_versions"),
       rerank: z
         .boolean()
         .optional()
@@ -714,6 +730,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       hyde,
       tags,
       include_all_versions,
+      valid_at,
       rerank,
       group_by_document,
       cursor: cursorStr,
@@ -848,6 +865,10 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         false, // ftsOnly
         undefined, // baseRef
         path_prefix, // pathPrefix — folder-scoped search
+        undefined,
+        undefined,
+        undefined,
+        parseRfc3339DateTime(valid_at),
       );
 
       if (!result.ok) {
@@ -939,6 +960,8 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         asset_url: r.asset_url ?? null,
         metadata: r.metadata,
         modified: r.modified,
+        valid_from: r.valid_from?.toISOString() ?? null,
+        effective_valid_from: r.effective_valid_from.toISOString(),
       }));
 
       // Build next_cursor when the full page was returned (and no reranking —
@@ -1079,6 +1102,15 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .optional()
         .describe("Tags to attach to the document"),
       version: z.string().min(1).optional().describe("Technical document version tag"),
+      version_mode: z
+        .union([z.literal("replace"), z.literal("version")])
+        .optional()
+        .describe("replace updates the current reference; version preserves prior revisions (default: replace)"),
+      valid_from: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe("RFC 3339 business-validity start with an explicit timezone"),
       metadata: z
         .record(z.string(), z.unknown())
         .optional()
@@ -1094,6 +1126,8 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       link,
       tags,
       version,
+      version_mode = "replace",
+      valid_from,
       metadata,
     }) => {
       const col = collection ?? defaultCollection;
@@ -1123,6 +1157,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         allowedUsers: writeAcl.allowedUsers,
         allowedGroups: writeAcl.allowedGroups,
         version,
+        validFrom: parseRfc3339DateTime(valid_from),
         metadata: normalizedMetadata,
       };
 
@@ -1146,7 +1181,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           doc,
           0,
           normalizedMetadata,
-          "replace",
+          version_mode,
           chunking,
           embedFn,
           summaryClient,
@@ -1242,7 +1277,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       const upsertResult = await postgresClient.batchUpsert(
         points,
         col,
-        "replace",
+        version_mode,
       );
 
       if (!upsertResult.ok) {
@@ -1299,6 +1334,8 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
               chunks: jobs.length,
               reference,
               collection: col,
+              version_mode,
+              valid_from: parseRfc3339DateTime(valid_from) ?? null,
               ...(usage !== undefined &&
               (usage.inputTokens > 0 ||
                 usage.outputTokens > 0 ||

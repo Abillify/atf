@@ -295,7 +295,7 @@ async function ensureCollectionTenantIsolation(
  *
  * ── Add new collection steps here ──────────────────────────────────────────
  */
-const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
+export const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
   // The initial schema (versions 1–5) was created by ensureCollectionDDL()
   // directly — no migration steps needed for existing tables at that baseline.
   {
@@ -366,6 +366,14 @@ const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
       // index is safe here; expression/concurrent indexes would either lock in
       // field-specific assumptions or be illegal inside this transaction.
       await client.query(`CREATE INDEX IF NOT EXISTS "${table}_metadata_gin_idx" ON "${table}" USING gin(metadata)`);
+    },
+  },
+  {
+    toVersion: 11,
+    description: "Add temporal document-version validity",
+    up: async (client, table) => {
+      await client.query(`ALTER TABLE "${table}" ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ`);
+      await client.query(`CREATE INDEX IF NOT EXISTS "${table}_temporal_version_idx" ON "${table}"(tenant_id, base_ref, (COALESCE(valid_from, created)) DESC, created DESC, id DESC)`);
     },
   },
 ];

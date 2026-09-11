@@ -16,6 +16,20 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         if self.path == "/health":
             self._json(200, {"status": "ok"})
+        elif self.path == "/v1/models":
+            # Every OpenAI-compatible server exposes this, and @atf/extract uses it
+            # as its readiness probe so a health check spends no tokens.
+            self._json(
+                200,
+                {
+                    "object": "list",
+                    "data": [
+                        {"id": "example-chat", "object": "model", "owned_by": "quickstart"},
+                        {"id": "example-embedding", "object": "model", "owned_by": "quickstart"},
+                        {"id": "example-vision", "object": "model", "owned_by": "quickstart"},
+                    ],
+                },
+            )
         else:
             self._json(404, {"error": "not_found"})
 
@@ -40,6 +54,25 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/chat/completions":
             content = "ATF quickstart is running with a deterministic mock model."
+            if _is_page_extraction(request):
+                # @atf/extract expects <summary>, <figures> and <markdown>. Returning
+                # prose here would still work — its parser falls back to treating the
+                # whole response as the page body — but the quickstart would then
+                # demonstrate the fallback rather than the contract.
+                content = (
+                    "<summary>Eine Beispielseite aus dem ATF-Quickstart.</summary>\n"
+                    "<figures>\n"
+                    '<figure id="1" bbox="[0.1000, 0.2000, 0.6000, 0.7000]">'
+                    "Platzhalterabbildung des deterministischen Mock-Modells."
+                    "</figure>\n"
+                    "</figures>\n"
+                    "<markdown>\n"
+                    "# Beispielseite\n\n"
+                    "Dieser Text stammt aus dem deterministischen Mock-Modell, "
+                    "nicht aus einem echten Vision-Modell.\n\n"
+                    "![figure_1]\n"
+                    "</markdown>"
+                )
             if request.get("stream") is True:
                 chunks = [
                     {
@@ -81,6 +114,19 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, *_: object) -> None:
         return
+
+
+def _is_page_extraction(request: object) -> bool:
+    """True when the request carries an image, i.e. it is a page-extraction call."""
+    if not isinstance(request, dict):
+        return False
+    for message in request.get("messages", []):
+        content = message.get("content") if isinstance(message, dict) else None
+        if isinstance(content, list) and any(
+            isinstance(part, dict) and part.get("type") == "image_url" for part in content
+        ):
+            return True
+    return False
 
 
 ThreadingHTTPServer(("0.0.0.0", 8080), Handler).serve_forever()

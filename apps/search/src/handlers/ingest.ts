@@ -121,6 +121,7 @@ export function createIngestHandler(
         collectionRaw,
         versionMode,
         versionTag,
+        validFrom,
         ftsLanguage,
         semanticChunkingOverride,
         lateChunkingAlphaOverride,
@@ -217,6 +218,7 @@ export function createIngestHandler(
         allowedUsers: writeAcl?.allowedUsers ?? [],
         allowedGroups: writeAcl?.allowedGroups ?? [],
         version: versionTag,
+        validFrom,
       };
 
       const jobs = await buildJobsForDocument(

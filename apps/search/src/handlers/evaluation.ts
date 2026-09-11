@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import type { RequestHandler } from "express";
 import type { Logger } from "pino";
+import { parseRfc3339DateTime } from "../rfc3339.js";
 import {
   AccessDeniedError,
   accessScopeForRequest,
@@ -263,6 +264,13 @@ export function createRetrievalEvaluationHandler(
           ? body["hybrid"]
           : defaults.hybridSearch;
       const includeAllVersions = body["include_all_versions"] === true;
+      let validAt: string | undefined;
+      try {
+        validAt = parseRfc3339DateTime(body["valid_at"]);
+      } catch (error) {
+        res.status(400).json({ error: `valid_at ${(error as Error).message}` });
+        return;
+      }
       const candidateMultiplier =
         typeof body["candidate_multiplier"] === "number" &&
         Number.isInteger(body["candidate_multiplier"])
@@ -343,6 +351,8 @@ export function createRetrievalEvaluationHandler(
             undefined,
             Math.max(1, deadlineAt - Date.now()),
             controller.signal,
+            undefined,
+            validAt,
           );
           if (controller.signal.aborted) return;
           if (!found.ok) {
@@ -401,6 +411,7 @@ export function createRetrievalEvaluationHandler(
         max_cutoff: maxCutoff,
         hybrid,
         include_all_versions: includeAllVersions,
+        valid_at: validAt ?? null,
         candidate_multiplier: candidateMultiplier,
       };
       const dataset = {

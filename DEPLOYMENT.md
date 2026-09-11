@@ -91,8 +91,15 @@ source for those prebuilds. libvips remains a dynamically loaded, replaceable sh
 attribution link and unmodified status. These statements describe only the repository's Quickstart
 artifacts; they do not assert compliance for separately built production images.
 
+The Extract Quickstart image additionally installs Debian packages — `poppler-utils`,
+`libreoffice-writer-nogui`, `libreoffice-calc-nogui`, `fonts-liberation` and `fonts-dejavu-core`
+— because PDF and office conversion needs external binaries. Those packages come from the base
+image's distribution archive with their own licenses and are **not** covered by the generated
+inventories, which describe the JavaScript dependency tree only. A production Extract image must
+account for them in its own review.
+
 Tag releases attach a checksummed bundle containing both native workspace inventories and all
-four Quickstart image inventories. The release workflow publishes no OCI image. Production
+five Quickstart image inventories. The release workflow publishes no OCI image. Production
 images remain deployment-owned and require their own inventory, source-availability,
 replaceability, attribution, scanning, and immutable-digest review.
 
@@ -103,7 +110,8 @@ schemas themselves. Per-service annotated templates:
 [`apps/runtime/.env.example`](apps/runtime/.env.example),
 [`apps/search/.env.example`](apps/search/.env.example),
 [`apps/gate/.env.example`](apps/gate/.env.example),
-[`apps/control/.env.example`](apps/control/.env.example).
+[`apps/control/.env.example`](apps/control/.env.example),
+[`apps/extract/.env.example`](apps/extract/.env.example).
 
 Control defaults to relative Runtime URLs in production. An external same-origin reverse proxy
 must route the Runtime paths used by the browser (including `/v1/*`, `/monitoring/*`, and health

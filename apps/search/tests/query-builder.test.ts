@@ -396,6 +396,8 @@ describe("buildFtsQuery", () => {
         "ORDER BY (chunk->>'chunk_index')::int ASC NULLS FIRST, id ASC",
       );
       expect(sql).not.toContain("ts_rank");
+      expect(sql).toContain("valid_from");
+      expect(sql).toContain("effective_valid_from");
     });
 
     it("refuses a cursor, because chunk order has no score to page by", () => {
@@ -489,5 +491,40 @@ describe("tenant SQL binding", () => {
     });
     expect(sql).toContain("tenant_id = $1");
     expect(params.values).toEqual(["tenant-a", "alice"]);
+  });
+});
+
+
+describe("temporal version scope", () => {
+  const validAt = "2026-03-01T00:00:00.000Z";
+
+  it("implements the four include_all_versions/valid_at combinations with bind parameters", () => {
+    const latest = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON);
+    expect(latest.sql).toContain("is_latest = TRUE");
+
+    const all = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, true, 0, VECTOR_JSON);
+    expect(all.sql).not.toContain("is_latest = TRUE");
+    expect(all.sql).not.toContain("valid_from, \"documents\".created) <=");
+
+    const allAsOf = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, true, 0, VECTOR_JSON, undefined, undefined, undefined, undefined, undefined, validAt);
+    expect(allAsOf.sql).toContain("COALESCE(\"documents\".valid_from, \"documents\".created) <=");
+    expect(allAsOf.sql).not.toContain(validAt);
+    expect(allAsOf.params).toContain(validAt);
+
+    const oneAsOf = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON, undefined, undefined, undefined, undefined, undefined, validAt);
+    expect(oneAsOf.sql).toContain("FROM \"documents\" tv");
+    expect(oneAsOf.sql).toContain("ORDER BY COALESCE(tv.valid_from, tv.created) DESC, tv.created DESC, tv.id DESC");
+    expect(oneAsOf.params.filter((value) => value === validAt)).toHaveLength(1);
+  });
+
+  it("applies the same temporal predicate before binary, FTS and hybrid candidate limits", () => {
+    const binary = buildBinaryDenseQuery(TABLE, VEC_TYPE, 768, 10, undefined, false, 0, VECTOR_JSON, "01", 4, undefined, undefined, undefined, undefined, undefined, validAt);
+    const fts = buildFtsQuery(TABLE, "simple", 10, undefined, false, 0, "query", undefined, undefined, undefined, undefined, undefined, undefined, validAt);
+    const hybrid = buildHybridQuery(TABLE, VEC_TYPE, 60, "simple", 10, undefined, false, 4, 0, false, null, VECTOR_JSON, "query", undefined, undefined, null, undefined, undefined, undefined, undefined, undefined, validAt);
+    for (const built of [binary, fts, hybrid]) {
+      expect(built.sql).toContain("COALESCE(");
+      expect(built.sql).toContain("valid_from");
+      expect(built.params).toContain(validAt);
+    }
   });
 });

@@ -5,8 +5,10 @@ import { describe, expect, it } from "vitest";
 import {
   ensureCollectionDDL,
   ensureStatsTables,
+  CURRENT_SCHEMA_VERSION,
   type CollectionMeta,
 } from "../src/collection-ddl.js";
+import { COLLECTION_MIGRATIONS } from "../src/migrations.js";
 
 const meta: CollectionMeta = {
   language: "simple",
@@ -17,6 +19,17 @@ const meta: CollectionMeta = {
 };
 
 describe("collection DDL", () => {
+  it("migrates schema 11 with nullable validity storage and the temporal index", async () => {
+    expect(CURRENT_SCHEMA_VERSION).toBe(11);
+    const migration = COLLECTION_MIGRATIONS.find((step) => step.toVersion === 11);
+    expect(migration).toBeDefined();
+    const queries: string[] = [];
+    if (!migration) throw new Error("schema 11 migration missing");
+    await migration.up({ query: async (sql: string) => { queries.push(sql); return { rows: [] }; } } as never, "vc_legacy", meta, {} as never);
+    expect(queries.join("\n")).toContain("ADD COLUMN IF NOT EXISTS valid_from TIMESTAMPTZ");
+    expect(queries.join("\n")).toContain("vc_legacy_temporal_version_idx");
+  });
+
   it("creates a sparsevec inner-product HNSW index, not an invalid access method", async () => {
     const queries: string[] = [];
     const client = {
@@ -34,6 +47,10 @@ describe("collection DDL", () => {
     const sparseDdl = queries.find((sql) => sql.includes("sparse_vector_idx"));
     expect(sparseDdl).toContain("USING hnsw (sparse_vector sparsevec_ip_ops)");
     expect(sparseDdl).not.toContain("USING sparsevec");
+    expect(queries.join("\n")).toContain("valid_from     TIMESTAMPTZ");
+    const temporalDdl = queries.find((sql) => sql.includes("temporal_version_idx"));
+    expect(temporalDdl).toContain("COALESCE(valid_from, created)");
+    expect(temporalDdl).toContain("tenant_id, base_ref");
   });
 
   it("discards unmapped legacy stats before making tenant columns mandatory", async () => {

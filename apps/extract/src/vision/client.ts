@@ -1,0 +1,376 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * client.ts
+ *
+ * The vision model client: one OpenAI-compatible chat completion per page,
+ * carrying the rendered page image and its text layer.
+ *
+ * ## Two retry axes, deliberately separate
+ *
+ * A page can fail for two unrelated reasons and conflating them makes both
+ * handled badly:
+ *
+ *   **Transient failure** — connection reset, 502 from a loading model, empty
+ *   choices array. Retried in place with exponential backoff and jitter. The
+ *   request was fine; the world was not.
+ *
+ *   **Output truncation** — `finish_reason: "length"`. Retrying identically
+ *   produces the identical truncation, so this escalates to the next larger
+ *   token budget from `VISION_MAX_TOKEN_VARIANTS`. Starting at the largest budget
+ *   instead would make every page slower and, on some servers, reserve KV cache
+ *   that is never used.
+ *
+ * Truncation matters more than it looks. A cut-off response loses the tail of the
+ * page silently — the `<markdown>` section simply ends — so a page that looks
+ * successful is missing its last third. That is why it is a distinct signal all
+ * the way out to `/metrics` (`extract_vision_truncations_total`) rather than being
+ * folded into a generic failure count.
+ *
+ * ## Exhaustion is not failure
+ *
+ * When the largest budget still truncates, the partial response is returned with
+ * `truncated: true` rather than thrown away. A page that is 80% transcribed and
+ * flagged is more useful than no page, and the caller records the warning on the
+ * page so it is visible rather than merely lost.
+ */
+
+import type { Logger } from "pino";
+import { visionUnavailable } from "../errors.js";
+import { injectTraceHeaders } from "../trace-context.js";
+import { toDataUrl } from "../pipeline/raster.js";
+import { PAGE_SYSTEM_PROMPT, buildPageUserPrompt } from "./prompts.js";
+
+export interface VisionClientConfig {
+  /** Base URL; `/v1/chat/completions` is appended. */
+  visionUrl: string;
+  visionModel: string;
+  visionApiKey: string | null;
+  /** Per-request timeout in ms. 0 disables. */
+  visionTimeoutMs: number;
+  visionTemperature: number;
+  visionTopP: number;
+  /** Ascending output budgets, escalated on truncation. */
+  visionMaxTokenVariants: number[];
+  /** Transient-failure retries per budget. */
+  visionMaxRetries: number;
+  visionReasoningEffort: string | null;
+}
+
+export interface VisionUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+}
+
+export interface VisionPageResult {
+  /** Raw response text, for `parseVisionPage`. */
+  raw: string;
+  usage: VisionUsage;
+  /** Total requests made, including retries and escalations. */
+  requests: number;
+  /** True when even the largest budget was exhausted. */
+  truncated: boolean;
+  /** The budget that produced the returned response. */
+  maxTokens: number;
+}
+
+export interface AnalyzePageInput {
+  page: number;
+  pageCount: number;
+  rawText: string;
+  image: { buffer: Uint8Array; mimeType: string };
+  /** Aborts the request when the client disconnects. */
+  signal?: AbortSignal | undefined;
+}
+
+export interface VisionClient {
+  analyzePage(input: AnalyzePageInput): Promise<VisionPageResult>;
+  /** Reachability probe for `/health`. Never throws. */
+  probe(): Promise<{ available: boolean; error?: string }>;
+}
+
+interface ChatChoice {
+  message?: { content?: unknown };
+  finish_reason?: unknown;
+}
+
+interface ChatResponse {
+  choices?: ChatChoice[];
+  usage?: {
+    prompt_tokens?: unknown;
+    completion_tokens?: unknown;
+    total_tokens?: unknown;
+  };
+}
+
+function toInt(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0;
+}
+
+/** Sleep with jitter, so retries from concurrent pages do not synchronise. */
+function backoffDelay(attempt: number): number {
+  const base = Math.min(8_000, 250 * 2 ** attempt);
+  return base / 2 + Math.random() * (base / 2);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/** A failure worth retrying in place, as opposed to a permanent rejection. */
+class TransientVisionFailure extends Error {}
+
+/** The model stopped because it ran out of output budget. */
+class TruncatedVisionResponse extends Error {
+  readonly partial: string;
+  readonly usage: VisionUsage;
+
+  constructor(partial: string, usage: VisionUsage) {
+    super("The model response was cut off by the token budget");
+    this.partial = partial;
+    this.usage = usage;
+  }
+}
+
+export function createVisionClient(
+  config: VisionClientConfig,
+  logger: Logger,
+): VisionClient {
+  const endpoint = `${config.visionUrl.replace(/\/+$/, "")}/v1/chat/completions`;
+  const budgets =
+    config.visionMaxTokenVariants.length > 0 ? config.visionMaxTokenVariants : [8192];
+
+  function headers(): Record<string, string> {
+    const result: Record<string, string> = {
+      "content-type": "application/json",
+      accept: "application/json",
+    };
+    if (config.visionApiKey !== null) {
+      result["authorization"] = `Bearer ${config.visionApiKey}`;
+    }
+    injectTraceHeaders(result);
+    return result;
+  }
+
+  function buildBody(input: AnalyzePageInput, maxTokens: number): Record<string, unknown> {
+    return {
+      model: config.visionModel,
+      messages: [
+        { role: "system", content: PAGE_SYSTEM_PROMPT },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: buildPageUserPrompt({
+                page: input.page,
+                pageCount: input.pageCount,
+                rawText: input.rawText,
+              }),
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: toDataUrl(input.image.buffer, input.image.mimeType),
+                // "high" keeps the server from downscaling a page to a thumbnail,
+                // which makes table text unreadable regardless of RENDER_DPI.
+                detail: "high",
+              },
+            },
+          ],
+        },
+      ],
+      max_tokens: maxTokens,
+      temperature: config.visionTemperature,
+      top_p: config.visionTopP,
+      // Only sent when configured: strict servers reject unknown fields, so an
+      // unconditional chat_template_kwargs breaks every request against them.
+      ...(config.visionReasoningEffort !== null
+        ? { chat_template_kwargs: { reasoning_effort: config.visionReasoningEffort } }
+        : {}),
+    };
+  }
+
+  /** One request. Throws TransientVisionFailure or TruncatedVisionResponse. */
+  async function requestOnce(
+    input: AnalyzePageInput,
+    maxTokens: number,
+  ): Promise<{ raw: string; usage: VisionUsage }> {
+    const controller = new AbortController();
+    const timeout =
+      config.visionTimeoutMs > 0
+        ? setTimeout(() => controller.abort(new Error("timeout")), config.visionTimeoutMs)
+        : null;
+    const onExternalAbort = (): void => controller.abort(new Error("client disconnected"));
+    input.signal?.addEventListener("abort", onExternalAbort, { once: true });
+
+    let response: Response;
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: headers(),
+        body: JSON.stringify(buildBody(input, maxTokens)),
+        signal: controller.signal,
+      });
+    } catch (error) {
+      // A client disconnect is not the model's fault and must not be retried;
+      // everything else at this layer is a network condition and is.
+      if (input.signal?.aborted === true) {
+        throw visionUnavailable("The request was aborted by the client", { page: input.page });
+      }
+      throw new TransientVisionFailure(
+        error instanceof Error ? error.message : String(error),
+      );
+    } finally {
+      if (timeout !== null) clearTimeout(timeout);
+      input.signal?.removeEventListener("abort", onExternalAbort);
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      // 4xx other than 408/429 means the request itself is wrong — a bad model
+      // name, an unsupported field, an image the server refuses. Retrying is
+      // pointless and hides the real message.
+      const retryable =
+        response.status >= 500 || response.status === 408 || response.status === 429;
+      const message = `The vision endpoint returned HTTP ${response.status}: ${body.slice(0, 500)}`;
+      if (retryable) throw new TransientVisionFailure(message);
+      throw visionUnavailable(message, { page: input.page, status: response.status });
+    }
+
+    let payload: ChatResponse;
+    try {
+      payload = (await response.json()) as ChatResponse;
+    } catch (error) {
+      throw new TransientVisionFailure(
+        `The vision response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+
+    const usage: VisionUsage = {
+      promptTokens: toInt(payload.usage?.prompt_tokens),
+      completionTokens: toInt(payload.usage?.completion_tokens),
+      totalTokens: toInt(payload.usage?.total_tokens),
+    };
+
+    const choice = payload.choices?.[0];
+    const content = typeof choice?.message?.content === "string" ? choice.message.content : "";
+
+    if (choice?.finish_reason === "length") {
+      throw new TruncatedVisionResponse(content, usage);
+    }
+    if (content.trim() === "") {
+      // An empty completion with a normal finish reason is a server-side hiccup
+      // often enough to be worth one more try.
+      throw new TransientVisionFailure("The vision endpoint returned no content");
+    }
+
+    return { raw: content, usage };
+  }
+
+  async function analyzePage(input: AnalyzePageInput): Promise<VisionPageResult> {
+    const usageTotal: VisionUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    let requests = 0;
+    let lastTransient: Error | null = null;
+    let lastTruncation: TruncatedVisionResponse | null = null;
+
+    const addUsage = (usage: VisionUsage): void => {
+      usageTotal.promptTokens += usage.promptTokens;
+      usageTotal.completionTokens += usage.completionTokens;
+      usageTotal.totalTokens += usage.totalTokens;
+    };
+
+    for (const [budgetIndex, maxTokens] of budgets.entries()) {
+      // Transient retries are per budget: escalating resets the counter, because
+      // a truncation is not evidence that the endpoint is unhealthy.
+      for (let attempt = 0; attempt <= config.visionMaxRetries; attempt++) {
+        if (input.signal?.aborted === true) {
+          throw visionUnavailable("The request was aborted by the client", { page: input.page });
+        }
+        requests++;
+        try {
+          const result = await requestOnce(input, maxTokens);
+          addUsage(result.usage);
+          return { raw: result.raw, usage: usageTotal, requests, truncated: false, maxTokens };
+        } catch (error) {
+          if (error instanceof TruncatedVisionResponse) {
+            addUsage(error.usage);
+            lastTruncation = error;
+            logger.warn(
+              {
+                page: input.page,
+                maxTokens,
+                nextBudget: budgets[budgetIndex + 1] ?? null,
+                partialLength: error.partial.length,
+              },
+              "Vision response hit the token budget; escalating",
+            );
+            break; // next budget
+          }
+          if (error instanceof TransientVisionFailure) {
+            lastTransient = error;
+            if (attempt < config.visionMaxRetries) {
+              const delay = backoffDelay(attempt);
+              logger.warn(
+                { page: input.page, attempt: attempt + 1, delayMs: Math.round(delay), err: error.message },
+                "Vision request failed; retrying",
+              );
+              await sleep(delay);
+              continue;
+            }
+            break; // budgets loop decides whether anything is left to try
+          }
+          throw error; // ExtractError — permanent
+        }
+      }
+      // A transient exhaustion on this budget will recur on the next one, so stop.
+      if (lastTruncation === null && lastTransient !== null) break;
+      lastTransient = null;
+    }
+
+    if (lastTruncation !== null) {
+      // Exhausted every budget. Return the partial response rather than nothing:
+      // a flagged 80% page beats a missing page, and the flag reaches the
+      // document's warnings and /metrics.
+      logger.error(
+        { page: input.page, largestBudget: budgets.at(-1) ?? 0 },
+        "Vision response was still truncated at the largest token budget",
+      );
+      return {
+        raw: lastTruncation.partial,
+        usage: usageTotal,
+        requests,
+        truncated: true,
+        maxTokens: budgets.at(-1) ?? 0,
+      };
+    }
+
+    throw visionUnavailable(
+      `The vision endpoint failed after ${requests} attempt(s): ${lastTransient?.message ?? "unknown error"}`,
+      { page: input.page, requests },
+    );
+  }
+
+  async function probe(): Promise<{ available: boolean; error?: string }> {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 5_000);
+    try {
+      // The models listing is the cheapest endpoint every OpenAI-compatible
+      // server exposes; a chat completion would spend tokens on a health check.
+      const response = await fetch(`${config.visionUrl.replace(/\/+$/, "")}/v1/models`, {
+        headers: headers(),
+        signal: controller.signal,
+      });
+      if (response.ok) return { available: true };
+      return { available: false, error: `HTTP ${response.status}` };
+    } catch (error) {
+      return { available: false, error: error instanceof Error ? error.message : String(error) };
+    } finally {
+      clearTimeout(timeout);
+    }
+  }
+
+  return { analyzePage, probe };
+}

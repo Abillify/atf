@@ -14,6 +14,7 @@
  */
 
 import type { IncomingMessage } from "node:http";
+import { parseRfc3339DateTime } from "./rfc3339.js";
 import { readHeader, parseBooleanHeader } from "./header-utils.js";
 import { validateFtsLanguage } from "./collection-ddl.js";
 import type { ChunkingOptions } from "./ingest-jobs.js";
@@ -278,6 +279,8 @@ export interface ParsedIngestHeaders {
   collectionRaw: string;
   versionMode: "replace" | "version";
   versionTag: string | undefined;
+  /** Canonical UTC instant from X-Valid-From, or undefined for legacy/current-time fallback. */
+  validFrom: string | undefined;
   ftsLanguage: string;
   semanticChunkingOverride: boolean | undefined;
   lateChunkingAlphaOverride: number | undefined;
@@ -309,6 +312,13 @@ export function parseIngestHeaders(
   const versionMode =
     readHeader(req, "x-version-mode") === "version" ? "version" : "replace";
   const versionTag = readHeader(req, "x-version");
+  let validFrom: string | undefined;
+  let validFromError: string | undefined;
+  try {
+    validFrom = parseRfc3339DateTime(readHeader(req, "x-valid-from"));
+  } catch (error) {
+    validFromError = `X-Valid-From ${(error as Error).message}`;
+  }
 
   // Helper to build a partial error return with all overrides undefined
   const errReturn = (validationError: string): ParsedIngestHeaders => ({
@@ -317,6 +327,7 @@ export function parseIngestHeaders(
     collectionRaw,
     versionMode,
     versionTag,
+    validFrom,
     ftsLanguage: defaults.defaultFtsLanguage ?? "simple",
     semanticChunkingOverride: undefined,
     lateChunkingAlphaOverride: undefined,
@@ -332,6 +343,8 @@ export function parseIngestHeaders(
     normalizeTables: true,
     validationError,
   });
+
+  if (validFromError) return errReturn(validFromError);
 
   // FTS language
   const ftsLanguageRaw = readHeader(req, "x-fts-language");
@@ -429,6 +442,7 @@ export function parseIngestHeaders(
     collectionRaw,
     versionMode,
     versionTag,
+    validFrom,
     ftsLanguage,
     semanticChunkingOverride: semanticChunkingParsed ?? undefined,
     lateChunkingAlphaOverride: lateAlphaParsed ?? undefined,

@@ -35,6 +35,7 @@ import type { EmbedFn } from "../semantic-chunker.js";
 import type { SummaryClient } from "../summary-client.js";
 import { getUsageContext } from "../usage-context.js";
 import { aclForMutation } from "../access-scope.js";
+import { parseRfc3339DateTime } from "../rfc3339.js";
 
 const SUB_BATCH_SIZE = 16;
 /** The current Express transport buffers the request before this handler. */
@@ -162,6 +163,7 @@ export function createIngestStreamHandler(
         collectionRaw,
         versionMode,
         versionTag,
+        validFrom,
         ftsLanguage,
         semanticChunkingOverride,
         lateChunkingAlphaOverride,
@@ -176,6 +178,22 @@ export function createIngestStreamHandler(
         figureChunks,
         normalizeTables,
       } = parsed;
+
+      // Validate every item before starting the NDJSON response so malformed
+      // timestamps cannot produce a partially committed stream.
+      for (let i = 0; i < documents.length; i++) {
+        const document = documents[i] as IngestDocument & { valid_from?: unknown };
+        if (document.valid_from === null) {
+          document.validFrom = undefined;
+        } else {
+          try {
+            document.validFrom = parseRfc3339DateTime(document.valid_from) ?? validFrom;
+          } catch (error) {
+            res.status(400).json({ error: `Line ${i + 1}: valid_from ${(error as Error).message}` });
+            return;
+          }
+        }
+      }
 
       const scope = (res.locals as { accessScope?: import("../access-scope.js").AccessScope }).accessScope;
       const collectionAcl = (res.locals as { collectionAcl?: import("../collection-access.js").CollectionAcl }).collectionAcl;
@@ -234,7 +252,7 @@ export function createIngestStreamHandler(
         for (const document of documents) {
           document.metadata = normalizeMetadata(
             { ...normalizedSharedMetadata, ...(document.metadata ?? {}) },
-            versionTag,
+            document.version ?? versionTag,
           );
         }
       } catch (error) {
@@ -257,7 +275,8 @@ export function createIngestStreamHandler(
           ...d,
           allowedUsers: writeAcl?.allowedUsers ?? [],
           allowedGroups: writeAcl?.allowedGroups ?? [],
-          version: versionTag,
+          version: d.version ?? versionTag,
+          validFrom: d.validFrom,
         }));
 
         // Build jobs using semanticChunkBatch (one embed call for all docs in sub-batch)

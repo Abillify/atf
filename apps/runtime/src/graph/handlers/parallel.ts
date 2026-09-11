@@ -65,6 +65,10 @@ interface RagSourceSpec {
   rerank?: boolean;
   /** Server-side per-document result grouping via vectorsearch. Default true. */
   groupByDocument?: boolean;
+  /** Include every eligible historical version. */
+  includeAllVersions?: boolean;
+  /** RFC 3339 as-of instant forwarded to vectorsearch. */
+  validAt?: string;
 }
 
 /** A parallel node's data-driven retrieval plan (`config.ragProfiles`). */
@@ -208,6 +212,9 @@ function buildRagSourceNode(
   if (Array.isArray(source.tags) && source.tags.length > 0)
     args.tags = source.tags;
   if (typeof source.minScore === "number") args.minScore = source.minScore;
+  if (typeof source.includeAllVersions === "boolean")
+    args.include_all_versions = source.includeAllVersions;
+  if (typeof source.validAt === "string") args.valid_at = source.validAt;
   return {
     id: `${parentId}:rag:${index}:${source.collection}`,
     type: "tool",

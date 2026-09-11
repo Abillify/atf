@@ -1,7 +1,7 @@
 # Architecture
 
-ATF is a Bun workspace monorepo containing four independently deployable applications and
-five shared contract packages. The applications communicate over documented HTTP and MCP
+ATF is a Bun workspace monorepo containing five independently deployable applications and
+six shared contract packages. The applications communicate over documented HTTP and MCP
 interfaces only. None imports another's source, and none reads another's private
 configuration.
 
@@ -20,6 +20,7 @@ flowchart TB
         runtime["<b>Runtime</b><br/>orchestration + OpenAI-compatible API<br/>:3000"]
         search["<b>Search</b><br/>semantic retrieval<br/>:3002"]
         gate["<b>Gate</b><br/>governed MCP gateway<br/>:3003"]
+        extract["<b>Extract</b><br/>document to Markdown<br/>:3004"]
     end
 
     subgraph state["State"]
@@ -45,6 +46,10 @@ flowchart TB
 
     search --> pg
     search --> models
+    search -.->|POST /ingest-file| extract
+
+    extract -->|POST /ingest + PUT /document-assets| search
+    extract -->|vision model| models
 
     gate --> systems
     gate -.->|approval + session state| redis
@@ -55,7 +60,9 @@ Solid lines show configured request or persistence paths; they are not all manda
 deployment or flow. Dashed lines are explicitly optional coordination paths. Runtime can run
 without Search, Gate, or PostgreSQL for flows that do not require those capabilities, with
 in-memory/per-replica trade-offs described below. Without Redis, Runtime and Gate degrade to
-per-replica coordination rather than failing.
+per-replica coordination rather than failing. Extract is optional in both directions: Search
+mounts `/ingest-file` only when `CONVERTER_URL` is set, and Extract mounts `/v1/ingest` only
+when `SEARCH_URL` is set.
 
 ## Applications
 
@@ -109,6 +116,36 @@ Serves both MCP transports — streamable HTTP at `mcpPath` (default `/mcp`) and
 pair `/sse` and `/messages` — plus `/healthz`, `/readyz`, and a monitoring surface under
 `/monitor/*`.
 
+### Extract (`apps/extract`)
+
+Document-to-Markdown extraction against the `atf-extract` contract. Bun or Node, Express.
+
+Converts PDF, DOCX, XLSX, PNG, JPEG and GIF into the canonical Markdown defined by
+`packages/extract-contract`: `## Seite N` page markers, `<figure>` entries with normalised
+geometry, per-page `<summary>` blocks, and HTML tables that preserve merged cells. Every format
+funnels through one PDF page loop — office documents via LibreOffice — so page numbers, page
+images and text offsets agree across formats.
+
+Each page is rendered and sent to a vision model together with its text layer. The text layer is
+authoritative for wording; the rendered page is authoritative for structure. Figure crops are
+cut from a separately rendered, higher-resolution page.
+
+It is the one application that needs external binaries: `poppler-utils` for PDF access and
+`libreoffice` for office formats. That is precisely why it is a separate service rather than part
+of Search — those dependencies have no business in the container that serves the query path.
+
+Route groups: `/v1/convert` (sync, SSE, or async callback, selected by request header),
+`/v1/ingest` (convert and index in one call, mounted only with `SEARCH_URL`), `/ui/*` (browser
+backend-for-frontend), `/auth/*`, `/openapi.json`, `/metrics`, `/health`, and an operator upload
+UI at `/`.
+
+Extract and Search each hold the other's address optionally, and the two paths differ in one
+observable way: Extract's `/v1/ingest` stores figure crops via `PUT /document-assets/:assetId`,
+while Search's `/ingest-file` proxy forwards Markdown only, so figure descriptions are indexed
+but the images are not.
+
+Like Search, it has a Node build target (`build:node`) in addition to the Bun target.
+
 ## Shared contract packages
 
 `packages/` holds the messages that cross service boundaries, each as a versioned package
@@ -121,9 +158,15 @@ with Zod validation and its own tests.
 | `@atf/evidence-contract` | 1.1.0 | Evidence and lineage compatibility records |
 | `@atf/schema-compatibility` | 1.0.0 | Deterministic schema-evolution classification |
 | `@atf/contract-adapter` | 1.0.0 | Explicit adapters between the contracts above |
+| `@atf/extract-contract` | 1.0.0 | Canonical extracted-document Markdown grammar and figure asset identity |
 
 `integration/system` exercises their combined lifecycle without external infrastructure, which
 is what makes a contract break visible in CI rather than at deployment time.
+
+`@atf/extract-contract` is additionally verified against the *consumer* rather than only against
+itself: its test suite runs serialized output through Search's real
+`document-structure.ts` parser, because a grammar both sides merely believe they agree on is how
+page markers and figure bindings were silently lost before the package existed.
 
 ### Contract boundary status
 

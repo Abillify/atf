@@ -96,12 +96,55 @@ services:
       TENANT_ISOLATION_ENABLED: "false"
       ACL_REQUIRE_IDENTITY: "false"
       TRANSACTION_ENFORCEMENT: off
+      # Mounts POST /ingest-file, which proxies a binary upload to the converter.
+      # Note the asymmetry with the converter's own /v1/ingest: this path forwards
+      # Markdown, so figure descriptions are indexed but figure images are not.
+      CONVERTER_URL: http://extract:3000
     ports:
       - "${ATF_SEARCH_PORT:-3002}:3000"
     depends_on:
       postgres:
         condition: service_healthy
       model-mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  extract:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: extract
+    environment:
+      NODE_ENV: development
+      PORT: "3000"
+      VISION_URL: http://model-mock:8080
+      VISION_MODEL: example-vision
+      # The mock answers instantly, so the production-scale budgets only slow the
+      # smoke test down.
+      VISION_TIMEOUT_MS: "60000"
+      VISION_MAX_TOKEN_VARIANTS: "4096"
+      VISION_MAX_RETRIES: "1"
+      RENDER_DPI: "120"
+      FIGURE_DPI: "150"
+      MAX_PAGES: "20"
+      TEMP_DIR: /tmp/atf-extract
+      # Enables POST /v1/ingest, which converts and indexes in one call.
+      SEARCH_URL: http://search:3000
+      SEARCH_COLLECTION: documents
+      AUTHN_MODE: disabled
+      AUTHZ_ENABLED: "false"
+      TENANT_ISOLATION_ENABLED: "false"
+      CALLBACK_ALLOWED_HOSTS: 127.0.0.1,localhost
+    ports:
+      - "${ATF_EXTRACT_PORT:-3004}:3000"
+    depends_on:
+      model-mock:
+        condition: service_healthy
+      search:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]

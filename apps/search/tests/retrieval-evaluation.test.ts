@@ -26,12 +26,15 @@ import type { PostgresClient } from "../src/postgres-client.js";
 
 async function invokeEvaluation(body: Record<string, unknown>, headerCollection = "header_collection") {
   const collections: string[] = [];
+  const searchCalls: unknown[][] = [];
   const postgres = {
     getCollectionAcl: async (collection: string) => {
       collections.push(`acl:${collection}`);
       return { ok: true as const, result: { allowedUsers: [], allowedGroups: [] } };
     },
-    search: async (_query: string, _vector: number[], _limit: number, collection: string) => {
+    search: async (...args: unknown[]) => {
+      const collection = args[3] as string;
+      searchCalls.push(args);
       collections.push(`search:${collection}`);
       return { ok: true as const, result: [] };
     },
@@ -65,7 +68,7 @@ async function invokeEvaluation(body: Record<string, unknown>, headerCollection 
   } as unknown as Response;
   let forwarded: unknown;
   await Promise.resolve(handler(req, response, (error?: unknown) => { forwarded = error; }));
-  return { status: response.statusCode, payload, collections, forwarded };
+  return { status: response.statusCode, payload, collections, searchCalls, forwarded };
 }
 
 describe("retrieval evaluation boundary", () => {
@@ -77,6 +80,28 @@ describe("retrieval evaluation boundary", () => {
     expect(result.forwarded).toBeUndefined();
     expect(result.status).toBe(200);
     expect(result.collections).toEqual(["acl:body_collection", "search:body_collection"]);
+  });
+
+  it("forwards and reports the normalized temporal retrieval contract", async () => {
+    const result = await invokeEvaluation({
+      collection: "documents",
+      include_all_versions: true,
+      valid_at: "2026-03-01T12:00:00+01:00",
+      queries: [{ id: "q1", query: "needle", qrels: [{ reference: "doc" }] }],
+    });
+    expect(result.status).toBe(200);
+    expect(result.searchCalls[0]?.[7]).toBe(true);
+    expect(result.searchCalls[0]?.[19]).toBe("2026-03-01T11:00:00.000Z");
+    expect(result.payload).toMatchObject({ parameters: { include_all_versions: true, valid_at: "2026-03-01T11:00:00.000Z" } });
+  });
+
+  it("rejects offset-less valid_at", async () => {
+    const result = await invokeEvaluation({
+      collection: "documents",
+      valid_at: "2026-03-01T12:00:00",
+      queries: [{ id: "q1", query: "needle", qrels: [{ reference: "doc" }] }],
+    });
+    expect(result.status).toBe(400);
   });
 
   it("requires an explicit canonical body collection", async () => {

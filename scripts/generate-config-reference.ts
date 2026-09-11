@@ -222,13 +222,18 @@ function parseRuntime(source: string): Variable[] {
 }
 
 // ---------------------------------------------------------------------------
-// Search: Config interface with trailing comments
+// Search and Extract: a `Config` interface with trailing comments
+//
+// Both services follow the same convention — one flat `Config` interface whose
+// members carry `// ENV_NAME (default: …)` trailing comments — so one parser
+// serves both. `sourcePath` only improves the error message when the convention
+// is broken.
 // ---------------------------------------------------------------------------
 
-function parseSearch(source: string): Variable[] {
+function parseConfigInterface(source: string, sourcePath: string): Variable[] {
 	const start = source.indexOf("export interface Config");
 	if (start === -1) {
-		throw new Error("Config interface not found in apps/search/src/config.ts.");
+		throw new Error(`Config interface not found in ${sourcePath}.`);
 	}
 	const open = source.indexOf("{", start);
 	let depth = 0;
@@ -355,6 +360,17 @@ async function collectEnvNames(directories: string[]): Promise<Set<string>> {
 			// parseBoolEnv("HYBRID_SEARCH", true), parseCsvEnv("UI_SCOPES"), and so on.
 			for (const match of text.matchAll(
 				/\b[a-z][A-Za-z]*Env\w*\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
+			)) {
+				names.add(match[1]);
+			}
+			// Extract's string accessors are not named after the environment, so the
+			// `…Env(` pattern above misses them — and it missed 25 of them silently,
+			// which is the failure mode this whole script exists to prevent. They are
+			// listed by name rather than matched generically because a generic
+			// "identifier called with a SCREAMING_SNAKE literal" pattern also picks up
+			// things like push("SOME_CODE") and would fill the reference with noise.
+			for (const match of text.matchAll(
+				/\b(?:optionalString|requireString|requiredString)\(\s*["']([A-Z][A-Z0-9_]{2,})["']/g,
 			)) {
 				names.add(match[1]);
 			}
@@ -522,9 +538,20 @@ const searchSource = await readFile(
 	resolve(root, "apps/search/src/config.ts"),
 	"utf8",
 );
+const extractSource = await readFile(
+	resolve(root, "apps/extract/src/config.ts"),
+	"utf8",
+);
 
 const runtimeParsed = parseRuntime(runtimeSource);
-const searchParsed = parseSearch(searchSource);
+const searchParsed = parseConfigInterface(
+	searchSource,
+	"apps/search/src/config.ts",
+);
+const extractParsed = parseConfigInterface(
+	extractSource,
+	"apps/extract/src/config.ts",
+);
 
 const sections: Section[] = [
 	{
@@ -545,6 +572,16 @@ const sections: Section[] = [
 		variables: [
 			...searchParsed,
 			...(await unvalidatedExtras(["apps/search/src"], searchParsed)),
+		],
+	},
+	{
+		service: "Extract",
+		source: "apps/extract/src/config.ts",
+		intro:
+			"Document-to-Markdown extraction against the `atf-extract` contract. Extract has its own environment contract; only the access-control block (`AUTHN_MODE`, `OIDC_*`, `UI_*`, …) is deliberately identical to Search's so SSO is configured once. `VISION_URL` and `VISION_MODEL` are the only required variables. `SEARCH_URL` and `CONVERTER_URL` are the two halves of the optional Search integration: without `SEARCH_URL` the `/v1/ingest` route is not mounted here, and without `CONVERTER_URL` the `/ingest-file` route is not mounted in Search. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member.",
+		variables: [
+			...extractParsed,
+			...(await unvalidatedExtras(["apps/extract/src"], extractParsed)),
 		],
 	},
 	{

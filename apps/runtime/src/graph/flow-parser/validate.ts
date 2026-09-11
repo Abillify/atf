@@ -333,6 +333,8 @@ export const RagSourceSchema = z.object({
   when: z.string().max(1024).optional(),
   rerank: z.boolean().optional(),
   groupByDocument: z.boolean().optional(),
+  includeAllVersions: z.boolean().optional(),
+  validAt: z.string().datetime({ offset: true }).optional(),
 });
 
 /**

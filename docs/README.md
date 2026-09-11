@@ -22,10 +22,12 @@
 | Control | [../apps/control/README.md](../apps/control/README.md) |
 | Search | [../apps/search/README.md](../apps/search/README.md) |
 | Gate | [../apps/gate/README.md](../apps/gate/README.md) |
+| Extract | [../apps/extract/README.md](../apps/extract/README.md) |
 
 Contract packages: [identity](../packages/identity-contract/README.md),
 [transaction](../packages/transaction-contract/README.md),
 [evidence](../packages/evidence-contract/README.md),
+[extract](../packages/extract-contract/README.md),
 [schema compatibility](../packages/schema-compatibility/README.md), and
 [contract adapter](../packages/contract-adapter/README.md).
 

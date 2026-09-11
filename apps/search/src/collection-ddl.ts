@@ -291,7 +291,7 @@ export async function saveCollectionMeta(
 
 // ─── Collection table DDL ─────────────────────────────────────────────────────
 
-export const CURRENT_SCHEMA_VERSION = 10;
+export const CURRENT_SCHEMA_VERSION = 11;
 
 export interface CollectionDDLConfig {
   vecType: string;
@@ -354,6 +354,7 @@ export async function ensureCollectionDDL(
         is_latest      BOOLEAN NOT NULL DEFAULT TRUE,
         created        TIMESTAMPTZ DEFAULT NOW(),
         modified       TIMESTAMPTZ DEFAULT NOW(),
+        valid_from     TIMESTAMPTZ,
         source         TEXT,
         link           TEXT,
         title          TEXT,
@@ -402,6 +403,10 @@ export async function ensureCollectionDDL(
     await client.query(`
       CREATE INDEX IF NOT EXISTS "${table}_base_ref_idx"
         ON "${table}"(base_ref)
+    `);
+    await client.query(`
+      CREATE INDEX IF NOT EXISTS "${table}_temporal_version_idx"
+        ON "${table}"(tenant_id, base_ref, (COALESCE(valid_from, created)) DESC, created DESC, id DESC)
     `);
     await client.query(`
       CREATE INDEX IF NOT EXISTS "${table}_metadata_gin_idx"

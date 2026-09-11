@@ -29,7 +29,8 @@ export interface EvidenceRetrievalContract {
   /** Non-sensitive SHA-256 binding the principal and collection ACL used for retrieval. */
   accessScopeFingerprint: string;
   reranked: boolean;
-  temporalScope: "latest_only" | "latest_and_historical";
+  temporalScope: "latest_only" | "latest_and_historical" | "as_of_latest" | "as_of_all";
+  validAt: string | null;
   filter: Record<string, CanonicalJsonValue>;
   tags: string[];
   pathPrefix: string | null;
@@ -50,6 +51,7 @@ export interface VerifiedEvidencePackOptions {
   hydeApplied: boolean;
   reranked: boolean;
   includeAllVersions: boolean;
+  validAt?: string;
   filter?: Record<string, unknown>;
   tags?: string[];
   pathPrefix?: string;
@@ -125,6 +127,8 @@ export interface VerifiedEvidence {
     version: string;
     versionSource: "metadata" | "modified_at";
     modifiedAt: string;
+    validFrom: string | null;
+    effectiveValidFrom: string;
     contentHash: string;
     snapshotHash: string;
     hashAlgorithm: typeof SHA_256;
@@ -253,17 +257,22 @@ export function buildVerifiedEvidencePack(
     const chunkTotal = result.chunk?.chunk_total;
     const modified = result.modified.toISOString();
     const version = versionFor(result);
+    const explicitValidFrom = result.valid_from?.toISOString() ?? null;
+    const effectiveValidFrom = result.effective_valid_from.toISOString();
     const contentHash = sha256(result.content);
     const snapshotHash = sha256(
-      [
-        options.collection,
-        result.base_ref,
-        result.reference,
-        String(chunkIndex),
-        version.value,
-        modified,
+      JSON.stringify({
+        collection: options.collection,
+        document: result.base_ref,
+        reference: result.reference,
+        chunkIndex,
+        version: version.value,
+        versionSource: version.source,
+        modifiedAt: modified,
+        validFrom: explicitValidFrom,
+        effectiveValidFrom,
         contentHash,
-      ].join("\n"),
+      }),
     );
     const evidenceId = sha256(
       [EVIDENCE_PACK_SCHEMA_VERSION, options.collection, result.reference, snapshotHash].join(
@@ -330,6 +339,8 @@ export function buildVerifiedEvidencePack(
         version: version.value,
         versionSource: version.source,
         modifiedAt: modified,
+        validFrom: result.valid_from?.toISOString() ?? null,
+        effectiveValidFrom: result.effective_valid_from.toISOString(),
         contentHash,
         snapshotHash,
         hashAlgorithm: SHA_256,
@@ -358,9 +369,10 @@ export function buildVerifiedEvidencePack(
     effectiveQueryHash: sha256(options.effectiveQuery),
     accessScopeFingerprint: options.accessScopeFingerprint,
     reranked: options.reranked,
-    temporalScope: options.includeAllVersions
-      ? "latest_and_historical"
-      : "latest_only",
+    temporalScope: options.validAt
+      ? options.includeAllVersions ? "as_of_all" : "as_of_latest"
+      : options.includeAllVersions ? "latest_and_historical" : "latest_only",
+    validAt: options.validAt ?? null,
     filter: canonicalFilter(options.filter),
     tags: canonicalTags(options.tags),
     pathPrefix: options.pathPrefix ?? null,

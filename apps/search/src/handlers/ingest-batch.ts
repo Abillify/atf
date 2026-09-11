@@ -6,7 +6,6 @@ import type { EmbeddingClient } from "../embedding-client.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { PostgresClient } from "../postgres-client.js";
 import { normalizeMetadata, type Metadata } from "../metadata.js";
-import { readHeader } from "../header-utils.js";
 import {
   buildJobsForBatch,
   embedJobsWithLateChunking,
@@ -22,6 +21,7 @@ import type { EmbedFn } from "../semantic-chunker.js";
 import type { SummaryClient } from "../summary-client.js";
 import { getUsageContext } from "../usage-context.js";
 import { aclForMutation } from "../access-scope.js";
+import { parseRfc3339DateTime } from "../rfc3339.js";
 
 export interface BatchDocument {
   reference: string;
@@ -33,6 +33,8 @@ export interface BatchDocument {
   tags?: string[];
   allowedUsers?: string[];
   allowedGroups?: string[];
+  version?: string;
+  valid_from?: string | null;
 }
 
 export interface BatchDocumentResult {
@@ -124,6 +126,7 @@ export function createIngestBatchHandler(
         collectionRaw,
         versionMode,
         versionTag,
+        validFrom,
         ftsLanguage,
         semanticChunkingOverride,
         lateChunkingAlphaOverride,
@@ -201,10 +204,11 @@ export function createIngestBatchHandler(
         normalizedSharedMetadata = normalizeMetadata(sharedMetadata, versionTag);
         ingestDocs = documents.map((d) => ({
           ...d,
-          metadata: normalizeMetadata({ ...normalizedSharedMetadata, ...(d.metadata ?? {}) }, versionTag),
+          metadata: normalizeMetadata({ ...normalizedSharedMetadata, ...(d.metadata ?? {}) }, d.version ?? versionTag),
           allowedUsers: writeAcl?.allowedUsers ?? [],
           allowedGroups: writeAcl?.allowedGroups ?? [],
-          version: versionTag,
+          version: d.version ?? versionTag,
+          validFrom: d.valid_from === null ? undefined : parseRfc3339DateTime(d.valid_from) ?? validFrom,
         }));
       } catch (error) {
         res.status(400).json({ error: error instanceof Error ? error.message : "Invalid metadata" });

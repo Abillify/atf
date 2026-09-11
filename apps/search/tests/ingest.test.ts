@@ -4,6 +4,7 @@
 // vectorsearch/tests/ingest.test.ts
 import { describe, it, expect, vi } from "vitest";
 import { createIngestHandler } from "../src/handlers/ingest.js";
+import { parseIngestHeaders } from "../src/ingest-header-parser.js";
 import type {
   EmbeddingClient,
   EmbeddingResponse,
@@ -559,5 +560,25 @@ describe("ingest handler", () => {
       );
       expect(res.statusCode).toBe(200);
     });
+  });
+});
+
+
+describe("X-Valid-From", () => {
+  const defaults = { defaultChunkSize: null, defaultChunkOverlap: null };
+
+  it("accepts RFC 3339 offsets and canonicalizes to UTC", () => {
+    const parsed = parseIngestHeaders({ headers: { "x-valid-from": "2026-03-01T12:30:00+01:00" } }, defaults);
+    expect(parsed.validationError).toBeUndefined();
+    expect(parsed.validFrom).toBe("2026-03-01T11:30:00.000Z");
+  });
+
+  it("rejects offset-less and calendar-invalid date-times", () => {
+    const offsetless = parseIngestHeaders({ headers: { "x-valid-from": "2026-03-01T12:30:00" } }, defaults);
+    expect(offsetless.validationError).toContain("explicit timezone");
+    for (const value of ["2026-02-30T12:30:00Z", "2026-03-01T24:00:00Z"]) {
+      const parsed = parseIngestHeaders({ headers: { "x-valid-from": value } }, defaults);
+      expect(parsed.validationError).toContain("valid RFC 3339");
+    }
   });
 });

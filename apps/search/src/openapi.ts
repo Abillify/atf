@@ -44,6 +44,8 @@ const searchResultSchema = {
     "metadata",
     "created",
     "modified",
+    "valid_from",
+    "effective_valid_from",
   ],
   properties: {
     id: { type: "string", description: "Internal row UUID" },
@@ -121,6 +123,8 @@ const searchResultSchema = {
     },
     created: { type: "string", format: "date-time" },
     modified: { type: "string", format: "date-time" },
+    valid_from: { type: ["string", "null"], format: "date-time", description: "Explicit business-validity start, or null for legacy rows." },
+    effective_valid_from: { type: "string", format: "date-time", description: "COALESCE(valid_from, created)." },
   },
 };
 
@@ -327,8 +331,14 @@ export function buildOpenApiSpec(serverUrl: string) {
             ),
             booleanHeader(
               "X-Include-All-Versions",
-              "Include superseded document versions in results.",
+              "Orthogonal version switch: without X-Valid-At returns all versions; with X-Valid-At returns all versions whose effective validity start is at or before the instant.",
             ),
+            {
+              name: "X-Valid-At",
+              in: "header",
+              description: "RFC 3339 instant with explicit timezone. With include-all=false selects one as-of version per logical document; with true keeps every version effective by this instant.",
+              schema: { type: "string", format: "date-time" },
+            },
             booleanHeader(
               "X-Include-Query-Vector",
               "Return the query embedding vector in the response (adds ~12–64 KB).",
@@ -455,6 +465,7 @@ export function buildOpenApiSpec(serverUrl: string) {
                 cutoffs: { type: "array", items: { type: "integer", minimum: 1, maximum: 100 }, default: [10, 20, 50], description: "Metrics cutoffs; retrieval runs once to the maximum" },
                 dataset_version: { type: "string", maxLength: 128 },
                 hybrid: { type: "boolean" }, include_all_versions: { type: "boolean", default: false },
+                valid_at: { type: "string", format: "date-time", description: "Optional RFC 3339 as-of instant with explicit timezone" },
                 candidate_multiplier: { type: "integer", minimum: 1, maximum: 20 },
                 deadline_ms: { type: "integer", minimum: 1, maximum: 300000, default: 60000 },
                 concurrency: { type: "integer", minimum: 1, maximum: 8, default: 4 },
@@ -471,7 +482,7 @@ export function buildOpenApiSpec(serverUrl: string) {
                 properties: {
                   status: { type: "string", enum: ["ok"] },
                   collection: { type: "string" },
-                  parameters: { type: "object", required: ["k", "hybrid", "include_all_versions", "candidate_multiplier"], properties: { k: { type: "integer" }, hybrid: { type: "boolean" }, include_all_versions: { type: "boolean" }, candidate_multiplier: { type: "integer" } } },
+                  parameters: { type: "object", required: ["k", "hybrid", "include_all_versions", "valid_at", "candidate_multiplier"], properties: { k: { type: "integer" }, hybrid: { type: "boolean" }, include_all_versions: { type: "boolean" }, valid_at: { type: ["string", "null"], format: "date-time" }, candidate_multiplier: { type: "integer" } } },
                   dataset: { type: "object", description: "Client version label plus server-computed SHA-256 over the canonical bounded qrels input", required: ["version", "hash"], properties: { version: { type: ["string", "null"] }, hash: { type: "string", pattern: "^[a-f0-9]{64}$" } } },
                   metrics: { type: "object", required: ["recall_at_k", "mrr", "ndcg_at_k", "evaluated_queries", "skipped_queries"] },
                   release_gate: { type: "object", properties: { passed: { type: "boolean" }, thresholds: { type: "object" } } },
@@ -555,6 +566,12 @@ export function buildOpenApiSpec(serverUrl: string) {
               description:
                 "`replace` (default) overwrites; `version` preserves history.",
               schema: { type: "string", enum: ["replace", "version"] },
+            },
+            {
+              name: "X-Valid-From",
+              in: "header",
+              description: "Optional business-validity start. Must be RFC 3339 date-time with an explicit timezone.",
+              schema: { type: "string", format: "date-time" },
             },
             {
               name: "X-Chunk-Size",
@@ -691,6 +708,102 @@ export function buildOpenApiSpec(serverUrl: string) {
         },
       },
 
+      "/ingest-file": {
+        post: {
+          tags: ["Ingest"],
+          operationId: "ingestFile",
+          summary: "Ingest a binary document via the document converter",
+          description:
+            "Accepts a raw PDF, DOCX, XLSX, PNG, JPEG or GIF, has `@atf/extract` convert it to " +
+            "canonical Markdown, and indexes the result through the same path as " +
+            "`POST /ingest`. Every `X-…` header understood there applies here unchanged.\n\n" +
+            "Mounted only when `CONVERTER_URL` is configured; otherwise this route returns 404.\n\n" +
+            "**Figure images are not stored on this path.** The converter renders crops, but " +
+            "forwarding Markdown does not carry bytes. Figure *descriptions* are indexed and " +
+            "retrievable, so a search for what a diagram shows still finds it — there is just no " +
+            "image to open. Responses carry `X-Figure-Assets: not-stored` to say so. Use the " +
+            "converter's own `POST /v1/ingest` when stored crops are required.",
+          parameters: [
+            {
+              name: "X-Reference",
+              in: "header",
+              required: true,
+              description: "Document identity. Validated before the conversion is paid for.",
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Collection",
+              in: "header",
+              required: false,
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Title",
+              in: "header",
+              required: false,
+              description: "Forwarded to the converter and used as the document title.",
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Filename",
+              in: "header",
+              required: false,
+              description: "Helps the converter resolve DOCX from XLSX when both are ZIP-shaped.",
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Summary-Mode",
+              in: "header",
+              required: false,
+              description:
+                "Defaults to `embedded` when the converted document carries `<summary>` blocks, " +
+                "because regenerating them would pay twice for a worse summary.",
+              schema: { type: "string", enum: ["auto", "generate", "embedded", "off"] },
+            },
+          ],
+          requestBody: {
+            required: true,
+            description: "The raw document, sent with its own Content-Type.",
+            content: {
+              "application/pdf": { schema: { type: "string", format: "binary" } },
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+                schema: { type: "string", format: "binary" },
+              },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+                schema: { type: "string", format: "binary" },
+              },
+              "image/png": { schema: { type: "string", format: "binary" } },
+              "image/jpeg": { schema: { type: "string", format: "binary" } },
+              "image/gif": { schema: { type: "string", format: "binary" } },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Converted and indexed; the body is the normal ingest response",
+              headers: {
+                "X-Extract-Contract": {
+                  schema: { type: "string" },
+                  description: "Contract version the converter produced.",
+                },
+                "X-Figure-Assets": {
+                  schema: { type: "string", enum: ["not-stored"] },
+                  description: "Figure images are not stored on this path.",
+                },
+              },
+            },
+            "400": { description: "Missing X-Reference, empty body, or invalid headers" },
+            "401": { description: "Unauthorized" },
+            "404": { description: "CONVERTER_URL is not configured" },
+            "413": { description: "Upload exceeds CONVERTER_UPLOAD_LIMIT" },
+            "415": { description: "The converter refused the file type" },
+            "422": { description: "The document exceeds the converter's page limit" },
+            "429": { description: "Rate limit exceeded" },
+            "502": { description: "The converter, embedding server or database failed" },
+            "504": { description: "The converter did not respond within CONVERTER_TIMEOUT_MS" },
+          },
+        },
+      },
+
       "/ingest-batch": {
         post: {
           tags: ["Ingest"],
@@ -717,6 +830,7 @@ export function buildOpenApiSpec(serverUrl: string) {
                       tags: { type: "array", items: { type: "string" } },
                       metadata: { type: "object" },
                       version: { type: "string" },
+                      valid_from: { type: ["string", "null"], format: "date-time", description: "Per-document value overrides X-Valid-From; null explicitly uses the created-time fallback." },
                       allowed_users: {
                         type: "array",
                         items: { type: "string" },
@@ -733,6 +847,7 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
           parameters: [
             { name: "X-Collection", in: "header", schema: { type: "string" } },
+            { name: "X-Valid-From", in: "header", description: "Shared RFC 3339 validity start; per-document valid_from overrides it.", schema: { type: "string", format: "date-time" } },
             {
               name: "X-Version-Mode",
               in: "header",
@@ -804,6 +919,7 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
           parameters: [
             { name: "X-Collection", in: "header", schema: { type: "string" } },
+            { name: "X-Valid-From", in: "header", description: "Shared RFC 3339 validity start; per-document valid_from overrides it.", schema: { type: "string", format: "date-time" } },
             {
               name: "X-Version-Mode",
               in: "header",

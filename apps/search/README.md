@@ -36,6 +36,8 @@ reference. The principal routes are:
 | Endpoint | Purpose |
 | --- | --- |
 | `POST /ingest`, `/ingest-batch`, `/ingest-stream` | Ingest single, batch, and streaming documents |
+| `POST /ingest-file` | Binary document ingest through `@atf/extract`. Mounted only when `CONVERTER_URL` is set, otherwise 404. Forwards Markdown only, so figure descriptions are indexed but the images are not (`X-Figure-Assets: not-stored`) |
+| `PUT`, `GET /document-assets/:assetId` | Store and read original figure images. The owning document must already be visible, otherwise the write is refused |
 | `POST /search` | Dense, hybrid, sparse, and optionally reranked retrieval |
 | `POST /evaluations/retrieval` | Evaluate retrieval results |
 | `DELETE /delete` | Delete indexed content |
@@ -47,6 +49,32 @@ reference. The principal routes are:
 | `/admin/stats` | Operational statistics |
 | `/auth/login`, `/auth/callback`, `/auth/logout` | OIDC browser session for the test UI |
 | `/health`, `/metrics` | Health and Prometheus metrics |
+
+## Temporal document versions
+
+Every ingested document may declare `X-Valid-From` (batch/NDJSON items use `valid_from`; an item overrides the shared header). Values must be RFC 3339 date-times with an explicit `Z` or numeric offset, for example `2026-03-01T09:00:00+01:00`; offset-less timestamps are rejected with HTTP 400. The database stores the nullable value on every chunk. Legacy rows use `effective_valid_from = COALESCE(valid_from, created)`.
+
+`X-Include-All-Versions` and `X-Valid-At` are independent:
+
+| Include all | Valid at | Result |
+| --- | --- | --- |
+| false/omitted | omitted | Rows marked `is_latest=true` (backwards-compatible current search) |
+| true | omitted | Every stored version |
+| true | `X` | Every version with `effective_valid_from <= X` |
+| false/omitted | `X` | The version with the greatest effective start not after `X`, per logical document; all chunks of that version remain searchable; ties use `created`, then `id` |
+
+```bash
+# Current/latest
+curl -H 'X-Collection: policies' --data 'retention' http://localhost:3002/search
+# Complete history
+curl -H 'X-Collection: policies' -H 'X-Include-All-Versions: true' --data 'retention' http://localhost:3002/search
+# One version as of an instant
+curl -H 'X-Collection: policies' -H 'X-Valid-At: 2026-03-01T00:00:00Z' --data 'retention' http://localhost:3002/search
+# Every version introduced by that instant
+curl -H 'X-Collection: policies' -H 'X-Include-All-Versions: true' -H 'X-Valid-At: 2026-03-01T00:00:00Z' --data 'retention' http://localhost:3002/search
+```
+
+Search results expose both nullable `valid_from` and always-present `effective_valid_from`. The same `valid_at` contract is available in retrieval evaluation and the MCP `search`, `retrieve_evidence`, and `verified_evidence_pack` tools.
 
 ## Retrieval pipeline
 
@@ -94,3 +122,5 @@ Runtime are not shared.
 - [`docs/operations-and-retrieval.md`](../../docs/operations-and-retrieval.md) — operational
   behavior and retrieval tuning
 - [`docs/adr/search/`](../../docs/adr/search/) — identity authority and pagination decisions
+- [`apps/extract/README.md`](../extract/README.md) — the converter behind `/ingest-file`, and why
+  its own `POST /v1/ingest` is the path to use when figure images should be viewable

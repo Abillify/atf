@@ -38,6 +38,10 @@ must not be copied into operator logs, metric labels, or tickets. Bound statisti
 
 ## Retrieval quality and versions
 
+Document revisions may carry a nullable `valid_from` business timestamp. It is stored as `TIMESTAMPTZ` on every chunk; existing rows and ingests without the field use `COALESCE(valid_from, created)` as their effective start. API timestamps must be RFC 3339 date-times with an explicit timezone. `include_all_versions=false` without `valid_at` retains the legacy `is_latest` behavior; `true` without `valid_at` returns all revisions. With `valid_at`, `true` keeps all revisions introduced by that instant, while `false` deterministically selects the greatest effective start per logical document and keeps every chunk of that selected revision. No `valid_to` interval is inferred: earlier revisions remain eligible in the all-versions mode.
+
+Collection schema 11 adds this column and the tenant/base-reference temporal index. Query timestamps remain bind parameters in dense, binary, FTS, sparse, and hybrid branches, and tenant/ACL predicates continue to apply to the final rows. Evaluation reports its normalized `valid_at`; verified evidence binds the selected temporal mode and instant into its provenance hash.
+
 The lexical branch is PostgreSQL full-text search using `ts_rank` and `websearch_to_tsquery`,
 fused via RRF with the dense branch and an optional SPLADE `sparsevec` branch. Okapi BM25 is not
 implemented. "Late chunking" here means an alpha blend of chunk and whole-document embeddings,

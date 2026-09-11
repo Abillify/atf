@@ -74,6 +74,8 @@ export interface IngestDocument {
   allowedGroups?: string[];
   /** Explicit version tag (X-Version header). */
   version?: string;
+  /** Canonical RFC 3339 instant at which this version becomes valid. */
+  validFrom?: string;
 }
 
 export interface EmbedJob {
@@ -127,6 +129,7 @@ interface IngestUnit {
   reference: string;
   /** This unit's version tag, derived from the document version + suffix. */
   version?: string;
+  validFrom?: string;
   content: string;
   metadata: Metadata;
   source?: string;
@@ -174,7 +177,7 @@ function normalizeIngestDocument(
  * Without chapter splitting (or when it is disabled) this returns a single
  * unit identical to the document. With chapter splitting active, the document
  * is divided into chapter sub-documents whose references carry a readable
- * suffix, e.g. `<docRef>/1. Beteiligte Parteien`.
+ * suffix, e.g. `<docRef>/1. Introduction`.
  */
 function expandDocumentToUnits(
   doc: StructuredIngestDocument,
@@ -202,6 +205,7 @@ function expandDocumentToUnits(
     tags: doc.tags ?? [],
     allowedUsers: doc.allowedUsers ?? [],
     allowedGroups: doc.allowedGroups ?? [],
+    validFrom: doc.validFrom,
     rootDocumentId: typeof docMetadata.document_id === "string" ? docMetadata.document_id : doc.reference,
     sectionPath: [] as string[],
     sourceCharStart: 0,
@@ -414,6 +418,7 @@ function buildUnchunkedJob(
     point: {
       reference: doc.reference,
       version: doc.version,
+      validFrom: doc.validFrom,
       content: doc.content,
       metadata: docMetadata,
       source: doc.source,
@@ -566,6 +571,7 @@ async function buildJobsFromUnits(
           version: unit.version
             ? `${unit.version}_chunk_${chunk.index}`
             : undefined,
+          validFrom: unit.validFrom,
           content: chunk.content,
           metadata: unit.metadata,
           prefix: chunk.index === 0 ? resolvedPrefix : undefined,

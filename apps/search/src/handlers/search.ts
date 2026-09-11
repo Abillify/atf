@@ -27,6 +27,7 @@ import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import { getUsageContext } from "../usage-context.js";
 import { getPrincipal } from "../request-principal.js";
+import { parseRfc3339DateTime } from "../rfc3339.js";
 
 export interface SearchHandlerOptions {
   rerankerClient?: RerankerClient | null;
@@ -228,6 +229,13 @@ export function createSearchHandler(
         return;
       }
       const includeAllVersions = includeAllVersionsFlag ?? false;
+      let validAt: string | undefined;
+      try {
+        validAt = parseRfc3339DateTime(readHeader(req, "x-valid-at"));
+      } catch (error) {
+        res.status(400).json({ error: `X-Valid-At ${(error as Error).message}` });
+        return;
+      }
 
       // 8. X-Group-By-Document: collapse chunk results into one result per document
       const groupByDocumentFlag = parseGroupByDocumentFlag(
@@ -314,6 +322,7 @@ export function createSearchHandler(
           hybrid: hybridRequested,
           ftsOnly,
           includeAllVersions,
+          validAt,
           hyde: hydeRequested,
           groupByDocument,
           sparse: sparseClient !== null,
@@ -440,6 +449,10 @@ export function createSearchHandler(
         ftsOnly,
         xBaseRef,
         xPathPrefix,
+        undefined,
+        undefined,
+        undefined,
+        validAt,
       );
       if (!searchResult.ok) {
         const status =

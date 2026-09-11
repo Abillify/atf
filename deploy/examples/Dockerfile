@@ -42,3 +42,36 @@ RUN case "${TARGETARCH}" in amd64) actual_platform=linux-x64 ;; arm64) actual_pl
     && bun run supply-chain --inventory-root /workspace --output-dir /usr/share/doc/atf --platform "${actual_platform}" --artifact-kind image --artifact-name quickstart-control --git-sha "${GIT_SHA}"
 EXPOSE 3001
 CMD ["bun", "run", "--cwd", "apps/control", "next", "dev", "--turbopack", "-H", "0.0.0.0", "-p", "3001"]
+
+# Extract is the one target that needs external binaries: poppler-utils for PDF
+# text extraction and rasterisation, libreoffice for DOCX/XLSX. They are
+# installed here rather than in the shared `workspace` stage so the other four
+# images stay small — adding several hundred megabytes to Search, which sits on
+# the query path, is exactly what having a separate converter service avoids.
+#
+# fonts-liberation is not optional: without a metric-compatible substitute for
+# Arial and Times, LibreOffice reflows the document and the page breaks stop
+# matching what a human sees when they open the file, which silently invalidates
+# every page number in the output.
+FROM workspace AS extract
+ARG GIT_SHA=unknown
+ARG TARGETARCH
+ARG INVENTORY_PLATFORM
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      poppler-utils \
+      libreoffice-writer-nogui \
+      libreoffice-calc-nogui \
+      fonts-liberation \
+      fonts-dejavu-core \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+RUN case "${TARGETARCH}" in amd64) actual_platform=linux-x64 ;; arm64) actual_platform=linux-arm64 ;; *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; esac \
+    && { test -z "${INVENTORY_PLATFORM}" || test "${INVENTORY_PLATFORM}" = "${actual_platform}"; } \
+    && bun run supply-chain --inventory-root /workspace --output-dir /usr/share/doc/atf --platform "${actual_platform}" --artifact-kind image --artifact-name quickstart-extract --git-sha "${GIT_SHA}"
+# LibreOffice and poppler both need a writable HOME, and the conversion pipeline
+# writes rendered pages here.
+ENV TEMP_DIR=/tmp/atf-extract
+EXPOSE 3000
+CMD ["bun", "run", "--cwd", "apps/extract", "start"]

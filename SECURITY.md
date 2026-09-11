@@ -13,8 +13,8 @@ Report privately through either channel:
 
 Please include:
 
-- affected component (`runtime`, `control`, `search`, `gate`, or a contract package) and
-  version or commit;
+- affected component (`runtime`, `control`, `search`, `gate`, `extract`, or a contract package)
+  and version or commit;
 - impact and the attacker capability required;
 - reproduction steps or a minimal proof of concept;
 - relevant configuration, since many behaviors are configuration-dependent.
@@ -52,8 +52,9 @@ an earlier one. This table will gain rows if that changes.
 
 In scope: authentication and authorization bypass, tenant isolation escape, SQL or command
 injection, prompt injection that escalates to tool execution or data access beyond the
-caller's scope, PII vault leakage, audit log forgery, approval gate bypass, SSRF through tool
-or provider configuration, secret disclosure, and privilege escalation in the operator plane.
+caller's scope, PII vault leakage, audit log forgery, approval gate bypass, SSRF through tool,
+provider, or conversion-callback configuration, escape from the document conversion path,
+secret disclosure, and privilege escalation in the operator plane.
 
 Out of scope: findings that only apply to `deploy/examples`, which is documented as an
 unauthenticated local stack and is not a production template; missing hardening in a

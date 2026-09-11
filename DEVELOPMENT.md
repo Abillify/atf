@@ -137,7 +137,7 @@ image diff before committing; an unexplained snapshot change is a review blocker
 docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
 ```
 
-Brings up all four applications, PostgreSQL/pgvector, and a deterministic mock model, so no API
+Brings up all five applications, PostgreSQL/pgvector, and a deterministic mock model, so no API
 key is needed. Details, ports, and the security boundary: `deploy/examples/README.md`. It is
 explicitly unauthenticated and is never a production baseline.
 

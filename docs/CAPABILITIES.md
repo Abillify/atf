@@ -9,6 +9,7 @@ still depends on the operator enabling and verifying it. See
 ## Contents
 
 - [Orchestration and model access](#orchestration-and-model-access)
+- [Document extraction](#document-extraction)
 - [Retrieval](#retrieval)
 - [Governed tool and data access](#governed-tool-and-data-access)
 - [Guardrails and safety](#guardrails-and-safety)
@@ -67,6 +68,46 @@ need adaptation.
   a chat request. `TRIGGERS_REQUIRE_SIGNATURE` controls signature enforcement.
 - **Asynchronous jobs.** Long runs execute in the background and are polled by job id, with
   optional lease-based recovery after a replica restart.
+
+## Document extraction
+
+Extract converts documents into the canonical Markdown defined by `packages/extract-contract`,
+which is the form Search indexes. It is an optional service: retrieval works without it for
+callers that already hold Markdown.
+
+- **Formats.** PDF, DOCX, XLSX, PNG, JPEG and GIF. Office documents are laid out by LibreOffice
+  first, so every format funnels through one PDF page loop and page numbers, page images and
+  text offsets agree across formats.
+- **Structure preserved.** `## Seite N` page markers, `<figure>` entries with normalised
+  geometry, per-page `<summary>` blocks, and HTML tables that keep merged cells.
+- **Text layer plus vision.** Each page is rendered at `RENDER_DPI` and sent to a vision model
+  together with its extracted text layer. The text layer is authoritative for wording, the
+  rendered page for structure.
+- **Figure crops.** Cut from a separately rendered `FIGURE_DPI` page, so what an operator sees
+  in a search result is sharper than the model's input.
+- **Two retry axes.** Transport failures retry in place; a truncated completion escalates
+  through the `VISION_MAX_TOKEN_VARIANTS` budget ladder and is counted separately in
+  `extract_vision_truncations_total`. A page that cannot be completed becomes an empty page
+  carrying a warning rather than failing the document.
+- **Response modes selected by header.** Async callback (`X-Callback-URL`), streamed pages
+  (`Accept: text/event-stream`), plain Markdown (`Accept: text/markdown`), or the default JSON
+  envelope carrying figure geometry, warnings and token usage.
+- **Two Search paths.** `POST /v1/ingest` here converts and indexes including figure crops and
+  requires `SEARCH_URL`; `POST /ingest-file` in Search proxies the upload and requires
+  `CONVERTER_URL`, indexing figure descriptions but not the images
+  (`X-Figure-Assets: not-stored`).
+- **Bounded work.** `MAX_PAGES`, `MAX_UPLOAD_BYTES`, a decoded-pixel ceiling for images,
+  `CONVERT_CONCURRENCY`, `PAGE_CONCURRENCY`, and a queue that answers 503 with `Retry-After`
+  past `QUEUE_MAX_DEPTH`.
+- **Upload and callback hardening.** Uploads are type-sniffed rather than trusted, filenames
+  never reach a process argument, converter subprocesses run without credentials in their
+  environment, and callback targets refuse link-local and cloud metadata addresses
+  unconditionally. `CALLBACK_ALLOWED_HOSTS` closes the remaining SSRF surface and the production
+  readiness gate flags an empty value.
+- **Split credentials.** `/v1/*` accepts machine credentials only, `/ui/*` the session cookie
+  only. The ingest ACL headers can only narrow the caller's own identity.
+- **Degradation is reported, not hidden.** Without LibreOffice the service stays healthy and
+  reports `degraded_formats`; without poppler it reports unhealthy.
 
 ## Retrieval
 

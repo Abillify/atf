@@ -178,6 +178,15 @@ export interface Config {
   streamBodyLimit: string; // STREAM_BODY_LIMIT (default: "50mb")
 
   /**
+   * Document converter backing POST /ingest-file.
+   *
+   * Opt-in: when CONVERTER_URL is unset the route is not mounted at all, so a
+   * deployment without a converter answers 404 rather than failing at call time.
+   * See `handlers/ingest-file.ts` for what the route does and does not do.
+   */
+  converter: ConverterConfig | null; // CONVERTER_URL (opt-in)
+
+  /**
    * Use semantic (embedding-based) chunking instead of text-boundary chunking.
    * Requires CHUNK_SIZE to be set. Default: false.
    */
@@ -340,6 +349,30 @@ export interface Config {
  * A single OIDC issuer entry for API/MCP JWT Bearer authentication.
  * Configured via the `API_OIDC_ISSUERS` JSON array.
  */
+/**
+ * The `@atf/extract` service that `POST /ingest-file` proxies binary uploads to.
+ *
+ * Search deliberately does not convert documents itself: PDF and office
+ * conversion needs poppler and LibreOffice, which would add several hundred
+ * megabytes and a document-parser attack surface to the container that serves
+ * the query path. The converter runs as its own service and this is the address
+ * of it.
+ */
+export interface ConverterConfig {
+  /** CONVERTER_URL — base URL of @atf/extract. */
+  url: string;
+  /** CONVERTER_TOKEN — Bearer credential presented to the converter. */
+  token: string | null;
+  /**
+   * CONVERTER_TIMEOUT_MS — a whole document, not a single page. Default 15 min:
+   * conversion runs one vision call per page, so a long specification takes
+   * minutes and a short timeout discards work that was nearly finished.
+   */
+  timeoutMs: number;
+  /** CONVERTER_UPLOAD_LIMIT — body limit for POST /ingest-file. */
+  uploadLimit: string;
+}
+
 export interface ApiOidcIssuerConfig {
   /**
    * Issuer URL — used to build the discovery URL and to validate the `iss`
@@ -655,6 +688,21 @@ export function loadConfig(): Config {
   const defaultFtsLanguage = (process.env["FTS_LANGUAGE"] ?? "simple")
     .trim()
     .toLowerCase();
+
+  // ── Document converter (opt-in — enabled when CONVERTER_URL is set) ─────────
+  // Without it, POST /ingest-file is not mounted, so a caller gets 404 rather
+  // than a 502 from an address that was never configured.
+  const converterUrl = optionalString("CONVERTER_URL");
+  const converter: ConverterConfig | null =
+    converterUrl === null
+      ? null
+      : {
+          url: converterUrl.replace(/\/+$/, ""),
+          token: optionalString("CONVERTER_TOKEN"),
+          timeoutMs: parseNonNegIntEnv("CONVERTER_TIMEOUT_MS", 900_000),
+          uploadLimit:
+            (process.env["CONVERTER_UPLOAD_LIMIT"] ?? "50mb").trim() || "50mb",
+        };
 
   // ── Integer fields ──────────────────────────────────────────────────────────
   const port = parseIntEnv("PORT", 3000, { min: 1, max: 65535 });
@@ -981,6 +1029,7 @@ export function loadConfig(): Config {
     rrfK,
     statsFlushIntervalMs,
     streamBodyLimit,
+    converter,
     semanticChunking,
     breakpointPercentile,
     chapterSplitMaxChunks,

@@ -20,6 +20,82 @@ releases:
 
 Nothing yet.
 
+## [0.1.2] — 2026-09-11
+
+Adds a fifth application and an as-of dimension to retrieval. Read the migration notes: one
+collection migration runs automatically, and evidence-pack hashes change for unchanged content.
+
+### Added
+
+- **Extract (`apps/extract`)**, a fifth application: document-to-Markdown extraction for PDF,
+  DOCX, XLSX, PNG, JPEG and GIF. Every format funnels through one PDF page loop, so page
+  numbers, page images and text offsets agree across formats. Each page is rendered and sent to
+  a vision model together with its text layer, which stays authoritative for wording while the
+  rendered page is authoritative for structure. Sync, SSE and async-callback response modes are
+  selected by request header. It is the one application needing external binaries
+  (`poppler-utils`, LibreOffice), which is why it is a separate service rather than part of
+  Search. See [`apps/extract/README.md`](apps/extract/README.md).
+- **`@atf/extract-contract` 1.0.0**, the canonical extracted-document grammar shared by Extract
+  and Search: `## Seite N` page markers, `<figure>` entries with normalised geometry, per-page
+  `<summary>` blocks, merged-cell HTML tables, figure asset identity, and the ingest headers.
+- **`POST /ingest-file` in Search**: binary document ingest by proxying to Extract and then
+  running the unchanged ingest path. Mounted only when `CONVERTER_URL` is set, otherwise 404.
+  It forwards Markdown only, so figure descriptions are indexed but the images are not
+  (`X-Figure-Assets: not-stored`). Use Extract's own `POST /v1/ingest` when crops should be
+  viewable. New Search variables: `CONVERTER_URL`, `CONVERTER_TOKEN`, `CONVERTER_TIMEOUT_MS`
+  (default 15 min, because conversion runs one vision call per page), `CONVERTER_UPLOAD_LIMIT`.
+- **Temporal document validity in Search.** Retrieval already distinguished current from
+  historical versions; this adds the *business* validity dimension, so a query can ask what a
+  document set said at a given instant rather than only what is newest. `X-Valid-From` on
+  ingest records when a revision takes effect, `X-Valid-At` on search and `valid_at` on
+  `POST /evaluations/retrieval` and the MCP read tools select as of an instant, and every hit
+  now carries `valid_from` (nullable) and `effective_valid_from`
+  (`COALESCE(valid_from, created)`). Timestamps without a UTC offset are rejected rather than
+  guessed. Omitting the headers leaves the previous behaviour unchanged.
+- `ragProfiles` sources in Runtime accept `includeAllVersions` and `validAt`, forwarded to
+  Search as `include_all_versions` and `valid_at`, so a flow can pin retrieval to an instant.
+- `ingest_document` over MCP accepts `version_mode` and `valid_from`. The default stays
+  `replace`, which is what the tool did implicitly before.
+
+### Changed
+
+- **Evidence-pack `snapshotHash` and `evidenceId` change for identical content.** The hash input
+  is now a canonical JSON object and includes `versionSource`, `validFrom` and
+  `effectiveValidFrom`; `retrieve_evidence` additionally binds `effective_valid_from`. The
+  schema version stays `v2` because the pack's *shape* is unchanged, so a stored hash compared
+  against a freshly computed one will mismatch without any schema signal. Recompute persisted
+  evidence identifiers, or keep them alongside the pack that produced them.
+- `temporalScope` in the evidence pack gained `as_of_latest` and `as_of_all`, and a `validAt`
+  field. Existing values keep their meaning; an exhaustive consumer-side switch needs the two
+  new arms.
+- **`is_latest` is now decided per ingest revision rather than per row.** Every chunk of one
+  revision shares a private version-group id (`metadata._atf_version_group`), so an as-of
+  selection can no longer return half a version. For multi-chunk documents ingested in version
+  mode this changes which rows the default search returns — previously one row per `base_ref`
+  won. The group id is written into `metadata` and is therefore visible to anything reading
+  metadata raw.
+- The Quickstart image inventory now covers all five image targets. The Extract image installs
+  Debian packages (`poppler-utils`, LibreOffice, metric-compatible fonts) whose licenses are not
+  covered by the generated JavaScript inventories; see [DEPLOYMENT.md](DEPLOYMENT.md).
+- Artifact size budgets now cover `apps/search/dist` and `apps/extract/dist`, so a bundle
+  regression in either service fails CI instead of going unnoticed.
+
+### Fixed
+
+- `deploy/examples/.env.example` was missing `ATF_EXTRACT_PORT`, which `compose.yaml` reads.
+
+### Migration notes
+
+- **Collection schema 10 → 11**, applied automatically at Search startup under the existing
+  advisory lock. It adds a nullable `valid_from TIMESTAMPTZ` column and one index, both with
+  `IF NOT EXISTS`: no rename, no type change, no backfill, no `NOT NULL`. Existing rows stay
+  valid and their effective validity is their `created` timestamp. Rolling back to 0.1.1 is
+  data-safe — the older binary ignores the column — but the stored `schema_version` remains 11.
+- Rebuilding the index is not blocking, but on a large collection it is not instant either.
+  Plan the first start after the upgrade accordingly.
+- If you persist `evidencePackHash`, `snapshotHash` or `evidenceId`, recompute them; see the
+  first entry under Changed.
+
 ## [0.1.1] — 2026-09-02
 
 Public-release hardening patch. No contract-package or executable flow version changed.
@@ -88,6 +164,7 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/abillify/atf/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/abillify/atf/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/abillify/atf/releases/tag/v0.1.0

@@ -154,6 +154,33 @@ describe("search handler", () => {
     expect(res.body).toHaveProperty("error");
   });
 
+  it("returns HTTP 400 for an offset-less X-Valid-At", async () => {
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      createMockPostgresClient({}),
+      logger,
+    );
+    const res = mockRes();
+    await handler(mockReq("search query", { "x-valid-at": "2026-03-01T12:00:00" }) as never, res as never, vi.fn());
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({ error: expect.stringContaining("explicit timezone") });
+  });
+
+  it("canonicalizes and forwards X-Valid-At independently of include-all", async () => {
+    const postgresClient = createMockPostgresClient({ search: { ok: true, result: [] } });
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      postgresClient,
+      logger,
+    );
+    const res = mockRes();
+    await handler(mockReq("search query", { "x-valid-at": "2026-03-01T12:00:00+01:00", "x-include-all-versions": "true" }) as never, res as never, vi.fn());
+    expect(res.statusCode).toBe(200);
+    const args = (postgresClient.search as ReturnType<typeof vi.fn>).mock.calls[0] ?? [];
+    expect(args[7]).toBe(true);
+    expect(args[19]).toBe("2026-03-01T11:00:00.000Z");
+  });
+
   it("uses default limit of 10 when X-Max-Results header is absent", async () => {
     const postgresClient = createMockPostgresClient({
       search: { ok: true, result: [] },

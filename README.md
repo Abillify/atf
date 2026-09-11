@@ -72,7 +72,7 @@ It is not a hosted service — there is no signup, and operating it for third pa
 use the license reserves. It is not a research or agent-authoring framework; flows are YAML
 that operators review, not a Python DSL. And it is not a thin proxy in front of a model API:
 the retrieval, policy, and evidence layers are the product, which is also why the deployment
-footprint is PostgreSQL plus four services rather than a single binary.
+footprint is PostgreSQL plus five services rather than a single binary.
 
 ### When to use something else
 
@@ -101,6 +101,8 @@ flowchart LR
     runtime --> models["Model providers"]
     gate --> systems["Your databases<br/>and services"]
     search --> pg[("PostgreSQL<br/>pgvector")]
+    search -.->|documents| extract["<b>Extract</b><br/>document to Markdown"]
+    extract --> search
 ```
 
 | Application | Role |
@@ -109,6 +111,7 @@ flowchart LR
 | [`apps/control`](apps/control) | Operator and governance UI. Uses Runtime's HTTP API and SSE stream; deployment routing remains external |
 | [`apps/search`](apps/search) | Semantic and hybrid retrieval on PostgreSQL/pgvector. No separate vector database |
 | [`apps/gate`](apps/gate) | MCP gateway. Turns YAML into governed, identity-aware tools |
+| [`apps/extract`](apps/extract) | Converts PDF, office and image documents into the canonical extracted-document Markdown that Search indexes |
 
 Shared messages that cross service boundaries live in versioned contract packages under
 [`packages/`](packages), and `integration/system` exercises their combined lifecycle so a
@@ -135,13 +138,14 @@ git clone https://github.com/abillify/atf.git && cd atf
 docker compose --env-file deploy/examples/.env.example -f deploy/examples/compose.yaml up --build -d
 ```
 
-This starts all four applications plus PostgreSQL/pgvector and a deterministic mock model, so
+This starts all five applications plus PostgreSQL/pgvector and a deterministic mock model, so
 it needs no API key. Once the health checks pass:
 
 - Control — <http://localhost:3001>
 - Runtime readiness — <http://localhost:3000/health/ready>
 - Search health — <http://localhost:3002/health>
 - Gate readiness — <http://localhost:3003/readyz>
+- Extract health — <http://localhost:3004/health>
 
 Run a flow through the OpenAI-compatible endpoint:
 

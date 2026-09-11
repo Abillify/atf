@@ -146,6 +146,18 @@ describe("vectorsearch real MCP transaction _meta contract", () => {
     expect(list.body.result.tools).toHaveLength(1);
     expect(list.body.result.nextCursor).toBe("1");
 
+    const fullList = await request(app).post(handlers.path)
+      .set("MCP-Protocol-Version", "2026-07-28").set("Mcp-Method", "tools/list")
+      .send({ jsonrpc: "2.0", id: 22, method: "tools/list", params: { pageSize: 100 }, _meta: meta });
+    const tools = fullList.body.result.tools as Array<{ name: string; inputSchema: { properties: Record<string, unknown> } }>;
+    for (const name of ["search", "retrieve_evidence", "verified_evidence_pack"]) {
+      expect(tools.find((tool) => tool.name === name)?.inputSchema.properties).toHaveProperty("valid_at");
+    }
+    expect(tools.find((tool) => tool.name === "ingest")?.inputSchema.properties).toMatchObject({
+      valid_from: expect.any(Object),
+      version_mode: expect.any(Object),
+    });
+
     const mismatch = await request(app).post(handlers.path)
       .set("MCP-Protocol-Version", "2026-07-28").set("Mcp-Method", "tools/call").set("Mcp-Name", "other")
       .send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "search", arguments: {} }, _meta: meta });

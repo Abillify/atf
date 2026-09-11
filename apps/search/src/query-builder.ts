@@ -63,6 +63,40 @@ export class SqlParams {
   }
 }
 
+function temporalRoot(alias: string): string {
+  return `COALESCE(${alias}.chunk->>'root_document_id', ${alias}.base_ref)`;
+}
+
+function temporalVersionKey(alias: string): string {
+  return `COALESCE(${alias}.metadata->>'_atf_version_group', ${alias}.metadata->>'version', ${alias}.valid_from::text, ${alias}.created::text, regexp_replace(${alias}.reference, '_chunk_[0-9]+$', ''))`;
+}
+
+/** Build the same parameterized temporal scope for every retrieval branch. */
+export function buildTemporalFilterSql(
+  p: SqlParams,
+  table: string,
+  includeAllVersions: boolean,
+  validAt?: string,
+  alias = "",
+): string {
+  const row = alias ? alias : `"${table}"`;
+  if (!validAt) return includeAllVersions ? "" : ` AND ${row}.is_latest = TRUE`;
+  const validAtPh = p.add(validAt);
+  const effective = `COALESCE(${row}.valid_from, ${row}.created)`;
+  if (includeAllVersions) return ` AND ${effective} <= ${validAtPh}::timestamptz`;
+
+  return ` AND ${effective} <= ${validAtPh}::timestamptz
+    AND ${temporalVersionKey(row)} = (
+      SELECT ${temporalVersionKey("tv")}
+      FROM "${table}" tv
+      WHERE tv.tenant_id = ${row}.tenant_id
+        AND ${temporalRoot("tv")} = ${temporalRoot(row)}
+        AND COALESCE(tv.valid_from, tv.created) <= ${validAtPh}::timestamptz
+      ORDER BY COALESCE(tv.valid_from, tv.created) DESC, tv.created DESC, tv.id DESC
+      LIMIT 1
+    )`;
+}
+
 // ─── Shared filter helpers ────────────────────────────────────────────────────
 
 function buildFilterSql(
@@ -295,10 +329,11 @@ export function buildDenseQuery(
   userGroups?: string[],
   cursor?: SearchCursor,
   pathLike?: string,
+  validAt?: string,
 ): { sql: string; params: unknown[] } {
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
-  const latestFilter = includeAllVersions ? "" : " AND is_latest = TRUE";
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
@@ -326,11 +361,13 @@ export function buildDenseQuery(
         tags,
         created,
         modified,
+        valid_from,
+        COALESCE(valid_from, created) AS effective_valid_from,
         1 - (vector <=> ${vecPh}::${vecType}) AS vector_similarity,
         NULL::float8                           AS text_score,
         NULL::float8                           AS sparse_score
       FROM "${table}"
-      WHERE TRUE${latestFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
+      WHERE TRUE${temporalFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
       ORDER BY vector_similarity DESC, id ASC
       LIMIT ${limitPh} OFFSET ${offsetPh}
     `,
@@ -360,6 +397,7 @@ export function buildBinaryDenseQuery(
   userGroups?: string[],
   cursor?: SearchCursor,
   pathLike?: string,
+  validAt?: string,
 ): { sql: string; params: unknown[] } {
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
@@ -372,7 +410,7 @@ export function buildBinaryDenseQuery(
     4000,
   );
   const candPh = p.add(candidateLimit);
-  const latestFilter = includeAllVersions ? "" : " AND is_latest = TRUE";
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
@@ -394,7 +432,7 @@ export function buildBinaryDenseQuery(
       WITH bin_cands AS (
         SELECT id
         FROM "${table}"
-        WHERE TRUE${latestFilter}${filterSql}${pathSql}${tagsSql}${accessSql}
+        WHERE TRUE${temporalFilter}${filterSql}${pathSql}${tagsSql}${accessSql}
           AND bit_vector IS NOT NULL
         ORDER BY bit_vector <~> ${binPh}::bit(${vectorSize})
         LIMIT ${candPh}
@@ -413,6 +451,8 @@ export function buildBinaryDenseQuery(
         d.tags,
         d.created,
         d.modified,
+        d.valid_from,
+        COALESCE(d.valid_from, d.created) AS effective_valid_from,
         1 - (d.vector <=> ${vecPh}::${vecType}) AS vector_similarity,
         NULL::float8                             AS text_score,
         NULL::float8                             AS sparse_score
@@ -445,12 +485,13 @@ export function buildFtsQuery(
   cursor?: SearchCursor,
   baseRef?: string,
   pathLike?: string,
+  validAt?: string,
 ): { sql: string; params: unknown[] } {
   // ── baseRef-only branch: skip FTS entirely, filter by base_ref column directly ──
   // Uses a fresh SqlParams so $1 is never an untyped query-text parameter.
   if (baseRef) {
     const p2 = new SqlParams();
-    const latestFilter2 = includeAllVersions ? "" : " AND is_latest = TRUE";
+    const temporalFilter2 = buildTemporalFilterSql(p2, table, includeAllVersions, validAt);
     const filterSql2 = buildFilterSql(p2, filter);
     const pathSql2 = buildPathPrefixSql(p2, pathLike);
     const tagsSql2 = buildTagsSql(p2, tags);
@@ -484,11 +525,13 @@ export function buildFtsQuery(
           tags,
           created,
           modified,
+          valid_from,
+          COALESCE(valid_from, created) AS effective_valid_from,
           NULL::float8 AS vector_similarity,
           1.0::float8  AS text_score,
           NULL::float8 AS sparse_score
         FROM "${table}"
-        WHERE TRUE${latestFilter2}${filterSql2}${pathSql2}${tagsSql2}${accessSql2}
+        WHERE TRUE${temporalFilter2}${filterSql2}${pathSql2}${tagsSql2}${accessSql2}
           AND base_ref = ${baseRefPh}
         ORDER BY (chunk->>'chunk_index')::int ASC NULLS FIRST, id ASC
         LIMIT ${limitPh2} OFFSET ${offsetPh2}
@@ -499,7 +542,7 @@ export function buildFtsQuery(
 
   const p = new SqlParams();
   const queryPh = p.add(queryText);
-  const latestFilter = includeAllVersions ? "" : " AND is_latest = TRUE";
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
@@ -526,11 +569,13 @@ export function buildFtsQuery(
         tags,
         created,
         modified,
+        valid_from,
+        COALESCE(valid_from, created) AS effective_valid_from,
         NULL::float8                                                          AS vector_similarity,
         ts_rank(ts_search, websearch_to_tsquery('${language}', ${queryPh}))  AS text_score,
         NULL::float8                                                          AS sparse_score
       FROM "${table}"
-      WHERE TRUE${latestFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
+      WHERE TRUE${temporalFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
         AND ts_search @@ websearch_to_tsquery('${language}', ${queryPh})
       ORDER BY text_score DESC, id ASC
       LIMIT ${limitPh} OFFSET ${offsetPh}
@@ -562,6 +607,7 @@ export function buildHybridQuery(
   userGroups?: string[],
   cursor?: SearchCursor,
   pathLike?: string,
+  validAt?: string,
 ): { sql: string; params: unknown[] } {
   // RRF ranks are POOL-RELATIVE: a document's rrf_score depends on which other
   // documents are in the candidate set. Filtering the pool by a cursor changes
@@ -608,7 +654,7 @@ export function buildHybridQuery(
 
   const limitPh = p.add(limit);
   const offsetPh = p.add(offset);
-  const latestFilter = includeAllVersions ? "" : " AND is_latest = TRUE";
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
 
   // language is validated via ALLOWED_FTS_LANGUAGES; PostgreSQL does not support
   // regconfig as a bind parameter, so string interpolation is intentional here.
@@ -618,7 +664,7 @@ export function buildHybridQuery(
     spr AS (
       SELECT id, (sparse_vector <#> ${sparsePh}::sparsevec(${sparseVocabSize})) * -1 AS sprscore
       FROM "${table}"
-      WHERE TRUE${latestFilter}${filterSql}${extraSql}
+      WHERE TRUE${temporalFilter}${filterSql}${extraSql}
         AND sparse_vector IS NOT NULL
       ORDER BY sparse_vector <#> ${sparsePh}::sparsevec(${sparseVocabSize})
       LIMIT ${candPh}
@@ -644,7 +690,7 @@ export function buildHybridQuery(
       ? `
     bin_pre AS (
       SELECT id FROM "${table}"
-      WHERE TRUE${latestFilter}${filterSql}${extraSql}
+      WHERE TRUE${temporalFilter}${filterSql}${extraSql}
         AND bit_vector IS NOT NULL
       ORDER BY bit_vector <~> ${binPh}::bit(${binaryDim})
       LIMIT ${binCandPh}
@@ -659,14 +705,14 @@ export function buildHybridQuery(
       vec AS (
         SELECT id, 1 - (vector <=> ${vecPh}::${vecType}) AS vscore
         FROM "${table}"
-        WHERE TRUE${latestFilter}${filterSql}${extraSql}${vecIdFilter}
+        WHERE TRUE${temporalFilter}${filterSql}${extraSql}${vecIdFilter}
         ORDER BY vector <=> ${vecPh}::${vecType}
         LIMIT ${candPh}
       ),
       txt AS (
         SELECT id, ts_rank(ts_search, websearch_to_tsquery('${language}', ${queryPh})) AS tscore
         FROM "${table}"
-        WHERE TRUE${latestFilter}${filterSql}${extraSql}
+        WHERE TRUE${temporalFilter}${filterSql}${extraSql}
           AND ts_search @@ websearch_to_tsquery('${language}', ${queryPh})
         ORDER BY tscore DESC
         LIMIT ${candPh}
@@ -707,6 +753,8 @@ export function buildHybridQuery(
         d.tags,
         d.created,
         d.modified,
+        d.valid_from,
+        COALESCE(d.valid_from, d.created) AS effective_valid_from,
         r.vector_similarity,
         r.text_score,
         r.sparse_score,

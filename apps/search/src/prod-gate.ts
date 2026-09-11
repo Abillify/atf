@@ -174,6 +174,28 @@ export function checkProductionReadiness(
     );
   }
 
+  // ── Document converter ────────────────────────────────────────────────────
+  // POST /ingest-file forwards the raw document to another service, so the hop
+  // carries the full document content and needs the same protection the ingest
+  // body itself gets.
+  // Truthiness rather than `!== null`: the gate is called with hand-built config
+  // objects in tests and by callers that predate this field, where the property is
+  // absent rather than explicitly null.
+  if (config.converter) {
+    if (isProd && !config.converter.url.startsWith("https://")) {
+      fatal.push(
+        "CONVERTER_URL must be https in production; the request body is the complete document.",
+      );
+    }
+    if (config.converter.token === null) {
+      flag(
+        "CONVERTER_URL is configured without CONVERTER_TOKEN — uploads would be sent to the " +
+          "converter unauthenticated, which either fails or means the converter is open to " +
+          "anyone who can reach it.",
+      );
+    }
+  }
+
   // ── Error disclosure ──────────────────────────────────────────────────────
 
   if (config.exposeErrorDetail) {

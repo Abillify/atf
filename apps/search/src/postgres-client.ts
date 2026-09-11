@@ -189,6 +189,8 @@ export interface DocumentPoint {
   allowedGroups?: string[];
   /** Preserve persisted row ACLs when an upsert conflicts; INSERT ACLs still come from this point. */
   preserveExistingAclOnConflict?: boolean;
+  /** Business-validity start; null/undefined falls back to the immutable created timestamp. */
+  validFrom?: string;
 }
 
 /**
@@ -298,6 +300,10 @@ export interface SearchResult {
   asset_url?: string;
   created: Date;
   modified: Date;
+  /** Explicit business-validity start, when supplied at ingest. */
+  valid_from: Date | null;
+  /** COALESCE(valid_from, created), always present. */
+  effective_valid_from: Date;
 }
 
 /**
@@ -671,6 +677,7 @@ export interface PostgresClient {
     timeoutMs?: number,
     signal?: AbortSignal,
     onPlan?: (plan: SearchExecutionPlan) => void,
+    validAt?: string,
   ): Promise<PostgresResponse<SearchResult[]>>;
 
   delete(
@@ -1730,8 +1737,9 @@ export function createPostgresClient(
             point.tags ?? [],
             point.allowedUsers ?? [],
             point.allowedGroups ?? [],
+            point.validFrom ?? null,
           ];
-          const extraBase = params.length; // 13
+          const extraBase = params.length; // 14
           pushExtraParams(params, point, meta);
           const sparseValSql = sql.sparseVal(extraBase);
           const binaryValSql = sql.binaryVal(
@@ -1749,9 +1757,9 @@ export function createPostgresClient(
           }>(
             `INSERT INTO "${table}"
                (reference, base_ref, is_latest, content, vector, ts_search, metadata, chunk,
-                prefix, source, link, title, tags, allowed_users, allowed_groups, modified${sql.sparseCol}${sql.binaryCol}, tenant_id)
+                prefix, source, link, title, tags, allowed_users, allowed_groups, valid_from, modified${sql.sparseCol}${sql.binaryCol}, tenant_id)
              VALUES ($1, $2, TRUE, $3, $4::${vecType}, to_tsvector('${lang}', $${ftsParam}), $5, $6,
-                     $7, $8, $9, $10, $11, $12, $13, NOW()${sparseValSql}${binaryValSql}, $${tenantParam})
+                     $7, $8, $9, $10, $11, $12, $13, $14::timestamptz, NOW()${sparseValSql}${binaryValSql}, $${tenantParam})
              ON CONFLICT (tenant_id, reference) DO UPDATE SET
                content        = EXCLUDED.content,
                vector         = EXCLUDED.vector,
@@ -1763,6 +1771,7 @@ export function createPostgresClient(
                link           = EXCLUDED.link,
                title          = EXCLUDED.title,
                tags           = EXCLUDED.tags,
+               valid_from      = EXCLUDED.valid_from,
                ${aclConflictUpdate}
                is_latest      = TRUE,
                modified       = NOW()${sql.sparseUpdate}${sql.binaryUpdate}
@@ -1781,6 +1790,16 @@ export function createPostgresClient(
           return { id: row.id };
         } else {
           // Version mode
+          point = {
+            ...point,
+            metadata: {
+              ...point.metadata,
+              _atf_version_group:
+                typeof point.metadata["_atf_version_group"] === "string"
+                  ? point.metadata["_atf_version_group"]
+                  : uuidv4(),
+            },
+          };
           await client.query("BEGIN");
           try {
             const baseRef = point.baseRef ?? point.reference;
@@ -1815,6 +1834,7 @@ export function createPostgresClient(
               point.tags ?? [],
               point.allowedUsers ?? [],
               point.allowedGroups ?? [],
+              point.validFrom ?? null,
             ];
             const extraBase = params.length;
             pushExtraParams(params, point, meta);
@@ -1831,9 +1851,9 @@ export function createPostgresClient(
             const result = await client.query<{ id: string }>(
               `INSERT INTO "${table}"
                  (reference, base_ref, is_latest, content, vector, ts_search, metadata, chunk,
-                  prefix, source, link, title, tags, allowed_users, allowed_groups${sql.sparseCol}${sql.binaryCol}, tenant_id)
+                  prefix, source, link, title, tags, allowed_users, allowed_groups, valid_from${sql.sparseCol}${sql.binaryCol}, tenant_id)
                VALUES ($1, $2, TRUE, $3, $4::${vecType}, to_tsvector('${lang}', $${ftsParam}), $5, $6,
-                       $7, $8, $9, $10, $11, $12, $13${sparseValSql}${binaryValSql}, $${tenantParam})
+                       $7, $8, $9, $10, $11, $12, $13, $14::timestamptz${sparseValSql}${binaryValSql}, $${tenantParam})
                ON CONFLICT (tenant_id, reference) DO UPDATE SET
                  content        = EXCLUDED.content,
                  vector         = EXCLUDED.vector,
@@ -1845,6 +1865,7 @@ export function createPostgresClient(
                  link           = EXCLUDED.link,
                  title          = EXCLUDED.title,
                  tags           = EXCLUDED.tags,
+                 valid_from      = EXCLUDED.valid_from,
                  ${aclConflictUpdate}
                  is_latest      = TRUE,
                  modified       = NOW()${sql.sparseUpdate}${sql.binaryUpdate}
@@ -1889,6 +1910,7 @@ export function createPostgresClient(
       timeoutMs?: number,
       signal?: AbortSignal,
       onPlan?: (plan: SearchExecutionPlan) => void,
+      validAt?: string,
     ): Promise<PostgresResponse<SearchResult[]>> {
       const table = collectionTableName(collection);
       // Normalise a folder path prefix into a wildcard-escaped LIKE pattern
@@ -1958,6 +1980,7 @@ export function createPostgresClient(
                 cursor,
                 baseRef,
                 pathLike,
+                validAt,
               )
             : hybridSearch
               ? buildHybridQuery(
@@ -1982,6 +2005,7 @@ export function createPostgresClient(
                   undefined,
                   cursor,
                   pathLike,
+                  validAt,
                 )
               : binaryStr && meta.vectorSize
                 ? buildBinaryDenseQuery(
@@ -2000,6 +2024,7 @@ export function createPostgresClient(
                     undefined,
                     cursor,
                     pathLike,
+                    validAt,
                   )
                 : buildDenseQuery(
                     table,
@@ -2014,6 +2039,7 @@ export function createPostgresClient(
                     undefined,
                     cursor,
                     pathLike,
+                    validAt,
                   );
 
           const result = await client.query(sql, params);
@@ -2072,6 +2098,8 @@ export function createPostgresClient(
               : {}),
             created: row.created as Date,
             modified: row.modified as Date,
+            valid_from: (row.valid_from as Date | null) ?? null,
+            effective_valid_from: row.effective_valid_from as Date,
           }));
 
           return searchResults;
@@ -2225,8 +2253,9 @@ export function createPostgresClient(
                   point.tags ?? [],
                   point.allowedUsers ?? [],
                   point.allowedGroups ?? [],
+                  point.validFrom ?? null,
                 );
-                const extraBase = params.length; // 13 fixed params pushed
+                const extraBase = params.length; // 14 fixed params pushed
                 pushExtraParams(params, point, meta);
                 // Append FTS-preprocessed content as the last param for this row
                 params.push(buildFtsText(point));
@@ -2238,7 +2267,7 @@ export function createPostgresClient(
                 const binaryPh = sql.binaryVal(
                   extraBase + (meta.sparseEnabled ? 1 : 0),
                 );
-                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, to_tsvector('${lang}', $${ftsIdx}), $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, NOW()${sparsePh}${binaryPh}, $${tenantIdx})`;
+                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, to_tsvector('${lang}', $${ftsIdx}), $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, $${n + 13}::timestamptz, NOW()${sparsePh}${binaryPh}, $${tenantIdx})`;
               });
 
               const result = await client.query<{
@@ -2248,7 +2277,7 @@ export function createPostgresClient(
               }>(
                 `INSERT INTO "${table}"
                    (reference, base_ref, is_latest, content, vector, ts_search, metadata, chunk,
-                    prefix, source, link, title, tags, allowed_users, allowed_groups, modified${sql.sparseCol}${sql.binaryCol}, tenant_id)
+                    prefix, source, link, title, tags, allowed_users, allowed_groups, valid_from, modified${sql.sparseCol}${sql.binaryCol}, tenant_id)
                  VALUES ${rows.join(", ")}
                  ON CONFLICT (tenant_id, reference) DO UPDATE SET
                    content        = EXCLUDED.content,
@@ -2261,6 +2290,7 @@ export function createPostgresClient(
                    link           = EXCLUDED.link,
                    title          = EXCLUDED.title,
                    tags           = EXCLUDED.tags,
+                   valid_from      = EXCLUDED.valid_from,
                    ${aclConflictUpdate}
                    is_latest      = TRUE,
                    modified       = NOW()${sql.sparseUpdate}${sql.binaryUpdate}
@@ -2309,7 +2339,19 @@ export function createPostgresClient(
               [batchTenantId, collection, rootRefsInBatch, assetIdsInBatch],
             );
           } else {
-            // Version mode
+            // Version mode. A private group id binds every chunk/chapter row of
+            // one ingest revision, so as-of selection never returns half a version
+            // and equal valid_from values can still be broken by created/id.
+            const versionGroups = new Map<string, string>();
+            points = points.map((point) => {
+              const root = point.chunk?.root_document_id ?? point.baseRef ?? point.reference;
+              let group = versionGroups.get(root);
+              if (!group) {
+                group = uuidv4();
+                versionGroups.set(root, group);
+              }
+              return { ...point, metadata: { ...point.metadata, _atf_version_group: group } };
+            });
             const versionedRefs = points.map((p) => {
               const baseRef = p.baseRef ?? p.reference;
               return p.version
@@ -2365,6 +2407,7 @@ export function createPostgresClient(
                   point.tags ?? [],
                   point.allowedUsers ?? [],
                   point.allowedGroups ?? [],
+                  point.validFrom ?? null,
                 );
                 const extraBase = params.length;
                 pushExtraParams(params, point, meta);
@@ -2378,13 +2421,13 @@ export function createPostgresClient(
                 const binaryPh = sql.binaryVal(
                   extraBase + (meta.sparseEnabled ? 1 : 0),
                 );
-                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, to_tsvector('${lang}', $${ftsIdx}), $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}${sparsePh}${binaryPh}, $${tenantIdx})`;
+                return `($${n}, $${n + 1}, TRUE, $${n + 2}, $${n + 3}::${vecType}, to_tsvector('${lang}', $${ftsIdx}), $${n + 4}, $${n + 5}, $${n + 6}, $${n + 7}, $${n + 8}, $${n + 9}, $${n + 10}, $${n + 11}, $${n + 12}, $${n + 13}::timestamptz${sparsePh}${binaryPh}, $${tenantIdx})`;
               });
 
               const result = await client.query<{ id: string }>(
                 `INSERT INTO "${table}"
                    (reference, base_ref, is_latest, content, vector, ts_search, metadata, chunk,
-                    prefix, source, link, title, tags, allowed_users, allowed_groups${sql.sparseCol}${sql.binaryCol}, tenant_id)
+                    prefix, source, link, title, tags, allowed_users, allowed_groups, valid_from${sql.sparseCol}${sql.binaryCol}, tenant_id)
                  VALUES ${rows.join(", ")}
                  ON CONFLICT (tenant_id, reference) DO UPDATE SET
                    content        = EXCLUDED.content,
@@ -2397,6 +2440,7 @@ export function createPostgresClient(
                    link           = EXCLUDED.link,
                    title          = EXCLUDED.title,
                    tags           = EXCLUDED.tags,
+                   valid_from      = EXCLUDED.valid_from,
                    ${aclConflictUpdate}
                    is_latest      = TRUE,
                    modified       = NOW()${sql.sparseUpdate}${sql.binaryUpdate}
@@ -2422,12 +2466,19 @@ export function createPostgresClient(
               autoBaseRefs.length < points.filter((p) => !p.version).length
             ) {
               await client.query(
-                `WITH ranked AS (
-                   SELECT id, ROW_NUMBER() OVER (PARTITION BY tenant_id, base_ref ORDER BY id DESC) AS rn
+                `WITH winners AS (
+                   SELECT DISTINCT ON (tenant_id, base_ref)
+                          tenant_id, base_ref, metadata->>'_atf_version_group' AS version_group
                    FROM "${table}"
                    WHERE base_ref = ANY($1) AND tenant_id = $2 AND is_latest = TRUE
+                   ORDER BY tenant_id, base_ref, created DESC, id DESC
                  )
-                 UPDATE "${table}" SET is_latest = FALSE WHERE id IN (SELECT id FROM ranked WHERE rn > 1)`,
+                 UPDATE "${table}" d SET is_latest = FALSE
+                 FROM winners w
+                 WHERE d.tenant_id = w.tenant_id
+                   AND d.base_ref = w.base_ref
+                   AND d.is_latest = TRUE
+                   AND d.metadata->>'_atf_version_group' IS DISTINCT FROM w.version_group`,
                 [autoBaseRefs, batchTenantId],
               );
             }

@@ -123,6 +123,7 @@ jobs:
           - "@atf/control"
           - "@atf/search"
           - "@atf/gate"
+          - "@atf/extract"
           - "@atf/system-integration"
     services:
       postgres:
@@ -164,7 +165,7 @@ jobs:
       - name: Contract package tests
         run: |
           for package in identity-contract transaction-contract evidence-contract \
-                         schema-compatibility contract-adapter; do
+                         schema-compatibility contract-adapter extract-contract; do
             bun run --filter "@atf/$package" test
           done
       - name: Cross-contract lifecycle
