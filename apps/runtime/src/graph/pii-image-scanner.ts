@@ -330,7 +330,8 @@ export type GenerateDescriptionFn = (args: {
   messages: Array<{
     role: "user";
     content: Array<
-      { type: "text"; text: string } | { type: "image"; image: string }
+      | { type: "text"; text: string }
+      | { type: "file"; data: URL; mediaType: string }
     >;
   }>;
 }) => Promise<{ text: string }>;
@@ -359,7 +360,7 @@ export function createLlmImageDescriber(
   const system = opts.prompt ?? DEFAULT_DESCRIBE_PROMPT;
   const timeoutMs = opts.timeoutMs ?? 20_000;
   return {
-    async describe(url: string): Promise<string> {
+    async describe(url: string, mime: string): Promise<string> {
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
@@ -378,7 +379,11 @@ export function createLlmImageDescriber(
                 role: "user",
                 content: [
                   { type: "text", text: "Describe this attachment:" },
-                  { type: "image", image: url },
+                  {
+                    type: "file",
+                    data: new URL(url),
+                    mediaType: mime || "image",
+                  },
                 ],
               },
             ],

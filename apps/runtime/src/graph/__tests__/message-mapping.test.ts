@@ -223,16 +223,28 @@ describe("baseMessagesToModelMessages", () => {
     expect(out.map((m) => m.role)).toEqual(["user"]);
   });
 
-  test("maps a multimodal human message to text + image parts", () => {
+  test("maps a multimodal human message to text + file parts", () => {
     const human = new HumanMessage({
       content: [
         { type: "text", text: "see" },
-        { type: "image_url", image_url: { url: "https://x/y.png" } },
+        {
+          type: "image_url",
+          image_url: { url: "data:image/png;base64,AAAA" },
+          mediaType: "image/png",
+        },
       ] as never,
     });
     const out = baseMessagesToModelMessages([human]);
-    const parts = out[0]?.content as Array<{ type: string }>;
-    expect(parts.some((p) => p.type === "image")).toBe(true);
+    const parts = out[0]?.content as Array<{
+      type: string;
+      data?: URL;
+      mediaType?: string;
+    }>;
+    expect(parts).toContainEqual({
+      type: "file",
+      data: new URL("data:image/png;base64,AAAA"),
+      mediaType: "image/png",
+    });
     expect(parts.some((p) => p.type === "text")).toBe(true);
   });
 
@@ -464,7 +476,7 @@ describe("coreMessagesToText", () => {
         role: "user",
         content: [
           { type: "text", text: "hello" },
-          { type: "image", image: "https://x/y.png" },
+          { type: "file", data: "https://x/y.png", mediaType: "image/png" },
         ],
       } as ModelMessage,
     ]);

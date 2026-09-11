@@ -237,7 +237,11 @@ describe("createLlmImageDescriber", () => {
         role: "user",
         content: [
           { type: "text", text: "Describe this attachment:" },
-          { type: "image", image: "data:image/png;base64,AAAA" },
+          {
+            type: "file",
+            data: new URL("data:image/png;base64,AAAA"),
+            mediaType: "image/png",
+          },
         ],
       },
     ]);

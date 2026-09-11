@@ -332,7 +332,7 @@ describe("applySummary", () => {
       assistant("d"),
       {
         role: "user",
-        content: [{ type: "image", image: "xyz" }],
+        content: [{ type: "file", data: "xyz", mediaType: "image/png" }],
       } as unknown as ModelMessage,
     ];
     const out = applySummary(withImage, { headEnd: 2, tailStart: 4 }, "S");
@@ -344,7 +344,7 @@ describe("applySummary", () => {
       throw new Error("expected two content parts");
     }
     expect(firstPart.type).toBe("text");
-    expect(secondPart.type).toBe("image"); // image survived
+    expect(secondPart.type).toBe("file"); // image file survived
   });
 
   test("reduces the token estimate", () => {

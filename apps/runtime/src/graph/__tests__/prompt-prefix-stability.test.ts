@@ -69,7 +69,7 @@ describe("fingerprintMessage", () => {
       role: "user",
       content: [
         { type: "text", text: "sieh dir das an" },
-        { type: "image", image: "abc" },
+        { type: "file", data: "abc", mediaType: "image/png" },
       ],
     } as unknown as ModelMessage;
     expect(fingerprintMessage(a).hash).not.toBe(fingerprintMessage(b).hash);

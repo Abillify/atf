@@ -33,7 +33,12 @@ import { processContentBlocks } from "./content-processor.js";
 /** LangChain complex message content part. */
 export type LcContentPart =
   | { type: "text"; text: string }
-  | { type: "image_url"; image_url: { url: string } };
+  | {
+      type: "image_url";
+      image_url: { url: string };
+      /** Preserved for AI SDK `file` parts; optional for legacy checkpoints. */
+      mediaType?: string;
+    };
 
 /**
  * Strips the engine's own rendered UI scaffolding out of assistant text that
@@ -108,8 +113,12 @@ export function chatMessageToBaseMessage(
           : block.text;
       parts.push({ type: "text", text });
     } else if (block.type === "image") {
-      // Pass the original (data or remote) URL as a real image part
-      parts.push({ type: "image_url", image_url: { url: block.url } });
+      // Preserve the validated MIME type for the provider-bound AI SDK file part.
+      parts.push({
+        type: "image_url",
+        image_url: { url: block.url },
+        mediaType: block.mimeType,
+      });
     } else if (block.type === "url") {
       parts.push({ type: "text", text: `[url: ${block.url}]` });
     } else if (block.type === "file") {
@@ -296,7 +305,9 @@ export function modelMessagesContainImages(messages: readonly ModelMessage[]): b
       const part = raw as Record<string, unknown>;
       if (part.type === "image") return true;
       if (part.type === "file" && typeof part.mediaType === "string") {
-        return part.mediaType.startsWith("image/");
+        return (
+          part.mediaType === "image" || part.mediaType.startsWith("image/")
+        );
       }
       if (part.type === "tool-result") {
         const output = part.output;
@@ -608,16 +619,22 @@ export function baseMessagesToModelMessages(
     // Complex content array → AI SDK parts
     if (Array.isArray(content)) {
       const parts: Array<
-        { type: "text"; text: string } | { type: "image"; image: string }
+        | { type: "text"; text: string }
+        | { type: "file"; data: URL; mediaType: string }
       > = [];
       for (const part of content as LcContentPart[]) {
         if (part.type === "text") {
           parts.push({ type: "text", text: part.text });
         } else if (part.type === "image_url") {
-          parts.push({ type: "image", image: part.image_url.url });
+          const data = part.image_url.url;
+          const mediaType =
+            part.mediaType ??
+            /^data:(image\/[^;,]+)[;,]/i.exec(data)?.[1]?.toLowerCase() ??
+            "image";
+          parts.push({ type: "file", data: new URL(data), mediaType });
         }
       }
-      // user messages support image parts; others get text only
+      // User messages support file parts; others get text only.
       if (role === "user") {
         result.push({ role: "user", content: parts });
       } else {
@@ -958,9 +975,19 @@ export function coreMessagesToText(messages: ModelMessage[]): string {
     if (Array.isArray(content)) {
       const parts: string[] = [];
       for (const rawPart of content) {
-        const part = rawPart as { type?: string; text?: string };
+        const part = rawPart as {
+          type?: string;
+          text?: string;
+          mediaType?: string;
+        };
         if (part.type === "text" && typeof part.text === "string") {
           parts.push(part.text);
+        } else if (
+          part.type === "file" &&
+          (part.mediaType === "image" ||
+            part.mediaType?.startsWith("image/"))
+        ) {
+          parts.push("[image]");
         } else if (part.type !== undefined) {
           parts.push(`[${part.type}]`);
         }

@@ -89,7 +89,7 @@ describe("attachVolatileGuidance", () => {
         role: "user",
         content: [
           { type: "text", text: "was ist das?" },
-          { type: "image", image: "base64..." },
+          { type: "file", data: "base64...", mediaType: "image/png" },
         ],
       } as unknown as ModelMessage,
     ];
@@ -98,12 +98,13 @@ describe("attachVolatileGuidance", () => {
     const content = at(messages, 1).content as Array<{
       type: string;
       text?: string;
-      image?: string;
+      data?: string;
+      mediaType?: string;
     }>;
     expect(Array.isArray(content)).toBe(true);
     expect(content).toHaveLength(3);
-    // Image part survived — a JSON.stringify fallback would have destroyed it.
-    expect(at(content, 1).type).toBe("image");
+    // File part survived — a JSON.stringify fallback would have destroyed it.
+    expect(at(content, 1).type).toBe("file");
     expect(content[2]).toEqual({ type: "text", text: GUIDANCE });
   });
 

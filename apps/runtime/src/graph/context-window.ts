@@ -146,8 +146,14 @@ function estimateContentTokens(content: unknown): number {
 
   let total = 0;
   for (const raw of content) {
-    const part = raw as { type?: string; text?: string };
-    if (part.type === "image" || part.type === "image_url") {
+    const part = raw as { type?: string; text?: string; mediaType?: string };
+    if (
+      part.type === "image" ||
+      part.type === "image_url" ||
+      (part.type === "file" &&
+        (part.mediaType === "image" ||
+          part.mediaType?.startsWith("image/")))
+    ) {
       total += IMAGE_PART_ESTIMATE_TOKENS;
       continue;
     }
