@@ -20,6 +20,60 @@ releases:
 
 Nothing yet.
 
+## [0.2.0] — 2026-09-11
+
+Expands Extract's document surface and progress contract. This release does not run a database
+migration and does not change an executable flow. The independently versioned
+`@atf/extract-contract` advances from 1.0.0 to 1.1.0 with additive fields.
+
+### Added
+
+- Extract and Search accept legacy DOC/XLS plus TIFF, BMP and WebP. LibreOffice handles both
+  legacy and OOXML Office files; raster formats share the bounded image pipeline, with a dedicated
+  decoded-pixel ceiling for BMP.
+- Conversion responses expose aggregate token usage and pipeline timings in JSON and through
+  `X-Token-Usage`, `X-Model` and the compatible `X-Vision-Model` header.
+- SSE conversion now reports `queued`, `converting`, `progress` and `heartbeat` in addition to
+  acceptance, completion and error events. Progress carries ordered page Markdown, cumulative
+  tokens, ETA, elapsed time and per-page timing.
+- `X-Callback-Events: extract|progress|all` opts asynchronous callers into equivalent ordered,
+  best-effort progress callback POSTs before the terminal callback.
+
+### Changed
+
+- `@atf/extract-contract` 1.1.0 adds optional timing and progress telemetry. Consumers continue to
+  gate on major version 1; the canonical Markdown grammar is unchanged.
+- Search's `/ingest-file` proxy accepts every format supported by Extract and preserves the
+  `atf-extract/1.1.0` provenance.
+- Health output reports DOC, DOCX, XLS and XLSX as degraded when LibreOffice is unavailable.
+
+### Fixed
+
+- Legacy Office admission follows the complete CFB FAT and directory chains instead of assuming
+  the primary Word or Excel stream is in the first directory sector.
+- Slow progress callback receivers no longer delay page conversion or create an unbounded
+  completion backlog. Intermediate delivery keeps one in-flight and the latest pending event,
+  remains ordered and timeout-bounded, and the terminal callback retains its retry budget.
+- Queue hook failures now restore active/waiting state instead of leaking capacity.
+
+### Security
+
+- DOC/XLS are admitted only after their OLE container contains the expected Word or Excel primary
+  stream; unrelated compound formats are rejected before LibreOffice sees them.
+- The supported parser surface grows to legacy OLE and an explicit BMP decoder. Existing upload,
+  decoded-pixel, page and queue limits remain the resource boundaries; deployments should retain
+  corpus and fuzz testing for untrusted documents.
+
+### Compatibility
+
+- SSE clients must ignore unknown event names for forward compatibility. Existing terminal `done`
+  and error handling remains available, but the observable event sequence now includes queue and
+  conversion state.
+- DOC/XLS conversion requires LibreOffice. A deployment without it stays healthy but advertises
+  those formats as degraded.
+- No flow YAML is tracked in this repository, so no `metadata.version` changes here. A later flow
+  deployment still requires checking `flow_version` in the execution debug trace.
+
 ## [0.1.4] — 2026-09-11
 
 Corrects version metadata that 0.1.2 and 0.1.3 left behind, and adds the check that should have
@@ -213,7 +267,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/abillify/atf/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/abillify/atf/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/abillify/atf/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/abillify/atf/compare/v0.1.1...v0.1.2
