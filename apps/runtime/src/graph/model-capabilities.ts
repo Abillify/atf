@@ -197,6 +197,15 @@ const RULES: readonly CapabilityRule[] = [
     modelPattern: "gpt-4-turbo*",
     caps: { contextLength: 128_000 },
   },
+  // Local vLLM (openai protocol) Qwen3 multimodal checkpoints. Verified against
+  // a live gpuvllm endpoint: the NVFP4 build accepts image inputs, but a local
+  // model id matches no cloud glob and would otherwise fail closed on vision.
+  // Scoped to the multimodal build so text-only Qwen deployments stay closed.
+  {
+    provider: "openai",
+    modelPattern: "*Qwen3*NVFP4*",
+    caps: { visionInput: true },
+  },
   // o-series reasoning models.
   { provider: "openai", modelPattern: "o1*", caps: { contextLength: 200_000 } },
   { provider: "openai", modelPattern: "o3*", caps: { contextLength: 200_000 } },

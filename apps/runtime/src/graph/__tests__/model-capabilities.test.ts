@@ -77,6 +77,21 @@ describe("getModelCapabilities", () => {
     ).toEqual([]);
   });
 
+  test("local vLLM Qwen3 NVFP4 build declares vision; other local models fail closed", () => {
+    // Verified against a live gpuvllm endpoint (openai protocol). A named
+    // instance resolves to its protocol, so the openai model glob applies.
+    expect(
+      getModelCapabilities("openai", "unsloth/Qwen3.8-27B-NVFP4").visionInput,
+    ).toBe(true);
+    // Unmatched local text model stays closed (safe default).
+    expect(getModelCapabilities("openai", "unsloth/Qwen3-8B").visionInput).toBe(
+      false,
+    );
+    expect(getModelCapabilities("openai", "some-local-model").visionInput).toBe(
+      false,
+    );
+  });
+
   test("isLocalInferenceProvider is true only for always-local providers", () => {
     expect(isLocalInferenceProvider("ollama")).toBe(true);
     // openai can be local (LM Studio) but not guaranteed by the provider alone

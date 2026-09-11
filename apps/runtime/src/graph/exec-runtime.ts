@@ -1373,6 +1373,25 @@ export function messagesHaveAttachments(state: AgentState): boolean {
   return false;
 }
 
+/**
+ * Whether the most recent human message carries an image/file attachment.
+ * Unlike `messagesHaveAttachments`, this intentionally ignores attachments
+ * from prior checkpointed turns so optional vision preprocessing cannot leak
+ * stale image context into a later text-only request.
+ */
+export function lastUserMessageHasAttachments(state: AgentState): boolean {
+  for (const m of state.messages.toReversed()) {
+    if (m._getType() !== "human") continue;
+    const c = m.content;
+    if (!Array.isArray(c)) return false;
+    return c.some((part) => {
+      const t = (part as { type?: string }).type;
+      return t === "image_url" || t === "image" || t === "file";
+    });
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // RAG context management — prevent accumulation across checkpointed turns
 // ---------------------------------------------------------------------------

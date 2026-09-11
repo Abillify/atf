@@ -88,6 +88,7 @@ import {
   resolveContextPlaceholders,
   lastUserQuery,
   messagesHaveAttachments,
+  lastUserMessageHasAttachments,
   deduplicateRagContext,
   isRagContextMessage,
   trimConversationHistory,
@@ -344,6 +345,12 @@ export function createLlmNodeHandler(
     const inputFilter = (node.config as { inputFilter?: string } | undefined)
       ?.inputFilter;
     if (inputFilter === "attachments" && !messagesHaveAttachments(state)) {
+      return { currentNodeId: node.id };
+    }
+    if (
+      inputFilter === "current-turn-attachments" &&
+      !lastUserMessageHasAttachments(state)
+    ) {
       return { currentNodeId: node.id };
     }
 
