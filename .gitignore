@@ -30,5 +30,6 @@ report/
 # Python, tooling and operating-system files
 __pycache__/
 *.py[cod]
+.kiro/
 .git/
 .DS_Store
