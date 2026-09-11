@@ -20,6 +20,35 @@ releases:
 
 Nothing yet.
 
+## [0.1.4] — 2026-09-11
+
+Corrects version metadata that 0.1.2 and 0.1.3 left behind, and adds the check that should have
+caught it.
+
+### Fixed
+
+- **Service identities announced the wrong version.** Search's OpenAPI document
+  (`GET /openapi.json`) and Gate's MCP server identity — the `serverInfo` in a discovery
+  response, and the client identity Gate presents when proxying or importing another MCP server —
+  still reported `0.1.1` after both preceding releases. A client reading either to record which
+  version produced a result recorded a wrong answer. The README release badge, the project-status
+  line, and the supported-versions table in [SECURITY.md](SECURITY.md) were stale for the same
+  reason.
+- README and DEVELOPMENT.md still described four applications and four Quickstart image targets.
+  Both have been five since 0.1.2.
+
+### Added
+
+- `bun run verify:version` compares every hardcoded product-version occurrence against the root
+  `package.json` and fails when they disagree; `bun run version:sync` rewrites them. CI runs the
+  check in the Hygiene job. The declared occurrences live in
+  `scripts/check-product-version.ts` — a new one belongs in that list, and the script fails
+  loudly when a file it knows about changes shape.
+
+  The duplication itself stays: a badge URL, a Zod schema default and an MCP client identity
+  cannot import a version at the point they are written. Verifying the copies is the smaller
+  mechanism than removing them.
+
 ## [0.1.3] — 2026-09-11
 
 Security patch for the upload path introduced in 0.1.2. No contract-package or executable flow
@@ -184,7 +213,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/abillify/atf/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/abillify/atf/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/abillify/atf/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/abillify/atf/compare/v0.1.0...v0.1.1

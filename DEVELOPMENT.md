@@ -54,7 +54,7 @@ The root notices and SBOM are the committed Linux x64 workspace reference; do no
 them on macOS with a Linux platform label. `--platform` records the target and
 `--assert-host-platform` makes native CI fail if the runner is not that platform. CI separately
 generates commit-specific `linux-x64` and `darwin-arm64` workspace artifacts and inventories
-the four final Quickstart image targets from inside each image. For an intentional local
+the five final Quickstart image targets from inside each image. For an intentional local
 platform artifact, use an isolated output directory, for example:
 
 ```bash

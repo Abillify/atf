@@ -75,6 +75,12 @@ jobs:
 
       - name: SPDX headers
         run: bun run verify:spdx
+      # The product version is repeated in badge URLs, prose, a Zod default and two
+      # MCP client identities, none of which can import it. Releases 0.1.2 and 0.1.3
+      # shipped with Search's OpenAPI document and Gate's server identity still
+      # announcing 0.1.1 because nothing compared them.
+      - name: Product version consistency
+        run: bun run verify:version
 
       - name: Third-party notices, SBOM, and license policy
         run: >-
