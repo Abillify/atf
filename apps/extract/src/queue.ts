@@ -40,9 +40,14 @@ export class QueueSaturatedError extends Error {
   }
 }
 
+export interface QueueSubmitHooks {
+  onQueued?: (state: QueueState & { position: number }) => void;
+  onStarted?: (state: QueueState & { queueMs: number }) => void;
+}
+
 export interface WorkQueue {
   /** Run `task` when a slot is free. Rejects immediately when the queue is full. */
-  submit<T>(task: () => Promise<T>): Promise<T>;
+  submit<T>(task: () => Promise<T>, hooks?: QueueSubmitHooks): Promise<T>;
   state(): QueueState;
 }
 
@@ -79,7 +84,8 @@ export function createWorkQueue(options: {
     notify();
   };
 
-  async function submit<T>(task: () => Promise<T>): Promise<T> {
+  async function submit<T>(task: () => Promise<T>, hooks: QueueSubmitHooks = {}): Promise<T> {
+    const submittedAt = Date.now();
     if (active >= concurrency && waiting.length >= maxDepth) {
       // Reject before reading the upload into the pipeline, so an overloaded
       // service spends nothing on work it is about to refuse.
@@ -89,14 +95,30 @@ export function createWorkQueue(options: {
     if (active < concurrency) {
       active++;
       notify();
+      try {
+        hooks.onQueued?.({ ...state(), position: 0 });
+      } catch (error) {
+        release();
+        throw error;
+      }
     } else {
-      await new Promise<void>((resolve) => {
-        waiting.push({ run: resolve });
+      await new Promise<void>((resolve, reject) => {
+        const waiter = { run: resolve };
+        waiting.push(waiter);
         notify();
+        try {
+          hooks.onQueued?.({ ...state(), position: waiting.length });
+        } catch (error) {
+          const index = waiting.indexOf(waiter);
+          if (index >= 0) waiting.splice(index, 1);
+          notify();
+          reject(error);
+        }
       });
     }
 
     try {
+      hooks.onStarted?.({ ...state(), queueMs: Date.now() - submittedAt });
       return await task();
     } finally {
       release();

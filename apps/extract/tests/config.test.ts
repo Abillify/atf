@@ -203,6 +203,13 @@ describe("loadConfig", () => {
     });
   });
 
+  it("requires a positive callback timeout so delivery is always bounded", () => {
+    expect(() => loadTestConfig({ CALLBACK_TIMEOUT_MS: "0" })).toThrow(
+      /CALLBACK_TIMEOUT_MS.*>= 1/,
+    );
+    expect(loadTestConfig({ CALLBACK_TIMEOUT_MS: "1" }).callbackTimeoutMs).toBe(1);
+  });
+
   it("treats MAX_PAGES=0 as unlimited but keeps the value distinguishable", () => {
     expect(loadTestConfig({ MAX_PAGES: "0" }).maxPages).toBe(0);
     expect(loadTestConfig({ MAX_PAGES: "50" }).maxPages).toBe(50);

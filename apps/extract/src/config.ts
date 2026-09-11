@@ -154,7 +154,7 @@ export interface Config {
   tempDir: string; // TEMP_DIR (default: "/tmp/atf-extract")
   /** PAGE_LABEL — page-marker label emitted in the canonical Markdown. */
   pageLabel: PageLabel; // PAGE_LABEL (default: "Seite")
-  /** LIBREOFFICE_BIN — binary used to convert DOCX/XLSX to PDF. */
+  /** LIBREOFFICE_BIN — binary used to convert Word/Excel formats to PDF. */
   libreofficeBin: string; // LIBREOFFICE_BIN (default: "libreoffice")
   /** POPPLER_BIN_DIR — directory holding pdfinfo/pdftotext/pdftoppm. */
   popplerBinDir: string | null; // POPPLER_BIN_DIR
@@ -477,7 +477,7 @@ export function loadConfig(): Config {
   const queueMaxDepth = parseIntEnv("QUEUE_MAX_DEPTH", 32, { min: 1 });
   const rateLimit = parseNonNegIntEnv("RATE_LIMIT", 120);
   const callbackMaxRetries = parseNonNegIntEnv("CALLBACK_MAX_RETRIES", 3);
-  const callbackTimeoutMs = parseNonNegIntEnv("CALLBACK_TIMEOUT_MS", 30_000);
+  const callbackTimeoutMs = parseIntEnv("CALLBACK_TIMEOUT_MS", 30_000, { min: 1 });
   const callbackAllowedHosts = parseCsvEnv("CALLBACK_ALLOWED_HOSTS").map((host) =>
     host.toLowerCase(),
   );

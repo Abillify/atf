@@ -145,8 +145,31 @@ export function stubExtractor(options: {
         crops: options.crops ?? new Map(),
       };
       // Mirror the streaming contract so SSE tests exercise the real path.
+      await input.onPrepared?.({ pageCount: document.pageCount, extractionMs: 1 });
       if (input.onPage !== undefined) {
         for (const page of document.pages) await input.onPage(page, result.crops);
+      }
+      if (input.onProgress !== undefined) {
+        let promptTokens = 0;
+        let completionTokens = 0;
+        let totalTokens = 0;
+        for (const page of document.pages) {
+          promptTokens += 1;
+          completionTokens += 2;
+          totalTokens += 3;
+          await input.onProgress({
+            page,
+            crops: result.crops,
+            pageCount: document.pageCount,
+            usage: {
+              requests: page.page,
+              promptTokens,
+              completionTokens,
+              totalTokens,
+            },
+            timing: { elapsedMs: page.page * 10, pageMs: 10, visionMs: 8 },
+          });
+        }
       }
       return result;
     },

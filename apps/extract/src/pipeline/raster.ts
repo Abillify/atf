@@ -20,6 +20,7 @@
  */
 
 import sharp, { type Metadata } from "sharp";
+import { decode as decodeBmp } from "bmp-js";
 import { boundingBoxToPixels, type BoundingBox, type FigureMimeType } from "@atf/extract-contract";
 import { conversionFailed } from "../errors.js";
 
@@ -31,6 +32,56 @@ import { conversionFailed } from "../errors.js";
  * the wire; the limit has to be on decoded pixels.
  */
 const MAX_PIXELS = 40_000_000; // ~40 MP, comfortably above an A0 page at 300 dpi
+// bmp-js expands to ABGR before we create Sharp's RGB input, so BMP needs a
+// stricter budget to keep peak memory bounded under conversion concurrency.
+const MAX_BMP_PIXELS = 10_000_000;
+
+function isBmp(buffer: Uint8Array): boolean {
+  return buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d;
+}
+
+/** Decode BMP explicitly because some Sharp/libvips builds omit the BMP loader. */
+function bmpAsSharpInput(buffer: Uint8Array): {
+  data: Buffer;
+  raw: { width: number; height: number; channels: 3 };
+} {
+  if (buffer.byteLength < 26) throw conversionFailed("The BMP header is truncated");
+  const source = Buffer.from(buffer);
+  const headerSize = source.readUInt32LE(14);
+  if (headerSize < 40 || source.byteLength < 54) {
+    throw conversionFailed("The BMP uses an unsupported legacy header");
+  }
+  const width = source.readInt32LE(18);
+  const signedHeight = source.readInt32LE(22);
+  const height = Math.abs(signedHeight);
+  if (width < 1 || height < 1 || width * height > MAX_BMP_PIXELS) {
+    throw conversionFailed(
+      `The BMP declares ${width}×${height} pixels, outside the ${MAX_BMP_PIXELS} pixel limit`,
+    );
+  }
+
+  try {
+    const decoded = decodeBmp(source);
+    if (decoded.width !== width || decoded.height !== height) {
+      throw new Error("decoded dimensions differ from the BMP header");
+    }
+    if (decoded.data.length !== width * height * 4) {
+      throw new Error("decoded pixel data has an unexpected length");
+    }
+    const rgb = Buffer.alloc(width * height * 3);
+    // bmp-js returns ABGR; Sharp raw input expects RGB.
+    for (let sourceOffset = 0, targetOffset = 0; sourceOffset < decoded.data.length; sourceOffset += 4) {
+      rgb[targetOffset++] = decoded.data[sourceOffset + 3] ?? 0;
+      rgb[targetOffset++] = decoded.data[sourceOffset + 2] ?? 0;
+      rgb[targetOffset++] = decoded.data[sourceOffset + 1] ?? 0;
+    }
+    return { data: rgb, raw: { width, height, channels: 3 } };
+  } catch (error) {
+    throw conversionFailed(
+      `The BMP could not be decoded: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
 
 export interface RasterPage {
   /** Normalised image bytes. */
@@ -53,7 +104,15 @@ export interface RasterPage {
  * channel, which reads as a blank page.
  */
 export async function normalizeImageToPage(buffer: Uint8Array): Promise<RasterPage> {
-  const image = sharp(buffer, { failOn: "error", limitInputPixels: MAX_PIXELS });
+  const decodedBmp = isBmp(buffer) ? bmpAsSharpInput(buffer) : null;
+  const image =
+    decodedBmp === null
+      ? sharp(buffer, { failOn: "error", limitInputPixels: MAX_PIXELS })
+      : sharp(decodedBmp.data, {
+          raw: decodedBmp.raw,
+          failOn: "error",
+          limitInputPixels: MAX_PIXELS,
+        });
   let metadata: Metadata;
   try {
     metadata = await image.metadata();

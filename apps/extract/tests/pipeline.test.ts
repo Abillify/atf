@@ -52,6 +52,28 @@ async function testPng(width = 400, height = 300): Promise<Buffer> {
     .toBuffer();
 }
 
+/** A valid 2×2 24-bit BMP used to exercise magic-byte admission and Sharp decoding. */
+function tinyBmp(): Buffer {
+  const rowSize = 8; // two BGR pixels plus two bytes padding
+  const pixelBytes = rowSize * 2;
+  const buffer = Buffer.alloc(54 + pixelBytes);
+  buffer.write("BM", 0, "ascii");
+  buffer.writeUInt32LE(buffer.length, 2);
+  buffer.writeUInt32LE(54, 10);
+  buffer.writeUInt32LE(40, 14);
+  buffer.writeInt32LE(2, 18);
+  buffer.writeInt32LE(2, 22);
+  buffer.writeUInt16LE(1, 26);
+  buffer.writeUInt16LE(24, 28);
+  buffer.writeUInt32LE(pixelBytes, 34);
+  // Bottom row red/green, top row blue/white (BGR byte order).
+  Buffer.from([0, 0, 255, 0, 255, 0, 0, 0, 255, 0, 0, 255, 255, 255, 0, 0]).copy(
+    buffer,
+    54,
+  );
+  return buffer;
+}
+
 /** A vision client returning a fixed page response. */
 function fixedVision(raw: string, truncated = false): VisionClient {
   return {
@@ -267,6 +289,56 @@ describe("normalizeImageToPage", () => {
       .toBuffer();
     const page = await normalizeImageToPage(gif);
     expect(page.mimeType).toBe("image/png");
+  });
+
+  it("normalises TIFF, BMP and WebP through the same single-page path", async () => {
+    const png = await testPng(8, 8);
+    const variants = [
+      { buffer: await sharp(png).tiff().toBuffer(), filename: "scan.tiff", mimeType: "image/tiff" },
+      { buffer: tinyBmp(), filename: "scan.bmp", mimeType: "image/bmp" },
+      { buffer: await sharp(png).webp().toBuffer(), filename: "scan.webp", mimeType: "image/webp" },
+    ];
+
+    for (const variant of variants) {
+      const result = await extractor(fixedVision(WITH_FIGURE)).extract({
+        buffer: variant.buffer,
+        filename: variant.filename,
+        declaredMimeType: variant.mimeType,
+        reference: variant.filename,
+      });
+      expect(result.document.source.mimeType).toBe(variant.mimeType);
+      expect(result.document.pipeline.extractor).toBe("sharp");
+      expect(result.document.pageCount).toBe(1);
+      expect(result.document.pipeline.ocr).toBe(true);
+    }
+  });
+
+  it("rejects a BMP above its decoded-memory budget before decoding pixels", async () => {
+    const bomb = tinyBmp();
+    bomb.writeInt32LE(5000, 18);
+    bomb.writeInt32LE(5000, 22);
+    await expect(normalizeImageToPage(bomb)).rejects.toMatchObject({
+      code: "CONVERSION_FAILED",
+      message: expect.stringMatching(/10000000 pixel limit/),
+    });
+  });
+
+  it("reports aggregate model usage and timing", async () => {
+    const result = await extractor(fixedVision(WITH_FIGURE)).extract({
+      buffer: await testPng(),
+      filename: "usage.png",
+      declaredMimeType: "image/png",
+      reference: "usage",
+    });
+
+    expect(result.document.usage).toEqual({
+      requests: 1,
+      promptTokens: 100,
+      completionTokens: 200,
+      totalTokens: 300,
+    });
+    expect(result.document.timings?.totalMs).toBeGreaterThanOrEqual(0);
+    expect(result.document.timings?.perPageVisionMs).toHaveLength(1);
   });
 
   it("rejects an undecodable image with a client error", async () => {

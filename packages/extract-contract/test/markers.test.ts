@@ -29,9 +29,9 @@ describe("contract version", () => {
   test("parses and gates on the major", () => {
     expect(parseContractId(EXTRACT_CONTRACT_ID)).toEqual({
       name: "atf-extract",
-      version: "1.0.0",
+      version: "1.1.0",
       major: 1,
-      minor: 0,
+      minor: 1,
       patch: 0,
     });
     expect(isCompatibleContract("atf-extract/1.7.2")).toBe(true);

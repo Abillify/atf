@@ -121,6 +121,9 @@ export const timingsSchema = z.object({
   extractionMs: z.int().min(0).default(0),
   visionMs: z.int().min(0).default(0),
   renderMs: z.int().min(0).default(0),
+  timeToFirstPageMs: z.int().min(0).optional(),
+  avgVisionMsPerPage: z.int().min(0).optional(),
+  perPageVisionMs: z.array(z.int().min(0)).optional(),
 });
 
 /** A fully extracted document in structured form. */
@@ -158,9 +161,24 @@ export const convertProgressEventSchema = z.object({
   type: z.literal("progress"),
   page: z.int().min(1),
   pageCount: z.int().min(0),
+  /** extract-compatible alias for pageCount. */
+  total: z.int().min(0).optional(),
   /** Serialized Markdown for this page, ready to append. */
   markdown: z.string(),
   figures: z.array(extractedFigureSchema).default([]),
+  warnings: z.array(z.string()).default([]),
+  tokens: z
+    .object({
+      prompt: z.int().min(0),
+      completion: z.int().min(0),
+      total: z.int().min(0),
+    })
+    .optional(),
+  etaSeconds: z.int().min(0).nullable().optional(),
+  elapsedMs: z.int().min(0).optional(),
+  pageTiming: z
+    .object({ totalMs: z.int().min(0), visionMs: z.int().min(0) })
+    .optional(),
 });
 
 export type ExtractedFigure = z.infer<typeof extractedFigureSchema>;

@@ -4,7 +4,7 @@
 /**
  * office.ts
  *
- * DOCX and XLSX to PDF, via headless LibreOffice.
+ * Word and spreadsheet documents to PDF, via headless LibreOffice.
  *
  * Why convert at all instead of parsing OOXML directly: a Word document has no
  * pages until something lays it out. A library like `mammoth` returns the whole
@@ -32,6 +32,7 @@
 import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import type { SupportedFormat } from "../formats.js";
 import { conversionFailed } from "../errors.js";
 import { run, type RunOptions } from "./exec.js";
 
@@ -102,7 +103,12 @@ export async function convertToPdf(
   return join(outputDir, first);
 }
 
-/** Extension LibreOffice needs to pick the right import filter. */
-export function officeExtensionFor(kind: "word" | "spreadsheet"): string {
-  return kind === "word" ? ".docx" : ".xlsx";
+/** Extension LibreOffice needs to pick the exact import filter. */
+export function officeExtensionFor(format: SupportedFormat): string {
+  if (format.kind !== "word" && format.kind !== "spreadsheet") {
+    throw new Error(`No Office extension for ${format.label}`);
+  }
+  const extension = format.extensions[0];
+  if (extension === undefined) throw new Error(`No extension registered for ${format.label}`);
+  return extension;
 }

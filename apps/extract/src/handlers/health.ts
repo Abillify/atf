@@ -39,7 +39,7 @@ import { probe as probeBinary } from "../pipeline/exec.js";
 import type { WorkQueue } from "../queue.js";
 import type { VisionClient } from "../vision/client.js";
 import type { SearchClient } from "../search-client.js";
-import { supportedMimeTypes } from "../formats.js";
+import { formatByMimeType, supportedMimeTypes } from "../formats.js";
 
 /** Binaries do not appear at runtime; a failed probe stays true for a while. */
 const BINARY_TTL_MS = 300_000;
@@ -145,10 +145,10 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
       const poppler = { pdfinfo, pdftotext, pdftoppm };
       const popplerAvailable = Object.values(poppler).every((state) => state.available);
 
-      // LibreOffice is only needed for DOCX and XLSX, so its absence degrades the
-      // supported format set rather than the service.
+      // LibreOffice is only needed for Word and spreadsheet inputs, so its
+      // absence degrades those formats rather than the whole service.
       const degraded: string[] = [];
-      if (!libreoffice.available) degraded.push("docx", "xlsx");
+      if (!libreoffice.available) degraded.push("doc", "docx", "xls", "xlsx");
 
       const healthy = popplerAvailable && visionState.available;
       if (!healthy) {
@@ -169,11 +169,10 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
           figure_dpi: config.figureDpi,
           max_pages: config.maxPages === 0 ? null : config.maxPages,
         },
-        supported_types: supportedMimeTypes().filter(
-          (mimeType) =>
-            libreoffice.available ||
-            !mimeType.includes("officedocument"),
-        ),
+        supported_types: supportedMimeTypes().filter((mimeType) => {
+          const kind = formatByMimeType(mimeType)?.kind;
+          return libreoffice.available || (kind !== "word" && kind !== "spreadsheet");
+        }),
         dependencies: {
           poppler,
           libreoffice,

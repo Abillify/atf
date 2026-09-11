@@ -120,7 +120,7 @@ pair `/sse` and `/messages` — plus `/healthz`, `/readyz`, and a monitoring sur
 
 Document-to-Markdown extraction against the `atf-extract` contract. Bun or Node, Express.
 
-Converts PDF, DOCX, XLSX, PNG, JPEG and GIF into the canonical Markdown defined by
+Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into the canonical Markdown defined by
 `packages/extract-contract`: `## Seite N` page markers, `<figure>` entries with normalised
 geometry, per-page `<summary>` blocks, and HTML tables that preserve merged cells. Every format
 funnels through one PDF page loop — office documents via LibreOffice — so page numbers, page
@@ -158,7 +158,7 @@ with Zod validation and its own tests.
 | `@atf/evidence-contract` | 1.1.0 | Evidence and lineage compatibility records |
 | `@atf/schema-compatibility` | 1.0.0 | Deterministic schema-evolution classification |
 | `@atf/contract-adapter` | 1.0.0 | Explicit adapters between the contracts above |
-| `@atf/extract-contract` | 1.0.0 | Canonical extracted-document Markdown grammar and figure asset identity |
+| `@atf/extract-contract` | 1.1.0 | Canonical extracted-document Markdown grammar, figure asset identity, usage and timing telemetry |
 
 `integration/system` exercises their combined lifecycle without external infrastructure, which
 is what makes a contract break visible in CI rather than at deployment time.

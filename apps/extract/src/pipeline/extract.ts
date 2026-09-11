@@ -8,8 +8,8 @@
  *
  * ## One page-producing path
  *
- * Every format funnels into the same PDF page loop. A PDF is used as-is; DOCX and
- * XLSX become a PDF via LibreOffice first; a single image becomes a one-page
+ * Every format funnels into the same PDF page loop. A PDF is used as-is; Word
+ * and spreadsheet documents become a PDF via LibreOffice first; a single image becomes a one-page
  * document without a text layer. That is why page numbers, page images and text
  * offsets agree across formats — and why a Word document has page numbers at all,
  * which the implementation this replaces could not provide because it parsed
@@ -102,6 +102,14 @@ export interface ExtractorDeps {
   metrics: ExtractorMetrics;
 }
 
+export interface ExtractProgress {
+  page: ExtractedPage;
+  crops: ReadonlyMap<string, FigureCrop>;
+  pageCount: number;
+  usage: { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
+  timing: { elapsedMs: number; pageMs: number; visionMs: number };
+}
+
 export interface ExtractInput {
   buffer: Uint8Array;
   filename: string;
@@ -110,12 +118,16 @@ export interface ExtractInput {
   reference: string;
   title?: string | undefined;
   signal?: AbortSignal | undefined;
+  /** Called once the input has become a page-addressable document. */
+  onPrepared?: (state: { pageCount: number; extractionMs: number }) => void | Promise<void>;
   /**
    * Called for each page in reading order as soon as its prefix is complete.
    * Used by the SSE handler; the crops for that page are passed alongside so a
    * caller can upload them incrementally instead of holding all of them.
    */
   onPage?: (page: ExtractedPage, crops: ReadonlyMap<string, FigureCrop>) => void | Promise<void>;
+  /** Rich additive progress callback with cumulative usage and timing. */
+  onProgress?: (progress: ExtractProgress) => void | Promise<void>;
 }
 
 export interface ExtractResult {
@@ -132,6 +144,9 @@ interface PageOutcome {
   crops: Map<string, FigureCrop>;
   /** True when the page had no text layer, so its text came from the image. */
   usedOcr: boolean;
+  usage: { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
+  pageMs: number;
+  visionMs: number;
 }
 
 /** A page image plus the geometry needed to resolve a normalised bbox. */
@@ -171,6 +186,7 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     try {
       const prepared = await preparePages(input, format, workDir, tools);
       const { pageCount, pageSource } = prepared;
+      const extractionMs = Date.now() - startedAt;
 
       if (config.maxPages > 0 && pageCount > config.maxPages) {
         throw new ExtractError(
@@ -191,7 +207,15 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         "Extraction started",
       );
 
+      await input.onPrepared?.({ pageCount, extractionMs });
+
       const pageNumbers = Array.from({ length: pageCount }, (_, index) => index + 1);
+      const cumulativeUsage = {
+        requests: 0,
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+      };
       const outcomes = await mapOrdered(
         pageNumbers,
         config.pageConcurrency,
@@ -206,7 +230,22 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
             tools,
           }),
         async (outcome) => {
+          cumulativeUsage.requests += outcome.usage.requests;
+          cumulativeUsage.promptTokens += outcome.usage.promptTokens;
+          cumulativeUsage.completionTokens += outcome.usage.completionTokens;
+          cumulativeUsage.totalTokens += outcome.usage.totalTokens;
           if (input.onPage !== undefined) await input.onPage(outcome.page, outcome.crops);
+          await input.onProgress?.({
+            page: outcome.page,
+            crops: outcome.crops,
+            pageCount,
+            usage: { ...cumulativeUsage },
+            timing: {
+              elapsedMs: Date.now() - startedAt,
+              pageMs: outcome.pageMs,
+              visionMs: outcome.visionMs,
+            },
+          });
         },
       );
 
@@ -243,6 +282,35 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         pageCount: pages.length,
         pageLabel: config.pageLabel,
         pages,
+        usage: {
+          requests: outcomes.reduce((sum, outcome) => sum + outcome.usage.requests, 0),
+          promptTokens: outcomes.reduce((sum, outcome) => sum + outcome.usage.promptTokens, 0),
+          completionTokens: outcomes.reduce(
+            (sum, outcome) => sum + outcome.usage.completionTokens,
+            0,
+          ),
+          totalTokens: outcomes.reduce((sum, outcome) => sum + outcome.usage.totalTokens, 0),
+        },
+        timings: {
+          totalMs: Date.now() - startedAt,
+          extractionMs,
+          visionMs: outcomes.reduce((sum, outcome) => sum + outcome.visionMs, 0),
+          renderMs: outcomes.reduce(
+            (sum, outcome) => sum + Math.max(0, outcome.pageMs - outcome.visionMs),
+            0,
+          ),
+          ...(outcomes[0] !== undefined
+            ? { timeToFirstPageMs: extractionMs + outcomes[0].pageMs }
+            : {}),
+          avgVisionMsPerPage:
+            outcomes.length === 0
+              ? 0
+              : Math.round(
+                  outcomes.reduce((sum, outcome) => sum + outcome.visionMs, 0) /
+                    outcomes.length,
+                ),
+          perPageVisionMs: outcomes.map((outcome) => outcome.visionMs),
+        },
         warnings,
       };
 
@@ -321,7 +389,7 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       await writeFile(pdfPath, input.buffer);
     } else {
       pdfPath = await convertToPdf(
-        { buffer: input.buffer, extension: officeExtensionFor(format.kind) },
+        { buffer: input.buffer, extension: officeExtensionFor(format) },
         {
           binary: config.libreofficeBin,
           workDir,
@@ -383,7 +451,10 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     const usedOcr = rawText.trim() === "";
 
     let parsed: ReturnType<typeof parseVisionPage>;
+    let visionMs = 0;
+    let usage = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     try {
+      const visionStartedAt = Date.now();
       const response = await vision.analyzePage({
         page: pageNumber,
         pageCount,
@@ -391,6 +462,8 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         image: { buffer: image.buffer, mimeType: image.mimeType },
         signal: input.signal,
       });
+      visionMs = Date.now() - visionStartedAt;
+      usage = { requests: response.requests, ...response.usage };
       metrics.recordVision({
         ok: true,
         truncated: response.truncated,
@@ -429,6 +502,9 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         },
         crops: new Map(),
         usedOcr,
+        usage,
+        pageMs: Date.now() - pageStartedAt,
+        visionMs,
       };
     }
 
@@ -455,7 +531,14 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       figures,
       warnings,
     };
-    return { page, crops, usedOcr };
+    return {
+      page,
+      crops,
+      usedOcr,
+      usage,
+      pageMs: Date.now() - pageStartedAt,
+      visionMs,
+    };
   }
 
   /**

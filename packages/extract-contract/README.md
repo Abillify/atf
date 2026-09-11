@@ -4,8 +4,15 @@ The document-extraction output contract. One normative definition of what a
 converted document looks like, shared by the producer (`@atf/extract`) and every
 consumer (`@atf/search`, runtime flows, operators re-ingesting stored Markdown).
 
-Contract id: `atf-extract/1.0.0`. Gate on the **major** version only; minor
+Contract id: `atf-extract/1.1.0`. Gate on the **major** version only; minor
 versions are additive by construction.
+
+Version 1.1 adds optional document timing fields (`timeToFirstPageMs`,
+`avgVisionMsPerPage`, `perPageVisionMs`) and optional progress telemetry
+(`total`, cumulative token counts, ETA, elapsed time and page timing). A 1.0
+consumer remains compatible because all additions are optional and the
+canonical Markdown grammar is unchanged. Timing values describe pipeline work,
+not serialization or network-delivery latency.
 
 ## Why a contract package
 

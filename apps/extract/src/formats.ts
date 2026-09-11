@@ -46,35 +46,49 @@ export interface SupportedFormat {
   /** Extensions that map to this format, lower-case, with the dot. */
   extensions: string[];
   kind: SourceKind;
+  /** Byte-signature family required before the parser may see the upload. */
+  family: Exclude<SniffedFamily, "unknown">;
   /** Human label for error messages and the UI. */
   label: string;
 }
 
-/**
- * The supported set, exactly as specified: PDF, DOCX, XLSX, PNG, JPEG, GIF.
- *
- * Legacy `.doc`/`.xls` are deliberately absent. LibreOffice can open them, but
- * the binary formats are where its parser has the worst track record, and
- * accepting them would mean a wider attack surface for a format nobody asked
- * for.
- */
+/** Formats supported by the consolidated Extract service. */
 export const SUPPORTED_FORMATS: readonly SupportedFormat[] = [
-  { mimeType: "application/pdf", extensions: [".pdf"], kind: "pdf", label: "PDF" },
+  { mimeType: "application/pdf", extensions: [".pdf"], kind: "pdf", family: "pdf", label: "PDF" },
   {
     mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     extensions: [".docx"],
     kind: "word",
+    family: "zip",
     label: "Word (DOCX)",
+  },
+  {
+    mimeType: "application/msword",
+    extensions: [".doc"],
+    kind: "word",
+    family: "ole",
+    label: "Word (DOC)",
   },
   {
     mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     extensions: [".xlsx"],
     kind: "spreadsheet",
+    family: "zip",
     label: "Excel (XLSX)",
   },
-  { mimeType: "image/png", extensions: [".png"], kind: "image", label: "PNG" },
-  { mimeType: "image/jpeg", extensions: [".jpg", ".jpeg"], kind: "image", label: "JPEG" },
-  { mimeType: "image/gif", extensions: [".gif"], kind: "image", label: "GIF" },
+  {
+    mimeType: "application/vnd.ms-excel",
+    extensions: [".xls"],
+    kind: "spreadsheet",
+    family: "ole",
+    label: "Excel (XLS)",
+  },
+  { mimeType: "image/png", extensions: [".png"], kind: "image", family: "png", label: "PNG" },
+  { mimeType: "image/jpeg", extensions: [".jpg", ".jpeg"], kind: "image", family: "jpeg", label: "JPEG" },
+  { mimeType: "image/gif", extensions: [".gif"], kind: "image", family: "gif", label: "GIF" },
+  { mimeType: "image/tiff", extensions: [".tif", ".tiff"], kind: "image", family: "tiff", label: "TIFF" },
+  { mimeType: "image/bmp", extensions: [".bmp"], kind: "image", family: "bmp", label: "BMP" },
+  { mimeType: "image/webp", extensions: [".webp"], kind: "image", family: "webp", label: "WebP" },
 ];
 
 const BY_MIME = new Map(SUPPORTED_FORMATS.map((format) => [format.mimeType, format]));
@@ -100,63 +114,146 @@ export function supportedFormatsLabel(): string {
 }
 
 /** Coarse family a byte signature identifies. */
-export type SniffedFamily = "pdf" | "zip" | "png" | "jpeg" | "gif" | "unknown";
+export type SniffedFamily =
+  | "pdf"
+  | "zip"
+  | "ole"
+  | "png"
+  | "jpeg"
+  | "gif"
+  | "tiff"
+  | "bmp"
+  | "webp"
+  | "unknown";
 
-/**
- * Identify a byte signature.
- *
- * `zip` is as specific as this can get for OOXML: DOCX and XLSX are both ZIP
- * containers, and telling them apart means reading the container's content
- * types, which is the job of the converter, not of an admission check.
- */
+/** Identify a byte signature without trusting caller-controlled metadata. */
 export function sniffFamily(buffer: Uint8Array): SniffedFamily {
   const startsWith = (...bytes: number[]): boolean =>
     bytes.length <= buffer.length && bytes.every((byte, index) => buffer[index] === byte);
 
   if (startsWith(0x25, 0x50, 0x44, 0x46, 0x2d)) return "pdf"; // %PDF-
-  if (startsWith(0x50, 0x4b, 0x03, 0x04)) return "zip"; // PK\x03\x04
+  if (startsWith(0x50, 0x4b, 0x03, 0x04)) return "zip"; // PK\x03\x04, OOXML
+  if (startsWith(0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1)) return "ole";
   if (startsWith(0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)) return "png";
   if (startsWith(0xff, 0xd8, 0xff)) return "jpeg";
   if (startsWith(0x47, 0x49, 0x46, 0x38)) return "gif"; // GIF8[79]a
+  if (startsWith(0x49, 0x49, 0x2a, 0x00) || startsWith(0x4d, 0x4d, 0x00, 0x2a)) return "tiff";
+  if (startsWith(0x42, 0x4d)) return "bmp";
+  if (
+    startsWith(0x52, 0x49, 0x46, 0x46) &&
+    buffer.length >= 12 &&
+    buffer[8] === 0x57 &&
+    buffer[9] === 0x45 &&
+    buffer[10] === 0x42 &&
+    buffer[11] === 0x50
+  ) return "webp";
   return "unknown";
 }
 
-/** Families a format's bytes may legitimately start with. */
-const FAMILY_BY_KIND: Record<SourceKind, SniffedFamily> = {
-  pdf: "pdf",
-  word: "zip",
-  spreadsheet: "zip",
-  image: "unknown", // resolved per image MIME type below
-};
+/**
+ * Follow the CFB FAT and directory chains and return every stream name.
+ *
+ * DOC, XLS, MSI, MSG and legacy PPT share the same OLE signature. Requiring the
+ * primary Word/Excel stream prevents a renamed arbitrary compound file from
+ * reaching LibreOffice. Directory entries may span several non-contiguous
+ * sectors, so checking only the first directory sector rejects valid files.
+ */
+function oleDirectoryStreams(buffer: Uint8Array): Set<string> {
+  const streams = new Set<string>();
+  if (buffer.byteLength < 512) return streams;
+  const view = Buffer.from(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  if (view.readUInt16LE(28) !== 0xfffe) return streams;
+  const sectorShift = view.readUInt16LE(30);
+  if (sectorShift !== 9 && sectorShift !== 12) return streams;
 
-const FAMILY_BY_IMAGE_MIME: Record<string, SniffedFamily> = {
-  "image/png": "png",
-  "image/jpeg": "jpeg",
-  "image/gif": "gif",
-};
+  const sectorSize = 2 ** sectorShift;
+  const sectorCount = Math.floor(view.byteLength / sectorSize) - 1;
+  const sectorOffset = (sector: number): number => (sector + 1) * sectorSize;
+  const isRegularSector = (sector: number): boolean => sector >= 0 && sector < sectorCount;
+  const readSector = (sector: number): Buffer | undefined => {
+    if (!isRegularSector(sector)) return undefined;
+    const offset = sectorOffset(sector);
+    if (offset + sectorSize > view.byteLength) return undefined;
+    return view.subarray(offset, offset + sectorSize);
+  };
 
-function expectedFamily(format: SupportedFormat): SniffedFamily {
-  if (format.kind === "image") {
-    return FAMILY_BY_IMAGE_MIME[format.mimeType] ?? "unknown";
+  const endOfChain = 0xfffffffe;
+  const fatSectorMarker = 0xfffffffd;
+  const difatSectorMarker = 0xfffffffc;
+  const fatSectorIds: number[] = [];
+  const seenFatSectors = new Set<number>();
+  let invalidFatReference = false;
+  const addFatSector = (sector: number): void => {
+    if (!isRegularSector(sector)) return;
+    if (seenFatSectors.has(sector)) {
+      invalidFatReference = true;
+      return;
+    }
+    seenFatSectors.add(sector);
+    fatSectorIds.push(sector);
+  };
+  for (let offset = 76; offset < 512; offset += 4) addFatSector(view.readInt32LE(offset));
+
+  let difatSector = view.readInt32LE(68);
+  const difatSectorCount = view.readUInt32LE(72);
+  const seenDifat = new Set<number>();
+  for (let index = 0; index < difatSectorCount; index++) {
+    if (!isRegularSector(difatSector) || seenDifat.has(difatSector)) return streams;
+    seenDifat.add(difatSector);
+    const sector = readSector(difatSector);
+    if (sector === undefined) return streams;
+    for (let offset = 0; offset < sectorSize - 4; offset += 4) {
+      addFatSector(sector.readInt32LE(offset));
+    }
+    difatSector = sector.readInt32LE(sectorSize - 4);
   }
-  return FAMILY_BY_KIND[format.kind];
+  if ((difatSector >>> 0) !== endOfChain || invalidFatReference) return streams;
+
+  const declaredFatSectors = view.readUInt32LE(44);
+  if (declaredFatSectors === 0 || fatSectorIds.length !== declaredFatSectors) return streams;
+  const fat: number[] = [];
+  for (const fatSectorId of fatSectorIds) {
+    const sector = readSector(fatSectorId);
+    if (sector === undefined) return streams;
+    for (let offset = 0; offset < sectorSize; offset += 4) fat.push(sector.readUInt32LE(offset));
+  }
+  if (fatSectorIds.some((sector) => fat[sector] !== fatSectorMarker)) return streams;
+  if ([...seenDifat].some((sector) => fat[sector] !== difatSectorMarker)) return streams;
+
+  let directorySector = view.readInt32LE(48);
+  const seenDirectory = new Set<number>();
+  for (;;) {
+    if (!isRegularSector(directorySector) || seenDirectory.has(directorySector)) return new Set();
+    seenDirectory.add(directorySector);
+    const sector = readSector(directorySector);
+    if (sector === undefined) return new Set();
+    for (let offset = 0; offset + 128 <= sectorSize; offset += 128) {
+      const nameBytes = sector.readUInt16LE(offset + 64);
+      const objectType = sector[offset + 66];
+      if (objectType !== 2 || nameBytes < 2 || nameBytes > 64 || nameBytes % 2 !== 0) continue;
+      const name = sector.subarray(offset, offset + nameBytes - 2).toString("utf16le");
+      if (name !== "") streams.add(name);
+    }
+    const next = fat[directorySector];
+    if (next === endOfChain) return streams;
+    if (next === undefined || !isRegularSector(next)) return new Set();
+    directorySector = next;
+  }
+}
+
+function oleMatchesFormat(buffer: Uint8Array, format: SupportedFormat): boolean {
+  const streams = oleDirectoryStreams(buffer);
+  if (format.mimeType === "application/msword") return streams.has("WordDocument");
+  if (format.mimeType === "application/vnd.ms-excel") {
+    return streams.has("Workbook") || streams.has("Book");
+  }
+  return false;
 }
 
 /** Format matching a sniffed family, when the family maps to exactly one. */
 function formatForFamily(family: SniffedFamily): SupportedFormat | undefined {
-  switch (family) {
-    case "pdf":
-      return BY_MIME.get("application/pdf");
-    case "png":
-      return BY_MIME.get("image/png");
-    case "jpeg":
-      return BY_MIME.get("image/jpeg");
-    case "gif":
-      return BY_MIME.get("image/gif");
-    default:
-      // `zip` is ambiguous between DOCX and XLSX; `unknown` says nothing.
-      return undefined;
-  }
+  const matches = SUPPORTED_FORMATS.filter((format) => format.family === family);
+  return matches.length === 1 ? matches[0] : undefined;
 }
 
 /** Normalise a filename to a lower-case extension including the dot. */
@@ -213,19 +310,27 @@ export function resolveFormat(input: ResolveFormatInput): ResolveFormatResult {
     return { ok: true, format: unambiguous, sniffed };
   }
 
-  if (sniffed === "zip") {
-    // DOCX and XLSX are indistinguishable by signature; the declaration or the
-    // extension picks, and both candidates are ZIP-shaped so neither can smuggle
-    // something else in.
+  if (sniffed === "zip" || sniffed === "ole") {
+    // OOXML ZIP and legacy OLE containers are each ambiguous between Word and
+    // Excel. A supported declaration or extension resolves the ambiguity, but
+    // only within the family proven by the bytes.
     const candidate = declaredFormat ?? extensionFormat;
-    if (candidate !== undefined && expectedFamily(candidate) === "zip") {
+    if (candidate !== undefined && candidate.family === sniffed) {
+      if (sniffed === "ole" && !oleMatchesFormat(input.buffer, candidate)) {
+        return {
+          ok: false,
+          reason:
+            `The OLE container does not contain the primary stream required for ${candidate.label}.`,
+        };
+      }
       return { ok: true, format: candidate, sniffed };
     }
+    const names = sniffed === "zip" ? "DOCX or XLSX" : "DOC or XLS";
     return {
       ok: false,
       reason:
-        "The file is a ZIP container but neither the Content-Type nor the filename says " +
-        "whether it is DOCX or XLSX. Send one of them.",
+        `The file is a ${sniffed === "zip" ? "ZIP" : "legacy Office OLE"} container but ` +
+        `neither the Content-Type nor the filename says whether it is ${names}. Send one of them.`,
     };
   }
 

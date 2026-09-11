@@ -1,7 +1,7 @@
 # @atf/extract
 
 Document-to-Markdown extraction against the [`atf-extract`](../../packages/extract-contract)
-contract. Converts PDF, DOCX, XLSX, PNG, JPEG and GIF into Markdown that
+contract. Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into Markdown that
 `@atf/search` can index with page numbers, figure entries and per-page summaries
 intact.
 
@@ -63,9 +63,10 @@ throw away 199 good pages because of one, after having already paid for them.
 
 ## Running it
 
-Requires `poppler-utils` (PDF) and `libreoffice` (DOCX/XLSX) on `PATH`. Without
-LibreOffice the service is healthy but reports `degraded_formats: ["docx","xlsx"]`;
-without poppler it is unhealthy, because nothing works.
+Requires `poppler-utils` (PDF) and `libreoffice` (DOC/DOCX/XLS/XLSX) on `PATH`. Without
+LibreOffice the service is healthy but reports
+`degraded_formats: ["doc","docx","xls","xlsx"]`; without poppler it is unhealthy, because
+nothing works.
 
 ```bash
 cp .env.example .env          # set VISION_URL and VISION_MODEL
@@ -101,15 +102,33 @@ Selected by request header, so a caller changes one header rather than one URL:
 | Header | Mode |
 | --- | --- |
 | `X-Callback-URL: …` | 202 immediately, result POSTed to the callback |
-| `Accept: text/event-stream` | pages stream in reading order as they complete |
+| `X-Callback-URL: …` + `X-Callback-Events: extract` | additionally emits `queued`, `converting`, `progress`, `heartbeat` and `error` callback events |
+| `Accept: text/event-stream` | pages stream in reading order with queue state, tokens, ETA and timing |
 | `Accept: text/markdown` | one Markdown response at the end |
 | _(default)_ | one JSON envelope at the end |
 
 JSON is the default because the envelope carries figure geometry, per-page
-warnings and token usage. `X-Include-Figure-Data: true` embeds the crops as
-base64; it is off by default because a document with many figures otherwise
-produces a multi-megabyte body on a path where the bytes usually go straight to
-Search.
+warnings, token usage and timing telemetry. Completed responses expose the same
+summary through `X-Token-Usage`, `X-Model` and the compatibility alias
+`X-Vision-Model`. `timings.totalMs` measures the extraction pipeline through
+page assembly; `timeToFirstPageMs` is the extraction duration plus the first
+ordered page's processing time, not network delivery latency.
+
+SSE emits `accepted`, `queued`, `converting`, `progress`, `heartbeat`, `error`
+and `done` in that lifecycle order; clients must ignore event names they do not
+recognise for forward compatibility. Progress pages are emitted in reading
+order. With `X-Callback-Events`, intermediate callback POSTs use the same event
+names, carry both `jobId` and `job_id`, are serialized per job, have no retries
+and are best-effort. At most one in-flight event and the latest pending event are
+kept, so slow receivers may miss intermediate progress but cannot build an
+unbounded backlog. Their delivery runs independently of conversion work; the
+terminal `completed` or `failed` callback waits for at most those two queued
+attempts and retains `CALLBACK_MAX_RETRIES`. Every callback attempt is bounded
+by `CALLBACK_TIMEOUT_MS`.
+
+`X-Include-Figure-Data: true` embeds the crops as base64; it is off by default
+because a document with many figures otherwise produces a multi-megabyte body
+on a path where the bytes usually go straight to Search.
 
 ## Security
 

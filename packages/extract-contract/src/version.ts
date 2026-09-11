@@ -23,16 +23,16 @@
  * body would put provenance text into the indexed content.
  */
 
-/** Wire identifier prefix. Combined with the version to form `atf-extract/1.0.0`. */
+/** Wire identifier prefix. Combined with the version to form `atf-extract/1.1.0`. */
 export const EXTRACT_CONTRACT_NAME = "atf-extract";
 
 /** Current contract version. */
-export const EXTRACT_CONTRACT_VERSION = "1.0.0";
+export const EXTRACT_CONTRACT_VERSION = "1.1.0";
 
 /** Current major version — the only part a consumer must gate on. */
 export const EXTRACT_CONTRACT_MAJOR = 1;
 
-/** Canonical `contract` field value, e.g. `atf-extract/1.0.0`. */
+/** Canonical `contract` field value, e.g. `atf-extract/1.1.0`. */
 export const EXTRACT_CONTRACT_ID = `${EXTRACT_CONTRACT_NAME}/${EXTRACT_CONTRACT_VERSION}`;
 
 /** Response header carrying {@link EXTRACT_CONTRACT_ID}. */

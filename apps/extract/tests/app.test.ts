@@ -73,7 +73,7 @@ describe("GET /health", () => {
     );
     expect(response.status).toBe(200);
     expect(response.body.status).toBe("ok");
-    expect(response.body.contract).toBe("atf-extract/1.0.0");
+    expect(response.body.contract).toBe("atf-extract/1.1.0");
   });
 
   it("reports the queue and the pipeline settings", async () => {
@@ -107,7 +107,7 @@ describe("GET /health", () => {
   });
 
   it("degrades rather than fails when only LibreOffice is missing", async () => {
-    // LibreOffice is needed for DOCX and XLSX; PDFs and images still work.
+    // LibreOffice is needed for all Word and spreadsheet formats; PDFs and images still work.
     const missing = vi.fn(async (command: string) =>
       command.includes("libreoffice")
         ? { available: false, error: "ENOENT" }
@@ -115,10 +115,12 @@ describe("GET /health", () => {
     );
     const response = await request(app({}, { probeBinary: missing })).get("/health");
     expect(response.status).toBe(200);
-    expect(response.body.degraded_formats).toEqual(["docx", "xlsx"]);
+    expect(response.body.degraded_formats).toEqual(["doc", "docx", "xls", "xlsx"]);
     expect(response.body.supported_types).not.toContain(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     );
+    expect(response.body.supported_types).not.toContain("application/msword");
+    expect(response.body.supported_types).not.toContain("application/vnd.ms-excel");
   });
 
   it("stays healthy when only Search is unreachable", async () => {
@@ -168,10 +170,10 @@ describe("POST /v1/convert", () => {
       .send(PDF_BYTES);
 
     expect(response.status).toBe(200);
-    expect(response.body.contract).toBe("atf-extract/1.0.0");
+    expect(response.body.contract).toBe("atf-extract/1.1.0");
     expect(response.body.reference).toBe("docs/a.pdf");
     expect(response.body.markdown).toContain("## Seite 1");
-    expect(response.headers["x-extract-contract"]).toBe("atf-extract/1.0.0");
+    expect(response.headers["x-extract-contract"]).toBe("atf-extract/1.1.0");
     expect(response.headers["x-page-count"]).toBe("2");
   });
 
@@ -322,10 +324,15 @@ describe("POST /v1/convert", () => {
 
       const events = response.text.split("\n\n").filter((frame) => frame.trim() !== "");
       const names = events.map((frame) => /^event: (\S+)/m.exec(frame)?.[1]);
-      expect(names).toEqual(["accepted", "progress", "progress", "done"]);
+      expect(names).toEqual(["accepted", "queued", "converting", "progress", "progress", "done"]);
 
-      const firstProgress = JSON.parse(/^data: (.*)$/m.exec(events[1] ?? "")?.[1] ?? "{}");
+      const progressFrame = events.find((frame) => frame.includes("event: progress")) ?? "";
+      const firstProgress = JSON.parse(/^data: (.*)$/m.exec(progressFrame)?.[1] ?? "{}");
       expect(firstProgress.page).toBe(1);
+      expect(firstProgress.pageCount).toBe(2);
+      expect(firstProgress.total).toBe(2);
+      expect(firstProgress.tokens).toEqual({ prompt: 1, completion: 2, total: 3 });
+      expect(firstProgress.etaSeconds).not.toBeUndefined();
       // The serialized page, so a client can append it verbatim.
       expect(firstProgress.markdown).toContain("## Seite 1");
     });
@@ -368,6 +375,77 @@ describe("POST /v1/convert", () => {
       const delivered = JSON.parse(String(init?.body));
       expect(delivered.status).toBe("completed");
       expect(delivered.markdown).toContain("## Seite 1");
+    });
+
+    it("emits extract-compatible progress callbacks when explicitly enabled", async () => {
+      const fetchMock = vi.fn(
+        async (_url: URL, _init: RequestInit) => new Response(null, { status: 204 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "hooks.test" }))
+        .post("/v1/convert")
+        .set("Content-Type", "application/pdf")
+        .set("X-Callback-URL", "http://hooks.test/done")
+        .set("X-Callback-Events", "extract")
+        .send(PDF_BYTES);
+
+      expect(response.status).toBe(202);
+      await vi.waitFor(() => {
+        const lastCall = fetchMock.mock.calls.at(-1);
+        const payload = JSON.parse(String(lastCall?.[1]?.body));
+        expect(payload.status).toBe("completed");
+      });
+      const payloads = fetchMock.mock.calls.map((call) =>
+        JSON.parse(String(call[1]?.body)),
+      );
+      expect(payloads[0]).toMatchObject({
+        type: "queued",
+        jobId: response.body.job_id,
+        job_id: response.body.job_id,
+      });
+      expect(payloads.at(-1)).toMatchObject({
+        status: "completed",
+        job_id: response.body.job_id,
+      });
+      const progressPayloads = payloads.filter((payload) => payload.type === "progress");
+      expect(progressPayloads).toHaveLength(1);
+      expect(progressPayloads[0]).toMatchObject({
+        page: 2,
+        pageCount: 2,
+        tokens: { prompt: 2, completion: 4, total: 6 },
+        jobId: response.body.job_id,
+        job_id: response.body.job_id,
+      });
+    });
+
+    it("coalesces progress when a callback receiver is slow", async () => {
+      const pending: Array<(response: Response) => void> = [];
+      const fetchMock = vi.fn(
+        (_url: URL, _init: RequestInit) =>
+          new Promise<Response>((resolve) => pending.push(resolve)),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "hooks.test" }))
+        .post("/v1/convert")
+        .set("Content-Type", "application/pdf")
+        .set("X-Callback-URL", "http://hooks.test/done")
+        .set("X-Callback-Events", "extract")
+        .send(PDF_BYTES);
+
+      expect(response.status).toBe(202);
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      pending.shift()?.(new Response(null, { status: 204 }));
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      pending.shift()?.(new Response(null, { status: 204 }));
+      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+
+      const terminal = JSON.parse(
+        String((fetchMock.mock.calls[2]?.[1] as RequestInit | undefined)?.body),
+      );
+      expect(terminal.status).toBe("completed");
+      pending.shift()?.(new Response(null, { status: 204 }));
     });
 
     it("refuses a callback outside the allow-list before doing any work", async () => {

@@ -75,7 +75,7 @@ Extract converts documents into the canonical Markdown defined by `packages/extr
 which is the form Search indexes. It is an optional service: retrieval works without it for
 callers that already hold Markdown.
 
-- **Formats.** PDF, DOCX, XLSX, PNG, JPEG and GIF. Office documents are laid out by LibreOffice
+- **Formats.** PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP. Office documents are laid out by LibreOffice
   first, so every format funnels through one PDF page loop and page numbers, page images and
   text offsets agree across formats.
 - **Structure preserved.** `## Seite N` page markers, `<figure>` entries with normalised
@@ -91,7 +91,10 @@ callers that already hold Markdown.
   carrying a warning rather than failing the document.
 - **Response modes selected by header.** Async callback (`X-Callback-URL`), streamed pages
   (`Accept: text/event-stream`), plain Markdown (`Accept: text/markdown`), or the default JSON
-  envelope carrying figure geometry, warnings and token usage.
+  envelope carrying figure geometry, warnings, token usage and timing telemetry. SSE reports
+  `accepted`, queue/conversion progress, heartbeat, error and completion events in reading order.
+  `X-Callback-Events` opts into equivalent serialized, best-effort progress POSTs without retries;
+  terminal callbacks retain their configured retry budget.
 - **Two Search paths.** `POST /v1/ingest` here converts and indexes including figure crops and
   requires `SEARCH_URL`; `POST /ingest-file` in Search proxies the upload and requires
   `CONVERTER_URL`, indexing figure descriptions but not the images

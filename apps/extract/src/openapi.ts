@@ -157,6 +157,20 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               "link-local and metadata addresses are always refused.",
             schema: { type: "string", format: "uri" },
           },
+          {
+            name: "X-Callback-Events",
+            in: "header",
+            required: false,
+            description:
+              "Set to `extract`, `progress`, or `all` to receive queued, converting, " +
+              "progress, heartbeat and error callback POSTs before the unchanged final callback. " +
+              "Intermediate bodies carry `type`, `jobId` and `job_id`, are serialized per job, " +
+              "best-effort and not retried; they do not block conversion work. One in-flight " +
+              "event and the latest pending event are retained, so slow receivers may miss " +
+              "intermediate progress without creating an unbounded backlog. The terminal " +
+              "completed/failed callback retains CALLBACK_MAX_RETRIES.",
+            schema: { type: "string", enum: ["extract", "progress", "all"] },
+          },
         ],
         requestBody: uploadRequestBody,
         responses: {
@@ -166,12 +180,25 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               "X-Extract-Contract": { schema: { type: "string" }, description: "Contract id" },
               "X-Page-Count": { schema: { type: "integer" } },
               "X-Figure-Count": { schema: { type: "integer" } },
+              "X-Token-Usage": { schema: { type: "integer", minimum: 0 } },
+              "X-Model": { schema: { type: "string" } },
+              "X-Vision-Model": {
+                schema: { type: "string" },
+                description: "Compatibility alias for X-Model.",
+              },
               "X-Extract-Warnings": { schema: { type: "integer" } },
             },
             content: {
               "application/json": { schema: { $ref: "#/components/schemas/ConvertResponse" } },
               "text/markdown": { schema: { type: "string" } },
-              "text/event-stream": { schema: { type: "string" } },
+              "text/event-stream": {
+                schema: {
+                  type: "string",
+                  description:
+                    "Ordered accepted, queued, converting, progress, heartbeat, error and done " +
+                    "events. Clients must ignore unknown event names for forward compatibility.",
+                },
+              },
             },
           },
           "202": {
@@ -283,7 +310,8 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
       version: EXTRACT_CONTRACT_VERSION,
       summary: "Document-to-Markdown extraction against the atf-extract contract",
       description:
-        "Converts PDF, DOCX, XLSX, PNG, JPEG and GIF into the canonical Markdown defined by " +
+        "Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into " +
+        "the canonical Markdown defined by " +
         `\`${EXTRACT_CONTRACT_ID}\`: \`## Seite N\` page markers, \`<figure id bbox page>\` ` +
         "entries with normalised geometry, per-page `<summary>` blocks, and HTML tables that " +
         "preserve merged cells.\n\n" +
@@ -395,6 +423,39 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             pageCount: { type: "integer" },
             pageLabel: { type: "string", enum: ["Seite", "Page"] },
             pages: { type: "array", items: { $ref: "#/components/schemas/Page" } },
+            usage: {
+              type: "object",
+              required: ["requests", "promptTokens", "completionTokens", "totalTokens"],
+              properties: {
+                requests: { type: "integer", minimum: 0 },
+                promptTokens: { type: "integer", minimum: 0 },
+                completionTokens: { type: "integer", minimum: 0 },
+                totalTokens: { type: "integer", minimum: 0 },
+              },
+            },
+            timings: {
+              type: "object",
+              required: ["totalMs", "extractionMs", "visionMs", "renderMs"],
+              description:
+                "Pipeline timings through page assembly; serialization and network delivery are excluded.",
+              properties: {
+                totalMs: { type: "integer", minimum: 0 },
+                extractionMs: { type: "integer", minimum: 0 },
+                visionMs: { type: "integer", minimum: 0 },
+                renderMs: { type: "integer", minimum: 0 },
+                timeToFirstPageMs: {
+                  type: "integer",
+                  minimum: 0,
+                  description:
+                    "Extraction plus processing of the first page emitted in reading order.",
+                },
+                avgVisionMsPerPage: { type: "integer", minimum: 0 },
+                perPageVisionMs: {
+                  type: "array",
+                  items: { type: "integer", minimum: 0 },
+                },
+              },
+            },
             markdown: { type: "string", description: "The serialized canonical document." },
             warnings: { type: "array", items: { type: "string" } },
           },

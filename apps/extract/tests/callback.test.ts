@@ -179,6 +179,31 @@ describe("deliverCallback", () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
+  it("bounds a callback attempt when the receiver never responds", async () => {
+    const fetchMock = vi.fn(
+      (_url: URL, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener(
+            "abort",
+            () => reject(new DOMException("aborted", "AbortError")),
+            { once: true },
+          );
+        }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      deliverCallback({
+        url,
+        jobId: "j",
+        body: {},
+        config: { ...OPEN, callbackTimeoutMs: 1 },
+        logger: testLogger,
+      }),
+    ).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("never throws, because there is nobody left to tell", async () => {
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ENOTFOUND")));
     await expect(

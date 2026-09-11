@@ -96,6 +96,59 @@ describe("createWorkQueue", () => {
     await expect(queue.submit(async () => "ok")).resolves.toBe("ok");
   });
 
+  it("reports queued position and start timing", async () => {
+    const queue = createWorkQueue({ concurrency: 1, maxDepth: 2 });
+    const gate = deferred();
+    const first = queue.submit(async () => gate.promise);
+    const queued: number[] = [];
+    const started: number[] = [];
+    const second = queue.submit(async () => undefined, {
+      onQueued: (state) => queued.push(state.position),
+      onStarted: (state) => started.push(state.queueMs),
+    });
+
+    expect(queued).toEqual([1]);
+    gate.resolve();
+    await Promise.all([first, second]);
+    expect(started).toHaveLength(1);
+    expect(started[0]).toBeGreaterThanOrEqual(0);
+  });
+
+  it.each(["onQueued", "onStarted"] as const)(
+    "restores capacity when %s throws for an immediate task",
+    async (hookName) => {
+      const queue = createWorkQueue({ concurrency: 1, maxDepth: 1 });
+      await expect(
+        queue.submit(async () => undefined, {
+          [hookName]: () => {
+            throw new Error(`${hookName} failed`);
+          },
+        }),
+      ).rejects.toThrow(`${hookName} failed`);
+      expect(queue.state()).toMatchObject({ active: 0, depth: 0 });
+      await expect(queue.submit(async () => "ok")).resolves.toBe("ok");
+    },
+  );
+
+  it("removes a waiting task when its onQueued hook throws", async () => {
+    const queue = createWorkQueue({ concurrency: 1, maxDepth: 2 });
+    const gate = deferred();
+    const running = queue.submit(async () => gate.promise);
+
+    await expect(
+      queue.submit(async () => undefined, {
+        onQueued: () => {
+          throw new Error("queued hook failed");
+        },
+      }),
+    ).rejects.toThrow("queued hook failed");
+    expect(queue.state()).toMatchObject({ active: 1, depth: 0 });
+
+    gate.resolve();
+    await running;
+    expect(queue.state()).toMatchObject({ active: 0, depth: 0 });
+  });
+
   it("reports state changes for metrics", async () => {
     const states: Array<{ depth: number; active: number }> = [];
     const queue = createWorkQueue({
