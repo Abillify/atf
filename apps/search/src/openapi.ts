@@ -714,7 +714,8 @@ export function buildOpenApiSpec(serverUrl: string) {
           operationId: "ingestFile",
           summary: "Ingest a binary document via the document converter",
           description:
-            "Accepts a raw PDF, DOCX, XLSX, PNG, JPEG or GIF, has `@atf/extract` convert it to " +
+            "Accepts a raw PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP or WebP, " +
+            "has `@atf/extract` convert it to " +
             "canonical Markdown, and indexes the result through the same path as " +
             "`POST /ingest`. Every `X-…` header understood there applies here unchanged.\n\n" +
             "Mounted only when `CONVERTER_URL` is configured; otherwise this route returns 404.\n\n" +
@@ -748,7 +749,9 @@ export function buildOpenApiSpec(serverUrl: string) {
               name: "X-Filename",
               in: "header",
               required: false,
-              description: "Helps the converter resolve DOCX from XLSX when both are ZIP-shaped.",
+              description:
+                "Helps the converter distinguish Word from Excel for ZIP-shaped OOXML and " +
+                "OLE-shaped legacy Office files.",
               schema: { type: "string" },
             },
             {
@@ -769,12 +772,17 @@ export function buildOpenApiSpec(serverUrl: string) {
               "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
                 schema: { type: "string", format: "binary" },
               },
+              "application/msword": { schema: { type: "string", format: "binary" } },
               "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
                 schema: { type: "string", format: "binary" },
               },
+              "application/vnd.ms-excel": { schema: { type: "string", format: "binary" } },
               "image/png": { schema: { type: "string", format: "binary" } },
               "image/jpeg": { schema: { type: "string", format: "binary" } },
               "image/gif": { schema: { type: "string", format: "binary" } },
+              "image/tiff": { schema: { type: "string", format: "binary" } },
+              "image/bmp": { schema: { type: "string", format: "binary" } },
+              "image/webp": { schema: { type: "string", format: "binary" } },
             },
           },
           responses: {

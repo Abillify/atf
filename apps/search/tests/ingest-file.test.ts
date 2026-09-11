@@ -103,7 +103,7 @@ function markdownResponse(body = MARKDOWN, headers: Record<string, string> = {})
     status: 200,
     headers: {
       "content-type": "text/markdown; charset=utf-8",
-      "x-extract-contract": "atf-extract/1.0.0",
+      "x-extract-contract": "atf-extract/1.1.0",
       "x-page-count": "1",
       "x-figure-count": "1",
       ...headers,
@@ -116,6 +116,18 @@ afterEach(() => {
 });
 
 describe("POST /ingest-file", () => {
+  it("admits every extract-compatible MIME type", () => {
+    expect(CONVERTIBLE_MIME_TYPES).toEqual(
+      expect.arrayContaining([
+        "application/msword",
+        "application/vnd.ms-excel",
+        "image/tiff",
+        "image/bmp",
+        "image/webp",
+      ]),
+    );
+  });
+
   it("asks the converter for Markdown and forwards the credential", async () => {
     const fetchMock = vi.fn(async () => markdownResponse());
     vi.stubGlobal("fetch", fetchMock);
@@ -214,7 +226,7 @@ describe("POST /ingest-file", () => {
         .send(PDF);
 
       const metadata = JSON.parse(captured[0]?.metadata ?? "{}");
-      expect(metadata.extract_contract).toBe("atf-extract/1.0.0");
+      expect(metadata.extract_contract).toBe("atf-extract/1.1.0");
       expect(metadata.extract_via).toBe("search/ingest-file");
     });
 
@@ -230,7 +242,7 @@ describe("POST /ingest-file", () => {
 
       const metadata = JSON.parse(captured[0]?.metadata ?? "{}");
       expect(metadata.project_id).toBe("wms");
-      expect(metadata.extract_contract).toBe("atf-extract/1.0.0");
+      expect(metadata.extract_contract).toBe("atf-extract/1.1.0");
     });
 
     it("lets the caller's value win on a conflict", async () => {
@@ -262,7 +274,7 @@ describe("POST /ingest-file", () => {
       expect(raw).toMatch(/^base64:/);
       const decoded = JSON.parse(Buffer.from(raw.slice(7), "base64").toString("utf-8"));
       expect(decoded.author).toBe("Prüfautor");
-      expect(decoded.extract_contract).toBe("atf-extract/1.0.0");
+      expect(decoded.extract_contract).toBe("atf-extract/1.1.0");
     });
 
     it("passes invalid caller metadata through untouched", async () => {
@@ -290,7 +302,7 @@ describe("POST /ingest-file", () => {
       .set("X-Reference", "a")
       .send(PDF);
     expect(response.headers["x-figure-assets"]).toBe("not-stored");
-    expect(response.headers["x-extract-contract"]).toBe("atf-extract/1.0.0");
+    expect(response.headers["x-extract-contract"]).toBe("atf-extract/1.1.0");
   });
 
   describe("validation before any work is done", () => {

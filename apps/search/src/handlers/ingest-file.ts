@@ -51,10 +51,15 @@ import { injectTraceHeaders } from "../trace-context.js";
 export const CONVERTIBLE_MIME_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  "application/msword",
   "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+  "application/vnd.ms-excel",
   "image/png",
   "image/jpeg",
   "image/gif",
+  "image/tiff",
+  "image/bmp",
+  "image/webp",
 ] as const;
 
 /** Response header the converter uses to declare its output contract. */
