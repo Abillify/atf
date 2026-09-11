@@ -20,6 +20,34 @@ releases:
 
 Nothing yet.
 
+## [0.2.1] — 2026-09-11
+
+Repairs multimodal LLM requests in Runtime. Image attachments now reach providers as AI SDK
+file parts, local multimodal Qwen3 checkpoints are recognised as vision-capable, and an
+optional vision step can be scoped to the current turn. No database migration, no contract
+change and no executable flow change.
+
+### Added
+
+- LLM nodes accept `config.inputFilter: "current-turn-attachments"`, which skips the node
+  unless the most recent user message itself carries an image or file part. The existing
+  `"attachments"` filter keeps its behaviour of matching attachments anywhere in the
+  checkpointed history.
+- Model capabilities mark local vLLM Qwen3 NVFP4 checkpoints served over the OpenAI protocol
+  as vision-capable. Local model ids match no cloud pattern and previously failed closed on
+  vision; the rule is scoped to the multimodal build so text-only Qwen deployments stay closed.
+
+### Fixed
+
+- Image content is mapped to AI SDK `file` parts with the validated MIME type instead of the
+  legacy `image` part, so providers receive the declared media type. Image detection, context
+  window estimation and text rendering all recognise the file-part shape, including checkpoints
+  written before this release.
+- A vision preprocessing step filtered on attachments no longer runs for a later text-only
+  request because an earlier checkpointed turn contained an image.
+- The PII image describer passes the attachment MIME type through to the description request
+  rather than sending an untyped image part.
+
 ## [0.2.0] — 2026-09-11
 
 Expands Extract's document surface and progress contract. This release does not run a database
@@ -267,7 +295,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/abillify/atf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/abillify/atf/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/abillify/atf/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/abillify/atf/compare/v0.1.2...v0.1.3
