@@ -36,6 +36,7 @@ import {
   type Task,
 } from "../agent-harness/types.js";
 import { createAgentHarnessNodeHandler } from "../agent-harness.js";
+import { HarnessConfigSchema } from "../flow-parser/validate.js";
 import type {
   AgentState,
   ExecRuntime,
@@ -1484,6 +1485,441 @@ describe("verification gate (end-to-end)", () => {
     ).toEqual(["discovery", "summary", "discovery"]);
     expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
       "harness_coverage_discovery_reopened",
+    );
+  });
+});
+
+
+describe("coverage worker targets", () => {
+  test("parseHarnessConfig preserves trimmed mode-specific targets", () => {
+    const config = parseHarnessConfig({
+      allowlist: ["default-worker", "summary-worker", "discovery-worker"],
+      coverageQueue: {
+        enabled: true,
+        sourceTool: "vectorsearch/get_summaries",
+        targets: {
+          summary: " summary-worker ",
+          discovery: "discovery-worker",
+          original: "default-worker",
+        },
+      },
+    });
+
+    expect(config.coverageQueue?.targets).toEqual({
+      summary: "summary-worker",
+      discovery: "discovery-worker",
+      original: "default-worker",
+    });
+  });
+
+  test("routes summary and discovery assignments to their configured workers", async () => {
+    const seed: ToolResultEntry = {
+      tool_call_id: "seed",
+      tool_name: "vectorsearch/get_summaries",
+      result: {
+        summaries: [{ reference: "/A", title: "A", summary: "Summary A" }],
+        count: 1,
+        total: 1,
+      },
+      execution_time_seconds: 0,
+    };
+
+    const { update, calls } = await run(
+      harnessNode({
+        allowlist: ["default-worker", "summary-worker", "discovery-worker"],
+        plannerless: true,
+        maxIterations: 4,
+        coverageQueue: {
+          enabled: true,
+          sourceTool: "vectorsearch/get_summaries",
+          batchSize: 1,
+          maxOriginalsPerBatch: 1,
+          assignmentCharBudget: 1000,
+          documentWindowChars: 1000,
+          hybridSearch: {
+            minDistinctQueries: 2,
+            requireHydeVariants: true,
+            requireGroupedResults: true,
+          },
+          searchDiscovery: {
+            rounds: 1,
+            maxAttemptsPerRound: 1,
+            maxHitsPerPass: 2,
+          },
+          targets: {
+            summary: "summary-worker",
+            discovery: "discovery-worker",
+          },
+          markers: { start: "<COVERAGE>", end: "</COVERAGE>" },
+        },
+        verification: {
+          target: "reviewer",
+          passSignal: "VERIFIKATION OK",
+          failClosed: true,
+        },
+      }),
+      [
+        "orchestrator",
+        "default-worker",
+        "summary-worker",
+        "discovery-worker",
+        "reviewer",
+      ],
+      [],
+      (target) => {
+        if (target === "reviewer") return { text: "VERIFIKATION OK" };
+        if (target === "summary-worker") {
+          return {
+            text:
+              '<COVERAGE>{"assignmentId":"coverage-2","documents":[' +
+              '{"ref":"/A","decision":"excluded","reason":"Sachfremd"}' +
+              "]}</COVERAGE>",
+          };
+        }
+        if (target === "discovery-worker") {
+          return {
+            text: "Discovery abgeschlossen.",
+            toolResults: [
+              {
+                tool_call_id: "search-exact",
+                tool_name: "vectorsearch/search",
+                args_json: JSON.stringify({
+                  query: "Aktenzeichen 123",
+                  hybrid: true,
+                  hyde: false,
+                  group_by_document: true,
+                }),
+                result: { results: [] },
+                execution_time_seconds: 0,
+              },
+              {
+                tool_call_id: "search-concept",
+                tool_name: "vectorsearch/search",
+                args_json: JSON.stringify({
+                  query: "juristischer Fristbeginn",
+                  hybrid: true,
+                  hyde: true,
+                  group_by_document: true,
+                }),
+                result: { results: [] },
+                execution_time_seconds: 0,
+              },
+            ],
+          };
+        }
+        return { text: "unerwarteter Fallback" };
+      },
+      [seed],
+    );
+
+    expect(calls).toEqual([
+      "discovery-worker",
+      "summary-worker",
+      "reviewer",
+    ]);
+    expect(update.harness?.stopReason).toBe("completed");
+    expect(update.harness?.tasks.map((task) => task.target)).toEqual([
+      "discovery-worker",
+      "summary-worker",
+    ]);
+  });
+  test("routes original assignments to their configured worker", async () => {
+    const seed: ToolResultEntry = {
+      tool_call_id: "seed-original",
+      tool_name: "vectorsearch/get_summaries",
+      result: {
+        summaries: [{ reference: "/A", title: "A", summary: "Summary A" }],
+        count: 1,
+        total: 1,
+      },
+      execution_time_seconds: 0,
+    };
+
+    const { update, calls } = await run(
+      harnessNode({
+        allowlist: ["default-worker", "original-worker"],
+        plannerless: true,
+        maxIterations: 4,
+        coverageQueue: {
+          enabled: true,
+          sourceTool: "vectorsearch/get_summaries",
+          targets: { original: "original-worker" },
+          markers: { start: "<COVERAGE>", end: "</COVERAGE>" },
+        },
+        verification: {
+          target: "reviewer",
+          passSignal: "VERIFIKATION OK",
+          failClosed: true,
+        },
+      }),
+      ["orchestrator", "default-worker", "original-worker", "reviewer"],
+      [],
+      (target) => {
+        if (target === "reviewer") return { text: "VERIFIKATION OK" };
+        if (target === "default-worker") {
+          return {
+            text:
+              '<COVERAGE>{"assignmentId":"coverage-1","documents":[' +
+              '{"ref":"/A","decision":"relevant","reason":"Fristbezug"}' +
+              "]}</COVERAGE>",
+          };
+        }
+        return {
+          text:
+            '<COVERAGE>{"assignmentId":"coverage-2","documents":[' +
+            '{"ref":"/A","decision":"reviewed","reason":"Vollständig geprüft"}' +
+            "]}</COVERAGE>",
+          toolResults: [
+            {
+              tool_call_id: "read-original",
+              tool_name: "vectorsearch/get_document",
+              args_json: JSON.stringify({
+                reference: "/A",
+                offset: 0,
+                max_chars: 6,
+              }),
+              result: {
+                reference: "/A",
+                content: "abcdef",
+                totalChars: 6,
+                modified: "2026-09-14T00:00:00.000Z",
+              },
+              execution_time_seconds: 0,
+            },
+          ],
+        };
+      },
+      [seed],
+    );
+
+    expect(calls).toEqual(["default-worker", "original-worker", "reviewer"]);
+    expect(update.harness?.stopReason).toBe("completed");
+    expect(update.harness?.tasks.map((task) => task.target)).toEqual([
+      "default-worker",
+      "original-worker",
+    ]);
+    expect(
+      update.harness?.tasks.map((task) => task.coverageAssignmentMode),
+    ).toEqual(["summary", "original"]);
+  });
+
+  test("uses the first valid allowlist target for an omitted mode override", async () => {
+    const seed: ToolResultEntry = {
+      tool_call_id: "seed-fallback",
+      tool_name: "vectorsearch/get_summaries",
+      result: {
+        summaries: [{ reference: "/A", title: "A", summary: "Summary A" }],
+        count: 1,
+        total: 1,
+      },
+      execution_time_seconds: 0,
+    };
+
+    const { update, calls } = await run(
+      harnessNode({
+        allowlist: ["default-worker", "original-worker"],
+        plannerless: true,
+        maxIterations: 3,
+        coverageQueue: {
+          enabled: true,
+          sourceTool: "vectorsearch/get_summaries",
+          targets: { original: "original-worker" },
+          markers: { start: "<COVERAGE>", end: "</COVERAGE>" },
+        },
+        verification: {
+          target: "reviewer",
+          passSignal: "VERIFIKATION OK",
+          failClosed: true,
+        },
+      }),
+      ["orchestrator", "default-worker", "original-worker", "reviewer"],
+      [],
+      (target) =>
+        target === "reviewer"
+          ? { text: "VERIFIKATION OK" }
+          : {
+              text:
+                '<COVERAGE>{"assignmentId":"coverage-1","documents":[' +
+                '{"ref":"/A","decision":"excluded","reason":"Sachfremd"}' +
+                "]}</COVERAGE>",
+            },
+      [seed],
+    );
+
+    expect(calls).toEqual(["default-worker", "reviewer"]);
+    expect(update.harness?.tasks[0]).toMatchObject({
+      target: "default-worker",
+      coverageAssignmentMode: "summary",
+    });
+  });
+
+  test("keeps mode-specific routing for verification repair assignments", async () => {
+    const seed: ToolResultEntry = {
+      tool_call_id: "seed-repair",
+      tool_name: "vectorsearch/get_summaries",
+      result: {
+        summaries: [{ reference: "/A", title: "A", summary: "Summary A" }],
+        count: 1,
+        total: 1,
+      },
+      execution_time_seconds: 0,
+    };
+    const searchResults = (suffix: string): DelegatedToolResult[] => [
+      {
+        tool_call_id: `search-exact-${suffix}`,
+        tool_name: "vectorsearch/search",
+        args_json: JSON.stringify({
+          query: `exakter Anker ${suffix}`,
+          hybrid: true,
+          hyde: false,
+          group_by_document: true,
+        }),
+        result: { results: [] },
+        execution_time_seconds: 0,
+      },
+      {
+        tool_call_id: `search-concept-${suffix}`,
+        tool_name: "vectorsearch/search",
+        args_json: JSON.stringify({
+          query: `konzeptuelle Gegenhypothese ${suffix}`,
+          hybrid: true,
+          hyde: true,
+          group_by_document: true,
+        }),
+        result: { results: [] },
+        execution_time_seconds: 0,
+      },
+    ];
+
+    const { update, calls } = await run(
+      harnessNode({
+        allowlist: ["default-worker", "summary-worker", "discovery-worker"],
+        plannerless: true,
+        maxIterations: 7,
+        coverageQueue: {
+          enabled: true,
+          sourceTool: "vectorsearch/get_summaries",
+          targets: {
+            summary: "summary-worker",
+            discovery: "discovery-worker",
+          },
+          hybridSearch: {
+            minDistinctQueries: 2,
+            requireHydeVariants: true,
+            requireGroupedResults: true,
+          },
+          searchDiscovery: {
+            rounds: 1,
+            maxAttemptsPerRound: 1,
+            maxHitsPerPass: 2,
+          },
+          markers: { start: "<COVERAGE>", end: "</COVERAGE>" },
+        },
+        verification: {
+          target: "reviewer",
+          passSignal: "VERIFIKATION OK",
+          maxAttempts: 2,
+          failClosed: true,
+        },
+      }),
+      [
+        "orchestrator",
+        "default-worker",
+        "summary-worker",
+        "discovery-worker",
+        "reviewer",
+      ],
+      [],
+      (target, idx) => {
+        if (target === "reviewer") {
+          return idx === 0
+            ? { text: "GLOBAL DISCOVERY: weitere Evidenz erforderlich." }
+            : { text: "VERIFIKATION OK" };
+        }
+        if (target === "summary-worker") {
+          return {
+            text:
+              '<COVERAGE>{"assignmentId":"coverage-2","documents":[' +
+              '{"ref":"/A","decision":"excluded","reason":"Sachfremd"}' +
+              "]}</COVERAGE>",
+          };
+        }
+        return {
+          text: `Discovery ${idx + 1} abgeschlossen.`,
+          toolResults: searchResults(`runde-${idx + 1}`),
+        };
+      },
+      [seed],
+    );
+
+    expect(calls).toEqual([
+      "discovery-worker",
+      "summary-worker",
+      "reviewer",
+      "discovery-worker",
+      "reviewer",
+    ]);
+    expect(update.harness?.stopReason).toBe("completed");
+    expect(update.harness?.tasks.map((task) => task.target)).toEqual([
+      "discovery-worker",
+      "summary-worker",
+      "discovery-worker",
+    ]);
+  });
+});
+
+
+describe("coverage target validation", () => {
+  test("schema rejects blank and non-allowlisted mode targets", () => {
+    const base = {
+      allowlist: ["default-worker"],
+      coverageQueue: {
+        enabled: true,
+        sourceTool: "vectorsearch/get_summaries",
+      },
+    };
+
+    expect(
+      HarnessConfigSchema.safeParse({
+        ...base,
+        coverageQueue: {
+          ...base.coverageQueue,
+          targets: { summary: "   " },
+        },
+      }).success,
+    ).toBe(false);
+    expect(
+      HarnessConfigSchema.safeParse({
+        ...base,
+        coverageQueue: {
+          ...base.coverageQueue,
+          targets: { summary: "summary-worker" },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("runtime fails closed when validation was bypassed with an invalid target", async () => {
+    const { update, calls } = await run(
+      harnessNode({
+        allowlist: ["default-worker"],
+        plannerless: true,
+        maxIterations: 2,
+        coverageQueue: {
+          enabled: true,
+          sourceTool: "vectorsearch/get_summaries",
+          targets: { summary: "missing-worker" },
+        },
+      }),
+      ["orchestrator", "default-worker"],
+      [],
+      () => ({ text: "unexpected" }),
+    );
+
+    expect(calls).toEqual([]);
+    expect(update.harness?.stopReason).toBe("no-tasks");
+    expect(update.errors?.map((error) => error.message).join("\n")).toContain(
+      "summary=missing-worker",
     );
   });
 });

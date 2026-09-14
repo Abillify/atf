@@ -253,6 +253,13 @@ export const HarnessConfigSchema = z.object({
     .object({
       enabled: z.boolean(),
       mode: z.enum(["legacy", "staged"]).optional(),
+      targets: z
+        .object({
+          summary: z.string().trim().min(1).optional(),
+          discovery: z.string().trim().min(1).optional(),
+          original: z.string().trim().min(1).optional(),
+        })
+        .optional(),
       sourceTool: z.string().min(1).max(256),
       batchSize: z.number().int().min(1).max(100).optional(),
       maxOriginalsPerBatch: z.number().int().min(1).max(10).optional(),
@@ -316,6 +323,18 @@ export const HarnessConfigSchema = z.object({
       failClosed: z.boolean().optional(),
     })
     .optional(),
+}).superRefine((config, ctx) => {
+  for (const [mode, target] of Object.entries(
+    config.coverageQueue?.targets ?? {},
+  )) {
+    if (target !== undefined && !config.allowlist.includes(target)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["coverageQueue", "targets", mode],
+        message: "coverage target must be present in allowlist",
+      });
+    }
+  }
 });
 
 /**

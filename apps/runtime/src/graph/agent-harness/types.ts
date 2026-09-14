@@ -300,14 +300,11 @@ export interface HarnessConfig {
   requiredFindingMarkers?: string[];
   /**
    * Plannerless loop mode. When `true`, the harness SKIPS all LLM planner
-   * calls (initial plan + every re-plan) and instead delegates repeatedly to
-   * the SINGLE allowlist target, one pass per iteration, until `stopSignal` is
-   * emitted or a limit (maxIterations/maxTimeMs/maxCost) is hit. Everything
-   * else — bounded/condensed carryForward, limits, progress, citations — is
-   * unchanged. This removes the planner's per-iteration token/latency overhead
-   * for a self-directed single-worker research loop (the worker already picks
-   * its own next document). Requires the allowlist to hold exactly one target;
-   * a `stopSignal` is strongly recommended so the loop can end early.
+   * calls (initial plan + every re-plan) and delegates repeatedly without a
+   * planner. Generic plannerless loops use the first allowlist target. Coverage
+   * queues may override that target per assignment mode via
+   * `coverageQueue.targets`; every configured target must also be allowlisted.
+   * Missing mode overrides fall back to the first allowlist target.
    */
   plannerless?: boolean;
   /**
@@ -1044,10 +1041,30 @@ export function parseHarnessConfig(
         raw.searchDiscovery && typeof raw.searchDiscovery === "object"
           ? (raw.searchDiscovery as Record<string, unknown>)
           : undefined;
+      const rawTargets =
+        raw.targets && typeof raw.targets === "object"
+          ? (raw.targets as Record<string, unknown>)
+          : undefined;
+      const targets =
+        rawTargets === undefined
+          ? undefined
+          : Object.fromEntries(
+              (["summary", "discovery", "original"] as const).flatMap(
+                (mode) => {
+                  const target = rawTargets[mode];
+                  return typeof target === "string" && target.trim() !== ""
+                    ? [[mode, target.trim()] as const]
+                    : [];
+                },
+              ),
+            );
       result.coverageQueue = {
         enabled: true,
         ...(raw.mode === "staged" || raw.mode === "legacy"
           ? { mode: raw.mode }
+          : {}),
+        ...(targets !== undefined && Object.keys(targets).length > 0
+          ? { targets }
           : {}),
         sourceTool: raw.sourceTool.trim(),
         batchSize: boundedInt(raw.batchSize, 1, 100, 20),

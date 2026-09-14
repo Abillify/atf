@@ -52,10 +52,18 @@ export interface CoverageSearchDiscoveryConfig {
 
 export type CoverageQueueMode = "legacy" | "staged";
 
+/** Optional worker-node overrides for deterministic coverage assignments. */
+export type CoverageTargets = Partial<Record<CoverageAssignmentMode, string>>;
+
 export interface CoverageQueueConfig {
 	enabled: boolean;
 	/** Staged runs complete all triage before one global discovery and originals. */
 	mode?: CoverageQueueMode;
+	/**
+	 * Worker node selected per assignment mode. Missing modes fall back to the
+	 * first validated allowlist target for backward compatibility.
+	 */
+	targets?: CoverageTargets;
 	sourceTool: string;
 	batchSize: number;
 	maxOriginalsPerBatch: number;

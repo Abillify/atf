@@ -41,7 +41,10 @@ need adaptation.
   fan-out and merge), `retrieval` (embed, fetch top-K, inject as grounding context and
   citations), `memory` (recall long-term memories for the user or tenant scope),
   `agent-harness` (plans tasks with a model, then delegates each to allowlisted worker nodes
-  or subflows), `transform` (derives extra `classification` fields from existing ones via
+  or subflows; in plannerless coverage queues, optional
+  `config.coverageQueue.targets.{summary,discovery,original}` entries route each assignment
+  mode to a specific allowlisted worker, while omitted modes use the first valid allowlist
+  target), `transform` (derives extra `classification` fields from existing ones via
   lookup tables in the YAML, with no model call), `trigger` (declarative boundary marker for
   webhook- or schedule-started flows; a no-op at execution time), `assistant-context`
   (resolves the per-user assistant and injects its identity, skill index and credential state

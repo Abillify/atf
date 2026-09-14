@@ -1272,12 +1272,19 @@ export function createAgentHarnessNodeHandler(
       ancestorChain,
     );
 
-    // Plannerless mode (HarnessConfig.plannerless): loop the single allowlist
-    // target directly, with NO planner LLM calls. `plannerlessTarget` is the
-    // sole worker; `plannerlessSeq` numbers the synthetic per-iteration tasks.
+    // Plannerless mode skips planner calls. Generic runs use the first
+    // allowlist target; coverage assignments may select an allowlisted target
+    // per mode and fall back to that first target when no override is set.
     const plannerless = cfg.plannerless === true;
     const plannerlessTarget = validTargets[0];
     const coverageConfig = plannerless ? cfg.coverageQueue : undefined;
+    const coverageTargetForAssignment = (
+      assignment: CoverageAssignment | undefined,
+    ): string | undefined => {
+      if (assignment === undefined) return plannerlessTarget;
+      const configured = coverageConfig?.targets?.[assignment.mode];
+      return configured ?? plannerlessTarget;
+    };
     let coverageLedger: CoverageLedger | undefined;
     let currentCoverageAssignment: CoverageAssignment | undefined;
     let plannerlessSeq = 0;
@@ -1644,12 +1651,29 @@ export function createAgentHarnessNodeHandler(
     }
 
     if (plannerless) {
-      // No planner: the single allowlist target is looped directly. Coverage
-      // mode replaces the generic pass with a deterministic assignment from the
-      // complete get_summaries snapshot.
+      const invalidCoverageTargets = Object.entries(
+        coverageConfig?.targets ?? {},
+      ).filter(
+        (entry): entry is [string, string] =>
+          entry[1] !== undefined && !validTargets.includes(entry[1]),
+      );
+      if (invalidCoverageTargets.length > 0) {
+        errors.push({
+          message:
+            `Agent harness "${node.id}": coverage target(s) must resolve to ` +
+            `allowlisted nodes (${invalidCoverageTargets
+              .map(([mode, target]) => `${mode}=${target}`)
+              .join(", ")}).`,
+          type: "execution_error",
+          details: { node_id: node.id },
+        });
+        return stop("no-tasks", progress, errors);
+      }
+      // No planner: the first allowlist target is the compatibility fallback;
+      // coverage mode may override it per deterministic assignment mode.
       if (plannerlessTarget === undefined) {
         errors.push({
-          message: `Agent harness "${node.id}": plannerless mode requires exactly one valid allowlist target.`,
+          message: `Agent harness "${node.id}": plannerless mode requires at least one valid allowlist target.`,
           type: "execution_error",
           details: { node_id: node.id },
         });
@@ -1695,7 +1719,9 @@ export function createAgentHarnessNodeHandler(
             currentCoverageAssignment === undefined
               ? `Research step ${plannerlessSeq}`
               : coverageTaskLabel(currentCoverageAssignment, "Coverage"),
-          target: plannerlessTarget,
+          target:
+            coverageTargetForAssignment(currentCoverageAssignment) ??
+            plannerlessTarget,
           status: "pending",
           ...(currentCoverageAssignment !== undefined
             ? {
@@ -2689,7 +2715,9 @@ export function createAgentHarnessNodeHandler(
                   currentCoverageAssignment,
                   "Coverage-Nacharbeit",
                 ),
-          target: plannerlessTarget,
+          target:
+            coverageTargetForAssignment(currentCoverageAssignment) ??
+            plannerlessTarget,
           status: "pending",
           ...(currentCoverageAssignment !== undefined
             ? {
@@ -3229,7 +3257,9 @@ export function createAgentHarnessNodeHandler(
               currentCoverageAssignment === undefined
                 ? `Research step ${plannerlessSeq}`
                 : coverageTaskLabel(currentCoverageAssignment, "Coverage"),
-            target: plannerlessTarget,
+            target:
+              coverageTargetForAssignment(currentCoverageAssignment) ??
+              plannerlessTarget,
             status: "pending",
             ...(currentCoverageAssignment !== undefined
               ? {
