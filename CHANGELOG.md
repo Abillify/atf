@@ -20,6 +20,37 @@ releases:
 
 Nothing yet.
 
+## [0.3.0] — 2026-09-14
+
+Adds deterministic worker routing for plannerless coverage queues. Existing flows remain
+compatible: every assignment mode without an override continues to use the first valid
+allowlist target. No database migration, independently versioned contract-package change, or
+executable flow change is included in this repository.
+
+### Added
+
+- Agent-harness coverage queues accept optional
+  `config.coverageQueue.targets.{summary,discovery,original}` entries, allowing summary triage,
+  targeted discovery, and original-document review to run on different worker nodes.
+- Flow validation trims configured targets and requires every target to be non-empty and present
+  in the harness allowlist. Runtime validation also fails closed before delegation when a
+  configured non-empty target does not resolve to an allowlisted node, even if schema validation
+  was bypassed.
+
+### Compatibility
+
+- Omitting `coverageQueue.targets`, or omitting an individual mode, preserves the previous
+  behavior by selecting the first valid allowlist target.
+- Deployments may opt into mode-specific workers without migrating stored data. Any external
+  executable flow changed to use the new configuration still requires its own semantic
+  `metadata.version` bump and post-deployment `flow_version` verification in the execution
+  debug trace.
+
+### Security
+
+- Mode-specific routing does not expand worker authority: configured targets must remain in the
+  harness allowlist and resolve to valid, non-cyclic nodes before any task is delegated.
+
 ## [0.2.1] — 2026-09-11
 
 Repairs multimodal LLM requests in Runtime. Image attachments now reach providers as AI SDK
@@ -295,7 +326,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/abillify/atf/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/abillify/atf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/abillify/atf/compare/v0.1.4...v0.2.0
 [0.1.4]: https://github.com/abillify/atf/compare/v0.1.3...v0.1.4
