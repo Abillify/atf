@@ -49,7 +49,6 @@ import {
 const DEFAULT_PAGE_SIZE = 200;
 const DEFAULT_MAX_PAGES = 50;
 const MCP_ERROR_FALLBACK = "MCP tool reported an error";
-const MAX_ERROR_MESSAGE_LENGTH = 500;
 
 function positiveSafeInteger(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0
@@ -64,57 +63,12 @@ function nonNegativeSafeInteger(value: unknown, fallback: number): number {
 }
 
 /**
- * Extract a short message from explicitly error-shaped fields only. In
- * particular, never stringify the full MCP payload: error responses may carry
- * request data or other sensitive fields alongside the actual message.
+ * Returns a stable public message for untrusted MCP error envelopes. Provider
+ * messages may contain credentials, private endpoints, or request excerpts and
+ * must not enter state, traces, monitoring, or client streams.
  */
-function mcpErrorMessage(content: unknown): string {
-  const seen = new Set<object>();
-  const normalize = (value: string): string | undefined => {
-    const message = value.replace(/\s+/g, " ").trim();
-    if (message === "") return undefined;
-    return message.length <= MAX_ERROR_MESSAGE_LENGTH
-      ? message
-      : `${message.slice(0, MAX_ERROR_MESSAGE_LENGTH - 1)}…`;
-  };
-  const visit = (
-    value: unknown,
-    depth: number,
-    acceptPlainString: boolean,
-  ): string | undefined => {
-    if (depth > 5 || value === null || value === undefined) return undefined;
-    if (typeof value === "string") {
-      if (acceptPlainString) return normalize(value);
-      try {
-        return visit(JSON.parse(value) as unknown, depth + 1, false);
-      } catch {
-        return undefined;
-      }
-    }
-    if (Array.isArray(value)) {
-      for (const item of value) {
-        const message = visit(item, depth + 1, false);
-        if (message !== undefined) return message;
-      }
-      return undefined;
-    }
-    if (typeof value !== "object" || seen.has(value)) return undefined;
-    seen.add(value);
-    const record = value as Record<string, unknown>;
-    for (const key of ["message", "error", "reason", "detail"]) {
-      const message = visit(record[key], depth + 1, true);
-      if (message !== undefined) return message;
-    }
-    // MCP text parts commonly contain a JSON-encoded error envelope. Parse it,
-    // but do not surface arbitrary plain text content as an error message.
-    if (record.type === "text") {
-      const message = visit(record.text, depth + 1, false);
-      if (message !== undefined) return message;
-    }
-    return visit(record.structuredContent, depth + 1, false);
-  };
-
-  return visit(content, 0, false) ?? MCP_ERROR_FALLBACK;
+function mcpErrorMessage(_content: unknown): string {
+  return MCP_ERROR_FALLBACK;
 }
 
 export function createToolNodeHandler(
@@ -481,8 +435,8 @@ export function createToolNodeHandler(
             if (pageTotal < 0) pageTotal = undefined;
           }
           pageOk = true;
-        } catch (err) {
-          const errMsg = err instanceof Error ? err.message : String(err);
+        } catch {
+          const errMsg = "Tool execution failed.";
           errors.push({
             message: `Tool "${toolRef}" failed: ${errMsg}`,
             type: "tool_error",

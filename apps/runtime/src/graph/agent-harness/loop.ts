@@ -40,6 +40,7 @@ import {
   coverageFindingText,
   coverageSummary,
   coverageVerificationManifest,
+  describeCoverageReportDefect,
   freezeCoverageCandidates,
   hasRequiredHybridSearchEvidence,
   isCoverageTerminal,
@@ -1137,89 +1138,102 @@ export function createAgentHarnessNodeHandler(
       return { runStore, scope: resolution.scope, parentRunId };
     })();
 
+    const delegationFailure = (
+      target: string,
+    ): { update: Partial<AgentState>; ok: false } => ({
+      update: {
+        errors: [
+          {
+            message: "Delegated task failed.",
+            type: "execution_error",
+            details: { node_id: target },
+          },
+        ],
+      },
+      ok: false,
+    });
+
     const runDelegation = async (
       target: string,
       taskKey: string,
       delegateState: AgentState,
       delegateConfig: LangGraphRunnableConfig,
     ): Promise<{ update: Partial<AgentState>; ok: boolean }> => {
-      if (durableBinding === undefined) {
-        return delegate(
-          target,
-          delegateState,
-          delegateConfig,
-          runtime,
-          nodeMap,
-          _testOverrides?.registry,
-          {
-            trigger: "harness-delegation",
-            parent_node_id: node.id,
-            delegation_id: taskKey,
-          },
-        );
-      }
-      const workerId = runtime.ctx.executionId;
-      const child = await durableBinding.runStore.startClaimed(
-        durableBinding.scope,
-        {
-          idempotencyKey: `harness:${runtime.ctx.executionId}:${node.id}:${taskKey}:${target}`,
-          ...(durableBinding.parentRunId !== undefined
-            ? { parentRunId: durableBinding.parentRunId }
-            : {}),
-          workerId,
-          resumePayload: {
-            kind: "harness-delegation",
-            executionId: runtime.ctx.executionId,
-            harnessNodeId: node.id,
-            taskKey,
-            target,
-          },
-        },
-      );
-      const heartbeat = setInterval(
-        () =>
-          void durableBinding.runStore
-            .heartbeat(durableBinding.scope, child.id, workerId)
-            .catch(() => undefined),
-        20_000,
-      );
-      heartbeat.unref?.();
       try {
-        const result = await delegate(
-          target,
-          delegateState,
-          delegateConfig,
-          runtime,
-          nodeMap,
-          _testOverrides?.registry,
+        if (durableBinding === undefined) {
+          return await delegate(
+            target,
+            delegateState,
+            delegateConfig,
+            runtime,
+            nodeMap,
+            _testOverrides?.registry,
+            {
+              trigger: "harness-delegation",
+              parent_node_id: node.id,
+              delegation_id: taskKey,
+            },
+          );
+        }
+        const workerId = runtime.ctx.executionId;
+        const child = await durableBinding.runStore.startClaimed(
+          durableBinding.scope,
           {
-            trigger: "harness-delegation",
-            parent_node_id: node.id,
-            delegation_id: child.id,
+            idempotencyKey: `harness:${runtime.ctx.executionId}:${node.id}:${taskKey}:${target}`,
+            ...(durableBinding.parentRunId !== undefined
+              ? { parentRunId: durableBinding.parentRunId }
+              : {}),
+            workerId,
+            resumePayload: {
+              kind: "harness-delegation",
+              executionId: runtime.ctx.executionId,
+              harnessNodeId: node.id,
+              taskKey,
+              target,
+            },
           },
         );
-        const error = result.ok
-          ? undefined
-          : "Delegated handler returned an execution error.";
-        await durableBinding.runStore.settle(
-          durableBinding.scope,
-          child.id,
-          result.ok,
-          error,
-          workerId,
+        const heartbeat = setInterval(
+          () =>
+            void durableBinding.runStore
+              .heartbeat(durableBinding.scope, child.id, workerId)
+              .catch(() => undefined),
+          20_000,
         );
-        return result;
-      } catch (error) {
-        await durableBinding.runStore.settle(
-          durableBinding.scope,
-          child.id,
-          false,
-          error instanceof Error ? error.message : String(error),
-          workerId,
-        );
-        throw error;
-      } finally {
-        clearInterval(heartbeat);
+        heartbeat.unref?.();
+        try {
+          const result = await delegate(
+            target,
+            delegateState,
+            delegateConfig,
+            runtime,
+            nodeMap,
+            _testOverrides?.registry,
+            {
+              trigger: "harness-delegation",
+              parent_node_id: node.id,
+              delegation_id: child.id,
+            },
+          );
+          const error = result.ok
+            ? undefined
+            : "Delegated handler returned an execution error.";
+          await durableBinding.runStore.settle(
+            durableBinding.scope,
+            child.id,
+            result.ok,
+            error,
+            workerId,
+          );
+          return result;
+        } finally {
+          clearInterval(heartbeat);
+        }
+      } catch {
+        // Lifecycle and durable-store failures are operational details. Convert
+        // them at this boundary so the generic graph/route catch cannot expose
+        // connection strings, endpoints, or payload excerpts.
+        return delegationFailure(target);
       }
     };
 
@@ -1344,7 +1358,6 @@ export function createAgentHarnessNodeHandler(
             "issued; the run stays fail-closed and reports a partial result.",
           details: {
             unsettled_documents: blocked.length,
-            blocked_refs: blocked.slice(0, 10).map((document) => document.ref),
             discovery_rounds: coverageLedger.discoveryRounds,
             required_discovery_rounds:
               coverageConfig.searchDiscovery?.rounds ?? 0,
@@ -1489,6 +1502,10 @@ export function createAgentHarnessNodeHandler(
     const contextFindings: string[] = [];
     const answerCitations: Citation[] = [];
     let coverageUpdates = 0;
+    // Reports the strict coverage gate refused. Monotonic like `coverageUpdates`:
+    // the per-batch delta decides whether a pass counted as progress or as
+    // stagnation (see `consecutiveStagnantIterations`).
+    let coverageReportRejections = 0;
 
     // --- Verification gate state ---
     // Declared HERE, before `stop()`, because `stop()` reports the verification
@@ -1688,11 +1705,9 @@ export function createAgentHarnessNodeHandler(
           );
           progress.coverage = coverageLedger;
           currentCoverageAssignment = issueCoverageAssignment();
-        } catch (error) {
-          const message =
-            error instanceof Error ? error.message : String(error);
+        } catch {
           errors.push({
-            message: `Agent harness "${node.id}": ${message}`,
+            message: `Agent harness "${node.id}": coverage seed validation failed.`,
             type: "execution_error",
             details: {
               node_id: node.id,
@@ -1787,6 +1802,17 @@ export function createAgentHarnessNodeHandler(
     // --- Write initial task list to state before the loop (Req 3.4, 10.3) ---
     // (The progress object is mutated in place and returned on every exit)
 
+    // Tracks report-protocol failures by the logical assignment, rather than by
+    // the transient monotone attempt id. A productive sibling must reset the
+    // *global* no-progress guard, while this map preserves which document batch
+    // still needs repair across retries.
+    const coverageReportRejectionStreaks = new Map<string, number>();
+    const coverageAssignmentKey = (assignment: CoverageAssignment): string =>
+      `${assignment.mode}\u0000${assignment.documents
+        .map((document) => document.ref)
+        .sort((left, right) => left.localeCompare(right))
+        .join("\u0000")}`;
+
     let coverageProvenanceFailure = false;
     let terminalBudgetFailure = false;
 
@@ -1826,6 +1852,9 @@ export function createAgentHarnessNodeHandler(
               .join("; ")
           : "Delegation failed";
         const terminalBudgetError = isTerminalBudgetErrorText(errorText);
+        const safeErrorText = terminalBudgetError
+          ? "Transaction budget exceeded."
+          : "Delegated task failed.";
 
         // Retry BEFORE giving up: a delegated worker fails for transient
         // reasons (provider hiccup, a tool momentarily unavailable, an empty
@@ -1838,24 +1867,23 @@ export function createAgentHarnessNodeHandler(
           t.status = "pending";
           t.researchStatus =
             "The research step is being re-run after a technical error; a domain decision is still pending.";
-          // Carry the failure text on the task so the re-attempt (and any
-          // re-plan that sees the task list) knows what went wrong.
-          t.error = errorText;
+          // Retain only a stable public failure category on task state. Raw
+          // delegated errors may contain provider endpoints or credentials.
+          t.error = safeErrorText;
           runtime.onNodeDiagnostic?.(node.id, {
             level: "info",
             code: "harness_task_retry",
             message:
-              `Task ${t.id} ("${t.description}") failed on attempt ` +
-              `${t.attempts} of ${maxTaskAttempts + 1} and will be retried: ${errorText}`,
+              `Task ${t.id} failed on attempt ${t.attempts} of ` +
+              `${maxTaskAttempts + 1} and will be retried.`,
             details: {
               task_id: t.id,
-              target: t.target,
               attempt: t.attempts,
               maxAttempts: maxTaskAttempts + 1,
             },
           });
           emitHarnessStatus(
-            `Task ${formatTaskReference(t)} → retry ${t.attempts}/${maxTaskAttempts} (${errorText})`,
+            `Task ${t.id} → retry ${t.attempts}/${maxTaskAttempts} (${safeErrorText})`,
           );
           return false;
         }
@@ -1863,12 +1891,16 @@ export function createAgentHarnessNodeHandler(
         t.status = "failed";
         t.researchStatus =
           "The research step could not be completed technically; no domain decision is available.";
-        t.error = errorText;
+        t.error = safeErrorText;
         terminalBudgetFailure ||= terminalBudgetError;
-        // Record the error but continue folding the current deterministic batch.
-        // The outer loop stops immediately after the batch on terminal budgets.
+        // Preserve failure control flow without copying provider/tool payloads
+        // into the harness result or the execution error stream.
         if (Array.isArray(update.errors)) {
-          errors.push(...(update.errors as StreamError[]));
+          errors.push({
+            message: safeErrorText,
+            type: "execution_error",
+            details: { node_id: node.id, task_id: t.id },
+          });
         }
         return false;
       }
@@ -1945,6 +1977,7 @@ export function createAgentHarnessNodeHandler(
           );
           findingMsgs = finding === "" ? [] : [new AIMessage(finding)];
           if (parsed !== undefined) {
+            coverageReportRejectionStreaks.delete(coverageAssignmentKey(assignment));
             const applied = applyCoverageReport(
               coverageLedger,
               assignment,
@@ -1968,7 +2001,7 @@ export function createAgentHarnessNodeHandler(
                 details: {
                   task_id: t.id,
                   assignment_id: assignment.id,
-                  refs: applied.rejectedRefs,
+                  rejected_document_count: applied.rejectedRefs.length,
                 },
               });
             }
@@ -1982,12 +2015,13 @@ export function createAgentHarnessNodeHandler(
                 details: {
                   task_id: t.id,
                   assignment_id: assignment.id,
-                  refs: applied.rejectedSearchRefs,
-                  observed_searches: searchEvidence.map((item) => ({
-                    query: item.query,
-                    hyde: item.hyde,
-                    group_by_document: item.groupByDocument,
-                  })),
+                  rejected_document_count: applied.rejectedSearchRefs.length,
+                  observed_search_count: searchEvidence.length,
+                  hyde_search_count: searchEvidence.filter((item) => item.hyde)
+                    .length,
+                  grouped_search_count: searchEvidence.filter(
+                    (item) => item.groupByDocument,
+                  ).length,
                 },
               });
             }
@@ -2001,21 +2035,39 @@ export function createAgentHarnessNodeHandler(
                 details: {
                   task_id: t.id,
                   assignment_id: assignment.id,
-                  refs: applied.rejectedUnexpectedSearchRefs,
-                  observed_queries: searchEvidence.map((item) => item.query),
+                  rejected_document_count:
+                    applied.rejectedUnexpectedSearchRefs.length,
+                  observed_search_count: searchEvidence.length,
                 },
               });
             }
           } else if (assignment.mode !== "discovery") {
+            const defect = describeCoverageReportDefect(
+              finalWorkerText,
+              assignment,
+              coverageConfig.markers,
+            );
+            // The gate refused the report, so the assignment stays open and comes
+            // back in the very next pass unchanged: whatever else the batch did,
+            // this document did not move. Counted against
+            // `maxStagnantIterations` below so the refusal cannot be masked by an
+            // unrelated task's progress in the same batch.
+            coverageReportRejections += 1;
+            const assignmentKey = coverageAssignmentKey(assignment);
+            const rejectionStreak =
+              (coverageReportRejectionStreaks.get(assignmentKey) ?? 0) + 1;
+            coverageReportRejectionStreaks.set(assignmentKey, rejectionStreak);
             runtime.onNodeDiagnostic?.(node.id, {
               level: "warn",
               code: "harness_coverage_report_invalid",
               message:
-                `Task ${t.id} did not return a valid report for ` +
-                `${assignment.id}; coverage status was not changed.`,
+                `Task ${t.id} did not return a valid coverage report; ` +
+                `coverage status was not changed (rule: ${defect}).`,
               details: {
                 task_id: t.id,
-                assignment_id: assignment.id,
+                assignment_mode: assignment.mode,
+                rejection_streak: rejectionStreak,
+                defect_code: defect,
               },
             });
           }
@@ -2106,15 +2158,15 @@ export function createAgentHarnessNodeHandler(
                 details: {
                   task_id: t.id,
                   assignment_id: assignment.id,
-                  previous_queries: coverageLedger.discoverySearches.map(
-                    (item) => item.query,
-                  ),
-                  observed_searches: searchEvidence.map((item) => ({
-                    query: item.query,
-                    hyde: item.hyde,
-                    group_by_document: item.groupByDocument,
-                    globally_new: novelEvidence.includes(item),
-                  })),
+                  previous_search_count:
+                    coverageLedger.discoverySearches.length,
+                  observed_search_count: searchEvidence.length,
+                  novel_search_count: novelEvidence.length,
+                  hyde_search_count: searchEvidence.filter((item) => item.hyde)
+                    .length,
+                  grouped_search_count: searchEvidence.filter(
+                    (item) => item.groupByDocument,
+                  ).length,
                   expansion_query_limit:
                     Number.isFinite(expansionQueryLimit)
                       ? expansionQueryLimit
@@ -2184,7 +2236,7 @@ export function createAgentHarnessNodeHandler(
                 details: {
                   task_id: t.id,
                   assignment_id: assignment.id,
-                  refs: promoted.promotedRefs,
+                  promoted_document_count: promoted.promotedRefs.length,
                 },
               });
             }
@@ -2214,9 +2266,9 @@ export function createAgentHarnessNodeHandler(
               details: {
                 assignment_id: assignment.id,
                 generation: assignment.discoveryGeneration ?? 0,
-                frozen_refs: frozen.frozenRefs,
-                expansion_seeds: assignment.expansionSeeds ?? [],
-                overflow_refs: frozen.overflowRefs,
+                frozen_document_count: frozen.frozenRefs.length,
+                expansion_seed_count: assignment.expansionSeeds?.length ?? 0,
+                overflow_document_count: frozen.overflowRefs.length,
                 candidate_count: coverageLedger.candidateRefs.length,
               },
             });
@@ -2523,14 +2575,15 @@ export function createAgentHarnessNodeHandler(
       progress.iterations += 1;
 
       if (!ok) {
-        // A fail-closed verifier is part of the correctness boundary. Preserve
-        // its technical StreamErrors so the harness and flow cannot report a
-        // provider/tool failure as an ordinary bounded partial completion.
-        if (
-          verification.failClosed === true &&
-          Array.isArray(update.errors)
-        ) {
-          errors.push(...update.errors);
+        // Fail-closed semantics require an error, not the verifier's raw
+        // provider/tool payload. The latter may contain credentials or private
+        // endpoints and must not enter the parent execution stream.
+        if (verification.failClosed === true && Array.isArray(update.errors)) {
+          errors.push({
+            message: "Verification worker failed.",
+            type: "execution_error",
+            details: { node_id: node.id },
+          });
         }
         runtime.onNodeDiagnostic?.(node.id, {
           level: "warn",
@@ -2614,7 +2667,7 @@ export function createAgentHarnessNodeHandler(
             message:
               `Verification round ${verificationRounds} reopened ` +
               `${reopened.reopenedRefs.length} referenced coverage item(s).`,
-            details: { refs: reopened.reopenedRefs },
+            details: { reopened_document_count: reopened.reopenedRefs.length },
           });
         }
       }
@@ -3042,6 +3095,7 @@ export function createAgentHarnessNodeHandler(
       let stopSignalHit = false;
       const findingCountBeforeBatch = contextFindings.length;
       const coverageUpdatesBeforeBatch = coverageUpdates;
+      const coverageRejectionsBeforeBatch = coverageReportRejections;
 
       for (const outcome of outcomes) {
         stopSignalHit = incorporateOutcome(outcome) || stopSignalHit;
@@ -3112,6 +3166,8 @@ export function createAgentHarnessNodeHandler(
       }
 
       const coverageProgress = coverageUpdates - coverageUpdatesBeforeBatch;
+      const coverageRejections =
+        coverageReportRejections - coverageRejectionsBeforeBatch;
       const observedSearchPasses = outcomes
         .filter((outcome) => outcome.ok)
         .reduce((total, outcome) => total + outcome.searchEvidence.length, 0);
@@ -3124,8 +3180,11 @@ export function createAgentHarnessNodeHandler(
         }
       }
       if (plannerless && outcomes.some((outcome) => outcome.ok)) {
+        // A rejected report keeps only its assignment open. A coverage commit
+        // elsewhere in a parallel batch resets global no-progress detection,
+        // so a bad sibling cannot terminate productive work.
         consecutiveStagnantIterations =
-          newFindingCount > 0 || coverageProgress > 0
+          coverageProgress > 0 || (coverageRejections === 0 && newFindingCount > 0)
             ? 0
             : consecutiveStagnantIterations + 1;
       }
@@ -3216,10 +3275,14 @@ export function createAgentHarnessNodeHandler(
               code: "harness_stagnation_limit",
               message:
                 `Plannerless harness stopped after ${consecutiveStagnantIterations} ` +
-                "consecutive completed passes without a unique finding.",
+                "consecutive completed passes without a unique finding." +
+                (coverageReportRejections > 0
+                  ? ` ${coverageReportRejections} coverage report(s) were refused by the gate; see harness_coverage_report_invalid.`
+                  : ""),
               details: {
                 stagnant_iterations: consecutiveStagnantIterations,
                 unique_findings: contextFindings.length,
+                coverage_report_rejections: coverageReportRejections,
               },
             });
             return stop("stagnation-limit", progress, errors);

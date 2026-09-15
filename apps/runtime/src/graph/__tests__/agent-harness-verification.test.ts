@@ -154,6 +154,8 @@ interface DelegatedToolResult extends ToolResultEntry {
 interface CapturedDiagnostic {
   code: string;
   level?: string;
+  /** Human-readable diagnostic text, as emitted by the runtime. */
+  message?: string;
   details?: Record<string, unknown>;
 }
 
@@ -733,7 +735,7 @@ describe("verification gate (end-to-end)", () => {
     expect(update.harness?.stopReason).toBe("verification-failed");
     expect(update.harness?.verified).toBe(false);
     expect(update.errors?.map((error) => error.message)).toContain(
-      "worker reviewer failed",
+      "Verification worker failed.",
     );
   });
 
@@ -838,7 +840,7 @@ describe("verification gate (end-to-end)", () => {
     expect(update.harness?.partial).toBe(true);
     expect(update.harness?.verified).toBe(false);
     expect(update.errors?.map((error) => error.message).join("\n")).toContain(
-      "Coverage seed incomplete: 2 unique references for reported total 3",
+      "coverage seed validation failed",
     );
   });
 
@@ -899,9 +901,9 @@ describe("verification gate (end-to-end)", () => {
     expect(unassignable[0]?.level).toBe("error");
     expect(unassignable[0]?.details).toMatchObject({
       unsettled_documents: 1,
-      blocked_refs: [longRef],
       assignment_char_budget: 1000,
     });
+    expect(JSON.stringify(unassignable[0]?.details)).not.toContain(longRef);
   });
 
   test("bounds coverage-worker context and omits dossier/prior findings", async () => {
@@ -1921,5 +1923,131 @@ describe("coverage target validation", () => {
     expect(update.errors?.map((error) => error.message).join("\n")).toContain(
       "summary=missing-worker",
     );
+  });
+});
+
+/**
+ * A refused coverage report must burn the run's stagnation budget.
+ *
+ * The gate is strict on purpose, but "refused" alone leaves the assignment open,
+ * so the next pass re-seeds the identical work. A pass that made progress on
+ * some other task used to reset the stagnation counter and mask that refusal
+ * indefinitely. A refusal now keeps the counter from resetting on its own, so a
+ * model that never satisfies the report protocol stops at
+ * maxStagnantIterations instead of repeating the same unusable answer until
+ * maxIterations.
+ */
+describe("coverage report refusal counts as stagnation", () => {
+  const nodes = ["orchestrator", "worker", "reviewer"];
+  const seed: ToolResultEntry = {
+    tool_call_id: "seed",
+    tool_name: "vectorsearch/get_summaries",
+    result: {
+      summaries: [{ reference: "/A", title: "A", summary: "Summary A" }],
+      count: 1,
+      total: 1,
+    },
+    execution_time_seconds: 0,
+  };
+  const coverageQueue = {
+    enabled: true,
+    sourceTool: "vectorsearch/get_summaries",
+    batchSize: 1,
+    maxOriginalsPerBatch: 1,
+    markers: { start: "<COVERAGE>", end: "</COVERAGE>" },
+  };
+
+  test("stops at the stagnation limit instead of looping to maxIterations", async () => {
+    const { update, calls, diagnostics } = await run(
+      harnessNode({
+        allowlist: ["worker"],
+        plannerless: true,
+        maxIterations: 8,
+        maxStagnantIterations: 2,
+        coverageQueue,
+      }),
+      nodes,
+      [],
+      () => ({
+        text: "Ich habe das Dokument gelesen, melde aber nichts im Format.",
+      }),
+      [seed],
+    );
+
+    expect(update.harness?.stopReason).toBe("stagnation-limit");
+    // Two refused passes - not eight: the refusal, not maxIterations, ended it.
+    expect(calls.filter((call) => call === "worker")).toHaveLength(2);
+    const invalid = diagnostics.find(
+      (diagnostic) => diagnostic.code === "harness_coverage_report_invalid",
+    );
+    expect(invalid?.details).toMatchObject({ rejection_streak: 1 });
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      "harness_coverage_report_invalid",
+    );
+    const stop = diagnostics.find(
+      (diagnostic) => diagnostic.code === "harness_stagnation_limit",
+    );
+    expect(stop?.details).toMatchObject({
+      stagnant_iterations: 2,
+      coverage_report_rejections: 2,
+    });
+    expect(String(stop?.message)).toContain("refused by the gate");
+  });
+
+  test("a valid report still resets stagnation and does not trigger the stop", async () => {
+    const { update, diagnostics } = await run(
+      harnessNode({
+        allowlist: ["worker"],
+        plannerless: true,
+        maxIterations: 8,
+        maxStagnantIterations: 2,
+        coverageQueue,
+      }),
+      nodes,
+      [],
+      () => ({
+        text:
+          "ABGEDECKT: /A\nBEFUNDE: keine.\n<COVERAGE>" +
+          '{"assignmentId":"coverage-1","documents":[' +
+          '{"ref":"/A","decision":"excluded","reason":"Nicht einschlaegig"}]}' +
+          "</COVERAGE>",
+      }),
+      [seed],
+    );
+
+    expect(update.harness?.stopReason).not.toBe("stagnation-limit");
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      "harness_coverage_report_invalid",
+    );
+    expect(diagnostics.map((diagnostic) => diagnostic.code)).not.toContain(
+      "harness_stagnation_limit",
+    );
+  });
+
+  test("stagnation stays opt-in: without the limit refusals only warn", async () => {
+    const { update, calls, diagnostics } = await run(
+      harnessNode({
+        allowlist: ["worker"],
+        plannerless: true,
+        maxIterations: 4,
+        coverageQueue,
+      }),
+      nodes,
+      [],
+      () => ({ text: "Immer noch kein Bericht im Format." }),
+      [seed],
+    );
+
+    expect(update.harness?.stopReason).not.toBe("stagnation-limit");
+    // Keeps being retried until the iteration budget ends it - the behaviour
+    // before refusals counted as stagnation, preserved when no limit is set.
+    expect(calls.filter((call) => call === "worker").length).toBeGreaterThan(2);
+    const invalid = diagnostics.filter(
+      (diagnostic) => diagnostic.code === "harness_coverage_report_invalid",
+    );
+    expect(invalid.length).toBeGreaterThan(0);
+    expect(invalid[0]?.details).toMatchObject({
+      defect_code: "missing_start_marker",
+    });
   });
 });

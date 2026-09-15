@@ -937,9 +937,12 @@ describe("LLM node — empty-response fallback (config.emptyResponseFallback)", 
     );
     expect(terminalFallback?.details).toMatchObject({
       phase: "terminal-fallback",
-      last_error: "provider stream boom",
+      last_error: "LLM provider request failed.",
       candidates: ["openai/mock-model"],
     });
+    expect(JSON.stringify(terminalFallback)).not.toContain(
+      "provider stream boom",
+    );
 
     let content = "";
     for (const c of chunks) {
@@ -1178,10 +1181,11 @@ describe("debug trace — diagnostics timeline", () => {
       );
     expect(diagnostic?.details).toMatchObject({
       phase: "provider-initialization",
-      error: "credentials unavailable",
     });
-    expect(diagnostic?.message).toContain("credentials unavailable");
-    expect(diagnostic?.message).not.toContain("unknown LLM provider");
+    expect(diagnostic?.message).toBe(
+      "Could not initialize openai/mock-model.",
+    );
+    expect(JSON.stringify(diagnostic)).not.toContain("credentials unavailable");
   });
 
   test("reasoning-only response records retries then a salvage on the node", async () => {

@@ -1042,9 +1042,6 @@ export async function narrateProgress(
       level: "info",
       code: "harness_progress_narrator_fallback",
       message: "Progress narrator unavailable; deterministic status used.",
-      details: {
-        reason: error instanceof Error ? error.message : String(error),
-      },
     });
     return {
       text: null,
@@ -1153,26 +1150,24 @@ export async function delegate(
     const update = await handler(state, config);
     // Determine if the handler signaled errors in its update
     const hadError = Array.isArray(update.errors) && update.errors.length > 0;
-    const errorMsg = hadError
-      ? (update.errors as Array<{ message: string }>)
-          .map((e) => e.message)
-          .join("; ")
-      : undefined;
+    const errorMsg = hadError ? "Delegated task failed." : undefined;
 
     // 5. Emit onNodeEnd after running
     await runtime.onNodeEnd?.(target, errorMsg);
 
     return { update, ok: !hadError };
-  } catch (err) {
-    // 6. On thrown error: emit onNodeEnd with error, return ok: false
-    const errorMessage = err instanceof Error ? err.message : String(err);
+  } catch {
+    // Delegated exceptions may contain provider URLs, credentials, or payload
+    // excerpts. Child lifecycle telemetry and the parent update receive only a
+    // stable category; the harness still treats the task as failed.
+    const errorMessage = "Delegated task failed.";
     await runtime.onNodeEnd?.(target, errorMessage);
 
     return {
       update: {
         errors: [
           {
-            message: `Delegation to "${target}" threw: ${errorMessage}`,
+            message: errorMessage,
             type: "execution_error",
             details: { node_id: target },
           },

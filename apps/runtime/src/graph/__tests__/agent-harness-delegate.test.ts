@@ -173,7 +173,7 @@ describe("delegate(target, state, config, runtime, nodeMap)", () => {
     const firstEndCall = runtime._nodeEndCalls[0];
     if (firstEndCall === undefined) throw new Error("expected a first onNodeEnd call");
     expect(firstEndCall.nodeId).toBe("error-worker");
-    expect(firstEndCall.error).toContain("Tool execution failed");
+    expect(firstEndCall.error).toBe("Delegated task failed.");
   });
 
   test("thrown error: handler throws an exception → caught, returns { update: {errors: [...]}, ok: false }", async () => {
@@ -181,8 +181,9 @@ describe("delegate(target, state, config, runtime, nodeMap)", () => {
     const nodeMap = mkNodeMap(workerNode);
     const runtime = mkRuntime();
 
+    const rawError = "sk-secret-canary at https://private.internal/worker";
     const stubHandler: NodeHandler = async () => {
-      throw new Error("Connection timeout");
+      throw new Error(rawError);
     };
 
     testRegistry.register({
@@ -208,8 +209,8 @@ describe("delegate(target, state, config, runtime, nodeMap)", () => {
     expect(errors.length).toBe(1);
     const firstError = errors[0];
     if (firstError === undefined) throw new Error("expected a first error");
-    expect(firstError.message).toContain("Connection timeout");
-    expect(firstError.message).toContain("throw-worker");
+    expect(firstError.message).toBe("Delegated task failed.");
+    expect(firstError.message).not.toContain(rawError);
 
     // onNodeStart still emitted before the error
     expect(runtime._nodeStartCalls).toEqual(["throw-worker"]);
@@ -218,7 +219,8 @@ describe("delegate(target, state, config, runtime, nodeMap)", () => {
     const firstEndCall = runtime._nodeEndCalls[0];
     if (firstEndCall === undefined) throw new Error("expected a first onNodeEnd call");
     expect(firstEndCall.nodeId).toBe("throw-worker");
-    expect(firstEndCall.error).toContain("Connection timeout");
+    expect(firstEndCall.error).toBe("Delegated task failed.");
+    expect(JSON.stringify(runtime._nodeEndCalls)).not.toContain(rawError);
   });
 
   test("target unavailable: target not in nodeMap → { update: {errors: [...]}, ok: false }", async () => {
@@ -388,6 +390,7 @@ describe("delegate(target, state, config, runtime, nodeMap)", () => {
     const errors = result.update.errors as Array<{ message: string }>;
     const firstError = errors[0];
     if (firstError === undefined) throw new Error("expected a first error");
-    expect(firstError.message).toContain("raw string error");
+    expect(firstError.message).toBe("Delegated task failed.");
+    expect(firstError.message).not.toContain("raw string error");
   });
 });

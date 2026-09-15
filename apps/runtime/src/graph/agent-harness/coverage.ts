@@ -904,6 +904,105 @@ export function parseCoverageReport(
 	};
 }
 
+/**
+ * Classifies WHY {@link parseCoverageReport} rejected a worker's final message.
+ *
+ * The returned value is a stable, non-content-bearing rule code. Worker output,
+ * assignment references, configured markers, JSON keys, and parser errors must
+ * never be copied into diagnostics: all are externally controlled and may
+ * contain document data, credentials, or private endpoints.
+ */
+export function describeCoverageReportDefect(
+	text: string,
+	assignment: CoverageAssignment,
+	markers: CoverageReportMarkers,
+): string {
+	const startCount = markerCount(text, markers.start);
+	const endCount = markerCount(text, markers.end);
+	if (startCount === 0) return "missing_start_marker";
+	if (endCount === 0) return "missing_end_marker";
+	if (startCount !== 1 || endCount !== 1) return "invalid_marker_count";
+	const start = text.indexOf(markers.start);
+	const end = text.indexOf(markers.end, start + markers.start.length);
+	if (end < start) return "invalid_marker_order";
+	if (text.slice(end + markers.end.length).trim() !== "") {
+		return "trailing_content";
+	}
+	const payload = text.slice(start + markers.start.length, end).trim();
+	let raw: unknown;
+	try {
+		raw = JSON.parse(payload);
+	} catch {
+		return "invalid_json";
+	}
+	if (raw === null || typeof raw !== "object") return "invalid_report_type";
+	const record = raw as Record<string, unknown>;
+	const recordKeys = Object.keys(record).sort();
+	if (
+		recordKeys.length !== 2 ||
+		recordKeys[0] !== "assignmentId" ||
+		recordKeys[1] !== "documents"
+	) {
+		return "invalid_report_keys";
+	}
+	if (record.assignmentId !== assignment.id) return "assignment_id_mismatch";
+	if (!Array.isArray(record.documents)) return "invalid_documents_type";
+	const expectedRefs = assignment.documents.map((document) => document.ref);
+	if (record.documents.length === 0) return "empty_documents";
+	if (record.documents.length > expectedRefs.length) return "too_many_documents";
+	const seen = new Set<string>();
+	for (const [index, value] of record.documents.entries()) {
+		if (value === null || typeof value !== "object") {
+			return `invalid_document_type_at_${index}`;
+		}
+		const item = value as Record<string, unknown>;
+		const itemKeys = Object.keys(item).sort();
+		const allowedKeys = new Set([
+			"decision",
+			"discoveredEntities",
+			"discoveredTerms",
+			"reason",
+			"ref",
+		]);
+		if (itemKeys.some((key) => !allowedKeys.has(key))) {
+			return `unknown_document_keys_at_${index}`;
+		}
+		for (const key of ["ref", "decision", "reason"] as const) {
+			if (typeof item[key] !== "string") {
+				return `invalid_${key}_type_at_${index}`;
+			}
+		}
+		if ((item.reason as string).trim() === "") {
+			return `empty_reason_at_${index}`;
+		}
+		if (
+			assignment.mode !== "original" &&
+			(item.discoveredEntities !== undefined || item.discoveredTerms !== undefined)
+		) {
+			return `discovery_fields_not_allowed_at_${index}`;
+		}
+		if (
+			parseDiscoveredValues(item.discoveredEntities) === undefined ||
+			parseDiscoveredValues(item.discoveredTerms) === undefined
+		) {
+			return `invalid_discovery_fields_at_${index}`;
+		}
+		const ref = normalizedRef(item.ref as string);
+		const decision = item.decision as CoverageReportDecision;
+		const validDecision =
+			assignment.mode === "summary"
+				? decision === "relevant" ||
+					decision === "possibly_relevant" ||
+					decision === "excluded"
+				: decision === "reviewed" || decision === "excluded";
+		if (!validDecision) return `invalid_decision_at_${index}`;
+		if (!expectedRefs.includes(ref)) return `unassigned_ref_at_${index}`;
+		if (seen.has(ref)) return `duplicate_ref_at_${index}`;
+		seen.add(ref);
+	}
+	return "accepted_on_recheck";
+}
+
 function normalizeWindows(
 	windows: readonly CoverageWindow[],
 ): CoverageWindow[] {

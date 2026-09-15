@@ -114,7 +114,7 @@ describe("deterministic tool pagination", () => {
 						{
 							type: "text",
 							text: JSON.stringify({
-								message: "upstream service unavailable",
+								message: "sk-secret-canary at https://private.internal/mcp",
 								rawRequest: "SECRET_REQUEST_DATA",
 							}),
 						},
@@ -126,11 +126,35 @@ describe("deterministic tool pagination", () => {
 		expect(out.toolResults).toEqual([]);
 		expect(out.messages).toEqual([]);
 		expect(calls.results).toEqual([]);
-		expect(calls.errors).toEqual(["upstream service unavailable"]);
+		expect(calls.errors).toEqual(["MCP tool reported an error"]);
 		expect(out.errors).toHaveLength(1);
 		expect(out.errors?.[0]?.type).toBe("tool_error");
-		expect(JSON.stringify(out.errors)).not.toContain("SECRET_REQUEST_DATA");
-		expect(JSON.stringify(calls.errors)).not.toContain("SECRET_REQUEST_DATA");
+		for (const secret of [
+			"SECRET_REQUEST_DATA",
+			"sk-secret-canary",
+			"https://private.internal/mcp",
+		]) {
+			expect(JSON.stringify(out.errors)).not.toContain(secret);
+			expect(JSON.stringify(calls.errors)).not.toContain(secret);
+		}
+	});
+
+	test("redacts thrown MCP transport errors", async () => {
+		const calls = emptyCalls();
+		const handler = createToolNodeHandler(node());
+		const secret = "sk-secret-canary at https://private.internal/transport";
+		const out = await handler(
+			state,
+			runConfig(
+				makeRuntime(calls, async () => {
+					throw new Error(secret);
+				}),
+			),
+		);
+
+		expect(calls.errors).toEqual(["Tool execution failed."]);
+		expect(out.errors?.[0]?.message).toContain("Tool execution failed.");
+		expect(JSON.stringify({ calls, errors: out.errors })).not.toContain(secret);
 	});
 
 	test("reports missing or invalid total after a successful page", async () => {
