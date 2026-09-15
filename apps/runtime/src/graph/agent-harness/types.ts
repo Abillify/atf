@@ -1156,6 +1156,7 @@ export function parseHarnessConfig(
             }
           : {}),
         markers: { start, end },
+        ...(raw.structuredReport === true ? { structuredReport: true } : {}),
       };
     }
   }

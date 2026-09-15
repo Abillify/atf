@@ -72,6 +72,16 @@ export interface CoverageQueueConfig {
 	hybridSearch?: CoverageHybridSearchConfig;
 	searchDiscovery?: CoverageSearchDiscoveryConfig;
 	markers: CoverageReportMarkers;
+	/**
+	 * When true, coverage reports are obtained via a schema-enforced JSON call
+	 * ("structured-after-tools") instead of the marker-wrapped free-text
+	 * contract. The worker still reasons/uses tools normally; the harness then
+	 * makes one additional tool-less, schema-constrained extraction call whose
+	 * object is validated with the same rules as the marker path. Eliminates the
+	 * `missing_start_marker` failure class on models that drop the sentinels.
+	 * Defaults to false (marker contract) for backward compatibility.
+	 */
+	structuredReport?: boolean;
 }
 
 export type CoverageDocumentStatus =
@@ -796,33 +806,24 @@ function parseDiscoveredValues(value: unknown): string[] | undefined {
 	return values;
 }
 
-export function parseCoverageReport(
-	text: string,
+/**
+ * Validates an already-parsed coverage-report OBJECT against an assignment.
+ *
+ * This is the format-agnostic core shared by both delivery contracts:
+ *   - {@link parseCoverageReport} extracts the object from between the markers
+ *     (the streaming worker contract), then calls this.
+ *   - {@link parseCoverageReportObject} takes a schema-enforced JSON object
+ *     directly (the structured-output worker contract) and calls this.
+ *
+ * The rules (key set, per-item shape, mode-dependent decision set, ref
+ * membership, no duplicates, discovery fields only for `original`) live here so
+ * the two contracts can never drift apart. Returns the normalized report or
+ * `undefined` when any rule is violated.
+ */
+function validateCoverageReportObject(
+	raw: unknown,
 	assignment: CoverageAssignment,
-	markers: CoverageReportMarkers,
-): { report: CoverageReport; findingText: string } | undefined {
-	if (
-		markerCount(text, markers.start) !== 1 ||
-		markerCount(text, markers.end) !== 1
-	) {
-		return undefined;
-	}
-	const start = text.indexOf(markers.start);
-	const end = text.indexOf(markers.end, start + markers.start.length);
-	if (
-		start < 0 ||
-		end < start ||
-		text.slice(end + markers.end.length).trim() !== ""
-	) {
-		return undefined;
-	}
-
-	let raw: unknown;
-	try {
-		raw = JSON.parse(text.slice(start + markers.start.length, end).trim());
-	} catch {
-		return undefined;
-	}
+): CoverageReport | undefined {
 	if (raw === null || typeof raw !== "object") return undefined;
 	const record = raw as Record<string, unknown>;
 	const recordKeys = Object.keys(record).sort();
@@ -898,10 +899,143 @@ export function parseCoverageReport(
 			...(discoveredTerms.length > 0 ? { discoveredTerms } : {}),
 		});
 	}
-	return {
-		report: { assignmentId: assignment.id, documents },
-		findingText: text.slice(0, start).trim(),
+	return { assignmentId: assignment.id, documents };
+}
+
+export function parseCoverageReport(
+	text: string,
+	assignment: CoverageAssignment,
+	markers: CoverageReportMarkers,
+): { report: CoverageReport; findingText: string } | undefined {
+	if (
+		markerCount(text, markers.start) !== 1 ||
+		markerCount(text, markers.end) !== 1
+	) {
+		return undefined;
+	}
+	const start = text.indexOf(markers.start);
+	const end = text.indexOf(markers.end, start + markers.start.length);
+	if (
+		start < 0 ||
+		end < start ||
+		text.slice(end + markers.end.length).trim() !== ""
+	) {
+		return undefined;
+	}
+
+	let raw: unknown;
+	try {
+		raw = JSON.parse(text.slice(start + markers.start.length, end).trim());
+	} catch {
+		return undefined;
+	}
+	const report = validateCoverageReportObject(raw, assignment);
+	if (report === undefined) return undefined;
+	return { report, findingText: text.slice(0, start).trim() };
+}
+
+/**
+ * Parses a coverage report delivered as a schema-enforced JSON OBJECT (the
+ * structured-output worker contract), with NO surrounding markers. `text` is the
+ * worker's whole assistant content, expected to be exactly one JSON object.
+ *
+ * A structured-output worker cannot prepend a free-text finding, so there is no
+ * `findingText` to recover here (findings for these workers are carried via the
+ * report itself, not a text preamble).
+ */
+export function parseCoverageReportObject(
+	text: string,
+	assignment: CoverageAssignment,
+): { report: CoverageReport; findingText: string } | undefined {
+	const trimmed = text.trim();
+	if (trimmed === "") return undefined;
+	let raw: unknown;
+	try {
+		raw = JSON.parse(trimmed);
+	} catch {
+		return undefined;
+	}
+	const report = validateCoverageReportObject(raw, assignment);
+	if (report === undefined) return undefined;
+	return { report, findingText: "" };
+}
+
+/**
+ * Builds the JSON Schema a structured-output coverage worker must satisfy for a
+ * given assignment. The schema is mode-dependent, mirroring the acceptance rules
+ * in {@link validateCoverageReportObject}:
+ *   - `assignmentId` is pinned to the exact assignment id (const),
+ *   - the `decision` enum is `relevant|possibly_relevant|excluded` for summary
+ *     assignments and `reviewed|excluded` otherwise,
+ *   - `discoveredEntities`/`discoveredTerms` are offered only for `original`
+ *     assignments (they are rejected by the validator for other modes).
+ *
+ * `additionalProperties: false` and the `required` lists keep the object shape
+ * exactly what the validator accepts, so a schema-conforming object passes the
+ * gate deterministically.
+ */
+export function buildCoverageReportSchema(
+	assignment: CoverageAssignment,
+): Record<string, unknown> {
+	const decisionEnum =
+		assignment.mode === "summary"
+			? ["relevant", "possibly_relevant", "excluded"]
+			: ["reviewed", "excluded"];
+	const itemProperties: Record<string, unknown> = {
+		ref: { type: "string", enum: assignment.documents.map((d) => d.ref) },
+		decision: { type: "string", enum: decisionEnum },
+		reason: { type: "string", minLength: 1 },
 	};
+	const itemRequired = ["ref", "decision", "reason"];
+	if (assignment.mode === "original") {
+		itemProperties.discoveredEntities = {
+			type: "array",
+			items: { type: "string" },
+		};
+		itemProperties.discoveredTerms = {
+			type: "array",
+			items: { type: "string" },
+		};
+	}
+	return {
+		type: "object",
+		additionalProperties: false,
+		required: ["assignmentId", "documents"],
+		properties: {
+			assignmentId: { type: "string", const: assignment.id },
+			documents: {
+				type: "array",
+				minItems: 1,
+				maxItems: assignment.documents.length,
+				items: {
+					type: "object",
+					additionalProperties: false,
+					required: itemRequired,
+					properties: itemProperties,
+				},
+			},
+		},
+	};
+}
+
+/**
+ * Classifies WHY {@link parseCoverageReportObject} rejected a structured-output
+ * worker's JSON. Returns the same stable, content-free rule codes as
+ * {@link describeCoverageReportDefect}, minus the marker-specific codes.
+ */
+export function describeCoverageReportObjectDefect(
+	text: string,
+	assignment: CoverageAssignment,
+): string {
+	const trimmed = text.trim();
+	if (trimmed === "") return "empty_output";
+	let raw: unknown;
+	try {
+		raw = JSON.parse(trimmed);
+	} catch {
+		return "invalid_json";
+	}
+	return describeCoverageReportObjectPayload(raw, assignment);
 }
 
 /**
@@ -935,6 +1069,19 @@ export function describeCoverageReportDefect(
 	} catch {
 		return "invalid_json";
 	}
+	return describeCoverageReportObjectPayload(raw, assignment);
+}
+
+/**
+ * Shared payload classifier for an already-parsed report OBJECT. Returns the
+ * same stable rule codes for both the marker path
+ * ({@link describeCoverageReportDefect}) and the structured-output path
+ * ({@link describeCoverageReportObjectDefect}). Content-free by contract.
+ */
+function describeCoverageReportObjectPayload(
+	raw: unknown,
+	assignment: CoverageAssignment,
+): string {
 	if (raw === null || typeof raw !== "object") return "invalid_report_type";
 	const record = raw as Record<string, unknown>;
 	const recordKeys = Object.keys(record).sort();

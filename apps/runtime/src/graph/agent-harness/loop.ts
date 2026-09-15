@@ -30,6 +30,7 @@ import type {
   CoverageAssignment,
   CoverageDocumentEvidence,
   CoverageLedger,
+  CoverageReport,
   CoverageSearchEvidence,
   CoverageSearchParseResult,
 } from "./coverage.js";
@@ -41,6 +42,7 @@ import {
   coverageSummary,
   coverageVerificationManifest,
   describeCoverageReportDefect,
+  describeCoverageReportObjectDefect,
   freezeCoverageCandidates,
   hasRequiredHybridSearchEvidence,
   isCoverageTerminal,
@@ -193,6 +195,7 @@ import {
   narrateProgress,
   type PlannerBudget,
   plan,
+  requestCoverageReport,
 } from "./tools.js";
 import {
   checkLimits,
@@ -998,6 +1001,35 @@ export function finalAiAnswerText(msgs: readonly BaseMessage[]): string {
     if (text !== "" && !isEmptyResponseFallback(message)) return text;
   }
   return "";
+}
+
+/**
+ * Output-token ceiling for the structured coverage-report extraction call. A
+ * report is a compact per-document decision list; 12k tokens comfortably covers
+ * a full 25–100 document batch without letting a degenerate model run away.
+ */
+const COVERAGE_REPORT_EXTRACTION_MAX_TOKENS = 12288;
+
+/**
+ * System prompt for the schema-enforced coverage-report extraction
+ * ("structured-after-tools"). The schema itself pins the shape (keys, enum,
+ * ref set), so this only states the task and the mode-specific decision
+ * semantics; it never asks for markers or code fences.
+ */
+function buildCoverageReportExtractionSystemPrompt(
+  assignment: CoverageAssignment,
+): string {
+  const decisions =
+    assignment.mode === "summary"
+      ? "`relevant`, `possibly_relevant` oder `excluded`"
+      : "`reviewed` oder `excluded`";
+  return (
+    "Fasse deine vorstehende Analyse in einem Coverage-Report zusammen. " +
+    `Entscheide jedes zugewiesene Dokument (Feld \`ref\`) genau einmal mit ${decisions} ` +
+    "und gib je einen knappen, sachlichen Grund (Feld `reason`) an. " +
+    "Verwende exakt die vorgegebene `assignmentId`. Antworte ausschliesslich mit " +
+    "dem geforderten JSON-Objekt."
+  );
 }
 
 export function condensedFindingText(msgs: BaseMessage[]): string {
@@ -1834,6 +1866,12 @@ export function createAgentHarnessNodeHandler(
       coverageEvidence: CoverageDocumentEvidence[];
       searchEvidence: CoverageSearchEvidence[];
       searchParseStatuses: CoverageSearchParseResult["status"][];
+      /**
+       * Pre-computed report from the schema-enforced extraction call, present
+       * only when `coverageQueue.structuredReport` is enabled. When set, it
+       * REPLACES marker parsing of the worker text for this outcome.
+       */
+      coverageReportOverride?: { report: CoverageReport } | { defect: string };
     }): boolean => {
       const {
         task: t,
@@ -1842,6 +1880,7 @@ export function createAgentHarnessNodeHandler(
         coverageEvidence,
         searchEvidence,
         searchParseStatuses,
+        coverageReportOverride,
       } = outcome;
       let signalHit = false;
 
@@ -1959,22 +1998,35 @@ export function createAgentHarnessNodeHandler(
           // into invalid multi-marker blobs whenever the worker had an interim
           // answer before its final report.
           const finalWorkerText = finalAiAnswerText(newMsgs);
-          // A discovery assignment decides nothing, so it owes no report. Its
+          // Report acquisition has two contracts:
+          //   - structuredReport: the report was already produced by the
+          //     schema-enforced extraction call (coverageReportOverride).
+          //   - marker contract: parse it from the worker's final text.
+          // A discovery assignment decides nothing, so it owes no report; its
           // value is the observed search provenance handled above.
+          const structuredMode = coverageReportOverride !== undefined;
           const parsed =
             assignment.mode === "discovery"
               ? undefined
-              : parseCoverageReport(
-                  finalWorkerText,
-                  assignment,
-                  coverageConfig.markers,
-                );
+              : structuredMode
+                ? "report" in coverageReportOverride
+                  ? {
+                      report: coverageReportOverride.report,
+                      findingText: "",
+                    }
+                  : undefined
+                : parseCoverageReport(
+                    finalWorkerText,
+                    assignment,
+                    coverageConfig.markers,
+                  );
           // Keep report JSON private. `coverageFindingText` deliberately uses
           // the aggregate so all pre-report factual findings remain available.
-          const finding = coverageFindingText(
-            workerText,
-            coverageConfig.markers,
-          );
+          // In structured mode the whole worker text is the finding (the report
+          // is delivered out-of-band, not inline), so no marker split applies.
+          const finding = structuredMode
+            ? workerText
+            : coverageFindingText(workerText, coverageConfig.markers);
           findingMsgs = finding === "" ? [] : [new AIMessage(finding)];
           if (parsed !== undefined) {
             coverageReportRejectionStreaks.delete(coverageAssignmentKey(assignment));
@@ -2042,11 +2094,19 @@ export function createAgentHarnessNodeHandler(
               });
             }
           } else if (assignment.mode !== "discovery") {
-            const defect = describeCoverageReportDefect(
-              finalWorkerText,
-              assignment,
-              coverageConfig.markers,
-            );
+            // In structured mode the extraction call already classified the
+            // failure (schema-invalid object, empty output, or a decode error);
+            // use that code. Otherwise fall back to the marker-defect classifier.
+            const defect =
+              structuredMode && coverageReportOverride !== undefined
+                ? "defect" in coverageReportOverride
+                  ? coverageReportOverride.defect
+                  : "structured_output_failed"
+                : describeCoverageReportDefect(
+                    finalWorkerText,
+                    assignment,
+                    coverageConfig.markers,
+                  );
             // The gate refused the report, so the assignment stays open and comes
             // back in the very next pass unchanged: whatever else the batch did,
             // this document did not move. Counted against
@@ -3074,11 +3134,56 @@ export function createAgentHarnessNodeHandler(
               t.target,
             ),
           );
+
+          // Structured-after-tools: when configured, the report is NOT parsed
+          // from the worker's marker-wrapped text. The worker reasoned/used
+          // tools normally above; here we make one additional tool-less,
+          // schema-enforced extraction call so the decision set can never be
+          // lost to a dropped marker or a truncated repetition loop. Skipped for
+          // discovery (owes no report) and when delegation failed. The result is
+          // attached to the outcome and consumed by `incorporateOutcome`.
+          let coverageReportOverride:
+            | { report: CoverageReport }
+            | { defect: string }
+            | undefined;
+          if (
+            coverageConfig?.structuredReport === true &&
+            assignment !== undefined &&
+            assignment.mode !== "discovery" &&
+            res.ok
+          ) {
+            const workerNode = nodeMap.get(t.target);
+            const workerLlm = workerNode?.llm ?? runtime.appConfig.defaultLlm;
+            if (workerLlm !== undefined) {
+              const workerReplyMessages = baseMessagesToModelMessages(
+                (Array.isArray(res.update.messages)
+                  ? res.update.messages
+                  : res.update.messages !== undefined
+                    ? [res.update.messages]
+                    : []) as BaseMessage[],
+              );
+              const extraction = await requestCoverageReport(
+                delegatedRuntime,
+                workerLlm,
+                assignment,
+                workerReplyMessages,
+                buildCoverageReportExtractionSystemPrompt(assignment),
+                COVERAGE_REPORT_EXTRACTION_MAX_TOKENS,
+              );
+              coverageReportOverride =
+                extraction.report !== undefined
+                  ? { report: extraction.report }
+                  : { defect: extraction.defect ?? "structured_output_failed" };
+            }
+          }
           return {
             task: t,
             coverageEvidence,
             searchEvidence,
             searchParseStatuses,
+            ...(coverageReportOverride !== undefined
+              ? { coverageReportOverride }
+              : {}),
             ...res,
           };
         }),

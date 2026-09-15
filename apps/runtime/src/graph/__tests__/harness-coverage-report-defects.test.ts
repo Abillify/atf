@@ -14,8 +14,11 @@
 
 import { describe, test, expect } from "bun:test";
 import {
+  buildCoverageReportSchema,
   describeCoverageReportDefect,
+  describeCoverageReportObjectDefect,
   parseCoverageReport,
+  parseCoverageReportObject,
   type CoverageAssignment,
   type CoverageReportMarkers,
 } from "../agent-harness/coverage.js";
@@ -312,5 +315,162 @@ describe("describeCoverageReportDefect", () => {
       ],
     });
     expect(parseCoverageReport(text, originalAssignment(), markers)).toBeDefined();
+  });
+});
+
+/**
+ * The structured-output ("structured-after-tools") contract: the report is a
+ * bare JSON object with NO markers, produced by a schema-enforced extraction
+ * call. `parseCoverageReportObject` / `describeCoverageReportObjectDefect` must
+ * apply exactly the same acceptance rules as the marker path, minus everything
+ * marker-specific.
+ */
+describe("parseCoverageReportObject (marker-free structured contract)", () => {
+  test("accepts a bare well-formed summary report object", () => {
+    const parsed = parseCoverageReportObject(
+      JSON.stringify(validSummary),
+      summaryAssignment(),
+    );
+    expect(parsed).toBeDefined();
+    expect(parsed?.report.documents.map((d) => d.ref)).toEqual([
+      "/a.md",
+      "/b.md",
+    ]);
+    // A structured worker cannot prepend a free-text finding.
+    expect(parsed?.findingText).toBe("");
+  });
+
+  test("tolerates surrounding whitespace", () => {
+    expect(
+      parseCoverageReportObject(
+        `\n  ${JSON.stringify(validSummary)}\n`,
+        summaryAssignment(),
+      ),
+    ).toBeDefined();
+  });
+
+  test("rejects (and does not accept) a report addressed to another assignment", () => {
+    const text = JSON.stringify({ ...validSummary, assignmentId: "coverage-9" });
+    expect(parseCoverageReportObject(text, summaryAssignment())).toBeUndefined();
+    expect(describeCoverageReportObjectDefect(text, summaryAssignment())).toBe(
+      "assignment_id_mismatch",
+    );
+  });
+
+  test("rejects empty output", () => {
+    expect(parseCoverageReportObject("   ", summaryAssignment())).toBeUndefined();
+    expect(describeCoverageReportObjectDefect("   ", summaryAssignment())).toBe(
+      "empty_output",
+    );
+  });
+
+  test("rejects non-JSON output", () => {
+    expect(
+      parseCoverageReportObject("not json at all", summaryAssignment()),
+    ).toBeUndefined();
+    expect(
+      describeCoverageReportObjectDefect("kein JSON", summaryAssignment()),
+    ).toBe("invalid_json");
+  });
+
+  test("shares the mode-dependent decision rule with the marker path", () => {
+    // "reviewed" is invalid for a summary assignment on both contracts.
+    const text = JSON.stringify({
+      assignmentId: "coverage-1",
+      documents: [{ ref: "/a.md", decision: "reviewed", reason: "gelesen" }],
+    });
+    expect(parseCoverageReportObject(text, summaryAssignment())).toBeUndefined();
+    expect(describeCoverageReportObjectDefect(text, summaryAssignment())).toBe(
+      "invalid_decision_at_0",
+    );
+  });
+
+  test("accepts discovery fields on an original assignment", () => {
+    const text = JSON.stringify({
+      assignmentId: "coverage-1",
+      documents: [
+        {
+          ref: "/a.md",
+          decision: "reviewed",
+          reason: "vollständig gelesen",
+          discoveredEntities: ["Rechnung 2024-118"],
+        },
+      ],
+    });
+    expect(parseCoverageReportObject(text, originalAssignment())).toBeDefined();
+  });
+
+  test("a valid object is described as accepted (no false alarm)", () => {
+    expect(
+      describeCoverageReportObjectDefect(
+        JSON.stringify(validSummary),
+        summaryAssignment(),
+      ),
+    ).toBe("accepted_on_recheck");
+  });
+
+  test("does not echo model-controlled values into a defect code", () => {
+    const text = JSON.stringify({
+      assignmentId: "sk-leak-canary",
+      documents: [{ ref: "/a.md", decision: "relevant", reason: "x" }],
+    });
+    const defect = describeCoverageReportObjectDefect(text, summaryAssignment());
+    expect(defect).toBe("assignment_id_mismatch");
+    expect(defect).not.toContain("sk-leak-canary");
+  });
+});
+
+describe("buildCoverageReportSchema", () => {
+  test("summary schema pins the assignment id and the summary decision enum", () => {
+    const schema = buildCoverageReportSchema(summaryAssignment()) as Record<
+      string,
+      // biome-ignore lint/suspicious/noExplicitAny: test navigates a plain schema object
+      any
+    >;
+    expect(schema.properties.assignmentId.const).toBe("coverage-1");
+    expect(schema.properties.documents.items.properties.decision.enum).toEqual([
+      "relevant",
+      "possibly_relevant",
+      "excluded",
+    ]);
+    // The ref enum is scoped to exactly the assigned documents.
+    expect(schema.properties.documents.items.properties.ref.enum).toEqual([
+      "/a.md",
+      "/b.md",
+    ]);
+    // Discovery fields are NOT offered for a summary assignment.
+    expect(
+      schema.properties.documents.items.properties.discoveredEntities,
+    ).toBeUndefined();
+    expect(schema.properties.documents.items.additionalProperties).toBe(false);
+  });
+
+  test("original schema uses the reviewed/excluded enum and offers discovery fields", () => {
+    const schema = buildCoverageReportSchema(originalAssignment()) as Record<
+      string,
+      // biome-ignore lint/suspicious/noExplicitAny: test navigates a plain schema object
+      any
+    >;
+    expect(schema.properties.documents.items.properties.decision.enum).toEqual([
+      "reviewed",
+      "excluded",
+    ]);
+    expect(
+      schema.properties.documents.items.properties.discoveredEntities,
+    ).toBeDefined();
+  });
+
+  test("a schema-conforming object passes the validator (schema ⊇ validator)", () => {
+    const assignment = summaryAssignment();
+    const conforming = {
+      assignmentId: assignment.id,
+      documents: [
+        { ref: "/a.md", decision: "relevant", reason: "passt" },
+        { ref: "/b.md", decision: "excluded", reason: "themenfern" },
+      ],
+    };
+    expect(
+      parseCoverageReportObject(JSON.stringify(conforming), assignment),
+    ).toBeDefined();
   });
 });

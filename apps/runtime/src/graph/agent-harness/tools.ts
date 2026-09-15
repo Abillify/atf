@@ -26,6 +26,13 @@ import {
   estimateTokensFromText,
   buildCostAttribution,
 } from "../../observability/cost.js";
+import {
+  buildCoverageReportSchema,
+  parseCoverageReportObject,
+  describeCoverageReportObjectDefect,
+  type CoverageAssignment,
+  type CoverageReport,
+} from "./coverage.js";
 
 // ---------------------------------------------------------------------------
 // Planner — structured-output LLM call
@@ -1176,4 +1183,173 @@ export async function delegate(
       ok: false,
     };
   }
+}
+
+// ---------------------------------------------------------------------------
+// Coverage report — structured-output extraction ("structured-after-tools")
+// ---------------------------------------------------------------------------
+
+/** Result of {@link requestCoverageReport}. */
+export interface CoverageReportRequestResult {
+  /** The validated report, or `undefined` when the model produced nothing usable. */
+  report?: CoverageReport;
+  /** Stable, content-free defect code when no valid report was produced. */
+  defect?: string;
+  /** USD spent on this extraction call (already recorded on the runtime usage). */
+  cost: number;
+}
+
+/**
+ * Extracts a coverage report as a SCHEMA-ENFORCED JSON object from a coverage
+ * worker, decoupled from the worker's free-text turn.
+ *
+ * Motivation: the marker contract (`<<<COVERAGE_REPORT>>> … <<<END…>>>`) asked a
+ * local model to wrap valid JSON in exact sentinels as ordinary streamed text.
+ * Small models drop the sentinels or loop, and the repetition guard then
+ * truncates the marker away — a valid decision set is rejected as
+ * `missing_start_marker`. Instead, the worker does its reasoning/tool work
+ * normally, and this function runs ONE additional tool-less, schema-enforced
+ * call whose output is constrained to {@link buildCoverageReportSchema}. The
+ * provider (OpenAI-compatible vLLM, Bedrock, Google, …) enforces the shape, so
+ * the object parses deterministically and the report can never be lost to a
+ * missing marker.
+ *
+ * The schema is mode-dependent (summary vs. reviewed/excluded, discovery fields
+ * only for `original`), which is exactly why this lives in the harness — only
+ * here is `assignment.mode` known. The result is still validated locally with
+ * {@link parseCoverageReportObject} so a non-conforming server response is
+ * caught and reported with the same stable defect codes as the marker path.
+ *
+ * All token usage and cost are folded into the shared runtime accounting,
+ * mirroring {@link narrateProgress}.
+ */
+export async function requestCoverageReport(
+  runtime: ExecRuntime,
+  llm: LlmConfig,
+  assignment: CoverageAssignment,
+  workerMessages: readonly ModelMessage[],
+  system: string,
+  maxOutputTokens: number,
+): Promise<CoverageReportRequestResult> {
+  const schema = jsonSchema(buildCoverageReportSchema(assignment));
+  const caps = getModelCapabilities(llm.provider, llm.model);
+  const temperature = caps.unsupportedParameters.includes("temperature")
+    ? undefined
+    : ((llm.parameters?.temperature as number | undefined) ?? 0);
+
+  const model = runtime.llmProviderFactory(llm, runtime.appConfig, {
+    ...(runtime.ctx.providerKeyOverrides !== undefined
+      ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
+      : {}),
+  });
+
+  const messages: ModelMessage[] = [
+    { role: "system", content: system },
+    ...workerMessages,
+  ];
+
+  let outputText = "";
+  let generationUsage:
+    | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
+    | undefined;
+  try {
+    if (caps.structuredOutput === "generateObject") {
+      const result = await generateObject({
+        model,
+        schema,
+        messages,
+        allowSystemInMessages: caps.allowSystemInMessages,
+        maxOutputTokens,
+        ...(temperature !== undefined ? { temperature } : {}),
+        ...(runtime.signal !== undefined ? { abortSignal: runtime.signal } : {}),
+      });
+      outputText = JSON.stringify(result.object);
+      generationUsage = result.usage;
+    } else {
+      const outputSpec =
+        caps.structuredOutput === "response_format"
+          ? Output.object({ schema, name: "coverage_report" })
+          : undefined;
+      const result = await generateText({
+        model,
+        messages,
+        allowSystemInMessages: caps.allowSystemInMessages,
+        maxOutputTokens,
+        ...(temperature !== undefined ? { temperature } : {}),
+        ...(outputSpec !== undefined ? { output: outputSpec } : {}),
+        ...(runtime.signal !== undefined ? { abortSignal: runtime.signal } : {}),
+      });
+      const enforced = (result as { output?: unknown }).output;
+      outputText =
+        result.text.trim() !== ""
+          ? result.text
+          : enforced !== undefined
+            ? JSON.stringify(enforced)
+            : result.text;
+      generationUsage = result.usage;
+    }
+  } catch (err) {
+    // A schema-enforced call can throw "No object generated"/decode errors on a
+    // momentarily confused local server. Treat as a defect so the assignment
+    // stays open and is re-issued, exactly like a rejected marker report.
+    runtime.metrics.recordLlmCall(llm.provider, llm.model, "error", 0, 0, 0);
+    if (runtime.signal?.aborted === true) throw err;
+    return { defect: "structured_output_failed", cost: 0 };
+  }
+
+  const finiteUsage = (value: number | undefined): number =>
+    typeof value === "number" && Number.isFinite(value) ? value : 0;
+  let promptTokens = finiteUsage(generationUsage?.inputTokens);
+  let completionTokens = finiteUsage(generationUsage?.outputTokens);
+  if (promptTokens === 0) {
+    promptTokens = estimateTokensFromText(
+      messages
+        .map((m) =>
+          typeof m.content === "string" ? m.content : JSON.stringify(m.content),
+        )
+        .join("\n"),
+    );
+  }
+  if (completionTokens === 0 && outputText.length > 0) {
+    completionTokens = estimateTokensFromText(outputText);
+  }
+  runtime.usage.promptTokens += promptTokens;
+  runtime.usage.completionTokens += completionTokens;
+  runtime.usage.totalTokens +=
+    generationUsage?.totalTokens && generationUsage.totalTokens > 0
+      ? generationUsage.totalTokens
+      : promptTokens + completionTokens;
+
+  const cost = estimateCost(
+    llm.provider,
+    llm.model,
+    { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+    runtime.pricingOverrides ?? runtime.appConfig.llmPricing,
+  );
+  runtime.metrics.recordLlmCall(
+    llm.provider,
+    llm.model,
+    "ok",
+    promptTokens,
+    completionTokens,
+    cost,
+  );
+  if (cost > 0) {
+    runtime.costTracker?.record(runtime.ctx.clientId, cost, {
+      provider: llm.provider,
+      model: llm.model,
+      promptTokens,
+      completionTokens,
+      ...buildCostAttribution(runtime.ctx, runtime.flowId),
+    });
+  }
+
+  const parsed = parseCoverageReportObject(outputText, assignment);
+  if (parsed === undefined) {
+    return {
+      defect: describeCoverageReportObjectDefect(outputText, assignment),
+      cost,
+    };
+  }
+  return { report: parsed.report, cost };
 }

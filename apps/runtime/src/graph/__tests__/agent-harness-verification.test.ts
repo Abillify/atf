@@ -173,6 +173,13 @@ function mkRun(
     callIndex: number,
     state: AgentState,
   ) => Behaviour,
+  /**
+   * Optional override for the schema-enforced coverage-report extraction call
+   * (structuredReport mode). Receives the joined prompt and returns the JSON
+   * text the mock model should emit. When omitted, a valid excluded report for
+   * the sole seeded assignment is returned.
+   */
+  coverageReportResponder?: (prompt: string) => string,
 ): {
   runtime: ExecRuntime;
   calls: string[];
@@ -219,18 +226,40 @@ function mkRun(
         role?: string;
         content?: unknown;
       }>;
+      const joined = prompt
+        .map((p) =>
+          typeof p.content === "string" ? p.content : JSON.stringify(p.content),
+        )
+        .join("\n");
+      // The schema-enforced coverage-report extraction ("structured-after-
+      // tools") reuses this same mock model. It is identified by its dedicated
+      // system prompt; a test can override the emitted report per call via
+      // `coverageReportResponder`, else a valid excluded report for the sole
+      // seeded assignment is returned.
+      if (joined.includes("Coverage-Report")) {
+        const report =
+          coverageReportResponder?.(joined) ??
+          '{"assignmentId":"coverage-1","documents":' +
+            '[{"ref":"/A","decision":"excluded","reason":"nicht einschlaegig"}]}';
+        return {
+          content: [{ type: "text" as const, text: report }],
+          finishReason: { unified: "stop" as const, raw: "stop" },
+          usage: {
+            inputTokens: {
+              total: 10,
+              noCache: undefined,
+              cacheRead: undefined,
+              cacheWrite: undefined,
+            },
+            outputTokens: { total: 5, text: undefined, reasoning: undefined },
+          },
+          warnings: [],
+        };
+      }
       // Capture the WHOLE prompt, not just the system message: the verifier's
       // critique travels as a conversation message (an AIMessage folded into
       // `state.messages`), not as part of the system prompt.
-      plannerPrompts.push(
-        prompt
-          .map((p) =>
-            typeof p.content === "string"
-              ? p.content
-              : JSON.stringify(p.content),
-          )
-          .join("\n"),
-      );
+      plannerPrompts.push(joined);
       // Successive planner calls consume successive entries of `plans`; once
       // exhausted the planner returns nothing so the run can terminate.
       const tasks = plans[plannerCall] ?? [];
@@ -377,7 +406,13 @@ function mkRun(
 function mkNodeMap(ids: string[]): Map<string, FlowNode> {
   const map = new Map<string, FlowNode>();
   for (const id of ids) {
-    map.set(id, { id, type: "llm" } as unknown as FlowNode);
+    // A worker LLM is required only by the structuredReport extraction path;
+    // harmless for every other test (the extraction call never fires there).
+    map.set(id, {
+      id,
+      type: "llm",
+      llm: { provider: "openai", model: "test-model" },
+    } as unknown as FlowNode);
   }
   return map;
 }
@@ -419,6 +454,7 @@ async function run(
   ) => Behaviour,
   initialToolResults: ToolResultEntry[] = [],
   initialMessages?: AgentState["messages"],
+  coverageReportResponder?: (prompt: string) => string,
 ): Promise<{
   update: HarnessUpdate;
   calls: string[];
@@ -434,7 +470,7 @@ async function run(
     context?: Parameters<ExecRuntime["onNodeStart"]>[1];
   }>;
 }> {
-  const h = mkRun(plans, behaviour);
+  const h = mkRun(plans, behaviour, coverageReportResponder);
   const handler = createAgentHarnessNodeHandler(node, mkNodeMap(nodeIds), {
     registry: h.registry,
   });
@@ -2048,6 +2084,96 @@ describe("coverage report refusal counts as stagnation", () => {
     expect(invalid.length).toBeGreaterThan(0);
     expect(invalid[0]?.details).toMatchObject({
       defect_code: "missing_start_marker",
+    });
+  });
+});
+
+/**
+ * structuredReport ("structured-after-tools"): the worker's marker-wrapped text
+ * is NOT parsed. Instead the harness makes a schema-enforced extraction call
+ * whose JSON object becomes the report. This removes the `missing_start_marker`
+ * failure class — a worker that never emits a marker still moves the queue.
+ */
+describe("coverage report via structuredReport (schema-enforced extraction)", () => {
+  const nodes = ["orchestrator", "worker", "reviewer"];
+  const seed: ToolResultEntry = {
+    tool_call_id: "seed",
+    tool_name: "vectorsearch/get_summaries",
+    result: {
+      summaries: [{ reference: "/A", title: "A", summary: "Summary A" }],
+      count: 1,
+      total: 1,
+    },
+    execution_time_seconds: 0,
+  };
+  const coverageQueue = {
+    enabled: true,
+    sourceTool: "vectorsearch/get_summaries",
+    batchSize: 1,
+    maxOriginalsPerBatch: 1,
+    markers: { start: "<COVERAGE>", end: "</COVERAGE>" },
+    structuredReport: true,
+  };
+
+  test("a worker that emits NO marker still produces a valid report and moves the queue", async () => {
+    const { update, diagnostics } = await run(
+      harnessNode({
+        allowlist: ["worker"],
+        plannerless: true,
+        maxIterations: 8,
+        maxStagnantIterations: 2,
+        coverageQueue,
+      }),
+      nodes,
+      [],
+      // Free-text worker turn, no marker, no JSON — exactly the case that broke
+      // the marker contract. The extraction call (mock) supplies the report.
+      () => ({ text: "Ich habe Dokument /A geprueft, es ist nicht relevant." }),
+      [seed],
+    );
+
+    // The report was applied: the run is not a stagnation stop, and the gate
+    // never rejected a report.
+    expect(update.harness?.stopReason).not.toBe("stagnation-limit");
+    expect(diagnostics.map((d) => d.code)).not.toContain(
+      "harness_coverage_report_invalid",
+    );
+    // The seeded document reached a terminal (excluded) status via the report.
+    expect(
+      update.harness?.coverage?.documents.every(
+        (d) => d.status === "excluded" || d.status === "reviewed",
+      ),
+    ).toBe(true);
+  });
+
+  test("a schema-invalid extraction result is refused with a stable defect code", async () => {
+    const { update, diagnostics } = await run(
+      harnessNode({
+        allowlist: ["worker"],
+        plannerless: true,
+        maxIterations: 8,
+        maxStagnantIterations: 2,
+        coverageQueue,
+      }),
+      nodes,
+      [],
+      () => ({ text: "Analyse ohne Report." }),
+      [seed],
+      undefined,
+      // Extraction returns a report for the WRONG assignment id — must be
+      // rejected exactly like a malformed marker report, and counted as
+      // stagnation so it cannot loop forever.
+      () =>
+        '{"assignmentId":"coverage-999","documents":' +
+        '[{"ref":"/A","decision":"excluded","reason":"x"}]}',
+    );
+
+    expect(update.harness?.stopReason).toBe("stagnation-limit");
+    const invalid = diagnostics.find(
+      (d) => d.code === "harness_coverage_report_invalid",
+    );
+    expect(invalid?.details).toMatchObject({
+      defect_code: "assignment_id_mismatch",
     });
   });
 });
