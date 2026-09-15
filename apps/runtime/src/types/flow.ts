@@ -117,6 +117,35 @@ export interface MediaToolConfig {
 }
 
 /**
+ * Vision-inspection settings for an `llm` node that must stay text-only.
+ *
+ * Configured under an `llm` node's `config.imageInspection`. When present, any
+ * inline image in the conversation is parked in the run's image-reference
+ * registry before the request is built (so the hosting model never receives
+ * image bytes, nor the base64 that carries them) and replaced by a short
+ * `img-N` reference. The node is then given an `inspect_image` tool that
+ * resolves a reference and asks {@link ImageInspectionConfig.llm} — a vision
+ * model — about it.
+ *
+ * This keeps image *input* reachable in a flow whose answering model cannot see,
+ * instead of either failing the request (`vision_not_supported`) or silently
+ * dropping what the user pasted.
+ */
+export interface ImageInspectionConfig {
+  /**
+   * The vision model to consult. Must be a model with vision input support;
+   * it is only ever invoked when the hosting model calls the tool.
+   */
+  llm: LlmConfig;
+  /** Overrides the generated tool description. */
+  description?: string;
+  /** Overrides the generated `image` argument description. */
+  imageDescription?: string;
+  /** Caps the answer length returned to the hosting model. Default 4000 chars. */
+  maxAnswerChars?: number;
+}
+
+/**
  * Schema definition for structured output from a `classifier` node.
  * Uses a JSON Schema subset that the AI SDK's generateObject supports.
  */

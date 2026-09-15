@@ -7,16 +7,25 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { InMemoryMediaStore, mediaExtension } from "../media-store.js";
+import {
+  InMemoryMediaStore,
+  decodeBase64Bytes,
+  mediaExtension,
+} from "../media-store.js";
 
 const bytes = (n: number): Uint8Array =>
   new Uint8Array(Array.from({ length: n }, (_, i) => i % 256));
+
+function requireId(id: string | undefined): string {
+  if (id === undefined) throw new Error("expected media id");
+  return id;
+}
 
 describe("InMemoryMediaStore", () => {
   test("stores and retrieves media by id with the original bytes + type", () => {
     const store = new InMemoryMediaStore();
     const data = bytes(32);
-    const id = store.put(data, "image/png");
+    const id = requireId(store.put(data, "image/png"));
     const got = store.get(id);
     expect(got).toBeDefined();
     if (got === undefined) throw new Error("expected stored media");
@@ -26,8 +35,8 @@ describe("InMemoryMediaStore", () => {
 
   test("mints unguessable, unique ids per put", () => {
     const store = new InMemoryMediaStore();
-    const a = store.put(bytes(4), "image/png");
-    const b = store.put(bytes(4), "image/png");
+    const a = requireId(store.put(bytes(4), "image/png"));
+    const b = requireId(store.put(bytes(4), "image/png"));
     expect(a).not.toBe(b);
     // UUID v4 shape (the capability must be unguessable).
     expect(a).toMatch(
@@ -46,7 +55,7 @@ describe("InMemoryMediaStore", () => {
       ttlSeconds: 10,
       clock: () => now,
     });
-    const id = store.put(bytes(8), "image/jpeg");
+    const id = requireId(store.put(bytes(8), "image/jpeg"));
     expect(store.get(id)).toBeDefined();
     now += 10_001; // past the 10s TTL
     expect(store.get(id)).toBeUndefined();
@@ -55,11 +64,11 @@ describe("InMemoryMediaStore", () => {
 
   test("evicts the least-recently-used entry when over the entry bound", () => {
     const store = new InMemoryMediaStore({ maxEntries: 2 });
-    const a = store.put(bytes(4), "image/png");
-    const b = store.put(bytes(4), "image/png");
+    const a = requireId(store.put(bytes(4), "image/png"));
+    const b = requireId(store.put(bytes(4), "image/png"));
     // Touch a so b becomes the LRU.
     store.get(a);
-    const c = store.put(bytes(4), "image/png");
+    const c = requireId(store.put(bytes(4), "image/png"));
     expect(store.get(b)).toBeUndefined(); // evicted
     expect(store.get(a)).toBeDefined();
     expect(store.get(c)).toBeDefined();
@@ -71,10 +80,42 @@ describe("InMemoryMediaStore", () => {
       maxTotalBytes: 100,
       maxEntries: 100,
     });
-    const a = store.put(bytes(60), "image/png");
-    const b = store.put(bytes(60), "image/png"); // 120 > 100 → evict a
+    const a = requireId(store.put(bytes(60), "image/png"));
+    const b = requireId(store.put(bytes(60), "image/png")); // 120 > 100 → evict a
     expect(store.get(a)).toBeUndefined();
     expect(store.get(b)).toBeDefined();
+  });
+  test("rejects empty and oversized items without evicting resident media", () => {
+    const store = new InMemoryMediaStore({
+      maxItemBytes: 64,
+      maxTotalBytes: 128,
+    });
+    const resident = requireId(store.put(bytes(64), "image/png"));
+
+    expect(store.put(new Uint8Array(), "image/png")).toBeUndefined();
+    expect(store.put(bytes(65), "image/png")).toBeUndefined();
+    expect(store.get(resident)).toBeDefined();
+    expect(store.size()).toBe(1);
+  });
+});
+
+describe("decodeBase64Bytes", () => {
+  test("accepts canonical padded or unpadded data and folded whitespace", () => {
+    expect(Buffer.from(decodeBase64Bytes("cGl4ZWw=") ?? []).toString()).toBe(
+      "pixel",
+    );
+    expect(Buffer.from(decodeBase64Bytes("cGl4ZWw") ?? []).toString()).toBe(
+      "pixel",
+    );
+    expect(Buffer.from(decodeBase64Bytes("cGl4\nZWw=") ?? []).toString()).toBe(
+      "pixel",
+    );
+  });
+
+  test("rejects malformed alphabet, padding, lengths and empty data", () => {
+    for (const invalid of ["", "A", "cGl$ZWw=", "cG=lZWw=", "cGl4ZWw==="]) {
+      expect(decodeBase64Bytes(invalid)).toBeUndefined();
+    }
   });
 });
 

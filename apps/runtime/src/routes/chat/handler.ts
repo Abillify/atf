@@ -864,13 +864,24 @@ export function collectFlowLlmConfigs(
   if (flow === undefined) return [];
   const seen = new Set<string>();
   const configs: LlmConfig[] = [];
-  for (const node of flow.nodes) {
-    const llm = node.llm;
-    if (llm === undefined) continue;
+  const add = (llm: LlmConfig | undefined): void => {
+    if (llm === undefined) return;
     const key = `${llm.provider}/${llm.model}`;
-    if (seen.has(key)) continue;
+    if (seen.has(key)) return;
     seen.add(key);
     configs.push(llm);
+  };
+  for (const node of flow.nodes) {
+    add(node.llm);
+    for (const override of node.overrides ?? []) add(override.llm);
+    const config = node.config as
+      | {
+          mediaTools?: Array<{ llm?: LlmConfig }>;
+          imageInspection?: { llm?: LlmConfig };
+        }
+      | undefined;
+    for (const mediaTool of config?.mediaTools ?? []) add(mediaTool.llm);
+    add(config?.imageInspection?.llm);
   }
   return configs;
 }

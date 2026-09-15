@@ -213,6 +213,108 @@ export interface AiToolResultPart {
   output: unknown; // ai@6.x (was `result` in ai@4.x)
 }
 
+const SAFE_TOOL_ERROR_OUTPUT = Object.freeze({
+  isError: true,
+  error: Object.freeze({
+    name: "ToolExecutionError",
+    message: "Tool execution failed.",
+  }),
+});
+
+/**
+ * Replaces untrusted tool-error envelopes before retry prompts or durable
+ * conversation history can expose provider payloads, credentials, or private
+ * endpoints. Successful outputs retain their original identity and content.
+ */
+export function sanitizeToolResultOutput(output: unknown): unknown {
+  const seen = new Set<object>();
+  const containsError = (value: unknown, depth: number): boolean => {
+    if (depth > 6 || value === null || value === undefined) return false;
+    if (typeof value === "string") {
+      try {
+        return containsError(JSON.parse(value) as unknown, depth + 1);
+      } catch {
+        return false;
+      }
+    }
+    if (Array.isArray(value)) {
+      return value.some((item) => containsError(item, depth + 1));
+    }
+    if (typeof value !== "object") return false;
+    if (seen.has(value)) return false;
+    seen.add(value);
+    const record = value as Record<string, unknown>;
+    if (
+      record.isError === true ||
+      record.status === "error" ||
+      (typeof record.type === "string" && record.type.startsWith("error-"))
+    ) {
+      return true;
+    }
+    return ["output", "result", "content", "value"].some((key) =>
+      containsError(record[key], depth + 1),
+    );
+  };
+  return containsError(output, 0) ? SAFE_TOOL_ERROR_OUTPUT : output;
+}
+
+export function sanitizeToolCallModelMessages(
+  messages: ModelMessage[],
+  effectiveArgsByCallId?: ReadonlyMap<string, Record<string, unknown>>,
+): ModelMessage[] {
+  let changed = false;
+  const sanitized = messages.map((message) => {
+    if (message.role !== "assistant" || !Array.isArray(message.content)) {
+      return message;
+    }
+    let contentChanged = false;
+    const content = message.content.map((rawPart) => {
+      const part = rawPart as {
+        type?: string;
+        toolCallId?: string;
+        input?: unknown;
+      };
+      if (part.type !== "tool-call") return rawPart;
+      const safeInput =
+        part.toolCallId === undefined
+          ? {}
+          : (effectiveArgsByCallId?.get(part.toolCallId) ?? {});
+      if (part.input === safeInput) return rawPart;
+      contentChanged = true;
+      return { ...part, input: safeInput };
+    });
+    if (!contentChanged) return message;
+    changed = true;
+    return { ...message, content } as ModelMessage;
+  });
+  return changed ? sanitized : messages;
+}
+
+/** Sanitizes tool-result parts before any model step or prompt trace sees them. */
+export function sanitizeToolResultModelMessages(
+  messages: ModelMessage[],
+): ModelMessage[] {
+  let changed = false;
+  const sanitized = messages.map((message) => {
+    if (message.role !== "tool" || !Array.isArray(message.content)) {
+      return message;
+    }
+    let contentChanged = false;
+    const content = message.content.map((rawPart) => {
+      const part = rawPart as { type?: string; output?: unknown };
+      if (part.type !== "tool-result") return rawPart;
+      const output = sanitizeToolResultOutput(part.output);
+      if (output === part.output) return rawPart;
+      contentChanged = true;
+      return { ...part, output };
+    });
+    if (!contentChanged) return message;
+    changed = true;
+    return { ...message, content } as ModelMessage;
+  });
+  return changed ? sanitized : messages;
+}
+
 export type AiToolResultOutput =
   | { type: "text"; value: string }
   | { type: "error-text"; value: string }
@@ -498,7 +600,9 @@ export function baseMessagesToModelMessages(
             type: "tool-call",
             toolCallId: tc.id ?? crypto.randomUUID(),
             toolName: sanitizeProviderToolName(tc.name),
-            input: tc.args ?? {},
+            // Historical tool arguments may contain pre-DLP model output.
+            // Pairing only requires id/name; never replay raw arguments.
+            input: {},
           });
         }
         result.push({
@@ -649,7 +753,7 @@ export function baseMessagesToModelMessages(
     result.push({ role, content: String(content) } as ModelMessage);
   }
 
-  return result;
+  return sanitizeToolResultModelMessages(result);
 }
 
 /**
@@ -771,10 +875,9 @@ export function aiResponseMessagesToBaseMessages(
           toolCalls.push({
             id: tc.toolCallId,
             name: tc.toolName,
-            args:
-              tc.input && typeof tc.input === "object"
-                ? (tc.input as Record<string, unknown>)
-                : {},
+            // Provider response messages contain the model's pre-DLP input.
+            // Persist only the call identity; effective args are execution-local.
+            args: {},
           });
         }
       }
@@ -797,8 +900,9 @@ export function aiResponseMessagesToBaseMessages(
         const part = rawPart as { type?: string };
         if (part.type === "tool-result") {
           const tr = rawPart as AiToolResultPart;
+          const sanitizedOutput = sanitizeToolResultOutput(tr.output);
           // ai@6.x ToolResultOutput: { type: "text"|"json", value: string|JSONValue }
-          const rawOutput = tr.output as
+          const rawOutput = sanitizedOutput as
             | { type?: string; value?: unknown }
             | undefined;
           const content =
@@ -806,7 +910,7 @@ export function aiResponseMessagesToBaseMessages(
               ? rawOutput.value
               : rawOutput?.type === "json"
                 ? JSON.stringify(rawOutput.value)
-                : JSON.stringify(tr.output);
+                : JSON.stringify(sanitizedOutput);
           out.push(
             new ToolMessage({
               content,

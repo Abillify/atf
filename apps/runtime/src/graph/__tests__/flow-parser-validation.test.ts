@@ -334,6 +334,83 @@ describe("FlowNodeSchema", () => {
     ).toBe(false);
   });
 
+  test("accepts a config.imageInspection block with a vision model", () => {
+    expect(
+      FlowNodeSchema.safeParse({
+        id: "n1",
+        type: "llm",
+        config: {
+          imageInspection: {
+            llm: { provider: "openai", model: "gpt-4o" },
+            maxAnswerChars: 6_000,
+          },
+        },
+      }).success,
+    ).toBe(true);
+  });
+
+  test("rejects text-only or unknown imageInspection models unless explicitly attested", () => {
+    const base = { id: "n1", type: "llm", config: { imageInspection: { llm: { provider: "openai", model: "text-only-unknown" } } } };
+    expect(FlowNodeSchema.safeParse(base).success).toBe(false);
+    expect(
+      FlowNodeSchema.safeParse({
+        ...base,
+        config: { imageInspection: { llm: { provider: "openai", model: "local-vision", parameters: { visionInput: true } } } },
+      }).success,
+    ).toBe(true);
+  });
+
+  test("rejects config.imageInspection without a vision model", () => {
+    // Without `llm` there is no way back to the pixels once the image was
+    // parked as a reference — the flow would silently stop reading attachments.
+    expect(
+      FlowNodeSchema.safeParse({
+        id: "n1",
+        type: "llm",
+        config: { imageInspection: { maxAnswerChars: 5_000 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("rejects a malformed imageInspection answer cap", () => {
+    const vision = { provider: "openai", model: "gpt-4o" };
+    // Too small to answer anything useful, too large for a hosting prompt,
+    // and a fraction is not a character count.
+    expect(
+      FlowNodeSchema.safeParse({
+        id: "n1",
+        type: "llm",
+        config: { imageInspection: { llm: vision, maxAnswerChars: 10 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      FlowNodeSchema.safeParse({
+        id: "n1",
+        type: "llm",
+        config: { imageInspection: { llm: vision, maxAnswerChars: 5_000_000 } },
+      }).success,
+    ).toBe(false);
+    expect(
+      FlowNodeSchema.safeParse({
+        id: "n1",
+        type: "llm",
+        config: { imageInspection: { llm: vision, maxAnswerChars: 1.5 } },
+      }).success,
+    ).toBe(false);
+  });
+
+  test("rejects an unknown provider in config.imageInspection.llm", () => {
+    expect(
+      FlowNodeSchema.safeParse({
+        id: "n1",
+        type: "llm",
+        config: {
+          imageInspection: { llm: { provider: "nonsense", model: "x" } },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
   test("accepts router type", () => {
     expect(FlowNodeSchema.safeParse({ id: "n1", type: "router" }).success).toBe(
       true,

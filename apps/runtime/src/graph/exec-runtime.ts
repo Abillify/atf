@@ -403,6 +403,14 @@ export interface ExecRuntime {
    * WebUI cannot render (open-webui#16976).
    */
   publishMedia?: (base64: string, mediaType: string) => string | undefined;
+  /**
+   * Run-scoped image reference registry (see `image-reference.ts`). Created once
+   * per execution when a media store is configured, so an inline image parked
+   * by one node stays resolvable by every later node and agent-loop step of the
+   * same run. Undefined when no media store is available — inline images are
+   * then left untouched and the vision capability guard applies as before.
+   */
+  imageRefs?: import("./image-reference.js").ImageRefRegistry;
   /** Metrics sink — defaults to a no-op when metrics are disabled. */
   metrics: Metrics;
   /**

@@ -28,8 +28,15 @@ export function collectFlowLlmConfigs(flow: FlowDefinition): LlmConfig[] {
   for (const node of flow.nodes) {
     add(node.llm);
     for (const override of node.overrides ?? []) add(override.llm);
-    const mediaTools = (node.config as { mediaTools?: Array<{ llm?: LlmConfig }> } | undefined)?.mediaTools ?? [];
+    const config = node.config as
+      | {
+          mediaTools?: Array<{ llm?: LlmConfig }>;
+          imageInspection?: { llm?: LlmConfig };
+        }
+      | undefined;
+    const mediaTools = config?.mediaTools ?? [];
     for (const mediaTool of mediaTools) add(mediaTool.llm);
+    add(config?.imageInspection?.llm);
   }
   return [...byKey.values()];
 }

@@ -62,6 +62,33 @@ need adaptation.
   models. Image generation is available only when an `llm` node declares a `config.mediaTools`
   generation tool (or a configured provider returns native generated media); generated files
   are served through Runtime's transient media route. There is no standalone `/images` API.
+  A text-only `llm` node can additionally declare `config.imageInspection`: inline images are
+  then parked in a run-scoped, byte-owned reference registry and replaced by short `img-N`
+  references. A minimal configuration is:
+
+  ```yaml
+  config:
+    imageInspection:
+      llm:
+        provider: private-vision
+        model: vision-model
+        parameters: { visionInput: true, maxTokens: 2048 }
+      maxAnswerChars: 4000
+  ```
+
+  The registry requires Runtime's in-process media store but does not require `MEDIA_BASE_URL`,
+  because inspection bytes are never served publicly. It keeps active bytes independently of the
+  transient publication store, bounded to 32 references, 128 MiB per run and 25 MiB per image;
+  the oldest references are evicted when a bound is crossed. Empty, oversized, malformed-base64,
+  remote or otherwise undecodable images fail closed instead of reaching the text-only host.
+  The inspection model must declare vision input support (or be explicitly attested with
+  `parameters.visionInput: true`). The node receives an `inspect_image` tool — renamed with a
+  suffix if necessary to avoid any configured or caller-tool collision — that asks the vision
+  model about one live reference on demand. Its answer, not the pixels, enters the hosting
+  model's context. Each inspection is a separate provider call with separately attributed usage,
+  cost, metrics and synthetic tool-node trace data; provider failures are returned as bounded
+  tool results and recorded as errors. Same-loop tool-result images are offloaded before each
+  subsequent provider step, so their bytes are not repeatedly sent to the hosting provider.
   Reasoning output from thinking models is surfaced separately from the answer.
 - **Agentic tool use.** A flow step can let the model select and call tools over MCP, then
   incorporate the results. `MAX_TOOL_STEPS` bounds the loop.
@@ -166,7 +193,9 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
   (`OUTPUT_GUARDRAILS_ENABLED`, `GUARDRAIL_MODE`, `GUARDRAIL_REDACT_PII`).
 - **Tool egress control.** Outbound tool traffic is checked against an egress policy, which
   is how data-loss prevention is applied to tool calls (`TOOL_EGRESS_GUARDRAIL`,
-  `TOOL_EGRESS_MODE`).
+  `TOOL_EGRESS_MODE`). This does not intercept direct model-provider calls made by
+  `config.imageInspection`; its vision provider must independently satisfy model allowlisting,
+  residency and privacy requirements.
 - **Tool output validation.** Data returned *by* a tool is inspected for injected
   instructions before it flows back into the model. This closes the indirect prompt injection
   path that output-only filtering misses (`TOOL_OUTPUT_VALIDATOR_ENABLED`).
@@ -219,7 +248,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   organizations. An external detection service can be added
   (`PII_DETECTORS`, `PII_NER_MODEL`, `PII_REMOTE_ENDPOINT`).
 - **Multimodal.** Images can be routed through a describe-and-detect path before they are
-  forwarded (`PII_VAULT_MULTIMODAL_MODE`).
+  forwarded (`PII_VAULT_MULTIMODAL_MODE`). With the default multimodal mode `off`, an
+  `inspect_image` call sends the original image bytes to its configured vision provider; its
+  textual answer then enters the hosting model context. Deployments requiring no-plaintext
+  image egress must choose and fail-closed-test an explicit multimodal policy for this path.
 - **Per-flow configuration.** Which detectors run and which types a flow tokenizes is set per
   flow, not only globally (`PII_VAULT_TYPES`, `PII_DETECTOR_FAIL_MODE`).
 - **Reversible by design.** For values a configured detector successfully identifies, this is
@@ -296,7 +328,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Idempotency.** A repeated request with the same idempotency key does not execute a
   consequential action twice (`IDEMPOTENCY_ENABLED`).
 - **Limits.** Rate limiting per identity and per user, pre- and post-authentication buckets,
-  concurrency caps, queue depth limits, and hard execution timeouts.
+  concurrency caps, queue depth limits, and hard execution timeouts. Transient media storage
+  additionally rejects empty or individual payloads above 25 MiB and retains at most 128 MiB;
+  image-inspection registries apply the same byte ceilings plus a 32-reference LRU bound per
+  execution. Evicted references report unavailable rather than resolving to another image.
 - **Durable execution.** Optional checkpointing lets a long agent run survive a restart
   (`CHECKPOINTING_ENABLED`).
 

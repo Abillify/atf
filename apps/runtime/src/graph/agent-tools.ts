@@ -29,7 +29,11 @@ import type {
   ToolExecutionOptions,
   ToolChoice as AiToolChoice,
 } from "ai";
-import type { FlowNode, MediaToolConfig } from "../types/flow.js";
+import type {
+  FlowNode,
+  MediaToolConfig,
+  ImageInspectionConfig,
+} from "../types/flow.js";
 import type { OpenAITool, ToolChoice } from "../types/openai.js";
 import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../types/monitoring.js";
@@ -39,7 +43,7 @@ import { hasFindings } from "./output-guardrails.js";
 import type { ToolOutputValidator } from "../mcp/tool-output-validator.js";
 import type { AppConfig } from "../config/index.js";
 import type { CompliancePolicy } from "../compliance/policy-schema.js";
-import type { LlmProviderFactory, ProviderResolution } from "./graph-engine.js";
+import type { LlmProviderFactory, ProviderResolution, UsageAccumulator } from "./graph-engine.js";
 import type { ToolIndex } from "./tool-index.js";
 import type {
   GenAiRequest,
@@ -59,7 +63,14 @@ import {
   parseVectorSearchSummaries,
 } from "./reranker.js";
 import { buildCitationEntries } from "./rag-grounding.js";
-import { mcpToolResultToModelOutput } from "./message-mapping.js";
+import {
+  mcpToolResultToModelOutput,
+  sanitizeToolResultOutput,
+} from "./message-mapping.js";
+import {
+  IMAGE_INSPECTION_TOOL_NAME,
+  type ImageRefRegistry,
+} from "./image-reference.js";
 import {
   getTransactionOrchestrator,
   thrownToolOutcome,
@@ -341,7 +352,8 @@ export async function buildAiTools(
       }),
       // Preserve MCP image content as an actual AI SDK file/image part in the
       // next agent step instead of JSON-stringifying the base64 payload.
-      toModelOutput: ({ output }) => mcpToolResultToModelOutput(output),
+      toModelOutput: ({ output }) =>
+        mcpToolResultToModelOutput(sanitizeToolResultOutput(output)),
       execute: async (
         modelArgs: Record<string, unknown>,
         toolOptions: ToolExecutionOptions<never>,
@@ -363,6 +375,7 @@ export async function buildAiTools(
         );
         if (missing.length > 0) {
           return {
+            isError: true,
             error: "missing_required_params",
             message: `Tool '${toolRef}' requires: ${missing.join(", ")}. Provide all required parameters and try again.`,
             required: missing,
@@ -380,6 +393,7 @@ export async function buildAiTools(
             egress.onFindings?.(toolRef, scrubbed.findings);
             if (egress.guardrail.mode === "block") {
               return {
+                isError: true,
                 error: "egress_blocked",
                 message:
                   "The tool call was blocked because its arguments contained " +
@@ -516,6 +530,7 @@ export async function buildAiTools(
         // effect. Non-durable journals return undefined and retain legacy flow.
         if (started === false) {
           return {
+            isError: true,
             error: "tool_lease_unavailable",
             message: "This tool operation is already owned by another worker or is being recovered.",
           };
@@ -561,6 +576,7 @@ export async function buildAiTools(
             if (request === undefined || result.resolveApproval === undefined) {
               await transactionInvocation?.complete("failed", result.content);
               return {
+                isError: true,
                 error: "approval_denied",
                 message: "The MCP server requested approval, but no supported approval continuation was available.",
               };
@@ -569,6 +585,7 @@ export async function buildAiTools(
               await result.resolveApproval(request, { decision: "denied" });
               await transactionInvocation?.complete("failed", "approval gate unavailable");
               return {
+                isError: true,
                 error: "approval_denied",
                 message: "The MCP server requested human approval, but no approval UI is configured.",
               };
@@ -622,6 +639,7 @@ export async function buildAiTools(
                 reason: decision.reason ?? "The requested action was not approved by a human reviewer.",
               }));
               return {
+                isError: true,
                 error: "approval_denied",
                 message:
                   decision.reason ??
@@ -639,6 +657,7 @@ export async function buildAiTools(
             if (resumedJournal === false) {
               await transactionInvocation?.complete("failed", "approved journal continuation was no longer claimable");
               return {
+                isError: true,
                 error: "tool_lease_unavailable",
                 message: "The approved tool operation is no longer claimable for continuation.",
               };
@@ -652,6 +671,7 @@ export async function buildAiTools(
             if (resumedLease === false) {
               await transactionInvocation?.complete("failed", "approved journal continuation lease was unavailable");
               return {
+                isError: true,
                 error: "tool_lease_unavailable",
                 message: "The approved tool operation could not acquire a continuation lease.",
               };
@@ -659,6 +679,7 @@ export async function buildAiTools(
             if (resumed === undefined) {
               await transactionInvocation?.complete("failed", "approved continuation returned no result");
               return {
+                isError: true,
                 error: "approval_denied",
                 message: "The approved MCP action could not be resumed.",
               };
@@ -1131,6 +1152,7 @@ export function buildToolSelectionMetaTool(opts: {
         typeof args.query === "string" ? (args.query as string) : "";
       if (query.trim() === "") {
         return {
+          isError: true,
           error: "missing_query",
           message: "Provide a 'query' describing the capability you need.",
         };
@@ -1388,12 +1410,11 @@ async function runMediaGeneration(
   let model: ReturnType<typeof media.llmProviderFactory>;
   try {
     model = media.llmProviderFactory(mt.llm, media.appConfig, media.resolution);
-  } catch (err) {
+  } catch {
     return {
+      isError: true,
       error: "media_provider_error",
-      message: `Could not initialise the media model: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      message: "Could not initialise the media model.",
     };
   }
 
@@ -1419,12 +1440,11 @@ async function runMediaGeneration(
   let result: Awaited<ReturnType<typeof generateText>>;
   try {
     result = await generateText(params);
-  } catch (err) {
+  } catch {
     return {
+      isError: true,
       error: "media_generation_failed",
-      message: `Media generation failed: ${
-        err instanceof Error ? err.message : String(err)
-      }`,
+      message: "Media generation failed.",
     };
   }
 
@@ -1529,6 +1549,301 @@ async function runMediaGeneration(
     message: `Generated ${emitted} media file(s) and displayed ${
       emitted === 1 ? "it" : "them"
     } to the user. Do not repeat the media as text or a data URI.`,
+  };
+}
+
+/**
+ * Wiring for the `inspect_image` tool (see {@link buildImageInspectionTools}).
+ *
+ * The tool is the read side of the image-reference indirection
+ * (`image-reference.ts`): inline images were parked in the run's registry and
+ * replaced by `img-N` placeholders, and this tool resolves one of those
+ * references and asks a dedicated vision model about it. It runs only when the
+ * hosting model explicitly calls it, so a text-only flow pays a vision call
+ * exactly when the picture actually matters.
+ */
+export interface AgentImageInspectionHooks {
+  /** Existing model tools, used to choose a non-colliding tool key. */
+  existingTools?: ToolSet;
+  /** Actual node owning this call; used for node-level trace attribution. */
+  nodeId?: string;
+  /** The execution accumulator includes on-demand vision usage and cost. */
+  usage?: UsageAccumulator;
+  onNodeDiagnostic?: (
+    nodeId: string,
+    diagnostic: { level: "error" | "warn" | "info"; code: string; message: string },
+  ) => void;
+  registry: ImageRefRegistry;
+  /** The node's `config.imageInspection` block. */
+  config: ImageInspectionConfig;
+  appConfig: AppConfig;
+  llmProviderFactory: LlmProviderFactory;
+  /** See {@link AgentMediaHooks.signal} — same deadline, same reason. */
+  signal?: AbortSignal;
+  pricingOverrides?: Record<string, ModelPrice>;
+  resolution?: ProviderResolution;
+  costTracker?: SpendRecorder;
+  metrics?: Metrics;
+  clientId?: string;
+  costAttribution?: CostAttribution;
+  setGenAiAttributes?: (
+    nodeId: string,
+    req?: GenAiRequest,
+    res?: GenAiResponse,
+  ) => void;
+}
+
+/** Caps the vision answer so one inspection cannot bloat the hosting prompt. */
+const DEFAULT_IMAGE_ANSWER_CHARS = 4_000;
+
+/**
+ * Builds the `inspect_image` tool for an `llm` node that declares
+ * `config.imageInspection`. The node's config block is passed in through
+ * {@link AgentImageInspectionHooks.config} — one source of truth, so a caller
+ * cannot accidentally enable the tool with one copy of the settings and describe
+ * it from another. Returns an empty ToolSet when the block has no `llm`, so a
+ * node that does not opt in is completely unaffected.
+ */
+export function buildImageInspectionTools(
+  hooks: AgentImageInspectionHooks,
+): ToolSet {
+  const cfg = hooks.config as ImageInspectionConfig | undefined;
+  if (cfg === null || typeof cfg !== "object" || cfg.llm === undefined) {
+    return {};
+  }
+  const key = uniqueMediaToolKey(
+    (hooks.existingTools ?? {}) as Record<string, unknown>,
+    IMAGE_INSPECTION_TOOL_NAME,
+  );
+  const tools: ToolSet = {};
+  tools[key] = tool<{ image: string; question: string }, unknown, never>({
+    // No list of "currently available" references here: this description is
+    // rendered once when the tool set is assembled, which happens BEFORE the
+    // prompt's inline images are offloaded, so any such list would be empty (or
+    // worse, stale). Each offloaded image names its own reference in place, and
+    // an unresolvable reference reports the live list from inside the tool.
+    description:
+      hooks.config.description ??
+      `Inspects an image from this conversation that you cannot see yourself, ` +
+      `using a vision model, and returns a factual description answering your ` +
+      `question about it. Images you cannot see appear in the conversation as ` +
+      `[image ref=img-N …] lines; pass that reference exactly as it appears.`,
+    inputSchema: jsonSchema<{ image: string; question: string }>({
+      type: "object",
+      properties: {
+        image: {
+          type: "string",
+          description:
+            hooks.config.imageDescription ??
+            'The image reference to inspect, e.g. "img-1".',
+        },
+        question: {
+          type: "string",
+          description:
+            "What to look for in the image. Be specific — one focused question " +
+            "per call yields a more reliable answer.",
+        },
+      },
+      required: ["image", "question"],
+    }),
+    execute: async (
+      args: { image: string; question: string },
+      opts: ToolExecutionOptions<never>,
+    ): Promise<unknown> =>
+      runImageInspection(
+        hooks,
+        String(args?.image ?? ""),
+        String(args?.question ?? ""),
+        opts.toolCallId,
+      ),
+  }) as ToolSet[string];
+  return tools;
+}
+
+/**
+ * Resolves one image reference and asks the configured vision model about it.
+ * Returns a compact, model-facing result — the bytes themselves never go back
+ * into the hosting model's context.
+ */
+async function runImageInspection(
+  hooks: AgentImageInspectionHooks,
+  image: string,
+  question: string,
+  toolCallId?: string,
+): Promise<unknown> {
+  const stored = hooks.registry.resolve(image);
+  if (stored === undefined) {
+    const available = hooks.registry.list().map((info) => info.ref);
+    return {
+      status: "unknown_image",
+      message:
+        "The requested image is not available in this run. " +
+        (available.length > 0
+          ? `Available references: ${available.join(", ")}.`
+          : "No images have been attached to this conversation."),
+    };
+  }
+  if (question.trim() === "") {
+    return {
+      status: "invalid_request",
+      message: 'The "question" argument must not be empty.',
+    };
+  }
+
+  const recordError = (code: string, message: string): void => {
+    hooks.metrics?.recordLlmCall(
+      hooks.config.llm.provider,
+      hooks.config.llm.model,
+      "error",
+      0,
+      0,
+      0,
+    );
+    if (toolCallId !== undefined) {
+      hooks.setGenAiAttributes?.(toolCallId, {
+        provider: hooks.config.llm.provider,
+        model: hooks.config.llm.model,
+      });
+    }
+    if (hooks.nodeId !== undefined) {
+      hooks.onNodeDiagnostic?.(hooks.nodeId, { level: "error", code, message });
+    }
+  };
+
+  let model: ReturnType<typeof hooks.llmProviderFactory>;
+  try {
+    model = hooks.llmProviderFactory(
+      hooks.config.llm,
+      hooks.appConfig,
+      hooks.resolution,
+    );
+  } catch {
+    const message = "Could not initialise the vision model.";
+    recordError("image_inspection_provider_error", message);
+    return {
+      isError: true,
+      status: "vision_provider_error",
+      message,
+    };
+  }
+
+  const dataUrl = `data:${stored.mediaType};base64,${Buffer.from(
+    stored.data,
+  ).toString("base64")}`;
+  const params: Parameters<typeof generateText>[0] = {
+    model,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              `Answer the following question about the attached image, ` +
+              `strictly from what is visible in it. If the answer is not ` +
+              `visible, say so.\n\nQuestion: ${question}`,
+          },
+          { type: "file", data: new URL(dataUrl), mediaType: stored.mediaType },
+        ],
+      },
+    ],
+  };
+  const visionParams = filterLlmParameters(
+    hooks.config.llm.parameters as Record<string, unknown> | undefined,
+    hooks.config.llm.provider,
+    hooks.config.llm.model,
+  );
+  if (typeof visionParams?.temperature === "number") {
+    params.temperature = visionParams.temperature;
+  }
+  if (typeof visionParams?.maxTokens === "number") {
+    params.maxOutputTokens = visionParams.maxTokens;
+  }
+  if (hooks.signal !== undefined) params.abortSignal = hooks.signal;
+
+  let result: Awaited<ReturnType<typeof generateText>>;
+  try {
+    result = await generateText(params);
+  } catch {
+    const message = "Vision inspection failed.";
+    recordError("image_inspection_call_failed", message);
+    return {
+      isError: true,
+      status: "vision_call_failed",
+      message,
+    };
+  }
+
+  // Report the vision call to the monitoring/cost layer under the tool-call id,
+  // exactly as the media-generation path does, so the spend is visible rather
+  // than hidden inside a tool result.
+  const usage = result.usage;
+  if (toolCallId !== undefined) {
+    hooks.setGenAiAttributes?.(
+      toolCallId,
+      { provider: hooks.config.llm.provider, model: hooks.config.llm.model },
+      {
+        inputTokens: usage?.inputTokens ?? 0,
+        outputTokens: usage?.outputTokens ?? 0,
+      },
+    );
+  }
+  if (usage !== undefined) {
+    const inputTokens = usage.inputTokens ?? 0;
+    const outputTokens = usage.outputTokens ?? 0;
+    if (hooks.usage !== undefined) {
+      hooks.usage.promptTokens += inputTokens;
+      hooks.usage.completionTokens += outputTokens;
+      hooks.usage.totalTokens += inputTokens + outputTokens;
+    }
+    const cost = estimateCost(
+      hooks.config.llm.provider,
+      hooks.config.llm.model,
+      {
+        prompt_tokens: usage.inputTokens ?? 0,
+        completion_tokens: usage.outputTokens ?? 0,
+      },
+      hooks.pricingOverrides ?? hooks.appConfig.llmPricing,
+    );
+    hooks.metrics?.recordLlmCall(
+      hooks.config.llm.provider,
+      hooks.config.llm.model,
+      "ok",
+      usage.inputTokens ?? 0,
+      usage.outputTokens ?? 0,
+      cost,
+    );
+    if (cost > 0) {
+      if (hooks.usage !== undefined) {
+        hooks.usage.costUsd = (hooks.usage.costUsd ?? 0) + cost;
+      }
+      hooks.costTracker?.record(hooks.clientId, cost, {
+        provider: hooks.config.llm.provider,
+        model: hooks.config.llm.model,
+        promptTokens: usage.inputTokens ?? 0,
+        completionTokens: usage.outputTokens ?? 0,
+        ...(hooks.costAttribution ?? {}),
+      });
+    }
+  }
+
+  const cap =
+    typeof hooks.config.maxAnswerChars === "number" &&
+    hooks.config.maxAnswerChars > 0
+      ? Math.floor(hooks.config.maxAnswerChars)
+      : DEFAULT_IMAGE_ANSWER_CHARS;
+  const answer = typeof result.text === "string" ? result.text.trim() : "";
+  if (answer === "") {
+    return {
+      status: "no_answer",
+      image,
+      message: "The vision model returned no description for this image.",
+    };
+  }
+  return {
+    status: "ok",
+    image,
+    description: answer.length > cap ? `${answer.slice(0, cap)}…` : answer,
   };
 }
 

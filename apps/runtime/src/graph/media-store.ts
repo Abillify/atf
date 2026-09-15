@@ -26,6 +26,27 @@
  * storage if long-term media retention is required.
  */
 
+export const DEFAULT_MEDIA_MAX_ITEM_BYTES = 26_214_400; // 25 MiB
+
+/**
+ * Strictly decodes standard base64, accepting folded whitespace and omitted
+ * terminal padding but rejecting malformed alphabets, padding and lengths.
+ */
+export function decodeBase64Bytes(value: string): Uint8Array | undefined {
+  const compact = value.replace(/\s+/gu, "");
+  if (compact === "" || !/^[A-Za-z0-9+/]*={0,2}$/u.test(compact)) {
+    return undefined;
+  }
+  const unpadded = compact.replace(/=+$/u, "");
+  if (unpadded.length % 4 === 1) return undefined;
+  const padded = unpadded.padEnd(Math.ceil(unpadded.length / 4) * 4, "=");
+  const decoded = new Uint8Array(Buffer.from(padded, "base64"));
+  if (decoded.byteLength === 0) return undefined;
+  return Buffer.from(decoded).toString("base64").replace(/=+$/u, "") === unpadded
+    ? decoded
+    : undefined;
+}
+
 /** A stored media payload. */
 export interface StoredMedia {
   /** Raw media bytes. */
@@ -38,8 +59,8 @@ export interface StoredMedia {
 export type Clock = () => number;
 
 export interface MediaStore {
-  /** Stores media bytes and returns an unguessable id to retrieve them by. */
-  put(data: Uint8Array, mediaType: string): string;
+  /** Stores media bytes, or rejects an empty/oversized payload. */
+  put(data: Uint8Array, mediaType: string): string | undefined;
   /** Retrieves stored media by id, or undefined when missing/expired. */
   get(id: string): StoredMedia | undefined;
 }
@@ -58,6 +79,8 @@ export interface InMemoryMediaStoreOptions {
   maxEntries?: number;
   /** Max total bytes retained before LRU eviction. Default 134217728 (128 MiB). */
   maxTotalBytes?: number;
+  /** Max bytes accepted for one item. Default 26214400 (25 MiB). */
+  maxItemBytes?: number;
   clock?: Clock;
 }
 
@@ -70,6 +93,7 @@ export class InMemoryMediaStore implements MediaStore {
   private readonly ttlMs: number;
   private readonly maxEntries: number;
   private readonly maxTotalBytes: number;
+  private readonly maxItemBytes: number;
   private readonly clock: Clock;
   private totalBytes = 0;
   private seq = 0;
@@ -78,10 +102,17 @@ export class InMemoryMediaStore implements MediaStore {
     this.ttlMs = Math.max(1, options.ttlSeconds ?? 86_400) * 1000;
     this.maxEntries = Math.max(1, options.maxEntries ?? 100);
     this.maxTotalBytes = Math.max(1, options.maxTotalBytes ?? 134_217_728);
+    this.maxItemBytes = Math.min(
+      this.maxTotalBytes,
+      Math.max(1, options.maxItemBytes ?? DEFAULT_MEDIA_MAX_ITEM_BYTES),
+    );
     this.clock = options.clock ?? Date.now;
   }
 
-  put(data: Uint8Array, mediaType: string): string {
+  put(data: Uint8Array, mediaType: string): string | undefined {
+    if (data.byteLength === 0 || data.byteLength > this.maxItemBytes) {
+      return undefined;
+    }
     const id = crypto.randomUUID();
     this.entries.set(id, {
       data,

@@ -39,7 +39,10 @@ import type { FlowRegistry } from "../flow-parser.js";
 import { applyFlowVariables } from "../flow-parser.js";
 import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 import { createLlmProvider } from "../llm-factory.js";
-import { chatMessageToBaseMessage } from "../message-mapping.js";
+import {
+  chatMessageToBaseMessage,
+  sanitizeToolResultOutput,
+} from "../message-mapping.js";
 import type { ModelQualityRegistry } from "../model-quality.js";
 import type { ResponseCache } from "../response-cache.js";
 import type { SemanticCache } from "../semantic-cache.js";
@@ -52,7 +55,8 @@ import { createToolLoopState } from "../tool-loop-detection.js";
 import type { ToolGroupSummarizer } from "../tool-group-summary.js";
 import type { MemoryStore } from "../memory-store.js";
 import type { MediaStore } from "../media-store.js";
-import { mediaExtension } from "../media-store.js";
+import { decodeBase64Bytes, mediaExtension } from "../media-store.js";
+import { HashedImageRefRegistry } from "../image-reference.js";
 import type { OutputGuardrail } from "../output-guardrails.js";
 import type { ToolEgressGuardrail } from "../output-guardrails.js";
 import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
@@ -417,14 +421,10 @@ class GraphEngineServiceImpl implements GraphEngineService {
     if (this.mediaStore === undefined) return undefined;
     const base = this.appConfig.mediaBaseUrl;
     if (base === undefined || base === "") return undefined;
-    let bytes: Uint8Array;
-    try {
-      bytes = new Uint8Array(Buffer.from(base64, "base64"));
-    } catch {
-      return undefined;
-    }
-    if (bytes.byteLength === 0) return undefined;
+    const bytes = decodeBase64Bytes(base64);
+    if (bytes === undefined) return undefined;
     const id = this.mediaStore.put(bytes, mediaType);
+    if (id === undefined) return undefined;
     return `${base.replace(/\/$/, "")}/v1/media/${id}.${mediaExtension(mediaType)}`;
   }
 
@@ -733,53 +733,6 @@ class GraphEngineServiceImpl implements GraphEngineService {
         return undefined;
       }
     };
-    /**
-     * MCP and the AI SDK expose tool failures in several equivalent envelopes.
-     * Normalise them once so synthetic nodes and debug traces agree instead of
-     * treating `{ isError: true, content: [...] }` as a successful null result.
-     */
-    const toolErrorMessage = (content: unknown): string | undefined => {
-      const seen = new Set<object>();
-      const visit = (value: unknown, depth: number): string | undefined => {
-        if (depth > 5 || value === null || value === undefined) return undefined;
-        if (typeof value === "string") {
-          try {
-            return visit(JSON.parse(value) as unknown, depth + 1);
-          } catch {
-            return undefined;
-          }
-        }
-        if (Array.isArray(value)) {
-          for (const item of value) {
-            const found = visit(item, depth + 1);
-            if (found !== undefined) return found;
-          }
-          return undefined;
-        }
-        if (typeof value !== "object") return undefined;
-        if (seen.has(value)) return undefined;
-        seen.add(value);
-        const record = value as Record<string, unknown>;
-        const isSdkError =
-          typeof record.type === "string" && record.type.startsWith("error-");
-        if (record.isError === true || isSdkError || record.error !== undefined) {
-          const detail =
-            record.message ?? record.error ?? record.value ?? record.content;
-          if (typeof detail === "string" && detail.trim() !== "") return detail;
-          try {
-            return JSON.stringify(detail ?? record);
-          } catch {
-            return "Tool reported an error";
-          }
-        }
-        for (const key of ["output", "result", "content", "value"]) {
-          const found = visit(record[key], depth + 1);
-          if (found !== undefined) return found;
-        }
-        return undefined;
-      };
-      return visit(content, 0);
-    };
     /** Emits the "running" event for a synthetic tool node. */
     const emitToolNodeStart = (toolCallId: string, toolName: string): void => {
       if (!monitoring) return;
@@ -911,28 +864,38 @@ class GraphEngineServiceImpl implements GraphEngineService {
       argsJson: string,
       ownerNodeId?: string,
     ): Promise<void> => {
-      // Capture the tool's input args for its synthetic node's detail view.
-      toolNodeArgs.set(toolCallId, truncateToolIo(argsJson));
+      let safeArgsJson = '{"argument_keys":[]}';
+      try {
+        const args = JSON.parse(argsJson) as unknown;
+        const keys =
+          args !== null && typeof args === "object" && !Array.isArray(args)
+            ? Object.keys(args as Record<string, unknown>).sort()
+            : [];
+        safeArgsJson = JSON.stringify({ argument_keys: keys });
+      } catch {
+        // Invalid arguments are represented by an empty key list, never raw.
+      }
+      // Tool arguments are pre-DLP model output. Telemetry records shape only;
+      // execution receives the original value through the AI SDK tool closure.
+      toolNodeArgs.set(toolCallId, truncateToolIo(safeArgsJson));
       emitToolNodeStart(toolCallId, toolName);
       const activeNodeId = ownerNodeId ?? lastActiveNodeId;
       if (activeNodeId !== undefined) {
         toolCallOwnerNodeIds.set(toolCallId, activeNodeId);
         const existing = nodeToolCalls.get(activeNodeId) ?? [];
-        existing.push({ id: toolCallId, name: toolName, args_json: argsJson });
+        existing.push({
+          id: toolCallId,
+          name: toolName,
+          args_json: safeArgsJson,
+        });
         nodeToolCalls.set(activeNodeId, existing);
       }
       if (this.debugStore !== undefined && activeNodeId !== undefined) {
-        let parsedArgs: unknown;
-        try {
-          parsedArgs = JSON.parse(argsJson) as unknown;
-        } catch {
-          parsedArgs = argsJson;
-        }
         const debugCalls = nodeDebugToolCalls.get(activeNodeId) ?? [];
         debugCalls.push({
           id: toolCallId,
           name: toolName,
-          arguments: parsedArgs,
+          arguments: JSON.parse(safeArgsJson) as unknown,
           result: null,
           is_error: false,
           called_at: new Date().toISOString(),
@@ -943,19 +906,13 @@ class GraphEngineServiceImpl implements GraphEngineService {
         pendingToolTraceMetadata.delete(toolCallId);
         nodeDebugToolCalls.set(activeNodeId, debugCalls);
       }
-      try {
-        const args = JSON.parse(argsJson) as Record<string, unknown>;
-        const argSummary =
-          Object.keys(args).length > 0
-            ? ` (${Object.entries(args)
-                .map(([k, v]) => `${k}: ${JSON.stringify(v)}`)
-                .join(", ")})`
-            : "";
-        await emitReasoningStep(`🔧 Tool: **${toolName}**${argSummary}\n`);
-      } catch {
-        /* non-critical */
-      }
-      _pendingToolCallIds.set(toolCallId, { name: toolName, argsJson });
+      await emitReasoningStep(
+        `🔧 Tool: **${toolName}** (argument shape: ${safeArgsJson})\n`,
+      );
+      _pendingToolCallIds.set(toolCallId, {
+        name: toolName,
+        argsJson: safeArgsJson,
+      });
     };
 
     // --- Client tool-call passthrough callback ---
@@ -985,13 +942,59 @@ class GraphEngineServiceImpl implements GraphEngineService {
       emitToolNodeEnd(toolCallId, 0);
     };
 
+    const onToolError = (
+      toolCallId: string,
+      _errorMessage: string,
+      execTimeSec: number,
+    ): void => {
+      const safeMessage = "Tool execution failed.";
+      const visibleContent = {
+        isError: true,
+        error: {
+          name: "ToolExecutionError",
+          message: safeMessage,
+        },
+      };
+      toolNodeResults.set(toolCallId, JSON.stringify(visibleContent));
+      const activeNodeId =
+        toolCallOwnerNodeIds.get(toolCallId) ?? lastActiveNodeId;
+      if (activeNodeId !== undefined) {
+        const calls = nodeToolCalls.get(activeNodeId);
+        const call = calls?.findLast(
+          (item) =>
+            item.id === toolCallId && item.exec_time_seconds === undefined,
+        );
+        if (call !== undefined) {
+          call.exec_time_seconds = Math.round(execTimeSec * 1000) / 1000;
+        }
+        const debugCalls = nodeDebugToolCalls.get(activeNodeId);
+        const debugCall = debugCalls?.findLast(
+          (item) => item.id === toolCallId && item.result === null,
+        );
+        if (debugCall !== undefined) {
+          debugCall.result = visibleContent;
+          debugCall.exec_time_seconds =
+            Math.round(execTimeSec * 1000) / 1000;
+          debugCall.is_error = true;
+        }
+      }
+      toolCallOwnerNodeIds.delete(toolCallId);
+      _pendingToolCallIds.delete(toolCallId);
+      emitToolNodeEnd(toolCallId, execTimeSec, safeMessage);
+    };
+
     const onToolResult = async (
       toolCallId: string,
       content: unknown,
       execTimeSec: number,
       options?: { streamDetails?: boolean },
     ): Promise<void> => {
-      const errorMessage = toolErrorMessage(content);
+      const visibleContent = sanitizeToolResultOutput(content);
+      const errorMessage =
+        visibleContent === content ? undefined : "Tool execution failed.";
+      // Error envelopes are untrusted provider/tool output. Preserve successful
+      // results, but expose only a stable error object to monitoring, debug
+      // traces, and client reasoning streams.
       const toolUsage = extractToolUsage(content);
       if (toolUsage !== undefined) {
         nodeToolCostOverride.set(toolCallId, toolUsage.cost);
@@ -1006,7 +1009,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       }
       // Capture the tool's output for its synthetic node's detail view — a
       // vectorsearch-style payload normalises to a findings table shape.
-      const resultDisplay = buildToolResultDisplay(content);
+      const resultDisplay = buildToolResultDisplay(visibleContent);
       if (resultDisplay !== undefined) {
         toolNodeResults.set(toolCallId, truncateToolIo(resultDisplay));
       }
@@ -1031,7 +1034,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
             (call) => call.id === toolCallId && call.result === null,
           );
           if (dtc !== undefined) {
-            dtc.result = content;
+            dtc.result = visibleContent;
             dtc.exec_time_seconds = Math.round(execTimeSec * 1000) / 1000;
             dtc.is_error = errorMessage !== undefined;
           }
@@ -1066,9 +1069,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
       if (options?.streamDetails === false) return;
 
       // Render as Open WebUI <details type="tool_calls"> content block.
-      let displayResult: unknown = content;
+      let displayResult: unknown = visibleContent;
       try {
-        const raw = typeof content === "string" ? JSON.parse(content) : content;
+        const raw =
+          typeof visibleContent === "string"
+            ? JSON.parse(visibleContent)
+            : visibleContent;
         if (
           Array.isArray(raw) &&
           raw.length > 0 &&
@@ -1149,7 +1155,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
           }
         }
       } catch {
-        displayResult = content;
+        displayResult = visibleContent;
       }
 
       const formatVectorHits = (val: unknown): string | undefined => {
@@ -1883,8 +1889,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       onToolTraceMetadata: mergeToolTraceMetadata,
       onClientToolCall,
       onToolResult,
-      onToolError: (toolCallId, errorMessage, execTimeSec) =>
-        emitToolNodeEnd(toolCallId, execTimeSec, errorMessage),
+      onToolError,
       onCitations,
       registerCitations,
       onNodeStart,
@@ -1956,6 +1961,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
             publishMedia: (base64: string, mediaType: string) =>
               this.publishMediaUrl(base64, mediaType),
           }
+        : {}),
+      // Run-scoped image references. Unlike publishMedia this needs no
+      // `mediaBaseUrl`: the bytes are only ever read back in-process by the
+      // `inspect_image` tool, never served to a browser.
+      ...(this.mediaStore !== undefined
+        ? { imageRefs: new HashedImageRefRegistry({ store: this.mediaStore }) }
         : {}),
       metrics: this.metrics,
       authorizationEnabled: this.appConfig.authzEnabled ?? true,

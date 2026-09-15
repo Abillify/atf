@@ -311,6 +311,7 @@ describe("buildAiTools — MCP 2026 server approvals", () => {
     const node: FlowNode = { id: "n1", type: "llm", tools: ["bank/pay"] };
     const { tools } = await buildAiTools(node, mcp, CTX, approval);
     expect(await executeOnlyTool(tools, {})).toEqual({
+      isError: true,
       error: "approval_denied",
       message: "operator denied",
     });

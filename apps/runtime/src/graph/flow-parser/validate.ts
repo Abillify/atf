@@ -20,6 +20,7 @@ import type {
 } from "../../types/flow.js";
 import { DATA_CLASSES } from "../../types/flow.js";
 import { defaultNodeHandlerRegistry } from "../node-handler-registry.js";
+import { getModelCapabilities } from "../model-capabilities.js";
 
 // ---------------------------------------------------------------------------
 // Validation Error Type
@@ -160,6 +161,32 @@ const FinalAnswerContractSchema = z
   });
 
 /**
+ * Vision-inspection settings (`config.imageInspection`) of an `llm` node that
+ * must stay text-only. The vision model is mandatory: once inline images are
+ * parked as `img-N` references, that model is the ONLY way back to the pixels,
+ * so a block without it would silently make every attached image unreadable.
+ * `maxAnswerChars` is bounded because the answer is injected into the hosting
+ * model's own context on every later turn.
+ */
+const ImageInspectionConfigSchema = z
+  .object({
+    llm: LlmConfigSchema,
+    description: z.string().min(1).max(2_000).optional(),
+    imageDescription: z.string().min(1).max(1_000).optional(),
+    maxAnswerChars: z.number().int().min(200).max(100_000).optional(),
+  })
+  .superRefine(({ llm }, ctx) => {
+    const capabilities = getModelCapabilities(llm.provider, llm.model);
+    if (capabilities.visionInput || llm.parameters?.visionInput === true) return;
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["llm"],
+      message:
+        "imageInspection.llm must declare vision input support (known vision model or parameters.visionInput: true)",
+    });
+  });
+
+/**
  * LLM node config remains extensible, but security-sensitive output framing is
  * validated explicitly. By default the runtime buffers all ordinary content;
  * the opt-in live mode starts emitting only after the start marker while
@@ -169,6 +196,7 @@ export const LlmNodeConfigSchema = z
   .object({
     finalAnswerContract: FinalAnswerContractSchema.optional(),
     maxOutputChars: z.number().int().min(1_000).max(1_000_000).optional(),
+    imageInspection: ImageInspectionConfigSchema.optional(),
     toolResultBudget: z
       .object({
         perResultChars: z.number().int().min(1_000).max(1_000_000).optional(),

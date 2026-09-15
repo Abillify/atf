@@ -48,6 +48,28 @@ describe("collectFlowLlmConfigs", () => {
     ]);
   });
 
+  it("includes image-inspection models in static policy evaluation", () => {
+    const flow: FlowDefinition = {
+      id: "f1",
+      name: "F1",
+      nodes: [
+        {
+          id: "n1",
+          type: "llm",
+          llm: { provider: "openai", model: "gpt-4o" },
+          config: {
+            imageInspection: { llm: { provider: "google", model: "gemini-2.0-flash" } },
+          },
+        },
+      ],
+      edges: [],
+    };
+    expect(collectFlowLlmConfigs(flow).map((config) => config.model)).toEqual([
+      "gpt-4o",
+      "gemini-2.0-flash",
+    ]);
+  });
+
   it("deduplicates identical provider+model pairs", () => {
     const flow: FlowDefinition = {
       id: "f1",

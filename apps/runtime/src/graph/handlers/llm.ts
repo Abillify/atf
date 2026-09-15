@@ -21,7 +21,11 @@ import { AIMessage } from "@langchain/core/messages";
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import { streamText, stepCountIs } from "ai";
 import type { ModelMessage, ToolSet } from "ai";
-import type { FlowNode, LlmConfig } from "../../types/flow.js";
+import type {
+  FlowNode,
+  LlmConfig,
+  ImageInspectionConfig,
+} from "../../types/flow.js";
 import {
   allowsEmptyResponseFallback,
   allowsTerminalEmptyResponseFallback,
@@ -38,7 +42,7 @@ import {
 } from "../../assistants/context-frame.js";
 import type { NodeHandlerRegistration } from "../node-handler-registry.js";
 import { providerTransportErrorCode } from "../provider-circuit-breaker.js";
-import { UnknownProviderError, filterLlmParameters } from "../llm-factory.js";
+import { filterLlmParameters } from "../llm-factory.js";
 import { buildClassificationNamespaces } from "../classification-access.js";
 import {
   baseMessagesToModelMessages,
@@ -49,15 +53,25 @@ import {
   applyBedrockPromptCache,
   coreMessagesToText,
   modelMessagesContainImages,
+  sanitizeToolResultOutput,
+  sanitizeToolResultModelMessages,
+  sanitizeToolCallModelMessages,
 } from "../message-mapping.js";
 import { getModelCapabilities } from "../model-capabilities.js";
 import {
   buildAiTools,
   buildMediaTools,
+  buildImageInspectionTools,
   buildClientTools,
   buildToolSelectionMetaTool,
   mapToolChoice,
+  uniqueMediaToolKey,
 } from "../agent-tools.js";
+import {
+  offloadInlineImages,
+  inlineImageBytes,
+  IMAGE_INSPECTION_TOOL_NAME,
+} from "../image-reference.js";
 import {
   parseToolSelection,
   expandPatterns,
@@ -156,6 +170,14 @@ function readSafeAssistantRetryToolRefs(
 
 const HISTORY_COPY_MIN_CHARS = 40;
 const HISTORY_COPY_MIN_SHARED_TOKENS = 8;
+
+/**
+ * Decoded inline-image bytes we are willing to keep shipping in a prompt before
+ * it becomes a trace-level warning. A single phone photo is ~2–4 MB, so this
+ * fires on the first attachment — which is exactly when the cost of re-sending
+ * it on every turn of a long conversation starts to matter.
+ */
+const PROMPT_INLINE_IMAGE_WARN_BYTES = 1_500_000;
 
 function normalizeHistoryCopyText(text: string): string {
   return text.normalize("NFKC").toLocaleLowerCase().replace(/\s+/gu, " ").trim();
@@ -439,6 +461,10 @@ export function createLlmNodeHandler(
     });
 
     let aiTools: ToolSet | undefined;
+    const effectiveToolArgsByCallId = new Map<
+      string,
+      Record<string, unknown>
+    >();
     const assistantSessionBinding = (() => {
       if (runtime.assistants === undefined) return undefined;
       const resolution = resolveAssistantScope({
@@ -533,20 +559,18 @@ export function createLlmNodeHandler(
             templateContext: toolTemplateContext,
             ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
             ...(assistantToolJournal !== undefined ? { journal: assistantToolJournal } : {}),
-            ...(runtime.onToolEffectiveArgs !== undefined
-              ? {
-                  onEffectiveToolArgs: (
-                    toolCallId: string,
-                    toolRef: string,
-                    args: Record<string, unknown>,
-                  ) =>
-                    runtime.onToolEffectiveArgs?.(
-                      toolCallId,
-                      toolRef,
-                      JSON.stringify(args),
-                    ),
-                }
-              : {}),
+            onEffectiveToolArgs: (
+              toolCallId: string,
+              toolRef: string,
+              args: Record<string, unknown>,
+            ) => {
+              effectiveToolArgsByCallId.set(toolCallId, args);
+              return runtime.onToolEffectiveArgs?.(
+                toolCallId,
+                toolRef,
+                JSON.stringify(args),
+              );
+            },
             ...(runtime.executeToolCall !== undefined
               ? { executeToolCall: runtime.executeToolCall }
               : {}),
@@ -761,6 +785,69 @@ export function createLlmNodeHandler(
       }
     }
 
+    // Image inspection (see `image-reference.ts`) is assembled after every
+    // other tool source, including caller-provided tools. That final ordering
+    // reserves a non-colliding key instead of allowing a client `inspect_image`
+    // declaration to overwrite the internal, server-executed inspection tool.
+    const imageInspection = (
+      node.config as { imageInspection?: ImageInspectionConfig } | undefined
+    )?.imageInspection;
+    const imageInspectionEnabled =
+      imageInspection?.llm !== undefined && runtime.imageRefs !== undefined;
+    if (imageInspection?.llm !== undefined && runtime.imageRefs === undefined) {
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "warn",
+        code: "image_inspection_unavailable",
+        message:
+          `Node ${node.id} declares config.imageInspection but no media store is ` +
+          "configured, so inline images cannot be referenced or inspected. Set " +
+          "MEDIA_BASE_URL / enable the media store, or remove the config.",
+      });
+    }
+    let imageInspectionToolName = IMAGE_INSPECTION_TOOL_NAME;
+    if (imageInspectionEnabled && runtime.imageRefs !== undefined) {
+      imageInspectionToolName = uniqueMediaToolKey(
+        (aiTools ?? {}) as Record<string, unknown>,
+        IMAGE_INSPECTION_TOOL_NAME,
+      );
+      const inspectionTools = buildImageInspectionTools({
+        existingTools: aiTools,
+        nodeId: node.id,
+        usage: runtime.usage,
+        onNodeDiagnostic: runtime.onNodeDiagnostic,
+        registry: runtime.imageRefs,
+        config: imageInspection,
+        appConfig: runtime.appConfig,
+        llmProviderFactory: runtime.llmProviderFactory,
+        ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
+        ...(runtime.pricingOverrides !== undefined
+          ? { pricingOverrides: runtime.pricingOverrides }
+          : {}),
+        ...(runtime.ctx.providerKeyOverrides !== undefined
+          ? {
+              resolution: {
+                providerKeyOverrides: runtime.ctx.providerKeyOverrides,
+              },
+            }
+          : {}),
+        ...(runtime.setGenAiAttributes !== undefined
+          ? { setGenAiAttributes: runtime.setGenAiAttributes }
+          : {}),
+        ...(runtime.costTracker !== undefined
+          ? { costTracker: runtime.costTracker }
+          : {}),
+        metrics: runtime.metrics,
+        clientId: runtime.ctx.clientId,
+        costAttribution: buildCostAttribution(runtime.ctx, runtime.flowId),
+      });
+      if (Object.keys(inspectionTools).length > 0) {
+        aiTools = { ...(aiTools ?? {}), ...inspectionTools };
+        if (activeToolKeys !== undefined) {
+          for (const k of Object.keys(inspectionTools)) activeToolKeys.add(k);
+        }
+      }
+    }
+
     const effectiveParams = filterLlmParameters(
       llmConfig.parameters as Record<string, unknown> | undefined,
       llmConfig.provider,
@@ -946,22 +1033,20 @@ export function createLlmNodeHandler(
                       sequence: snapshot.sequence,
                       token: runtime.ctx.ssoToken,
                     });
-                  } catch (error) {
+                  } catch {
                     runtime.onNodeDiagnostic?.(node.id, {
                       level: "warn",
                       code: "history_snapshot_index_failed",
                       message: "The durable history snapshot was stored, but its Vectorsearch projection failed.",
-                      details: { error: error instanceof Error ? error.message : String(error) },
                     });
                   }
                 }
               }
-            } catch (error) {
+            } catch {
               runtime.onNodeDiagnostic?.(node.id, {
                 level: "warn",
                 code: "history_snapshot_persist_failed",
                 message: "History compaction succeeded, but its durable session snapshot could not be persisted.",
-                details: { error: error instanceof Error ? error.message : String(error) },
               });
             }
           }
@@ -1172,6 +1257,92 @@ export function createLlmNodeHandler(
           ];
         }
       }
+    }
+
+    // ── Inline images → references ────────────────────────────────────────
+    // Runs once the prompt is final and before any candidate request is built,
+    // so the base64 never reaches the provider (or the prompt-cache key, or the
+    // context-window accounting) for a node that opted into reference-based
+    // image handling. The bytes live in the run-scoped registry and are reachable
+    // again through `inspect_image`; identical images reuse the same `img-N`, so
+    // a re-sent attachment does not change the prompt across turns.
+    //
+    // This also lifts the vision guard: a node that offloads its images sends no
+    // image parts at all, so `vision_not_supported` below no longer skips a
+    // text-only model that would otherwise reject the whole request.
+    //
+    // Scope note: what is rewritten here is the *incoming* prompt, including
+    // images a tool returned on an earlier turn. A tool result produced later in
+    // the SAME provider loop is appended by the SDK itself and goes out with its
+    // bytes — the AI SDK exposes no per-step message hook to rewrite it.
+    if (imageInspectionEnabled && runtime.imageRefs !== undefined) {
+      const offloaded = offloadInlineImages(
+        messagesWithSystemPrompt,
+        runtime.imageRefs,
+        imageInspectionToolName,
+      );
+      if (offloaded.offloaded > 0) {
+        messagesWithSystemPrompt = offloaded.messages;
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "info",
+          code: "llm_images_offloaded",
+          message:
+            `Replaced ${offloaded.offloaded} inline image(s) with ` +
+            `${IMAGE_INSPECTION_TOOL_NAME} references (${offloaded.refs.join(
+              ", ",
+            )}), keeping ${offloaded.bytesRemoved} image bytes out of the prompt.`,
+          details: {
+            offloaded: offloaded.offloaded,
+            refs: offloaded.refs,
+            bytesRemoved: offloaded.bytesRemoved,
+          },
+        });
+        runtime.metrics.recordCounter(
+          "aiperator_image_offload_total",
+          { node: node.id },
+          offloaded.offloaded,
+        );
+        runtime.metrics.recordCounter(
+          "aiperator_image_offload_bytes_total",
+          { node: node.id },
+          offloaded.bytesRemoved,
+        );
+      }
+      if (offloaded.unresolved > 0) {
+        const message =
+          `${offloaded.unresolved} image reference(s) could not be parked because ` +
+          "they are remote or otherwise undecodable; refusing to send them to the hosting model.";
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "error",
+          code: "image_inspection_remote_image_unavailable",
+          message,
+          details: { unresolved: offloaded.unresolved },
+        });
+        throw new Error("IMAGE_INSPECTION_REMOTE_IMAGE_UNAVAILABLE");
+      }
+    }
+
+    // Prompt-size guard for images that are *still* inline: a node without
+    // `config.imageInspection` (or a remote image URL that cannot be parked)
+    // sends those bytes to the provider on every single turn, which is both a
+    // cost and a context-window problem long before it becomes an error. Loudly
+    // visible here rather than inferred from a truncated answer.
+    const remainingImages = inlineImageBytes(messagesWithSystemPrompt);
+    if (remainingImages.totalBytes > PROMPT_INLINE_IMAGE_WARN_BYTES) {
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "warn",
+        code: "llm_prompt_image_payload_large",
+        message:
+          `${remainingImages.count} inline image(s) totalling ` +
+          `${remainingImages.totalBytes} bytes are part of this prompt. ` +
+          "Consider config.imageInspection so images are referenced instead of " +
+          "re-sent on every turn.",
+        details: {
+          images: remainingImages.count,
+          totalBytes: remainingImages.totalBytes,
+          maxBytes: remainingImages.maxBytes,
+        },
+      });
     }
 
     runtime.onNodeIo?.(node.id, {
@@ -1546,7 +1717,7 @@ export function createLlmNodeHandler(
       }
     }
 
-    let lastErrMsg = "unknown error";
+    let lastErrMsg = "LLM provider request failed.";
     let providerAttemptCount = 0;
     let policySuppressedToolFallback = false;
     const circuitSkippedProviders: string[] = [];
@@ -1580,13 +1751,8 @@ export function createLlmNodeHandler(
             ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
             : {}),
         });
-      } catch (err) {
-        lastErrMsg =
-          err instanceof UnknownProviderError
-            ? `unknown LLM provider "${err.provider}"`
-            : err instanceof Error
-              ? err.message
-              : String(err);
+      } catch {
+        lastErrMsg = "LLM provider initialization failed.";
         runtime.metrics.recordLlmCall(
           candidate.provider,
           candidate.model,
@@ -1598,13 +1764,12 @@ export function createLlmNodeHandler(
         runtime.onNodeDiagnostic?.(node.id, {
           level: "error",
           code: "llm_provider_candidate_failed",
-          message: `Could not initialize ${candidate.provider}/${candidate.model}: ${lastErrMsg}`,
+          message: `Could not initialize ${candidate.provider}/${candidate.model}.`,
           details: {
             phase: "provider-initialization",
             candidate_index: c,
             provider: candidate.provider,
             model: candidate.model,
-            error: lastErrMsg,
           },
         });
         continue;
@@ -1698,7 +1863,19 @@ export function createLlmNodeHandler(
           // array on SDK versions that omit stepNumber).
           const firstStep =
             stepNumber === 0 || (Array.isArray(steps) && steps.length === 0);
-          const sanitized = sanitizeReasoningSentinelModelMessages(messages);
+          const reasoningSanitized =
+            sanitizeReasoningSentinelModelMessages(messages);
+          // Effective post-DLP arguments are exposed exactly once: to the
+          // immediate step following their tool execution. Older calls are
+          // blanked on subsequent steps and never reach durable history.
+          const currentEffectiveArgs = new Map(effectiveToolArgsByCallId);
+          effectiveToolArgsByCallId.clear();
+          const argumentSanitized = sanitizeToolCallModelMessages(
+            reasoningSanitized,
+            currentEffectiveArgs,
+          );
+          const sanitized =
+            sanitizeToolResultModelMessages(argumentSanitized);
           // Bound the tool output replayed on EVERY step. This is the highest-
           // leverage application point in the whole loop: without it, a large
           // result produced on step 2 is re-sent verbatim on steps 3…N (up to
@@ -1726,7 +1903,38 @@ export function createLlmNodeHandler(
               budgeted.stats.charsSaved,
             );
           }
-          if (modelMessagesContainImages(budgeted.messages) && !visionInput) {
+          let stepMessages = budgeted.messages;
+          if (imageInspectionEnabled && runtime.imageRefs !== undefined) {
+            const offloaded = offloadInlineImages(
+              stepMessages,
+              runtime.imageRefs,
+              imageInspectionToolName,
+            );
+            if (offloaded.unresolved > 0) {
+              runtime.onNodeDiagnostic?.(node.id, {
+                level: "error",
+                code: "image_inspection_remote_image_unavailable",
+                message:
+                  "A tool result contains a remote or undecodable image that cannot be safely offloaded.",
+                details: { unresolved: offloaded.unresolved },
+              });
+              throw new Error("IMAGE_INSPECTION_REMOTE_IMAGE_UNAVAILABLE");
+            }
+            if (offloaded.offloaded > 0) {
+              stepMessages = offloaded.messages;
+              runtime.metrics.recordCounter(
+                "aiperator_image_offload_total",
+                { node: node.id },
+                offloaded.offloaded,
+              );
+              runtime.metrics.recordCounter(
+                "aiperator_image_offload_bytes_total",
+                { node: node.id },
+                offloaded.bytesRemoved,
+              );
+            }
+          }
+          if (modelMessagesContainImages(stepMessages) && !visionInput) {
             runtime.onNodeDiagnostic?.(node.id, {
               level: "error",
               code: "vision_not_supported",
@@ -1736,12 +1944,12 @@ export function createLlmNodeHandler(
             throw new Error("VISION_INPUT_NOT_SUPPORTED");
           }
           const effectiveStepMaxTokens = clampMaxOutputTokens(
-            budgeted.messages,
+            stepMessages,
             candidate,
             maxTokens,
           );
           return {
-            messages: budgeted.messages,
+            messages: stepMessages,
             ...(effectiveStepMaxTokens !== undefined
               ? { maxOutputTokens: effectiveStepMaxTokens }
               : {}),
@@ -1989,7 +2197,6 @@ export function createLlmNodeHandler(
               ...(attemptUsage.cachedPromptTokens !== undefined
                 ? { cached_input_tokens: attemptUsage.cachedPromptTokens }
                 : {}),
-              ...(outcome === "error" ? { error: lastErrMsg } : {}),
             },
           });
 
@@ -2580,7 +2787,9 @@ export function createLlmNodeHandler(
               const startedAt = toolStartTimes.get(id) ?? Date.now();
               toolStartTimes.delete(id);
               const toolRef = toolRefByCallId.get(id);
-              const output = (part as { output?: unknown }).output;
+              const output = sanitizeToolResultOutput(
+                (part as { output?: unknown }).output,
+              );
               visibleTextLengthAtLastToolResult = fullText.length;
               lastToolResultForRetry = output;
               if (toolRef !== undefined && isSuccessfulToolResult(output)) {
@@ -2590,7 +2799,7 @@ export function createLlmNodeHandler(
               try {
                 await runtime.onToolResult(
                   id,
-                  (part as { output?: unknown }).output,
+                  output,
                   execTimeSec,
                   { streamDetails: streamToolResultDetails },
                 );
@@ -2613,19 +2822,19 @@ export function createLlmNodeHandler(
               const startedAt = toolStartTimes.get(id) ?? Date.now();
               toolStartTimes.delete(id);
               const error = part.error;
-              const detail =
-                error instanceof Error
-                  ? { name: error.name, message: error.message }
-                  : error;
+              const detail = {
+                name: "ToolExecutionError",
+                message: "Tool execution failed.",
+              };
               visibleTextLengthAtLastToolResult = fullText.length;
               lastToolResultForRetry = {
                 isError: true,
-                error: detail ?? "Tool execution failed",
+                error: detail,
               };
               try {
                 await runtime.onToolResult(
                   id,
-                  { isError: true, error: detail ?? "Tool execution failed" },
+                  { isError: true, error: detail },
                   (Date.now() - startedAt) / 1000,
                   { streamDetails: streamToolResultDetails },
                 );
@@ -2690,11 +2899,10 @@ export function createLlmNodeHandler(
                   (attemptUsage.cachedPromptTokens ?? 0) + stepCached;
               }
             } else if (part.type === "error") {
-              const errMsg =
-                part.error instanceof Error
-                  ? part.error.message
-                  : String(part.error);
-              throw new StreamErrorSignal(errMsg, part.error);
+              throw new StreamErrorSignal(
+                "LLM provider stream failed.",
+                part.error,
+              );
             } else if (part.type === "file") {
               await flushThinkBuf();
               const gf = (
@@ -3507,10 +3715,19 @@ export function createLlmNodeHandler(
                 ]),
           };
         } catch (err) {
-          lastErrMsg = err instanceof Error ? err.message : String(err);
           accountAttempt("error");
           const requestTimedOut =
             !runtime.signal?.aborted && requestDeadline.aborted;
+          const errorCause = err instanceof Error ? err.cause : undefined;
+          const transactionBudgetExceeded =
+            isBudgetExceededError(err) || isBudgetExceededError(errorCause);
+          lastErrMsg = transactionBudgetExceeded
+            ? "Transaction budget exceeded."
+            : requestTimedOut
+              ? "LLM request timed out."
+              : runtime.signal?.aborted === true
+                ? "Flow execution aborted."
+                : "LLM provider request failed.";
           if (requestTimedOut) {
             runtime.onNodeDiagnostic?.(node.id, {
               level: "warn",

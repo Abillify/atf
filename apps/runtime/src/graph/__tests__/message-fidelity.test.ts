@@ -17,9 +17,34 @@ import {
   baseMessagesToModelMessages as baseMessagesToCoreMessages,
   aiResponseMessagesToBaseMessages,
   chatMessageToBaseMessage,
+  sanitizeToolResultOutput,
 } from "../message-mapping.js";
 
 describe("baseMessagesToCoreMessages — tool-call / tool-result fidelity", () => {
+  test("keeps successful payloads with domain error fields unchanged", () => {
+    for (const successful of [
+      { error: null, data: { value: 42 } },
+      {
+        error: "fachlicher Hinweis",
+        message: "Beschreibung",
+        data: { value: 42 },
+      },
+    ]) {
+      expect(sanitizeToolResultOutput(successful)).toBe(successful);
+    }
+  });
+
+  test("sanitizes explicit structured error payloads", () => {
+    const secret = "sk-secret-canary at https://private.internal/tool";
+    const sanitized = sanitizeToolResultOutput({
+      isError: true,
+      error: "provider_failed",
+      message: secret,
+    });
+    expect(JSON.stringify(sanitized)).toContain("Tool execution failed.");
+    expect(JSON.stringify(sanitized)).not.toContain(secret);
+  });
+
   test("AIMessage with tool_calls becomes an assistant message with tool-call parts (only with matching results)", () => {
     // A tool call without a matching result should be filtered out
     const aiWithoutResult = new AIMessage({
@@ -64,7 +89,8 @@ describe("baseMessagesToCoreMessages — tool-call / tool-result fidelity", () =
     if (toolCall === undefined) throw new Error("expected a tool-call part");
     expect(toolCall.toolCallId).toBe("call-1");
     expect(toolCall.toolName).toBe("search");
-    expect(toolCall.input).toEqual({ q: "weather" }); // ai@6.x: args → input
+    // Historical pre-DLP arguments are never replayed to another provider.
+    expect(toolCall.input).toEqual({});
   });
 
   test("ToolMessage becomes a tool-role message with a matching tool-result part", () => {
@@ -208,6 +234,32 @@ describe("aiResponseMessagesToBaseMessages — AI SDK → LangChain", () => {
     const toolMsg = lc[1] as ToolMessage;
     expect(toolMsg._getType()).toBe("tool");
     expect(toolMsg.tool_call_id).toBe("c1");
+  });
+
+  test("redacts tool-error envelopes before they enter durable history", () => {
+    const secret = "sk-secret-canary at https://private.internal/tool";
+    const sdkMessages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "failed-call",
+            toolName: "search",
+            output: {
+              type: "json",
+              value: { isError: true, content: secret },
+            },
+          },
+        ],
+      },
+    ];
+
+    const lc = aiResponseMessagesToBaseMessages(sdkMessages);
+    expect(lc).toBeDefined();
+    const content = String((lc?.[0] as ToolMessage | undefined)?.content ?? "");
+    expect(content).toContain("Tool execution failed.");
+    expect(content).not.toContain(secret);
   });
 
   test("round-trips SDK response → LangChain → CoreMessages preserving the call id", () => {

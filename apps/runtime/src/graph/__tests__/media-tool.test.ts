@@ -19,6 +19,9 @@ import type { FlowNode } from "../../types/flow.js";
 import type { AppConfig } from "../../config/index.js";
 import { mkUsage } from "./v3-mock-helpers.js";
 
+const PROVIDER_ERROR_CANARY =
+  "sk-secret-canary at https://private.internal/media";
+
 const baseConfig: AppConfig = {
   port: 3000,
   flowsDir: "./flows",
@@ -226,15 +229,39 @@ describe("buildMediaTools", () => {
     const tools = buildMediaTools(nodeWithMediaTool(), {
       appConfig: baseConfig,
       llmProviderFactory: () => {
-        throw new Error("no api key");
+        throw new Error(PROVIDER_ERROR_CANARY);
       },
       emit: async () => {},
     });
     const tool = tools.generate_image as ExecutableTool;
     const result = (await tool.execute({ prompt: "x" }, {})) as {
       error: string;
+      message: string;
     };
     expect(result.error).toBe("media_provider_error");
+    expect(result.message).toBe("Could not initialise the media model.");
+    expect(JSON.stringify(result)).not.toContain(PROVIDER_ERROR_CANARY);
+  });
+
+  test("does not disclose a media generation provider failure", async () => {
+    const tools = buildMediaTools(nodeWithMediaTool(), {
+      appConfig: baseConfig,
+      llmProviderFactory: () =>
+        new MockLanguageModelV3({
+          doGenerate: async () => {
+            throw new Error(PROVIDER_ERROR_CANARY);
+          },
+        }) as unknown as import("ai").LanguageModel,
+      emit: async () => {},
+    });
+    const tool = tools.generate_image as ExecutableTool;
+    const result = (await tool.execute({ prompt: "x" }, {})) as {
+      error: string;
+      message: string;
+    };
+    expect(result.error).toBe("media_generation_failed");
+    expect(result.message).toBe("Media generation failed.");
+    expect(JSON.stringify(result)).not.toContain(PROVIDER_ERROR_CANARY);
   });
 });
 
