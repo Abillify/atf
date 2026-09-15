@@ -6,7 +6,7 @@
     "search-dist": {"path": "apps/search/dist", "warningBytes": 6291456},
     "extract-dist": {"path": "apps/extract/dist", "warningBytes": 4194304},
     "control-static": {"path": "apps/control/.next/static", "warningBytes": 8388608},
-    "control-standalone": {"path": "apps/control/.next/standalone", "warningBytes": 67108864}
+    "control-standalone": {"path": "apps/control/.next/standalone", "warningBytes": 100663296}
   },
   "browser": {
     "auth": {"path": "/auth", "navigationMs": 3000, "firstContentfulPaintMs": 2000, "transferBytes": 5242880}

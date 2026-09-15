@@ -20,6 +20,59 @@ releases:
 
 Nothing yet.
 
+## [0.4.0] — 2026-09-15
+
+Adds on-demand image inspection for text-only Runtime nodes and hardens plannerless coverage
+report diagnostics. Existing flows remain compatible because image inspection is opt-in and the
+stagnation limit remains opt-in. No database migration, independently versioned contract-package
+change, or executable flow change is included in this repository.
+
+### Added
+
+- `llm` nodes can declare `config.imageInspection` with a dedicated vision-capable model. Inline
+  image bytes are replaced by deterministic run-scoped `img-N` references, and the hosting model
+  can call the collision-safe `inspect_image` tool only when visual evidence is needed.
+- Image references cover initial attachments and same-loop tool-result images, deduplicate by
+  canonical MIME type plus bytes, and retain active bytes independently of transient publication
+  store eviction.
+- Inspection calls report separate model usage, cost, success/error metrics and synthetic
+  tool-node trace attribution. Static model-policy and capability discovery include the secondary
+  inspection model.
+- Invalid coverage reports now identify the violated report rule and expose a rejection streak
+  scoped to the logical assignment.
+
+### Fixed
+
+- Productive coverage work in one parallel assignment resets global stagnation even when a sibling
+  report is rejected, preventing valid progress from being terminated by an unrelated worker.
+- Repeated invalid coverage reports consume the optional plannerless stagnation budget instead of
+  silently retrying until the global iteration limit.
+- Inspection-tool names are reserved after configured, media and caller tools are merged, so a
+  caller-supplied `inspect_image` cannot replace the internal server-executed tool.
+- Remote, undecodable, malformed-base64 and oversized image inputs fail closed rather than being
+  forwarded to a text-only host or deferred to a paid vision failure.
+- Run-owned image copies are bounded to 32 live references, 128 MiB per execution and 25 MiB per
+  image. Transient media storage rejects empty or oversized items without evicting valid entries.
+- Coverage rejection diagnostics no longer retain excerpts of worker output, avoiding duplication
+  of source content into debug-trace details.
+
+### Security
+
+- Image-inspection documentation now states the direct vision-provider egress boundary, the
+  default-off multimodal PII behavior, the distinction from MCP tool-egress controls, and the
+  operator responsibility to verify no-plaintext image handling when required.
+- Strict base64 canonicalization rejects invalid alphabets, padding and impossible lengths before
+  image bytes enter Runtime's media or inspection stores.
+
+### Compatibility
+
+- Existing nodes without `config.imageInspection` keep their previous multimodal behavior. The
+  new block requires a known vision-capable model or explicit `parameters.visionInput: true`.
+- Evicted `img-N` references become unavailable and are never rebound to another image. Operators
+  should size image-heavy flows within the documented fixed per-run bounds.
+- No flow YAML is tracked in this repository. External flows opting into image inspection require
+  their own semantic `metadata.version` bump and post-deployment `flow_version` verification.
+
 ## [0.3.0] — 2026-09-14
 
 Adds deterministic worker routing for plannerless coverage queues. Existing flows remain
@@ -326,7 +379,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/abillify/atf/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/abillify/atf/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/abillify/atf/compare/v0.1.4...v0.2.0
