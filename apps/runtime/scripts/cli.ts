@@ -42,6 +42,10 @@ import {
   loadModelShortcuts,
   resolveModelShortcuts,
 } from "../src/graph/flow-parser/model-shortcuts.js";
+import {
+  ProviderInstancesSchema,
+  setProviderRegistry,
+} from "../src/config/providers.js";
 
 // ---------------------------------------------------------------------------
 // ANSI helpers
@@ -241,6 +245,36 @@ function collectFlowFiles(target: string): string[] {
 // Commands
 // ---------------------------------------------------------------------------
 
+/**
+ * Publishes provider instances from the `PROVIDERS` env var so `llm.provider`
+ * references resolve during offline validation. Deliberately does NOT call
+ * `loadConfig()` — that would enforce every unrelated env requirement and
+ * `process.exit(1)` on the first missing variable, which is wrong for a
+ * self-contained flow validator. Without `PROVIDERS` set the registry stays
+ * empty and only the built-in wire protocols resolve, matching prior behaviour.
+ */
+export function registerProvidersFromEnv(): void {
+  const providersRaw = process.env.PROVIDERS;
+  if (!providersRaw) return;
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(providersRaw);
+  } catch {
+    console.log(
+      `${warn} ${dim("PROVIDERS is set but is not valid JSON — provider names will not resolve")}`,
+    );
+    return;
+  }
+  const parsed = ProviderInstancesSchema.safeParse(parsedJson);
+  if (!parsed.success) {
+    console.log(
+      `${warn} ${dim("PROVIDERS is set but does not match the provider schema — provider names will not resolve")}`,
+    );
+    return;
+  }
+  setProviderRegistry(parsed.data);
+}
+
 /** validate: check flow files offline without a running server. */
 async function cmdValidate(args: ParsedArgs): Promise<number> {
   const [target] = args.positional;
@@ -248,6 +282,8 @@ async function cmdValidate(args: ParsedArgs): Promise<number> {
     console.error(`${fail} Usage: aiperator validate <file|dir>`);
     return 1;
   }
+
+  registerProvidersFromEnv();
 
   if (!fs.existsSync(target)) {
     console.error(`${fail} File not found: ${target}`);
@@ -887,7 +923,11 @@ async function main(): Promise<void> {
   process.exit(exitCode);
 }
 
-main().catch((err) => {
-  console.error(`${fail} Unhandled error:`, err);
-  process.exit(1);
-});
+// Only run the CLI when executed directly (`bun run scripts/cli.ts …`), not
+// when imported by a test. Importing must not trigger `main()` / `process.exit`.
+if (import.meta.main) {
+  main().catch((err) => {
+    console.error(`${fail} Unhandled error:`, err);
+    process.exit(1);
+  });
+}
