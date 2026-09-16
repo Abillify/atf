@@ -20,6 +20,36 @@ releases:
 
 Nothing yet.
 
+## [0.5.0] — 2026-09-16
+
+Adds a deterministic hard cap that shrinks an oversized prompt before the output-token allowance
+would collapse to one token, and teaches the offline flow validator to resolve named providers.
+Both changes are backward compatible: truncation only engages when a known context window would
+otherwise be exceeded, and provider resolution during validation is opt-in via the existing
+`PROVIDERS` environment variable. No database migration, independently versioned contract-package
+change, or executable flow change is included in this repository.
+
+### Added
+
+- Deterministic prompt truncation for `llm` nodes: when an assembled prompt would exceed the
+  model's usable input budget, the runtime shortens the largest earlier string message (never the
+  final task turn), preserving head and tail around an explicit elision marker, instead of letting
+  the output-token allowance be floored at one token. The current-task message is always kept
+  intact, image and tool-call content are left untouched, and the operation is a pure function of
+  its inputs so provider prompt-cache reuse is preserved.
+- The event is recorded in the execution debug trace as a `context_truncated` diagnostic carrying
+  the removed character count, the number of shortened messages, and the estimated prompt tokens
+  before and after.
+- The offline flow validator (`scripts/cli.ts validate`) resolves named `llm.provider` references
+  by reading provider instances from the `PROVIDERS` environment variable, so deployment flows that
+  target a named local endpoint validate without a running server. Malformed or schema-invalid
+  `PROVIDERS` input is ignored with a warning rather than aborting validation, and an unset variable
+  preserves the prior protocol-only behaviour.
+
+### Fixed
+
+- Removed an unused import in the agent-harness loop.
+
 ## [0.4.0] — 2026-09-15
 
 Adds on-demand image inspection for text-only Runtime nodes and hardens plannerless coverage
@@ -379,7 +409,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/abillify/atf/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/abillify/atf/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/abillify/atf/compare/v0.2.0...v0.2.1
