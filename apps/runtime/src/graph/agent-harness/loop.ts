@@ -42,7 +42,6 @@ import {
   coverageSummary,
   coverageVerificationManifest,
   describeCoverageReportDefect,
-  describeCoverageReportObjectDefect,
   freezeCoverageCandidates,
   hasRequiredHybridSearchEvidence,
   isCoverageTerminal,
