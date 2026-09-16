@@ -130,6 +130,7 @@ import {
   estimateMessagesTokens,
   measureContextPressure,
   resolveContextWindow,
+  truncateMessagesToWindow,
 } from "../context-window.js";
 import {
   compressHistory,
@@ -2027,6 +2028,38 @@ export function createLlmNodeHandler(
         // cumulatively, preserving provider prompt-cache reuse.
         streamParams.messages = messagesForAttempt();
         const attemptStartedAt = Date.now();
+        // Hard cap against the output-token clamp: deterministically shrink the
+        // assembled prompt so it fits the usable input budget, BEFORE clamping
+        // the output allowance. Without this a prompt larger than the window
+        // floors maxOutputTokens at 1 (clampMaxOutputTokens), and the model can
+        // emit no final-answer marker / verifier pass signal — the run ends with
+        // no result despite valid findings. Truncating the input instead keeps
+        // the output allowance intact and is recorded in the trace below.
+        const truncation = truncateMessagesToWindow(
+          streamParams.messages ?? [],
+          candidate,
+          maxTokens,
+        );
+        if (truncation.truncated) {
+          streamParams.messages = truncation.messages;
+          runtime.onNodeDiagnostic?.(node.id, {
+            level: "warn",
+            code: "context_truncated",
+            message:
+              "Deterministically shortened the prompt to fit the model context " +
+              "window and preserve the configured output-token allowance.",
+            details: {
+              attempt,
+              model: `${candidate.provider}/${candidate.model}`,
+              context_length: resolveContextWindow(candidate),
+              configured_max_output_tokens: maxTokens,
+              removed_chars: truncation.removedChars,
+              truncated_messages: truncation.truncatedMessages,
+              estimated_prompt_tokens_before: truncation.estimatedTokensBefore,
+              estimated_prompt_tokens_after: truncation.estimatedTokensAfter,
+            },
+          });
+        }
         const attemptMessages = streamParams.messages ?? [];
         const effectiveAttemptMaxTokens = clampMaxOutputTokens(
           attemptMessages,

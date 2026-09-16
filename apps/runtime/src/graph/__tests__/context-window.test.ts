@@ -21,6 +21,7 @@ import {
   measureContextPressure,
   readContextLengthOverride,
   resolveContextWindow,
+  truncateMessagesToWindow,
 } from "../context-window.js";
 import { getModelCapabilities } from "../model-capabilities.js";
 
@@ -246,5 +247,140 @@ describe("measureContextPressure", () => {
       cfg("openai", "local", { contextLength: 500 }),
     );
     expect(p.utilization).toBeGreaterThan(1);
+  });
+});
+
+describe("truncateMessagesToWindow", () => {
+  function sys(text: string): ModelMessage {
+    return { role: "system", content: text } as ModelMessage;
+  }
+  function user(text: string): ModelMessage {
+    return { role: "user", content: text } as ModelMessage;
+  }
+
+  test("returns the input unchanged when the window is unknown", () => {
+    const messages = [sys("x".repeat(400_000)), user("frage")];
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local-unknown"),
+      1_000,
+    );
+    expect(result.truncated).toBe(false);
+    expect(result.messages).toBe(messages);
+    expect(result.removedChars).toBe(0);
+  });
+
+  test("returns the input unchanged when the prompt already fits", () => {
+    const messages = [sys("kurzer kontext"), user("frage")];
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      8_000,
+    );
+    expect(result.truncated).toBe(false);
+    expect(result.messages).toBe(messages);
+  });
+
+  test("shrinks an oversized prompt to fit window minus output reservation", () => {
+    // ~128k tokens of context in one message; window 128k, reserve 12k output.
+    const oversized = "a".repeat(512_000); // ~128k tokens at 4 chars/token
+    const messages = [sys(oversized), user("die eigentliche frage")];
+    const contextLength = 128_000;
+    const reserve = 12_288;
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength }),
+      reserve,
+    );
+
+    expect(result.truncated).toBe(true);
+    expect(result.truncatedMessages).toBe(1);
+    expect(result.removedChars).toBeGreaterThan(0);
+    // The surviving prompt must leave room for the full output reservation.
+    expect(result.estimatedTokensAfter).toBeLessThanOrEqual(contextLength - reserve);
+    expect(result.estimatedTokensAfter).toBeLessThan(result.estimatedTokensBefore);
+  });
+
+  test("never truncates the final message (the current task)", () => {
+    const oversized = "a".repeat(512_000);
+    const question = "die eigentliche frage bleibt vollstaendig erhalten";
+    const messages = [sys(oversized), user(question)];
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      12_288,
+    );
+
+    expect(result.truncated).toBe(true);
+    const last = result.messages[result.messages.length - 1];
+    expect(last?.content).toBe(question);
+  });
+
+  test("preserves head and tail of a truncated message around a marker", () => {
+    const head = "KOPF_MARKIERUNG_START";
+    const tail = "SCHWANZ_MARKIERUNG_ENDE";
+    const oversized = `${head}${"a".repeat(512_000)}${tail}`;
+    const messages = [sys(oversized), user("frage")];
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      12_288,
+    );
+
+    expect(result.truncated).toBe(true);
+    const shortened = result.messages[0]?.content as string;
+    expect(shortened.startsWith(head)).toBe(true);
+    expect(shortened.endsWith(tail)).toBe(true);
+    expect(shortened).toContain("gekürzt");
+  });
+
+  test("is deterministic — identical input yields byte-identical output", () => {
+    const messages = [sys("a".repeat(512_000)), user("frage")];
+    const first = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      12_288,
+    );
+    const second = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      12_288,
+    );
+    expect(first.messages[0]?.content).toBe(second.messages[0]?.content as string);
+    expect(first.removedChars).toBe(second.removedChars);
+  });
+
+  test("cuts the largest string message first", () => {
+    const big = "b".repeat(600_000);
+    const small = "s".repeat(20_000);
+    const messages = [sys(small), sys(big), user("frage")];
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      12_288,
+    );
+
+    expect(result.truncated).toBe(true);
+    // The big message shrank; the small one is untouched.
+    const shortenedBig = result.messages[1]?.content as string;
+    expect(shortenedBig.length).toBeLessThan(big.length);
+    expect(result.messages[0]?.content).toBe(small);
+  });
+
+  test("leaves image and tool-call content untouched (string-only truncation)", () => {
+    const imageMessage = {
+      role: "user",
+      content: [{ type: "image", image: "data:image/png;base64,AAAA" }],
+    } as unknown as ModelMessage;
+    const oversized = "a".repeat(512_000);
+    const messages = [sys(oversized), imageMessage, user("frage")];
+    const result = truncateMessagesToWindow(
+      messages,
+      cfg("openai", "local", { contextLength: 128_000 }),
+      12_288,
+    );
+
+    // The image message is not a string, so it is not the truncation target.
+    expect(result.messages[1]).toBe(imageMessage);
   });
 });

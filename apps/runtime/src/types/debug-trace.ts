@@ -363,7 +363,8 @@ export interface DebugNodeDiagnostic {
   level: "info" | "warn" | "error";
   /**
    * Stable machine code for the event, e.g. "retry", "fallback",
-   * "repetition_aborted", "reasoning_salvage", "empty_response". Groupable and
+   * "repetition_aborted", "reasoning_salvage", "empty_response",
+   * "max_output_tokens_clamped", "context_truncated". Groupable and
    * greppable; not a closed enum so new events need no type change.
    */
   code: string;

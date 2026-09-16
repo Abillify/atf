@@ -264,3 +264,180 @@ export function measureContextPressure(
       : {}),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Deterministic prompt truncation (hard cap against the output-token clamp)
+// ---------------------------------------------------------------------------
+
+/**
+ * Share of a truncated message's surviving budget spent on the head; the rest
+ * is kept from the tail. Mirrors `tool-result-budget`'s HEAD_SHARE: a large
+ * carried-forward context usually leads with scope/instructions and closes with
+ * the decisive findings, so keeping both ends beats a head-only cut.
+ */
+const TRUNCATION_HEAD_SHARE = 0.7;
+
+/**
+ * Smallest surviving size for a single truncated message. Below this the
+ * head/tail split is not worth the elision marker, so the message is cut whole
+ * to the marker only. ~2k chars ≈ 500 tokens.
+ */
+const MIN_TRUNCATED_MESSAGE_CHARS = 2_000;
+
+/** Outcome of {@link truncateMessagesToWindow}. */
+export interface ContextTruncation {
+  /** The (possibly rewritten) message list to send to the provider. */
+  messages: ModelMessage[];
+  /** True when at least one message was shortened. */
+  truncated: boolean;
+  /** Total characters elided across all shortened messages. */
+  removedChars: number;
+  /** Number of messages that were shortened. */
+  truncatedMessages: number;
+  /** Estimated prompt tokens after truncation. */
+  estimatedTokensAfter: number;
+  /** Estimated prompt tokens before truncation. */
+  estimatedTokensBefore: number;
+}
+
+/** Builds the deterministic marker inserted where content was elided. */
+function elisionMarker(removedChars: number): string {
+  return `\n\n[… ${removedChars} Zeichen aus dem Kontext gekürzt, um das Modell-Context-Window einzuhalten …]\n\n`;
+}
+
+/**
+ * Shortens one string to `keepChars`, preserving head and tail around a
+ * deterministic elision marker. Returns the original when it already fits or
+ * when the surviving budget is too small to be worth splitting (then it is cut
+ * to the marker plus a head slice). Pure function of (text, keepChars).
+ */
+function truncateText(text: string, keepChars: number): string {
+  if (text.length <= keepChars) return text;
+  const removed = text.length - keepChars;
+  const marker = elisionMarker(removed);
+  if (keepChars < MIN_TRUNCATED_MESSAGE_CHARS) {
+    return text.slice(0, Math.max(0, keepChars)) + marker;
+  }
+  const budget = keepChars - marker.length;
+  if (budget <= 0) return marker;
+  const headChars = Math.floor(budget * TRUNCATION_HEAD_SHARE);
+  const tailChars = budget - headChars;
+  return text.slice(0, headChars) + marker + text.slice(text.length - tailChars);
+}
+
+/**
+ * Deterministically shrinks an assembled prompt so its estimated size stays
+ * within the model's usable input budget, instead of letting the output-token
+ * allowance collapse to 1 (the failure mode where `clampMaxOutputTokens` floors
+ * `maxOutputTokens` at 1 and the model can emit nothing — no final-answer
+ * marker, no verifier pass signal).
+ *
+ * Design (mirrors `tool-result-budget`):
+ * - **Deterministic.** A pure function of (messages, window, reservation): the
+ *   same input truncates to the same bytes on every retry, so it does not break
+ *   provider prompt-cache reuse.
+ * - **Newest-first retention.** The LAST message (the current task/question) is
+ *   never touched; older, larger string messages are cut first. A synthesizer's
+ *   oversized carried-forward context is exactly such an earlier message.
+ * - **String content only.** Image parts and tool-call structures are left
+ *   intact — images are budgeted separately and cutting their bytes as text
+ *   would corrupt them without reliably reclaiming window.
+ *
+ * Returns the original list unchanged (`truncated: false`) when the window is
+ * unknown or the prompt already fits — the same "never guess a window" rule the
+ * rest of this module follows.
+ */
+export function truncateMessagesToWindow(
+  messages: ModelMessage[],
+  llmConfig: Pick<LlmConfig, "provider" | "model" | "parameters"> | undefined,
+  maxOutputTokens: number | undefined,
+  safetyTokens = CONTEXT_OUTPUT_SAFETY_TOKENS,
+): ContextTruncation {
+  const estimatedTokensBefore = estimateMessagesTokens(messages);
+  const contextLength = resolveContextWindow(llmConfig);
+  const unchanged: ContextTruncation = {
+    messages,
+    truncated: false,
+    removedChars: 0,
+    truncatedMessages: 0,
+    estimatedTokensAfter: estimatedTokensBefore,
+    estimatedTokensBefore,
+  };
+
+  if (contextLength === undefined || contextLength <= 0) return unchanged;
+
+  const reservation =
+    typeof maxOutputTokens === "number" &&
+    Number.isFinite(maxOutputTokens) &&
+    maxOutputTokens > 0
+      ? Math.floor(maxOutputTokens)
+      : 0;
+  const safety =
+    Number.isFinite(safetyTokens) && safetyTokens > 0
+      ? Math.floor(safetyTokens)
+      : 0;
+
+  // Token budget the prompt must fit into so the configured output allowance
+  // survives intact. Floored at 1 so a pathological reservation cannot make the
+  // target non-positive.
+  const targetInputTokens = Math.max(1, contextLength - reservation - safety);
+  if (estimatedTokensBefore <= targetInputTokens) return unchanged;
+
+  // How many prompt tokens (hence chars) must go. Bias the char target low by
+  // using the same coarse ratio the estimator uses, so one pass is enough.
+  const tokensToRemove = estimatedTokensBefore - targetInputTokens;
+  let charsToRemove = tokensToRemove * CHARS_PER_TOKEN;
+
+  const next = [...messages];
+  let removedChars = 0;
+  let truncatedMessages = 0;
+
+  // Never touch the final message (the current task/question). Cut earlier
+  // string messages, largest first, until the target is met. "Largest first"
+  // is deterministic (stable by size then original index) and reclaims the most
+  // window per edited message.
+  const lastIndex = next.length - 1;
+  const candidates = next
+    .map((message, index) => ({ index, message }))
+    .filter(
+      ({ index, message }) =>
+        index !== lastIndex && typeof message.content === "string",
+    )
+    .sort((a, b) => {
+      const lenA = (a.message.content as string).length;
+      const lenB = (b.message.content as string).length;
+      if (lenB !== lenA) return lenB - lenA;
+      return a.index - b.index;
+    });
+
+  for (const { index, message } of candidates) {
+    if (charsToRemove <= 0) break;
+    const content = message.content as string;
+    // Keep at least the floor so a shortened message still carries a usable
+    // head/tail rather than collapsing to nothing.
+    const keepChars = Math.max(
+      MIN_TRUNCATED_MESSAGE_CHARS,
+      content.length - charsToRemove,
+    );
+    if (keepChars >= content.length) continue;
+    const shortened = truncateText(content, keepChars);
+    const removed = content.length - shortened.length;
+    if (removed <= 0) continue;
+    next[index] = { ...message, content: shortened } as ModelMessage;
+    removedChars += removed;
+    truncatedMessages += 1;
+    charsToRemove -= removed;
+  }
+
+  if (truncatedMessages === 0) return unchanged;
+
+  const estimatedTokensAfter = estimateMessagesTokens(next);
+  return {
+    messages: next,
+    truncated: true,
+    removedChars,
+    truncatedMessages,
+    estimatedTokensAfter,
+    estimatedTokensBefore,
+  };
+}
