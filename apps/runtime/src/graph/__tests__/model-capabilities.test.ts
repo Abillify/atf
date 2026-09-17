@@ -83,6 +83,9 @@ describe("getModelCapabilities", () => {
     expect(
       getModelCapabilities("openai", "unsloth/Qwen3.8-27B-NVFP4").visionInput,
     ).toBe(true);
+    expect(
+      getModelCapabilities("openai", "Qwen3.8-Flash-Next").visionInput,
+    ).toBe(true);
     // Unmatched local text model stays closed (safe default).
     expect(getModelCapabilities("openai", "unsloth/Qwen3-8B").visionInput).toBe(
       false,
@@ -90,6 +93,34 @@ describe("getModelCapabilities", () => {
     expect(getModelCapabilities("openai", "some-local-model").visionInput).toBe(
       false,
     );
+  });
+
+  test("the thinking toggle is declared only for the verified local build", () => {
+    // Verified against a live llama.cpp endpoint (b10975): this checkpoint
+    // honors `enable_thinking: false` on the non-streaming generate path.
+    expect(
+      getModelCapabilities("openai", "Qwen3.8-Flash-Next")
+        .suppressThinkingKwargs,
+    ).toEqual({ enable_thinking: false });
+
+    // Everything else must stay empty. The kwargs are merged into the request
+    // body for the OpenAI-compatible protocols, and a HOSTED OpenAI endpoint
+    // rejects unrecognized request arguments — so this has to fail closed per
+    // model rather than per provider.
+    expect(
+      getModelCapabilities("openai", "gpt-4o").suppressThinkingKwargs,
+    ).toEqual({});
+    expect(
+      getModelCapabilities("openai", "unsloth/Qwen3.8-27B-NVFP4")
+        .suppressThinkingKwargs,
+    ).toEqual({});
+    expect(
+      getModelCapabilities("openai", "some-local-model").suppressThinkingKwargs,
+    ).toEqual({});
+    expect(
+      getModelCapabilities("bedrock", "eu.anthropic.claude-haiku-4-5-20251001-v1:0")
+        .suppressThinkingKwargs,
+    ).toEqual({});
   });
 
   test("isLocalInferenceProvider is true only for always-local providers", () => {

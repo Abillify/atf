@@ -74,6 +74,26 @@ export interface ModelCapabilities {
   /** Whether the model accepts image/file inputs. Unknown models fail closed. */
   visionInput: boolean;
   /**
+   * `chat_template_kwargs` that switch OFF a hybrid-reasoning model's thinking
+   * channel, for ENGINE-INTERNAL calls that are pure format conversion and gain
+   * nothing from reasoning (e.g. the coverage-report extraction, which only
+   * re-shapes a decision set the worker already reasoned out).
+   *
+   * Empty `{}` means "no known toggle" and nothing is injected. This must fail
+   * closed per model, not per provider: the fields are merged into the request
+   * body for the OpenAI-compatible protocols, and a hosted OpenAI endpoint
+   * REJECTS unrecognized request arguments outright. So only models verified to
+   * accept the toggle may carry it.
+   *
+   * Measured effect on the coverage-report extraction against a live llama.cpp
+   * endpoint (build b10975, Qwen3.8-Flash-Next), 25-document batch: 34–73s and
+   * 4.5k–7.1k output tokens WITH thinking vs. 11–15s and a stable 2.8k tokens
+   * with it off — same fully valid report. The thinking tokens are billed
+   * against the same output ceiling as the report, so suppressing them also buys
+   * back budget headroom on large batches.
+   */
+  suppressThinkingKwargs: Record<string, unknown>;
+  /**
    * Total context window in tokens (input + output share it), or `undefined`
    * when it cannot be known from the provider/model id alone.
    *
@@ -106,6 +126,7 @@ const GLOBAL_DEFAULT: ModelCapabilities = {
   allowSystemInMessages: true,
   unsupportedParameters: [],
   visionInput: false,
+  suppressThinkingKwargs: {},
 };
 
 /**
@@ -205,6 +226,21 @@ const RULES: readonly CapabilityRule[] = [
     provider: "openai",
     modelPattern: "*Qwen3*NVFP4*",
     caps: { visionInput: true },
+  },
+  {
+    provider: "openai",
+    modelPattern: "*Qwen3.8-Flash-Next*",
+    // `enable_thinking: false` verified against a live llama.cpp endpoint
+    // (b10975) serving this checkpoint: honored on the non-streaming
+    // generate path, and the thinking channel goes fully silent
+    // (`reasoning_content` empty) while the constrained JSON stays valid.
+    // Deliberately scoped to this verified build rather than a broad `*Qwen3*`:
+    // the toggle is a property of the served chat template, and an unrecognized
+    // request argument is fatal on a hosted OpenAI endpoint.
+    caps: {
+      visionInput: true,
+      suppressThinkingKwargs: { enable_thinking: false },
+    },
   },
   // o-series reasoning models.
   { provider: "openai", modelPattern: "o1*", caps: { contextLength: 200_000 } },

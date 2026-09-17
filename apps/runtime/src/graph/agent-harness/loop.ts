@@ -1004,16 +1004,47 @@ export function finalAiAnswerText(msgs: readonly BaseMessage[]): string {
 
 /**
  * Output-token ceiling for the structured coverage-report extraction call. A
- * report is a compact per-document decision list; 12k tokens comfortably covers
- * a full 25–100 document batch without letting a degenerate model run away.
+ * report is a compact per-document decision list, but it still costs roughly
+ * 120 output tokens per document, and on a reasoning model the thinking tokens
+ * are billed against this same ceiling.
+ *
+ * Measured against a live llama.cpp endpoint (build b10975, Qwen3.8-Flash-Next),
+ * a full batch consumed: 25 docs → ~5.9k, 50 docs → ~7.5k, 75 docs → ~9.1k,
+ * 100 docs → ~12.3k output tokens. The previous 12288 ceiling therefore sat just
+ * BELOW the largest supported batch: a 100-document assignment stopped on
+ * `length` with truncated JSON and the report was refused as `invalid_json`,
+ * silently capping the queue. 16384 keeps ~33% headroom over the measured
+ * 100-document cost while still bounding a degenerate model that never stops.
  */
-const COVERAGE_REPORT_EXTRACTION_MAX_TOKENS = 12288;
+const COVERAGE_REPORT_EXTRACTION_MAX_TOKENS = 16384;
 
 /**
  * System prompt for the schema-enforced coverage-report extraction
- * ("structured-after-tools"). The schema itself pins the shape (keys, enum,
- * ref set), so this only states the task and the mode-specific decision
- * semantics; it never asks for markers or code fences.
+ * ("structured-after-tools"). States the task, the mode-specific decision
+ * semantics and — critically — ENUMERATES the refs to decide. It never asks for
+ * markers or code fences; the schema pins the shape.
+ *
+ * ## Why the refs must be listed here, not left to the schema
+ *
+ * It is tempting to rely on `buildCoverageReportSchema`, which already pins the
+ * ref set as a JSON-Schema `enum`. That is a decoding CONSTRAINT, not
+ * information: it tells the sampler which strings are legal, it does not tell
+ * the model which documents exist or which ones it has already emitted. With
+ * the refs absent from the prompt, a constrained model satisfies the grammar the
+ * cheapest way available — it repeats the FIRST legal enum value for every
+ * array element.
+ *
+ * Measured against a live llama.cpp endpoint (build b10975, Qwen3.8-Flash-Next)
+ * on a 25-document summary assignment, 3 of 3 runs returned
+ * `documents.length = 25` with exactly ONE distinct ref and 24 refs missing, so
+ * `validateCoverageReportObject` rejected every report as a duplicate ref and
+ * the coverage queue never advanced. Listing the refs (ordered, counted, with an
+ * explicit "each exactly once") made 3 of 3 runs return 25 unique refs and 0
+ * missing.
+ *
+ * The listing is therefore load-bearing for correctness, not a prompt nicety.
+ * The refs are already carried in the schema enum, so this costs prompt tokens
+ * but adds no new content.
  */
 function buildCoverageReportExtractionSystemPrompt(
   assignment: CoverageAssignment,
@@ -1022,12 +1053,18 @@ function buildCoverageReportExtractionSystemPrompt(
     assignment.mode === "summary"
       ? "`relevant`, `possibly_relevant` oder `excluded`"
       : "`reviewed` oder `excluded`";
+  const refs = assignment.documents
+    .map((document, index) => `${index + 1}. ${document.ref}`)
+    .join("\n");
   return (
     "Fasse deine vorstehende Analyse in einem Coverage-Report zusammen. " +
     `Entscheide jedes zugewiesene Dokument (Feld \`ref\`) genau einmal mit ${decisions} ` +
     "und gib je einen knappen, sachlichen Grund (Feld `reason`) an. " +
     "Verwende exakt die vorgegebene `assignmentId`. Antworte ausschliesslich mit " +
-    "dem geforderten JSON-Objekt."
+    "dem geforderten JSON-Objekt.\n\n" +
+    `Entscheide genau diese ${assignment.documents.length} Dokumente, in exakt ` +
+    "dieser Reihenfolge, jedes genau einmal. Gib kein Dokument doppelt und kein " +
+    `zusaetzliches aus:\n${refs}`
   );
 }
 

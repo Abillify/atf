@@ -21,6 +21,7 @@ import type {
   ProgressNarratorConfig,
 } from "./types.js";
 import { getModelCapabilities } from "../model-capabilities.js";
+import { ensureTrailingUserTurn } from "../exec-runtime.js";
 import {
   estimateCost,
   estimateTokensFromText,
@@ -1237,16 +1238,64 @@ export async function requestCoverageReport(
     ? undefined
     : ((llm.parameters?.temperature as number | undefined) ?? 0);
 
-  const model = runtime.llmProviderFactory(llm, runtime.appConfig, {
+  // This extraction call is pure format conversion: the worker already did the
+  // reasoning, and the decision set is re-emitted under a grammar that pins
+  // every field. A hybrid-reasoning model therefore spends thinking tokens here
+  // for no gain — and spends them against the SAME output ceiling as the report,
+  // so on a large batch the thinking can crowd out the JSON and truncate it.
+  // Where the model is known to accept the toggle, switch the thinking channel
+  // off for this call only (see `suppressThinkingKwargs`). The worker's own
+  // reasoning call is untouched.
+  //
+  // The node's own `chatTemplateKwargs` are preserved and merged under ours, so
+  // an operator-supplied template flag still applies; only the thinking toggle
+  // is forced.
+  const extractionLlm: LlmConfig =
+    Object.keys(caps.suppressThinkingKwargs).length > 0
+      ? {
+          ...llm,
+          parameters: {
+            ...llm.parameters,
+            chatTemplateKwargs: {
+              ...(llm.parameters?.chatTemplateKwargs !== null &&
+              typeof llm.parameters?.chatTemplateKwargs === "object" &&
+              !Array.isArray(llm.parameters?.chatTemplateKwargs)
+                ? (llm.parameters.chatTemplateKwargs as Record<string, unknown>)
+                : {}),
+              ...caps.suppressThinkingKwargs,
+            },
+          },
+        }
+      : llm;
+
+  const model = runtime.llmProviderFactory(extractionLlm, runtime.appConfig, {
     ...(runtime.ctx.providerKeyOverrides !== undefined
       ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
       : {}),
   });
 
-  const messages: ModelMessage[] = [
+  // `workerMessages` is the worker's own reply, so this list ends on an
+  // ASSISTANT turn. That shape is fatal for a schema-enforced call on
+  // llama.cpp: the server treats a trailing assistant message as a prefill to
+  // CONTINUE, then has to seed the json_schema grammar with that free-text
+  // prefix. The prefix is not a valid prefix of the report grammar, so grammar
+  // setup aborts and the request fails closed with HTTP 400
+  // "Failed to initialize samplers" — before a single token is sampled.
+  // Verified against a live llama.cpp endpoint (b10975) serving
+  // Qwen3.8-Flash-Next: `[system, assistant]` + `response_format` fails for
+  // both `json_schema` AND `json_object`, while the same schema with a trailing
+  // user turn returns a fully valid 25-document report. Every coverage report
+  // in a run was rejected as `structured_output_failed` for exactly this
+  // reason.
+  //
+  // Appending one short user turn restores a normal turn boundary and the
+  // correct role semantics: the worker's analysis is context handed back to the
+  // model, not words it should continue. `ensureTrailingUserTurn` is the
+  // engine-wide backstop for the same shape (see exec-runtime.ts).
+  const messages: ModelMessage[] = ensureTrailingUserTurn([
     { role: "system", content: system },
     ...workerMessages,
-  ];
+  ]).messages;
 
   let outputText = "";
   let generationUsage:

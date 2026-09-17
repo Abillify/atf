@@ -2146,6 +2146,49 @@ describe("coverage report via structuredReport (schema-enforced extraction)", ()
     ).toBe(true);
   });
 
+  /**
+   * The extraction schema pins the ref set as a JSON-Schema `enum`, but an enum
+   * is a decoding constraint, not information: it tells the sampler which
+   * strings are legal, not which documents exist. Measured against a live
+   * llama.cpp endpoint (Qwen3.8-Flash-Next), omitting the refs from the prompt
+   * made the model repeat the FIRST legal enum value for all 25 array elements
+   * (25 documents, 1 distinct ref), which the validator rejects as a duplicate
+   * ref — so the queue never advanced. The refs must be NAMED in the prompt.
+   */
+  test("the extraction prompt enumerates the refs to decide", async () => {
+    const extractionPrompts: string[] = [];
+
+    await run(
+      harnessNode({
+        allowlist: ["worker"],
+        plannerless: true,
+        maxIterations: 8,
+        maxStagnantIterations: 2,
+        coverageQueue,
+      }),
+      nodes,
+      [],
+      () => ({ text: "Analyse ohne Report." }),
+      [seed],
+      undefined,
+      (joined) => {
+        extractionPrompts.push(joined);
+        return (
+          '{"assignmentId":"coverage-1","documents":' +
+          '[{"ref":"/A","decision":"excluded","reason":"nicht einschlaegig"}]}'
+        );
+      },
+    );
+
+    expect(extractionPrompts.length).toBeGreaterThan(0);
+    const prompt = extractionPrompts[0] ?? "";
+    // The assigned ref is named, numbered, and the count + "genau einmal"
+    // instruction is present so the model cannot collapse onto one enum value.
+    expect(prompt).toContain("1. /A");
+    expect(prompt).toContain("genau diese 1 Dokumente");
+    expect(prompt).toContain("jedes genau einmal");
+  });
+
   test("a schema-invalid extraction result is refused with a stable defect code", async () => {
     const { update, diagnostics } = await run(
       harnessNode({
