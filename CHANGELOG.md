@@ -20,6 +20,69 @@ releases:
 
 Nothing yet.
 
+## [0.6.0] — 2026-09-17
+
+Makes structured output survive the three ways a local OpenAI-compatible server breaks it: the
+document delivered in the reasoning channel, a near-miss response the strict schema parse rejects,
+and a schema-enforced call whose prompt ends on an assistant turn. The plannerless coverage-report
+extraction is the flow that hit all three; it now also names the refs it must decide and gets an
+output ceiling that covers the largest supported batch. Every change is backward compatible: the
+recoveries only engage on a response that would otherwise have failed, and the thinking-channel
+toggle is scoped to a single verified model. No database migration, independently versioned
+contract-package change, or executable flow change is included in this repository.
+
+### Fixed
+
+- Structured-output `llm` nodes no longer fail when an OpenAI-compatible server delivers the
+  generated document in the reasoning channel with an empty `message.content`. Verified against the
+  LM Studio build serving `qwen/qwen3.6-35b-a3b`: a `response_format: json_schema` request whose
+  thinking channel is active returns the complete object in `reasoning_content`, which the AI SDK
+  saw as empty text and reported as `No object generated: could not parse the response.` — failing
+  every attempt and discarding a usable document. The response is now repaired at the fetch layer,
+  scoped to non-streaming responses of requests that asked for `json_schema` / `json_object`, so no
+  chain-of-thought can reach a free-form answer.
+- A structured-output response that the strict schema parse rejects but that still contains a valid
+  JSON object (code fence, trailing prose) is recovered from the error's raw text and emitted
+  canonically, instead of consuming all three attempts and failing the node. Provider token usage
+  attached to the error is accounted rather than reported as zero.
+- The schema-enforced coverage-report extraction no longer sends a prompt that ends on an assistant
+  turn. llama.cpp reads a trailing assistant message as a prefill to continue and then has to seed
+  the `json_schema` grammar with that free text, which aborts sampler setup with HTTP 400
+  `Failed to initialize samplers` before a token is produced — so every coverage report of a run was
+  refused as `structured_output_failed` and the queue never advanced. A short user turn is appended
+  where the shape requires it; a reply already ending on a user or tool turn is left untouched.
+- The extraction prompt now enumerates the assigned refs, ordered and counted, with an explicit
+  "each exactly once". The schema's ref `enum` is a decoding constraint, not information: with the
+  refs absent from the prompt a constrained model repeated the first legal enum value for every
+  array element, and the report was rejected as a duplicate ref.
+- The extraction output ceiling rose from 12288 to 16384 tokens. A report costs roughly 120 output
+  tokens per document, so a 100-document assignment stopped on `length` with truncated JSON and was
+  refused as `invalid_json`, silently capping the queue.
+
+### Added
+
+- A `structured_output_salvaged` diagnostic and the `aiperator_llm_structured_salvaged_total`
+  counter record when a node succeeded on a tolerant parse of the raw text rather than on enforced
+  output, so a recovered near-miss is visible in the trace instead of looking like a clean success.
+- Model capabilities carry `suppressThinkingKwargs`, the `chat_template_kwargs` that switch off a
+  hybrid-reasoning model's thinking channel for engine-internal calls that are pure format
+  conversion. It fails closed per model — a hosted OpenAI endpoint rejects unrecognized request
+  arguments — and is currently declared only for the verified local `Qwen3.8-Flash-Next` build,
+  which is also now recognized as accepting image input.
+
+### Changed
+
+- The `structured_output_failed` and `structured_output_empty_retry` diagnostics carry the
+  provider's `finish_reason`, response length and output-token count when the SDK supplies them, so
+  a truncated document (`finish_reason` `length` → raise `maxTokens`) is distinguishable from an
+  empty one.
+- The coverage-report extraction call switches the thinking channel off where the model declares the
+  toggle. The reasoning is already done by the worker and the thinking tokens are billed against the
+  same output ceiling as the report. Measured against a live llama.cpp endpoint on a 25-document
+  batch: 11–15s and a stable 2.8k output tokens with the channel off versus 34–73s and 4.5k–7.1k
+  with it on, at identical validity. An operator's own `chatTemplateKwargs` are preserved and only
+  the toggle is forced.
+
 ## [0.5.0] — 2026-09-16
 
 Adds a deterministic hard cap that shrinks an oversized prompt before the output-token allowance
@@ -409,7 +472,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/abillify/atf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/abillify/atf/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/abillify/atf/compare/v0.2.1...v0.3.0
