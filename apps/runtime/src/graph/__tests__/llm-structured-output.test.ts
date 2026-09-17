@@ -280,3 +280,68 @@ describe("llm node — structured output, empty provider result", () => {
     expect(reported).toContain("mock-model");
   });
 });
+describe("llm node — structured output salvage", () => {
+  /**
+   * The SDK's strict parse rejects anything that is not bare JSON and throws
+   * `NoObjectGeneratedError` — while still carrying the model's raw text on the
+   * error. The node must recover the object from that text (and emit it
+   * canonically) instead of burning three attempts and failing, which is how the
+   * `userstory-cr` flow lost complete documents.
+   */
+  async function runFenced(
+    text: string,
+  ): Promise<{ content: string; calls: number; chunks: ChatCompletionChunk[] }> {
+    let calls = 0;
+    const engine = createGraphEngine(baseConfig, {
+      flowRegistry: singleNodeRegistry(structuredFlow()),
+      llmProviderFactory: () =>
+        new MockLanguageModelV3({
+          doGenerate: async () => {
+            calls += 1;
+            return mkGenerateResult(text, 11, 7) as never;
+          },
+        }) as never,
+    });
+    const chunks: ChatCompletionChunk[] = [];
+    await engine.executeFlow(
+      "s-flow",
+      [{ role: "user", content: "Story X" }],
+      { ssoToken: "a.b.c", executionId: "exec-salvage" },
+      async (chunk) => {
+        chunks.push(chunk);
+      },
+      async () => {},
+    );
+    let content = "";
+    for (const c of chunks) {
+      const delta = c.choices[0]?.delta as { content?: string | null } | undefined;
+      if (typeof delta?.content === "string") content += delta.content;
+    }
+    return { content, calls, chunks };
+  }
+  test("recovers a fenced JSON document on the first attempt", async () => {
+    const obj = { score: 42, dev_ready: false, briefing: "Fenced." };
+    const { content, calls } = await runFenced(
+      `Here you go:\n\`\`\`json\n${JSON.stringify(obj)}\n\`\`\`\n`,
+    );
+    // One provider call, and the emitted content is parseable JSON — no fence.
+    expect(calls).toBe(1);
+    expect(JSON.parse(content)).toEqual(obj);
+  });
+  test("recovers JSON followed by trailing prose", async () => {
+    const obj = { score: 1, dev_ready: true, briefing: "b" };
+    const { content, calls } = await runFenced(
+      `${JSON.stringify(obj)}\n\nHope that helps!`,
+    );
+    expect(calls).toBe(1);
+    expect(JSON.parse(content)).toEqual(obj);
+  });
+  test("still fails when the text holds no JSON at all", async () => {
+    const { content, calls, chunks } = await runFenced("Sorry, I cannot help.");
+    expect(calls).toBe(3);
+    expect(content).toBe("");
+    expect(JSON.stringify(chunks)).toContain(
+      "structured-output generation failed",
+    );
+  });
+});

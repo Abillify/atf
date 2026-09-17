@@ -135,6 +135,86 @@ export function injectExtraBody(
 }
 
 /**
+ * Reports whether an outgoing OpenAI-compatible request asks for a machine-
+ * readable JSON answer (`response_format` of `json_schema` or `json_object`).
+ *
+ * Used to scope {@link recoverReasoningOnlyJson} to exactly the requests whose
+ * ONLY acceptable payload is the generated JSON, so promoting a reasoning-only
+ * response can never leak chain-of-thought into a conversational answer.
+ */
+export function requestsStructuredJson(body: FetchBody): boolean {
+  if (typeof body !== "string") return false;
+  try {
+    const parsed = JSON.parse(body) as {
+      response_format?: { type?: unknown } | null;
+    };
+    const type = parsed.response_format?.type;
+    return type === "json_schema" || type === "json_object";
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Repairs a NON-STREAMING chat completion whose generated JSON arrived in the
+ * REASONING channel instead of `message.content`.
+ *
+ * Verified against the LM Studio build serving `qwen/qwen3.6-35b-a3b`: when the
+ * model's thinking channel is active, a `response_format: json_schema` request
+ * comes back with `content: ""` and the complete document in
+ * `message.reasoning_content` (`completion_tokens_details.reasoning_tokens`
+ * equal to the whole completion). The AI SDK then sees empty text and throws
+ * `NoObjectGeneratedError: could not parse the response.` — the exact failure the
+ * `userstory-cr` flow hit on every attempt, discarding a usable document.
+ *
+ * Thinking is normally disabled for these nodes (`reasoning_effort: "none"` /
+ * `enable_thinking: false`), but that is a request hint the server may ignore —
+ * LM Studio's thinking switch is also load-time state. So the recovery is done
+ * here, where the wire response is still intact, rather than relying on the
+ * server honouring the hint.
+ *
+ * Deliberately narrow: only `choices[].message` entries with empty/absent
+ * `content` are touched, and only for requests that asked for structured JSON
+ * (see {@link requestsStructuredJson}). Anything else is returned unchanged.
+ *
+ * @returns the rewritten payload, or `null` when nothing needed changing.
+ */
+export function recoverReasoningOnlyJson(payload: unknown): unknown | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const root = payload as { choices?: unknown };
+  if (!Array.isArray(root.choices)) return null;
+  let changed = false;
+  for (const choice of root.choices) {
+    if (choice === null || typeof choice !== "object") continue;
+    const message = (choice as { message?: unknown }).message;
+    if (message === null || typeof message !== "object") continue;
+    const msg = message as {
+      content?: unknown;
+      reasoning_content?: unknown;
+      reasoning?: unknown;
+    };
+    const content = msg.content;
+    const hasContent = typeof content === "string" && content.trim() !== "";
+    if (hasContent) continue;
+    const recovered =
+      typeof msg.reasoning_content === "string" &&
+      msg.reasoning_content.trim() !== ""
+        ? msg.reasoning_content
+        : typeof msg.reasoning === "string" && msg.reasoning.trim() !== ""
+          ? msg.reasoning
+          : undefined;
+    if (recovered === undefined) continue;
+    msg.content = recovered;
+    delete msg.reasoning_content;
+    delete msg.reasoning;
+    changed = true;
+  }
+  return changed ? payload : null;
+}
+
+/**
  * Wraps the native fetch for OpenAI-compatible endpoints (LM Studio, Ollama,
  * vLLM). Two responsibilities:
  *
@@ -184,10 +264,40 @@ function makeReasoningFetch(
     const responseBody = response.body;
     if (!responseBody) return response;
 
-    // Only intercept SSE streaming responses — pass through everything else
-    // (generateText uses non-streaming JSON, must not be transformed)
     const ct = response.headers.get("content-type") ?? "";
-    if (!ct.includes("text/event-stream")) return response;
+
+    // Non-streaming JSON answer to a structured-output request: rescue a
+    // document the server delivered in the reasoning channel with an empty
+    // `content` (see recoverReasoningOnlyJson). Everything else — including
+    // every free-form non-streaming completion — passes through untouched.
+    if (!ct.includes("text/event-stream")) {
+      if (
+        response.ok &&
+        ct.includes("application/json") &&
+        requestsStructuredJson(body ?? null)
+      ) {
+        const raw = await response.text();
+        try {
+          const parsed: unknown = JSON.parse(raw);
+          const repaired = recoverReasoningOnlyJson(parsed);
+          if (repaired !== null) {
+            return new Response(JSON.stringify(repaired), {
+              status: response.status,
+              statusText: response.statusText,
+              headers: response.headers,
+            });
+          }
+        } catch {
+          /* not JSON after all — fall through and hand back the original text */
+        }
+        return new Response(raw, {
+          status: response.status,
+          statusText: response.statusText,
+          headers: response.headers,
+        });
+      }
+      return response;
+    }
 
     const decoder = new TextDecoder();
     const encoder = new TextEncoder();

@@ -13,6 +13,8 @@ import {
   injectChatTemplateKwargs,
   injectReasoningEffort,
   injectExtraBody,
+  requestsStructuredJson,
+  recoverReasoningOnlyJson,
 } from "../llm-factory.js";
 import { setProviderRegistry } from "../../config/providers.js";
 import type { AppConfig } from "../../config/index.js";
@@ -267,5 +269,65 @@ describe("createLlmProvider — unknown provider", () => {
   test("throws UnknownProviderError", () => {
     const bad = { provider: "made-up", model: "x" } as unknown as LlmConfig;
     expect(() => createLlmProvider(bad, cfg())).toThrow(UnknownProviderError);
+  });
+});
+describe("requestsStructuredJson", () => {
+  test("detects json_schema and json_object response formats", () => {
+    expect(
+      requestsStructuredJson(
+        JSON.stringify({ response_format: { type: "json_schema" } }),
+      ),
+    ).toBe(true);
+    expect(
+      requestsStructuredJson(
+        JSON.stringify({ response_format: { type: "json_object" } }),
+      ),
+    ).toBe(true);
+  });
+  test("is false for free-form requests and non-JSON bodies", () => {
+    expect(requestsStructuredJson(JSON.stringify({ model: "m" }))).toBe(false);
+    expect(
+      requestsStructuredJson(JSON.stringify({ response_format: { type: "text" } })),
+    ).toBe(false);
+    expect(requestsStructuredJson("not json")).toBe(false);
+    expect(requestsStructuredJson(null)).toBe(false);
+  });
+});
+describe("recoverReasoningOnlyJson", () => {
+  const doc = '{"title":"x"}';
+  test("promotes reasoning_content to content when content is empty", () => {
+    const payload = {
+      choices: [{ message: { role: "assistant", content: "", reasoning_content: doc } }],
+    };
+    const out = recoverReasoningOnlyJson(payload) as typeof payload | null;
+    expect(out).not.toBeNull();
+    const msg = out?.choices[0]?.message as Record<string, unknown> | undefined;
+    expect(msg?.content).toBe(doc);
+    expect("reasoning_content" in (msg ?? {})).toBe(false);
+  });
+  test("also accepts the newer `reasoning` key", () => {
+    const payload = {
+      choices: [{ message: { role: "assistant", content: null, reasoning: doc } }],
+    };
+    const out = recoverReasoningOnlyJson(payload) as
+      | { choices: Array<{ message: Record<string, unknown> }> }
+      | null;
+    expect(out?.choices[0]?.message.content).toBe(doc);
+  });
+  test("leaves a populated content untouched", () => {
+    const payload = {
+      choices: [
+        { message: { role: "assistant", content: doc, reasoning_content: "thinking" } },
+      ],
+    };
+    expect(recoverReasoningOnlyJson(payload)).toBeNull();
+  });
+  test("returns null when there is nothing to recover", () => {
+    expect(
+      recoverReasoningOnlyJson({ choices: [{ message: { content: "" } }] }),
+    ).toBeNull();
+    expect(recoverReasoningOnlyJson({})).toBeNull();
+    expect(recoverReasoningOnlyJson(null)).toBeNull();
+    expect(recoverReasoningOnlyJson("nope")).toBeNull();
   });
 });

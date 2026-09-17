@@ -36,7 +36,13 @@
  * No `any` at module boundaries.
  */
 import { AIMessage } from "@langchain/core/messages";
-import { generateText, generateObject, Output, jsonSchema } from "ai";
+import {
+  generateText,
+  generateObject,
+  NoObjectGeneratedError,
+  Output,
+  jsonSchema,
+} from "ai";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { FlowNode, LlmConfig } from "../../types/flow.js";
 import { UnknownProviderError } from "../llm-factory.js";
@@ -119,6 +125,43 @@ async function delayUnlessAborted(
       { once: true },
     );
   });
+}
+
+/** Provider usage as reported by the SDK, on success and on a thrown result alike. */
+interface StructuredUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
+
+/** What could be recovered from a thrown `NoObjectGeneratedError`. */
+interface SalvagedGeneration {
+  text: string;
+  usage: StructuredUsage | undefined;
+  finishReason: string | undefined;
+}
+
+/**
+ * Reads the response the SDK attached to a `NoObjectGeneratedError`.
+ *
+ * `generateText` + an `output` spec (and `generateObject`) throw when the
+ * model's text does not STRICTLY parse into the schema — but the SDK still
+ * carries the raw `text`, `usage` and `finishReason` on the error. Discarding
+ * that turned every near-miss (a code fence, a trailing sentence, a document
+ * the server delivered outside `content`) into a failed node AND reported zero
+ * tokens for a call that had actually run to completion.
+ *
+ * Returns `undefined` for any other error, so auth/deadline/transport failures
+ * keep their existing behaviour.
+ */
+function salvageNoObjectGenerated(err: unknown): SalvagedGeneration | undefined {
+  if (!NoObjectGeneratedError.isInstance(err)) return undefined;
+  return {
+    text: typeof err.text === "string" ? err.text : "",
+    usage: err.usage as StructuredUsage | undefined,
+    finishReason:
+      typeof err.finishReason === "string" ? err.finishReason : undefined,
+  };
 }
 
 /** Inputs for {@link runStructuredLlmOutput}. */
@@ -242,57 +285,75 @@ export async function runStructuredLlmOutput(
 
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      let text: string;
-      let genUsage:
-        | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-        | undefined;
+      let text = "";
+      let genUsage: StructuredUsage | undefined;
+      /** Set when the payload came off a thrown NoObjectGeneratedError. */
+      let salvaged: SalvagedGeneration | undefined;
 
-      if (useGenerateObject) {
-        const objResult = await generateObject({
-          model,
-          schema: jsonSchema(output.schema),
-          messages: cachedMessages,
-          allowSystemInMessages: caps.allowSystemInMessages,
-          ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
-          ...(temperature !== undefined ? { temperature } : {}),
-          // Bind the flow's execution deadline — see ExecRuntime.signal.
-          ...(runtime.signal !== undefined
-            ? { abortSignal: runtime.signal }
-            : {}),
-        });
-        genUsage = objResult.usage;
-        text = JSON.stringify(objResult.object);
-      } else {
-        const genResult = await generateText({
-          model,
-          messages: cachedMessages,
-          allowSystemInMessages: caps.allowSystemInMessages,
-          ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
-          ...(temperature !== undefined ? { temperature } : {}),
-          ...(outputSpec !== undefined ? { output: outputSpec } : {}),
-          // Bind the flow's execution deadline — see ExecRuntime.signal.
-          ...(runtime.signal !== undefined
-            ? { abortSignal: runtime.signal }
-            : {}),
-        });
-        // Prefer the schema-validated object from the enforced output; fall back
-        // to the raw text (prompt_validate path, or a server that returned the
-        // JSON only as text). If the enforced object is present but `text` is
-        // empty (some servers only populate `output`), serialise the object.
-        const enforced =
-          outputSpec !== undefined
-            ? ((genResult as { output?: unknown }).output as
-                | Record<string, unknown>
-                | undefined)
-            : undefined;
-        if (genResult.text.trim() !== "") {
-          text = genResult.text;
-        } else if (enforced !== undefined) {
-          text = JSON.stringify(enforced);
+      try {
+        if (useGenerateObject) {
+          const objResult = await generateObject({
+            model,
+            schema: jsonSchema(output.schema),
+            messages: cachedMessages,
+            allowSystemInMessages: caps.allowSystemInMessages,
+            ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
+            ...(temperature !== undefined ? { temperature } : {}),
+            // Bind the flow's execution deadline — see ExecRuntime.signal.
+            ...(runtime.signal !== undefined
+              ? { abortSignal: runtime.signal }
+              : {}),
+          });
+          genUsage = objResult.usage;
+          text = JSON.stringify(objResult.object);
         } else {
-          text = genResult.text;
+          const genResult = await generateText({
+            model,
+            messages: cachedMessages,
+            allowSystemInMessages: caps.allowSystemInMessages,
+            ...(maxTokens !== undefined ? { maxOutputTokens: maxTokens } : {}),
+            ...(temperature !== undefined ? { temperature } : {}),
+            ...(outputSpec !== undefined ? { output: outputSpec } : {}),
+            // Bind the flow's execution deadline — see ExecRuntime.signal.
+            ...(runtime.signal !== undefined
+              ? { abortSignal: runtime.signal }
+              : {}),
+          });
+          // Prefer the schema-validated object from the enforced output; fall back
+          // to the raw text (prompt_validate path, or a server that returned the
+          // JSON only as text). If the enforced object is present but `text` is
+          // empty (some servers only populate `output`), serialise the object.
+          const enforced =
+            outputSpec !== undefined
+              ? ((genResult as { output?: unknown }).output as
+                  | Record<string, unknown>
+                  | undefined)
+              : undefined;
+          if (genResult.text.trim() !== "") {
+            text = genResult.text;
+          } else if (enforced !== undefined) {
+            text = JSON.stringify(enforced);
+          } else {
+            text = genResult.text;
+          }
+          genUsage = genResult.usage;
         }
-        genUsage = genResult.usage;
+      } catch (genErr) {
+        // A strict-parse failure still carries the model's raw response. Keep it
+        // when a tolerant parse can make an object out of it; otherwise rethrow
+        // and let the retry/fail path below handle it as before.
+        const candidate = salvageNoObjectGenerated(genErr);
+        const extracted =
+          candidate !== undefined ? extractJsonFromText(candidate.text) : null;
+        if (candidate === undefined || extracted === null) {
+          throw genErr;
+        }
+        salvaged = candidate;
+        // The CANONICAL object, not the raw text: the consumer parses this
+        // node's content as JSON, so emitting the code fence / surrounding prose
+        // that made the strict parse fail would just move the failure downstream.
+        text = JSON.stringify(extracted);
+        genUsage = candidate.usage;
       }
 
       // Nothing usable came back — treat exactly like a thrown decode failure so
@@ -431,6 +492,32 @@ export async function runStructuredLlmOutput(
             response_chars: text.length,
           },
         });
+      } else if (salvaged !== undefined) {
+        // The provider's strict schema parse rejected the response, but the raw
+        // text carried a usable object. Recorded so the trace shows the node
+        // succeeded on a tolerant parse rather than on enforced output.
+        runtime.metrics.recordCounter(
+          "aiperator_llm_structured_salvaged_total",
+          { node: node.id, model: llmConfig.model },
+        );
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "structured_output_salvaged",
+          message:
+            `Strict schema parse rejected the response on attempt ${attempt}; ` +
+            "recovered a valid JSON object from the raw text.",
+          details: {
+            attempts: attempt,
+            provider: String(llmConfig.provider),
+            model: llmConfig.model,
+            strategy: caps.structuredOutput,
+            response_chars: text.length,
+            raw_response_chars: salvaged.text.length,
+            ...(salvaged.finishReason !== undefined
+              ? { finish_reason: salvaged.finishReason }
+              : {}),
+          },
+        });
       } else if (attempt > 1) {
         runtime.onNodeDiagnostic?.(node.id, {
           level: "info",
@@ -451,6 +538,23 @@ export async function runStructuredLlmOutput(
       };
     } catch (err) {
       const errMsg = err instanceof Error ? err.message : String(err);
+      // What the provider actually returned, when the SDK attached it. Without
+      // this a trace showed only "could not parse the response", which cannot
+      // distinguish a truncated document (finish_reason "length" → raise
+      // maxTokens) from an empty one (nothing in `content` at all).
+      const failed = salvageNoObjectGenerated(err);
+      const failureDetails: Record<string, unknown> =
+        failed !== undefined
+          ? {
+              response_chars: failed.text.length,
+              ...(failed.finishReason !== undefined
+                ? { finish_reason: failed.finishReason }
+                : {}),
+              ...(failed.usage?.outputTokens !== undefined
+                ? { output_tokens: failed.usage.outputTokens }
+                : {}),
+            }
+          : {};
       runtime.metrics.recordLlmCall(
         llmConfig.provider,
         llmConfig.model,
@@ -488,6 +592,7 @@ export async function runStructuredLlmOutput(
             model: llmConfig.model,
             strategy: caps.structuredOutput,
             error: errMsg,
+            ...failureDetails,
           },
         });
         await delayUnlessAborted(retryDelayMs * attempt, runtime.signal);
@@ -504,6 +609,7 @@ export async function runStructuredLlmOutput(
           strategy: caps.structuredOutput,
           aborted,
           retryable: emptyOutput,
+          ...failureDetails,
         },
       });
       return {
