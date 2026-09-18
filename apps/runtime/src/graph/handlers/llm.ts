@@ -2859,6 +2859,50 @@ export function createLlmNodeHandler(
                 name: "ToolExecutionError",
                 message: "Tool execution failed.",
               };
+              // The client/model-facing envelope is intentionally anonymized
+              // ("Tool execution failed.") so untrusted tool/transport output
+              // never reaches the reasoning stream. But that anonymization also
+              // erased the ONLY signal an operator has: without the raw cause a
+              // failed adapter/transport call is indistinguishable from a
+              // budget/identity/evidence guard, and the vectorsearch server logs
+              // stay empty when the throw happens before its network call. Emit
+              // the raw name+message once through the server-side diagnostic
+              // pipeline (never the model stream) so the debug trace can name
+              // the actual failure class. Deliberately excludes tool arguments
+              // to avoid leaking a `reference`/query payload into diagnostics.
+              const rawToolError =
+                error instanceof Error
+                  ? error
+                  : typeof error === "object" && error !== null
+                    ? (error as { name?: unknown; message?: unknown })
+                    : undefined;
+              const rawToolErrorName =
+                typeof rawToolError?.name === "string"
+                  ? rawToolError.name
+                  : undefined;
+              const rawToolErrorMessage =
+                typeof rawToolError?.message === "string"
+                  ? rawToolError.message
+                  : typeof error === "string"
+                    ? error
+                    : undefined;
+              runtime.onNodeDiagnostic?.(node.id, {
+                level: "error",
+                code: "tool_execution_failed",
+                message:
+                  "A delegated tool call threw before returning a result. " +
+                  "The model-facing result is anonymized; this diagnostic " +
+                  "carries the raw failure class for operators.",
+                details: {
+                  tool_call_id: id,
+                  ...(rawToolErrorName !== undefined
+                    ? { error_name: rawToolErrorName }
+                    : {}),
+                  ...(rawToolErrorMessage !== undefined
+                    ? { error_message: rawToolErrorMessage }
+                    : {}),
+                },
+              });
               visibleTextLengthAtLastToolResult = fullText.length;
               lastToolResultForRetry = {
                 isError: true,

@@ -260,6 +260,44 @@ function normalizedRef(ref: string): string {
 	return ref.trim().normalize("NFC");
 }
 
+/**
+ * Canonical DOCUMENT identity for cross-source deduplication.
+ *
+ * The coverage ledger is seeded from `get_summaries`, whose `reference` is a
+ * document-level path (`/…/Datei.pdf`). Discovery `search` hits, however, carry
+ * a `base_ref` when the server provides one but fall back to a chunk/section
+ * `reference` (`/…/Datei.pdf/46. …/18. …`) when it does not. A raw-string
+ * compare (trim+NFC only) then fails to recognize that a deep search hit and a
+ * document-level triage entry are the SAME physical document, so the hit's
+ * promotion/reopen is silently lost — and, where two differently formatted
+ * strings for one document coexist, the document can be read in full twice.
+ *
+ * This collapses both forms to one key: NFC + trim, a stripped trailing slash,
+ * case-folded, and — when the path contains a file-extension segment — the
+ * prefix up to and including that document file. It is intentionally
+ * conservative: a reference without a recognizable document file is only
+ * slash/case-normalized, never truncated. Used ONLY for cross-source hit
+ * matching; the displayed `ref` handed to `get_document` stays the full,
+ * original ledger reference.
+ */
+const DOCUMENT_FILE_SEGMENT = /\.(?:pdf|docx?|xlsx?|pptx?|txt|md|html?|csv)(?=\/|$)/i;
+
+export function documentIdentityKey(ref: string): string {
+	let key = normalizedRef(ref);
+	if (key === "") return "";
+	// Drop a single trailing slash so `/a/b/` and `/a/b` collapse.
+	if (key.endsWith("/") && key.length > 1) key = key.slice(0, -1);
+	// Truncate a deep chunk/section path to its parent document file, so a
+	// search hit inside a document maps to the same key as the document-level
+	// triage reference. Match the FIRST document-file segment: the physical
+	// file is the outermost extension in these nested reference paths.
+	const match = DOCUMENT_FILE_SEGMENT.exec(key);
+	if (match !== null) {
+		key = key.slice(0, match.index + match[0].length);
+	}
+	return key.toLocaleLowerCase();
+}
+
 export function seedCoverageLedger(
 	toolResults: readonly ToolResultEntry[] | undefined,
 	sourceTool: string,
@@ -276,6 +314,11 @@ export function seedCoverageLedger(
 	let total: number | undefined;
 	const documents: CoverageDocument[] = [];
 	const seen = new Set<string>();
+	// Tracks raw-string-distinct references separately from canonical-identity
+	// dedup, so we can tell "fewer entries because pages are missing" (a real
+	// completeness failure) apart from "fewer entries because two reference
+	// forms are the same physical document" (expected, not a failure).
+	const rawSeen = new Set<string>();
 	for (const entry of matching) {
 		const meta = parseVectorSearchSummaryMeta(entry.result);
 		if (
@@ -292,8 +335,14 @@ export function seedCoverageLedger(
 					`Coverage source tool "${sourceTool}" returned a summary without a reference.`,
 				);
 			}
-			if (seen.has(ref)) continue;
-			seen.add(ref);
+			rawSeen.add(ref);
+			// Dedupe by canonical document identity, not raw string, so the same
+			// physical document surfaced under two reference forms across
+			// paginated summary pages seeds exactly one ledger entry. The first
+			// full reference wins as the displayed `ref`.
+			const identity = documentIdentityKey(ref);
+			if (seen.has(identity)) continue;
+			seen.add(identity);
 			documents.push({
 				ref,
 				title: summary.title.trim().normalize("NFC") || ref,
@@ -310,15 +359,28 @@ export function seedCoverageLedger(
 			`Coverage source tool "${sourceTool}" did not report a total.`,
 		);
 	}
-	if (documents.length !== total) {
+	// A raw-distinct count above the reported total means duplicate pages or a
+	// bad envelope; more entries than the source claims is never acceptable.
+	if (rawSeen.size > total) {
 		throw new CoverageSeedError(
-			`Coverage seed incomplete: ${documents.length} unique references for reported total ${total}.`,
+			`Coverage seed inconsistent: ${rawSeen.size} distinct references exceed reported total ${total}.`,
 		);
 	}
+	// Fewer raw-distinct references than the reported total means summary pages
+	// are genuinely missing — still a fail-closed completeness violation.
+	if (rawSeen.size < total) {
+		throw new CoverageSeedError(
+			`Coverage seed incomplete: ${rawSeen.size} unique references for reported total ${total}.`,
+		);
+	}
+	// All pages present. Canonical dedup may legitimately collapse two reference
+	// forms of one physical document, so the ledger total is the deduplicated
+	// document count, not the raw summary-row count.
+	const effectiveTotal = documents.length;
 
 	return {
 		sourceTool,
-		total,
+		total: effectiveTotal,
 		documents,
 		assignmentsIssued: 0,
 		discoveryRounds: 0,
@@ -711,13 +773,16 @@ export function promoteCoverageSearchHits(
 				typeof hit.score === "number" &&
 				hit.score >= rerankScoreThreshold;
 			if (!selectedByRank && !selectedByScore) continue;
-			const reasons = selectedByRef.get(hit.ref) ?? [];
+			// Key by canonical document identity so a deep chunk/section hit ref
+			// matches the document-level ledger reference from summary triage.
+			const hitKey = documentIdentityKey(hit.ref);
+			const reasons = selectedByRef.get(hitKey) ?? [];
 			reasons.push(
 				selectedByScore
 					? `Rerank score ${hit.score?.toFixed(3)} for query "${pass.query}"`
 					: `Top-${maxHitsPerPass} hit (rank ${hit.rank}) for query "${pass.query}"`,
 			);
-			selectedByRef.set(hit.ref, reasons);
+			selectedByRef.set(hitKey, reasons);
 		}
 	}
 	if (selectedByRef.size === 0)
@@ -726,14 +791,17 @@ export function promoteCoverageSearchHits(
 	const selectedRefs: string[] = [];
 	const promotedRefs: string[] = [];
 	const documents = ledger.documents.map((document) => {
-		const candidateReasons = selectedByRef.get(document.ref);
+		const documentKey = documentIdentityKey(document.ref);
+		const candidateReasons = selectedByRef.get(documentKey);
 		if (candidateReasons === undefined) return document;
 		selectedRefs.push(document.ref);
 		const readInFull =
 			document.totalChars !== undefined || document.windows.length > 0;
 		if (document.status === "reviewed" || readInFull) return document;
 		const searches = evidence.filter((pass) =>
-			pass.resultRefs.includes(document.ref),
+			pass.resultRefs.some(
+				(resultRef) => documentIdentityKey(resultRef) === documentKey,
+			),
 		);
 		if (document.status !== "summary-reviewed") promotedRefs.push(document.ref);
 		return {
