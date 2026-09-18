@@ -20,6 +20,38 @@ releases:
 
 Nothing yet.
 
+## [0.6.1] — 2026-09-18
+
+Hardens the staged coverage queue against a cross-source identity gap and makes a failed
+delegated tool call diagnosable. Both changes are backward compatible: the queue's public
+behavior is unchanged for references that already matched, and the tool-error handling adds
+a server-side diagnostic without altering the anonymized result the model sees. No database
+migration, independently versioned contract-package change, or executable flow change is
+included in this repository. The FDS research flows that consume this runtime bump their own
+`metadata.version` in their deployment repository.
+
+### Fixed
+
+- The staged coverage queue now deduplicates documents across the two retrieval paths by a
+  canonical document identity instead of a raw reference string. Summary triage seeds the
+  ledger with a document-level reference, while a discovery search hit can carry a deeper
+  chunk/section reference when the store omits `base_ref`; the raw-string compare then failed
+  to recognize the two as the same physical document, so a search hit's promotion was silently
+  lost and — where two reference forms for one document coexisted — the same original could be
+  read twice. Seeding and search-hit promotion now key on a normalized document identity
+  (NFC, trimmed, trailing-slash- and case-insensitive, truncated to the parent document file).
+  The reference handed to `get_document` is unchanged. Ledger seeding still fails closed when
+  summary pages are genuinely missing.
+
+### Added
+
+- A delegated tool call that throws before returning a result now emits a server-side
+  `tool_execution_failed` diagnostic carrying the raw error class (name and message) into the
+  execution debug trace. The model-facing result stays the anonymized `Tool execution failed.`
+  envelope, and tool arguments are deliberately excluded so a reference or query payload is
+  never written to diagnostics. Previously the raw cause was discarded, making an adapter or
+  transport failure indistinguishable from a budget, identity, or evidence guard.
+
 ## [0.6.0] — 2026-09-17
 
 Makes structured output survive the three ways a local OpenAI-compatible server breaks it: the
@@ -472,7 +504,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/abillify/atf/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/abillify/atf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/abillify/atf/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.4.0
