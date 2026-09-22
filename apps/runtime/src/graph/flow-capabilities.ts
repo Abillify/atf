@@ -3,6 +3,7 @@
 
 import type { FlowDefinition, LlmConfig } from "../types/flow.js";
 import { getModelCapabilities, type ModelCapabilities } from "./model-capabilities.js";
+import { poolLeafConfigs } from "./model-pool.js";
 
 export interface FlowModelCapability extends ModelCapabilities {
   provider: string;
@@ -23,7 +24,16 @@ export interface FlowCapabilityDescriptor {
 export function collectFlowLlmConfigs(flow: FlowDefinition): LlmConfig[] {
   const byKey = new Map<string, LlmConfig>();
   const add = (llm: LlmConfig | undefined): void => {
-    if (llm) byKey.set(`${llm.provider}/${llm.model}`, llm);
+    if (!llm) return;
+    byKey.set(`${llm.provider}/${llm.model}`, llm);
+    // A POOL shortcut expands to a primary config plus its remaining members
+    // (see LlmPoolConfig). Every member can serve a request, so every member
+    // must appear in the flow's model/capability set — otherwise a fallback or
+    // rotated-to member would be invisible to capability checks. poolLeafConfigs
+    // walks nested sub-pools, so every leaf model is covered.
+    for (const leaf of poolLeafConfigs(llm)) {
+      byKey.set(`${leaf.provider}/${leaf.model}`, leaf);
+    }
   };
   for (const node of flow.nodes) {
     add(node.llm);

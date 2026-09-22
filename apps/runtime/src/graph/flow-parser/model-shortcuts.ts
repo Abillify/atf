@@ -21,15 +21,31 @@
  * temperature/maxTokens while inheriting the model's tuning (e.g. qwen's
  * thinking-off params) from the preset.
  *
+ * POOL shortcuts: besides a plain `engine` + `model` pair, a shortcut may be a
+ * pool — an ordered list of members, each either a concrete `engine` + `model`
+ * pair (optionally with extra `parameters`) or a reference to ANOTHER shortcut.
+ * A referenced shortcut that is itself a pool is kept as a NESTED sub-pool
+ * (a candidate carrying its own `pool`) rather than flattened, so the inner
+ * strategy survives: an outer `"fallback"` pool can hold an inner
+ * `"round-robin"` sub-pool as its primary member and only fall through to the
+ * next outer member when the whole sub-pool is unavailable. A pool carries a
+ * `strategy` (`"fallback"`, `"round-robin"`, `"weighted-round-robin"`,
+ * `"random"`, `"weighted-random"`, `"least-used"`). Expansion writes the FIRST
+ * LEAF into the node's `provider`/`model`/`parameters` and attaches a
+ * `pool: { strategy, candidates }` (candidates may themselves carry a nested
+ * `pool`) that the `llm` / `classifier` handlers use for selection at runtime.
+ *
  * Failure handling mirrors unknown-variable handling: an unknown shortcut /
  * engine / preset is logged to stderr and the `shortcut` key is left in place,
  * so the node fails Zod validation loudly (flow skipped) rather than silently
- * running on a wrong model.
+ * running on a wrong model. The same applies to malformed pools (unknown
+ * member, cyclic reference, empty member list).
  *
  * No `any` at module boundaries.
  */
 
 import * as fs from "node:fs";
+import type { LlmConfig, LlmPoolStrategy } from "../../types/flow.js";
 import { parseFlowFile, resolveConfigFile } from "../../util/parse-flow-file.js";
 
 // ---------------------------------------------------------------------------
@@ -57,13 +73,57 @@ interface ModelPresetDef {
   parameters?: Record<string, unknown>;
 }
 
-interface ShortcutDef {
+/**
+ * A plain shortcut: one engine + one model preset (+ optional extra params).
+ * Structurally distinguished from {@link PoolShortcutDef} by the presence of
+ * `engine`/`model` (single) versus `members` (pool) — no discriminant tag, so
+ * callers and tests construct the natural shape directly.
+ */
+interface SingleShortcutDef {
   /** Engine name (key into `engines`). */
   engine: string;
   /** Model-preset name (key into `modelPresets`). */
   model: string;
   /** Optional extra parameters layered on top of the preset's. */
   parameters?: Record<string, unknown>;
+}
+
+/** One member of a pool shortcut: a concrete pair or a reference to another shortcut. */
+interface PoolMemberDef {
+  /** Reference to another shortcut (single or pool; pools are flattened). */
+  shortcut?: string;
+  /** Concrete engine name (key into `engines`). Set together with `model`. */
+  engine?: string;
+  /** Concrete model-preset name (key into `modelPresets`). */
+  model?: string;
+  /** Optional extra parameters layered on top of the preset's. */
+  parameters?: Record<string, unknown>;
+  /** Optional relative selection weight. */
+  weight?: number;
+}
+
+/** A pool shortcut: ordered members + a selection strategy. */
+interface PoolShortcutDef {
+  /** Selection strategy; `"fallback"` when omitted. */
+  strategy: LlmPoolStrategy;
+  /** Ordered members (>= 1 after parsing). */
+  members: PoolMemberDef[];
+  /**
+   * Pool-level parameters, layered onto EVERY leaf of this pool (including the
+   * leaves of nested sub-pool members). Precedence, later wins:
+   *   preset < THIS pool's params < nested/inner pool params < member params <
+   *   node-level params.
+   * So an outer pool can set e.g. `extraBody.repeat_penalty` once for all its
+   * members, an inner pool can override it, and a node can still override both.
+   */
+  parameters?: Record<string, unknown>;
+}
+
+type ShortcutDef = SingleShortcutDef | PoolShortcutDef;
+
+/** Type guard: a shortcut is a pool when it carries a member list. */
+function isPoolShortcut(s: ShortcutDef): s is PoolShortcutDef {
+  return "members" in s;
 }
 
 export interface ModelShortcutsData {
@@ -132,15 +192,80 @@ function parseShortcutsData(raw: unknown): ModelShortcutsData {
           }
         : null,
   );
-  const shortcuts = coerceSection<ShortcutDef>(root.shortcuts, (s) =>
-    typeof s.engine === "string" && typeof s.model === "string"
-      ? {
-          engine: s.engine,
-          model: s.model,
-          ...(isRecord(s.parameters) ? { parameters: s.parameters } : {}),
+  const shortcuts = coerceSection<ShortcutDef>(root.shortcuts, (s) => {
+    // Pool form: `pool:` is either a bare member list or `{ strategy, members }`.
+    if (s.pool !== undefined) {
+      const poolSource = isRecord(s.pool) ? s.pool : undefined;
+      const rawMembers = Array.isArray(s.pool)
+        ? s.pool
+        : Array.isArray(poolSource?.members)
+          ? poolSource.members
+          : null;
+      if (rawMembers === null) return null;
+      const validStrategies: LlmPoolStrategy[] = [
+        "fallback",
+        "round-robin",
+        "weighted-round-robin",
+        "random",
+        "weighted-random",
+        "least-used",
+      ];
+      const strategy = validStrategies.includes(
+        poolSource?.strategy as LlmPoolStrategy,
+      )
+        ? (poolSource?.strategy as LlmPoolStrategy)
+        : "fallback";
+      const members: PoolMemberDef[] = [];
+      for (const rawMember of rawMembers) {
+        if (!isRecord(rawMember)) continue;
+        if (typeof rawMember.shortcut === "string") {
+          members.push({
+            shortcut: rawMember.shortcut,
+            ...(typeof rawMember.weight === "number" &&
+            Number.isFinite(rawMember.weight) &&
+            rawMember.weight > 0
+              ? { weight: rawMember.weight }
+              : {}),
+          });
+          continue;
         }
-      : null,
-  );
+        if (
+          typeof rawMember.engine === "string" &&
+          typeof rawMember.model === "string"
+        ) {
+          members.push({
+            engine: rawMember.engine,
+            model: rawMember.model,
+            ...(isRecord(rawMember.parameters)
+              ? { parameters: rawMember.parameters }
+              : {}),
+            ...(typeof rawMember.weight === "number" &&
+            Number.isFinite(rawMember.weight) &&
+            rawMember.weight > 0
+              ? { weight: rawMember.weight }
+              : {}),
+          });
+        }
+      }
+      if (members.length === 0) return null;
+      return {
+        strategy,
+        members,
+        ...(isRecord(poolSource?.parameters)
+          ? { parameters: poolSource.parameters }
+          : {}),
+      };
+    }
+    // Plain form: engine + model (+ optional params).
+    if (typeof s.engine === "string" && typeof s.model === "string") {
+      return {
+        engine: s.engine,
+        model: s.model,
+        ...(isRecord(s.parameters) ? { parameters: s.parameters } : {}),
+      };
+    }
+    return null;
+  });
   const pricing = coerceSection<ModelPrice>(root.pricing, (p) =>
     typeof p.prompt === "number" &&
     Number.isFinite(p.prompt) &&
@@ -220,10 +345,197 @@ function warn(fileName: string, reason: string): void {
 }
 
 /**
+ * Expands a concrete engine/model pair (a single shortcut or a pool member)
+ * into a concrete {@link LlmConfig}. `extraParams` are layered above the
+ * preset's (member/shortcut params), `nodeParams` last (node-level wins).
+ * Returns `null` — after logging — when the engine or preset is unknown, so
+ * the caller can leave the `shortcut` key in place and fail validation loudly.
+ */
+function expandConcrete(
+  name: string,
+  engineName: string,
+  modelName: string,
+  extraParams: Record<string, unknown> | undefined,
+  weight: number | undefined,
+  inheritedParams: Record<string, unknown>,
+  nodeParams: Record<string, unknown>,
+  data: ModelShortcutsData,
+  fileName: string,
+): LlmConfig | null {
+  const engine = data.engines[engineName];
+  if (engine === undefined) {
+    warn(
+      fileName,
+      `Model shortcut "${name}" references unknown engine "${engineName}"`,
+    );
+    return null;
+  }
+  const preset = data.modelPresets[modelName];
+  if (preset === undefined) {
+    warn(
+      fileName,
+      `Model shortcut "${name}" references unknown model preset "${modelName}"`,
+    );
+    return null;
+  }
+  // Precedence (later wins): preset < inherited pool params < shortcut/member <
+  // node-level parameters. `inheritedParams` are the accumulated pool-level
+  // parameters from every enclosing pool (outer first, inner overriding).
+  const mergedParams: Record<string, unknown> = {
+    ...(preset.parameters ?? {}),
+    ...inheritedParams,
+    ...(extraParams ?? {}),
+    ...nodeParams,
+  };
+  const config: LlmConfig = { provider: engine.provider, model: preset.model };
+  if (weight !== undefined && Number.isFinite(weight) && weight > 0) {
+    config.weight = weight;
+  }
+  if (Object.keys(mergedParams).length > 0) {
+    config.parameters = mergedParams;
+  }
+  return config;
+}
+
+/**
+ * The first concrete LEAF of a (possibly nested) candidate config — the value
+ * that fills a host node's `provider`/`model`/`parameters`. Walks into a nested
+ * sub-pool's first candidate so a pool-of-pools still resolves to a real model.
+ */
+function firstLeaf(config: LlmConfig): LlmConfig {
+  let leaf = config;
+  while (leaf.pool !== undefined && leaf.pool.candidates[0] !== undefined) {
+    leaf = leaf.pool.candidates[0];
+  }
+  return leaf;
+}
+
+/**
+ * Expands a shortcut into a SINGLE {@link LlmConfig}.
+ *
+ * - A plain shortcut → a concrete provider/model config.
+ * - A pool shortcut → a config whose `provider`/`model`/`parameters` come from
+ *   the first leaf candidate and which carries a `pool: { strategy, candidates }`.
+ *   A pool member that references ANOTHER pool shortcut is kept as a NESTED
+ *   candidate (a candidate carrying its own `pool`) rather than flattened, so
+ *   the inner strategy survives — this is what lets an outer `fallback` pool
+ *   hold an inner `round-robin` sub-pool as its primary member. Member weights
+ *   (including on a referenced sub-pool) are preserved for weighted strategies.
+ *
+ * `visiting` guards against reference cycles. Node-level `nodeParams` are
+ * request-level overrides (temperature, maxTokens, …) layered onto every leaf,
+ * so each member keeps its own preset tuning but inherits the requesting node's
+ * overrides. `inheritedParams` accumulates the pool-level `parameters` of every
+ * enclosing pool (outer first, inner overriding) and is layered onto every leaf
+ * below preset tuning but above nothing else except member/node params — this
+ * is how a pool's `parameters` reach its members and nested sub-pool leaves.
+ * Returns `null` on any lookup failure (already logged) so the caller leaves the
+ * `shortcut` key in place and the node fails validation loudly.
+ */
+function expandShortcutToConfig(
+  name: string,
+  nodeParams: Record<string, unknown>,
+  data: ModelShortcutsData,
+  fileName: string,
+  visiting: ReadonlySet<string>,
+  inheritedParams: Record<string, unknown> = {},
+): LlmConfig | null {
+  if (visiting.has(name)) {
+    warn(fileName, `Model shortcut "${name}" has a cyclic reference`);
+    return null;
+  }
+  const shortcut = data.shortcuts[name];
+  if (shortcut === undefined) {
+    warn(fileName, `Unknown model shortcut "${name}" — leaving unresolved`);
+    return null;
+  }
+
+  if (!isPoolShortcut(shortcut)) {
+    return expandConcrete(
+      name,
+      shortcut.engine,
+      shortcut.model,
+      shortcut.parameters,
+      undefined,
+      inheritedParams,
+      nodeParams,
+      data,
+      fileName,
+    );
+  }
+
+  // This pool's own parameters override any inherited from an enclosing pool
+  // (outer < inner), and are inherited further down into members/sub-pools.
+  const poolInherited: Record<string, unknown> = {
+    ...inheritedParams,
+    ...(shortcut.parameters ?? {}),
+  };
+
+  const candidates: LlmConfig[] = [];
+  for (const member of shortcut.members) {
+    if (member.shortcut !== undefined) {
+      // Referenced member: expanded to a SINGLE config (which itself keeps a
+      // nested `pool` when the referenced shortcut is a pool), so the inner
+      // strategy is preserved instead of flattened into this pool's order.
+      const nested = expandShortcutToConfig(
+        member.shortcut,
+        nodeParams,
+        data,
+        fileName,
+        new Set([...visiting, name]),
+        poolInherited,
+      );
+      if (nested === null) return null;
+      // An explicit member weight applies to the nested candidate as a whole.
+      if (
+        member.weight !== undefined &&
+        Number.isFinite(member.weight) &&
+        member.weight > 0
+      ) {
+        nested.weight = member.weight;
+      }
+      candidates.push(nested);
+      continue;
+    }
+    const concrete = expandConcrete(
+      name,
+      member.engine as string,
+      member.model as string,
+      member.parameters,
+      member.weight,
+      poolInherited,
+      nodeParams,
+      data,
+      fileName,
+    );
+    if (concrete === null) return null;
+    candidates.push(concrete);
+  }
+  if (candidates.length === 0) {
+    warn(fileName, `Model shortcut "${name}" pool has no usable members`);
+    return null;
+  }
+
+  const first = firstLeaf(candidates[0] as LlmConfig);
+  const config: LlmConfig = { provider: first.provider, model: first.model };
+  if (
+    first.parameters !== undefined &&
+    Object.keys(first.parameters).length > 0
+  ) {
+    config.parameters = first.parameters;
+  }
+  config.pool = { strategy: shortcut.strategy, candidates };
+  return config;
+}
+
+/**
  * Expands a single llm-ish object carrying a string `shortcut` in place.
  * On any lookup failure it leaves `shortcut` intact (so Zod rejects the node)
  * and logs a warning. On success it deletes `shortcut` and sets `provider`,
- * `model` and the merged `parameters`.
+ * `model` and the merged `parameters`. When the shortcut is a POOL, the first
+ * leaf candidate fills those keys and a concrete `pool: { strategy, candidates }`
+ * (possibly with nested sub-pools) is attached for the runtime handlers (see
+ * `LlmPoolConfig`).
  */
 function expandShortcutObject(
   obj: Record<string, unknown>,
@@ -233,41 +545,27 @@ function expandShortcutObject(
   const name = obj.shortcut;
   if (typeof name !== "string") return;
 
-  const shortcut = data.shortcuts[name];
-  if (shortcut === undefined) {
-    warn(fileName, `Unknown model shortcut "${name}" — leaving unresolved`);
-    return;
-  }
-  const engine = data.engines[shortcut.engine];
-  if (engine === undefined) {
-    warn(
-      fileName,
-      `Model shortcut "${name}" references unknown engine "${shortcut.engine}"`,
-    );
-    return;
-  }
-  const preset = data.modelPresets[shortcut.model];
-  if (preset === undefined) {
-    warn(
-      fileName,
-      `Model shortcut "${name}" references unknown model preset "${shortcut.model}"`,
-    );
-    return;
-  }
-
   const nodeParams = isRecord(obj.parameters) ? obj.parameters : {};
-  // Precedence (later wins): preset < shortcut < node-level parameters.
-  const mergedParams: Record<string, unknown> = {
-    ...(preset.parameters ?? {}),
-    ...(shortcut.parameters ?? {}),
-    ...nodeParams,
-  };
+  const resolved = expandShortcutToConfig(
+    name,
+    nodeParams,
+    data,
+    fileName,
+    new Set<string>(),
+  );
+  if (resolved === null) return;
 
   delete obj.shortcut;
-  obj.provider = engine.provider;
-  obj.model = preset.model;
-  if (Object.keys(mergedParams).length > 0) {
-    obj.parameters = mergedParams;
+  obj.provider = resolved.provider;
+  obj.model = resolved.model;
+  if (
+    resolved.parameters !== undefined &&
+    Object.keys(resolved.parameters).length > 0
+  ) {
+    obj.parameters = resolved.parameters;
+  }
+  if (resolved.pool !== undefined) {
+    obj.pool = resolved.pool;
   }
 }
 

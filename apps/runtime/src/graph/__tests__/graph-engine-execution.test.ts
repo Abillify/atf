@@ -322,3 +322,147 @@ describe("executeFlow — conditional routing", () => {
     );
   });
 });
+
+describe("executeFlow — in-request failover on an unreachable provider", () => {
+  /** A live candidate mock that streams a single "recovered" token. */
+  function liveModel(): MockLanguageModelV3 {
+    return new MockLanguageModelV3({
+      doStream: async () =>
+        ({
+          stream: new ReadableStream({
+            start(controller: ReadableStreamDefaultController<unknown>) {
+              controller.enqueue({ type: "text-start", id: "1" });
+              controller.enqueue({
+                type: "text-delta",
+                id: "1",
+                delta: "recovered",
+              });
+              controller.enqueue({ type: "text-end", id: "1" });
+              controller.enqueue({
+                type: "finish",
+                finishReason: { unified: "stop" as const, raw: "stop" },
+                usage: {
+                  inputTokens: {
+                    total: 7,
+                    noCache: undefined,
+                    cacheRead: undefined,
+                    cacheWrite: undefined,
+                  },
+                  outputTokens: {
+                    total: 5,
+                    text: undefined,
+                    reasoning: undefined,
+                  },
+                },
+              });
+              controller.close();
+            },
+          }),
+        }) as unknown as import("@ai-sdk/provider").LanguageModelV3StreamResult,
+    });
+  }
+
+  function poolFlow(id: string): FlowDefinition {
+    return {
+      id,
+      name: "Failover",
+      nodes: [
+        {
+          id: "llm-1",
+          type: "llm",
+          llm: {
+            provider: "openai",
+            model: "dead-model",
+            pool: {
+              strategy: "fallback",
+              candidates: [
+                { provider: "openai", model: "dead-model" },
+                { provider: "openai", model: "live-model" },
+              ],
+            },
+          },
+        },
+      ],
+      edges: [],
+    };
+  }
+
+  /**
+   * A pool whose PRIMARY candidate is unreachable must fail over to the next
+   * candidate WITHIN the same request, without exhausting the per-candidate
+   * retry budget on the dead endpoint. This holds for EVERY transport failure
+   * (see providerTransportErrorCode), not just connection-refused: connect/read
+   * timeouts, DNS failures, reset connections, and HTTP 408/5xx all mean the
+   * endpoint could not serve the request, so the retry-on-the-same-endpoint is
+   * skipped. The dead primary is contacted exactly once; the second answers.
+   */
+  const deadEndpointCases: Array<{ label: string; makeError: () => unknown }> = [
+    {
+      label: "connection refused (ECONNREFUSED)",
+      makeError: () =>
+        new Error("fetch failed", { cause: { code: "ECONNREFUSED" } }),
+    },
+    {
+      label: "connect/read timeout (ETIMEDOUT)",
+      makeError: () =>
+        new Error("fetch failed", { cause: { code: "ETIMEDOUT" } }),
+    },
+    {
+      label: "DNS failure (ENOTFOUND)",
+      makeError: () =>
+        new Error("fetch failed", { cause: { code: "ENOTFOUND" } }),
+    },
+    {
+      label: "server error (HTTP 503)",
+      makeError: () => Object.assign(new Error("Service Unavailable"), {
+        statusCode: 503,
+      }),
+    },
+    {
+      label: "generic network timeout message",
+      makeError: () => new Error("request to model endpoint timed out"),
+    },
+  ];
+
+  for (const { label, makeError } of deadEndpointCases) {
+    test(`fails over immediately on ${label}, without retrying the dead one`, async () => {
+      const callsByModel = new Map<string, number>();
+      const factory = (cfg: { model: string }) => {
+        callsByModel.set(cfg.model, (callsByModel.get(cfg.model) ?? 0) + 1);
+        if (cfg.model === "dead-model") {
+          return new MockLanguageModelV3({
+            doStream: async () => {
+              throw makeError();
+            },
+          });
+        }
+        return liveModel();
+      };
+
+      const engine = createGraphEngine(baseConfig, {
+        flowRegistry: singleNodeRegistry(poolFlow(`failover-${label}`)),
+        llmProviderFactory: factory as never,
+      });
+
+      const chunks: ChatCompletionChunk[] = [];
+      await engine.executeFlow(
+        `failover-${label}`,
+        [{ role: "user", content: "hi" }],
+        { ssoToken: "a.b.c", executionId: `exec-${label}` },
+        async (c) => {
+          chunks.push(c);
+        },
+        async () => {},
+      );
+
+      // The dead endpoint was contacted exactly once — no retry-with-backoff on
+      // a known-unreachable provider, regardless of the transport error kind.
+      expect(callsByModel.get("dead-model")).toBe(1);
+      // The live candidate served the answer within the same request.
+      expect(callsByModel.get("live-model")).toBe(1);
+      expect(
+        chunks.some((c) => c.choices[0]?.delta?.content === "recovered"),
+      ).toBe(true);
+    });
+  }
+});

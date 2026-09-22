@@ -63,6 +63,59 @@ export interface LlmParameters {
 }
 
 /**
+ * Selection strategy for a model pool (see {@link LlmPoolConfig}).
+ *
+ * - `"fallback"` — try the members strictly in configured order; the first is
+ *   the primary and each later member is a failover for the ones before it.
+ * - `"round-robin"` — distribute calls evenly across the members by advancing a
+ *   shared cursor each call; the member the cursor lands on becomes the primary
+ *   and the remaining members (in configured order, wrapped) act as failovers,
+ *   so a pool still degrades gracefully when the rotated-to member is down.
+ */
+export type LlmPoolStrategy =
+  | "fallback"
+  | "round-robin"
+  | "weighted-round-robin"
+  | "random"
+  | "weighted-random"
+  | "least-used";
+
+/**
+ * A runtime model pool attached to an {@link LlmConfig} by the flow parser when
+ * a node references a POOL shortcut in `flows/model-shortcuts.yaml` (a shortcut
+ * composed of several engine/model pairs or other shortcuts).
+ *
+ * The host {@link LlmConfig} itself always carries the FIRST candidate's
+ * `provider`/`model`/`parameters`, so every consumer that only understands a
+ * plain LlmConfig (admission, compliance, cost, capability collection, the
+ * structured-output path) sees a valid single model even if it ignores `pool`.
+ * The streaming `llm` handler and the `classifier` handler additionally read
+ * `pool` to build the ordered candidate chain per {@link LlmPoolStrategy}.
+ *
+ * `candidates` are expanded configs. A candidate is normally a concrete
+ * provider/model pair, but it MAY itself carry a nested `pool` — this is how a
+ * pool shortcut that references ANOTHER pool shortcut is represented: the inner
+ * pool keeps its own strategy instead of being flattened into the parent's
+ * order. `buildPoolCandidateChain` resolves a nested candidate recursively (its
+ * own strategy first, then the parent's), so e.g. an outer `fallback` pool whose
+ * first member is an inner `round-robin` sub-pool rotates between the sub-pool's
+ * members and only falls through to the outer pool's next member when the whole
+ * sub-pool is unavailable. The host config's own `provider`/`model` is always the
+ * first LEAF of the (possibly nested) candidate list, so plain consumers still
+ * see a valid single model.
+ */
+export interface LlmPoolConfig {
+  /** Selection strategy; defaults to `"fallback"` when omitted. */
+  strategy?: LlmPoolStrategy;
+  /**
+   * Ordered candidates (>= 1). Each is a concrete provider/model pair or a
+   * nested sub-pool (a candidate carrying its own `pool`). The first leaf
+   * matches the host config.
+   */
+  candidates: LlmConfig[];
+}
+
+/**
  * Configuration for a specific LLM provider and model on a flow node.
  */
 export interface LlmConfig {
@@ -87,6 +140,17 @@ export interface LlmConfig {
   model: string;
   /** Optional inference parameters */
   parameters?: LlmParameters;
+  /** Optional relative pool weight. Ignored outside a pool. */
+  weight?: number;
+  /**
+   * Optional model pool, set by the parser when the node's shortcut resolves to
+   * a POOL (see {@link LlmPoolConfig}). When present, the streaming `llm` and
+   * `classifier` handlers select among `candidates` by `strategy` instead of
+   * using only this config's own `provider`/`model`. All other consumers keep
+   * working off the host config (the first leaf candidate). A candidate may
+   * itself carry a `pool` (a nested sub-pool with its own strategy).
+   */
+  pool?: LlmPoolConfig;
 }
 
 /**
@@ -273,6 +337,8 @@ export interface FlowNode {
     | (string & {});
   /** Human-readable display label */
   label?: string;
+  /** Queue priority for requests reaching this LLM node; higher runs first. */
+  priority?: number;
   /** LLM configuration — falls back to global default if omitted */
   llm?: LlmConfig;
   /** MCP tool identifiers this node may invoke (max 50, each max 128 chars) */
@@ -368,6 +434,8 @@ export interface FlowDefinition {
   name: string;
   /** Optional description */
   description?: string;
+  /** Queue priority for flow requests; higher values run first, default 50. */
+  priority?: number;
   /**
    * Flow-scoped variables.
    *

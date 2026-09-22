@@ -116,22 +116,65 @@ export const LlmParametersSchema = z
  *   still fails the flow loudly instead of erroring at first model call.
  * - model: string max 256 chars
  * - parameters: optional LlmParameters
+ * - pool: optional model pool (set by the parser when a POOL shortcut is
+ *   expanded — see `LlmPoolConfig`). `candidates` are provider/model/parameters
+ *   configs; a candidate MAY itself carry a nested `pool` (a pool shortcut that
+ *   references another pool shortcut keeps its own strategy). The candidate
+ *   schema is therefore recursive via `z.lazy`.
  */
+const ProviderSchema = z.union([
+  z.string().min(1).max(64).refine(isKnownProviderName, {
+    message:
+      "provider must be a configured PROVIDERS name or a built-in protocol",
+  }),
+  z
+    .string()
+    .regex(
+      VAR_PLACEHOLDER_RE,
+      "provider must be a known provider or a {{vars.*}} reference",
+    ),
+]);
+
+const PoolStrategySchema = z
+  .enum([
+    "fallback",
+    "round-robin",
+    "weighted-round-robin",
+    "random",
+    "weighted-random",
+    "least-used",
+  ])
+  .optional();
+
+/**
+ * A pool candidate: a provider/model config that may itself carry a nested
+ * `pool`. Recursive via `z.lazy` so an outer pool can hold an inner sub-pool.
+ */
+const LlmPoolCandidateSchema: z.ZodType<LlmConfig> = z.lazy(() =>
+  z.object({
+    provider: ProviderSchema,
+    model: z.string().min(1).max(256),
+    parameters: LlmParametersSchema.optional(),
+    weight: z.number().finite().positive().optional(),
+    pool: z
+      .object({
+        strategy: PoolStrategySchema,
+        candidates: z.array(LlmPoolCandidateSchema).min(1),
+      })
+      .optional(),
+  }),
+) as unknown as z.ZodType<LlmConfig>;
+
 export const LlmConfigSchema: z.ZodType<LlmConfig> = z.object({
-  provider: z.union([
-    z.string().min(1).max(64).refine(isKnownProviderName, {
-      message:
-        "provider must be a configured PROVIDERS name or a built-in protocol",
-    }),
-    z
-      .string()
-      .regex(
-        VAR_PLACEHOLDER_RE,
-        "provider must be a known provider or a {{vars.*}} reference",
-      ),
-  ]),
+  provider: ProviderSchema,
   model: z.string().min(1).max(256),
   parameters: LlmParametersSchema.optional(),
+  pool: z
+    .object({
+      strategy: PoolStrategySchema,
+      candidates: z.array(LlmPoolCandidateSchema).min(1),
+    })
+    .optional(),
 }) as unknown as z.ZodType<LlmConfig>;
 
 const FinalAnswerContractSchema = z
@@ -534,6 +577,7 @@ export const FlowNodeSchema: z.ZodType<FlowNode> = z
     id: z.string().min(1),
     type: z.string().min(1),
     label: z.string().optional(),
+    priority: z.number().int().min(0).max(100).optional(),
     llm: LlmConfigSchema.optional(),
     tools: z.array(z.string().max(128)).max(50).optional(),
     config: z.record(z.string(), z.unknown()).optional(),
@@ -712,6 +756,7 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
   id: z.string().min(1),
   name: z.string().min(1),
   description: z.string().optional(),
+  priority: z.number().int().min(0).max(100).optional(),
   variables: z.record(z.string(), z.unknown()).optional(),
   pricing: z
     .record(

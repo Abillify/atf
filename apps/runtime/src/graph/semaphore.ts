@@ -59,17 +59,22 @@ export interface AcquireOptions {
   timeoutMs?: number;
   /** Abort the wait when this fires (e.g. the flow's execution-timeout signal). */
   signal?: AbortSignal;
+  /** Higher values run first; equal values preserve FIFO order. */
+  priority?: number;
 }
 
 /** A queued caller. `settled` guards against handing a slot to a gone waiter. */
 interface Waiter {
   resolve: () => void;
   settled: boolean;
+  priority: number;
+  sequence: number;
 }
 
 export class Semaphore {
   private count: number;
   private readonly queue: Waiter[] = [];
+  private nextSequence = 0;
 
   /**
    * @param maxConcurrent Maximum number of slots held concurrently.
@@ -99,7 +104,13 @@ export class Semaphore {
 
     const timeoutMs = opts.timeoutMs ?? 0;
     const startedAt = Date.now();
-    const waiter: Waiter = { resolve: () => {}, settled: false };
+    const priority = Number.isFinite(opts.priority) ? (opts.priority ?? 0) : 0;
+    const waiter: Waiter = {
+      resolve: () => {},
+      settled: false,
+      priority,
+      sequence: this.nextSequence++,
+    };
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
@@ -111,7 +122,15 @@ export class Semaphore {
           waiter.settled = true;
           resolve();
         };
-        this.queue.push(waiter);
+        const insertAt = this.queue.findIndex(
+          (candidate) =>
+            !candidate.settled &&
+            (candidate.priority < waiter.priority ||
+              (candidate.priority === waiter.priority &&
+                candidate.sequence > waiter.sequence)),
+        );
+        if (insertAt < 0) this.queue.push(waiter);
+        else this.queue.splice(insertAt, 0, waiter);
 
         const fail = (err: Error): void => {
           if (waiter.settled) return;

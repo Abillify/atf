@@ -14,6 +14,7 @@ import type { ChatCompletionRequest, TokenUsage } from "../../types/openai.js";
 import type { RequestContext } from "../../types/monitoring.js";
 import type { MonitoringServiceInterface } from "../../monitoring/monitoring-service.js";
 import type { FlowDefinition, LlmConfig } from "../../types/flow.js";
+import { poolLeafConfigs } from "../../graph/model-pool.js";
 import crypto from "node:crypto";
 
 // ---------------------------------------------------------------------------
@@ -843,6 +844,17 @@ export function collectFlowModels(flow: FlowDefinition | undefined): string[] {
   for (const node of flow.nodes) {
     const m = node.llm?.model;
     if (typeof m === "string" && m !== "") models.add(m);
+    // A POOL shortcut (flows/model-shortcuts.yaml) can serve a request from ANY
+    // of its members, so token limits must account for every member model — not
+    // just the primary written into `llm.model`. poolLeafConfigs walks nested
+    // sub-pools, so every leaf model is included.
+    if (node.llm !== undefined) {
+      for (const leaf of poolLeafConfigs(node.llm)) {
+        if (typeof leaf.model === "string" && leaf.model !== "") {
+          models.add(leaf.model);
+        }
+      }
+    }
   }
   return [...models];
 }
@@ -867,9 +879,19 @@ export function collectFlowLlmConfigs(
   const add = (llm: LlmConfig | undefined): void => {
     if (llm === undefined) return;
     const key = `${llm.provider}/${llm.model}`;
-    if (seen.has(key)) return;
-    seen.add(key);
-    configs.push(llm);
+    if (!seen.has(key)) {
+      seen.add(key);
+      configs.push(llm);
+    }
+    // Every POOL member can serve the request, so compliance/data rules must be
+    // evaluated against all of them, not only the primary (see LlmPoolConfig).
+    // poolLeafConfigs walks nested sub-pools, so every leaf model is included.
+    for (const leaf of poolLeafConfigs(llm)) {
+      const memberKey = `${leaf.provider}/${leaf.model}`;
+      if (seen.has(memberKey)) continue;
+      seen.add(memberKey);
+      configs.push(leaf);
+    }
   };
   for (const node of flow.nodes) {
     add(node.llm);

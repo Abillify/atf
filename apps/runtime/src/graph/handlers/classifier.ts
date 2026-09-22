@@ -39,6 +39,7 @@ import {
   buildClassificationNamespaces,
 } from "../classification-access.js";
 import { getModelCapabilities } from "../model-capabilities.js";
+import { buildPoolCandidateChain, poolSignature } from "../model-pool.js";
 import type { AgentState } from "../graph-engine.js";
 
 /**
@@ -101,49 +102,6 @@ export function createClassifierNodeHandler(
       (node.config?.responseFormat as string) ?? "json"
     ).toLowerCase();
 
-    let model: ReturnType<typeof runtime.llmProviderFactory>;
-    try {
-      model = runtime.llmProviderFactory(llmConfig, runtime.appConfig, {
-        ...(runtime.ctx.providerKeyOverrides !== undefined
-          ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
-          : {}),
-      });
-    } catch (err) {
-      const providerValue =
-        err instanceof UnknownProviderError
-          ? err.provider
-          : String(llmConfig.provider);
-      return {
-        currentNodeId: node.id,
-        errors: [
-          {
-            message: `Classifier node "${node.id}": unknown provider "${providerValue}".`,
-            type: "provider_error",
-            details: { node_id: node.id, provider: providerValue },
-          },
-        ],
-      };
-    }
-
-    // Resolve engine×model quirks from the capability registry (replaces the
-    // former hardcoded `provider === "openai"` branches). Drives the
-    // structured-output strategy, the prompt-cache scheme and whether the
-    // system message may ride inside `messages`.
-    const caps = getModelCapabilities(llmConfig.provider, llmConfig.model);
-
-    // Schema hint in the prompt. XML always gets an example hint. JSON only
-    // needs one for the `prompt_validate` strategy — there the provider does
-    // NOT enforce the schema (plain generateText + tolerant parse), so we must
-    // tell the model to emit exactly one JSON object. `response_format` and
-    // `generateObject` enforce the schema natively → no in-prompt hint.
-    const schemaHint =
-      responseFormat === "xml"
-        ? buildXmlSchemaHint(schema.schema)
-        : caps.structuredOutput === "prompt_validate"
-          ? `\n\nRespond with ONLY a valid JSON object matching this schema, no prose, no code fences:\n${JSON.stringify(
-              schema.schema,
-            )}`
-          : "";
     // Resolve runtime placeholders in the classifier prompt: {{context.*}},
     // {{now.*}} and — non-destructively — {{node.<id>.classification.<field>}}
     // / {{turn[<n>].<id>.classification.<field>}}. At this point state.turns
@@ -158,18 +116,26 @@ export function createClassifierNodeHandler(
         state.context,
         buildClassificationNamespaces(state.turns),
       ) ?? "";
-    const systemContent = resolvedSystemPrompt + schemaHint;
-
     const coreMessages = baseMessagesToModelMessages(state.messages);
-    const messagesWithSystem: ModelMessage[] = [
-      { role: "system", content: systemContent },
-      ...coreMessages,
-    ];
 
-    // Surface the resolved classifier prompt to monitoring.
-    runtime.onNodeIo?.(node.id, {
-      prompt: coreMessagesToText(messagesWithSystem),
-    });
+    // Pool support: a node whose shortcut resolved to a POOL carries
+    // `llmConfig.pool` (see flows/model-shortcuts.yaml + LlmPoolConfig). The
+    // chain is the ordered list of candidates to attempt — configured order for
+    // "fallback", rotated per call for "round-robin". Without a pool the chain
+    // is exactly [llmConfig], so single-model behaviour is unchanged. Each
+    // attempt re-derives its per-model strategy (structured-output mode, prompt
+    // cache) from the capability registry, so a mixed pool (local + cloud)
+    // routes each member correctly.
+    const poolChain = buildPoolCandidateChain(
+      llmConfig,
+      `${runtime.flowId ?? ""}/${node.id}/${poolSignature(llmConfig.pool?.candidates ?? [])}`,
+      {
+        isAvailable: (candidate) =>
+          runtime.providerCircuitBreaker?.getState(candidate.provider).state !==
+          "open",
+      },
+    );
+    let lastAttemptError = "classifier model call failed";
 
     // Debug trace: record the structured classification decision. `schema` and
     // `responseFormat` are in scope for both the success and the catch path.
@@ -189,290 +155,19 @@ export function createClassifierNodeHandler(
       });
     };
 
-    const classifierParams = filterLlmParameters(
-      llmConfig.parameters as Record<string, unknown> | undefined,
-      llmConfig.provider,
-      llmConfig.model,
-    );
-    const classifierTemperature = classifierParams?.temperature as
-      | number
-      | undefined;
-    const classifierMaxTokens = classifierParams?.maxTokens as
-      | number
-      | undefined;
-
-    // Prompt-cache the classifier's (large, static) system prompt. A dispatcher
-    // classifier runs on EVERY request and carries a big, byte-
-    // identical system block (route rules + full client table + JSON schema
-    // hint). Marking the system message with an ephemeral cache breakpoint lets
-    // Anthropic/Bedrock serve it from cache (~10% input cost on hits) instead of
-    // re-billing it every turn. Mirrors the llm-node path; no-op for providers
-    // without prompt caching or when disabled via appConfig.
-    const cachedMessages =
-      runtime.appConfig.anthropicPromptCacheEnabled !== false
-        ? caps.promptCache === "anthropic"
-          ? applyAnthropicPromptCache(messagesWithSystem)
-          : caps.promptCache === "bedrock"
-            ? applyBedrockPromptCache(messagesWithSystem)
-            : messagesWithSystem
-        : messagesWithSystem;
-
-    // Structured-output strategy for JSON classifiers — selected per model from
-    // the capability registry, because a single mechanism does not work
-    // everywhere:
-    //   • "response_format": `generateText` + `output` spec (json_schema). The
-    //     object is parsed from the response TEXT (Output.parseCompleteOutput),
-    //     so raw `text` stays available and text-returning test mocks keep
-    //     working. Enforced by OpenAI-compatible servers (LM Studio / Ollama).
-    //   • "generateObject": the SDK's NATIVE structured output (tool-use for
-    //     Claude/Bedrock, responseSchema for Google). A prod trace showed
-    //     `generateText`+`output` returns EMPTY on Bedrock (silent fallback →
-    //     misroute), so those providers must go through generateObject.
-    //   • "prompt_validate": plain `generateText` (NO output spec) + a JSON
-    //     schema hint in the prompt + tolerant parse. The universal fallback
-    //     and the path for models whose native structured output is broken
-    //     (e.g. Bedrock claude-sonnet-5 rejects output_config.format).
-    // XML classifiers stay on plain `generateText` + extractXmlToJson,
-    // regardless of the model's JSON strategy.
-    const jsonStrategy =
-      responseFormat === "json" ? caps.structuredOutput : undefined;
-    const useGenerateObject = jsonStrategy === "generateObject";
-    const outputSpec =
-      jsonStrategy === "response_format"
-        ? Output.object({
-            schema: jsonSchema(schema.schema),
-            name: "classification",
-          })
-        : undefined;
-
-    try {
-      let text: string;
-      let genUsage:
-        | { inputTokens?: number; outputTokens?: number; totalTokens?: number }
-        | undefined;
-      let structuredObject: Record<string, unknown> | undefined;
-
-      if (useGenerateObject) {
-        // Native structured output (schema-enforced) for cloud providers.
-        const objResult = await generateObject({
-          model,
-          schema: jsonSchema(schema.schema),
-          messages: cachedMessages,
-          // Allow the system message to stay in `messages` (it carries the
-          // prompt-cache breakpoint). Without this generateObject rejects it
-          // with "System messages are not allowed ... Use the instructions
-          // option instead" and every Bedrock classifier would fall back.
-          allowSystemInMessages: caps.allowSystemInMessages,
-          maxOutputTokens: classifierMaxTokens ?? 512,
-          ...(classifierTemperature !== undefined
-            ? { temperature: classifierTemperature }
-            : undefined),
-          // Bind the flow's execution deadline: without this, a hung classifier
-          // call outlives the engine's timeout — the graph moves on (or the
-          // request ends) while the provider call and its billed tokens keep
-          // running. See ExecRuntime.signal for the full reasoning.
-          ...(runtime.signal !== undefined
-            ? { abortSignal: runtime.signal }
-            : {}),
-        });
-        structuredObject = objResult.object as Record<string, unknown>;
-        genUsage = objResult.usage;
-        text = JSON.stringify(objResult.object);
-      } else {
-        const genResult = await generateText({
-          model,
-          messages: cachedMessages,
-          // The system prompt is intentionally carried as the first `messages`
-          // entry (the engine merges/orders it to stay provider-valid for
-          // Gemma/Mistral). Opt into that explicitly so ai@6 does not emit its
-          // "system messages in messages" warning on every classifier call.
-          allowSystemInMessages: caps.allowSystemInMessages,
-          maxOutputTokens: classifierMaxTokens ?? 512,
-          ...(classifierTemperature !== undefined
-            ? { temperature: classifierTemperature }
-            : undefined),
-          ...(outputSpec !== undefined ? { output: outputSpec } : {}),
-          // See the generateObject branch above — same deadline-binding reasoning.
-          ...(runtime.signal !== undefined
-            ? { abortSignal: runtime.signal }
-            : {}),
-        });
-        text = genResult.text;
-        genUsage = genResult.usage;
-        // Schema-validated object from the enforced output (JSON path).
-        // Undefined on the XML path.
-        structuredObject =
-          outputSpec !== undefined
-            ? ((genResult as { output?: unknown }).output as
-                | Record<string, unknown>
-                | undefined)
-            : undefined;
-      }
-
-      // Surface the raw classifier output to monitoring.
-      runtime.onNodeIo?.(node.id, { response: text });
-
-      // Account tokens + cost. Coerce non-finite provider usage (NaN) to 0 so
-      // it cannot poison the accumulator and serialize to `null`.
-      const finiteUsage = (n: number | undefined): number =>
-        typeof n === "number" && Number.isFinite(n) ? n : 0;
-      let promptTokens = finiteUsage(genUsage?.inputTokens);
-      let completionTokens = finiteUsage(genUsage?.outputTokens);
-      // Fallback estimation: local providers (LM Studio, Ollama) often omit
-      // usage for generateText. Estimate from input messages + output text so
-      // the classifier still contributes to the run's token accounting.
-      if (promptTokens === 0) {
-        const promptText = messagesWithSystem
-          .map((m) =>
-            typeof m.content === "string"
-              ? m.content
-              : JSON.stringify(m.content),
-          )
-          .join("\n");
-        promptTokens = estimateTokensFromText(promptText);
-      }
-      if (completionTokens === 0 && text.length > 0) {
-        completionTokens = estimateTokensFromText(text);
-      }
-      runtime.usage.promptTokens += promptTokens;
-      runtime.usage.completionTokens += completionTokens;
-      runtime.usage.totalTokens +=
-        genUsage?.totalTokens && genUsage.totalTokens > 0
-          ? genUsage.totalTokens
-          : promptTokens + completionTokens;
-      // Surface per-node token usage so the live graph / history can show
-      // tokens and the estimated per-call cost for this classifier node. The
-      // classifier handler does not set the model via the llm-node path, so
-      // report it here too — otherwise cost cannot be computed (needs a model).
-      runtime.setGenAiAttributes?.(
-        node.id,
-        {
-          provider: llmConfig.provider,
-          model: llmConfig.model,
-          operation: "chat",
-        },
-        {
-          inputTokens: promptTokens,
-          outputTokens: completionTokens,
-        },
-      );
-      const cost = estimateCost(
-        llmConfig.provider,
-        llmConfig.model,
-        { prompt_tokens: promptTokens, completion_tokens: completionTokens },
-        runtime.pricingOverrides ?? runtime.appConfig.llmPricing,
-      );
-      runtime.metrics.recordLlmCall(
-        llmConfig.provider,
-        llmConfig.model,
-        "ok",
-        promptTokens,
-        completionTokens,
-        cost,
-      );
-      if (cost > 0) {
-        runtime.usage.costUsd = (runtime.usage.costUsd ?? 0) + cost;
-        runtime.costTracker?.record(runtime.ctx.clientId, cost, {
-          provider: llmConfig.provider,
-          model: llmConfig.model,
-          promptTokens,
-          completionTokens,
-          ...buildCostAttribution(runtime.ctx, runtime.flowId),
-        });
-      }
-
-      const classification: Record<string, unknown> | null =
-        responseFormat === "xml"
-          ? extractXmlToJson(text, schema.schema)
-          : // Prefer the enforced, schema-validated object; fall back to a
-            // tolerant text parse for non-enforcing servers / edge cases.
-            (structuredObject ?? extractJsonFromText(text));
-      if (classification === null) {
-        // Could not parse JSON — fall back to a safe default classification
-        // (config.fallback) instead of failing the whole response.
-        const fb = buildFallbackClassification(node, schema);
-        if (fb !== undefined) {
-          emitClassifierDebug(text, null, fb.label, true);
-          try {
-            await runtime.onReasoning(
-              node.id,
-              `🧭 Route: **${fb.label}** (Fallback — Klassifizierung unklar)\n`,
-            );
-          } catch {
-            /* non-critical */
-          }
-          return {
-            currentNodeId: node.id,
-            classification: fb.classification,
-            classLabel: fb.label,
-            turns: appendNodeClassification(
-              state.turns,
-              node.id,
-              fb.classification,
-              fb.label,
-            ),
-          };
-        }
-        emitClassifierDebug(text, null, undefined, false);
-        return {
-          currentNodeId: node.id,
-          errors: [
-            {
-              message: `Classifier node "${node.id}": could not parse JSON from model output: ${text.slice(0, 200)}`,
-              type: "execution_error",
-              details: { node_id: node.id },
-            },
-          ],
-        };
-      }
-
-      const rawLabel = classification[schema.classKey];
-      const classLabel =
-        typeof rawLabel === "string" ? rawLabel : String(rawLabel ?? "");
-      emitClassifierDebug(text, classification, classLabel, false);
-
-      // Do NOT emit classification as a message — it would leak into the SSE
-      // stream visible to the client. Store only in state for routing conditions.
-      // But DO emit a reasoning_content step so Open WebUI shows it in the
-      // collapsible thinking block.
-      try {
-        await runtime.onReasoning(
-          node.id,
-          `🧭 Route: **${classLabel}**${classification.client ? ` · client: ${String(classification.client)}` : ""}${classification.needsRag !== undefined ? ` · RAG: ${classification.needsRag ? "yes" : "no"}` : ""}\n`,
-        );
-      } catch {
-        /* non-critical */
-      }
-      return {
-        currentNodeId: node.id,
-        classification,
-        classLabel,
-        turns: appendNodeClassification(
-          state.turns,
-          node.id,
-          classification,
-          classLabel,
-        ),
-      };
-    } catch (err) {
-      const errMsg = err instanceof Error ? err.message : String(err);
-      runtime.metrics.recordLlmCall(
-        llmConfig.provider,
-        llmConfig.model,
-        "error",
-        0,
-        0,
-        0,
-      );
-      // Transient provider failure (e.g. LM Studio model swap → 400). Fall back
-      // to a safe default route instead of failing the whole response.
+    // Safe default route when every candidate failed — shared by the
+    // parse-failure, generation-failure and pool-exhausted paths.
+    const finishWithFallback = async (
+      raw: string,
+      reason: string,
+    ): Promise<Partial<AgentState>> => {
       const fb = buildFallbackClassification(node, schema);
       if (fb !== undefined) {
-        emitClassifierDebug("", null, fb.label, true);
+        emitClassifierDebug(raw, null, fb.label, true);
         try {
           await runtime.onReasoning(
             node.id,
-            `🧭 Route: **${fb.label}** (Fallback — ${errMsg})\n`,
+            `🧭 Route: **${fb.label}** (Fallback — ${reason})\n`,
           );
         } catch {
           /* non-critical */
@@ -489,19 +184,382 @@ export function createClassifierNodeHandler(
           ),
         };
       }
-      emitClassifierDebug("", null, undefined, false);
+      emitClassifierDebug(raw, null, undefined, false);
       return {
         currentNodeId: node.id,
         errors: [
           {
-            message: `Classifier node "${node.id}": generateText failed — ${errMsg}`,
+            message: `Classifier node "${node.id}": ${reason}`,
             type: "execution_error",
             details: { node_id: node.id },
           },
         ],
       };
+    };
+
+    for (const [attemptIndex, candidate] of poolChain.entries()) {
+      const isPoolFallback = attemptIndex > 0;
+
+      let model: ReturnType<typeof runtime.llmProviderFactory>;
+      try {
+        model = runtime.llmProviderFactory(candidate, runtime.appConfig, {
+          ...(runtime.ctx.providerKeyOverrides !== undefined
+            ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
+            : {}),
+        });
+      } catch (err) {
+        const providerValue =
+          err instanceof UnknownProviderError
+            ? err.provider
+            : String(candidate.provider);
+        lastAttemptError = `unknown provider "${providerValue}"`;
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "llm_provider_candidate_failed",
+          message: `Classifier node "${node.id}": could not initialize ${candidate.provider}/${candidate.model}.`,
+          details: {
+            node_id: node.id,
+            provider: providerValue,
+            candidate_index: attemptIndex,
+          },
+        });
+        continue;
+      }
+
+      // Resolve engine×model quirks from the capability registry (replaces the
+      // former hardcoded `provider === "openai"` branches). Drives the
+      // structured-output strategy, the prompt-cache scheme and whether the
+      // system message may ride inside `messages`.
+      const caps = getModelCapabilities(candidate.provider, candidate.model);
+
+      // Schema hint in the prompt. XML always gets an example hint. JSON only
+      // needs one for the `prompt_validate` strategy — there the provider does
+      // NOT enforce the schema (plain generateText + tolerant parse), so we must
+      // tell the model to emit exactly one JSON object. `response_format` and
+      // `generateObject` enforce the schema natively → no in-prompt hint.
+      const schemaHint =
+        responseFormat === "xml"
+          ? buildXmlSchemaHint(schema.schema)
+          : caps.structuredOutput === "prompt_validate"
+            ? `\n\nRespond with ONLY a valid JSON object matching this schema, no prose, no code fences:\n${JSON.stringify(
+                schema.schema,
+              )}`
+            : "";
+      const systemContent = resolvedSystemPrompt + schemaHint;
+
+      const messagesWithSystem: ModelMessage[] = [
+        { role: "system", content: systemContent },
+        ...coreMessages,
+      ];
+
+      // Surface the resolved classifier prompt to monitoring.
+      runtime.onNodeIo?.(node.id, {
+        prompt: coreMessagesToText(messagesWithSystem),
+      });
+
+      const classifierParams = filterLlmParameters(
+        candidate.parameters as Record<string, unknown> | undefined,
+        candidate.provider,
+        candidate.model,
+      );
+      const classifierTemperature = classifierParams?.temperature as
+        | number
+        | undefined;
+      const classifierMaxTokens = classifierParams?.maxTokens as
+        | number
+        | undefined;
+
+      // Prompt-cache the classifier's (large, static) system prompt. A dispatcher
+      // classifier runs on EVERY request and carries a big, byte-
+      // identical system block (route rules + full client table + JSON schema
+      // hint). Marking the system message with an ephemeral cache breakpoint lets
+      // Anthropic/Bedrock serve it from cache (~10% input cost on hits) instead of
+      // re-billing it every turn. Mirrors the llm-node path; no-op for providers
+      // without prompt caching or when disabled via appConfig.
+      const cachedMessages =
+        runtime.appConfig.anthropicPromptCacheEnabled !== false
+          ? caps.promptCache === "anthropic"
+            ? applyAnthropicPromptCache(messagesWithSystem)
+            : caps.promptCache === "bedrock"
+              ? applyBedrockPromptCache(messagesWithSystem)
+              : messagesWithSystem
+          : messagesWithSystem;
+
+      // Structured-output strategy for JSON classifiers — selected per model from
+      // the capability registry, because a single mechanism does not work
+      // everywhere:
+      //   • "response_format": `generateText` + `output` spec (json_schema). The
+      //     object is parsed from the response TEXT (Output.parseCompleteOutput),
+      //     so raw `text` stays available and text-returning test mocks keep
+      //     working. Enforced by OpenAI-compatible servers (LM Studio / Ollama).
+      //   • "generateObject": the SDK's NATIVE structured output (tool-use for
+      //     Claude/Bedrock, responseSchema for Google). A prod trace showed
+      //     `generateText`+`output` returns EMPTY on Bedrock (silent fallback →
+      //     misroute), so those providers must go through generateObject.
+      //   • "prompt_validate": plain `generateText` (NO output spec) + a JSON
+      //     schema hint in the prompt + tolerant parse. The universal fallback
+      //     and the path for models whose native structured output is broken
+      //     (e.g. Bedrock claude-sonnet-5 rejects output_config.format).
+      // XML classifiers stay on plain `generateText` + extractXmlToJson,
+      // regardless of the model's JSON strategy.
+      const jsonStrategy =
+        responseFormat === "json" ? caps.structuredOutput : undefined;
+      const useGenerateObject = jsonStrategy === "generateObject";
+      const outputSpec =
+        jsonStrategy === "response_format"
+          ? Output.object({
+              schema: jsonSchema(schema.schema),
+              name: "classification",
+            })
+          : undefined;
+
+      if (isPoolFallback) {
+        runtime.metrics.recordLlmFallback(candidate.provider, candidate.model);
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "fallback",
+          message: `Classifier falling back to ${candidate.provider}/${candidate.model} after the previous pool candidate failed.`,
+          details: {
+            node_id: node.id,
+            provider: candidate.provider,
+            model: candidate.model,
+            candidate_index: attemptIndex,
+          },
+        });
+      }
+
+      try {
+        let text: string;
+        let genUsage:
+          | {
+              inputTokens?: number;
+              outputTokens?: number;
+              totalTokens?: number;
+            }
+          | undefined;
+        let structuredObject: Record<string, unknown> | undefined;
+
+        if (useGenerateObject) {
+          // Native structured output (schema-enforced) for cloud providers.
+          const objResult = await generateObject({
+            model,
+            schema: jsonSchema(schema.schema),
+            messages: cachedMessages,
+            // Allow the system message to stay in `messages` (it carries the
+            // prompt-cache breakpoint). Without this generateObject rejects it
+            // with "System messages are not allowed ... Use the instructions
+            // option instead" and every Bedrock classifier would fall back.
+            allowSystemInMessages: caps.allowSystemInMessages,
+            maxOutputTokens: classifierMaxTokens ?? 512,
+            ...(classifierTemperature !== undefined
+              ? { temperature: classifierTemperature }
+              : undefined),
+            // Bind the flow's execution deadline: without this, a hung classifier
+            // call outlives the engine's timeout — the graph moves on (or the
+            // request ends) while the provider call and its billed tokens keep
+            // running. See ExecRuntime.signal for the full reasoning.
+            ...(runtime.signal !== undefined
+              ? { abortSignal: runtime.signal }
+              : {}),
+          });
+          structuredObject = objResult.object as Record<string, unknown>;
+          genUsage = objResult.usage;
+          text = JSON.stringify(objResult.object);
+        } else {
+          const genResult = await generateText({
+            model,
+            messages: cachedMessages,
+            // The system prompt is intentionally carried as the first `messages`
+            // entry (the engine merges/orders it to stay provider-valid for
+            // Gemma/Mistral). Opt into that explicitly so ai@6 does not emit its
+            // "system messages in messages" warning on every classifier call.
+            allowSystemInMessages: caps.allowSystemInMessages,
+            maxOutputTokens: classifierMaxTokens ?? 512,
+            ...(classifierTemperature !== undefined
+              ? { temperature: classifierTemperature }
+              : undefined),
+            ...(outputSpec !== undefined ? { output: outputSpec } : {}),
+            // See the generateObject branch above — same deadline-binding reasoning.
+            ...(runtime.signal !== undefined
+              ? { abortSignal: runtime.signal }
+              : {}),
+          });
+          text = genResult.text;
+          genUsage = genResult.usage;
+          // Schema-validated object from the enforced output (JSON path).
+          // Undefined on the XML path.
+          structuredObject =
+            outputSpec !== undefined
+              ? ((genResult as { output?: unknown }).output as
+                  | Record<string, unknown>
+                  | undefined)
+              : undefined;
+        }
+
+        // Surface the raw classifier output to monitoring.
+        runtime.onNodeIo?.(node.id, { response: text });
+
+        // Account tokens + cost. Coerce non-finite provider usage (NaN) to 0 so
+        // it cannot poison the accumulator and serialize to `null`.
+        const finiteUsage = (n: number | undefined): number =>
+          typeof n === "number" && Number.isFinite(n) ? n : 0;
+        let promptTokens = finiteUsage(genUsage?.inputTokens);
+        let completionTokens = finiteUsage(genUsage?.outputTokens);
+        // Fallback estimation: local providers (LM Studio, Ollama) often omit
+        // usage for generateText. Estimate from input messages + output text so
+        // the classifier still contributes to the run's token accounting.
+        if (promptTokens === 0) {
+          const promptText = messagesWithSystem
+            .map((m) =>
+              typeof m.content === "string"
+                ? m.content
+                : JSON.stringify(m.content),
+            )
+            .join("\n");
+          promptTokens = estimateTokensFromText(promptText);
+        }
+        if (completionTokens === 0 && text.length > 0) {
+          completionTokens = estimateTokensFromText(text);
+        }
+        runtime.usage.promptTokens += promptTokens;
+        runtime.usage.completionTokens += completionTokens;
+        runtime.usage.totalTokens +=
+          genUsage?.totalTokens && genUsage.totalTokens > 0
+            ? genUsage.totalTokens
+            : promptTokens + completionTokens;
+        // Surface per-node token usage so the live graph / history can show
+        // tokens and the estimated per-call cost for this classifier node. The
+        // classifier handler does not set the model via the llm-node path, so
+        // report it here too — otherwise cost cannot be computed (needs a model).
+        // Attribution follows the candidate ACTUALLY used, which under a pool
+        // may differ from the node's primary config.
+        runtime.setGenAiAttributes?.(
+          node.id,
+          {
+            provider: candidate.provider,
+            model: candidate.model,
+            operation: "chat",
+          },
+          {
+            inputTokens: promptTokens,
+            outputTokens: completionTokens,
+          },
+        );
+        const cost = estimateCost(
+          candidate.provider,
+          candidate.model,
+          { prompt_tokens: promptTokens, completion_tokens: completionTokens },
+          runtime.pricingOverrides ?? runtime.appConfig.llmPricing,
+        );
+        runtime.metrics.recordLlmCall(
+          candidate.provider,
+          candidate.model,
+          "ok",
+          promptTokens,
+          completionTokens,
+          cost,
+        );
+        if (cost > 0) {
+          runtime.usage.costUsd = (runtime.usage.costUsd ?? 0) + cost;
+          runtime.costTracker?.record(runtime.ctx.clientId, cost, {
+            provider: candidate.provider,
+            model: candidate.model,
+            promptTokens,
+            completionTokens,
+            ...buildCostAttribution(runtime.ctx, runtime.flowId),
+          });
+        }
+
+        const classification: Record<string, unknown> | null =
+          responseFormat === "xml"
+            ? extractXmlToJson(text, schema.schema)
+            : // Prefer the enforced, schema-validated object; fall back to a
+              // tolerant text parse for non-enforcing servers / edge cases.
+              (structuredObject ?? extractJsonFromText(text));
+        if (classification === null) {
+          // Could not parse JSON. With pool candidates remaining, treat it as a
+          // failed attempt and rotate to the next model (a member that answers
+          // in prose instead of schema JSON is a per-model failure, not a
+          // flow-level one). Without remaining candidates, fall back to the
+          // safe default classification (config.fallback) instead of failing
+          // the whole response — unchanged single-model behaviour.
+          if (attemptIndex < poolChain.length - 1) {
+            lastAttemptError = `could not parse JSON from model output: ${text.slice(0, 200)}`;
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "warn",
+              code: "classifier_unparseable",
+              message: `Classifier node "${node.id}": ${candidate.provider}/${candidate.model} returned unparseable output — trying next pool candidate.`,
+              details: { node_id: node.id, candidate_index: attemptIndex },
+            });
+            continue;
+          }
+          return finishWithFallback(
+            text,
+            `could not parse JSON from model output: ${text.slice(0, 200)}`,
+          );
+        }
+
+        const rawLabel = classification[schema.classKey];
+        const classLabel =
+          typeof rawLabel === "string" ? rawLabel : String(rawLabel ?? "");
+        emitClassifierDebug(text, classification, classLabel, false);
+
+        // Do NOT emit classification as a message — it would leak into the SSE
+        // stream visible to the client. Store only in state for routing conditions.
+        // But DO emit a reasoning_content step so Open WebUI shows it in the
+        // collapsible thinking block.
+        try {
+          await runtime.onReasoning(
+            node.id,
+            `🧭 Route: **${classLabel}**${classification.client ? ` · client: ${String(classification.client)}` : ""}${classification.needsRag !== undefined ? ` · RAG: ${classification.needsRag ? "yes" : "no"}` : ""}\n`,
+          );
+        } catch {
+          /* non-critical */
+        }
+        return {
+          currentNodeId: node.id,
+          classification,
+          classLabel,
+          turns: appendNodeClassification(
+            state.turns,
+            node.id,
+            classification,
+            classLabel,
+          ),
+        };
+      } catch (err) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        lastAttemptError = `generateText failed — ${errMsg}`;
+        runtime.metrics.recordLlmCall(
+          candidate.provider,
+          candidate.model,
+          "error",
+          0,
+          0,
+          0,
+        );
+        // Transient provider failure (e.g. LM Studio model swap → 400) or a
+        // pool member that is down. With remaining candidates, move to the
+        // next one; after the last, fall back to a safe default route instead
+        // of failing the whole response.
+        if (attemptIndex < poolChain.length - 1) {
+          runtime.onNodeDiagnostic?.(node.id, {
+            level: "warn",
+            code: "classifier_candidate_failed",
+            message: `Classifier node "${node.id}": ${candidate.provider}/${candidate.model} failed (${errMsg}) — trying next pool candidate.`,
+            details: { node_id: node.id, candidate_index: attemptIndex },
+          });
+          continue;
+        }
+        return finishWithFallback("", lastAttemptError);
+      }
     }
-  };
+
+    // Every pool candidate failed before its try block could produce output
+    // (e.g. provider-initialisation errors). Same terminal handling as a
+    // generation failure on the last candidate.
+    return finishWithFallback("", lastAttemptError);
+  };;
 }
 
 export const nodeType: NodeHandlerRegistration = {

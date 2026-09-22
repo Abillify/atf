@@ -1062,29 +1062,39 @@ describe("LLM provider circuit breaker", () => {
         async () => {},
         async () => {},
       );
+      // First node: the very first transport failure triggers an immediate
+      // in-request failover to the deployment fallback — the dead endpoint is
+      // NOT retried to exhaustion, and the circuit has not opened yet (one
+      // failure, threshold two), so no `llm_provider_circuit_opened` is emitted
+      // here.
       const firstNodeDiagnostics =
         debugStore
           .getTrace(executionId)
           ?.nodes.find((node) => node.node_id === "llm-1")?.diagnostics ?? [];
       expect(
         firstNodeDiagnostics.find(
-          (entry) => entry.code === "llm_provider_circuit_opened",
+          (entry) => entry.code === "llm_provider_unreachable_failover",
         )?.details,
       ).toMatchObject({
-        state: "open",
-        failure_count: 2,
-        failure_threshold: 2,
-        last_transport_error_code: "ECONNREFUSED",
-        open_until: expect.any(Number),
-        cooldown_ms: 30_000,
+        provider: "openai",
+        transport_error_code: "ECONNREFUSED",
+        remaining_candidates: 1,
       });
+      expect(
+        firstNodeDiagnostics.find(
+          (entry) => entry.code === "llm_provider_circuit_opened",
+        ),
+      ).toBeUndefined();
+      // Second node reuses the same flow-local breaker: its first transport
+      // failure is the provider's second, which crosses the threshold and opens
+      // the circuit for this flow.
       const secondNodeDiagnostics =
         debugStore
           .getTrace(executionId)
           ?.nodes.find((node) => node.node_id === "llm-2")?.diagnostics ?? [];
       expect(
         secondNodeDiagnostics.find(
-          (entry) => entry.code === "llm_provider_circuit_open",
+          (entry) => entry.code === "llm_provider_circuit_opened",
         )?.details,
       ).toMatchObject({
         state: "open",
@@ -1096,7 +1106,10 @@ describe("LLM provider circuit breaker", () => {
       });
     }
 
-    expect(primaryCalls).toBe(2);
+    // Two executions × two nodes, each making exactly one primary attempt
+    // (immediate failover / circuit-open skip — never the exhausted retry loop)
+    // and one fallback call.
+    expect(primaryCalls).toBe(4);
     expect(primaryAttempts).toBe(4);
     expect(fallbackCalls).toBe(4);
   });

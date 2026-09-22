@@ -487,6 +487,13 @@ class GraphEngineServiceImpl implements GraphEngineService {
         "executeFlow: no FlowRegistry provided to GraphEngineService.",
       );
     }
+    const queuedFlow = this.flowRegistry.get(flowId);
+    const flowPriority = Math.max(
+      queuedFlow?.priority ?? 50,
+      ...(queuedFlow?.nodes
+        .filter((node) => node.type === "llm" || node.type === "classifier")
+        .map((node) => node.priority ?? 0) ?? [0]),
+    );
     // --- Execution deadline (starts NOW, before any waiting) ---
     //
     // The timer used to start after the concurrency slot AND the thread lock had
@@ -505,6 +512,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       await this.semaphore.acquire({
         timeoutMs,
         signal: deadline.signal,
+        priority: flowPriority,
       });
     } catch (err) {
       clearTimeout(deadlineTimer);

@@ -315,6 +315,13 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   configurable half-life (`ROUTER_QUALITY_HALF_LIFE_MS`).
 - **Fallback chains and failover.** `FALLBACK_LLM` and `FALLBACK_CHAIN` switch providers when
   one fails, with a circuit breaker per provider.
+- **Model pools per shortcut.** A model shortcut in `flows/model-shortcuts.yaml` can name a pool
+  of members (engine/model pairs or other shortcuts) with a selection strategy — `fallback`,
+  `round-robin`, `weighted-round-robin`, `random`, `weighted-random`, or `least-used`. The `llm`
+  and `classifier` handlers try the resolved candidates in the strategy's order, using each later
+  member as a failover, and skip a member whose provider circuit breaker is open. Every pool member
+  is included in the flow's model, capability, compliance, and token-limit accounting, so a rotated-
+  to or failed-over model is never invisible to those checks.
 - **Provider key pool.** Multiple keys per provider with automatic quarantine on error, which
   spreads provider-side rate limits.
 - **Three cache layers.** Response cache, semantic cache for equivalent-meaning requests, and
@@ -328,7 +335,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Idempotency.** A repeated request with the same idempotency key does not execute a
   consequential action twice (`IDEMPOTENCY_ENABLED`).
 - **Limits.** Rate limiting per identity and per user, pre- and post-authentication buckets,
-  concurrency caps, queue depth limits, and hard execution timeouts. Transient media storage
+  concurrency caps, queue depth limits, and hard execution timeouts. Under a concurrency cap,
+  waiting requests are admitted highest-priority-first (FIFO among equal priorities); a flow's
+  effective priority is the maximum of its own `priority` and its LLM/classifier nodes' `priority`
+  (integer 0–100, default 50), so a latency-sensitive flow can jump ahead of bulk work. Transient media storage
   additionally rejects empty or individual payloads above 25 MiB and retains at most 128 MiB;
   image-inspection registries apply the same byte ceilings plus a 32-reference LRU bound per
   execution. Evicted references report unavailable rather than resolving to another image.

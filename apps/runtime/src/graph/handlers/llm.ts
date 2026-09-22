@@ -58,6 +58,7 @@ import {
   sanitizeToolCallModelMessages,
 } from "../message-mapping.js";
 import { getModelCapabilities } from "../model-capabilities.js";
+import { buildPoolCandidateChain, poolSignature } from "../model-pool.js";
 import {
   buildAiTools,
   buildMediaTools,
@@ -429,6 +430,33 @@ export function createLlmNodeHandler(
       });
     }
 
+    // Pool selection (`llm.shortcut` → POOL in flows/model-shortcuts.yaml).
+    // When the resolved config carries a `pool`, pick the primary candidate
+    // NOW — before the response-cache key, temperature/maxTokens extraction
+    // and the candidate chain below — so a round-robin rotation is reflected
+    // consistently in the cache key, the request parameters and the fallback
+    // chain. The remaining pool members become failovers (in configured order
+    // for "fallback", wrapped order for "round-robin") at the candidate loop.
+    // `config.routing`/`config.objective` above take precedence: they replace
+    // llmConfig entirely, which drops any pool by design.
+    let poolChain: LlmConfig[] | undefined;
+    if (llmConfig?.pool !== undefined) {
+      const chain = buildPoolCandidateChain(
+        llmConfig,
+        `${runtime.flowId ?? ""}/${node.id}/${poolSignature(llmConfig.pool.candidates)}`,
+        {
+          isAvailable: (candidate) =>
+            runtime.providerCircuitBreaker?.getState(candidate.provider)
+              .state !== "open",
+        },
+      );
+      const primary = chain[0];
+      if (primary !== undefined) {
+        poolChain = chain;
+        llmConfig = { ...primary, pool: llmConfig.pool };
+      }
+    }
+
     if (llmConfig !== undefined) {
       const key = modelKeyOf(llmConfig);
       state.context.selectedModels ??= [];
@@ -471,19 +499,24 @@ export function createLlmNodeHandler(
       const resolution = resolveAssistantScope({
         tenantId: runtime.ctx.clientId,
         userId: runtime.ctx.userId ?? runtime.ctx.userEmail,
-        assistantId: typeof runtime.ctx.requestParams?.assistant_id === "string"
-          ? runtime.ctx.requestParams.assistant_id
-          : undefined,
+        assistantId:
+          typeof runtime.ctx.requestParams?.assistant_id === "string"
+            ? runtime.ctx.requestParams.assistant_id
+            : undefined,
       });
       if (!resolution.ok) return undefined;
       return {
         scope: resolution.scope,
-        conversationId: runtime.ctx.chatId ?? runtime.ctx.sessionId ?? runtime.ctx.executionId,
+        conversationId:
+          runtime.ctx.chatId ??
+          runtime.ctx.sessionId ??
+          runtime.ctx.executionId,
       };
     })();
     const assistantToolJournal = (() => {
       const journal = runtime.assistants?.stores.toolJournal;
-      if (journal === undefined || assistantSessionBinding === undefined) return undefined;
+      if (journal === undefined || assistantSessionBinding === undefined)
+        return undefined;
       return {
         journal,
         scope: assistantSessionBinding.scope,
@@ -504,7 +537,9 @@ export function createLlmNodeHandler(
     if (resolved.tools.length > 0 && runtime.mcpWrapper) {
       const nodeWithResolvedTools = { ...node, tools: resolved.tools };
       const toolEgressGuardrail = runtime.toolEgressGuardrail;
-      const classificationNamespaces = buildClassificationNamespaces(state.turns);
+      const classificationNamespaces = buildClassificationNamespaces(
+        state.turns,
+      );
       const toolTemplateContext: Record<string, unknown> = {
         query: lastUserQuery(state),
         classLabel: state.classLabel,
@@ -546,7 +581,12 @@ export function createLlmNodeHandler(
             : undefined,
           runtime.toolOutputValidator,
           runtime.compliancePolicy !== undefined
-            ? { policy: runtime.compliancePolicy, ...(runtime.flowId !== undefined ? { flowId: runtime.flowId } : {}) }
+            ? {
+                policy: runtime.compliancePolicy,
+                ...(runtime.flowId !== undefined
+                  ? { flowId: runtime.flowId }
+                  : {}),
+              }
             : undefined,
           // Self-search citations: when the model calls a vectorsearch tool
           // itself, register the retrieved documents (global [n], deduped
@@ -559,7 +599,9 @@ export function createLlmNodeHandler(
           {
             templateContext: toolTemplateContext,
             ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
-            ...(assistantToolJournal !== undefined ? { journal: assistantToolJournal } : {}),
+            ...(assistantToolJournal !== undefined
+              ? { journal: assistantToolJournal }
+              : {}),
             onEffectiveToolArgs: (
               toolCallId: string,
               toolRef: string,
@@ -863,7 +905,12 @@ export function createLlmNodeHandler(
     // the derived caps via `config.toolResultBudget`.
     const toolResultBudgetOverride = (
       node.config as
-        | { toolResultBudget?: { perResultChars?: number; perTurnChars?: number } }
+        | {
+            toolResultBudget?: {
+              perResultChars?: number;
+              perTurnChars?: number;
+            };
+          }
         | undefined
     )?.toolResultBudget;
     const derivedToolBudget = budgetForContextWindow(
@@ -998,7 +1045,11 @@ export function createLlmNodeHandler(
         // Persist a newly generated summary as immutable session provenance. The
         // prompt transform remains fail-open, while the snapshot makes the exact
         // compacted bytes inspectable and reusable after a process restart.
-        if (!result.summaryFromCache && result.summary !== undefined && assistantSessionBinding !== undefined) {
+        if (
+          !result.summaryFromCache &&
+          result.summary !== undefined &&
+          assistantSessionBinding !== undefined
+        ) {
           const sessionStore = runtime.assistants?.stores.sessionStore;
           if (sessionStore !== undefined) {
             try {
@@ -1008,11 +1059,17 @@ export function createLlmNodeHandler(
                 1_000,
               );
               const localEntries = transcript.filter(
-                (entry) => entry.conversationId === assistantSessionBinding.conversationId && entry.sequence !== undefined,
+                (entry) =>
+                  entry.conversationId ===
+                    assistantSessionBinding.conversationId &&
+                  entry.sequence !== undefined,
               );
               const first = localEntries[0];
               const latest = localEntries.at(-1);
-              if (first?.sequence !== undefined && latest?.sequence !== undefined) {
+              if (
+                first?.sequence !== undefined &&
+                latest?.sequence !== undefined
+              ) {
                 const snapshot = await sessionStore.createSnapshot({
                   scope: assistantSessionBinding.scope,
                   conversationId: assistantSessionBinding.conversationId,
@@ -1038,7 +1095,8 @@ export function createLlmNodeHandler(
                     runtime.onNodeDiagnostic?.(node.id, {
                       level: "warn",
                       code: "history_snapshot_index_failed",
-                      message: "The durable history snapshot was stored, but its Vectorsearch projection failed.",
+                      message:
+                        "The durable history snapshot was stored, but its Vectorsearch projection failed.",
                     });
                   }
                 }
@@ -1047,7 +1105,8 @@ export function createLlmNodeHandler(
               runtime.onNodeDiagnostic?.(node.id, {
                 level: "warn",
                 code: "history_snapshot_persist_failed",
-                message: "History compaction succeeded, but its durable session snapshot could not be persisted.",
+                message:
+                  "History compaction succeeded, but its durable session snapshot could not be persisted.",
               });
             }
           }
@@ -1160,7 +1219,9 @@ export function createLlmNodeHandler(
           // Compact repeated entries in list lines (e.g. taiga's duplicated
           // "Known epics") before injecting — this text is re-sent on every
           // agent-loop step, so trimming it saves input tokens per turn.
-          blocks.push(`### ${server}\n${dedupeGuidanceListLines(instr.trim())}`);
+          blocks.push(
+            `### ${server}\n${dedupeGuidanceListLines(instr.trim())}`,
+          );
         }
       }
       if (blocks.length > 0) {
@@ -1200,7 +1261,10 @@ export function createLlmNodeHandler(
     let messagesWithSystemPrompt: ModelMessage[];
     if (effectiveSystemPrompt) {
       const firstCoreMessage = coreMessages[0];
-      if (firstCoreMessage !== undefined && firstCoreMessage.role === "system") {
+      if (
+        firstCoreMessage !== undefined &&
+        firstCoreMessage.role === "system"
+      ) {
         const existingContent = firstCoreMessage.content;
         const existing =
           typeof existingContent === "string"
@@ -1667,7 +1731,17 @@ export function createLlmNodeHandler(
       requireToolUseDecision.required || toolSequenceContract !== undefined;
     const requireToolUseMandatory =
       requireToolUseDecision.mandatory || toolSequenceContract !== undefined;
-    const candidates: LlmConfig[] = [llmConfig];
+    // Candidate models with retry + fallback.
+    //
+    // When the node's shortcut resolved to a POOL, the chain starts with the
+    // pool's ordered candidates (primary first — already rotated for
+    // round-robin above, so `llmConfig` IS `poolChain[0]`), followed by the
+    // deployment-wide fallback model/chain as last-resort failovers. Without a
+    // pool the chain is exactly the previous `[llmConfig]`, so behaviour is
+    // unchanged.
+    const candidates: LlmConfig[] = poolChain
+      ? poolChain.map((c) => ({ ...c, pool: undefined }))
+      : [llmConfig];
     if (
       runtime.appConfig.fallbackLlm &&
       !sameModel(runtime.appConfig.fallbackLlm, llmConfig)
@@ -1729,7 +1803,9 @@ export function createLlmNodeHandler(
         candidate.provider,
       );
       if (circuitState?.state === "open") {
-        circuitSkippedProviders.push(`${candidate.provider}/${candidate.model}`);
+        circuitSkippedProviders.push(
+          `${candidate.provider}/${candidate.model}`,
+        );
         runtime.onNodeDiagnostic?.(node.id, {
           level: "warn",
           code: "llm_provider_circuit_open",
@@ -1875,8 +1951,7 @@ export function createLlmNodeHandler(
             reasoningSanitized,
             currentEffectiveArgs,
           );
-          const sanitized =
-            sanitizeToolResultModelMessages(argumentSanitized);
+          const sanitized = sanitizeToolResultModelMessages(argumentSanitized);
           // Bound the tool output replayed on EVERY step. This is the highest-
           // leverage application point in the whole loop: without it, a large
           // result produced on step 2 is re-sent verbatim on steps 3…N (up to
@@ -1968,7 +2043,7 @@ export function createLlmNodeHandler(
         }
       }
 
-      const providerOpts = llmConfig.parameters?.providerOptions;
+      const providerOpts = candidate.parameters?.providerOptions;
       if (
         providerOpts !== undefined &&
         typeof providerOpts === "object" &&
@@ -2149,8 +2224,8 @@ export function createLlmNodeHandler(
           | "ended"
           | "interrupted";
         let finalAnswerStreamState: FinalAnswerStreamState = "seeking-start";
-        const currentFinalAnswerStreamState =
-          (): FinalAnswerStreamState => finalAnswerStreamState;
+        const currentFinalAnswerStreamState = (): FinalAnswerStreamState =>
+          finalAnswerStreamState;
         let finalAnswerPending = "";
         let liveAnswerStarted = false;
         let reasoningText = "";
@@ -2268,8 +2343,7 @@ export function createLlmNodeHandler(
             attemptUsage.cachedPromptTokens,
           );
           if (attemptCost > 0) {
-            runtime.usage.costUsd =
-              (runtime.usage.costUsd ?? 0) + attemptCost;
+            runtime.usage.costUsd = (runtime.usage.costUsd ?? 0) + attemptCost;
             runtime.costTracker?.record(runtime.ctx.clientId, attemptCost, {
               provider: candidate.provider,
               model: candidate.model,
@@ -2311,11 +2385,8 @@ export function createLlmNodeHandler(
         // workers are private can suppress the later result detail block while
         // retaining monitoring, duration, cost and error accounting.
         const streamToolResultDetails =
-          (
-            node.config as
-              | { streamToolResultDetails?: boolean }
-              | undefined
-          )?.streamToolResultDetails !== false;
+          (node.config as { streamToolResultDetails?: boolean } | undefined)
+            ?.streamToolResultDetails !== false;
         // Repetition guard (per attempt): abort the upstream generation and
         // truncate output when the model falls into a degenerate loop. Without
         // this, a stuck local model can emit tens of thousands of duplicate
@@ -2499,10 +2570,7 @@ export function createLlmNodeHandler(
             finalAnswerContract.startMarker,
           );
           const end = finalAnswerPending.indexOf(finalAnswerContract.endMarker);
-          if (
-            duplicateStart !== -1 &&
-            (end === -1 || duplicateStart < end)
-          ) {
+          if (duplicateStart !== -1 && (end === -1 || duplicateStart < end)) {
             const candidate = finalAnswerPending.slice(0, duplicateStart);
             if (
               liveAnswerStarted ||
@@ -2552,7 +2620,10 @@ export function createLlmNodeHandler(
           const remainder = finalAnswerPending.slice(safeLength);
           if (!liveAnswerStarted) safe = safe.trimStart();
           const trailingWhitespace = safe.match(/\s+$/)?.[0] ?? "";
-          const visible = safe.slice(0, safe.length - trailingWhitespace.length);
+          const visible = safe.slice(
+            0,
+            safe.length - trailingWhitespace.length,
+          );
           finalAnswerPending = trailingWhitespace + remainder;
           await emitLiveFinalChunk(visible);
         };
@@ -2567,20 +2638,14 @@ export function createLlmNodeHandler(
           }
           const protectedSuffix = longestMarkerPrefixSuffix(
             finalAnswerPending,
-            [
-              finalAnswerContract.startMarker,
-              finalAnswerContract.endMarker,
-            ],
+            [finalAnswerContract.startMarker, finalAnswerContract.endMarker],
           );
           const safe = finalAnswerPending.slice(
             0,
             finalAnswerPending.length - protectedSuffix,
           );
           finalAnswerPending = "";
-          if (
-            liveAnswerStarted ||
-            hasFinalAnswerStreamingSubstance(safe)
-          ) {
+          if (liveAnswerStarted || hasFinalAnswerStreamingSubstance(safe)) {
             await emitLiveFinalChunk(safe, true);
           }
         };
@@ -2615,8 +2680,7 @@ export function createLlmNodeHandler(
               reasoningText.length;
             let abortAfterPart = false;
             if (
-              (part.type === "text-delta" ||
-                part.type === "reasoning-delta") &&
+              (part.type === "text-delta" || part.type === "reasoning-delta") &&
               typeof part.text === "string"
             ) {
               const remainingChars = Math.max(
@@ -2830,12 +2894,9 @@ export function createLlmNodeHandler(
               }
               const execTimeSec = (Date.now() - startedAt) / 1000;
               try {
-                await runtime.onToolResult(
-                  id,
-                  output,
-                  execTimeSec,
-                  { streamDetails: streamToolResultDetails },
-                );
+                await runtime.onToolResult(id, output, execTimeSec, {
+                  streamDetails: streamToolResultDetails,
+                });
               } catch {
                 /* disconnect */
               }
@@ -2971,7 +3032,10 @@ export function createLlmNodeHandler(
                   ? details.cacheReadTokens
                   : (stepUsage as { cachedInputTokens?: number } | undefined)
                       ?.cachedInputTokens;
-              if (typeof stepCached === "number" && Number.isFinite(stepCached)) {
+              if (
+                typeof stepCached === "number" &&
+                Number.isFinite(stepCached)
+              ) {
                 attemptUsage.cachedPromptTokens =
                   (attemptUsage.cachedPromptTokens ?? 0) + stepCached;
               }
@@ -3083,10 +3147,7 @@ export function createLlmNodeHandler(
               extractFinalAnswer(finalAnswerBuffer, finalAnswerContract).ok;
           }
 
-          if (
-            finalAnswerContract !== undefined &&
-            !liveFinalAnswerAccepted
-          ) {
+          if (finalAnswerContract !== undefined && !liveFinalAnswerAccepted) {
             const extracted = extractFinalAnswer(
               finalAnswerBuffer,
               finalAnswerContract,
@@ -3200,7 +3261,10 @@ export function createLlmNodeHandler(
                     `Successful tools so far: ${completedTools}.`,
                 };
                 accountAttempt("error");
-                runtime.metrics.recordLlmRetry(candidate.provider, candidate.model);
+                runtime.metrics.recordLlmRetry(
+                  candidate.provider,
+                  candidate.model,
+                );
                 await sleep(fullJitter(backoffMs));
                 continue;
               }
@@ -3352,10 +3416,11 @@ export function createLlmNodeHandler(
                   attempt,
                   model: `${candidate.provider}/${candidate.model}`,
                   text_chars: textOnlyChars,
-                  selection_best_score:
-                    Number.isFinite(selectedBoundToolBestScore)
-                      ? selectedBoundToolBestScore
-                      : null,
+                  selection_best_score: Number.isFinite(
+                    selectedBoundToolBestScore,
+                  )
+                    ? selectedBoundToolBestScore
+                    : null,
                 },
               });
               runtime.metrics.recordCounter(
@@ -3396,10 +3461,11 @@ export function createLlmNodeHandler(
                   attempt,
                   model: `${candidate.provider}/${candidate.model}`,
                   text_chars: textOnlyChars,
-                  selection_best_score:
-                    Number.isFinite(selectedBoundToolBestScore)
-                      ? selectedBoundToolBestScore
-                      : null,
+                  selection_best_score: Number.isFinite(
+                    selectedBoundToolBestScore,
+                  )
+                    ? selectedBoundToolBestScore
+                    : null,
                 },
               });
               runtime.metrics.recordCounter(
@@ -3418,10 +3484,8 @@ export function createLlmNodeHandler(
           // prevents a duplicate consequential tool call during synthesis.
           const missingPostToolAnswer =
             visibleTextLengthAtLastToolResult !== undefined &&
-            fullText
-              .slice(visibleTextLengthAtLastToolResult)
-              .trim()
-              .length === 0;
+            fullText.slice(visibleTextLengthAtLastToolResult).trim().length ===
+              0;
           if (missingPostToolAnswer) {
             const serializedResult = (() => {
               try {
@@ -3453,11 +3517,15 @@ export function createLlmNodeHandler(
                   "You received a tool result but did not phrase a visible " +
                   "answer for the user. Produce a short, correct answer from " +
                   "this result now. Do not call another tool. " +
-                  "Tool result: " + serializedResult,
+                  "Tool result: " +
+                  serializedResult,
               };
               streamParams.toolChoice = "none" as const;
               accountAttempt("error");
-              runtime.metrics.recordLlmRetry(candidate.provider, candidate.model);
+              runtime.metrics.recordLlmRetry(
+                candidate.provider,
+                candidate.model,
+              );
               await sleep(fullJitter(backoffMs));
               continue;
             }
@@ -3596,10 +3664,7 @@ export function createLlmNodeHandler(
               const lastResort =
                 c === candidates.length - 1 && attempt >= maxAttempts;
               if (
-                allowsEmptyResponseFallback(
-                  streamFallbackPolicy,
-                  emptyCfg,
-                ) &&
+                allowsEmptyResponseFallback(streamFallbackPolicy, emptyCfg) &&
                 lastResort
               ) {
                 const fallbackText =
@@ -3809,8 +3874,7 @@ export function createLlmNodeHandler(
             runtime.onNodeDiagnostic?.(node.id, {
               level: "warn",
               code: "llm_request_timeout",
-              message:
-                `LLM request attempt exceeded ${requestTimeoutMs}ms and was aborted.`,
+              message: `LLM request attempt exceeded ${requestTimeoutMs}ms and was aborted.`,
               details: {
                 attempt,
                 model: `${candidate.provider}/${candidate.model}`,
@@ -3866,6 +3930,46 @@ export function createLlmNodeHandler(
                 provider: candidate.provider,
                 model: candidate.model,
                 ...circuitState,
+              },
+            });
+            break;
+          }
+
+          // Immediate in-request failover on an UNREACHABLE provider.
+          //
+          // A transport failure (connection refused, DNS failure, connect
+          // timeout, 5xx/408 — see providerTransportErrorCode) means THIS
+          // endpoint could not serve the request at all. Retrying the SAME dead
+          // endpoint (with backoff) only to fail again and wait for the circuit
+          // breaker to cross its threshold wastes the request's time budget. As
+          // long as another candidate remains in the chain (a pool member or a
+          // deployment fallback), skip the remaining retries and move to it NOW.
+          // Nothing has streamed yet here (the `emittedAny` return above already
+          // handled a mid-stream failure), so switching candidates is safe. The
+          // recorded transport failure still counts toward the circuit breaker,
+          // so a provider that is down across requests is quarantined as before.
+          // Only the LAST candidate keeps the retry path, so a lone endpoint
+          // with no alternative still gets a chance to recover from a transient
+          // network hiccup.
+          if (transportFailure && c < candidates.length - 1) {
+            runtime.metrics.recordLlmFallback(
+              candidate.provider,
+              candidate.model,
+            );
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "warn",
+              code: "llm_provider_unreachable_failover",
+              message:
+                `Provider ${candidate.provider} was unreachable ` +
+                `(${transportErrorCode}); switching to the next candidate ` +
+                "without exhausting retries on the dead endpoint.",
+              details: {
+                phase: "provider-call",
+                attempt,
+                provider: candidate.provider,
+                model: candidate.model,
+                transport_error_code: transportErrorCode,
+                remaining_candidates: candidates.length - 1 - c,
               },
             });
             break;

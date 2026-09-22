@@ -13,6 +13,11 @@
     "description": {
       "type": "string"
     },
+    "priority": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 100
+    },
     "variables": {
       "type": "object",
       "propertyNames": {
@@ -105,6 +110,11 @@
           "label": {
             "type": "string"
           },
+          "priority": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
           "llm": {
             "type": "object",
             "properties": {
@@ -112,14 +122,8 @@
                 "anyOf": [
                   {
                     "type": "string",
-                    "enum": [
-                      "openai",
-                      "google",
-                      "ollama",
-                      "azure",
-                      "bedrock",
-                      "anthropic"
-                    ]
+                    "minLength": 1,
+                    "maxLength": 64
                   },
                   {
                     "type": "string",
@@ -138,6 +142,33 @@
                   "type": "string"
                 },
                 "additionalProperties": {}
+              },
+              "pool": {
+                "type": "object",
+                "properties": {
+                  "strategy": {
+                    "type": "string",
+                    "enum": [
+                      "fallback",
+                      "round-robin",
+                      "weighted-round-robin",
+                      "random",
+                      "weighted-random",
+                      "least-used"
+                    ]
+                  },
+                  "candidates": {
+                    "minItems": 1,
+                    "type": "array",
+                    "items": {
+                      "$ref": "#/$defs/__schema0"
+                    }
+                  }
+                },
+                "required": [
+                  "candidates"
+                ],
+                "additionalProperties": false
               }
             },
             "required": [
@@ -225,14 +256,8 @@
                       "anyOf": [
                         {
                           "type": "string",
-                          "enum": [
-                            "openai",
-                            "google",
-                            "ollama",
-                            "azure",
-                            "bedrock",
-                            "anthropic"
-                          ]
+                          "minLength": 1,
+                          "maxLength": 64
                         },
                         {
                           "type": "string",
@@ -251,6 +276,33 @@
                         "type": "string"
                       },
                       "additionalProperties": {}
+                    },
+                    "pool": {
+                      "type": "object",
+                      "properties": {
+                        "strategy": {
+                          "type": "string",
+                          "enum": [
+                            "fallback",
+                            "round-robin",
+                            "weighted-round-robin",
+                            "random",
+                            "weighted-random",
+                            "least-used"
+                          ]
+                        },
+                        "candidates": {
+                          "minItems": 1,
+                          "type": "array",
+                          "items": {
+                            "$ref": "#/$defs/__schema0"
+                          }
+                        }
+                      },
+                      "required": [
+                        "candidates"
+                      ],
+                      "additionalProperties": false
                     }
                   },
                   "required": [
@@ -360,6 +412,74 @@
     "edges"
   ],
   "additionalProperties": false,
+  "$defs": {
+    "__schema0": {
+      "type": "object",
+      "properties": {
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64
+            },
+            {
+              "type": "string",
+              "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
+            }
+          ]
+        },
+        "model": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "parameters": {
+          "type": "object",
+          "propertyNames": {
+            "type": "string"
+          },
+          "additionalProperties": {}
+        },
+        "weight": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "pool": {
+          "type": "object",
+          "properties": {
+            "strategy": {
+              "type": "string",
+              "enum": [
+                "fallback",
+                "round-robin",
+                "weighted-round-robin",
+                "random",
+                "weighted-random",
+                "least-used"
+              ]
+            },
+            "candidates": {
+              "minItems": 1,
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/__schema0"
+              }
+            }
+          },
+          "required": [
+            "candidates"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "provider",
+        "model"
+      ],
+      "additionalProperties": false
+    }
+  },
   "$id": "https://aiperator.dev/schemas/flow.schema.json",
   "title": "aiperator Flow Definition",
   "description": "Structural schema for aiperator flow YAML/JSON files (flows/*.yaml). Generated from the Zod FlowDefinitionSchema — do not edit by hand; run `bun run scripts/export-flow-schema.ts`. Cross-field validation (node type/config compatibility, override well-formedness, edge reference integrity) is enforced at runtime, not by this schema — use `bun run scripts/cli.ts validate <file>` for full validation."

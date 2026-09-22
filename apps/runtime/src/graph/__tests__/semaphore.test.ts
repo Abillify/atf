@@ -30,6 +30,24 @@ describe("Semaphore — concurrency", () => {
     await pending;
     expect(acquired).toBe(true);
   });
+
+    test("serves higher-priority waiters first and keeps FIFO for ties", async () => {
+      const sem = new Semaphore(1);
+      await sem.acquire();
+      const order: string[] = [];
+      const low = sem.acquire({ priority: 10 }).then(() => order.push("low"));
+      const high = sem.acquire({ priority: 90 }).then(() => order.push("high"));
+      const tied = sem.acquire({ priority: 90 }).then(() => order.push("tied"));
+
+      sem.release();
+      await high;
+      sem.release();
+      await tied;
+      sem.release();
+      await low;
+
+      expect(order).toEqual(["high", "tied", "low"]);
+    });
 });
 
 describe("Semaphore — bounded queue (backpressure)", () => {

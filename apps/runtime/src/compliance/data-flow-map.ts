@@ -28,6 +28,7 @@
  * No `any` at module boundaries.
  */
 
+import { poolLeafConfigs } from "../graph/model-pool.js";
 import type { FlowDefinition, DataClass, LlmConfig } from "../types/flow.js";
 import type { CompliancePolicy } from "./policy-schema.js";
 
@@ -113,14 +114,18 @@ export interface DataFlowMap {
 /** Default providers that run on-prem/local — data never leaves the deployment. */
 export const DEFAULT_LOCAL_PROVIDERS: ReadonlySet<string> = new Set(["ollama"]);
 
-/** Collects the effective LLM configs of a node (base + overrides). */
-function nodeLlmConfigs(
-  node: FlowDefinition["nodes"][number],
-): LlmConfig[] {
+/** Collects the effective LLM configs of a node (base + overrides + pool members). */
+function nodeLlmConfigs(node: FlowDefinition["nodes"][number]): LlmConfig[] {
   const configs: LlmConfig[] = [];
   if (node.llm !== undefined) configs.push(node.llm);
   for (const o of node.overrides ?? []) {
     if (o.llm !== undefined) configs.push(o.llm);
+  }
+  // A POOL member may serve any request, so it is a processor of the flow's
+  // data exactly like the primary — the record must list it (see LlmPoolConfig).
+  // poolLeafConfigs walks nested sub-pools, so every leaf model is included.
+  for (const llm of configs.slice()) {
+    for (const leaf of poolLeafConfigs(llm)) configs.push(leaf);
   }
   return configs;
 }
