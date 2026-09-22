@@ -20,6 +20,66 @@ releases:
 
 Nothing yet.
 
+## [0.7.0] — 2026-09-22
+
+Adds model pools to shortcuts and a priority-aware execution queue, and relaxes the flow
+schema's `llm.provider` from a fixed enum to any operator-configured provider name. All three
+are backward compatible: existing single-model shortcuts, unprioritized flows, and the
+previously enumerated provider names keep working unchanged. No database migration or
+independently versioned contract-package change is included.
+
+### Added
+
+- Model shortcuts in `flows/model-shortcuts.yaml` can now resolve to a **pool** instead of a
+  single engine/model pair. A pool is an ordered list of members — each a concrete engine/model
+  pair (with optional extra parameters and a relative `weight`) or a reference to another shortcut
+  (nested pools are flattened) — carrying a selection `strategy`: `fallback` (configured order is
+  the priority order), `round-robin`, `weighted-round-robin`, `random`, `weighted-random`, or
+  `least-used`. The flow parser writes the first candidate into the node's `provider`/`model`/
+  `parameters` and attaches a concrete `pool` to the `LlmConfig`, so every consumer that only
+  understands a plain config (admission, compliance, cost, capability collection) keeps working off
+  the primary while the streaming `llm` and `classifier` handlers select among the candidates per
+  strategy. All pool members are counted for compliance data-flow mapping, capability collection,
+  and token-limit accounting — a rotated-to or failed-over member is never invisible to those
+  checks. A malformed pool (unknown member, cyclic reference, empty member list) leaves the
+  `shortcut` key in place so the node fails validation loudly rather than running on a wrong model.
+- Flows and individual `llm`/`classifier` nodes accept an optional `priority` (integer 0–100).
+  The execution concurrency semaphore now admits waiting requests highest-priority-first, with
+  FIFO order preserved among equal priorities. A flow's effective queue priority is the maximum of
+  its own `priority` (default 50) and the `priority` of its LLM/classifier nodes, so a latency-
+  sensitive flow can jump the queue ahead of bulk work under a concurrency cap.
+
+- The `classifier` handler, when its node resolves to a pool, now tries the pool candidates in
+  the strategy's order and falls through to the next candidate on a generation error or an
+  unparseable classification before resorting to the node's configured `fallback` class. A
+  single-model (non-pool) classifier keeps its previous behaviour.
+
+### Changed
+
+- The flow schema no longer restricts an `llm.provider` to a fixed enum (`openai`, `google`,
+  `ollama`, `azure`, `bedrock`, `anthropic`). A provider is now any operator-configured `PROVIDERS`
+  name (1–64 chars) or a `{{vars.*}}` reference, matching how deployments already alias several
+  endpoints of the same wire protocol under distinct names.
+- The streaming `llm` handler now fails over immediately when a provider is unreachable. A
+  transport failure (connection refused, DNS failure, connect timeout, 5xx/408) on a candidate
+  that still has another candidate behind it (a pool member or a deployment-level fallback) skips
+  the remaining retries against the dead endpoint and moves to the next candidate at once, emitting
+  an `llm_provider_unreachable_failover` diagnostic. The failure still counts toward the provider's
+  circuit breaker, and the last candidate keeps the full retry path so a lone endpoint can still
+  recover from a transient hiccup.
+
+### Removed
+
+- The Control app's `/rag` collection-management page (and its loading skeleton) has been removed
+  along with its navigation entry; the RAG index is no longer managed from this UI.
+
+### Fixed
+
+- Removed a stray double semicolon at the end of the `llm` node handler that Biome flagged as
+  unreachable code (`lint/correctness/noUnreachable`), which broke the lint baseline.
+- The Studio builder's Copilot panel now uses a distinct React `key`, so it no longer shares a key
+  with the canvas and remounts correctly when the canvas is reset.
+
 ## [0.6.1] — 2026-09-18
 
 Hardens the staged coverage queue against a cross-source identity gap and makes a failed
@@ -504,7 +564,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.6.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/abillify/atf/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/abillify/atf/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/abillify/atf/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/abillify/atf/compare/v0.4.0...v0.5.0
