@@ -919,7 +919,7 @@ export function StudioBuilder({
 
       {/* Copilot (Phase 3: KI-Copilot im Builder) */}
       <FlowCopilotPanel
-        key={canvasKey}
+        key={`copilot-${canvasKey}`}
         flowId={base.id}
         token={token ?? undefined}
         getDefinition={currentDefinition}
