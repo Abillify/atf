@@ -11,7 +11,6 @@
 import type { LucideIcon } from "lucide-react";
 import {
   FlaskConical,
-  Library,
   Brain,
   ClipboardCheck,
   Sparkles,
@@ -58,7 +57,6 @@ export const NAV_GROUPS: NavGroup[] = [
     group: "Recherche & Optimierung",
     items: [
       { href: "/studio", label: "Studio", hint: "Build & test flows", icon: FlaskConical },
-      { href: "/rag", label: "RAG", hint: "Knowledge retrieval index", icon: Library },
       { href: "/memory", label: "Memory", hint: "Agent long-term memory", icon: Brain },
       { href: "/eval", label: "Eval", hint: "Regression eval cases", icon: ClipboardCheck },
       { href: "/optimizer", label: "Optimizer", hint: "Self-optimizing flow loop", icon: Sparkles },

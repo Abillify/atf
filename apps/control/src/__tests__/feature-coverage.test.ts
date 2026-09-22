@@ -35,7 +35,6 @@ const EXPECTED_ROUTES = [
   "security",
   "traces",
   "flow-diff",
-  "rag",
   "memory",
   "tenants",
   "eval",

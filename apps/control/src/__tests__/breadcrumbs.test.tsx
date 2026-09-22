@@ -33,11 +33,11 @@ describe("buildBreadcrumbs", () => {
 
 describe("Breadcrumbs", () => {
   it("renders group + current page with aria-current", () => {
-    render(<Breadcrumbs pathname="/rag" />);
+    render(<Breadcrumbs pathname="/memory" />);
     const nav = screen.getByRole("navigation", { name: /breadcrumb/i });
     expect(nav.textContent).toContain("Recherche & Optimierung");
-    expect(nav.textContent).toContain("RAG");
-    expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("RAG");
+    expect(nav.textContent).toContain("Memory");
+    expect(nav.querySelector('[aria-current="page"]')?.textContent).toBe("Memory");
   });
 
   it("renders nothing for an unknown route", () => {
