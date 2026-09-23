@@ -20,6 +20,24 @@ releases:
 
 Nothing yet.
 
+## [0.7.1] — 2026-09-23
+
+Fixes pool failover for schema-enforced `llm` nodes. Backward compatible: a single-model
+(non-pool) structured node keeps its previous behaviour, and no schema, migration, or
+independently versioned contract-package change is included.
+
+### Fixed
+
+- A structured-output `llm` node (one declaring `config.outputSchema`) now fails over across its
+  pool candidates and any deployment-level fallback model, exactly like the streaming `llm` and
+  `classifier` paths. Previously the structured-output path received only the pool's primary
+  candidate and retried that one provider, so an unreachable primary (e.g. an offline local
+  endpoint) failed the node with `Cannot connect to API` instead of rotating to a reachable
+  fallback. Each candidate keeps its own bounded empty-output retry budget; the run's deadline
+  firing still fails immediately (no failover past the budget), and only exhausting every
+  candidate fails the node. Emits `structured_output_candidate_failed`/`fallback` diagnostics on
+  each hand-off.
+
 ## [0.7.0] — 2026-09-22
 
 Adds model pools to shortcuts and a priority-aware execution queue, and relaxes the flow
@@ -564,7 +582,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/abillify/atf/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/abillify/atf/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/abillify/atf/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/abillify/atf/compare/v0.5.0...v0.6.0

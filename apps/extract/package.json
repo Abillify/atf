@@ -1,6 +1,6 @@
 {
   "name": "@atf/extract",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "private": true,
   "description": "Document-to-Markdown extraction service: PDF, Word, Excel and image formats to the canonical atf-extract contract, with direct Search ingest",
   "author": "Abillify Technology GmbH <info@abillify.me>",
