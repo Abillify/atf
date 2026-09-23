@@ -168,6 +168,15 @@ function salvageNoObjectGenerated(err: unknown): SalvagedGeneration | undefined 
 export interface StructuredLlmArgs {
   node: FlowNode;
   llmConfig: LlmConfig;
+  /**
+   * Ordered failover chain to attempt (primary first). When a shortcut resolved
+   * to a POOL — or a deployment-wide fallback model/chain is configured — the
+   * llm handler passes the full chain here so the structured-output path can
+   * fail over to the next candidate on an unreachable/erroring provider, exactly
+   * like the streaming path and the classifier. When omitted, the single
+   * {@link llmConfig} is used, so behaviour is unchanged for non-pool nodes.
+   */
+  candidates?: LlmConfig[];
   runtime: ExecRuntime;
   /** System-prompt-prefixed conversation, already assembled by the llm handler. */
   messages: ModelMessage[];
@@ -181,87 +190,25 @@ export interface StructuredLlmArgs {
  * JSON as the node's assistant message content. Returns a `Partial<AgentState>`
  * exactly like the streaming path: `{ currentNodeId, messages: [AIMessage] }`
  * on success, or `{ currentNodeId, errors: [...] }` on failure.
+ *
+ * Pool failover: the node's shortcut may resolve to a POOL (candidates over
+ * several providers) with a deployment-wide fallback chain behind it. Each
+ * candidate gets its own bounded empty-output retry budget; a provider that is
+ * unreachable or errors (anything other than the run's deadline firing) moves
+ * on to the NEXT candidate rather than failing the node. Only when every
+ * candidate is exhausted — or the deadline fires — does the node fail.
  */
 export async function runStructuredLlmOutput(
   args: StructuredLlmArgs,
 ): Promise<Partial<AgentState>> {
-  const { node, llmConfig, runtime, temperature, maxTokens, output } = args;
+  const { node, runtime, temperature, maxTokens, output } = args;
 
-  let model: LanguageModel;
-  try {
-    model = runtime.llmProviderFactory(llmConfig, runtime.appConfig, {
-      ...(runtime.ctx.providerKeyOverrides !== undefined
-        ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
-        : {}),
-    });
-  } catch (err) {
-    const providerValue =
-      err instanceof UnknownProviderError
-        ? err.provider
-        : String(llmConfig.provider);
-    return {
-      currentNodeId: node.id,
-      errors: [
-        {
-          message: `Node "${node.id}": unknown LLM provider "${providerValue}".`,
-          type: "provider_error",
-          details: { node_id: node.id, provider: providerValue },
-        },
-      ],
-    };
-  }
-
-  // Per-model structured-output strategy + prompt-cache scheme + whether a
-  // system message may ride inside `messages`.
-  const caps = getModelCapabilities(llmConfig.provider, llmConfig.model);
-
-  // For the non-enforcing fallback (`prompt_validate`) the provider does NOT
-  // constrain the output, so we must tell the model — in the prompt — to emit
-  // exactly one JSON object of this shape. `response_format` and
-  // `generateObject` enforce the schema natively → no hint needed. When a hint
-  // is required we append it to the existing system message (or add one).
-  let messages = args.messages;
-  if (caps.structuredOutput === "prompt_validate") {
-    const hint =
-      `\n\nRespond with ONLY a single valid JSON object matching this schema, ` +
-      `no prose, no code fences:\n${JSON.stringify(output.schema)}`;
-    const first = messages[0];
-    if (first !== undefined && first.role === "system") {
-      const existing =
-        typeof first.content === "string"
-          ? first.content
-          : JSON.stringify(first.content);
-      messages = [
-        { role: "system", content: existing + hint } as ModelMessage,
-        ...messages.slice(1),
-      ];
-    } else {
-      messages = [
-        { role: "system", content: hint.trimStart() } as ModelMessage,
-        ...messages,
-      ];
-    }
-  }
-
-  // Prompt-cache the (large, static) system prompt where the provider supports
-  // it. No-op for local OpenAI-compatible servers (promptCache: "none").
-  const cachedMessages =
-    runtime.appConfig.anthropicPromptCacheEnabled !== false
-      ? caps.promptCache === "anthropic"
-        ? applyAnthropicPromptCache(messages)
-        : caps.promptCache === "bedrock"
-          ? applyBedrockPromptCache(messages)
-          : messages
-      : messages;
-
-  const useGenerateObject = caps.structuredOutput === "generateObject";
-  const outputSpec =
-    caps.structuredOutput === "response_format"
-      ? Output.object({
-          schema: jsonSchema(output.schema),
-          name: output.name,
-        })
-      : undefined;
+  // Failover chain: the caller's ordered candidates (pool + deployment
+  // fallbacks) or, for a plain single-model node, just the one config.
+  const candidates =
+    args.candidates !== undefined && args.candidates.length > 0
+      ? args.candidates
+      : [args.llmConfig];
 
   /**
    * A schema-constrained call can come back with nothing usable: the SDK throws
@@ -282,8 +229,122 @@ export async function runStructuredLlmOutput(
   /** Bounded pause between attempts, so a momentarily confused server is not hammered. */
   const retryDelayMs = 150;
   let lastEmptyError: Error | undefined;
+  /** Last terminal error message, for the all-candidates-exhausted diagnostic. */
+  let lastErrMsg = "No output generated";
 
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+  for (const [candidateIndex, llmConfig] of candidates.entries()) {
+    const isFailover = candidateIndex > 0;
+    const isLastCandidate = candidateIndex === candidates.length - 1;
+
+    let model: LanguageModel;
+    try {
+      model = runtime.llmProviderFactory(llmConfig, runtime.appConfig, {
+        ...(runtime.ctx.providerKeyOverrides !== undefined
+          ? { providerKeyOverrides: runtime.ctx.providerKeyOverrides }
+          : {}),
+      });
+    } catch (err) {
+      const providerValue =
+        err instanceof UnknownProviderError
+          ? err.provider
+          : String(llmConfig.provider);
+      lastErrMsg = `unknown LLM provider "${providerValue}"`;
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: isLastCandidate ? "error" : "warn",
+        code: "llm_provider_candidate_failed",
+        message: `Node "${node.id}": could not initialize provider "${providerValue}".`,
+        details: {
+          node_id: node.id,
+          provider: providerValue,
+          candidate_index: candidateIndex,
+        },
+      });
+      // Failover to the next candidate; only the last one is a hard error.
+      if (!isLastCandidate) continue;
+      return {
+        currentNodeId: node.id,
+        errors: [
+          {
+            message: `Node "${node.id}": unknown LLM provider "${providerValue}".`,
+            type: "provider_error",
+            details: { node_id: node.id, provider: providerValue },
+          },
+        ],
+      };
+    }
+
+    // Per-model structured-output strategy + prompt-cache scheme + whether a
+    // system message may ride inside `messages`. Re-derived per candidate so a
+    // mixed pool (local + cloud) routes each member correctly.
+    const caps = getModelCapabilities(llmConfig.provider, llmConfig.model);
+
+    // For the non-enforcing fallback (`prompt_validate`) the provider does NOT
+    // constrain the output, so we must tell the model — in the prompt — to emit
+    // exactly one JSON object of this shape. `response_format` and
+    // `generateObject` enforce the schema natively → no hint needed. When a hint
+    // is required we append it to the existing system message (or add one).
+    let messages = args.messages;
+    if (caps.structuredOutput === "prompt_validate") {
+      const hint =
+        `\n\nRespond with ONLY a single valid JSON object matching this schema, ` +
+        `no prose, no code fences:\n${JSON.stringify(output.schema)}`;
+      const first = messages[0];
+      if (first !== undefined && first.role === "system") {
+        const existing =
+          typeof first.content === "string"
+            ? first.content
+            : JSON.stringify(first.content);
+        messages = [
+          { role: "system", content: existing + hint } as ModelMessage,
+          ...messages.slice(1),
+        ];
+      } else {
+        messages = [
+          { role: "system", content: hint.trimStart() } as ModelMessage,
+          ...messages,
+        ];
+      }
+    }
+
+    // Prompt-cache the (large, static) system prompt where the provider supports
+    // it. No-op for local OpenAI-compatible servers (promptCache: "none").
+    const cachedMessages =
+      runtime.appConfig.anthropicPromptCacheEnabled !== false
+        ? caps.promptCache === "anthropic"
+          ? applyAnthropicPromptCache(messages)
+          : caps.promptCache === "bedrock"
+            ? applyBedrockPromptCache(messages)
+            : messages
+        : messages;
+
+    const useGenerateObject = caps.structuredOutput === "generateObject";
+    const outputSpec =
+      caps.structuredOutput === "response_format"
+        ? Output.object({
+            schema: jsonSchema(output.schema),
+            name: output.name,
+          })
+        : undefined;
+
+    if (isFailover) {
+      runtime.metrics.recordLlmFallback(llmConfig.provider, llmConfig.model);
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "warn",
+        code: "fallback",
+        message: `Structured output falling back to ${llmConfig.provider}/${llmConfig.model} after the previous candidate failed.`,
+        details: {
+          node_id: node.id,
+          provider: llmConfig.provider,
+          model: llmConfig.model,
+          candidate_index: candidateIndex,
+        },
+      });
+    }
+
+    /** Set when this candidate failed terminally and the next should be tried. */
+    let candidateFailed = false;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       let text = "";
       let genUsage: StructuredUsage | undefined;
@@ -598,6 +659,36 @@ export async function runStructuredLlmOutput(
         await delayUnlessAborted(retryDelayMs * attempt, runtime.signal);
         continue;
       }
+      lastEmptyError = err instanceof Error ? err : new Error(errMsg);
+      lastErrMsg = errMsg;
+
+      // The deadline firing is terminal for the whole node — failing over to
+      // another provider would only run past the budget the run no longer has.
+      // Every other terminal error (unreachable provider, transport failure,
+      // exhausted empty-output retries) hands off to the NEXT candidate, so a
+      // pool with a reachable fallback still produces an answer.
+      if (!aborted && !isLastCandidate) {
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "structured_output_candidate_failed",
+          message:
+            `Structured output on ${llmConfig.provider}/${llmConfig.model} ` +
+            `failed after ${attempt} attempt(s) (${errMsg}); ` +
+            "trying the next candidate.",
+          details: {
+            attempts: attempt,
+            provider: String(llmConfig.provider),
+            model: llmConfig.model,
+            strategy: caps.structuredOutput,
+            candidate_index: candidateIndex,
+            error: errMsg,
+            ...failureDetails,
+          },
+        });
+        candidateFailed = true;
+        break;
+      }
+
       runtime.onNodeDiagnostic?.(node.id, {
         level: "error",
         code: "structured_output_failed",
@@ -628,22 +719,28 @@ export async function runStructuredLlmOutput(
         ],
       };
     }
+    }
+
+    // This candidate failed terminally without aborting the run — move on to
+    // the next candidate in the failover chain.
+    if (candidateFailed) continue;
   }
 
   // Unreachable in practice: the loop either returns a result or returns an
-  // error on its final attempt. Kept so the function is total.
+  // error on the last candidate's final attempt. Kept so the function is total.
+  const lastConfig = candidates[candidates.length - 1] ?? args.llmConfig;
   return {
     currentNodeId: node.id,
     errors: [
       {
         message: `Node "${node.id}": structured-output generation failed — ${
-          lastEmptyError?.message ?? "No output generated"
+          lastEmptyError?.message ?? lastErrMsg
         }`,
         type: "execution_error",
         details: {
           node_id: node.id,
-          provider: String(llmConfig.provider),
-          model: llmConfig.model,
+          provider: String(lastConfig.provider),
+          model: lastConfig.model,
           attempts: maxAttempts,
         },
       },

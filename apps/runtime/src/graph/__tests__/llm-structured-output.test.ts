@@ -345,3 +345,119 @@ describe("llm node — structured output salvage", () => {
     );
   });
 });
+
+describe("llm node — structured output pool failover", () => {
+  /**
+   * A structured-output node whose shortcut resolved to a POOL must fail over to
+   * the next candidate when the primary provider is unreachable — exactly like
+   * the streaming path and the classifier. Regression for the coach node that
+   * died with `Cannot connect to API` on an offline local endpoint instead of
+   * rotating to the reachable fallback model. See handlers/llm-structured.ts.
+   */
+  const PRIMARY_DOWN_MODEL = "primary-down";
+  const FALLBACK_OK_MODEL = "fallback-ok";
+
+  /** Node carrying a two-candidate fallback pool (primary down, fallback ok). */
+  function structuredPoolFlow(): FlowDefinition {
+    return {
+      id: "s-pool-flow",
+      name: "Structured Pool",
+      nodes: [
+        {
+          id: "classifier",
+          type: "llm",
+          systemPrompt: "Bewerte die Story.",
+          llm: {
+            provider: "openai",
+            model: PRIMARY_DOWN_MODEL,
+            pool: {
+              strategy: "fallback",
+              candidates: [
+                { provider: "openai", model: PRIMARY_DOWN_MODEL },
+                { provider: "openai", model: FALLBACK_OK_MODEL },
+              ],
+            },
+          },
+          config: {
+            outputSchema: { name: "evaluation", schema: OUTPUT_SCHEMA },
+          },
+        },
+      ],
+      edges: [],
+    };
+  }
+
+  /**
+   * Per-candidate mock: the primary model throws a transport error; every other
+   * model returns `okText`. Records how often each model was invoked.
+   */
+  function mockPoolFactory(
+    okText: string,
+    callsByModel: Map<string, number>,
+  ) {
+    return (cfg: { model: string }) =>
+      new MockLanguageModelV3({
+        doGenerate: async () => {
+          callsByModel.set(cfg.model, (callsByModel.get(cfg.model) ?? 0) + 1);
+          if (cfg.model === PRIMARY_DOWN_MODEL) {
+            throw new Error("Cannot connect to API: Unable to connect.");
+          }
+          return mkGenerateResult(okText, 11, 7) as never;
+        },
+      }) as never;
+  }
+
+  async function runPool(okText: string): Promise<{
+    content: string;
+    callsByModel: Map<string, number>;
+    chunks: ChatCompletionChunk[];
+  }> {
+    const callsByModel = new Map<string, number>();
+    const engine = createGraphEngine(baseConfig, {
+      flowRegistry: singleNodeRegistry(structuredPoolFlow()),
+      llmProviderFactory: mockPoolFactory(okText, callsByModel),
+    });
+    const chunks: ChatCompletionChunk[] = [];
+    await engine.executeFlow(
+      "s-pool-flow",
+      [{ role: "user", content: "Story X" }],
+      { ssoToken: "a.b.c", executionId: "exec-pool" },
+      async (chunk) => {
+        chunks.push(chunk);
+      },
+      async () => {},
+    );
+    let content = "";
+    for (const c of chunks) {
+      const delta = c.choices[0]?.delta as
+        | { content?: string | null }
+        | undefined;
+      if (typeof delta?.content === "string") content += delta.content;
+    }
+    return { content, callsByModel, chunks };
+  }
+
+  test("fails over to the next pool candidate when the primary is unreachable", async () => {
+    const json = JSON.stringify({
+      score: 73,
+      dev_ready: true,
+      briefing: "Vom Fallback beantwortet.",
+    });
+    const { content, callsByModel, chunks } = await runPool(json);
+
+    // The fallback candidate produced the answer …
+    expect(content).toBe(json);
+    expect(JSON.parse(content)).toEqual({
+      score: 73,
+      dev_ready: true,
+      briefing: "Vom Fallback beantwortet.",
+    });
+    // … the unreachable primary was tried, then the fallback was reached.
+    expect(callsByModel.get(PRIMARY_DOWN_MODEL)).toBe(1);
+    expect(callsByModel.get(FALLBACK_OK_MODEL)).toBe(1);
+    // The node did NOT fail — no hard structured-output failure was emitted.
+    expect(JSON.stringify(chunks)).not.toContain(
+      "structured-output generation failed",
+    );
+  });
+});

@@ -1548,9 +1548,29 @@ export function createLlmNodeHandler(
           ],
         };
       }
+      // Build the same ordered failover chain the streaming path uses: the
+      // pool's candidates (primary first, already rotated for round-robin) plus
+      // the deployment-wide fallback model/chain. Passing it lets the structured
+      // path fail over to a reachable provider instead of dying on an
+      // unreachable pool primary (e.g. an offline local llama.cpp endpoint).
+      const structuredCandidates: LlmConfig[] = poolChain
+        ? poolChain.map((c) => ({ ...c, pool: undefined }))
+        : [llmConfig];
+      if (
+        runtime.appConfig.fallbackLlm &&
+        !sameModel(runtime.appConfig.fallbackLlm, llmConfig)
+      ) {
+        structuredCandidates.push(runtime.appConfig.fallbackLlm);
+      }
+      for (const chainEntry of runtime.appConfig.fallbackChain ?? []) {
+        if (!structuredCandidates.some((c) => sameModel(c, chainEntry))) {
+          structuredCandidates.push(chainEntry);
+        }
+      }
       return runStructuredLlmOutput({
         node,
         llmConfig,
+        candidates: structuredCandidates,
         runtime,
         messages: messagesWithSystemPrompt,
         temperature,
