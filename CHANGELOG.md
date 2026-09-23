@@ -20,6 +20,35 @@ releases:
 
 Nothing yet.
 
+## [0.7.2] — 2026-09-23
+
+Dependency maintenance only. Every change is a backward-compatible upgrade of an existing
+dependency to a newer release; there is no source, schema, flow, migration, or
+independently versioned contract-package change. Third-party notices are regenerated to
+match the upgraded versions.
+
+### Changed
+
+- **Runtime** (`@atf/runtime`): AI SDK providers and core bumped — `ai` 7.0.93 → 7.0.107,
+  `@ai-sdk/amazon-bedrock` 5.0.76 → 5.0.88, `@ai-sdk/anthropic` 4.0.49 → 4.0.58,
+  `@ai-sdk/azure` 4.0.63 → 4.0.75, `@ai-sdk/google` 4.0.64 → 4.0.76,
+  `@ai-sdk/openai` 4.0.60 → 4.0.71, `@ai-sdk/provider` 4.0.10 → 4.0.17;
+  `@langchain/core` 1.2.9 → 1.2.11, `@langchain/langgraph` 1.4.14 → 1.4.16;
+  `@aws-sdk/client-bedrock-agent-runtime` 3.1127.0 → 3.1136.0; `jose` 6.2.4 → 6.2.12;
+  dev `fast-check` 4.9.0 → 4.10.2.
+- **Control** (`@atf/control`): `next` 16.3.4 → 16.3.5, `react`/`react-dom` 19.2.8 → 19.3.0,
+  `lucide-react` 1.35.0 → 1.45.0; dev `@types/react`/`@types/react-dom` → 19.3.0,
+  `@types/node` 26.4.1 → 26.6.2.
+- **Gate** (`@atf/gate`): `@aws-sdk/client-bedrock-runtime` 3.1127.0 → 3.1136.0,
+  `express-rate-limit` 8.5.2 → 8.7.0, `jose` 5.10.0 → 6.2.12, `mysql2` 3.24.2 → 3.24.4;
+  dev `@types/node` 26.4.1 → 26.6.2.
+- **Search** (`@atf/search`): `@aws-sdk/client-bedrock-runtime` 3.1127.0 → 3.1136.0,
+  `jose` 6.2.4 → 6.2.12; dev `@types/node` 26.4.1 → 26.6.2.
+- **Extract** (`@atf/extract`): `jose` 6.2.4 → 6.2.12; dev `fast-check` 4.9.0 → 4.10.2,
+  `@types/node` 26.4.1 → 26.6.2.
+- **Extract contract** (`@atf/extract-contract`): dev `fast-check` 4.9.0 → 4.10.2.
+- **Quickstart image** (`deploy/examples/Dockerfile`): base `oven/bun` 1.4.0 → 1.4.2.
+
 ## [0.7.1] — 2026-09-23
 
 Fixes pool failover for schema-enforced `llm` nodes. Backward compatible: a single-model
@@ -582,7 +611,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/abillify/atf/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/abillify/atf/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/abillify/atf/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/abillify/atf/compare/v0.6.0...v0.6.1
