@@ -29,7 +29,7 @@ interface MemorySession {
   entryCount: number;
 }
 
-function fetchSessions(token: string): Promise<MemorySession[]> {
+function fetchSessions(token: string | undefined): Promise<MemorySession[]> {
   return authFetch(backendUrl("/admin/memory/sessions"), token).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json() as Promise<{ sessions: MemorySession[] }>;
@@ -38,7 +38,7 @@ function fetchSessions(token: string): Promise<MemorySession[]> {
 
 function fetchSessionEntries(
   sessionId: string,
-  token: string,
+  token: string | undefined,
 ): Promise<MemoryEntry[]> {
   return authFetch(
     backendUrl(`/admin/memory/sessions/${encodeURIComponent(sessionId)}`),
@@ -51,7 +51,10 @@ function fetchSessionEntries(
     .then((d) => d.entries);
 }
 
-function clearSession(sessionId: string, token: string): Promise<void> {
+function clearSession(
+  sessionId: string,
+  token: string | undefined,
+): Promise<void> {
   return authFetch(
     backendUrl(`/admin/memory/sessions/${encodeURIComponent(sessionId)}`),
     token,
@@ -66,7 +69,7 @@ function SessionEntries({
   token,
 }: {
   sessionId: string;
-  token: string;
+  token: string | undefined;
 }) {
   const { data: entries = [], isLoading, error } = useQuery<
     MemoryEntry[],
@@ -107,7 +110,10 @@ function SessionEntries({
 }
 
 export default function MemoryPage() {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
+  // Authorization-Header bei undefined-Token weg.
+  const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -117,12 +123,12 @@ export default function MemoryPage() {
     error,
   } = useQuery<MemorySession[], Error>({
     queryKey: ["memory", "sessions"],
-    queryFn: () => fetchSessions(token!),
-    enabled: ready && !!token,
+    queryFn: () => fetchSessions(token),
+    enabled: ready && isAuthenticated,
   });
 
   const clearMutation = useMutation({
-    mutationFn: (sessionId: string) => clearSession(sessionId, token!),
+    mutationFn: (sessionId: string) => clearSession(sessionId, token),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["memory", "sessions"] }),
   });
@@ -189,7 +195,7 @@ export default function MemoryPage() {
               </Button>
             </div>
 
-            {expanded === session.id && token && (
+            {expanded === session.id && (
               <SessionEntries sessionId={session.id} token={token} />
             )}
           </div>

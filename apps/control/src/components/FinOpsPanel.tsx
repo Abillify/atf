@@ -71,7 +71,7 @@ interface Co2Report {
 
 async function fetchForecast(
   tenantId: string,
-  token: string,
+  token: string | undefined,
 ): Promise<BudgetForecast> {
   const res = await authFetch(
     backendUrl(`/admin/finops/forecast/${encodeURIComponent(tenantId)}`),
@@ -82,7 +82,7 @@ async function fetchForecast(
   return data.forecast;
 }
 
-async function fetchCo2Report(token: string): Promise<Co2Report> {
+async function fetchCo2Report(token: string | undefined): Promise<Co2Report> {
   const res = await authFetch(backendUrl("/admin/finops/co2"), token);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const data = (await res.json()) as { report: Co2Report };
@@ -121,7 +121,9 @@ function statusVariant(status: BudgetForecast["status"]): BadgeVariant {
 // ---------------------------------------------------------------------------
 
 export function FinOpsPanel(): React.JSX.Element {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym).
+  const { token, ready, isAuthenticated } = useAuth();
   const [tenantId, setTenantId] = useState("default");
   const [submittedTenant, setSubmittedTenant] = useState("default");
 
@@ -131,8 +133,8 @@ export function FinOpsPanel(): React.JSX.Element {
     error: forecastError,
   } = useQuery<BudgetForecast, Error>({
     queryKey: ["finops-forecast", submittedTenant],
-    queryFn: () => fetchForecast(submittedTenant, token!),
-    enabled: ready && !!token && !!submittedTenant,
+    queryFn: () => fetchForecast(submittedTenant, token),
+    enabled: ready && isAuthenticated && !!submittedTenant,
   });
 
   const {
@@ -141,8 +143,8 @@ export function FinOpsPanel(): React.JSX.Element {
     error: co2Error,
   } = useQuery<Co2Report, Error>({
     queryKey: ["finops-co2"],
-    queryFn: () => fetchCo2Report(token!),
-    enabled: ready && !!token,
+    queryFn: () => fetchCo2Report(token),
+    enabled: ready && isAuthenticated,
   });
 
   return (

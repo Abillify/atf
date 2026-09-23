@@ -39,7 +39,9 @@ interface GuardrailsResponse {
   rules: GuardrailRule[];
 }
 
-function fetchGuardrails(token: string): Promise<GuardrailsResponse> {
+function fetchGuardrails(
+  token: string | undefined,
+): Promise<GuardrailsResponse> {
   return authFetch(backendUrl("/admin/guardrails"), token).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json() as Promise<GuardrailsResponse>;
@@ -81,12 +83,16 @@ function SectionBadge({
 }
 
 export default function GuardrailsPage() {
-  const { token, ready } = useAuth();
+  // isAuthenticated (= !authRequired || !!token) statt !!token, damit die Seite
+  // auch bei deaktivierter Operator-Auth (AUTHN_MODE=disabled) laedt: dann wird
+  // kein Token ausgestellt, aber das Backend bedient die Operator-Plane anonym.
+  // authFetch laesst den Authorization-Header bei undefined-Token weg.
+  const { token, ready, isAuthenticated } = useAuth();
 
   const { data, isLoading, error } = useQuery<GuardrailsResponse, Error>({
     queryKey: ["guardrails"],
-    queryFn: () => fetchGuardrails(token!),
-    enabled: ready && !!token,
+    queryFn: () => fetchGuardrails(token),
+    enabled: ready && isAuthenticated,
   });
 
   return (

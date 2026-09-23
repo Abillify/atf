@@ -38,7 +38,7 @@ function statusVariant(status: JobStatus): BadgeVariant {
   return "secondary";
 }
 
-async function fetchJob(id: string, token: string): Promise<JobView> {
+async function fetchJob(id: string, token: string | undefined): Promise<JobView> {
   const res = await authFetch(backendUrl(`/v1/jobs/${encodeURIComponent(id)}`), token);
   if (!res.ok) {
     const detail = await res
@@ -57,6 +57,13 @@ async function fetchJob(id: string, token: string): Promise<JobView> {
 export interface JobsPanelProps {
   token: string | null | undefined;
   ready: boolean;
+  /**
+   * Whether operator auth is satisfied (= !authRequired || !!token). Lets the
+   * lookup work when auth is disabled (AUTHN_MODE=disabled), where no token is
+   * issued but the backend serves the operator plane anonymously. Optional and
+   * defaults to "token present" to preserve existing callers/tests.
+   */
+  authenticated?: boolean;
 }
 
 /**
@@ -65,9 +72,17 @@ export interface JobsPanelProps {
  * the job is not yet terminal (2s, matching the cadence a client would poll
  * on its own).
  */
-export function JobsPanel({ token, ready }: JobsPanelProps): React.JSX.Element {
+export function JobsPanel({
+  token,
+  ready,
+  authenticated,
+}: JobsPanelProps): React.JSX.Element {
   const [input, setInput] = useState("");
   const [jobId, setJobId] = useState<string | undefined>(undefined);
+
+  // Fall back to "token present" when `authenticated` is not supplied, so
+  // existing callers/tests keep their behaviour.
+  const authOk = authenticated ?? Boolean(token);
 
   const {
     data: job,
@@ -75,8 +90,8 @@ export function JobsPanel({ token, ready }: JobsPanelProps): React.JSX.Element {
     error,
   } = useQuery<JobView, Error>({
     queryKey: ["jobs", jobId],
-    queryFn: () => fetchJob(jobId as string, token as string),
-    enabled: ready && Boolean(token) && jobId !== undefined,
+    queryFn: () => fetchJob(jobId as string, token ?? undefined),
+    enabled: ready && authOk && jobId !== undefined,
     refetchInterval: (query) => {
       const status = query.state.data?.status;
       return status === "queued" || status === "running" ? 2000 : false;

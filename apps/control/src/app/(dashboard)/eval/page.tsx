@@ -44,14 +44,14 @@ interface EvalCase {
   createdAt: string;
 }
 
-function fetchEvalCases(token: string): Promise<EvalCase[]> {
+function fetchEvalCases(token: string | undefined): Promise<EvalCase[]> {
   return authFetch(backendUrl("/eval/cases"), token).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json() as Promise<{ cases: EvalCase[] }>;
   }).then((d) => d.cases);
 }
 
-function deleteEvalCase(id: string, token: string): Promise<void> {
+function deleteEvalCase(id: string, token: string | undefined): Promise<void> {
   return authFetch(
     backendUrl(`/eval/cases/${encodeURIComponent(id)}`),
     token,
@@ -62,7 +62,10 @@ function deleteEvalCase(id: string, token: string): Promise<void> {
 }
 
 export default function EvalPage() {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
+  // Authorization-Header bei undefined-Token weg.
+  const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = React.useState<"cases" | "runs">("cases");
 
@@ -72,12 +75,12 @@ export default function EvalPage() {
     error,
   } = useQuery<EvalCase[], Error>({
     queryKey: ["eval", "cases"],
-    queryFn: () => fetchEvalCases(token!),
-    enabled: ready && !!token,
+    queryFn: () => fetchEvalCases(token),
+    enabled: ready && isAuthenticated,
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id: string) => deleteEvalCase(id, token!),
+    mutationFn: (id: string) => deleteEvalCase(id, token),
     onSuccess: () =>
       queryClient.invalidateQueries({ queryKey: ["eval", "cases"] }),
   });

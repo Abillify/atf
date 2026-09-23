@@ -52,57 +52,57 @@ type ByokProvider = (typeof BYOK_PROVIDERS)[number];
 // ---------------------------------------------------------------------------
 
 const api = {
-  tenants: (token: string) =>
+  tenants: (token: string | undefined) =>
     authFetch(backendUrl("/admin/tenants"), token).then(r => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       return r.json() as Promise<{ tenants: Tenant[] }>;
     }).then(d => d.tenants),
 
-  createTenant: (token: string, body: Partial<Tenant>) =>
+  createTenant: (token: string | undefined, body: Partial<Tenant>) =>
     authFetch(backendUrl("/admin/tenants"), token, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then(async r => { if (!r.ok) throw new Error((await r.json() as { error?: { message?: string } }).error?.message ?? `HTTP ${r.status}`); return (await r.json() as { tenant: Tenant }).tenant; }),
 
-  updateTenant: (token: string, id: string, body: Partial<Tenant>) =>
+  updateTenant: (token: string | undefined, id: string, body: Partial<Tenant>) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(id)}`), token, {
       method: "PATCH", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     }).then(async r => { if (!r.ok) throw new Error((await r.json() as { error?: { message?: string } }).error?.message ?? `HTTP ${r.status}`); return (await r.json() as { tenant: Tenant }).tenant; }),
 
-  deleteTenant: (token: string, id: string) =>
+  deleteTenant: (token: string | undefined, id: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(id)}`), token, { method: "DELETE" })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); }),
 
-  keys: (token: string, tenantId: string) =>
+  keys: (token: string | undefined, tenantId: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/keys`), token)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ keys: ApiKey[] }>; }).then(d => d.keys),
 
-  createKey: (token: string, tenantId: string, name: string) =>
+  createKey: (token: string | undefined, tenantId: string, name: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/keys`), token, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ name }),
     }).then(async r => { if (!r.ok) throw new Error((await r.json() as { error?: { message?: string } }).error?.message ?? `HTTP ${r.status}`); return (await r.json() as { key: ApiKey }).key; }),
 
-  revokeKey: (token: string, tenantId: string, kid: string) =>
+  revokeKey: (token: string | undefined, tenantId: string, kid: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/keys/${encodeURIComponent(kid)}`), token, { method: "DELETE" })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); }),
 
-  usage: (token: string, tenantId: string) =>
+  usage: (token: string | undefined, tenantId: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/usage/summary`), token)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ summary: UsageSummary }>; }).then(d => d.summary),
 
-  providerKeys: (token: string, tenantId: string) =>
+  providerKeys: (token: string | undefined, tenantId: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/provider-keys`), token)
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ providerKeys: ProviderKey[] }>; }).then(d => d.providerKeys),
 
-  setProviderKey: (token: string, tenantId: string, provider: string, key: string) =>
+  setProviderKey: (token: string | undefined, tenantId: string, provider: string, key: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/provider-keys/${encodeURIComponent(provider)}`), token, {
       method: "PUT", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ key }),
     }).then(async r => { if (!r.ok) throw new Error((await r.json() as { error?: { message?: string } }).error?.message ?? `HTTP ${r.status}`); }),
 
-  deleteProviderKey: (token: string, tenantId: string, provider: string) =>
+  deleteProviderKey: (token: string | undefined, tenantId: string, provider: string) =>
     authFetch(backendUrl(`/admin/tenants/${encodeURIComponent(tenantId)}/provider-keys/${encodeURIComponent(provider)}`), token, { method: "DELETE" })
       .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); }),
 };
@@ -114,7 +114,7 @@ const api = {
 function TenantForm({
   initial, token, onSaved, onCancel,
 }: {
-  initial?: Tenant; token: string; onSaved: () => void; onCancel: () => void;
+  initial?: Tenant; token: string | undefined; onSaved: () => void; onCancel: () => void;
 }) {
   const qc = useQueryClient();
   const [name, setName] = useState(initial?.name ?? "");
@@ -169,7 +169,7 @@ function TenantForm({
 // KeysTab
 // ---------------------------------------------------------------------------
 
-function KeysTab({ tenantId, token }: { tenantId: string; token: string }) {
+function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefined }) {
   const qc = useQueryClient();
   const [newName, setNewName] = useState("default");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -248,7 +248,7 @@ function KeysTab({ tenantId, token }: { tenantId: string; token: string }) {
 // UsageTab
 // ---------------------------------------------------------------------------
 
-function UsageTab({ tenantId, token }: { tenantId: string; token: string }) {
+function UsageTab({ tenantId, token }: { tenantId: string; token: string | undefined }) {
   const { data: summary, isLoading, error } = useQuery<UsageSummary, Error>({
     queryKey: ["admin", "tenants", tenantId, "usage"],
     queryFn: () => api.usage(token, tenantId),
@@ -303,7 +303,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string }) {
 // BYOKTab
 // ---------------------------------------------------------------------------
 
-function BYOKTab({ tenantId, token }: { tenantId: string; token: string }) {
+function BYOKTab({ tenantId, token }: { tenantId: string; token: string | undefined }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState<ByokProvider | null>(null);
   const [keyValue, setKeyValue] = useState("");
@@ -397,7 +397,7 @@ function BYOKTab({ tenantId, token }: { tenantId: string; token: string }) {
 function TenantDetail({
   tenant, token, onEdited, onDeleted,
 }: {
-  tenant: Tenant; token: string; onEdited: () => void; onDeleted: () => void;
+  tenant: Tenant; token: string | undefined; onEdited: () => void; onDeleted: () => void;
 }) {
   const qc = useQueryClient();
   const [editing, setEditing] = useState(false);
@@ -454,7 +454,10 @@ function TenantDetail({
 // ---------------------------------------------------------------------------
 
 function TenantList() {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
+  // Authorization-Header bei undefined-Token weg.
+  const { token, ready, isAuthenticated } = useAuth();
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
@@ -463,10 +466,10 @@ function TenantList() {
   const { data: tenants = [], isLoading, error } = useQuery<Tenant[], Error>({
     queryKey: ["admin", "tenants"],
     queryFn: () =>
-      authFetch(backendUrl("/admin/tenants"), token!)
+      authFetch(backendUrl("/admin/tenants"), token)
         .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json() as Promise<{ tenants: Tenant[] }>; })
         .then(d => d.tenants),
-    enabled: ready && !!token,
+    enabled: ready && isAuthenticated,
   });
 
   const filtered = tenants.filter(t =>

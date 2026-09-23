@@ -15,11 +15,11 @@ const JobsPanel = dynamic(
 );
 
 export default function JobsPage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
 
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
-      <JobsPanel token={token} ready={ready} />
+      <JobsPanel token={token} ready={ready} authenticated={isAuthenticated} />
     </div>
   );
 }

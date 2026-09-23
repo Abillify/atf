@@ -168,7 +168,7 @@ async function readJson<T>(response: Response): Promise<T> {
 }
 
 function fetchAssistants(
-  token: string,
+  token: string | undefined,
   filters: { status?: string; search: string; offset: number },
 ): Promise<AssistantListPage> {
   const query = new URLSearchParams({
@@ -214,7 +214,7 @@ function ConstraintsEditor({
   onSaved,
 }: {
   detail: AssistantDetail;
-  token: string;
+  token: string | undefined;
   onSaved: () => void;
 }): React.JSX.Element {
   const [draft, setDraft] = useState<Record<string, string>>(() => ({
@@ -382,7 +382,7 @@ function AssistantDetailView({
   token,
 }: {
   row: AssistantRow;
-  token: string;
+  token: string | undefined;
 }): React.JSX.Element {
   const queryClient = useQueryClient();
   const path = detailPath(row);
@@ -726,7 +726,7 @@ function delegationStateBadgeVariant(
 }
 
 function fetchDelegations(
-  token: string,
+  token: string | undefined,
   filters: { state?: DelegationStateFilter; search: string; offset: number },
 ): Promise<DelegationConsolePage> {
   const query = new URLSearchParams({
@@ -756,7 +756,8 @@ function fetchDelegations(
  * asks first.
  */
 function RevocationConsole(): React.JSX.Element {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled.
+  const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [state, setState] = useState<DelegationStateFilter | undefined>(undefined);
   const [search, setSearch] = useState("");
@@ -777,12 +778,12 @@ function RevocationConsole(): React.JSX.Element {
   } = useQuery<DelegationConsolePage, Error>({
     queryKey,
     queryFn: () =>
-      fetchDelegations(token as string, {
+      fetchDelegations(token ?? undefined, {
         ...(state !== undefined ? { state } : {}),
         search,
         offset,
       }),
-    enabled: ready && Boolean(token),
+    enabled: ready && isAuthenticated,
   });
 
   const revoke = useMutation<unknown, Error, DelegationConsoleRow>({
@@ -987,7 +988,7 @@ interface OrgSkillListPage {
 }
 
 function fetchOrgSkills(
-  token: string,
+  token: string | undefined,
   filters: { tenantId: string; status?: "published" | "deprecated"; offset: number },
 ): Promise<OrgSkillListPage> {
   const query = new URLSearchParams({
@@ -1018,7 +1019,8 @@ function fetchOrgSkills(
  * `org-skill-registry.ts`).
  */
 function SkillRegistryConsole(): React.JSX.Element {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled.
+  const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [tenantId, setTenantId] = useState("");
   const [status, setStatus] = useState<"published" | "deprecated" | undefined>(
@@ -1035,12 +1037,12 @@ function SkillRegistryConsole(): React.JSX.Element {
   } = useQuery<OrgSkillListPage, Error>({
     queryKey,
     queryFn: () =>
-      fetchOrgSkills(token as string, {
+      fetchOrgSkills(token ?? undefined, {
         tenantId,
         ...(status !== undefined ? { status } : {}),
         offset,
       }),
-    enabled: ready && Boolean(token) && tenantId.trim() !== "",
+    enabled: ready && isAuthenticated && tenantId.trim() !== "",
   });
 
   const deprecate = useMutation<unknown, Error, OrgSkillRow>({
@@ -1205,7 +1207,8 @@ function SkillRegistryConsole(): React.JSX.Element {
 // ---------------------------------------------------------------------------
 
 function AssistantsEstatePanel(): React.JSX.Element {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled.
+  const { token, ready, isAuthenticated } = useAuth();
   const [status, setStatus] = useState<AssistantStatus | undefined>("active");
   const [search, setSearch] = useState("");
   const [offset, setOffset] = useState(0);
@@ -1218,12 +1221,12 @@ function AssistantsEstatePanel(): React.JSX.Element {
   } = useQuery<AssistantListPage, Error>({
     queryKey: ["assistants", "admin", "list", status ?? "any", search, offset],
     queryFn: () =>
-      fetchAssistants(token as string, {
+      fetchAssistants(token ?? undefined, {
         ...(status !== undefined ? { status } : {}),
         search,
         offset,
       }),
-    enabled: ready && Boolean(token),
+    enabled: ready && isAuthenticated,
   });
 
   const rows = page?.assistants ?? [];

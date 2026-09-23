@@ -84,9 +84,12 @@ const StudioPlayground = dynamic(
 // Data fetching
 // ---------------------------------------------------------------------------
 
-async function fetchFlowList(token: string): Promise<FlowListEntry[]> {
+async function fetchFlowList(
+  token: string | undefined,
+): Promise<FlowListEntry[]> {
   const resp = await fetch(backendUrl("/flows"), {
-    headers: { Authorization: `Bearer ${token}` },
+    // Header nur mit echtem Token; bei AUTHN_MODE=disabled anonym anfragen.
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = (await resp.json()) as
@@ -95,12 +98,16 @@ async function fetchFlowList(token: string): Promise<FlowListEntry[]> {
   return Array.isArray(data) ? data : (data.flows ?? []);
 }
 
-async function postEvalCase(token: string, evalCase: unknown): Promise<void> {
+async function postEvalCase(
+  token: string | undefined,
+  evalCase: unknown,
+): Promise<void> {
   const resp = await fetch("/api/eval/cases", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${token}`,
+      // Header nur mit echtem Token; bei AUTHN_MODE=disabled anonym anfragen.
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(evalCase),
   });
@@ -205,7 +212,10 @@ function EvalCaseBanner({
 // ---------------------------------------------------------------------------
 
 export default function StudioPage() {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym). fetchFlowList/postEvalCase
+  // senden den Authorization-Header nur mit echtem Token.
+  const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
 
   const [selectedFlowId, setSelectedFlowId] = useState("");
@@ -219,8 +229,8 @@ export default function StudioPage() {
     Error
   >({
     queryKey: ["flows"],
-    queryFn: () => fetchFlowList(token!),
-    enabled: ready && !!token,
+    queryFn: () => fetchFlowList(token),
+    enabled: ready && isAuthenticated,
   });
 
   const selectedFlow = flows.find((f) => f.id === selectedFlowId) ?? null;
@@ -231,7 +241,7 @@ export default function StudioPage() {
     { prompt: string; flowId: string; result: PlaygroundResult }
   >({
     mutationFn: async ({ prompt, flowId, result }) => {
-      if (!token) throw new Error("Not authenticated");
+      if (!isAuthenticated) throw new Error("Not authenticated");
 
       // Build the Studio eval case (Req. 16.1)
       const newCase = buildStudioEvalCase({

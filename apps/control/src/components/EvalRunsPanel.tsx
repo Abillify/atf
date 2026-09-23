@@ -116,7 +116,7 @@ const DEFAULT_TASKS = JSON.stringify(
   2,
 );
 
-function fetchEvalRuns(token: string, limit: number): Promise<EvalRunRecord[]> {
+function fetchEvalRuns(token: string | undefined, limit: number): Promise<EvalRunRecord[]> {
   return authFetch(backendUrl(`/admin/eval/runs?limit=${limit}`), token)
     .then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -125,7 +125,7 @@ function fetchEvalRuns(token: string, limit: number): Promise<EvalRunRecord[]> {
     .then((data) => data.runs);
 }
 
-function fetchMatrixRuns(token: string, limit: number): Promise<MatrixRun[]> {
+function fetchMatrixRuns(token: string | undefined, limit: number): Promise<MatrixRun[]> {
   return authFetch(backendUrl(`/admin/eval/matrix-runs?limit=${limit}`), token)
     .then((response) => {
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
@@ -137,7 +137,7 @@ function fetchMatrixRuns(token: string, limit: number): Promise<MatrixRun[]> {
     ));
 }
 
-function fetchMatrixRun(token: string, id: string): Promise<MatrixRun> {
+function fetchMatrixRun(token: string | undefined, id: string): Promise<MatrixRun> {
   return authFetch(
     backendUrl(`/admin/eval/matrix-runs/${encodeURIComponent(id)}`),
     token,
@@ -162,7 +162,7 @@ function scoreColor(score: number): string {
 function TraceDetail({ runId, cell, token }: {
   runId: string;
   cell: MatrixCell;
-  token: string;
+  token: string | undefined;
 }): React.JSX.Element {
   const [enabled, setEnabled] = React.useState(false);
   const { data, isLoading, error } = useQuery<TraceResponse, Error>({
@@ -198,7 +198,7 @@ function TraceDetail({ runId, cell, token }: {
   );
 }
 
-function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string }): React.JSX.Element {
+function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string | undefined }): React.JSX.Element {
   return (
     <div className="space-y-4 border-t border-border p-4">
       {run.tasks.map((task) => {
@@ -246,7 +246,7 @@ function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string }): Rea
   );
 }
 
-function MatrixRunCard({ run, token }: { run: MatrixRun; token: string }): React.JSX.Element {
+function MatrixRunCard({ run, token }: { run: MatrixRun; token: string | undefined }): React.JSX.Element {
   const [expanded, setExpanded] = React.useState(false);
   const { data: detail, isLoading, error } = useQuery<MatrixRun, Error>({
     queryKey: ["eval", "matrix-run", run.id],
@@ -287,7 +287,7 @@ function MatrixRunCard({ run, token }: { run: MatrixRun; token: string }): React
   );
 }
 
-function MatrixRuns({ runs, token }: { runs: MatrixRun[]; token: string }): React.JSX.Element {
+function MatrixRuns({ runs, token }: { runs: MatrixRun[]; token: string | undefined }): React.JSX.Element {
   if (runs.length === 0) {
     return <div className="rounded-lg border border-dashed border-border py-6 text-center text-sm text-muted-foreground">No matrix evaluation started yet.</div>;
   }
@@ -351,7 +351,10 @@ export interface EvalRunsPanelProps {
 }
 
 export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Element {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
+  // Authorization-Header bei undefined-Token weg.
+  const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
   const [name, setName] = React.useState("FDS flow comparison");
@@ -359,17 +362,17 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
   const [tasksJson, setTasksJson] = React.useState(DEFAULT_TASKS);
   const [concurrency, setConcurrency] = React.useState(2);
   const [formError, setFormError] = React.useState<string | null>(null);
-  const { flows } = useFlows({ token: token ?? undefined, enabled: ready && !!token });
+  const { flows } = useFlows({ token: token ?? undefined, enabled: ready && isAuthenticated });
 
   const { data: runs = [], isLoading, error } = useQuery<EvalRunRecord[], Error>({
     queryKey: ["eval", "runs", limit],
-    queryFn: () => fetchEvalRuns(token!, limit),
-    enabled: ready && !!token,
+    queryFn: () => fetchEvalRuns(token, limit),
+    enabled: ready && isAuthenticated,
   });
   const { data: matrixRuns = [], error: matrixError } = useQuery<MatrixRun[], Error>({
     queryKey: ["eval", "matrix-runs", limit],
-    queryFn: () => fetchMatrixRuns(token!, limit),
-    enabled: ready && !!token,
+    queryFn: () => fetchMatrixRuns(token, limit),
+    enabled: ready && isAuthenticated,
     refetchInterval: (query) => {
       const current = query.state.data;
       return Array.isArray(current) && current.some((run) =>
@@ -389,7 +392,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
       }
       if (!Array.isArray(tasks)) throw new Error("Tasks must be a JSON array.");
       if (selectedFlows.length === 0) throw new Error("Select at least one flow.");
-      const response = await authFetch(backendUrl("/admin/eval/matrix-runs"), token!, {
+      const response = await authFetch(backendUrl("/admin/eval/matrix-runs"), token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name, tasks, flows: selectedFlows, concurrency }),

@@ -31,7 +31,7 @@ interface McpServer {
   tools: McpTool[];
 }
 
-function fetchMcpServers(token: string): Promise<McpServer[]> {
+function fetchMcpServers(token: string | undefined): Promise<McpServer[]> {
   return authFetch(backendUrl("/mcp/servers"), token).then((r) => {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json() as Promise<{ servers: McpServer[] }>;
@@ -45,7 +45,10 @@ const STATUS_VARIANT: Record<McpServer["status"], BadgeVariant> = {
 };
 
 export default function McpPage() {
-  const { token, ready } = useAuth();
+  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
+  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
+  // Authorization-Header bei undefined-Token weg.
+  const { token, ready, isAuthenticated } = useAuth();
 
   const {
     data: servers = [],
@@ -53,8 +56,8 @@ export default function McpPage() {
     error,
   } = useQuery<McpServer[], Error>({
     queryKey: ["mcp", "servers"],
-    queryFn: () => fetchMcpServers(token!),
-    enabled: ready && !!token,
+    queryFn: () => fetchMcpServers(token),
+    enabled: ready && isAuthenticated,
   });
 
   return (
