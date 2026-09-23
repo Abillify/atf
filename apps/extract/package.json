@@ -1,6 +1,6 @@
 {
   "name": "@atf/extract",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "description": "Document-to-Markdown extraction service: PDF, Word, Excel and image formats to the canonical atf-extract contract, with direct Search ingest",
   "author": "Abillify Technology GmbH <info@abillify.me>",
@@ -23,7 +23,7 @@
     "@atf/extract-contract": "workspace:1.1.0",
     "bmp-js": "0.1.0",
     "express": "5.2.1",
-    "jose": "6.2.4",
+    "jose": "6.2.12",
     "multer": "2.3.0",
     "pino": "10.3.1",
     "pino-http": "11.0.0",
@@ -36,9 +36,9 @@
     "@types/bun": "1.4.0",
     "@types/express": "5.0.6",
     "@types/multer": "2.1.0",
-    "@types/node": "26.4.1",
+    "@types/node": "26.6.2",
     "@types/supertest": "7.2.1",
-    "fast-check": "4.9.0",
+    "fast-check": "4.10.2",
     "supertest": "7.2.2",
     "typescript": "7.0.2",
     "vitest": "5.0.0"

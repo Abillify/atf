@@ -1,6 +1,6 @@
 {
   "name": "@atf/runtime",
-  "version": "0.7.1",
+  "version": "0.7.2",
   "private": true,
   "author": "Abillify Technology GmbH <info@abillify.me>",
   "license": "Elastic-2.0",
@@ -27,29 +27,29 @@
     "node": ">=26 <27"
   },
   "dependencies": {
-    "@ai-sdk/amazon-bedrock": "5.0.76",
-    "@ai-sdk/anthropic": "4.0.49",
-    "@ai-sdk/azure": "4.0.63",
-    "@ai-sdk/google": "4.0.64",
-    "@ai-sdk/openai": "4.0.60",
-    "@ai-sdk/provider": "4.0.10",
+    "@ai-sdk/amazon-bedrock": "5.0.88",
+    "@ai-sdk/anthropic": "4.0.58",
+    "@ai-sdk/azure": "4.0.75",
+    "@ai-sdk/google": "4.0.76",
+    "@ai-sdk/openai": "4.0.71",
+    "@ai-sdk/provider": "4.0.17",
     "@atf/schema-compatibility": "workspace:1.0.0",
-    "@aws-sdk/client-bedrock-agent-runtime": "3.1127.0",
+    "@aws-sdk/client-bedrock-agent-runtime": "3.1136.0",
     "@huggingface/transformers": "4.2.0",
-    "@langchain/core": "1.2.9",
-    "@langchain/langgraph": "1.4.14",
+    "@langchain/core": "1.2.11",
+    "@langchain/langgraph": "1.4.16",
     "@langchain/langgraph-checkpoint": "1.1.5",
     "@modelcontextprotocol/sdk": "1.30.0",
-    "ai": "7.0.93",
+    "ai": "7.0.107",
     "chokidar": "5.0.0",
     "hono": "4.13.5",
-    "jose": "6.2.4",
+    "jose": "6.2.12",
     "yaml": "2.9.0",
     "zod": "4.4.3"
   },
   "devDependencies": {
     "@types/bun": "1.4.0",
-    "fast-check": "4.9.0",
+    "fast-check": "4.10.2",
     "typescript": "7.0.2"
   }
 }
