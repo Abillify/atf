@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
 import { Hono } from "hono";
 import type { AppConfig } from "../config/index.js";
 import type { Metrics } from "../observability/metrics.js";

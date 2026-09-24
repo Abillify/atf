@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
 import { Hono, type Context } from "hono";
 import { generateText, tool as aiTool, type ModelMessage, type ToolSet } from "ai";
 import { z } from "zod";
