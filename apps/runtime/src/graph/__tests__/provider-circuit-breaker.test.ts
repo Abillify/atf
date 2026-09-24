@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+	createObservedProviderCircuitBreaker,
 	createProviderCircuitBreaker,
 	isProviderTransportError,
 	providerTransportErrorCode,
@@ -65,6 +66,70 @@ describe("provider circuit breaker", () => {
 			},
 		);
 		expect(breaker.isOpen("openai")).toBe(false);
+	});
+});
+
+describe("observed provider circuit breaker", () => {
+	test("decides flow-locally while the observer accumulates across executions", () => {
+		const observer = createProviderCircuitBreaker({ failureThreshold: 2 });
+
+		// Two consecutive "executions", each with its own breaker, each seeing a
+		// single transport failure.
+		for (const _execution of ["exec-1", "exec-2"]) {
+			const perExecution = createObservedProviderCircuitBreaker(observer, {
+				failureThreshold: 2,
+			});
+			expect(
+				perExecution.recordTransportFailure("openai", "ECONNREFUSED"),
+			).toMatchObject({ state: "closed", failure_count: 1 });
+			// One failure never opens a fresh flow-local breaker, so the next
+			// execution still tries the provider.
+			expect(perExecution.isOpen("openai")).toBe(false);
+		}
+
+		// The long-lived observer saw BOTH failures and crossed its threshold —
+		// this is what the operator monitoring plane reports.
+		expect(observer.getState("openai")).toMatchObject({
+			state: "open",
+			failure_count: 2,
+			last_transport_error_code: "ECONNREFUSED",
+		});
+	});
+
+	test("a reachable response clears both the local and the observed state", () => {
+		const observer = createProviderCircuitBreaker({ failureThreshold: 2 });
+		const breaker = createObservedProviderCircuitBreaker(observer, {
+			failureThreshold: 2,
+		});
+
+		breaker.recordTransportFailure("openai", "ECONNRESET");
+		expect(observer.getState("openai")).toMatchObject({ failure_count: 1 });
+
+		breaker.recordReachable("openai");
+		expect(observer.getState("openai")).toMatchObject({
+			state: "closed",
+			failure_count: 0,
+		});
+		expect(breaker.getState("openai")).toMatchObject({
+			state: "closed",
+			failure_count: 0,
+		});
+	});
+
+	test("the observed state never influences a local decision", () => {
+		const observer = createProviderCircuitBreaker({ failureThreshold: 1 });
+		// Drive the observer wide open before the execution even starts.
+		observer.recordTransportFailure("openai", "ECONNREFUSED");
+		expect(observer.isOpen("openai")).toBe(true);
+
+		const breaker = createObservedProviderCircuitBreaker(observer, {
+			failureThreshold: 2,
+		});
+		expect(breaker.isOpen("openai")).toBe(false);
+		expect(breaker.getState("openai")).toMatchObject({
+			state: "closed",
+			failure_count: 0,
+		});
 	});
 });
 

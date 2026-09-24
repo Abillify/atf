@@ -72,6 +72,7 @@ import {
 } from "../graph/execution-admission.js";
 import type { Tracer } from "../observability/tracing.js";
 import { verifyExecutionContext } from "../graph/verified-execution-context.js";
+import { createProviderCircuitBreaker, type ProviderCircuitBreaker } from "../graph/provider-circuit-breaker.js";
 export interface EngineResult {
   graphEngine: GraphEngine;
   modelQuality: ModelQualityRegistry;
@@ -87,6 +88,7 @@ export interface EngineResult {
   canaryJudge: ReturnType<typeof createLlmJudgeFromConfig> | undefined;
   llmProviderFactory: LlmProviderFactory | undefined;
   providerKeyPool: ProviderKeyPool;
+  providerCircuitBreaker: ProviderCircuitBreaker;
 }
 
 export async function buildEngine(
@@ -221,6 +223,7 @@ export async function buildEngine(
   }
 
   // ── Graph engine ───────────────────────────────────────────────────────────
+  const providerCircuitBreaker = createProviderCircuitBreaker();
   const graphEngine = createGraphEngine(config, {
     flowRegistry,
     mcpWrapper,
@@ -249,6 +252,7 @@ export async function buildEngine(
     toolGroupSummarizer,
     reranker,
     toolOutputValidator,
+    providerCircuitBreaker,
   });
 
   // ── Debug trace store ──────────────────────────────────────────────────────
@@ -414,5 +418,6 @@ export async function buildEngine(
     canaryJudge,
     llmProviderFactory,
     providerKeyPool,
+    providerCircuitBreaker,
   };
 }

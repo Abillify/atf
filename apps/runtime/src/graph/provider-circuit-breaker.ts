@@ -26,6 +26,16 @@ export interface ProviderCircuitBreakerOptions {
 	now?: () => number;
 }
 
+/**
+ * The recording half of a breaker. A long-lived instance can consume the
+ * reachability signal of many executions without ever deciding anything about
+ * them.
+ */
+export type ProviderCircuitObserver = Pick<
+	ProviderCircuitBreaker,
+	"recordTransportFailure" | "recordReachable"
+>;
+
 interface ProviderCircuitState {
 	consecutiveTransportFailures: number;
 	lastTransportErrorCode?: string;
@@ -102,6 +112,45 @@ export function createProviderCircuitBreaker(
 		},
 		recordReachable(provider) {
 			states.delete(provider);
+		},
+	};
+}
+
+/**
+ * A FLOW-LOCAL breaker that additionally reports every reachability signal to a
+ * long-lived `observer`.
+ *
+ * Two different questions are being asked of one signal, and they need
+ * different scopes:
+ *
+ *   - "should THIS execution still try provider X?" — must stay flow-local, so
+ *     one flow hitting a dead endpoint cannot open the circuit for unrelated
+ *     flows. Every decision (`isOpen`, `getState`) and therefore every
+ *     node diagnostic comes from the local state only.
+ *   - "is provider X reachable right now?" — the operator monitoring plane asks
+ *     this across the whole process, so it needs state that outlives a single
+ *     execution.
+ *
+ * Teeing the recording side keeps both honest instead of forcing one scope onto
+ * the other: sharing a single breaker would have made a failure in one flow
+ * skip the provider in the next one.
+ */
+export function createObservedProviderCircuitBreaker(
+	observer: ProviderCircuitObserver,
+	options: ProviderCircuitBreakerOptions = {},
+): ProviderCircuitBreaker {
+	const local = createProviderCircuitBreaker(options);
+	return {
+		isOpen: (provider) => local.isOpen(provider),
+		getState: (provider) => local.getState(provider),
+		recordTransportFailure(provider, errorCode) {
+			observer.recordTransportFailure(provider, errorCode);
+			// The returned snapshot drives diagnostics, so it must be the local one.
+			return local.recordTransportFailure(provider, errorCode);
+		},
+		recordReachable(provider) {
+			observer.recordReachable(provider);
+			local.recordReachable(provider);
 		},
 	};
 }

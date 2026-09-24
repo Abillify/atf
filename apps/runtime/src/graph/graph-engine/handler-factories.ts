@@ -111,7 +111,11 @@ import type {
   UsageAccumulator,
   LlmProviderFactory,
 } from "../exec-runtime.js";
-import { createProviderCircuitBreaker } from "../provider-circuit-breaker.js";
+import {
+  createObservedProviderCircuitBreaker,
+  createProviderCircuitBreaker,
+} from "../provider-circuit-breaker.js";
+import type { ProviderCircuitBreaker } from "../provider-circuit-breaker.js";
 import type { GraphEngineService } from "./state.js";
 import type { AgentState, CompiledAgentGraph } from "./state.js";
 import {
@@ -220,6 +224,14 @@ export interface GraphEngineOptions {
   toolGroupSummarizer?: ToolGroupSummarizer;
   reranker?: Reranker;
   toolOutputValidator?: import("../../mcp/tool-output-validator.js").ToolOutputValidator;
+  /**
+   * Engine-wide breaker that OBSERVES provider reachability across executions,
+   * so the operator monitoring plane can report it. It deliberately does not
+   * decide anything for a run: each execution gets its own flow-local breaker
+   * (see `createObservedProviderCircuitBreaker`), so a dead endpoint in one flow
+   * cannot skip the provider in another.
+   */
+  providerCircuitBreaker?: ProviderCircuitBreaker;
 }
 
 class GraphEngineServiceImpl implements GraphEngineService {
@@ -229,6 +241,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
   private readonly cacheCkpt = new Map<string, CacheEntry>();
   private readonly semaphore: Semaphore;
   private readonly metrics: Metrics;
+  private readonly providerCircuitBreaker: ProviderCircuitBreaker;
   private readonly costTracker: SpendRecorder | undefined;
   private readonly checkpointer:
     | import("@langchain/langgraph").BaseCheckpointSaver
@@ -327,6 +340,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       toolGroupSummarizer,
       reranker,
       toolOutputValidator,
+      providerCircuitBreaker,
     } = options;
     this.flowRegistry = flowRegistry;
     this.mcpWrapper = mcpWrapper;
@@ -363,6 +377,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       appConfig.maxQueueDepth ?? 0,
     );
     this.metrics = metrics ?? createMetrics(false);
+    this.providerCircuitBreaker = providerCircuitBreaker ?? createProviderCircuitBreaker();
     this.costTracker = costTracker;
   }
 
@@ -1962,7 +1977,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
       },
       usage,
       llmProviderFactory: this.llmProviderFactory,
-      providerCircuitBreaker: createProviderCircuitBreaker(),
+      // Flow-local decisions (a dead endpoint in this run must not skip the
+      // provider in unrelated runs), while the reachability signal is also fed
+      // to the engine-wide breaker that the operator monitoring plane reads.
+      providerCircuitBreaker: createObservedProviderCircuitBreaker(
+        this.providerCircuitBreaker,
+      ),
       ...(this.mediaStore !== undefined &&
       this.appConfig.mediaBaseUrl !== undefined
         ? {
