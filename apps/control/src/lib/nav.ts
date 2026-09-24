@@ -73,6 +73,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/approvals", label: "Approvals", hint: "Human-in-the-loop inbox", icon: Inbox },
       { href: "/shadow", label: "Shadow", hint: "Shadow-mode A/B quality comparisons", icon: Layers },
       { href: "/security", label: "Security", hint: "Red-team posture & tool authz", icon: Shield },
+      { href: "/providers", label: "Providers", hint: "Provider and pool health", icon: Plug },
+      { href: "/provider-testing", label: "Provider Testing", hint: "Test provider models, capabilities & performance", icon: FlaskConical },
     ],
   },
   {
@@ -82,7 +84,6 @@ export const NAV_GROUPS: NavGroup[] = [
       { href: "/flow-diff", label: "Flow Diff", hint: "Compare flow versions", icon: GitCompare },
       { href: "/triggers", label: "Triggers", hint: "Webhook-triggered flows", icon: Zap },
       { href: "/assistants", label: "Assistants", hint: "Per-user assistants & operator constraints", icon: UserCog },
-      { href: "/providers", label: "Providers", hint: "Provider key pool health", icon: Plug },
       { href: "/guardrails", label: "Guardrails", hint: "Input/output/egress policy", icon: ShieldCheck },
       { href: "/pii-vault", label: "PII Vault", hint: "Reversible PII tokenization", icon: Lock },
       { href: "/compliance", label: "Compliance", hint: "Policy & evidentiary dossier", icon: Scale },
