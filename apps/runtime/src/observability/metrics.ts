@@ -48,6 +48,8 @@ export interface MetricsSummary {
   nodeErrorsTotal: number;
   llmCallsTotal: number;
   llmErrorsTotal: number;
+  llmCallsByProvider?: Record<string, number>;
+  llmErrorsByProvider?: Record<string, number>;
   tokensPrompt: number;
   tokensCompletion: number;
   /**
@@ -348,6 +350,8 @@ class MetricsRegistry implements Metrics {
     let nodeErrorsTotal = 0;
     let llmCallsTotal = 0;
     let llmErrorsTotal = 0;
+    const llmCallsByProvider: Record<string, number> = {};
+    const llmErrorsByProvider: Record<string, number> = {};
     let tokensPrompt = 0;
     let tokensCompletion = 0;
     let tokensCachedPrompt = 0;
@@ -379,8 +383,12 @@ class MetricsRegistry implements Metrics {
         nodeErrorsTotal += value;
       } else if (name === "aiperator_llm_calls_total") {
         llmCallsTotal += value;
+        const provider = labels.provider ?? "?";
+        llmCallsByProvider[provider] = (llmCallsByProvider[provider] ?? 0) + value;
       } else if (name === "aiperator_llm_errors_total") {
         llmErrorsTotal += value;
+        const provider = labels.provider ?? "?";
+        llmErrorsByProvider[provider] = (llmErrorsByProvider[provider] ?? 0) + value;
       } else if (name === "aiperator_llm_tokens_total") {
         const m = `${labels.provider ?? "?"}/${labels.model ?? "?"}`;
         const entry = tokensByModel[m] ?? { prompt: 0, completion: 0 };
@@ -432,6 +440,8 @@ class MetricsRegistry implements Metrics {
       nodeErrorsTotal,
       llmCallsTotal,
       llmErrorsTotal,
+      llmCallsByProvider,
+      llmErrorsByProvider,
       tokensPrompt,
       tokensCompletion,
       tokensCachedPrompt,

@@ -85,6 +85,8 @@ import { createJobsRouter } from "./routes/jobs.js";
 import { createComplianceRouter } from "./routes/compliance.js";
 import { createTenantsRouter } from "./routes/tenants.js";
 import { createProviderKeysRouter } from "./routes/provider-keys.js";
+import { createProviderMonitoringRouter } from "./routes/provider-monitoring.js";
+import { createProviderTestingRouter } from "./routes/provider-testing.js";
 import { createGuardrailsRouter } from "./routes/guardrails.js";
 import { createEvalRouter } from "./routes/eval.js";
 import { createAnalysisArtifactsRouter } from "./routes/analysis-artifacts.js";
@@ -1709,6 +1711,24 @@ if (import.meta.main) {
     "/",
     createProviderKeysRouter({
       providerKeyPool,
+      authRequired: config.monitoringAuthRequired,
+      operatorAuth,
+    }),
+  );
+  app.route(
+    "/",
+    createProviderMonitoringRouter({
+      metrics,
+      config,
+      providerCircuitBreaker: _engineResult.providerCircuitBreaker,
+      authRequired: config.monitoringAuthRequired,
+      operatorAuth,
+    }),
+  );
+  app.route(
+    "/",
+    createProviderTestingRouter({
+      config,
       authRequired: config.monitoringAuthRequired,
       operatorAuth,
     }),

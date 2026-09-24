@@ -74,6 +74,19 @@ export interface ModelCapabilities {
   /** Whether the model accepts image/file inputs. Unknown models fail closed. */
   visionInput: boolean;
   /**
+   * Whether the model exposes a reasoning/thinking channel (extended chain of
+   * thought). Surfaced for operator visibility in the provider-monitoring plane
+   * and independent of {@link suppressThinkingKwargs} (which only carries the
+   * request-body toggle to turn a KNOWN reasoning channel OFF). Unknown models
+   * fail closed to `false`.
+   */
+  reasoning: boolean;
+  /**
+   * Whether the model supports native tool/function calling. Surfaced for
+   * operator visibility. Unknown models fail closed to `false`.
+   */
+  toolCalling: boolean;
+  /**
    * `chat_template_kwargs` that switch OFF a hybrid-reasoning model's thinking
    * channel, for ENGINE-INTERNAL calls that are pure format conversion and gain
    * nothing from reasoning (e.g. the coverage-report extraction, which only
@@ -126,6 +139,8 @@ const GLOBAL_DEFAULT: ModelCapabilities = {
   allowSystemInMessages: true,
   unsupportedParameters: [],
   visionInput: false,
+  reasoning: false,
+  toolCalling: false,
   suppressThinkingKwargs: {},
 };
 
@@ -144,18 +159,37 @@ const RULES: readonly CapabilityRule[] = [
   // on how it was loaded, not on its name.
   {
     provider: "openai",
-    caps: { structuredOutput: "response_format", allowSystemInMessages: true },
+    caps: {
+      structuredOutput: "response_format",
+      allowSystemInMessages: true,
+      toolCalling: true,
+    },
   },
   {
     provider: "ollama",
-    caps: { structuredOutput: "response_format", allowSystemInMessages: true },
+    caps: {
+      structuredOutput: "response_format",
+      allowSystemInMessages: true,
+      toolCalling: true,
+    },
   },
   {
     provider: "azure",
-    caps: { structuredOutput: "response_format", allowSystemInMessages: true },
+    caps: {
+      structuredOutput: "response_format",
+      allowSystemInMessages: true,
+      toolCalling: true,
+    },
   },
   // Google — native structured output via responseSchema (generateObject).
-  { provider: "google", caps: { structuredOutput: "generateObject", visionInput: true } },
+  {
+    provider: "google",
+    caps: {
+      structuredOutput: "generateObject",
+      visionInput: true,
+      toolCalling: true,
+    },
+  },
   // Bedrock (Claude) — native tool-use structured output + Bedrock cache points.
   {
     provider: "bedrock",
@@ -164,6 +198,9 @@ const RULES: readonly CapabilityRule[] = [
       promptCache: "bedrock",
       allowSystemInMessages: true,
       visionInput: true,
+      toolCalling: true,
+      // Claude 3.7+/4/Sonnet-5 expose an extended-thinking channel.
+      reasoning: true,
       // Every Claude generation on Bedrock so far is a 200K window.
       contextLength: 200_000,
     },
@@ -188,6 +225,9 @@ const RULES: readonly CapabilityRule[] = [
       promptCache: "anthropic",
       allowSystemInMessages: true,
       visionInput: true,
+      toolCalling: true,
+      // Claude 3.7+/4/Sonnet-5 expose an extended-thinking channel.
+      reasoning: true,
       contextLength: 200_000,
     },
   },
@@ -239,18 +279,34 @@ const RULES: readonly CapabilityRule[] = [
     // request argument is fatal on a hosted OpenAI endpoint.
     caps: {
       visionInput: true,
+      // Hybrid-reasoning checkpoint: it HAS a thinking channel (we merely carry
+      // the toggle to turn it off for pure-format engine calls).
+      reasoning: true,
       suppressThinkingKwargs: { enable_thinking: false },
     },
   },
   // o-series reasoning models.
-  { provider: "openai", modelPattern: "o1*", caps: { contextLength: 200_000 } },
-  { provider: "openai", modelPattern: "o3*", caps: { contextLength: 200_000 } },
-  { provider: "openai", modelPattern: "o4*", caps: { contextLength: 200_000 } },
+  {
+    provider: "openai",
+    modelPattern: "o1*",
+    caps: { contextLength: 200_000, reasoning: true },
+  },
+  {
+    provider: "openai",
+    modelPattern: "o3*",
+    caps: { contextLength: 200_000, reasoning: true },
+  },
+  {
+    provider: "openai",
+    modelPattern: "o4*",
+    caps: { contextLength: 200_000, reasoning: true },
+  },
   // Google Gemini — 1M-token class across the 1.5/2.x/3.x Pro and Flash lines.
+  // The 2.5+ Pro/Flash lines expose a thinking channel.
   {
     provider: "google",
     modelPattern: "gemini-*",
-    caps: { contextLength: 1_048_576 },
+    caps: { contextLength: 1_048_576, reasoning: true },
   },
 ];
 
