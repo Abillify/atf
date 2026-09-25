@@ -277,3 +277,103 @@ describe("collectRoutingCandidates", () => {
     expect(infos.map((i) => i.flowId)).toEqual(["advisable"]);
   });
 });
+
+// ---------------------------------------------------------------------------
+
+describe("POST /optimizer/routing-advice (a definition that is not loaded)", () => {
+  const post = (a: Hono, body: unknown) =>
+    a.request("/optimizer/routing-advice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+  test("advises on the posted definition only, not on the loaded flows", async () => {
+    // The loaded version of the flow has no pool; the posted draft does.
+    const res = await post(app({ flows: [FLOW_WITHOUT_POOL] }), {
+      definition: { ...FLOW_WITH_POOL, id: "plain" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as AdviceBody;
+    expect(body.nodesExamined).toBe(1);
+    expect(first(body.recommendations, "recommendation")).toMatchObject({
+      flowId: "plain",
+      nodeId: "answer",
+      suggestedModel: "openai/gpt-4o-mini",
+    });
+  });
+
+  test("works without a flow registry (nothing loaded at all)", async () => {
+    const res = await post(app(), { definition: FLOW_WITH_POOL });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as AdviceBody).nodesExamined).toBe(1);
+  });
+
+  test("resolves shortcuts and variables in the source form, like a flow file", async () => {
+    const fs = await import("node:fs");
+    const os = await import("node:os");
+    const path = await import("node:path");
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "routing-advice-"));
+    try {
+      fs.writeFileSync(
+        path.join(dir, "model-shortcuts.yaml"),
+        "engines:\n  oai: { provider: openai }\nmodelPresets:\n  big: { model: gpt-4o }\n  small: { model: gpt-4o-mini }\n" +
+          "shortcuts:\n  big: { engine: oai, model: big }\n  small: { engine: oai, model: small }\n",
+      );
+      const a = new Hono();
+      a.route("/optimizer", createOptimizerRouter({ optimizer: optimizerStub, flowsDir: dir }));
+      const res = await post(a, {
+        definition: {
+          id: "src",
+          name: "Source form",
+          variables: { model_main: "big" },
+          nodes: [
+            {
+              id: "answer",
+              type: "llm",
+              llm: { shortcut: "{{vars.model_main}}" },
+              config: { routing: { strategy: "cheapest", candidates: [{ shortcut: "big" }, { shortcut: "small" }] } },
+            },
+          ],
+          edges: [],
+        },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as AdviceBody;
+      expect(body.nodesExamined).toBe(1);
+      expect(first(body.recommendations, "recommendation").suggestedModel).toBe("openai/gpt-4o-mini");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("rejects a body without a valid definition", async () => {
+    expect((await post(app(), {})).status).toBe(400);
+    expect((await post(app(), { definition: { id: "x", nodes: "nope" } })).status).toBe(400);
+  });
+});
+
+describe("without the self-optimizing loop (OPTIMIZER_ENABLED off)", () => {
+  const bare = () => {
+    const a = new Hono();
+    a.route("/optimizer", createOptimizerRouter({ flowRegistry: registry([FLOW_WITH_POOL]) }));
+    return a;
+  };
+
+  test("routing advice still works, GET and POST", async () => {
+    const get = await bare().request("/optimizer/routing-advice");
+    expect(get.status).toBe(200);
+    const post = await bare().request("/optimizer/routing-advice", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ definition: FLOW_WITH_POOL }),
+    });
+    expect(post.status).toBe(200);
+  });
+
+  test("the optimizer's own endpoints explain they are off (501)", async () => {
+    const res = await bare().request("/optimizer/advisable/runs");
+    expect(res.status).toBe(501);
+    expect(((await res.json()) as { error: { message: string } }).error.message).toContain("OPTIMIZER_ENABLED");
+  });
+});

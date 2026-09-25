@@ -38,7 +38,8 @@ import type { TraceAnalyzer } from "../graph/trace-analyzer.js";
 import type { OperatorAuthorizer } from "../middleware/operator-rbac.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import type { FlowRegistry } from "../graph/flow-parser.js";
-import type { LlmConfig } from "../types/flow.js";
+import { materializeFlowSource, validateFlowDefinition } from "../graph/flow-parser.js";
+import type { FlowDefinition, LlmConfig } from "../types/flow.js";
 import type { ModelQualityRegistry } from "../graph/model-quality.js";
 import {
   collectRoutingCandidates,
@@ -47,7 +48,11 @@ import {
 } from "../graph/routing-advisor.js";
 
 export interface OptimizerRouterDeps {
-  optimizer: FlowOptimizer;
+  /**
+   * The self-optimizing loop (OPTIMIZER_ENABLED). Optional: routing advice and
+   * trace analysis work without it; its own endpoints answer 501 then.
+   */
+  optimizer?: FlowOptimizer;
   operatorAuth?: OperatorAuthorizer;
   auditLog?: AuditLog;
   /**
@@ -62,6 +67,13 @@ export interface OptimizerRouterDeps {
   flowRegistry?: FlowRegistry;
   /** Global default model, used as a node's current model when it declares none. */
   defaultLlm?: LlmConfig;
+  /**
+   * Flows directory: resolves shortcuts, variables and includes of a
+   * source-form definition posted to `POST /optimizer/routing-advice`, the
+   * same way a flow file is loaded. Without it the posted definition must
+   * already be in runtime form.
+   */
+  flowsDir?: string;
   /**
    * Observed per-model judge quality. Without it recommendations are cost-only
    * and report `source: "unknown"`, which is reported honestly rather than
@@ -103,7 +115,20 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
     flowRegistry,
     defaultLlm,
     modelQuality,
+    flowsDir,
   } = deps;
+
+  const optimizerDisabled = (c: import("hono").Context) =>
+    c.json(
+      {
+        error: {
+          message:
+            "The flow optimizer is not enabled on this runtime (OPTIMIZER_ENABLED=true plus a replay store, a flow store and a generator/judge model).",
+          type: "not_configured",
+        },
+      },
+      501,
+    );
 
   // -------------------------------------------------------------------------
   // Auth middleware
@@ -156,15 +181,86 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
       );
     }
 
+    return c.json(
+      routingAdvice(
+        flowRegistry.list(),
+        c.req.query("minCostSavingPct"),
+        c.req.query("maxQualityLossPct"),
+      ),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /optimizer/routing-advice
+  //   The same advice for ONE definition that is not loaded (yet): the Studio
+  //   canvas or a draft, in source form (shortcuts, {{vars.*}}, includes are
+  //   resolved like a flow file). Nothing is registered or saved.
+  //
+  //   Body: { definition, minCostSavingPct?, maxQualityLossPct? }
+  // -------------------------------------------------------------------------
+  app.post("/routing-advice", async (c) => {
+    let body: unknown;
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json(
+        { error: { message: "Request body must be valid JSON.", type: "invalid_request_error" } },
+        400,
+      );
+    }
+    const b = (body ?? {}) as {
+      definition?: unknown;
+      minCostSavingPct?: unknown;
+      maxQualityLossPct?: unknown;
+    };
+    if (b.definition === null || typeof b.definition !== "object" || Array.isArray(b.definition)) {
+      return c.json(
+        {
+          error: {
+            message: "`definition` must be a flow definition object.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const materialized =
+      flowsDir !== undefined
+        ? materializeFlowSource(b.definition, flowsDir, "optimizer:definition")
+        : validateFlowDefinition(b.definition);
+    if (!materialized.success) {
+      return c.json(
+        {
+          error: {
+            message: `The definition is not a valid flow: ${materialized.error.reason}`,
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const raw = (v: unknown): string | undefined =>
+      typeof v === "number" || typeof v === "string" ? String(v) : undefined;
+    return c.json(
+      routingAdvice([materialized.data], raw(b.minCostSavingPct), raw(b.maxQualityLossPct)),
+    );
+  });
+
+  /** Advice for `flows`; thresholds as raw query/body values (percent, 0–100). */
+  function routingAdvice(
+    flows: readonly FlowDefinition[],
+    minCostRaw: string | undefined,
+    maxLossRaw: string | undefined,
+  ) {
     const num = (raw: string | undefined): number | undefined => {
       if (raw === undefined) return undefined;
       const n = Number(raw);
       return Number.isFinite(n) && n >= 0 && n <= 100 ? n : undefined;
     };
-    const minCostSavingPct = num(c.req.query("minCostSavingPct"));
-    const maxQualityLossPct = num(c.req.query("maxQualityLossPct"));
+    const minCostSavingPct = num(minCostRaw);
+    const maxQualityLossPct = num(maxLossRaw);
 
-    const nodes = collectRoutingCandidates(flowRegistry.list(), defaultLlm);
+    const nodes = collectRoutingCandidates(flows, defaultLlm);
     const recommendations = computeRoutingRecommendations({
       nodes,
       ...(minCostSavingPct !== undefined || maxQualityLossPct !== undefined
@@ -184,7 +280,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
         : {}),
     });
 
-    return c.json({
+    return {
       // Surfaced so an empty result is interpretable: zero candidates examined
       // means no flow declares a routing pool, which is different from "no
       // cheaper model clears the quality bar".
@@ -200,8 +296,8 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
           )}`,
         }),
       })),
-    });
-  });
+    };
+  }
 
   // -------------------------------------------------------------------------
   // POST /optimizer/analyze/:executionId
@@ -282,6 +378,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
   // POST /optimizer/:flowId/run
   // -------------------------------------------------------------------------
   app.post("/:flowId/run", async (c) => {
+    if (optimizer === undefined) return optimizerDisabled(c);
     const flowId = c.req.param("flowId");
     let body: Partial<OptimizerConfig> & { async?: boolean } = {};
     try {
@@ -405,6 +502,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
   // GET /optimizer/:flowId/runs
   // -------------------------------------------------------------------------
   app.get("/:flowId/runs", (c) => {
+    if (optimizer === undefined) return optimizerDisabled(c);
     const flowId = c.req.param("flowId");
     const runs = optimizer.listRuns(flowId);
     return c.json({ runs });
@@ -414,6 +512,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
   // GET /optimizer/runs/:runId
   // -------------------------------------------------------------------------
   app.get("/runs/:runId", (c) => {
+    if (optimizer === undefined) return optimizerDisabled(c);
     const runId = c.req.param("runId");
     const run = optimizer.getRun(runId);
     if (run === undefined) {
@@ -429,6 +528,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
   // POST /optimizer/runs/:runId/promote
   // -------------------------------------------------------------------------
   app.post("/runs/:runId/promote", async (c) => {
+    if (optimizer === undefined) return optimizerDisabled(c);
     const runId = c.req.param("runId");
     let variantLabel: string | undefined;
     try {

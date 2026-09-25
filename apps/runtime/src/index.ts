@@ -1806,17 +1806,21 @@ if (import.meta.main) {
       }),
     );
   }
-  if (flowOptimizer !== undefined) {
+  // Always mounted: routing advice (Studio "Optimize") and trace analysis don't
+  // need the self-optimizing loop; its own endpoints answer 501 without it.
+  {
     const { createOptimizerRouter } = await import("./routes/optimizer.js");
     app.route(
       "/optimizer",
       createOptimizerRouter({
-        optimizer: flowOptimizer,
+        ...(flowOptimizer !== undefined ? { optimizer: flowOptimizer } : {}),
         operatorAuth,
         auditLog,
         ...(traceAnalyzer !== undefined ? { traceAnalyzer } : {}),
         // Enables GET /optimizer/routing-advice (cost/quality model advice).
         flowRegistry,
+        // POST /optimizer/routing-advice resolves a canvas definition like a flow file.
+        flowsDir: config.flowsDir,
         ...(config.defaultLlm !== undefined
           ? { defaultLlm: config.defaultLlm }
           : {}),
