@@ -2331,6 +2331,7 @@ export function StudioBuilder({
               {...(catalog ? { catalog } : {})}
               nodeIds={nodeIdList}
               onFocusField={setFocusedField}
+              authToken={token ?? undefined}
               onEdgeChange={updateEdge}
               onDeleteEdge={deleteEdge}
               emptyContent={

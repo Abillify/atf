@@ -452,7 +452,10 @@ Control is a Next.js application for operating the platform.
   begins and ends and what a request brings in and returns; the nodes of a sub-flow file drawn in
   a labelled box, with a palette to extract a selection into `subflows/<name>.yaml` or place an
   existing file on the canvas; a settings form per node type generated from Runtime's node type
-  catalog (`GET /flows/node-types`) with the full node type reference beside it; a variables table
+  catalog (`GET /flows/node-types`) with the full node type reference beside it; an editor for the
+  prompt file behind a `#[[file:prompts/….md]]` reference, so the prompt text itself is editable
+  and not just the reference (`GET /flows/prompts/content`, `POST /flows/prompts/write`, both
+  pinned to the flow directory's `prompts/` subtree); a variables table
   (typed values, usage counts, renaming that rewrites references); an expression builder
   behind every ƒx button with a variable browser, operators, a live result from Runtime, values
   from a pinned run, and a copilot for the field; drafts, publish, and diff against the live

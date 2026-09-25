@@ -14,12 +14,14 @@ import { Button } from "../lib/ui";
 import type { NodeTypeCatalog } from "../lib/node-types";
 import { ConfigForm, ListInput } from "./ConfigForm";
 import { FormulaInput, FormulaTextarea } from "./FormulaEditor";
+import { PromptFileEditor } from "./PromptFileEditor";
 import {
   type EvaluatedVariables,
   VariablesEditor,
   countVarUsages,
   varRefRe,
 } from "./VariablesEditor";
+import type { TopLevelField } from "../lib/node-types";
 import {
   Field,
   Section,
@@ -69,6 +71,12 @@ export interface NodePropertyPanelProps {
   nodeIds?: string[];
   /** A settings field got focus — the docs panel scrolls to it. */
   onFocusField?: (key: string) => void;
+  /**
+   * Operator token for the prompt-file endpoints (`/flows/prompts/*`). Without
+   * it the prompt files behind `#[[file:…]]` are still listed, but loading them
+   * fails on a runtime that requires authentication.
+   */
+  authToken?: string | undefined;
 }
 
 const PROVIDERS: Provider[] = [
@@ -81,6 +89,27 @@ const PROVIDERS: Provider[] = [
 ];
 
 const REASONING_EFFORTS = ["", "none", "minimal", "low", "medium", "high"];
+
+/**
+ * Shown when a node carries a field its type does not read. The field stays
+ * editable on purpose: hiding it would leave a value in the file that looks
+ * effective and never is, with no way to notice or delete it from the Studio.
+ */
+function UnreadFieldNotice({
+  field,
+  type,
+}: {
+  field: string;
+  type: string;
+}): React.JSX.Element {
+  return (
+    <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-400">
+      A <span className="font-mono">{type}</span> node does not read{" "}
+      <span className="font-mono">{field}</span>. It is set here but has no
+      effect — clear it unless you are about to change the node type.
+    </p>
+  );
+}
 
 // ---------------------------------------------------------------------------
 // Flow-level settings (shown when nothing is selected)
@@ -464,6 +493,7 @@ export function NodePropertyPanel({
   origin,
   originOptions = [],
   onOriginChange,
+  authToken,
 }: NodePropertyPanelProps): React.JSX.Element {
   const [tab, setTab] = useState<"form" | "json">("form");
 
@@ -532,14 +562,41 @@ export function NodePropertyPanel({
       parameters: compact({ ...node.llm?.parameters, [key]: value }),
     });
 
-  const showLlm =
-    node.llm !== undefined ||
-    node.type === "llm" ||
-    node.type === "classifier";
-  const showPrompt =
-    showLlm || node.systemPrompt !== undefined || node.type === "agent-harness";
-  const showTools =
-    node.tools !== undefined || node.type === "llm" || node.type === "tool";
+  // Which node fields this type actually reads comes from the runtime's own
+  // catalog (`topLevel`), so the form cannot drift from the engine the way a
+  // second hand-maintained list here would. A field the type ignores is hidden
+  // — unless the node carries a value for it, which must stay visible so it can
+  // be seen and removed instead of lingering unread in the file.
+  const fieldUsage = (key: string): TopLevelField["usage"] | undefined =>
+    typeDoc?.topLevel.find((f) => f.key === key)?.usage;
+  /** @param fallback Visibility when no catalog is loaded (offline/older runtime). */
+  const usesField = (key: string, fallback: boolean): boolean => {
+    if (node[key as keyof FlowNode] !== undefined) return true;
+    const usage = fieldUsage(key);
+    if (usage !== undefined) return usage !== "ignored";
+    // The catalog describes this type but does not list the field at all.
+    return typeDoc === undefined ? fallback : false;
+  };
+  /** Set on the node although this type does not read it. */
+  const isUnread = (key: string): boolean =>
+    node[key as keyof FlowNode] !== undefined &&
+    typeDoc !== undefined &&
+    (fieldUsage(key) ?? "ignored") === "ignored";
+
+  const showLlm = usesField(
+    "llm",
+    node.type === "llm" || node.type === "classifier",
+  );
+  const showPrompt = usesField(
+    "systemPrompt",
+    showLlm || node.type === "agent-harness",
+  );
+  const showTools = usesField(
+    "tools",
+    node.type === "llm" || node.type === "tool",
+  );
+  const showPriority = usesField("priority", true);
+  const showOverrides = usesField("overrides", false);
   const params = node.llm?.parameters ?? {};
   const knownParams = new Set([
     "temperature",
@@ -628,19 +685,33 @@ export function NodePropertyPanel({
               onChange={(v) => set({ label: v || undefined })}
             />
           </Field>
-          <Field label="Priority" hint="Queue priority; higher runs first.">
-            <input
-              type="number"
-              className={inputCls}
-              value={node.priority ?? ""}
-              onChange={(e) =>
-                set({ priority: numberOrUndefined(e.target.value) })
-              }
-            />
-          </Field>
+          {/* Only `llm` and `classifier` node priorities feed the queue
+              priority; on any other type the number is read by nobody. */}
+          {showPriority && (
+            <>
+              <Field label="Priority" hint="Queue priority; higher runs first.">
+                <input
+                  type="number"
+                  className={inputCls}
+                  value={node.priority ?? ""}
+                  onChange={(e) =>
+                    set({ priority: numberOrUndefined(e.target.value) })
+                  }
+                />
+              </Field>
+              {/* Outside <Field>: its children sit inside the <label>, so a
+                  notice in there would become part of the accessible name. */}
+              {isUnread("priority") && (
+                <UnreadFieldNotice field="priority" type={node.type} />
+              )}
+            </>
+          )}
 
           {showLlm && (
             <Section title="Model">
+              {isUnread("llm") && (
+                <UnreadFieldNotice field="llm" type={node.type} />
+              )}
               <ModelSourceFields
                 key={node.id}
                 node={node}
@@ -724,6 +795,9 @@ export function NodePropertyPanel({
 
           {showPrompt && (
             <Section title="System prompt">
+              {isUnread("systemPrompt") && (
+                <UnreadFieldNotice field="systemPrompt" type={node.type} />
+              )}
               <FormulaTextarea
                 ariaLabel="System prompt"
                 title={`System prompt — ${node.id}`}
@@ -733,11 +807,22 @@ export function NodePropertyPanel({
                 onFocus={() => onFocusField?.("systemPrompt")}
                 onChange={(v) => set({ systemPrompt: v || undefined })}
               />
+              {/* `#[[file:prompts/x.md]]` keeps the prompt text out of the flow
+                  file — without this the field above shows a reference and the
+                  wording itself would not be editable in the Studio at all. */}
+              <PromptFileEditor
+                key={`${node.id}-prompt-files`}
+                systemPrompt={node.systemPrompt}
+                token={authToken}
+              />
             </Section>
           )}
 
           {showTools && (
             <Section title={`Tools (${node.tools?.length ?? 0})`}>
+              {isUnread("tools") && (
+                <UnreadFieldNotice field="tools" type={node.type} />
+              )}
               <Field
                 label="MCP tools"
                 hint={
@@ -869,8 +954,14 @@ export function NodePropertyPanel({
             )}
           </Section>
 
-          {node.overrides !== undefined && (
+          {showOverrides && (
             <Section title="Overrides" defaultOpen={false}>
+              {/* Only `llm` and `tool` nodes consult `overrides`
+                  (graph-engine/node-config.ts). A classifier in particular
+                  reads llm/systemPrompt directly and skips them. */}
+              {isUnread("overrides") && (
+                <UnreadFieldNotice field="overrides" type={node.type} />
+              )}
               <JsonEditor
                 key={`${node.id}-overrides`}
                 label="Overrides"
