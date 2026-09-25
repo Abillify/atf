@@ -2159,6 +2159,7 @@ export function StudioBuilder({
           liveAvailable={
             flow !== null && (flow.source === "file" || flow.status === "published")
           }
+          canvasIsLive={!dirty && (loadedKind.kind === "file" || loadedKind.kind === "published")}
           onValidationFailed={(report) => {
             setValidation(report);
             setProblemsOpen(true);

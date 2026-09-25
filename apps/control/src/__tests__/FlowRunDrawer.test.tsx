@@ -56,6 +56,20 @@ describe("FlowRunDrawer", () => {
     expect(run.stream.mock.calls[0]![1]).toBe("f@studio-1");
   });
 
+  test("an unchanged canvas runs the live flow under its real id", async () => {
+    renderDrawer({ canvasIsLive: true });
+    await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
+    expect(run.register).not.toHaveBeenCalled();
+    expect(run.stream.mock.calls[0]![1]).toBe("f");
+  });
+
+  test("an unchanged canvas still registers a test run when the flow isn't live", async () => {
+    run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
+    renderDrawer({ canvasIsLive: true, liveAvailable: false });
+    await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
+    expect(run.stream.mock.calls[0]![1]).toBe("f@studio-1");
+  });
+
   test("falls back to the live flow on a runtime without test runs, and says so", async () => {
     run.register.mockResolvedValue({ ok: false, unsupported: true });
     renderDrawer();

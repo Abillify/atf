@@ -57,6 +57,13 @@ export interface FlowRunDrawerProps {
   getDefinition?: () => FlowDefinition;
   /** True when the flow exists in the runtime, i.e. "Live" is runnable. */
   liveAvailable?: boolean;
+  /**
+   * The canvas is unchanged from the live version (no edits since loading a
+   * file or published flow). A "Canvas" run then runs the live flow under its
+   * real id, so it counts as flow traffic (Autopilot/Optimizer snapshots)
+   * instead of a throwaway `<id>@studio-…` test run.
+   */
+  canvasIsLive?: boolean;
   /** Canvas run refused by validation — lets the builder open its Problems list. */
   onValidationFailed?: (report: FlowValidationReport) => void;
   /**
@@ -94,6 +101,7 @@ export function FlowRunDrawer({
   onLiveStatesChange,
   getDefinition,
   liveAvailable = true,
+  canvasIsLive = false,
   onValidationFailed,
   onSaveEvalCase,
   onDeleteEvalCase,
@@ -239,7 +247,7 @@ export function FlowRunDrawer({
     abortRef.current = controller;
     try {
       let model = flowId;
-      if (target === "canvas" && getDefinition) {
+      if (target === "canvas" && getDefinition && !(canvasIsLive && liveAvailable)) {
         const reg = await registerTestRun(token ?? null, getDefinition());
         if (reg.ok) {
           model = reg.model;
@@ -278,7 +286,7 @@ export function FlowRunDrawer({
       setIsRunning(false);
       if (abortRef.current === controller) abortRef.current = null;
     }
-  }, [flowId, prompt, token, target, getDefinition, liveAvailable, onValidationFailed, reportStates, detach]);
+  }, [flowId, prompt, token, target, getDefinition, liveAvailable, canvasIsLive, onValidationFailed, reportStates, detach]);
 
   const handleStop = (): void => {
     abortRef.current?.abort();
