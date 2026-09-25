@@ -232,6 +232,40 @@ function resolveIncludeWritePath(flowsDir: string, relPath: string): string {
 }
 
 /**
+ * A prompt include path as it may appear in `#[[file:...]]` and be edited via
+ * `/flows/prompts/*`: strictly inside `prompts/`, a Markdown/text file, no
+ * traversal. Sub-directories under `prompts/` are allowed (flows organise
+ * prompts per route), the `..` check below is what keeps that safe.
+ */
+const PROMPT_FILE_RE = /^prompts\/(?:[\w.-]+\/)*[\w.-]+\.(?:md|markdown|txt)$/i;
+
+/** Human-readable reason a prompt path was rejected, or null when it is fine. */
+function promptPathProblem(relPath: string): string | null {
+  if (relPath.length === 0) return "Field 'path' is required.";
+  if (relPath.length > 512) return "Field 'path' is too long.";
+  if (relPath.includes("..") || relPath.includes("\0") || path.isAbsolute(relPath)) {
+    return `Illegal prompt path: "${relPath}" contains forbidden segments.`;
+  }
+  if (!PROMPT_FILE_RE.test(relPath)) {
+    return "Field 'path' must name a Markdown file under prompts/ (e.g. prompts/researcher.md).";
+  }
+  return null;
+}
+
+/**
+ * Resolves a prompt include path (`prompts/x.md`) to an absolute path strictly
+ * inside `baseDir`. Same realpath prefix check as
+ * {@link resolveIncludeWritePath}; the caller is expected to have run
+ * {@link promptPathProblem} first, which is what pins the file to `prompts/`.
+ *
+ * @throws `Error` with `code === "PATH_TRAVERSAL"` when the resolved path
+ *         escapes `baseDir`.
+ */
+function resolvePromptFilePath(baseDir: string, relPath: string): string {
+  return resolveIncludeWritePath(baseDir, relPath);
+}
+
+/**
  * Reads `metadata.$includeOrigins` (`nodeId -> relPath`) off a raw, already
  * schema-validated flow definition. Returns `undefined` when absent/empty —
  * the common case for the overwhelming majority of flows that don't use
@@ -905,6 +939,243 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     dbSource?.refresh?.();
 
     return ctx.json({ hash });
+  });
+
+  // -------------------------------------------------------------------------
+  // Prompt files — the content behind `#[[file:prompts/x.md]]`
+  //
+  // Most system prompts don't live in the flow YAML at all, they are a
+  // reference the parser expands on load (see flow-parser/normalize.ts). Until
+  // these two routes existed the Studio could show the reference string but not
+  // the prompt itself, which meant the actual prompt text of nearly every flow
+  // was not editable in the UI.
+  //
+  //   GET  /flows/prompts/content?path=prompts/x.md → { path, content, hash }
+  //   POST /flows/prompts/write { path, content, baseHash? } → { hash, path }
+  //
+  // Reading uses `sourceDir`, writing requires `flowsDir` (the writable mount).
+  // Both are pinned to the flow directory's `prompts/` subtree.
+  // Static paths: registered before GET /flows/:id.
+  // -------------------------------------------------------------------------
+  router.get("/flows/prompts/content", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    const rel = (ctx.req.query("path") ?? "").trim();
+    const problem = promptPathProblem(rel);
+    if (problem !== null) {
+      return ctx.json(
+        { error: { message: problem, type: "invalid_request_error" } },
+        400,
+      );
+    }
+    if (sourceDir === undefined) {
+      return ctx.json(
+        {
+          error: {
+            message:
+              "Prompt files are not available: configure FLOWS_DIR to enable this endpoint.",
+            type: "not_implemented_error",
+          },
+        },
+        501,
+      );
+    }
+    let absPath: string;
+    try {
+      absPath = resolvePromptFilePath(sourceDir, rel);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "PATH_TRAVERSAL") {
+        return ctx.json(
+          {
+            error: {
+              message: `Path traversal rejected: ${e.message}`,
+              type: "invalid_request_error",
+            },
+          },
+          400,
+        );
+      }
+      throw err;
+    }
+    let content: string;
+    try {
+      content = await fs.promises.readFile(absPath, "utf-8");
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "ENOENT" || e.code === "EISDIR") {
+        return ctx.json(
+          {
+            error: {
+              message: `Prompt file ${rel} not found.`,
+              type: "not_found_error",
+            },
+          },
+          404,
+        );
+      }
+      throw err;
+    }
+    return ctx.json({
+      path: rel,
+      content,
+      hash: sha256Hex(content),
+      // The editor disables saving up front on a read-only mount instead of
+      // letting the operator type a change and then fail on save.
+      writable: flowsDirWritable(),
+    });
+  });
+
+  router.post("/flows/prompts/write", async (ctx) => {
+    // Same authorization shape as POST /flows/write and /flows/subflows/write:
+    // a prompt file is flow behaviour, so it needs flows:write.
+    const actor = await guard(ctx, "flows:write");
+    if (!actor) {
+      const readActor = await guard(ctx, "flows:read");
+      if (readActor !== null) {
+        return ctx.json(
+          {
+            error: {
+              message:
+                "Insufficient role: prompt writing requires operator or admin role.",
+              type: "authorization_error",
+            },
+          },
+          403,
+        );
+      }
+      return unauthorized(ctx);
+    }
+    if (flowsDir === undefined) return requireFlowsDir(ctx);
+
+    let body: unknown;
+    try {
+      body = await ctx.req.json();
+    } catch {
+      return ctx.json(
+        {
+          error: {
+            message: "Request body must be valid JSON.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const req = (body ?? {}) as {
+      path?: unknown;
+      content?: unknown;
+      baseHash?: unknown;
+    };
+    const rel = typeof req.path === "string" ? req.path.trim() : "";
+    const problem = promptPathProblem(rel);
+    if (problem !== null) {
+      return ctx.json(
+        { error: { message: problem, type: "invalid_request_error" } },
+        400,
+      );
+    }
+    if (typeof req.content !== "string") {
+      return ctx.json(
+        {
+          error: {
+            message: "Field 'content' (string) is required.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    // A prompt is text, not a definition — there is nothing to schema-validate.
+    // The one guard that matters is size, so a runaway paste cannot fill the
+    // volume the flows are served from.
+    if (req.content.length > 1_000_000) {
+      return ctx.json(
+        {
+          error: {
+            message: "Prompt content exceeds the 1,000,000 character limit.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+
+    let targetPath: string;
+    try {
+      targetPath = resolvePromptFilePath(flowsDir, rel);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "PATH_TRAVERSAL") {
+        return ctx.json(
+          {
+            error: {
+              message: `Path traversal rejected: ${e.message}`,
+              type: "invalid_request_error",
+            },
+          },
+          400,
+        );
+      }
+      throw err;
+    }
+
+    // Conflict detection, same contract as /flows/write (Req. 14.6): a
+    // baseHash that no longer matches the file means somebody else edited the
+    // prompt since this editor loaded it.
+    let currentContent: string | null = null;
+    try {
+      currentContent = await fs.promises.readFile(targetPath, "utf-8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    if (typeof req.baseHash === "string" && currentContent !== null) {
+      const currentHash = sha256Hex(currentContent);
+      if (currentHash !== req.baseHash) {
+        return ctx.json(
+          {
+            error: {
+              message:
+                "Conflict: the prompt file has been modified since your last read. " +
+                "Fetch the latest version and re-apply your changes.",
+              type: "conflict_error",
+              currentHash,
+            },
+          },
+          409,
+        );
+      }
+    }
+    // Creating a prompt file is a deliberate act (a reference to a file that
+    // does not exist resolves to an empty prompt), so it is allowed — but only
+    // when the caller says so, to catch a typo in the path.
+    if (currentContent === null && req.baseHash !== undefined) {
+      return ctx.json(
+        {
+          error: {
+            message: `Prompt file ${rel} no longer exists; reload before saving.`,
+            type: "conflict_error",
+          },
+        },
+        409,
+      );
+    }
+
+    await atomicWriteFile(targetPath, req.content);
+    const hash = sha256Hex(req.content);
+
+    auditLog?.record({
+      actor: actor.name,
+      role: actor.role,
+      action: "flows.prompts.write",
+      target: rel,
+      details: {
+        path: targetPath,
+        chars: req.content.length,
+        created: currentContent === null,
+      },
+    });
+
+    return ctx.json({ path: rel, hash, created: currentContent === null });
   });
 
   // -------------------------------------------------------------------------
