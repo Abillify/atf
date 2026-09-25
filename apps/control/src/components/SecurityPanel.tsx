@@ -4,6 +4,7 @@
 
 import React, { useState } from "react";
 import { Badge, Button } from "../lib/ui";
+import { FlowPicker } from "./FlowPicker";
 import type {
   RedTeamRunSummary,
   RedTeamRun,
@@ -225,19 +226,13 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
 
           {/* Trigger a run */}
           <div className="flex items-center gap-2 rounded-lg border border-border bg-card p-4">
-            <select
+            <FlowPicker
+              flows={flows}
               value={selectedFlow}
-              onChange={(e) => setSelectedFlow(e.target.value)}
-              aria-label="Flow to red-team"
-              className="rounded border border-border px-2 py-1.5 text-sm"
-            >
-              <option value="">Select a flow…</option>
-              {flows.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name} ({f.id})
-                </option>
-              ))}
-            </select>
+              onChange={setSelectedFlow}
+              ariaLabel="Flow to red-team"
+              placeholder="Select a flow…"
+            />
             <Button
               variant="destructive"
               disabled={selectedFlow === "" || isRunning || !redTeamEnabled}

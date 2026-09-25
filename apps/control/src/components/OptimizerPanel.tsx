@@ -4,6 +4,7 @@
 
 import React, { useState } from "react";
 import { Badge, Button } from "../lib/ui";
+import { FlowPicker } from "./FlowPicker";
 import type {
   OptimizationRun,
   OptimizationRunStatus,
@@ -437,20 +438,14 @@ export function OptimizerPanel({
       </div>
 
       <div className="flex items-center gap-2">
-        <label className="text-xs text-muted-foreground">Flow</label>
-        <select
+        <span className="text-xs text-muted-foreground">Flow</span>
+        <FlowPicker
+          flows={flows}
           value={selectedFlowId}
-          onChange={(e) => onSelectFlow(e.target.value)}
-          aria-label="Flow to optimize"
-          className="rounded border border-border px-2 py-1 text-sm"
-        >
-          <option value="">— select a flow —</option>
-          {flows.map((f) => (
-            <option key={f.id} value={f.id}>
-              {f.name} ({f.id})
-            </option>
-          ))}
-        </select>
+          onChange={onSelectFlow}
+          ariaLabel="Flow to optimize"
+          placeholder="— select a flow —"
+        />
       </div>
 
       {selectedFlowId !== "" && (

@@ -351,6 +351,9 @@ export default function StudioPage() {
             value={selectedFlowId}
             onChange={setSelectedFlowId}
             loading={flowsLoading}
+            emptyOption="+ New flow"
+            placeholder="— new flow —"
+            ariaLabel="Select flow to edit in Builder"
           />
         </div>
 

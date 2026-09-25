@@ -29,6 +29,8 @@ export interface ExecutionPickerItem {
 export interface ExecutionPickerProps {
   items: ExecutionPickerItem[];
   flowOptions?: string[];
+  /** Flow names by id, shown and searchable in the flow filters. */
+  flowNames?: ReadonlyMap<string, string>;
   /** Flow ids that must be shown. An empty list includes every flow. */
   includeFlows?: string[];
   /** Flow ids that must be hidden (takes precedence over inclusion). */
@@ -74,6 +76,7 @@ function formatDuration(ms: number | undefined): string | null {
 export function ExecutionPicker({
   items,
   flowOptions,
+  flowNames,
   includeFlows = [],
   excludeFlows = [],
   onIncludeFlowsChange,
@@ -114,6 +117,7 @@ export function ExecutionPicker({
             <FlowMultiSelect
               label="Flows einschließen"
               options={flowOptions ?? []}
+              {...(flowNames !== undefined ? { names: flowNames } : {})}
               value={includeFlows}
               onChange={onIncludeFlowsChange}
             />
@@ -122,6 +126,7 @@ export function ExecutionPicker({
             <FlowMultiSelect
               label="Flows ausschließen"
               options={flowOptions ?? []}
+              {...(flowNames !== undefined ? { names: flowNames } : {})}
               value={excludeFlows}
               onChange={onExcludeFlowsChange}
             />

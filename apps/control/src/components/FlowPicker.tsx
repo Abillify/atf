@@ -3,50 +3,85 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * FlowPicker — searchable flow selector for the Studio header.
+ * FlowPicker — the searchable flow selector used wherever one flow is chosen
+ * (Studio header, Optimizer, Autopilot, Security, metrics filter).
  *
  * A native <select> with two dozen long German flow names is hard to scan; this
- * filters by name or id as you type. Keyboard: ↑/↓ to move, Enter to pick,
- * Escape to close. The first entry starts a new flow.
+ * lists flows alphabetically and filters by name or id as you type. Keyboard:
+ * ↑/↓ to move, Enter to pick, Escape to close. An optional first entry stands
+ * for the empty value "" — "+ New flow" in the Studio, "All flows" in a filter.
  */
 
 import type React from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
-import type { FlowListEntry } from "../types/flow";
+import { sortFlowsByName } from "../lib/flow-sort";
 
-const NEW_FLOW = "";
+const EMPTY = "";
+
+/** What the picker needs of a flow; `source`/`hasDraft` add the Studio's badges. */
+export interface FlowPickerFlow {
+  id: string;
+  name: string;
+  source?: string;
+  hasDraft?: boolean;
+}
+
+export interface FlowPickerProps {
+  flows: FlowPickerFlow[];
+  /** Selected flow id, or "" for none / the empty option. */
+  value: string;
+  onChange: (flowId: string) => void;
+  loading?: boolean;
+  /** Label of a first entry that picks "" (e.g. "+ New flow", "All flows"). Omitted: no such entry. */
+  emptyOption?: string;
+  /** Button text while `value` is "". */
+  placeholder?: string;
+  /** Accessible name of the button. */
+  ariaLabel?: string;
+  /** Width classes of the button (the list keeps at least 26rem). */
+  className?: string;
+  disabled?: boolean;
+}
 
 export function FlowPicker({
   flows,
   value,
   onChange,
   loading = false,
-}: {
-  flows: FlowListEntry[];
-  /** Selected flow id, or "" for a new flow. */
-  value: string;
-  onChange: (flowId: string) => void;
-  loading?: boolean;
-}): React.JSX.Element {
+  emptyOption,
+  placeholder = "— select flow —",
+  ariaLabel = "Select flow",
+  className = "w-[26rem] max-w-full",
+  disabled = false,
+}: FlowPickerProps): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Several pickers can share a page — keep their option ids apart.
+  const uid = useId();
+  const listId = `flow-picker-list${uid}`;
 
   const selected = flows.find((f) => f.id === value);
 
+  // Alphabetical by name (then id), case-insensitive, numbers in order.
+  const sorted = useMemo(() => sortFlowsByName(flows), [flows]);
+
   const options = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const matches = flows.filter(
+    const matches = sorted.filter(
       (f) => !q || f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q),
     );
     return [
-      { id: NEW_FLOW, name: "New flow", entry: undefined as FlowListEntry | undefined },
-      ...matches.map((f) => ({ id: f.id, name: f.name, entry: f })),
+      ...(emptyOption !== undefined
+        ? [{ id: EMPTY, name: emptyOption, entry: undefined as FlowPickerFlow | undefined }]
+        : []),
+      ...matches.map((f) => ({ id: f.id, name: f.name, entry: f as FlowPickerFlow | undefined })),
     ];
-  }, [flows, query]);
+  }, [sorted, query, emptyOption]);
+  const offset = emptyOption !== undefined ? 1 : 0;
 
   useEffect(() => {
     if (!open) return;
@@ -59,8 +94,8 @@ export function FlowPicker({
   }, [open]);
 
   const openPicker = (): void => {
-    // Start on the current selection (index 0 is "New flow").
-    setActive(Math.max(0, flows.findIndex((f) => f.id === value) + 1));
+    // Start on the current selection (after the empty entry, when there is one).
+    setActive(Math.max(0, sorted.findIndex((f) => f.id === value) + offset));
     setOpen(true);
   };
 
@@ -74,11 +109,12 @@ export function FlowPicker({
     <div ref={rootRef} className="relative min-w-0">
       <button
         type="button"
+        disabled={disabled}
         onClick={() => (open ? setOpen(false) : openPicker())}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label="Select flow to edit in Builder"
-        className="flex w-[26rem] max-w-full items-center gap-2 rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-muted"
+        aria-label={ariaLabel}
+        className={`flex items-center gap-2 rounded border border-border bg-card px-2 py-1 text-left text-xs hover:bg-muted disabled:opacity-50 ${className}`}
       >
         <span className="min-w-0 flex-1 truncate">
           {selected ? (
@@ -88,7 +124,7 @@ export function FlowPicker({
           ) : value ? (
             <span className="font-mono">{value}</span>
           ) : (
-            <span className="text-muted-foreground">— new flow —</span>
+            <span className="text-muted-foreground">{placeholder}</span>
           )}
         </span>
         {loading && <span className="text-muted-foreground">loading…</span>}
@@ -104,7 +140,8 @@ export function FlowPicker({
               value={query}
               onChange={(e) => {
                 setQuery(e.target.value);
-                setActive(0);
+                // While searching, Enter takes the first match, not the empty entry.
+                setActive(e.target.value.trim() ? offset : 0);
               }}
               onKeyDown={(e) => {
                 if (e.key === "ArrowDown") {
@@ -125,16 +162,16 @@ export function FlowPicker({
               aria-label="Search flows"
               role="combobox"
               aria-expanded
-              aria-controls="flow-picker-list"
-              aria-activedescendant={`flow-option-${active}`}
+              aria-controls={listId}
+              aria-activedescendant={`${listId}-${active}`}
               className="min-w-0 flex-1 bg-transparent text-xs outline-none"
             />
           </div>
-          <div id="flow-picker-list" role="listbox" className="max-h-80 overflow-auto py-1">
+          <div id={listId} role="listbox" className="max-h-80 overflow-auto py-1">
             {options.map((o, i) => (
               <div
-                key={o.id || "__new"}
-                id={`flow-option-${i}`}
+                key={o.id || "__empty"}
+                id={`${listId}-${i}`}
                 role="option"
                 tabIndex={-1}
                 aria-selected={o.id === value}
@@ -154,16 +191,18 @@ export function FlowPicker({
                     {o.entry.hasDraft && (
                       <span className="shrink-0 rounded bg-amber-50 px-1 text-[10px] text-amber-700">draft</span>
                     )}
-                    <span className="shrink-0 rounded bg-muted px-1 text-[10px] uppercase text-muted-foreground">
-                      {o.entry.source}
-                    </span>
+                    {o.entry.source !== undefined && (
+                      <span className="shrink-0 rounded bg-muted px-1 text-[10px] uppercase text-muted-foreground">
+                        {o.entry.source}
+                      </span>
+                    )}
                   </>
                 ) : (
-                  <span className="text-muted-foreground">+ New flow</span>
+                  <span className="text-muted-foreground">{o.name}</span>
                 )}
               </div>
             ))}
-            {options.length === 1 && query && (
+            {options.length === offset && query && (
               <p className="px-2 py-2 text-xs text-muted-foreground">No flow matches “{query}”.</p>
             )}
           </div>

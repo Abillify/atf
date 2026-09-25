@@ -19,6 +19,7 @@ import {
 import type { NodeExecutionEvent } from "../types/monitoring";
 import type { ExecutionPickerItem } from "./ExecutionPicker";
 import { Button } from "../lib/ui";
+import { FlowPicker } from "./FlowPicker";
 
 export interface MetricsSidebarProps {
   events: NodeExecutionEvent[];
@@ -26,6 +27,8 @@ export interface MetricsSidebarProps {
   executions?: ExecutionPickerItem[];
   /** When true, renders without the aside wrapper (embedded inside another panel). */
   embedded?: boolean;
+  /** Flow names by id, for the flow filter (falls back to the id). */
+  flowNames?: ReadonlyMap<string, string>;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,6 +289,7 @@ export function MetricsSidebar({
   events,
   executions = [],
   embedded = false,
+  flowNames,
 }: MetricsSidebarProps): React.JSX.Element {
   const [timeRange, setTimeRange] = useState<TimeRange>("1h");
   const [flowFilter, setFlowFilter] = useState<string | null>(null);
@@ -383,19 +387,17 @@ export function MetricsSidebar({
 
         {/* Flow filter */}
         {flowIds.length > 1 && (
-          <select
-            value={flowFilter ?? "__all__"}
-            onChange={(e) =>
-              setFlowFilter(e.target.value === "__all__" ? null : e.target.value)
-            }
-            aria-label="Filter metrics by flow"
-            className="mb-1 w-full rounded border border-border bg-card px-1.5 py-0.5 text-[10px] text-muted-foreground"
-          >
-            <option value="__all__">All Flows</option>
-            {flowIds.map((id) => (
-              <option key={id} value={id}>{id}</option>
-            ))}
-          </select>
+          <div className="mb-1">
+            <FlowPicker
+              flows={flowIds.map((id) => ({ id, name: flowNames?.get(id) ?? id }))}
+              value={flowFilter ?? ""}
+              onChange={(id) => setFlowFilter(id === "" ? null : id)}
+              emptyOption="All flows"
+              placeholder="All flows"
+              ariaLabel="Filter metrics by flow"
+              className="w-full"
+            />
+          </div>
         )}
 
         {tsData.length > 0 ? (

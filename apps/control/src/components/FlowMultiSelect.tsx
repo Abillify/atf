@@ -2,22 +2,38 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
+import { useMemo, useState } from "react";
+import { sortFlowsByName } from "../lib/flow-sort";
 
 export interface FlowMultiSelectProps {
   label: string;
+  /** Flow ids. */
   options: string[];
   value: string[];
   onChange: (flows: string[]) => void;
+  /** Flow names by id — listed and searched by name when known. */
+  names?: ReadonlyMap<string, string>;
 }
 
-/** Compact checkbox-based multi-select used by Live Graph and History. */
+/**
+ * Compact checkbox-based multi-select used by Live Graph, History and Eval —
+ * sorted and searchable by name or id like the single-flow FlowPicker.
+ */
 export function FlowMultiSelect({
   label,
   options,
   value,
   onChange,
+  names,
 }: FlowMultiSelectProps): React.JSX.Element {
+  const [query, setQuery] = useState("");
+  const listed = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return sortFlowsByName(options.map((id) => ({ id, name: names?.get(id) ?? id }))).filter(
+      (f) => !q || f.name.toLowerCase().includes(q) || f.id.toLowerCase().includes(q),
+    );
+  }, [options, names, query]);
   const selected = new Set(value);
   const toggle = (flow: string): void => {
     onChange(
@@ -33,17 +49,31 @@ export function FlowMultiSelect({
         {label}{value.length > 0 ? ` (${value.length})` : ""}
       </summary>
       <div className="absolute left-0 z-30 mt-1 max-h-56 min-w-52 overflow-y-auto rounded-md border border-border bg-card p-2 shadow-lg">
+        {options.length > 0 && (
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search by name or id…"
+            aria-label={`${label}: search flows`}
+            className="mb-1 w-full rounded border border-border bg-background px-1.5 py-1 text-xs outline-none"
+          />
+        )}
         {options.length === 0 ? (
           <p className="px-1 py-2 text-xs text-muted-foreground">Keine Flows verfügbar</p>
+        ) : listed.length === 0 ? (
+          <p className="px-1 py-2 text-xs text-muted-foreground">No flow matches “{query}”.</p>
         ) : (
-          options.map((flow) => (
-            <label key={flow} className="flex cursor-pointer items-center gap-2 px-1 py-1 text-xs text-foreground hover:bg-muted">
+          listed.map((flow) => (
+            <label key={flow.id} className="flex cursor-pointer items-center gap-2 px-1 py-1 text-xs text-foreground hover:bg-muted">
               <input
                 type="checkbox"
-                checked={selected.has(flow)}
-                onChange={() => toggle(flow)}
+                checked={selected.has(flow.id)}
+                onChange={() => toggle(flow.id)}
               />
-              <span className="truncate">{flow}</span>
+              <span className="min-w-0 flex-1 truncate">{flow.name}</span>
+              {flow.name !== flow.id && (
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{flow.id}</span>
+              )}
             </label>
           ))
         )}

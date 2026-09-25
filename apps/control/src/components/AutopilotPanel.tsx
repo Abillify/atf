@@ -17,6 +17,7 @@ import type React from "react";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
+import { FlowPicker } from "./FlowPicker";
 import { Badge, Button } from "../lib/ui";
 import { useDocumentVisibility } from "../hooks/useDocumentVisibility";
 
@@ -113,6 +114,15 @@ function RunRow({ run }: { run: AutopilotRun }) {
 
       {run.error && (
         <p className="text-red-600 text-[10px]">{run.error}</p>
+      )}
+      {run.status === "done" && run.optimizerRunId !== undefined && (
+        // The optimizer run holds the variants, scores and the promote action.
+        <a
+          href={`/optimizer?flow=${encodeURIComponent(run.flowId)}`}
+          className="inline-block text-[10px] font-medium text-primary hover:underline"
+        >
+          Show variants &amp; scores →
+        </a>
       )}
     </div>
   );
@@ -324,19 +334,15 @@ export function AutopilotPanel({
               {triggerFlowId || "no flow selected"}
             </span>
           ) : flows ? (
-            <select
-              value={triggerFlowId}
-              onChange={(e) => setTriggerFlowId(e.target.value)}
-              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1 text-xs"
-              aria-label="Flow for manual autopilot trigger"
-            >
-              <option value="">— select flow —</option>
-              {flows.map((f) => (
-                <option key={f.id} value={f.id}>
-                  {f.name} ({f.id})
-                </option>
-              ))}
-            </select>
+            <div className="min-w-0 flex-1">
+              <FlowPicker
+                flows={flows}
+                value={triggerFlowId}
+                onChange={setTriggerFlowId}
+                ariaLabel="Flow for manual autopilot trigger"
+                className="w-full"
+              />
+            </div>
           ) : (
             <input
               value={triggerFlowId}

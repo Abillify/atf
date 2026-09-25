@@ -363,6 +363,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
   const [concurrency, setConcurrency] = React.useState(2);
   const [formError, setFormError] = React.useState<string | null>(null);
   const { flows } = useFlows({ token: token ?? undefined, enabled: ready && isAuthenticated });
+  const flowNames = React.useMemo(() => new Map(flows.map((flow) => [flow.id, flow.name])), [flows]);
 
   const { data: runs = [], isLoading, error } = useQuery<EvalRunRecord[], Error>({
     queryKey: ["eval", "runs", limit],
@@ -425,7 +426,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
           </label>
         </div>
         <div className="mt-4">
-          <FlowMultiSelect label="Select flows" options={flows.map((flow) => flow.id)} value={selectedFlows} onChange={setSelectedFlows} />
+          <FlowMultiSelect label="Select flows" options={flows.map((flow) => flow.id)} names={flowNames} value={selectedFlows} onChange={setSelectedFlows} />
         </div>
         <label className="mt-4 block text-xs font-medium text-foreground">
           Tasks and perfect answers (JSON)

@@ -7,7 +7,7 @@
  */
 
 import dynamic from "next/dynamic";
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useHistory } from "../../../hooks/useHistory";
 import { useHistoryFacets } from "../../../hooks/useHistoryFacets";
@@ -16,6 +16,7 @@ import { useDebugDownload } from "../../../hooks/useDebugDownload";
 import { useTraceAnalysis } from "../../../hooks/useTraceAnalysis";
 import { useCreateVariant } from "../../../hooks/useCreateVariant";
 import { useMonitoringEvents } from "../../../hooks/useMonitoringEvents";
+import { useFlows } from "../../../hooks/useFlows";
 import type { TraceSuggestion } from "../../../types/trace-analysis";
 
 // Heavy panels — loaded client-side only (Req. 12.3).
@@ -54,6 +55,12 @@ const TraceAnalysisPanel = dynamic(
 export default function HistoryPage() {
   const { token, ready, renewNow } = useAuth();
   const tokenOpt = token ?? undefined;
+  // Names for the flow filters (the facets only carry ids).
+  const { flows } = useFlows({
+    enabled: ready,
+    ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
+  });
+  const flowNames = useMemo(() => new Map(flows.map((f) => [f.id, f.name])), [flows]);
 
   const { events } = useMonitoringEvents({
     enabled: ready,
@@ -192,6 +199,7 @@ export default function HistoryPage() {
           onAnalyze={handleAnalyze}
           analyzingId={traceAnalysis.analyzingId}
           flowOptions={facets.flows}
+          flowNames={flowNames}
           userOptions={facets.users}
           includeFlows={includeFlows}
           excludeFlows={excludeFlows}

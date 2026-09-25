@@ -10,6 +10,8 @@
  */
 
 import dynamic from "next/dynamic";
+import { useAuth } from "../../../lib/auth/useAuth";
+import { useFlows } from "../../../hooks/useFlows";
 
 const AutopilotPanel = dynamic(
   () =>
@@ -18,6 +20,12 @@ const AutopilotPanel = dynamic(
 );
 
 export default function AutopilotPage() {
+  const { token, ready } = useAuth();
+  const { flows } = useFlows({
+    enabled: ready,
+    ...(token ? { token } : {}),
+  });
+
   return (
     <div className="p-4 sm:p-6 max-w-2xl">
       <div className="mb-4">
@@ -30,7 +38,7 @@ export default function AutopilotPage() {
           with automatic rollback on regression.
         </p>
       </div>
-      <AutopilotPanel limit={30} />
+      <AutopilotPanel limit={30} flows={flows.map((f) => ({ id: f.id, name: f.name }))} />
     </div>
   );
 }

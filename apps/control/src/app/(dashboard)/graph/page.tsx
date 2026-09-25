@@ -76,6 +76,7 @@ export default function GraphPage() {
     ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
   });
 
+  const flowNames = useMemo(() => new Map(flows.map((f) => [f.id, f.name])), [flows]);
   const [includeFlows, setIncludeFlows] = useState<string[]>([]);
   const [excludeFlows, setExcludeFlows] = useState<string[]>([]);
   const flowOptions = useMemo(
@@ -149,6 +150,7 @@ export default function GraphPage() {
       <ExecutionPicker
         items={scoping.pickerItems}
         flowOptions={flowOptions}
+        flowNames={flowNames}
         includeFlows={includeFlows}
         excludeFlows={excludeFlows}
         onIncludeFlowsChange={setIncludeFlows}
@@ -270,6 +272,7 @@ export default function GraphPage() {
               events={scoping.displayEvents}
               executions={scoping.pickerItems}
               embedded
+              flowNames={flowNames}
             />
           )}
         </div>

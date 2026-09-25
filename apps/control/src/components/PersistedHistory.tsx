@@ -51,6 +51,8 @@ export interface PersistedHistoryProps {
   // --- Filtering (optional) -------------------------------------------------
   /** Distinct flow ids to offer in the flow filter dropdown. */
   flowOptions?: string[];
+  /** Flow names by id, shown and searchable in the flow filters. */
+  flowNames?: ReadonlyMap<string, string>;
   /** Distinct user names to offer in the user filter dropdown. */
   userOptions?: string[];
   /** Currently included/excluded flow ids. Exclusion takes precedence. */
@@ -127,6 +129,7 @@ export function PersistedHistory({
   onAnalyze,
   analyzingId,
   flowOptions,
+  flowNames,
   userOptions,
   includeFlows = [],
   excludeFlows = [],
@@ -216,6 +219,7 @@ export function PersistedHistory({
                 <FlowMultiSelect
                   label="Flows einschließen"
                   options={flowOptions ?? []}
+                  {...(flowNames !== undefined ? { names: flowNames } : {})}
                   value={includeFlows}
                   onChange={onIncludeFlowsChange}
                 />
@@ -224,6 +228,7 @@ export function PersistedHistory({
                 <FlowMultiSelect
                   label="Flows ausschließen"
                   options={flowOptions ?? []}
+                  {...(flowNames !== undefined ? { names: flowNames } : {})}
                   value={excludeFlows}
                   onChange={onExcludeFlowsChange}
                 />

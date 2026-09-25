@@ -130,10 +130,8 @@ describe("AutopilotPanel — governance display", () => {
         ]}
       />,
     );
-    const picker = screen.getByLabelText(
-      "Flow for manual autopilot trigger",
-    ) as HTMLSelectElement;
-    expect(picker.value).toBe("b");
+    const picker = screen.getByRole("button", { name: "Flow for manual autopilot trigger" });
+    expect(picker).toHaveTextContent("Beta (b)");
   });
 
   test("shows the host page's flow instead of another selector when fixed", () => {

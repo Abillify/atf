@@ -117,8 +117,9 @@ describe("SecurityPanel — posture section", () => {
   test("selecting a flow enables the run button and onRun is called", () => {
     const props = baseProps();
     render(<SecurityPanel {...props} />);
-    const select = screen.getByRole("combobox");
-    fireEvent.change(select, { target: { value: "helpdesk" } });
+    fireEvent.click(screen.getByRole("button", { name: "Flow to red-team" }));
+    fireEvent.change(screen.getByLabelText("Search flows"), { target: { value: "helpdesk" } });
+    fireEvent.keyDown(screen.getByLabelText("Search flows"), { key: "Enter" });
     const btn = screen.getByText("Run Red-Team");
     expect(btn).not.toBeDisabled();
     fireEvent.click(btn);
