@@ -3,6 +3,7 @@
 
 import { describe, expect, it } from "bun:test";
 import { formatReport, runEval, type EvalDataset, type FlowExecutor, type Judge } from "../eval-runner.js";
+import { createLlmJudge } from "../llm-judge.js";
 
 function at<T>(values: readonly T[], index: number): T {
   const value = values[index];
@@ -60,5 +61,50 @@ describe("runEval with llmJudge", () => {
     const report = await runEval(mixed, executor("The capital is Paris."), { judge });
     expect(report.passed).toBe(1);
     expect(at(report.cases, 0).score).toBe(0.95);
+  });
+});
+
+describe("createLlmJudge", () => {
+  const input = { criteria: "helpful?", response: "Paris.", messages: [{ role: "user" as const, content: "Capital of France?" }] };
+  // Any object with doGenerate counts as an AI SDK model; `generate` is stubbed.
+  const aiModel = { doGenerate: async () => ({}) } as unknown;
+
+  it("judges with an AI SDK model (what createLlmProvider returns)", async () => {
+    const calls: string[] = [];
+    const judge = createLlmJudge(aiModel, {
+      generate: async ({ prompt }) => {
+        calls.push(prompt);
+        return { text: '{"score": 0.8, "reasoning": "correct and short"}' };
+      },
+    });
+    expect(await judge(input)).toEqual({ score: 0.8, reasoning: "correct and short" });
+    expect(calls[0]).toContain("Paris.");
+  });
+
+  it("ignores a <think> block before the verdict", async () => {
+    const judge = createLlmJudge(aiModel, {
+      generate: async () => ({ text: '<think>score: 0 maybe?</think>\n{"score": 0.9, "reasoning": "fine"}' }),
+    });
+    expect((await judge(input)).score).toBe(0.9);
+  });
+
+  it("still supports a legacy { invoke } model and the plain `score: x` form", async () => {
+    const judge = createLlmJudge({ invoke: async () => ({ content: "Score: 0.6 — mostly right" }) });
+    expect((await judge(input)).score).toBe(0.6);
+  });
+
+  it("throws instead of scoring 0 when the reply has no score", async () => {
+    const judge = createLlmJudge(aiModel, { generate: async () => ({ text: "I think it is good." }) });
+    await expect(judge(input)).rejects.toThrow("no score");
+  });
+
+  it("throws instead of scoring 0 without a usable model", async () => {
+    await expect(createLlmJudge({})(input)).rejects.toThrow("No compatible judge model");
+  });
+
+  it("an unusable judge becomes a judge error in the eval, not a 0 score", async () => {
+    const report = await runEval(dataset("crit"), executor("x"), { judge: createLlmJudge({}) });
+    expect(at(report.cases, 0).score).toBeUndefined();
+    expect(at(at(report.cases, 0).assertions, 0).detail).toContain("judge error");
   });
 });
