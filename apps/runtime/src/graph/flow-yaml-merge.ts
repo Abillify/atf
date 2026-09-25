@@ -53,6 +53,29 @@
  * guesswork that can silently relocate a section heading, so this module leaves
  * the placement alone. Every SUBSEQUENT entry's comment travels with its entry.
  *
+ * ## Anchors and aliases (`&name` / `*name`)
+ *
+ * Several bundled flows share a config block between nodes via an anchor and
+ * plain alias references (`toolArgs: *primaryArgs`, `tools: *branchTools`). The
+ * definition the editor sends back is the EXPANDED form — the parser resolved
+ * every alias on load, so each site carries its own copy of the value and there
+ * is nothing in the object graph that says "these five are the same block".
+ *
+ * A naive merge therefore replaced every alias with a literal copy: the content
+ * stayed correct, but the file grew by a third, the anchors were left dangling
+ * with nothing referencing them, and the shared block silently became five
+ * independent ones — so a later edit to the anchor no longer reached the nodes
+ * that used to follow it. {@link mergeNode} keeps an alias when the value at
+ * that site is unchanged, which covers every save that does not touch the
+ * shared block. A site whose value genuinely diverged is inlined, because it is
+ * no longer the shared value.
+ *
+ * Alias preservation is verified, not trusted: {@link mergeFlowIntoYaml}
+ * re-parses its own output and falls back to the alias-expanding merge unless
+ * the result reads back exactly as `next`. That closes the one case where
+ * keeping an alias would change content — the anchor's own definition being
+ * edited while an alias site is not.
+ *
  * Pure and synchronous: no file I/O, so the merge itself is fully unit-testable.
  *
  * No `any` at module boundaries.
@@ -65,10 +88,12 @@ import {
   Parser,
   Composer,
   CST,
+  isAlias,
   isMap,
   isSeq,
   isScalar,
   isPair,
+  type Alias,
   type Document,
   type Node as YamlNode,
   type YAMLMap,
@@ -182,6 +207,34 @@ function plainEntryId(value: unknown): string | undefined {
 }
 
 /**
+ * The resolved value of every anchor in the document, captured BEFORE the merge
+ * mutates anything. An alias site may only stay an alias when the incoming value
+ * still equals this — comparing against the live tree would be order-dependent,
+ * since the anchor's definition may or may not have been merged already.
+ */
+function pristineAnchorValues(doc: Document): Map<string, unknown> {
+  const values = new Map<string, unknown>();
+  visitNodes(doc.contents, (node) => {
+    const anchor = (node as { anchor?: unknown }).anchor;
+    if (typeof anchor !== "string" || anchor === "" || values.has(anchor)) return;
+    const asJson = (node as { toJSON?: () => unknown }).toJSON;
+    if (typeof asJson === "function") {
+      values.set(anchor, (node as { toJSON: () => unknown }).toJSON());
+    }
+  });
+  return values;
+}
+
+/** How {@link mergeNode} treats an alias node it encounters. */
+interface MergeOptions {
+  /**
+   * Resolved anchor values from {@link pristineAnchorValues}. When absent,
+   * aliases are expanded into literal values (the fallback behaviour).
+   */
+  anchors?: Map<string, unknown>;
+}
+
+/**
  * Merges `next` into `current` (a Document node), returning the node to use.
  *
  * Returns `current` when it could be mutated in place (the comment-preserving
@@ -191,7 +244,27 @@ function mergeNode(
   doc: Document,
   current: unknown,
   next: unknown,
+  opts: MergeOptions = {},
 ): unknown {
+  // --- Alias (`*name`) ---
+  // `next` holds the expanded value at this site. As long as that value still
+  // matches what the anchor resolved to, the alias says exactly the same thing
+  // and is left in place; replacing it would inline the shared block.
+  if (isAlias(current) && opts.anchors !== undefined) {
+    const name = (current as Alias).source;
+    if (
+      opts.anchors.has(name) &&
+      isDeepStrictEqual(next, opts.anchors.get(name))
+    ) {
+      return current;
+    }
+    // The value at this site diverged from the shared block, so it is not the
+    // shared value any more and has to be written out on its own.
+    const created = doc.createNode(next);
+    carryComments(current, created);
+    return created;
+  }
+
   // --- Map ---
   if (isPlainObject(next)) {
     if (!isMap(current)) {
@@ -221,7 +294,7 @@ function mergeNode(
         map.set(key, doc.createNode(value));
         continue;
       }
-      const merged = mergeNode(doc, existing, value);
+      const merged = mergeNode(doc, existing, value, opts);
       if (merged !== existing) map.set(key, merged);
     }
     return map;
@@ -253,7 +326,7 @@ function mergeNode(
         const existing = byId.get(id);
         if (existing !== undefined) {
           byId.delete(id);
-          return mergeNode(doc, existing, nextItem);
+          return mergeNode(doc, existing, nextItem, opts);
         }
         return doc.createNode(nextItem);
       }
@@ -261,7 +334,7 @@ function mergeNode(
       // to positional matching among the id-less entries — the only signal
       // available, and safe because they carry no identity of their own.
       const existing = withoutId[positional++];
-      if (existing !== undefined) return mergeNode(doc, existing, nextItem);
+      if (existing !== undefined) return mergeNode(doc, existing, nextItem, opts);
       return doc.createNode(nextItem);
     });
 
@@ -296,6 +369,35 @@ export function mergeFlowIntoYaml(
   const lossless = patchYamlLosslessly(existingYaml, next);
   if (lossless !== null) return lossless;
 
+  const lineWidth = opts.lineWidth ?? 120;
+
+  const run = (doc: Document, mergeOpts: MergeOptions): string => {
+    const merged = mergeNode(doc, doc.contents, next, mergeOpts);
+    doc.contents = merged as typeof doc.contents;
+    return doc.toString({ lineWidth });
+  };
+
+  const doc = parseBase(existingYaml);
+
+  // Keep `*alias` references where the shared value did not change. Verified by
+  // reading the result back: an alias whose anchor was edited elsewhere would
+  // resolve to a different value, and that must never leave this function.
+  const anchors = pristineAnchorValues(doc);
+  if (anchors.size === 0) return run(doc, {});
+
+  const preserved = run(doc, { anchors });
+  let readsBack = false;
+  try {
+    readsBack = isDeepStrictEqual(parseYaml(preserved), next);
+  } catch {
+    readsBack = false;
+  }
+  // The merge mutated `doc`, so the fallback needs a fresh base.
+  return readsBack ? preserved : run(parseBase(existingYaml), {});
+}
+
+/** Parses the merge base, rejecting anything that cannot serve as one. */
+function parseBase(existingYaml: string): Document {
   let doc: Document;
   try {
     doc = parseDocument(existingYaml);
@@ -315,13 +417,7 @@ export function mergeFlowIntoYaml(
       "existing YAML is not a mapping at the top level, so it cannot be merged into",
     );
   }
-
-  const merged = mergeNode(doc, doc.contents, next);
-  doc.contents = merged as typeof doc.contents;
-
-  return doc.toString({
-    lineWidth: opts.lineWidth ?? 120,
-  });
+  return doc;
 }
 
 // ---------------------------------------------------------------------------

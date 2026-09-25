@@ -294,3 +294,133 @@ describe("yamlHasComments", () => {
     expect(yamlHasComments('id: f\nprompt: "a # b"\n')).toBe(false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Anchors and aliases
+// ---------------------------------------------------------------------------
+//
+// Bundled flows share a config block between nodes via an anchor plus plain
+// alias references. The definition the editor sends back is the EXPANDED form,
+// so nothing in it says "these sites are the same block" — a naive merge
+// inlined every alias, left the anchors dangling, and turned one shared block
+// into several independent copies without anyone noticing.
+
+/** Two nodes share `toolArgs` and `tools`; a third has its own. */
+const ANCHORED = `id: research
+name: Research
+nodes:
+  - id: lookup
+    type: llm
+    # Collection fixing, shared by the branches below.
+    config:
+      maxToolSteps: 12
+      toolArgs: &args
+        search: { collection: kanzlei, hybrid: true }
+    tools: &tools [search, get_document]
+  - id: broad
+    type: llm
+    config:
+      maxToolSteps: 28
+      toolArgs: *args
+    tools: *tools
+  - id: synth
+    type: llm
+    config: { maxToolSteps: 1 }
+edges:
+  - { id: e1, source: lookup, target: broad }
+`;
+
+/** The route's view of the file: aliases resolved into independent copies. */
+function asSubmitted(yaml: string): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(parse(yaml))) as Record<string, unknown>;
+}
+
+describe("mergeFlowIntoYaml — anchors and aliases", () => {
+  test("a structural save keeps every alias instead of inlining the shared block", () => {
+    const next = asSubmitted(ANCHORED);
+    (next.nodes as Array<Record<string, unknown>>).push({
+      id: "extra",
+      type: "router",
+    });
+
+    const out = mergeFlowIntoYaml(ANCHORED, next);
+
+    // The aliases are still references, not copies.
+    expect(out).toContain("toolArgs: *args");
+    expect(out).toContain("tools: *tools");
+    // The anchor definitions are untouched, so nothing dangles.
+    expect(out).toContain("toolArgs: &args");
+    expect(out).toContain("tools: &tools");
+    // The new node arrived and the content reads back exactly.
+    expect(out).toContain("id: extra");
+    expect(parse(out)).toEqual(next);
+  });
+
+  test("editing one alias site inlines only that site, the others stay aliases", () => {
+    const next = asSubmitted(ANCHORED);
+    const nodes = next.nodes as Array<Record<string, unknown>>;
+    const broad = nodes.find((n) => n.id === "broad") as {
+      config: { toolArgs: { search: Record<string, unknown> } };
+    };
+    broad.config.toolArgs.search.limit = 25;
+    // Force the Document path (a pure scalar change takes the lossless one).
+    nodes.push({ id: "extra", type: "router" });
+
+    const out = mergeFlowIntoYaml(ANCHORED, next);
+
+    // `broad` diverged from the shared block, so it is written out on its own…
+    expect(out).toMatch(/limit: 25/);
+    // …while its unchanged `tools` reference, and `lookup`'s anchor, remain.
+    expect(out).toContain("tools: *tools");
+    expect(out).toContain("toolArgs: &args");
+    expect(parse(out)).toEqual(next);
+  });
+
+  test("editing the anchor's own definition falls back rather than corrupting the aliases", () => {
+    // The dangerous case: the anchor gets a new value while the alias sites keep
+    // the old one. Keeping the alias would make it resolve to the NEW value, so
+    // the merge must expand instead.
+    const next = asSubmitted(ANCHORED);
+    const nodes = next.nodes as Array<Record<string, unknown>>;
+    const lookup = nodes.find((n) => n.id === "lookup") as {
+      config: { toolArgs: { search: Record<string, unknown> } };
+    };
+    lookup.config.toolArgs.search.collection = "support";
+    nodes.push({ id: "extra", type: "router" });
+
+    const out = mergeFlowIntoYaml(ANCHORED, next);
+
+    // Content is what matters and must be exact: `broad` still on kanzlei,
+    // `lookup` on support.
+    expect(parse(out)).toEqual(next);
+    expect(out).not.toContain("toolArgs: *args");
+  });
+
+  test("changing the shared block at every site keeps the file consistent", () => {
+    const next = asSubmitted(ANCHORED);
+    const nodes = next.nodes as Array<Record<string, unknown>>;
+    for (const n of nodes) {
+      const args = (n.config as { toolArgs?: { search: Record<string, unknown> } })
+        ?.toolArgs;
+      if (args !== undefined) args.search.rerank = true;
+    }
+    nodes.push({ id: "extra", type: "router" });
+
+    const out = mergeFlowIntoYaml(ANCHORED, next);
+    expect(parse(out)).toEqual(next);
+  });
+
+  test("an unchanged save of an anchored file is byte-identical", () => {
+    expect(mergeFlowIntoYaml(ANCHORED, asSubmitted(ANCHORED))).toBe(ANCHORED);
+  });
+
+  test("comments survive alongside the preserved aliases", () => {
+    const next = asSubmitted(ANCHORED);
+    (next.nodes as Array<Record<string, unknown>>).push({
+      id: "extra",
+      type: "router",
+    });
+    const out = mergeFlowIntoYaml(ANCHORED, next);
+    expect(out).toContain("# Collection fixing, shared by the branches below.");
+  });
+});
