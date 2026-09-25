@@ -54,7 +54,10 @@ function makeReplayStore(snapshots: ExecutionSnapshot[]): ReplayStore {
   return {
     save: async () => {},
     get: async (id) => snapshots.find((s) => s.executionId === id),
-    list: async (limit = 500) => snapshots.slice(0, limit),
+    list: async (limit = 500, filter = {}) =>
+      snapshots
+        .filter((s) => filter.flowId === undefined || s.flowId === filter.flowId)
+        .slice(0, limit),
     purgeOlderThan: async () => 0,
     eraseSubject: async () => 0,
   };
@@ -440,5 +443,46 @@ describe("FlowOptimizer — seed edits (create-variant-from-suggestion)", () => 
     if (firstVariant === undefined) throw new Error("expected a first variant");
     expect(firstVariant.label).toBe("suggestion-1");
     expect(run.variants.some((v) => v.label === "raise-tokens")).toBe(true);
+  });
+});
+
+describe("FlowOptimizer — a flow that only exists as a file (FLOWS_DIR)", () => {
+  const run = (fileFlows?: (id: string) => FlowDefinition | undefined) => {
+    const flowStore = new InMemoryFlowStore(); // empty: nothing online
+    const optimizer = createFlowOptimizer({
+      replayStore: makeReplayStore(Array.from({ length: 6 }, (_, i) => makeSnapshot(i))),
+      flowStore,
+      executor,
+      judge,
+      generatorModel: makeModel(STRUCTURAL_RESPONSE),
+      ...(fileFlows ? { fileFlows } : {}),
+    });
+    return {
+      flowStore,
+      result: optimizer.run({
+        flowId: "pipe",
+        targetNodeId: "resp",
+        allowStructural: true,
+        minSamples: 3,
+        variantCount: 1,
+        autoPromote: true,
+        minScoreImprovement: 0,
+      }),
+    };
+  };
+
+  test("is optimized from the file, and the promoted variant is published online", async () => {
+    const { flowStore, result } = run((id) => (id === "pipe" ? PIPE_FLOW : undefined));
+    const r = await result;
+    expect(r.status).toBe("done");
+    expect(r.promotedVariant).toBe("raise-tokens");
+    const rec = await flowStore.get("pipe");
+    expect(rec?.published?.nodes.find((n) => n.id === "resp")?.llm?.parameters?.maxTokens).toBe(8192);
+  });
+
+  test("without the file source it is skipped with a clear reason", async () => {
+    const r = await run().result;
+    expect(r.status).toBe("skipped");
+    expect(r.error ?? "").toContain("neither online nor in FLOWS_DIR");
   });
 });

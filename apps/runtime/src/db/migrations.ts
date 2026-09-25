@@ -1373,6 +1373,15 @@ export const MIGRATIONS: readonly Migration[] = [
          ON eval_matrix_runs (expires_at)`,
     ],
   },
+  {
+    version: 40,
+    name: "execution_snapshots per-flow index",
+    statements: [
+      // The optimizer and draft simulation read the newest snapshots of one flow.
+      `CREATE INDEX IF NOT EXISTS execution_snapshots_flow_idx
+         ON execution_snapshots (flow_id, created_at DESC)`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

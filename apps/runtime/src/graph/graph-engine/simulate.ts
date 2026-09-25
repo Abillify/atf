@@ -195,8 +195,7 @@ export async function simulateFlow(
       : { hasPolicy: false, allowsAnonymous: true };
 
   // --- Behavioral sample against real snapshots ---
-  const pool = await deps.replayStore.list(SNAPSHOT_POOL_SIZE);
-  const forFlow = pool.filter((s) => s.flowId === flowId);
+  const forFlow = await deps.replayStore.list(SNAPSHOT_POOL_SIZE, { flowId });
   const toSample = forFlow.slice(0, Math.max(0, options.maxSnapshots));
 
   const behavior = await runBehaviorSample(flowId, draft, toSample, options, deps);

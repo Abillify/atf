@@ -35,6 +35,17 @@ describe("studio test registry", () => {
     expect(reg.get(second)).toBeUndefined(); // expired
   });
 
+  test("an ephemeral definition resolves under its own id until disposed", () => {
+    const reg = createStudioTestRegistry(base);
+    const variant = { ...canvas, id: "f@variant/direct" };
+    const dispose = reg.registerEphemeral(variant);
+    expect(reg.get("f@variant/direct")).toBe(variant);
+    expect(reg.get("f")).toBe(live);
+    expect(reg.list()).toEqual([live]);
+    dispose();
+    expect(reg.get("f@variant/direct")).toBeUndefined();
+  });
+
   test("routing runs the test id directly but keeps the flow's guardrail override", () => {
     const routing = resolveFlowRouting({
       requestModel: "f@studio-abc",

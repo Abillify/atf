@@ -69,6 +69,16 @@ describe("InMemoryReplayStore", () => {
     const limited = await store.list(2);
     expect(limited.map((s) => s.executionId)).toEqual(["c", "b"]);
   });
+
+  test("list with a flowId applies the limit after filtering", async () => {
+    const store = new InMemoryReplayStore();
+    await store.save(snap({ executionId: "h1", flowId: "helpdesk" }));
+    await store.save(snap({ executionId: "h2", flowId: "helpdesk" }));
+    for (const id of ["x1", "x2", "x3"]) await store.save(snap({ executionId: id, flowId: "busy" }));
+    await store.save(snap({ executionId: "s1", flowId: "helpdesk@studio-abc" }));
+    const got = await store.list(2, { flowId: "helpdesk" });
+    expect(got.map((s) => s.executionId)).toEqual(["h2", "h1"]);
+  });
 });
 
 describe("ReplayService", () => {

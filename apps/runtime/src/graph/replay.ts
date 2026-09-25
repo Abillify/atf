@@ -45,15 +45,22 @@ export interface ExecutionSnapshot {
   userId?: string;
 }
 
+export interface ReplayListFilter {
+  /** Exact flow id. Studio canvas test runs are stored as `<flowId>@studio-<nonce>` and don't match. */
+  flowId?: string;
+}
+
 export interface ReplayStore {
   save(snapshot: ExecutionSnapshot): Promise<void>;
   get(executionId: string): Promise<ExecutionSnapshot | undefined>;
   /**
    * Returns the most recent snapshots (newest first), bounded by `limit`. Used
    * by the auto-eval dataset generator to mine production traffic. Optional
-   * `limit` defaults to 500.
+   * `limit` defaults to 500. With `filter.flowId` only that flow's snapshots
+   * count toward `limit` — filter here, not after a global `list`, or busy
+   * flows crowd a quiet flow out of the window.
    */
-  list(limit?: number): Promise<ExecutionSnapshot[]>;
+  list(limit?: number, filter?: ReplayListFilter): Promise<ExecutionSnapshot[]>;
   /**
    * Retention: deletes snapshots created strictly before the ISO cutoff.
    * Returns the number removed.
@@ -93,13 +100,15 @@ export class InMemoryReplayStore implements ReplayStore {
     return this.byId.get(executionId);
   }
 
-  async list(limit = 500): Promise<ExecutionSnapshot[]> {
-    // `order` is oldest → newest; return the newest `limit`, newest first.
-    const ids = this.order.slice(-Math.max(0, limit)).reverse();
+  async list(limit = 500, filter: ReplayListFilter = {}): Promise<ExecutionSnapshot[]> {
+    // `order` is oldest → newest; walk it backwards for newest first.
     const out: ExecutionSnapshot[] = [];
-    for (const id of ids) {
-      const s = this.byId.get(id);
-      if (s !== undefined) out.push(s);
+    for (let i = this.order.length - 1; i >= 0 && out.length < limit; i--) {
+      const id = this.order[i];
+      const s = id === undefined ? undefined : this.byId.get(id);
+      if (s === undefined) continue;
+      if (filter.flowId !== undefined && s.flowId !== filter.flowId) continue;
+      out.push(s);
     }
     return out;
   }
@@ -231,17 +240,26 @@ export class PostgresReplayStore implements ReplayStore {
     };
   }
 
-  async list(limit = 500): Promise<ExecutionSnapshot[]> {
+  async list(limit = 500, filter: ReplayListFilter = {}): Promise<ExecutionSnapshot[]> {
     // Operator-plane read (eval dataset, optimizer): uses BYPASSRLS pool when
     // available so it can access snapshots across all tenants.
     const rows = await this.db.withOperator((db) =>
-      db.query<SnapshotRow>(
-        `SELECT execution_id, flow_id, messages, metadata, response_text, created_at
-           FROM execution_snapshots
-          ORDER BY created_at DESC
-          LIMIT $1`,
-        [Math.max(1, limit)],
-      ),
+      filter.flowId !== undefined
+        ? db.query<SnapshotRow>(
+            `SELECT execution_id, flow_id, messages, metadata, response_text, created_at
+               FROM execution_snapshots
+              WHERE flow_id = $2
+              ORDER BY created_at DESC
+              LIMIT $1`,
+            [Math.max(1, limit), filter.flowId],
+          )
+        : db.query<SnapshotRow>(
+            `SELECT execution_id, flow_id, messages, metadata, response_text, created_at
+               FROM execution_snapshots
+              ORDER BY created_at DESC
+              LIMIT $1`,
+            [Math.max(1, limit)],
+          ),
     );
     return rows.map((r) => ({
       executionId: r.execution_id,

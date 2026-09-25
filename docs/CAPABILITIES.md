@@ -319,7 +319,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   (`REPLAY_ENABLED`).
 - **Self-optimizing loop.** The optimizer generates flow variants, evaluates them, and can
   promote a winner behind a canary gate, with cooldowns and a minimum score improvement
-  (`OPTIMIZER_ENABLED`, `OPTIMIZER_SCHEDULE_*`).
+  (`OPTIMIZER_ENABLED`, `OPTIMIZER_SCHEDULE_*`). It optimizes flows that exist only as files in
+  `FLOWS_DIR` as well; promoting a variant publishes an online version that then takes precedence
+  over the file. A run whose baseline or whose every variant could not be scored ends in `error`
+  naming the reason instead of reporting a result there is nothing behind.
 - **Autopilot governance.** Automated promotion is bounded by a drift guard, a per-window
   promotion cap, and an optional approval requirement (`AUTOPILOT_*`).
 

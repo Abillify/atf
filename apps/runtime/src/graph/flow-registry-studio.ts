@@ -17,6 +17,10 @@
  * - The definition keeps its real `id`, so access policy, guardrails, metering
  *   and monitoring treat the run as that flow; the compiled-graph cache keys on
  *   id + checksum, so a test definition can't collide with the live one.
+ *
+ * `registerEphemeral` is the same idea for internal callers (the optimizer's
+ * prompt variants, `<flowId>@variant/<label>`): the definition resolves under
+ * its own id until the returned disposer runs or the TTL passes.
  */
 
 import * as crypto from "node:crypto";
@@ -32,6 +36,15 @@ export function isStudioTestModel(model: string): boolean {
 export interface StudioTestRegistry extends FlowRegistry {
   /** Registers a runnable definition; returns the model id to run it with. */
   register(def: FlowDefinition): { model: string; expiresAt: string };
+  /** Makes `def` resolvable under `def.id` until the returned disposer runs (or the TTL passes). */
+  registerEphemeral(def: FlowDefinition): () => void;
+}
+
+/** True for a registry that can hold ephemeral definitions (the Studio test layer). */
+export function supportsEphemeralFlows(
+  registry: FlowRegistry,
+): registry is StudioTestRegistry {
+  return typeof (registry as Partial<StudioTestRegistry>).registerEphemeral === "function";
 }
 
 export function createStudioTestRegistry(
@@ -42,10 +55,12 @@ export function createStudioTestRegistry(
   const max = opts.max ?? 50;
   const now = opts.now ?? Date.now;
   const entries = new Map<string, { def: FlowDefinition; expires: number }>();
+  const ephemeral = new Map<string, { def: FlowDefinition; expires: number }>();
 
   const prune = (): void => {
     const t = now();
     for (const [id, e] of entries) if (e.expires <= t) entries.delete(id);
+    for (const [id, e] of ephemeral) if (e.expires <= t) ephemeral.delete(id);
     while (entries.size > max) {
       const oldest = entries.keys().next().value;
       if (oldest === undefined) break;
@@ -55,6 +70,11 @@ export function createStudioTestRegistry(
 
   return {
     get(flowId: string): FlowDefinition | undefined {
+      if (ephemeral.size > 0) {
+        prune();
+        const e = ephemeral.get(flowId);
+        if (e !== undefined) return e.def;
+      }
       if (!isStudioTestModel(flowId)) return base.get(flowId);
       prune();
       return entries.get(flowId)?.def;
@@ -71,6 +91,14 @@ export function createStudioTestRegistry(
       entries.set(model, { def, expires });
       prune();
       return { model, expiresAt: new Date(expires).toISOString() };
+    },
+    registerEphemeral(def: FlowDefinition) {
+      const entry = { def, expires: now() + ttlMs };
+      ephemeral.set(def.id, entry);
+      return () => {
+        // Only remove our own entry — a later registration may reuse the id.
+        if (ephemeral.get(def.id) === entry) ephemeral.delete(def.id);
+      };
     },
   };
 }

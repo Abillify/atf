@@ -22,6 +22,8 @@
  */
 
 import type { AppConfig } from "../config/index.js";
+import type { FlowDefinition } from "../types/flow.js";
+import { supportsEphemeralFlows } from "../graph/flow-registry-studio.js";
 import type { Logger } from "../observability/logger.js";
 import type { Database } from "../db/database.js";
 import type { McpWrapperService as McpWrapper } from "../mcp/mcp-wrapper.js";
@@ -373,6 +375,14 @@ export async function buildEngine(
         // back to the generator model inside the optimizer when absent.
         analyzerModel: judgeModel,
         debugTraceStore,
+        // File flows (FLOWS_DIR) in source form, like the Studio edits them.
+        fileFlows: (id) =>
+          (flowRegistry.getSource?.(id)?.definition as FlowDefinition | undefined) ?? flowRegistry.get(id),
+        // Variants run under `<flowId>@variant/<label>` — resolvable only once
+        // registered in the outer (Studio test) layer of the registry.
+        ...(supportsEphemeralFlows(flowRegistry)
+          ? { registerFlow: (def: FlowDefinition) => flowRegistry.registerEphemeral(def) }
+          : {}),
       });
       // Standalone trace analyzer, backing POST /optimizer/analyze/:executionId.
       const { createTraceAnalyzer } = await import(

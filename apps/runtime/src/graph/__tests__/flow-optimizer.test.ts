@@ -61,7 +61,10 @@ function makeReplayStore(snapshots: ExecutionSnapshot[]): ReplayStore {
   return {
     save: async () => {},
     get: async (id) => snapshots.find((s) => s.executionId === id),
-    list: async (limit = 500) => snapshots.slice(0, limit),
+    list: async (limit = 500, filter = {}) =>
+      snapshots
+        .filter((s) => filter.flowId === undefined || s.flowId === filter.flowId)
+        .slice(0, limit),
     purgeOlderThan: async () => 0,
     eraseSubject: async () => 0,
   };
@@ -245,6 +248,90 @@ describe("FlowOptimizer.run", () => {
     const run = await optimizer.run({ flowId: "test-flow", minSamples: 5 });
     expect(run.status).toBe("skipped");
     expect(run.error).toContain("2 snapshots available");
+  });
+
+  describe("synthetic variant ids", () => {
+    // An executor that, like the runtime's, only runs flows its registry knows.
+    function registryBacked() {
+      const known = new Map<string, FlowDefinition>([["test-flow", BASE_FLOW]]);
+      const executor: FlowExecutor = async (flowId) => {
+        if (!known.has(flowId)) throw new Error(`Flow '${flowId}' not found.`);
+        return { text: "The answer is 42.", cost: 0 };
+      };
+      const registerFlow = (def: FlowDefinition) => {
+        known.set(def.id, def);
+        return () => void known.delete(def.id);
+      };
+      return { known, executor, registerFlow };
+    }
+    async function optimizerWith(deps: Partial<Parameters<typeof createFlowOptimizer>[0]>) {
+      const flowStore = new InMemoryFlowStore();
+      await flowStore.saveDraft("test-flow", BASE_FLOW, "test");
+      await flowStore.publish("test-flow", "test");
+      return createFlowOptimizer({
+        replayStore: makeReplayStore(Array.from({ length: 5 }, (_, i) => makeSnapshot(i))),
+        flowStore,
+        executor: makeExecutor(),
+        judge: makeJudge(),
+        generatorModel: makeGeneratorModel([{ label: "direct", systemPrompt: "Be direct." }]),
+        ...deps,
+      });
+    }
+
+    test("variants run once registered through registerFlow, and are removed after", async () => {
+      const { known, executor, registerFlow } = registryBacked();
+      const optimizer = await optimizerWith({ executor, registerFlow });
+      const run = await optimizer.run({ flowId: "test-flow", minSamples: 5 });
+      expect(run.status).toBe("done");
+      expect(run.variants[0]?.avgScore).toBe(0.8);
+      expect([...known.keys()]).toEqual(["test-flow"]);
+    });
+
+    test("a run where no variant could run ends as an error, with the reason", async () => {
+      const { executor } = registryBacked();
+      const optimizer = await optimizerWith({ executor });
+      const run = await optimizer.run({ flowId: "test-flow", minSamples: 5 });
+      expect(run.status).toBe("error");
+      expect(run.error).toContain("No variant could be evaluated");
+      expect(run.error).toContain("not found");
+    });
+
+    test("a failing judge ends the run as an error instead of a 0 baseline", async () => {
+      const optimizer = await optimizerWith({
+        judge: async () => {
+          throw new Error("No compatible judge model is configured.");
+        },
+      });
+      const run = await optimizer.run({ flowId: "test-flow", minSamples: 5 });
+      expect(run.status).toBe("error");
+      expect(run.error).toContain("Baseline could not be scored");
+      expect(run.error).toContain("No compatible judge model");
+    });
+  });
+
+  test("a busy flow does not crowd the target flow's snapshots out", async () => {
+    // 100 newer snapshots of another flow, then the 5 of the target flow.
+    const others = Array.from({ length: 100 }, (_, i) => ({
+      ...makeSnapshot(i),
+      executionId: `other-${i}`,
+      flowId: "busy-flow",
+    }));
+    const own = Array.from({ length: 5 }, (_, i) => makeSnapshot(100 + i));
+    const { optimizer } = await makeOptimizer([...others, ...own]);
+    const run = await optimizer.run({ flowId: "test-flow", minSamples: 5 });
+    expect(run.error ?? "").not.toContain("snapshots available");
+  });
+
+  test("Studio canvas test runs don't count, and the skip says so", async () => {
+    const studio = Array.from({ length: 10 }, (_, i) => ({
+      ...makeSnapshot(i),
+      flowId: "test-flow@studio-0a1b2c",
+    }));
+    const { optimizer } = await makeOptimizer(studio);
+    const run = await optimizer.run({ flowId: "test-flow", minSamples: 5 });
+    expect(run.status).toBe("skipped");
+    expect(run.error).toContain("Only 0 snapshots available");
+    expect(run.error).toContain("Live target");
   });
 
   test("skips when flow not in store", async () => {

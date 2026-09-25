@@ -348,8 +348,13 @@ function toCaseResults(
     responseText: c.responseText,
     ...(c.score !== undefined ? { score: c.score } : {}),
     passed: c.passed,
-    ...(c.error !== undefined ? { error: c.error } : {}),
+    ...(caseError(c) !== undefined ? { error: caseError(c) } : {}),
   }));
+}
+
+/** The executor error, else the first judge failure (it leaves the case unscored). */
+function caseError(c: CaseResult): string | undefined {
+  return c.error ?? c.assertions.find((a) => a.detail?.startsWith("judge error") === true)?.detail;
 }
 
 // ---------------------------------------------------------------------------
@@ -373,7 +378,45 @@ class FlowOptimizerImpl implements FlowOptimizer {
     private readonly analyzerModel?: LanguageModel,
     /** Optional: source of debug traces for `analysisExecutionId` seeding. */
     private readonly debugTraceStore?: DebugTraceStore,
+    /** Optional: flows loaded from FLOWS_DIR (source form), see {@link FlowOptimizerDeps.fileFlows}. */
+    private readonly fileFlows?: (flowId: string) => FlowDefinition | undefined,
+    /** Optional: makes a synthetic definition runnable, see {@link FlowOptimizerDeps.registerFlow}. */
+    private readonly registerFlow?: (def: FlowDefinition) => () => void,
   ) {}
+
+  /**
+   * Makes a synthetic definition (a variant, a scoped sub-flow) runnable by the
+   * executor for the eval; returns its cleanup. Without `registerFlow` it falls
+   * back to a draft in the flow store, which only resolves where the executor
+   * reads drafts.
+   */
+  private async registerForEval(def: FlowDefinition): Promise<() => Promise<void>> {
+    if (this.registerFlow !== undefined) {
+      const dispose = this.registerFlow(def);
+      return async () => dispose();
+    }
+    try {
+      await this.flowStore.saveDraft(def.id, def, "optimizer");
+    } catch {
+      // best-effort
+    }
+    return async () => {
+      try {
+        await this.flowStore.delete(def.id);
+      } catch {
+        // best-effort cleanup
+      }
+    };
+  }
+
+  /**
+   * The flow's current definition: the online version (published, else
+   * draft) or — for a flow that only exists as a file — the file.
+   */
+  private async loadFlow(flowId: string): Promise<FlowDefinition | undefined> {
+    const record = await this.flowStore.get(flowId);
+    return record?.published ?? record?.draft ?? this.fileFlows?.(flowId) ?? undefined;
+  }
 
   // -------------------------------------------------------------------------
   // Public API
@@ -419,13 +462,12 @@ class FlowOptimizerImpl implements FlowOptimizer {
   ): Promise<OptimizationRun> {
     try {
       // --- 1. Load the current flow definition ----------------------------
-      const flowRecord = await this.flowStore.get(config.flowId);
-      const flowDef = flowRecord?.published ?? flowRecord?.draft ?? undefined;
+      const flowDef = await this.loadFlow(config.flowId);
       if (flowDef == null) {
         return this.finishRun(
           run,
           "skipped",
-          `Flow "${config.flowId}" not found in store`,
+          `Flow "${config.flowId}" not found (neither online nor in FLOWS_DIR)`,
         );
       }
 
@@ -476,14 +518,16 @@ class FlowOptimizerImpl implements FlowOptimizer {
       });
       const minSamples = config.minSamples ?? 5;
       const maxSamples = config.maxSamples ?? 20;
-      const snapshots = await this.replayStore.list(maxSamples * 3);
-      const flowSnapshots = snapshots.filter((s) => s.flowId === config.flowId);
+      const flowSnapshots = await this.replayStore.list(maxSamples * 3, { flowId: config.flowId });
 
       if (flowSnapshots.length < minSamples) {
+        // Studio "Canvas" runs execute an unsaved draft under a throwaway id
+        // (`<flowId>@studio-<nonce>`) and are deliberately not mined here.
         return this.finishRun(
           run,
           "skipped",
-          `Only ${flowSnapshots.length} snapshots available for flow "${config.flowId}" (need ≥ ${minSamples})`,
+          `Only ${flowSnapshots.length} snapshots available for flow "${config.flowId}" (need ≥ ${minSamples}). ` +
+            `Studio test runs on the Canvas target don't count — run the flow on the Live target or via the API.`,
         );
       }
 
@@ -596,18 +640,8 @@ class FlowOptimizerImpl implements FlowOptimizer {
       }
 
       // Register the sub-flow so its (and its variants') synthetic id resolves
-      // in the executor. Best-effort; cleaned up after evaluation.
-      if (scoped) {
-        try {
-          await this.flowStore.saveDraft(
-            evalBaseFlow.id,
-            evalBaseFlow,
-            "optimizer",
-          );
-        } catch {
-          // best-effort
-        }
-      }
+      // in the executor. Cleaned up after evaluation.
+      const disposeScoped = scoped ? await this.registerForEval(evalBaseFlow) : undefined;
 
       // --- 4. Evaluate baseline -------------------------------------------
       run.status = "evaluating";
@@ -624,6 +658,13 @@ class FlowOptimizerImpl implements FlowOptimizer {
       });
       run.baselineScore = baselineReport.avgScore;
       run.baselineCases = toCaseResults(baselineReport.cases, promptByCaseId);
+      // Without a single baseline score there is nothing to compare variants to
+      // (typically the judge is failing) — say why instead of reporting "done".
+      if (baselineReport.avgScore === undefined) {
+        await disposeScoped?.();
+        const reason = run.baselineCases.find((c) => c.error !== undefined)?.error ?? "no case was scored";
+        return this.finishRun(run, "error", `Baseline could not be scored: ${reason}`);
+      }
       this.logger?.info("Optimizer: baseline evaluated", {
         avgScore: baselineReport.avgScore,
         passRate: baselineReport.passRate,
@@ -737,17 +778,7 @@ class FlowOptimizerImpl implements FlowOptimizer {
           this.executor(variant.definition.id, messages, metadata);
 
         // Register the variant definition temporarily so the executor can find it.
-        // We do this by saving it as a draft in the flow store under its synthetic id.
-        try {
-          await this.flowStore.saveDraft(
-            variant.definition.id,
-            variant.definition,
-            "optimizer",
-          );
-        } catch {
-          // Best-effort: if the store rejects the synthetic id, eval with the
-          // original flow id and note the variant's systemPrompt in the dataset.
-        }
+        const disposeVariant = await this.registerForEval(variant.definition);
 
         let evalResult: VariantEvalResult;
         try {
@@ -795,21 +826,19 @@ class FlowOptimizerImpl implements FlowOptimizer {
           passRate: evalResult.passRate,
         });
 
-        // Clean up temporary draft (non-fatal if it fails).
-        try {
-          await this.flowStore.delete(variant.definition.id);
-        } catch {
-          // best-effort cleanup
-        }
+        await disposeVariant();
       }
 
-      // Clean up the temporary sub-flow draft (non-fatal).
-      if (scoped) {
-        try {
-          await this.flowStore.delete(evalBaseFlow.id);
-        } catch {
-          // best-effort cleanup
-        }
+      await disposeScoped?.();
+
+      // Every variant failed to run (or to be judged): report that as an
+      // error rather than a "done" run with nothing to compare.
+      if (variantResults.length > 0 && variantResults.every((v) => v.avgScore === undefined)) {
+        const reason =
+          variantResults.flatMap((v) => v.cases).find((c) => c.error !== undefined)?.error ??
+          variantResults.find((v) => v.error !== undefined)?.error ??
+          "no case was scored";
+        return this.finishRun(run, "error", `No variant could be evaluated: ${reason}`);
       }
 
       // --- 7. Auto-promote if configured ----------------------------------
@@ -889,8 +918,7 @@ class FlowOptimizerImpl implements FlowOptimizer {
       throw new Error(`Variant "${variantLabel}" not found in run "${runId}"`);
     }
 
-    const flowRecord = await this.flowStore.get(run.flowId);
-    const flowDef = flowRecord?.published ?? flowRecord?.draft ?? undefined;
+    const flowDef = await this.loadFlow(run.flowId);
     if (flowDef == null) throw new Error(`Flow "${run.flowId}" not found`);
 
     // Reconstruct the variant definition — a structural edit when the variant
@@ -1087,6 +1115,20 @@ export interface FlowOptimizerDeps {
   analyzerModel?: LanguageModel;
   /** Optional debug-trace source enabling `analysisExecutionId` seeding. */
   debugTraceStore?: DebugTraceStore;
+  /**
+   * Flows that exist only as files in FLOWS_DIR (source form). Without it
+   * such flows can't be optimized. Promoting a variant of one publishes an
+   * online version, which then takes precedence over the file — the same as
+   * publishing it from the Studio.
+   */
+  fileFlows?: (flowId: string) => FlowDefinition | undefined;
+  /**
+   * Makes a synthetic definition (`<flowId>@variant/<label>`, a scoped
+   * sub-flow) resolvable by `executor` for the duration of an eval; returns
+   * the cleanup. Without it the optimizer saves them as flow-store drafts,
+   * which the runtime's executor does not resolve.
+   */
+  registerFlow?: (def: FlowDefinition) => () => void;
 }
 
 /**
@@ -1103,5 +1145,7 @@ export function createFlowOptimizer(deps: FlowOptimizerDeps): FlowOptimizer {
     deps.logger,
     deps.analyzerModel,
     deps.debugTraceStore,
+    deps.fileFlows,
+    deps.registerFlow,
   );
 }
