@@ -34,7 +34,7 @@ export function Panel({
       {...props}
     >
       {heading !== undefined && (
-        <div className="border-b border-border px-4 py-3">
+        <div className="border-b border-border px-[var(--ui-card-p)] py-[var(--ui-cell-py)]">
           {typeof heading === "string" ? (
             <h2 className="text-sm font-semibold text-foreground">{heading}</h2>
           ) : (
@@ -42,7 +42,7 @@ export function Panel({
           )}
         </div>
       )}
-      <div className="flex-1 overflow-auto p-4">{children}</div>
+      <div className="flex-1 overflow-auto p-[var(--ui-card-p)]">{children}</div>
     </As>
   );
 }

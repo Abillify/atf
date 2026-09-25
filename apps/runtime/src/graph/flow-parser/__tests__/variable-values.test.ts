@@ -167,4 +167,42 @@ describe("constants file + integration", () => {
     expect(report.valid).toBe(false);
     expect(report.errors.map((e) => e.path)).toEqual(["variables.half", "variables.label"]);
   });
+
+  test("constants, env and calculations work directly in node and edge values", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "flow-constants-"));
+    fs.writeFileSync(path.join(dir, "constants.yaml"), "constants:\n  budget: 300\n");
+    setFlowConstantsDir(dir);
+    const bare = {
+      id: "f",
+      name: "F",
+      nodes: [
+        {
+          id: "a",
+          type: "llm",
+          llm: { provider: "openai", model: "m", parameters: { maxTokens: "{{= const.budget * 2 }}" } },
+          systemPrompt: "Budget {{const.budget}} for {{context.userName}}",
+        },
+      ],
+      edges: [{ source: "a", target: "a", conditions: "messageCount < {{const.budget}}" }],
+    } as unknown as FlowDefinition;
+    const resolved = applyFlowVariables(bare); // no variables at all
+    expect(resolved.nodes[0]?.llm?.parameters?.maxTokens).toBe(600);
+    // Runtime placeholders stay for the run.
+    expect(resolved.nodes[0]?.systemPrompt).toBe("Budget 300 for {{context.userName}}");
+    expect(resolved.edges[0]?.conditions).toBe("messageCount < 300");
+  });
+
+  test("the validator reports unresolved node placeholders with their path", () => {
+    const report = validateFlow({
+      id: "f",
+      name: "F",
+      nodes: [{ id: "a", type: "llm", config: { note: "{{const.nope}} / {{vars.fromRequest}}", n: "{{= 1 / 0 }}" } }],
+      edges: [],
+    });
+    expect(report.errors.map((e) => [e.path, e.message])).toEqual([
+      ["nodes[0](a).config.note", '{{const.nope}}: Unknown constant "const.nope" (flows/constants.yaml).'],
+      ["nodes[0](a).config.n", "{{= 1 / 0 }}: Division by zero."],
+    ]);
+    expect(report.warnings.map((w) => w.path)).toContain("nodes[0](a).config.note");
+  });
 });

@@ -25,10 +25,15 @@ import type { FlowReference } from "./node-types";
 import type { FlowDefinition, FlowNode } from "../types/flow";
 
 /**
- * `vars`: a plain field where only flow variables are substituted (they are
- * replaced in every string when the flow loads) — labels, models, numbers, …
+ * `template`: a system prompt or tool argument — load-time references and
+ * run-time placeholders. `condition`: an edge/parallel condition expression.
+ * `vars`: a plain field that is resolved once when the flow loads (variables,
+ * constants, public env, calculations) — labels, models, numbers, config, …
  */
 export type FormulaKind = "template" | "condition" | "vars";
+
+/** Value type of a symbol (drives the icon in the variable tree). */
+export type SymbolType = "text" | "number" | "boolean" | "list" | "object" | "function";
 
 export interface FormulaSymbol {
   /** Path as written in a condition / inside `{{ }}` in a template. */
@@ -45,6 +50,10 @@ export interface FormulaSymbol {
   calcInsert?: string;
   /** Picking it replaces the whole field value (a shortcut, a model id). */
   replace?: boolean;
+  /** Sub-heading inside its group, e.g. the node a field belongs to. */
+  section?: string;
+  /** Value type, for the icon (derived from `example` when absent). */
+  type?: SymbolType;
 }
 
 /** True when `caret` is inside an unclosed `{{= … }}` calculation of `text`. */
@@ -56,6 +65,19 @@ export function insideCalculation(text: string, caret: number): boolean {
 export interface FormulaGroup {
   title: string;
   symbols: FormulaSymbol[];
+  /** One line under the group title. */
+  hint?: string;
+}
+
+/** Icon type of a symbol: explicit, else from its example value. */
+export function symbolType(sym: FormulaSymbol): SymbolType {
+  if (sym.type) return sym.type;
+  const v = sym.example;
+  if (typeof v === "number") return "number";
+  if (typeof v === "boolean") return "boolean";
+  if (Array.isArray(v)) return "list";
+  if (v !== null && typeof v === "object") return "object";
+  return "text";
 }
 
 export interface FormulaOperator {
@@ -126,95 +148,157 @@ function exampleFor(schemaNode: unknown): unknown {
 
 const SAFE_IDENT = /^[A-Za-z_]\w*$/;
 
-/** Everything the formula editor offers for this flow. */
+/** What the builder can offer besides the flow itself (node type catalog). */
+export interface VocabularyCatalog {
+  reference?: Pick<FlowReference, "placeholders" | "conditionFields" | "calculationFunctions">;
+  constants?: Record<string, unknown>;
+  publicEnv?: Record<string, string>;
+}
+
+const RUNTIME_ONLY =
+  "Filled in at run time. This field is resolved once when the flow loads — use it in a system prompt, tool arguments or a condition.";
+const short = (v: unknown): string => {
+  const text = JSON.stringify(v) ?? String(v);
+  return text.length > 48 ? `${text.slice(0, 47)}…` : text;
+};
+
+/**
+ * Everything the expression builder offers for a field of kind `kind`:
+ * load-time references (variables, constants, public env, calculations), node
+ * results, request/user context, run state, date & time. Entries that do not
+ * work in this kind of field stay visible with the reason (`unavailable`), so
+ * the builder also teaches where what works. Static entries come from the
+ * runtime's reference data (the source of docs/FLOWS.md); node results are
+ * collected from this flow.
+ *
+ * `forVariable`: building the value of that variable — it is not offered to
+ * itself, and run-time placeholders are allowed (they are rendered where the
+ * variable is used).
+ */
 export function buildVocabulary(
   def: Pick<FlowDefinition, "nodes" | "variables">,
   kind: FormulaKind,
-  reference?: Pick<FlowReference, "placeholders" | "conditionFields">,
+  catalog?: VocabularyCatalog | FlowReference,
+  opts: { forVariable?: string } = {},
 ): FormulaGroup[] {
-  const groups: FormulaGroup[] = [];
+  // Back-compat: a bare FlowReference as third argument.
+  const cat: VocabularyCatalog =
+    catalog && "placeholders" in catalog ? { reference: catalog } : ((catalog as VocabularyCatalog | undefined) ?? {});
+  const reference = cat.reference;
   const cond = kind === "condition";
+  const loadTimeOnly = kind === "vars" && opts.forVariable === undefined;
+  const runtimeReason = loadTimeOnly ? RUNTIME_ONLY : undefined;
+  const groups: FormulaGroup[] = [];
 
-  const vars = Object.entries(def.variables ?? {}).filter(([k]) => !k.startsWith("_"));
-  if (kind === "vars") {
-    return vars.length > 0
-      ? [
-          {
-            title: "Flow variables",
-            symbols: vars.map(([k, v]) => ({
-              path: `vars.${k}`,
-              description: `Replaced when the flow loads. Value: ${JSON.stringify(v)}`,
-              example: v,
-            })),
-          },
-        ]
-      : [];
-  }
-  if (vars.length > 0) {
-    groups.push({
-      title: "Flow variables",
-      symbols: vars.map(([k, v]) => ({
-        path: `vars.${k}`,
-        description: `Replaced when the flow loads${cond ? " (textually — quote it for a string: '{{vars." + k + "}}')" : ""}. Value: ${JSON.stringify(v)}`,
-        example: v,
-      })),
-    });
-  }
-
-  // Classification fields from classifier schemas, llm output schemas and transforms.
-  const classFields = new Map<string, { from: string; example?: unknown }>();
-  for (const n of def.nodes) {
-    const props = (n.classifierSchema?.schema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
-    for (const f of schemaFields(n)) classFields.set(f, { from: n.id, example: exampleFor(props[f]) });
-    if (n.type === "transform") for (const f of transformFields(n)) classFields.set(f, { from: n.id });
-  }
-  // Runtime: prompts render only context/now/node/turn; classLabel and
-  // classification.* are filled in tool arguments.
-  const toolOnly = cond ? "" : " (tool arguments only)";
+  // --- Load-time references -------------------------------------------------
+  const vars = Object.entries(def.variables ?? {}).filter(
+    ([k]) => !k.startsWith("_") && k !== opts.forVariable,
+  );
   groups.push({
-    title: "Classification (this turn)",
-    symbols: [
-      {
-        path: "classLabel",
-        description: `Value of the classifier's classKey field.${toolOnly}`,
-        example: "INKASSO",
-      },
-      ...[...classFields.entries()].map(([f, info]) => ({
-        path: `classification.${f}`,
-        description: `Set by ${info.from}.${toolOnly}`,
-        ...(info.example !== undefined ? { example: info.example } : {}),
-      })),
-    ],
+    title: "Flow variables",
+    hint: cond
+      ? "Replaced textually when the flow loads — quote text values: '{{vars.x}}'."
+      : "Replaced when the flow loads; a request can override them.",
+    symbols:
+      vars.length > 0
+        ? vars.map(([k, v]) => ({
+            path: `vars.${k}`,
+            insert: `{{vars.${k}}}`,
+            calcInsert: `vars.${k}`,
+            description: `= ${short(v)}`,
+            example: v,
+          }))
+        : [{ path: "vars.none", description: "", unavailable: "No variables yet — add them in Flow settings (click an empty spot on the canvas)." }],
+  });
+  const constants = Object.entries(cat.constants ?? {});
+  groups.push({
+    title: "Constants",
+    hint: "Shared by all flows (flows/constants.yaml).",
+    symbols:
+      constants.length > 0
+        ? constants.map(([k, v]) => ({
+            path: `const.${k}`,
+            insert: `{{const.${k}}}`,
+            calcInsert: `const.${k}`,
+            description: `= ${short(v)}`,
+            example: v,
+          }))
+        : [{ path: "const.none", description: "", unavailable: "No constants yet — add `constants: { name: value }` to flows/constants.yaml." }],
+  });
+  const env = Object.entries(cat.publicEnv ?? {});
+  groups.push({
+    title: "Environment",
+    hint: "Only FLOW_PUBLIC_* variables are readable.",
+    symbols:
+      env.length > 0
+        ? env.map(([k, v]) => ({
+            path: `env.${k}`,
+            insert: `{{env.${k}}}`,
+            calcInsert: `env.${k}`,
+            description: `= ${short(v)}`,
+            example: v,
+          }))
+        : [{ path: "env.none", description: "", unavailable: "No FLOW_PUBLIC_* variables are set in the runtime environment." }],
   });
 
-  const classifiers = def.nodes.filter((n) => schemaFields(n).length > 0);
-  if (classifiers.length > 0) {
-    const perNode: FormulaSymbol[] = [];
-    for (const n of classifiers) {
-      const unsafe = cond && !SAFE_IDENT.test(n.id)
-        ? "Node ids with hyphens can't be used in conditions (they work in templates)."
-        : undefined;
-      for (const f of schemaFields(n)) {
-        perNode.push({
-          path: `node.${n.id}.classification.${f}`,
-          description: `${f} as ${n.id} set it in this run (even if a later classifier overwrote classification.${f}).`,
-          ...(unsafe ? { unavailable: unsafe } : {}),
-        });
-        perNode.push({
-          path: `turn[1].${n.id}.classification.${f}`,
-          description: `${f} from ${n.id} in the PREVIOUS turn (turn[2] = two turns ago).`,
-          ...(unsafe ? { unavailable: unsafe } : {}),
-        });
-      }
+  // --- Node results -----------------------------------------------------------
+  const nodeSymbols: FormulaSymbol[] = [];
+  for (const n of def.nodes) {
+    const fields = [...new Set([...schemaFields(n), ...(n.type === "transform" ? transformFields(n) : [])])];
+    if (fields.length === 0) continue;
+    const props = (n.classifierSchema?.schema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+    const hyphen = cond && !SAFE_IDENT.test(n.id)
+      ? "Node ids with hyphens can't be used in conditions (they work in prompts and tool arguments)."
+      : undefined;
+    for (const f of fields) {
+      const example = exampleFor(props[f]);
+      const base = { section: `${n.id} (${n.type})`, ...(example !== undefined ? { example } : {}) };
+      nodeSymbols.push({
+        ...base,
+        path: `node.${n.id}.classification.${f}`,
+        description: `${f} as ${n.id} set it in this run.`,
+        ...((runtimeReason ?? hyphen) ? { unavailable: runtimeReason ?? hyphen } : {}),
+      });
+      nodeSymbols.push({
+        ...base,
+        path: `turn[1].${n.id}.classification.${f}`,
+        description: `${f} from ${n.id} in the previous turn (turn[2] = two turns ago).`,
+        ...((runtimeReason ?? hyphen) ? { unavailable: runtimeReason ?? hyphen } : {}),
+      });
     }
-    groups.push({ title: "Per node / earlier turns", symbols: perNode });
   }
+  groups.push({
+    title: "Node results",
+    hint: "Output fields of classifier, structured-output and transform nodes.",
+    symbols:
+      nodeSymbols.length > 0
+        ? nodeSymbols
+        : [{ path: "node.none", description: "", unavailable: "No node in this flow produces fields yet (classifier, llm with outputSchema, transform)." }],
+  });
 
-  // Static entries come from the runtime's reference data (the same data
-  // docs/FLOWS.md is generated from). Generic classification entries are
-  // replaced by the concrete fields collected from this flow above.
-  const isDynamic = (path: string): boolean =>
-    /^(classLabel|classification\.|node\.|turn\[)/.test(path);
+  // Latest merged classification: tool arguments and conditions, not prompts.
+  const classFields = new Map<string, unknown>();
+  for (const n of def.nodes) {
+    const props = (n.classifierSchema?.schema as { properties?: Record<string, unknown> } | undefined)?.properties ?? {};
+    for (const f of schemaFields(n)) classFields.set(f, exampleFor(props[f]));
+    if (n.type === "transform") for (const f of transformFields(n)) classFields.set(f, undefined);
+  }
+  const toolOnly = cond || loadTimeOnly ? "" : " (tool arguments only — not rendered in system prompts)";
+  groups.push({
+    title: "Latest classification",
+    hint: "The merged classification of this turn.",
+    symbols: [
+      { path: "classLabel", description: `Value of the last classifier's classKey field.${toolOnly}`, example: "INKASSO" },
+      ...[...classFields.entries()].map(([f, example]) => ({
+        path: `classification.${f}`,
+        description: `Latest value of ${f}.${toolOnly}`,
+        ...(example !== undefined ? { example } : {}),
+      })),
+    ].map((sym) => (runtimeReason ? { ...sym, unavailable: runtimeReason } : sym)),
+  });
+
+  // --- Static entries from the runtime's reference data ------------------------
+  const isDynamic = (path: string): boolean => /^(classLabel|classification\.|node\.|turn\[)/.test(path);
   const now = nowValues();
   const staticGroups = (cond ? reference?.conditionFields : reference?.placeholders) ?? [];
   for (const g of staticGroups) {
@@ -222,7 +306,7 @@ export function buildVocabulary(
       .filter((sym) => !isDynamic(sym.path))
       .map((sym) => {
         const only =
-          cond || g.scopes.length !== 1
+          cond || loadTimeOnly || g.scopes.length !== 1
             ? ""
             : g.scopes[0] === "prompt"
               ? " (system prompts only)"
@@ -233,9 +317,37 @@ export function buildVocabulary(
           path: sym.path,
           description: `${sym.description}${only}`,
           ...(example !== undefined ? { example } : {}),
+          ...(runtimeReason ? { unavailable: runtimeReason } : {}),
         };
       });
-    if (symbols.length > 0) groups.push({ title: g.title, symbols });
+    if (symbols.length > 0) {
+      groups.push({ title: g.title === "User context" ? "Request & user" : g.title, symbols });
+    }
+  }
+
+  // --- Calculation functions (not in conditions: they have their own grammar) --
+  if (!cond) {
+    const fns = reference?.calculationFunctions ?? [];
+    groups.push({
+      title: "Calculation",
+      hint: "{{= … }} is evaluated when the flow loads: variables, constants and env — not run-time values.",
+      symbols: [
+        {
+          path: "calc",
+          insert: "{{=  }}",
+          type: "function" as const,
+          description: "Start a calculation, e.g. {{= round(vars.max_tokens / 2) }}",
+        },
+        ...fns.map((fn) => ({
+          path: `fn.${fn.text.replace("()", "")}`,
+          label: fn.label,
+          insert: `{{= ${fn.text} }}`,
+          calcInsert: fn.text,
+          type: "function" as const,
+          description: fn.description,
+        })),
+      ],
+    });
   }
   return groups;
 }

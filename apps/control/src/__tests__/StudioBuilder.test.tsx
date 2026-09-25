@@ -22,12 +22,16 @@ vi.mock("../components/FlowCanvas", () => ({
   FlowCanvas: ({
     nodes,
     edges,
+    nodeOrigins,
     onSelectionChange,
+    onSelectSubflow,
     nodeValidation,
   }: {
     nodes: { id: string }[];
     edges: { source: string; target: string }[];
+    nodeOrigins?: Record<string, string>;
     onSelectionChange?: (n: string[], e: string[]) => void;
+    onSelectSubflow?: (path: string) => void;
     nodeValidation?: Map<string, unknown>;
   }) => (
     <div data-testid="canvas">
@@ -44,6 +48,27 @@ vi.mock("../components/FlowCanvas", () => ({
         {edges.map((e) => (
           <li key={`${e.source}-${e.target}`}>{`edge:${e.source}->${e.target}`}</li>
         ))}
+      </ul>
+      {/* Selecting a whole sub-flow group (mirrors clicking its box label).
+          Real React Flow also fires onSelectionChange for the group's nodes
+          when they get programmatically selected, so the mock does too. */}
+      <ul>
+        {[...new Set(Object.values(nodeOrigins ?? {}))].map((p) => {
+          const groupIds = Object.entries(nodeOrigins ?? {})
+            .filter(([, path]) => path === p)
+            .map(([id]) => id);
+          return (
+            <li key={p}>
+              <button
+                type="button"
+                onClick={() => {
+                  onSelectSubflow?.(p);
+                  onSelectionChange?.(groupIds, []);
+                }}
+              >{`select-group:${p}`}</button>
+            </li>
+          );
+        })}
       </ul>
       <span data-testid="ringed">{nodeValidation?.size ?? 0}</span>
     </div>
@@ -161,6 +186,55 @@ describe("StudioBuilder", () => {
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Write to file" })).toBeInTheDocument();
+  });
+
+  test("includes a sub-flow from the palette; saving writes its nodes with their origin", async () => {
+    const fetchMock = mockBackend();
+    const base = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      if (String(url).endsWith("/flows/subflows")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ subflows: [{ path: "subflows/lib.yaml", nodeIds: ["recall"], edgeCount: 1, usedBy: [] }] }),
+        });
+      }
+      if (String(url).includes("/flows/subflows/content")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            path: "subflows/lib.yaml",
+            nodes: [{ id: "recall", type: "memory" }],
+            edges: [{ source: "answer", target: "recall" }],
+            edgeOrigins: { "answer->recall": "subflows/lib.yaml" },
+          }),
+        });
+      }
+      if (String(url).endsWith("/flows/write")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, fileName: "kanzlei.yaml" }) });
+      }
+      return base?.(url, init);
+    });
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Include" }));
+    await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
+    expect(screen.getByText("edge:answer->recall")).toBeInTheDocument();
+
+    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
+    vi.spyOn(window, "confirm").mockReturnValue(true); // "write into kanzlei.yaml?"
+    fireEvent.click(screen.getByRole("button", { name: "Write to file" }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/flows/write"))).toBe(true),
+    );
+    const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/flows/write"));
+    const sent = JSON.parse(String(call?.[1]?.body)) as { definition: FlowDefinition };
+    expect(sent.definition.metadata?.["$includeOrigins"]).toEqual({ recall: "subflows/lib.yaml" });
+    expect(sent.definition.metadata?.["$includeEdgeOrigins"]).toEqual({ "answer->recall": "subflows/lib.yaml" });
   });
 
   test("offers no file write when the runtime has file writing disabled", async () => {
@@ -285,5 +359,132 @@ describe("StudioBuilder", () => {
     );
     expect(screen.queryByText(/warning\(s\)/)).not.toBeInTheDocument();
     expect(screen.getByTestId("ringed").textContent).toBe("0");
+  });
+
+  // A backend that also serves the sub-flow include/content/write endpoints.
+  function mockBackendWithSubflows(): ReturnType<typeof vi.fn> {
+    const fetchMock = mockBackend();
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      if (u.endsWith("/flows/subflows")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ subflows: [{ path: "subflows/lib.yaml", nodeIds: ["recall"], edgeCount: 1, usedBy: [] }] }),
+        });
+      }
+      if (u.includes("/flows/subflows/content")) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            path: "subflows/lib.yaml",
+            nodes: [{ id: "recall", type: "memory" }],
+            edges: [{ source: "answer", target: "recall" }],
+            edgeOrigins: { "answer->recall": "subflows/lib.yaml" },
+          }),
+        });
+      }
+      if (u.endsWith("/flows/subflows/write")) {
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ hash: "abc123" }) });
+      }
+      return base(u, init);
+    });
+    return fetchMock;
+  }
+
+  /** Include subflows/lib.yaml, then select its group as a whole. */
+  async function includeAndSelectGroup(): Promise<void> {
+    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Include" }));
+    await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
+    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
+    fireEvent.click(screen.getByText("select-group:subflows/lib.yaml"));
+    await screen.findByTestId("subflow-group-panel");
+  }
+
+  test("selecting a sub-flow group shows its action panel", async () => {
+    mockBackendWithSubflows();
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    await includeAndSelectGroup();
+    const panel = within(screen.getByTestId("subflow-group-panel"));
+    expect(panel.getByRole("heading")).toHaveTextContent("lib.yaml");
+    expect(panel.getByRole("button", { name: /Save this sub-flow/ })).toBeInTheDocument();
+    expect(panel.getByRole("button", { name: /Remove from this flow/ })).toBeInTheDocument();
+  });
+
+  test("clicking the single node of a one-node sub-flow edits the node, not the group", async () => {
+    mockBackendWithSubflows();
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+
+    // Include the one-node sub-flow (its only node is "recall").
+    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
+    const dialog = await screen.findByRole("dialog");
+    fireEvent.click(await within(dialog).findByRole("button", { name: "Include" }));
+    await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
+    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
+
+    // Clicking the node itself must open the node's property panel, NOT the
+    // sub-flow group panel — even though the node IS the whole sub-flow.
+    const canvas = within(screen.getByTestId("canvas"));
+    fireEvent.click(canvas.getByText("recall"));
+    expect(await screen.findByRole("button", { name: "rename" })).toBeInTheDocument();
+    expect(screen.queryByTestId("subflow-group-panel")).not.toBeInTheDocument();
+  });
+
+  test("selecting a group then clicking a node inside it returns to the node panel", async () => {
+    mockBackendWithSubflows();
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    await includeAndSelectGroup();
+    expect(screen.getByTestId("subflow-group-panel")).toBeInTheDocument();
+
+    // Clicking the node clears the explicit group selection.
+    fireEvent.click(within(screen.getByTestId("canvas")).getByText("recall"));
+    await waitFor(() => expect(screen.queryByTestId("subflow-group-panel")).not.toBeInTheDocument());
+    expect(await screen.findByRole("button", { name: "rename" })).toBeInTheDocument();
+  });
+
+  test("Save this sub-flow writes just its file via /flows/subflows/write", async () => {
+    const fetchMock = mockBackendWithSubflows();
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    await includeAndSelectGroup();
+
+    // A freshly included sub-flow is dirty (not yet on disk in this flow), so
+    // "Save this sub-flow" is enabled.
+    fireEvent.click(within(screen.getByTestId("subflow-group-panel")).getByRole("button", { name: /Save this sub-flow/ }));
+    await waitFor(() =>
+      expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/flows/subflows/write"))).toBe(true),
+    );
+    const call = fetchMock.mock.calls.find(([u]) => String(u).endsWith("/flows/subflows/write"));
+    const sent = JSON.parse(String(call?.[1]?.body)) as { path: string; nodes: { id: string }[]; edges: unknown[] };
+    expect(sent.path).toBe("subflows/lib.yaml");
+    expect(sent.nodes.map((n) => n.id)).toEqual(["recall"]);
+    // answer->recall was recorded in $includeEdgeOrigins for this file on
+    // include, so it is written back into the sub-flow file (matching how the
+    // runtime resolves it on the next load).
+    expect(sent.edges).toEqual([{ source: "answer", target: "recall" }]);
+    await waitFor(() => expect(screen.getByText(/Saved lib.yaml to its file/)).toBeInTheDocument());
+  });
+
+  test("Remove from this flow drops the group's nodes but keeps the parent", async () => {
+    mockBackendWithSubflows();
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    await includeAndSelectGroup();
+    const canvas = () => within(screen.getByTestId("canvas"));
+    expect(canvas().getByText("recall")).toBeInTheDocument();
+
+    fireEvent.click(within(screen.getByTestId("subflow-group-panel")).getByRole("button", { name: /Remove from this flow/ }));
+    await waitFor(() => expect(canvas().queryByText("recall")).not.toBeInTheDocument());
+    // Parent nodes stay.
+    expect(canvas().getByText("answer")).toBeInTheDocument();
+    expect(canvas().getByText("router")).toBeInTheDocument();
+    expect(screen.getByText(/Removed sub-flow lib.yaml/)).toBeInTheDocument();
   });
 });

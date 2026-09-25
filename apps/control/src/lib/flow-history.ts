@@ -62,7 +62,9 @@ function signature(snapshot: FlowGraphSnapshot): string {
   const { nodes: _n, edges: _e, ...settings } = snapshot.base ?? ({} as Partial<FlowDefinition>);
   void _n;
   void _e;
-  return JSON.stringify({ nodes, edges, settings, origins: snapshot.nodeOrigins ?? {} });
+  // Node order is content too: the first node is the flow's entry.
+  const entry = snapshot.nodes[0]?.id ?? null;
+  return JSON.stringify({ nodes, edges, settings, origins: snapshot.nodeOrigins ?? {}, entry });
 }
 
 export function useFlowHistory(

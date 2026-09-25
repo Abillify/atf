@@ -113,40 +113,130 @@ export function referenceEdges(nodes: FlowNode[]): ReferenceEdge[] {
   return out;
 }
 
+/** Horizontal gap between a node and the tool nodes docked to its right. */
+const TOOL_GAP = 48;
+/** Vertical gap between two tool nodes stacked beside the same caller. */
+const TOOL_STACK_GAP = 16;
+
 /**
- * Hierarchical auto-layout for the editor canvas. Uses the real edges plus the
- * structural reference edges (parallel children, verifier) so nothing ends up
- * stranded in the first rank. Delegation links only rank a worker that has
- * no other incoming link — such a worker is reached solely through the harness
- * and belongs below it, not stranded above it. A worker that is also wired in
- * normally keeps its place: a harness may delegate to half the flow, and
- * ranking on all of those links would flatten the graph.
+ * A tool node runs INSIDE its caller for the caller's duration — a parallel
+ * child, or an agent-harness worker/verifier that has no incoming flow edge of
+ * its own. Its reference link docks on the caller's right edge, so the layout
+ * places it to the RIGHT of the caller at the SAME height (not on a rank below
+ * it, which would read as "runs after the caller"). A referenced node that is
+ * ALSO wired in with a real edge is an ordinary step and keeps its rank.
+ */
+function toolNodesByCaller(
+  refs: ReferenceEdge[],
+  realTargets: Set<string>,
+): Map<string, string[]> {
+  const byCaller = new Map<string, string[]>();
+  const claimed = new Set<string>();
+  for (const r of refs) {
+    if (realTargets.has(r.target) || claimed.has(r.target)) continue;
+    claimed.add(r.target); // one caller owns a tool node's placement
+    byCaller.set(r.source, [...(byCaller.get(r.source) ?? []), r.target]);
+  }
+  return byCaller;
+}
+
+/**
+ * Hierarchical auto-layout for the editor canvas.
+ *
+ * The vertical structure follows the run: real edges rank the graph top→bottom.
+ * Tool nodes (parallel children, harness workers/verifier with no incoming
+ * edge) do NOT get a rank of their own — they run during their caller's
+ * execution, so they are docked to the RIGHT of the caller at the same height,
+ * stacked vertically when a caller has several. This mirrors the right→left
+ * tool handles the canvas draws and reads as "runs alongside", not "runs
+ * after".
  */
 export function layoutEditorGraph(
   nodes: FlowNode[],
   edges: Array<{ source: string; target: string; label?: string }>,
   sizes?: Map<string, { width: number; height: number }>,
+  /** Node id → sub-flow file: its nodes are laid out as one group. */
+  origins?: Record<string, string>,
 ): LayoutMap {
   const refs = referenceEdges(nodes);
-  const structural = refs.filter((r) => r.kind !== "delegates");
-  const reached = new Set([...edges, ...structural].map((e) => e.target));
-  const delegateOnly = refs.filter((r) => {
-    if (r.kind !== "delegates" || reached.has(r.target)) return false;
-    reached.add(r.target); // one delegator is enough to rank it
-    return true;
-  });
+  const realTargets = new Set(edges.map((e) => e.target));
+  // Tool nodes are placed beside their caller, so they are excluded from the
+  // ranked graph entirely (no reference edge feeds Dagre for them).
+  const toolByCaller = toolNodesByCaller(refs, realTargets);
+  const toolNodes = new Set([...toolByCaller.values()].flat());
+
+  const sizeOf = (id: string): { width: number; height: number } =>
+    sizes?.get(id) ?? { width: EDITOR_NODE_W, height: EDITOR_NODE_H };
+
+  // Geometry of a caller's tool stack (docked to its right): the widest tool,
+  // and the summed height of the stack incl. gaps.
+  const toolStack = (caller: string): { width: number; height: number } => {
+    const tools = toolByCaller.get(caller) ?? [];
+    if (tools.length === 0) return { width: 0, height: 0 };
+    const width = Math.max(...tools.map((t) => sizeOf(t).width));
+    const height =
+      tools.reduce((s, t) => s + sizeOf(t).height, 0) +
+      TOOL_STACK_GAP * (tools.length - 1);
+    return { width, height };
+  };
+
+  // Reserve the space a caller's tool stack needs by laying the caller out at
+  // an ENLARGED size (its box + gap + the tool column). Dagre then keeps its
+  // neighbours clear of that whole footprint, so tools never overlap other
+  // nodes — the bug of placing them blindly after the fact.
+  const laidOutIds = nodes.map((n) => n.id).filter((id) => !toolNodes.has(id));
+  const dagreSizes = new Map<string, { width: number; height: number }>();
+  for (const id of laidOutIds) {
+    const base = sizeOf(id);
+    const stack = toolStack(id);
+    dagreSizes.set(id, {
+      width: stack.width > 0 ? base.width + TOOL_GAP + stack.width : base.width,
+      height: Math.max(base.height, stack.height),
+    });
+  }
+
   const positions = computeDagreLayout(
-    nodes.map((n) => n.id),
-    [...edges, ...structural, ...delegateOnly],
+    laidOutIds,
+    edges.filter((e) => !toolNodes.has(e.source) && !toolNodes.has(e.target)),
     {
-      ...(sizes ? { sizes } : {}),
+      sizes: dagreSizes,
+      ...(origins && Object.keys(origins).length > 0
+        ? { clusters: new Map(Object.entries(origins).filter(([id]) => !toolNodes.has(id))) }
+        : {}),
       defaultSize: { width: EDITOR_NODE_W, height: EDITOR_NODE_H },
       nodesep: 40,
       ranksep: 70,
       labelSize: { width: 190, height: 16 },
     },
   );
-  return Object.fromEntries(positions);
+
+  // `positions` gives the top-left of each caller's ENLARGED footprint. Place
+  // the caller vertically centred at the left of that box, and stack its tools
+  // to the right — both inside the reserved area, so nothing collides.
+  const layout: LayoutMap = {};
+  for (const [id, box] of positions) {
+    const base = sizeOf(id);
+    const stack = toolStack(id);
+    const footprintH = Math.max(base.height, stack.height);
+    layout[id] = { x: box.x, y: box.y + (footprintH - base.height) / 2 };
+
+    const tools = toolByCaller.get(id) ?? [];
+    if (tools.length === 0) continue;
+    const x = box.x + base.width + TOOL_GAP;
+    let y = box.y + (footprintH - stack.height) / 2;
+    for (const t of tools) {
+      layout[t] = { x, y };
+      y += sizeOf(t).height + TOOL_STACK_GAP;
+    }
+  }
+
+  // Any node the ranked layout didn't place (e.g. a tool node whose caller was
+  // itself excluded) falls back to a deterministic grid slot.
+  nodes.forEach((n, i) => {
+    if (layout[n.id] === undefined) layout[n.id] = autoPosition(i);
+  });
+
+  return layout;
 }
 export type ViewportState = { x: number; y: number; zoom: number };
 
@@ -201,7 +291,15 @@ export function flowToGraph(def: FlowDefinition): {
   // instead of dropping nodes into a fixed grid.
   const layout =
     def.nodes.length > 0 && def.nodes.some((n) => stored[n.id] === undefined)
-      ? { ...layoutEditorGraph(def.nodes, def.edges.map((e) => ({ ...e, label: e.label ?? e.conditions }))), ...stored }
+      ? {
+          ...layoutEditorGraph(
+            def.nodes,
+            def.edges.map((e) => ({ ...e, label: e.label ?? e.conditions })),
+            undefined,
+            nodeOriginsOf(def),
+          ),
+          ...stored,
+        }
       : stored;
   const nodes: RFNode[] = def.nodes.map((n, i) => ({
     id: n.id,

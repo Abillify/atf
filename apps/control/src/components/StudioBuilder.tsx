@@ -32,9 +32,10 @@ import {
   type EdgeSelection,
 } from "./NodePropertyPanel";
 import { FlowNodePalette } from "./FlowNodePalette";
+import { SubflowGroupPanel } from "./SubflowGroupPanel";
 import { FlowRunDrawer } from "./FlowRunDrawer";
 import { FlowVersionBar } from "./FlowVersionBar";
-import { FlowCopilotPanel } from "./FlowCopilotPanel";
+import { type CopilotFocus, FlowCopilotPanel } from "./FlowCopilotPanel";
 import type { NodeState } from "./graph/graphUtils";
 import type { DiffOverlay } from "../lib/flow-diff-view";
 import {
@@ -65,7 +66,32 @@ import { backendUrl } from "../lib/backend-url";
 import { Button } from "../lib/ui";
 import type { PlaygroundResult } from "../lib/studio-run";
 import { useNodeTypeCatalog } from "../lib/node-types";
-import { FormulaProvider } from "./FormulaEditor";
+import { fetchRunSample, loadPinnedRun, savePinnedRun, type PinnedRun } from "../lib/run-samples";
+import { Redo2, Undo2 } from "lucide-react";
+import {
+  fetchSubflowContent,
+  subflowAt,
+  subflowBoxes,
+  subflowPathFor,
+  subflowNodeIds,
+  subflowGroup,
+  subflowFragment,
+  removeSubflow,
+  writeSubflowContent,
+  subflowLabel,
+} from "../lib/subflows";
+import { useSubflowHistory, type SubflowSnapshot } from "../lib/subflow-history";
+import { EDITOR_NODE_H, EDITOR_NODE_W } from "./graph/GraphLayoutEngine";
+import { FormulaProvider, type RunsContext } from "./FormulaEditor";
+import { BoundaryPanel } from "./BoundaryPanel";
+import type { BoundaryCardInfo } from "./FlowCanvas";
+import {
+  REQUEST_EVENT_ID,
+  RESPONSE_EVENT_ID,
+  flowBoundaries,
+  withEntryFirst,
+} from "../lib/flow-boundaries";
+import { answerText } from "../lib/run-attach";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -98,6 +124,12 @@ export interface StudioBuilderProps {
    * single node is selected.
    */
   onInspect?: (info: { nodeId: string; type: string; field?: string } | null) => void;
+  /** Recorded execution to show in Run & Trace (a request opened from the Live Graph). */
+  attachExecutionId?: string;
+  /** Run & Trace moved on from the attached execution. */
+  onDetachExecution?: () => void;
+  /** Receives a getter for the canvas definition (source form), for page-level checks. */
+  canvasDefinitionRef?: React.MutableRefObject<(() => FlowDefinition) | null>;
 }
 
 export interface StudioBuilderPanels {
@@ -257,12 +289,17 @@ async function readStoreError(resp: Response): Promise<{
   validation?: FlowValidationReport;
 }> {
   try {
-    const data = (await resp.json()) as {
-      error?: { message?: string };
-      validation?: FlowValidationReport;
-    };
+    const text = await resp.text();
+    let data: { error?: { message?: string } | string; validation?: FlowValidationReport } = {};
+    try {
+      data = JSON.parse(text) as typeof data;
+    } catch {
+      // A plain-text refusal (e.g. the CSRF check's "Forbidden"): show it as is.
+      return { error: `HTTP ${resp.status}${text.trim() ? `: ${text.trim().slice(0, 200)}` : ""}` };
+    }
+    const message = typeof data.error === "string" ? data.error : data.error?.message;
     return {
-      error: data.error?.message ?? `HTTP ${resp.status}`,
+      error: message ?? `HTTP ${resp.status}`,
       ...(data.validation ? { validation: data.validation } : {}),
     };
   } catch {
@@ -317,7 +354,13 @@ async function publishOnBackend(
       backendUrl(`/flows/${encodeURIComponent(flowId)}/publish`),
       {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        // A JSON body (even empty): a body-less POST counts as a form post for
+        // the runtime's CSRF check and is refused unless strictly same-origin.
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: "{}",
       },
     );
     if (!resp.ok) return { ok: false, ...(await readStoreError(resp)) };
@@ -401,6 +444,9 @@ export function StudioBuilder({
   onSaveEvalCase,
   onDeleteEvalCase,
   onInspect,
+  attachExecutionId,
+  onDetachExecution,
+  canvasDefinitionRef,
 }: StudioBuilderProps): React.JSX.Element {
   const { token, ready, isAuthenticated } = useAuth();
 
@@ -411,8 +457,16 @@ export function StudioBuilder({
   const [edges, setEdges] = useState<RFEdge[]>([]);
   const [viewport, setViewport] = useState<ViewportState | undefined>(undefined);
   const [selNode, setSelNode] = useState<string | null>(null);
+  /** Start or End selected on the canvas (not flow nodes, see lib/flow-boundaries). */
+  const [selBoundary, setSelBoundary] = useState<"start" | "end" | null>(null);
   const [selEdge, setSelEdge] = useState<string | null>(null);
   const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  /**
+   * The sub-flow whose group is selected AS A WHOLE (via a click on its box
+   * label/border), driving the sub-flow action panel. Set only by
+   * `selectSubflowGroup`; cleared by any ordinary node/edge/pane selection.
+   */
+  const [selectedSubflowPath, setSelectedSubflowPath] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<
     "info" | "error" | "warn" | "ok"
@@ -447,6 +501,8 @@ export function StudioBuilder({
   const assistBarsHidden = !panels.assist;
 
   const history = useFlowHistory({ nodes: [], edges: [] });
+  /** Per-sub-flow undo/redo + saved-baseline, scoped to one `$include` group. */
+  const subflowHistory = useSubflowHistory();
   /** Positions as loaded — to tell whether the operator actually moved nodes. */
   const loadedPositionsRef = useRef<Map<string, { x: number; y: number }>>(
     new Map(),
@@ -456,6 +512,9 @@ export function StudioBuilder({
   };
   const clipboardRef = useRef<RFNode[]>([]);
   const skipHistoryRef = useRef(false);
+  /** Node ids of the last explicit sub-flow-group selection, so the resulting
+   * onSelectionChange doesn't clear it (see selectSubflowGroup). */
+  const groupSelectionRef = useRef<Set<string> | null>(null);
 
   /**
    * Stable canvas key — updated only when the operator explicitly switches to
@@ -572,6 +631,13 @@ export function StudioBuilder({
       graphToFlow(base, nodes, edges, viewport, nodeOrigins, includeLayout),
     [base, nodes, edges, viewport, nodeOrigins, includeLayout],
   );
+  useEffect(() => {
+    if (!canvasDefinitionRef) return;
+    canvasDefinitionRef.current = currentDefinition;
+    return () => {
+      canvasDefinitionRef.current = null;
+    };
+  }, [canvasDefinitionRef, currentDefinition]);
 
   // -------------------------------------------------------------------------
   // Dirty tracking — compared against the snapshot taken after load/save.
@@ -775,11 +841,20 @@ export function StudioBuilder({
 
   const addNodeAt = useCallback(
     (type: NodeType, position?: { x: number; y: number }): void => {
+      // Dropped onto a sub-flow box → the new node belongs to that sub-flow.
+      const into =
+        position !== undefined
+          ? subflowAt(
+              position,
+              subflowBoxes(nodes as never, nodeOrigins, { width: EDITOR_NODE_W, height: EDITOR_NODE_H }),
+            )
+          : undefined;
       setNodes((ns) => {
         const node = makeNode(
           type,
           ns.map((n) => n.id),
         );
+        if (into !== undefined) setNodeOrigins((o) => ({ ...o, [node.id]: into }));
         const pos = position ?? autoPosition(ns.length);
         setSelNode(node.id);
         setSelEdge(null);
@@ -790,7 +865,327 @@ export function StudioBuilder({
         ];
       });
     },
-    [],
+    [nodes, nodeOrigins],
+  );
+
+  // -------------------------------------------------------------------------
+  // Sub-flows: include a file, create a new one, move a node between files.
+  // The canvas always shows the merged graph; a node's origin decides which
+  // file it is written to on save (the runtime adds new files to
+  // metadata.$include and drops files no longer used).
+  // -------------------------------------------------------------------------
+  const setNodeOrigin = useCallback((nodeId: string, path: string | null): void => {
+    setNodeOrigins((o) => {
+      const { [nodeId]: _old, ...rest } = o;
+      void _old;
+      return path ? { ...rest, [nodeId]: path } : rest;
+    });
+  }, []);
+
+  const includeSubflow = useCallback(
+    async (path: string): Promise<string> => {
+      const content = await fetchSubflowContent(path, token);
+      const existing = new Set(nodes.map((n) => n.id));
+      const incoming = content.nodes.filter((n) => !existing.has(n.id));
+      const skipped = content.nodes.length - incoming.length;
+      if (incoming.length === 0) {
+        return skipped > 0 ? `All nodes of ${path} are already on the canvas.` : `${path} has no nodes.`;
+      }
+      const ids = new Set(incoming.map((n) => n.id));
+      const subEdges = content.edges.filter(
+        (e) => (ids.has(e.source) || existing.has(e.source)) && (ids.has(e.target) || existing.has(e.target)),
+      );
+      // Lay the sub-flow out on its own, to the right of the current graph.
+      const g = flowToGraph({ id: "sub", name: "sub", nodes: incoming, edges: subEdges.filter((e) => ids.has(e.source) && ids.has(e.target)) });
+      const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x + EDITOR_NODE_W), 0);
+      const minY = nodes.reduce((m, n) => Math.min(m, n.position.y), Number.POSITIVE_INFINITY);
+      const gx = Math.min(...g.nodes.map((n) => n.position.x));
+      const gy = Math.min(...g.nodes.map((n) => n.position.y));
+      const dx = (nodes.length > 0 ? maxX + 140 : 0) - gx;
+      const dy = (Number.isFinite(minY) ? minY : 0) - gy;
+      const newNodes = g.nodes.map((n) => ({ ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }));
+      const edgeIds = new Set(edges.map((e) => e.id));
+      const newEdges = flowToGraph({ id: "sub", name: "sub", nodes: incoming, edges: subEdges }).edges.map((e) => {
+        let id = e.id;
+        while (edgeIds.has(id)) id = `${id}-sub`;
+        edgeIds.add(id);
+        return { ...e, id };
+      });
+      setNodes((ns) => [...ns, ...newNodes]);
+      setEdges((es) => [...es, ...newEdges]);
+      setNodeOrigins((o) => ({ ...o, ...Object.fromEntries(incoming.map((n) => [n.id, path])) }));
+      if (Object.keys(content.edgeOrigins).length > 0) {
+        setBase((b) => ({
+          ...b,
+          metadata: {
+            ...(b.metadata ?? {}),
+            $includeEdgeOrigins: {
+              ...((b.metadata as Record<string, unknown> | undefined)?.["$includeEdgeOrigins"] as Record<string, string> | undefined),
+              ...content.edgeOrigins,
+            },
+          },
+        }));
+      }
+      return `Included ${path}: ${incoming.length} node(s)${skipped > 0 ? `, ${skipped} skipped (id already on the canvas)` : ""} — save to add it to the flow.`;
+    },
+    [nodes, edges, token],
+  );
+
+  const createSubflow = useCallback(
+    (name: string): string | null => {
+      const path = subflowPathFor(name);
+      if (!path) return "Enter a name (letters, digits, - or _).";
+      if (Object.values(nodeOrigins).includes(path)) return `${path} already exists in this flow.`;
+      const selectedIds = nodes.filter((n) => n.selected).map((n) => n.id);
+      if (selectedIds.length > 0) {
+        setNodeOrigins((o) => ({ ...o, ...Object.fromEntries(selectedIds.map((id) => [id, path])) }));
+        setStatus(`${selectedIds.length} node(s) moved to ${path} — save to write the file.`);
+      } else {
+        // An empty sub-flow can't be drawn: start it with one node beside the graph.
+        const maxX = nodes.reduce((m, n) => Math.max(m, n.position.x + EDITOR_NODE_W), 0);
+        const minY = nodes.reduce((m, n) => Math.min(m, n.position.y), Number.POSITIVE_INFINITY);
+        setNodes((ns) => {
+          const node = makeNode("llm", ns.map((n) => n.id));
+          setNodeOrigins((o) => ({ ...o, [node.id]: path }));
+          setSelNode(node.id);
+          setSelEdge(null);
+          setSelectedNodeIds([node.id]);
+          return [
+            ...ns,
+            {
+              id: node.id,
+              type: "flowNode",
+              position: { x: nodes.length > 0 ? maxX + 140 : 0, y: Number.isFinite(minY) ? minY : 0 },
+              data: { flowNode: node },
+            },
+          ];
+        });
+        setStatus(`Created ${path} with a first node — drop more nodes onto its box, then save.`);
+      }
+      setStatusKind("info");
+      return null;
+    },
+    [nodes, nodeOrigins],
+  );
+
+  // -------------------------------------------------------------------------
+  // Sub-flow groups on the canvas — a whole `$include` group can be selected,
+  // moved, deleted, saved to its file on its own, and stepped/undone/reset
+  // independently of the rest of the flow (see lib/subflows.ts &
+  // lib/subflow-history.ts).
+  // -------------------------------------------------------------------------
+
+  /** `$includeEdgeOrigins` off `base.metadata` (edge key → sub-flow path). */
+  const edgeOrigins = useMemo<Record<string, string>>(
+    () => (base.metadata?.["$includeEdgeOrigins"] as Record<string, string> | undefined) ?? {},
+    [base.metadata],
+  );
+
+  /** The current canvas slice of sub-flow `path` as a history snapshot. */
+  const subflowSnapshotOf = useCallback(
+    (path: string): SubflowSnapshot => {
+      const g = subflowGroup(nodes, edges, nodeOrigins, edgeOrigins, path);
+      const groupKeys = new Set(g.edges.map((e) => (e.data?.syntheticId ? `${e.source}->${e.target}` : e.id)));
+      return {
+        nodes: g.nodes,
+        edges: g.edges,
+        edgeOrigins: Object.fromEntries(
+          Object.entries(edgeOrigins).filter(([k, p]) => p === path && groupKeys.has(k)),
+        ),
+      };
+    },
+    [nodes, edges, nodeOrigins, edgeOrigins],
+  );
+
+  // Record each sub-flow's state for its scoped history, debounced like the
+  // global history so a drag/burst becomes one step. A path new to the history
+  // seeds its baseline; the debounce reads the latest snapshot via a ref.
+  const subflowSnapshotRef = useRef(subflowSnapshotOf);
+  subflowSnapshotRef.current = subflowSnapshotOf;
+  useEffect(() => {
+    const paths = [...new Set(Object.values(nodeOrigins))];
+    const t = setTimeout(() => {
+      for (const p of paths) subflowHistory.push(p, subflowSnapshotRef.current(p));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [nodes, edges, nodeOrigins, edgeOrigins, subflowHistory]);
+
+  /**
+   * Replaces exactly sub-flow `path`'s nodes/edges/edge-origins on the canvas
+   * with `snap`, leaving every other node, edge and sub-flow untouched. Used by
+   * per-sub-flow undo/redo and reset.
+   */
+  const applySubflowSnapshot = useCallback(
+    (path: string, snap: SubflowSnapshot): void => {
+      skipHistoryRef.current = true;
+      const oldIds = new Set(subflowNodeIds(nodeOrigins, path));
+      const oldEdgeKeys = new Set(
+        subflowGroup(nodes, edges, nodeOrigins, edgeOrigins, path).edges.map((e) =>
+          e.data?.syntheticId ? `${e.source}->${e.target}` : e.id,
+        ),
+      );
+      const newIds = new Set(snap.nodes.map((n) => n.id));
+      setNodes((ns) => [...ns.filter((n) => !oldIds.has(n.id)), ...snap.nodes]);
+      setEdges((es) => {
+        const keep = es.filter((e) => {
+          const key = e.data?.syntheticId ? `${e.source}->${e.target}` : e.id;
+          return !oldEdgeKeys.has(key);
+        });
+        return [...keep, ...snap.edges];
+      });
+      setNodeOrigins((o) => {
+        const rest = Object.fromEntries(Object.entries(o).filter(([id]) => !oldIds.has(id)));
+        return { ...rest, ...Object.fromEntries([...newIds].map((id) => [id, path])) };
+      });
+      setBase((b) => {
+        const eo = (b.metadata?.["$includeEdgeOrigins"] as Record<string, string> | undefined) ?? {};
+        const withoutPath = Object.fromEntries(Object.entries(eo).filter(([, p]) => p !== path));
+        const merged = { ...withoutPath, ...snap.edgeOrigins };
+        const metadata = { ...(b.metadata ?? {}) } as Record<string, unknown>;
+        if (Object.keys(merged).length > 0) metadata["$includeEdgeOrigins"] = merged;
+        else delete metadata["$includeEdgeOrigins"];
+        return { ...b, metadata };
+      });
+    },
+    [nodes, edges, nodeOrigins, edgeOrigins],
+  );
+
+  /**
+   * Selects a whole sub-flow group (all its nodes) on the canvas. This is the
+   * ONLY way the sub-flow action panel opens — an explicit click on the group's
+   * box label/border, never an inferred consequence of selecting a node inside
+   * it. Otherwise a single-node sub-flow could never have its node's properties
+   * edited (selecting the node would look identical to selecting the group).
+   */
+  const selectSubflowGroup = useCallback(
+    (path: string): void => {
+      const ids = new Set(subflowNodeIds(nodeOrigins, path));
+      if (ids.size === 0) return;
+      // Remember the group's node set so the selection-change that React Flow
+      // fires for this programmatic selection doesn't immediately clear the
+      // group selection (see handleSelectionChange).
+      groupSelectionRef.current = ids;
+      setNodes((ns) => ns.map((n) => ({ ...n, selected: ids.has(n.id) })));
+      setSelectedNodeIds([...ids]);
+      setSelectedSubflowPath(path);
+      setSelNode(null);
+      setSelEdge(null);
+    },
+    [nodeOrigins],
+  );
+
+  /**
+   * Removes a whole sub-flow from THIS flow: its nodes/edges leave the canvas
+   * and its `$include` bookkeeping is cleared, so on save the runtime drops the
+   * file from `metadata.$include`. The sub-flow FILE on disk is not touched.
+   */
+  const handleDeleteSubflow = useCallback(
+    (path: string): void => {
+      const r = removeSubflow(nodes, edges, nodeOrigins, edgeOrigins, path);
+      if (r.removedNodeIds.length === 0) return;
+      setNodes(r.nodes);
+      setEdges(r.edges);
+      setNodeOrigins(r.origins);
+      setBase((b) => {
+        const metadata = { ...(b.metadata ?? {}) } as Record<string, unknown>;
+        if (Object.keys(r.edgeOrigins).length > 0) metadata["$includeEdgeOrigins"] = r.edgeOrigins;
+        else delete metadata["$includeEdgeOrigins"];
+        return { ...b, metadata };
+      });
+      setSelectedNodeIds([]);
+      setSelNode(null);
+      setSelEdge(null);
+      groupSelectionRef.current = null;
+      setSelectedSubflowPath(null);
+      subflowHistory.forget(path);
+      setStatus(
+        `Removed sub-flow ${subflowLabel(path)} from this flow (${r.removedNodeIds.length} node(s)). ` +
+          "Its file is kept — save to drop it from this flow's includes. Cmd/Ctrl+Z to undo.",
+      );
+      setStatusKind("info");
+    },
+    [nodes, edges, nodeOrigins, edgeOrigins, subflowHistory],
+  );
+
+  /** Writes just this sub-flow's file (POST /flows/subflows/write). */
+  const handleSaveSubflow = useCallback(
+    async (path: string): Promise<void> => {
+      const g = subflowGroup(nodes, edges, nodeOrigins, edgeOrigins, path);
+      if (g.nodes.length === 0) return;
+      setStatus(`Saving ${subflowLabel(path)}…`);
+      setStatusKind("info");
+      try {
+        await writeSubflowContent(path, subflowFragment(g), token);
+        // The current state is now the saved baseline for this sub-flow.
+        subflowHistory.init(path, subflowSnapshotOf(path));
+        setStatus(`Saved ${subflowLabel(path)} to its file — live now.`);
+        setStatusKind("ok");
+      } catch (err) {
+        setStatus(`✗ Could not save ${subflowLabel(path)}: ${err instanceof Error ? err.message : String(err)}`);
+        setStatusKind("error");
+      }
+    },
+    [nodes, edges, nodeOrigins, edgeOrigins, token, subflowHistory, subflowSnapshotOf],
+  );
+
+  const handleUndoSubflow = useCallback(
+    (path: string): void => {
+      const snap = subflowHistory.undo(path);
+      if (snap) {
+        applySubflowSnapshot(path, snap);
+        setStatus(`Undid an edit in ${subflowLabel(path)}.`);
+        setStatusKind("info");
+      }
+    },
+    [subflowHistory, applySubflowSnapshot],
+  );
+
+  const handleRedoSubflow = useCallback(
+    (path: string): void => {
+      const snap = subflowHistory.redo(path);
+      if (snap) {
+        applySubflowSnapshot(path, snap);
+        setStatus(`Redid an edit in ${subflowLabel(path)}.`);
+        setStatusKind("info");
+      }
+    },
+    [subflowHistory, applySubflowSnapshot],
+  );
+
+  /** Resets a sub-flow to the version on disk (its file), re-fetching it. */
+  const handleResetSubflow = useCallback(
+    async (path: string): Promise<void> => {
+      setStatus(`Resetting ${subflowLabel(path)} to the saved file…`);
+      setStatusKind("info");
+      try {
+        const content = await fetchSubflowContent(path, token);
+        // Lay the fetched nodes out where the current group sits, so a reset
+        // doesn't jump the group across the canvas.
+        const current = subflowGroup(nodes, edges, nodeOrigins, edgeOrigins, path);
+        const posById = new Map(current.nodes.map((n) => [n.id, n.position]));
+        const anchor = current.nodes[0]?.position ?? { x: 0, y: 0 };
+        const g = flowToGraph({ id: "sub", name: "sub", nodes: content.nodes, edges: content.edges });
+        const placed = g.nodes.map((n) => ({
+          ...n,
+          position: posById.get(n.id) ?? anchor,
+        }));
+        const snap: SubflowSnapshot = {
+          nodes: placed,
+          edges: g.edges,
+          edgeOrigins: Object.fromEntries(
+            Object.entries(content.edgeOrigins).map(([k]) => [k, path]),
+          ),
+        };
+        applySubflowSnapshot(path, snap);
+        subflowHistory.init(path, snap);
+        setStatus(`Reset ${subflowLabel(path)} to the saved file.`);
+        setStatusKind("ok");
+      } catch (err) {
+        setStatus(`✗ Could not reset ${subflowLabel(path)}: ${err instanceof Error ? err.message : String(err)}`);
+        setStatusKind("error");
+      }
+    },
+    [nodes, edges, nodeOrigins, edgeOrigins, token, applySubflowSnapshot, subflowHistory],
   );
 
   const updateNode = useCallback(
@@ -946,6 +1341,22 @@ export function StudioBuilder({
   const handleSelectionChange = useCallback(
     (nodeIds: string[], edgeIds: string[]): void => {
       setSelectedNodeIds(nodeIds);
+      // A group selection is opened explicitly by selectSubflowGroup, which
+      // programmatically selects the group's nodes. React Flow then fires this
+      // handler once for that change; we consume the one-shot marker and keep
+      // the group panel open. EVERY later selection change — including a click
+      // on the group's own node(s), which for a single-node sub-flow is the
+      // same node set — clears the group selection so the node's property panel
+      // takes over. This is what lets a one-node sub-flow's node be edited.
+      const pending = groupSelectionRef.current;
+      groupSelectionRef.current = null;
+      const isProgrammaticGroupSelect =
+        pending !== null &&
+        pending.size === nodeIds.length &&
+        nodeIds.every((id) => pending.has(id));
+      if (!isProgrammaticGroupSelect) {
+        setSelectedSubflowPath(null);
+      }
       if (nodeIds.length === 1) {
         setSelNode(nodeIds[0]!);
         setSelEdge(null);
@@ -1052,6 +1463,7 @@ export function StudioBuilder({
           ...(e.label ? { label: e.label } : {}),
         })),
         sizes,
+        nodeOrigins,
       );
       return ns.map((n) => ({
         ...n,
@@ -1059,7 +1471,7 @@ export function StudioBuilder({
       }));
     });
     setFitViewNonce((v) => v + 1);
-  }, [edges]);
+  }, [edges, nodeOrigins]);
 
   // Delegation links fan out from a harness to half the flow; draw them only
   // while that harness is selected so they explain it without cluttering.
@@ -1283,6 +1695,23 @@ export function StudioBuilder({
   }, [loadFlow, flow]);
 
   const catalog = useNodeTypeCatalog();
+  // Run data pinned for the expression builder's previews, per flow.
+  const pinFlowId = flow?.id ?? "";
+  const [pinnedRun, setPinnedRunState] = useState<PinnedRun | null>(null);
+  useEffect(() => {
+    setPinnedRunState(pinFlowId ? loadPinnedRun(pinFlowId) : null);
+  }, [pinFlowId]);
+  const setPinnedRun = useCallback(
+    (run: PinnedRun | null) => {
+      setPinnedRunState(run);
+      if (pinFlowId) savePinnedRun(pinFlowId, run);
+    },
+    [pinFlowId],
+  );
+  const pinRun = useCallback(
+    async (executionId: string) => setPinnedRun(await fetchRunSample(executionId, token)),
+    [setPinnedRun, token],
+  );
   // Formula previews in the variables table: evaluated by the runtime, so
   // the result is exactly what a flow load produces.
   const evaluateVariables = useCallback(
@@ -1311,6 +1740,57 @@ export function StudioBuilder({
   const nodeIdList = useMemo(() => nodes.map((n) => n.id), [nodes]);
   const [focusedField, setFocusedField] = useState<string | undefined>(undefined);
 
+  const runsCtx = useMemo<RunsContext | undefined>(
+    () => (pinFlowId ? { flowId: pinFlowId, pinned: pinnedRun, onPin: setPinnedRun, token } : undefined),
+    [pinFlowId, pinnedRun, setPinnedRun, token],
+  );
+
+  // Start / End: the entry and exits as the compiler sees them, and what the
+  // cards show — the traced run first, else the pinned one.
+  const boundaries = useMemo(
+    () =>
+      flowBoundaries(
+        nodes.map((n) => {
+          const fn = n.data.flowNode;
+          return { id: fn.id, type: fn.type, parallelNodes: fn.parallelNodes, config: fn.config };
+        }),
+        edges.map((e) => ({ source: e.source, target: e.target, conditions: e.data?.conditions })),
+      ),
+    [nodes, edges],
+  );
+  const boundaryCards = useMemo(() => {
+    const req = liveStates?.get(REQUEST_EVENT_ID);
+    const res = liveStates?.get(RESPONSE_EVENT_ID);
+    const pinnedQuery = pinnedRun ? String(pinnedRun.sample["query"] ?? "") : "";
+    const start: BoundaryCardInfo = {
+      ...(req?.status ? { status: req.status } : {}),
+    };
+    const startText = req?.user_prompt ?? req?.prompt ?? (pinnedQuery ? `📌 ${pinnedQuery}` : undefined);
+    if (startText) start.summary = startText;
+    const end: BoundaryCardInfo = { ...(res?.status ? { status: res.status } : {}) };
+    const endText =
+      res?.response !== undefined
+        ? answerText(res.response)
+        : pinnedRun?.response !== undefined
+          ? `📌 ${pinnedRun.response}`
+          : undefined;
+    if (endText) end.summary = endText;
+    return { start, end };
+  }, [liveStates, pinnedRun]);
+
+  const setEntry = useCallback((id: string) => {
+    setNodes((ns) => withEntryFirst(ns, id));
+    setStatus(`“${id}” is now the entry — moved to the front of the flow (Cmd/Ctrl+Z to undo).`);
+    setStatusKind("info");
+  }, []);
+
+  const selectNodeById = useCallback((id: string) => {
+    setNodes((ns) => ns.map((n) => ({ ...n, selected: n.id === id })));
+    setSelNode(id);
+    setSelEdge(null);
+    setSelBoundary(null);
+  }, []);
+
   const selectedFlowNode = useMemo(
     () => nodes.find((n) => n.id === selNode)?.data.flowNode ?? null,
     [nodes, selNode],
@@ -1318,9 +1798,34 @@ export function StudioBuilder({
 
   const inspectedId = selectedFlowNode?.id;
   const inspectedType = selectedFlowNode?.type;
+  /** Text selected in the focused settings field (for the Copilot). */
+  const [fieldSelection, setFieldSelection] = useState<string | undefined>(undefined);
   useEffect(() => {
     setFocusedField(undefined);
+    setFieldSelection(undefined);
   }, [inspectedId]);
+  // Remember the selection inside a settings field — it survives the click
+  // into the Copilot, which moves the focus away.
+  const handlePanelSelect = useCallback((e: React.SyntheticEvent) => {
+    const el = e.target as HTMLInputElement | HTMLTextAreaElement;
+    if (typeof el.selectionStart !== "number" || typeof el.selectionEnd !== "number") return;
+    const text = el.value.slice(el.selectionStart, el.selectionEnd);
+    setFieldSelection(text.trim() === "" ? undefined : text);
+  }, []);
+
+  // What the Copilot is told the user has selected.
+  const copilotFocus = useMemo<CopilotFocus | undefined>(() => {
+    const nodeIds = selectedNodeIds.length > 0 ? selectedNodeIds : selNode ? [selNode] : [];
+    const e = selEdge ? edges.find((x) => x.id === selEdge) : undefined;
+    if (nodeIds.length === 0 && !e) return undefined;
+    const single = nodeIds.length === 1;
+    return {
+      nodeIds,
+      ...(e ? { edge: { source: e.source, target: e.target } } : {}),
+      ...(single && focusedField ? { field: focusedField } : {}),
+      ...(single && focusedField && fieldSelection ? { fieldSelection } : {}),
+    };
+  }, [selectedNodeIds, selNode, selEdge, edges, focusedField, fieldSelection]);
   useEffect(() => {
     onInspect?.(
       inspectedId && inspectedType
@@ -1386,7 +1891,12 @@ export function StudioBuilder({
   }
 
   return (
-    <FormulaProvider flow={formulaFlow} reference={catalog?.reference}>
+    <FormulaProvider
+      flow={formulaFlow}
+      catalog={catalog}
+      evaluateVariables={evaluateVariables}
+      runs={runsCtx}
+    >
     <div ref={rootRef} className="flex h-full flex-col gap-2 overflow-y-auto">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border pb-2">
@@ -1408,24 +1918,28 @@ export function StudioBuilder({
           </span>
         )}
 
-        <div className="flex items-center gap-1">
+        {/* Undo/redo: a bordered button group with icon + label so it reads
+            as controls, not as decoration. */}
+        <div className="flex items-center overflow-hidden rounded-md border border-border bg-card shadow-sm" role="group" aria-label="History">
           <button type="button"
             onClick={handleUndo}
             disabled={!history.canUndo}
-            title="Undo (Cmd/Ctrl+Z)"
+            title="Undo the last change (Cmd/Ctrl+Z)"
             aria-label="Undo"
-            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-30"
+            className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent"
           >
-            ↶
+            <Undo2 size={14} aria-hidden />
+            Undo
           </button>
           <button type="button"
             onClick={handleRedo}
             disabled={!history.canRedo}
-            title="Redo (Cmd/Ctrl+Shift+Z)"
+            title="Redo the last undone change (Cmd/Ctrl+Shift+Z)"
             aria-label="Redo"
-            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted disabled:opacity-30"
+            className="flex items-center gap-1 border-l border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent"
           >
-            ↷
+            <Redo2 size={14} aria-hidden />
+            Redo
           </button>
         </div>
 
@@ -1620,6 +2134,7 @@ export function StudioBuilder({
           getDefinition={currentDefinition}
           nodes={nodes}
           edges={edges}
+          {...(copilotFocus ? { focus: copilotFocus } : {})}
           onPreviewChange={(overlay) => {
             setDiffOverlay(overlay);
             // Proposed nodes may land outside the current view — bring the
@@ -1643,6 +2158,9 @@ export function StudioBuilder({
           }}
           {...(onSaveEvalCase ? { onSaveEvalCase } : {})}
           {...(onDeleteEvalCase ? { onDeleteEvalCase } : {})}
+          {...(pinFlowId ? { onPinRun: pinRun } : {})}
+          {...(attachExecutionId ? { attachExecutionId } : {})}
+          {...(onDetachExecution ? { onDetach: onDetachExecution } : {})}
         />
       </div>
 
@@ -1655,6 +2173,17 @@ export function StudioBuilder({
         <FlowNodePalette
           collapsed={paletteCollapsed}
           onAddNode={(type) => addNodeAt(type)}
+          subflows={
+            showFileWrite
+              ? {
+                  selectedCount: selectedNodeIds.length,
+                  included: [...new Set(Object.values(nodeOrigins))],
+                  onInclude: includeSubflow,
+                  onCreate: createSubflow,
+                  token,
+                }
+              : undefined
+          }
         />
 
         <div className="flex-1 min-h-0 min-w-0">
@@ -1679,6 +2208,15 @@ export function StudioBuilder({
             referenceEdges={referenceEdges}
             onAutoLayout={handleAutoLayout}
             fitViewNonce={fitViewNonce}
+            onInvalidConnection={(reason) => {
+              setStatus(`✗ ${reason}`);
+              setStatusKind("error");
+            }}
+            onSelectSubflow={selectSubflowGroup}
+            selectedSubflowPath={selectedSubflowPath}
+            boundaries={boundaryCards}
+            onSelectBoundary={setSelBoundary}
+            onSetEntry={setEntry}
             {...(viewport !== undefined ? { defaultViewport: viewport } : {})}
             height="100%"
           />
@@ -1692,8 +2230,28 @@ export function StudioBuilder({
           tabIndex={0}
           aria-label="Node properties"
           className="w-80 shrink-0 overflow-auto rounded-lg border border-border bg-card p-3 text-sm"
+          onSelect={handlePanelSelect}
+          // Runs before the field's own onFocus, which reports its name again —
+          // so a field that doesn't report one isn't mistaken for the last.
+          onFocusCapture={() => {
+            setFocusedField(undefined);
+            setFieldSelection(undefined);
+          }}
         >
-          {selectedNodeIds.length > 1 ? (
+          {selectedSubflowPath !== null ? (
+            <SubflowGroupPanel
+              path={selectedSubflowPath}
+              nodeCount={selectedNodeIds.length}
+              canUndo={subflowHistory.canUndo(selectedSubflowPath)}
+              canRedo={subflowHistory.canRedo(selectedSubflowPath)}
+              dirty={subflowHistory.isDirty(selectedSubflowPath)}
+              onSave={() => void handleSaveSubflow(selectedSubflowPath)}
+              onUndo={() => handleUndoSubflow(selectedSubflowPath)}
+              onRedo={() => handleRedoSubflow(selectedSubflowPath)}
+              onReset={() => void handleResetSubflow(selectedSubflowPath)}
+              onRemove={() => handleDeleteSubflow(selectedSubflowPath)}
+            />
+          ) : selectedNodeIds.length > 1 ? (
             <div className="space-y-3">
               <h4 className="text-sm font-semibold text-foreground">
                 {selectedNodeIds.length} nodes selected
@@ -1746,8 +2304,25 @@ export function StudioBuilder({
                 </p>
               </div>
             </div>
+          ) : selBoundary !== null ? (
+            <BoundaryPanel
+              kind={selBoundary}
+              boundaries={boundaries}
+              {...(runsCtx ? { runs: runsCtx } : {})}
+              {...(liveStates?.get(selBoundary === "start" ? REQUEST_EVENT_ID : RESPONSE_EVENT_ID)
+                ? { current: liveStates.get(selBoundary === "start" ? REQUEST_EVENT_ID : RESPONSE_EVENT_ID)! }
+                : {})}
+              onSelectNode={selectNodeById}
+            />
           ) : (
             <NodePropertyPanel
+              {...(showFileWrite && selectedFlowNode
+                ? {
+                    origin: nodeOrigins[selectedFlowNode.id],
+                    originOptions: [...new Set(Object.values(nodeOrigins))],
+                    onOriginChange: (path: string | null) => setNodeOrigin(selectedFlowNode.id, path),
+                  }
+                : {})}
               node={selectedFlowNode}
               edge={selectedEdge}
               onNodeChange={updateNode}

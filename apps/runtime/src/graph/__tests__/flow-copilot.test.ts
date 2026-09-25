@@ -8,7 +8,7 @@
  */
 
 import { describe, test, expect } from "bun:test";
-import { applyFlowPatch, proposeFlowEdit, type FlowPatch } from "../flow-copilot.js";
+import { applyFlowPatch, describeFocus, isPlaceholderNode, proposeFlowEdit, type FlowPatch } from "../flow-copilot.js";
 import type { FlowDefinition } from "../../types/flow.js";
 import type { LanguageModel } from "ai";
 
@@ -353,5 +353,64 @@ describe("proposeFlowEdit prompt and no-op handling", () => {
     const { model, prompts } = sequenceModel([emptyPatch({ updateNodes: [blankNode({ id: "llm", type: "llm", label: "x" })] })]);
     await proposeFlowEdit(big, "anything", model);
     expect(prompts[0]).toContain("cacheStable");
+  });
+});
+
+describe("editor selection (focus)", () => {
+  test("describes selected nodes, the field in focus and its selected text", () => {
+    const lines = describeFocus(base, {
+      nodeIds: ["llm"],
+      field: "systemPrompt",
+      fieldSelection: "Antworte kurz.",
+    }).join("\n");
+    expect(lines).toContain("selected node: llm");
+    expect(lines).toContain("editing its field: systemPrompt");
+    expect(lines).toContain('"Antworte kurz."');
+  });
+
+  test("drops ids that are not in the flow, and says nothing without a selection", () => {
+    expect(describeFocus(base, { nodeIds: ["ghost"] })).toEqual([]);
+    expect(describeFocus(base, undefined)).toEqual([]);
+    expect(describeFocus(base, { nodeIds: [], edge: { source: "router", target: "llm" } }).join("\n")).toContain(
+      "selected edge: router -> llm",
+    );
+  });
+
+  test("the selection reaches the prompt", async () => {
+    const { model, prompts } = sequenceModel([emptyPatch({ updateNodes: [blankNode({ id: "llm", type: "llm", label: "x" })] })]);
+    await proposeFlowEdit(base, "mach das günstiger", model, { focus: { nodeIds: ["llm"] } });
+    expect(prompts[0]).toContain("selected node: llm");
+  });
+});
+
+describe("new flow: entry and the placeholder node", () => {
+  // What the Studio creates for "— new flow —": one bare llm node.
+  const fresh: FlowDefinition = { id: "new-flow", name: "new-flow", nodes: [{ id: "llm-1", type: "llm" }], edges: [] };
+  const validator = blankNode({ id: "llm-address-validator", type: "llm", label: "Address validator", systemPrompt: "Prüfe die Adresse." });
+
+  test("the prompt marks the first node and the empty placeholder", async () => {
+    const { model, prompts } = sequenceModel([emptyPatch({ removeNodeIds: ["llm-1"], addNodes: [validator] })]);
+    await proposeFlowEdit(fresh, "Adressvalidierung bauen", model);
+    expect(prompts[0]).toContain("id=llm-1, type=llm, (FIRST node — runs start here), (empty placeholder — no settings yet)");
+    expect(prompts[0]).toContain("a run starts at the FIRST node");
+  });
+
+  test("an unconnected added node gets a concrete fix hint in the repair round", async () => {
+    const dangling = emptyPatch({ addNodes: [validator] });
+    const connected = emptyPatch({
+      addNodes: [validator],
+      addEdges: [{ source: "llm-1", target: "llm-address-validator", conditions: "", label: "" }],
+    });
+    const { model, prompts } = sequenceModel([dangling, connected]);
+    const result = await proposeFlowEdit(fresh, "Adressvalidierung bauen", model);
+    expect(result.ok).toBe(true);
+    expect(prompts[1]).toContain("not reachable from the start");
+    expect(prompts[1]).toContain("To fix an unreachable node: add an edge to it");
+  });
+
+  test("placeholder detection", () => {
+    expect(isPlaceholderNode({ id: "llm-1", type: "llm" })).toBe(true);
+    expect(isPlaceholderNode({ id: "t", type: "tool", tools: [] })).toBe(true);
+    expect(isPlaceholderNode({ id: "a", type: "llm", label: "Answer" })).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ import {
   rewriteNodeReferences,
   type RFEdge,
 } from "../lib/flow-graph";
+import { EDITOR_NODE_H, EDITOR_NODE_W } from "../components/graph/GraphLayoutEngine";
 import type { FlowDefinition } from "../types/flow";
 
 const def: FlowDefinition = {
@@ -126,16 +127,22 @@ describe("flowToGraph / graphToFlow", () => {
         { source: "orch", target: "final" },
       ],
     };
-    const pos = Object.fromEntries(
-      flowToGraph(composed).nodes.map((n) => [n.id, n.position]),
-    );
-    // Delegate-only worker: ranked below its harness instead of in the first rank.
-    expect(pos["worker"]!.y).toBeGreaterThan(pos["orch"]!.y);
-    // A worker that is also wired normally keeps its own rank.
-    expect(pos["shared"]!.y).toBe(pos["orch"]!.y);
+    const graph = flowToGraph(composed);
+    const at = (id: string): { x: number; y: number } => {
+      const p = graph.nodes.find((n) => n.id === id)?.position;
+      if (p === undefined) throw new Error(`no position for ${id}`);
+      return p;
+    };
+    // Delegate-only worker: it runs inside the harness, so it's docked to the
+    // harness's RIGHT at (roughly) the same height — not on a rank below it.
+    expect(at("worker").x).toBeGreaterThan(at("orch").x);
+    expect(Math.abs(at("worker").y - at("orch").y)).toBeLessThan(EDITOR_NODE_H);
+    // A worker that is also wired normally is an ordinary step and keeps its rank.
+    expect(at("shared").y).toBe(at("orch").y);
+    expect(at("shared").x).toBeLessThan(at("worker").x);
   });
 
-  test("places parallel children and harness verifiers below their parent", () => {
+  test("docks parallel children and harness verifiers to the right of their parent", () => {
     const composed: FlowDefinition = {
       id: "c",
       name: "c",
@@ -157,12 +164,70 @@ describe("flowToGraph / graphToFlow", () => {
     ]);
     expect(refs[1]!.label).toBe("parallel if x");
 
-    const pos = Object.fromEntries(
-      flowToGraph(composed).nodes.map((n) => [n.id, n.position]),
-    );
-    expect(pos["recall"]!.y).toBeGreaterThan(pos["ctx"]!.y);
-    expect(pos["vision"]!.y).toBeGreaterThan(pos["ctx"]!.y);
-    expect(pos["check"]!.y).toBeGreaterThan(pos["orch"]!.y);
+    const graph = flowToGraph(composed);
+    const at = (id: string): { x: number; y: number } => {
+      const p = graph.nodes.find((n) => n.id === id)?.position;
+      if (p === undefined) throw new Error(`no position for ${id}`);
+      return p;
+    };
+    // Tool nodes (parallel children, verifier) run during their caller — placed
+    // to its right at the same height, not on a rank below it.
+    expect(at("recall").x).toBeGreaterThan(at("ctx").x);
+    expect(at("vision").x).toBeGreaterThan(at("ctx").x);
+    expect(at("check").x).toBeGreaterThan(at("orch").x);
+    // Vertically they stay level with (stacked around) their caller.
+    expect(Math.abs(at("recall").y - at("ctx").y)).toBeLessThan(2 * EDITOR_NODE_H);
+    expect(Math.abs(at("check").y - at("orch").y)).toBeLessThan(EDITOR_NODE_H);
+    // Two parallel children of one caller are stacked vertically beside it.
+    expect(at("recall").y).not.toBe(at("vision").y);
+    expect(at("recall").x).toBe(at("vision").x);
+  });
+
+  test("docked tool nodes never overlap other nodes (reserved footprint)", () => {
+    // Mirrors the reported overlap: a caller with several tool nodes sitting on
+    // the same rank as, and next to, other regular nodes.
+    const composed: FlowDefinition = {
+      id: "c",
+      name: "c",
+      nodes: [
+        { id: "entry", type: "llm" },
+        { id: "assembler", type: "parallel", parallelNodes: ["recall", "vision"] },
+        { id: "recall", type: "memory" },
+        { id: "vision", type: "llm" },
+        { id: "agent", type: "agent-harness", config: { allowlist: ["worker"], verification: { target: "check" } } },
+        { id: "worker", type: "llm" },
+        { id: "check", type: "llm" },
+        { id: "responder", type: "llm" },
+      ],
+      // A wide first rank: assembler and agent are siblings, responder follows.
+      edges: [
+        { source: "entry", target: "assembler" },
+        { source: "entry", target: "agent" },
+        { source: "assembler", target: "responder" },
+        { source: "agent", target: "responder" },
+      ],
+    };
+    const graph = flowToGraph(composed);
+    // Every node uses the editor card size; check no two boxes overlap.
+    const boxes = graph.nodes.map((n) => ({
+      id: n.id,
+      x: n.position.x,
+      y: n.position.y,
+      w: EDITOR_NODE_W,
+      h: EDITOR_NODE_H,
+    }));
+    const overlaps = (a: (typeof boxes)[number], b: (typeof boxes)[number]): boolean =>
+      a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    for (let i = 0; i < boxes.length; i++) {
+      for (let j = i + 1; j < boxes.length; j++) {
+        const a = boxes[i]!;
+        const b = boxes[j]!;
+        expect(
+          overlaps(a, b),
+          `${a.id} (${a.x},${a.y}) overlaps ${b.id} (${b.x},${b.y})`,
+        ).toBe(false);
+      }
+    }
   });
 
   test("keeps stored positions and only lays out nodes missing from the layout", () => {

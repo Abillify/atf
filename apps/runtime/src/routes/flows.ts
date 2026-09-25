@@ -41,7 +41,7 @@ import {
   validateFlowDefinition,
   expandFlowSource,
 } from "../graph/flow-parser.js";
-import { includeEdgeKey } from "../graph/flow-parser/normalize.js";
+import { includeEdgeKey, resolveFlowSourceIncludes } from "../graph/flow-parser/normalize.js";
 import { materializeFlowSource } from "../graph/flow-parser.js";
 import type { StudioTestRegistry } from "../graph/flow-registry-studio.js";
 import {
@@ -66,7 +66,8 @@ import {
   simulateFlow,
   type SimulationDeps,
 } from "../graph/graph-engine/simulate.js";
-import { proposeFlowEdit } from "../graph/flow-copilot.js";
+import { type CopilotFocus, proposeFlowEdit } from "../graph/flow-copilot.js";
+import { type ExpressionCopilotInput, proposeExpression } from "../graph/expression-copilot.js";
 import { createLlmProvider } from "../graph/llm-factory.js";
 import type { AbManager } from "../graph/flow-ab.js";
 import type { FlowDefinition } from "../types/flow.js";
@@ -95,6 +96,37 @@ export interface FlowWriteRequest {
 }
 
 /** Compute the SHA-256 hex digest of a UTF-8 string. */
+/** A `{ start, end }` character range from a request body. */
+function isSelection(v: unknown): v is { start: number; end: number } {
+  if (v === null || typeof v !== "object") return false;
+  const { start, end } = v as { start?: unknown; end?: unknown };
+  return Number.isInteger(start) && Number.isInteger(end) && (start as number) >= 0 && (end as number) >= 0;
+}
+
+/** The Studio selection sent with a flow copilot request (`focus`), sanitised. */
+function parseCopilotFocus(v: unknown): CopilotFocus | undefined {
+  if (v === null || typeof v !== "object") return undefined;
+  const f = v as { nodeIds?: unknown; edge?: unknown; field?: unknown; fieldSelection?: unknown };
+  const nodeIds = Array.isArray(f.nodeIds)
+    ? f.nodeIds.filter((id): id is string => typeof id === "string").slice(0, 50)
+    : [];
+  const e = f.edge as { source?: unknown; target?: unknown } | null | undefined;
+  const edge =
+    e && typeof e.source === "string" && typeof e.target === "string"
+      ? { source: e.source, target: e.target }
+      : undefined;
+  const field = typeof f.field === "string" && f.field !== "" ? f.field.slice(0, 200) : undefined;
+  const fieldSelection =
+    typeof f.fieldSelection === "string" && f.fieldSelection !== "" ? f.fieldSelection.slice(0, 2000) : undefined;
+  if (nodeIds.length === 0 && edge === undefined) return undefined;
+  return {
+    nodeIds,
+    ...(edge !== undefined ? { edge } : {}),
+    ...(field !== undefined ? { field } : {}),
+    ...(fieldSelection !== undefined ? { fieldSelection } : {}),
+  };
+}
+
 function sha256Hex(content: string): string {
   return crypto.createHash("sha256").update(content, "utf8").digest("hex");
 }
@@ -635,6 +667,247 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
   });
 
   // -------------------------------------------------------------------------
+  // GET /flows/subflows — the sub-flow files a flow can include
+  // (FLOWS_DIR/subflows/*.{yaml,yml,json}) with their nodes and the flows that
+  // already use them. GET /flows/subflows/content?path=… — one file in SOURCE
+  // form (shortcuts, {{vars.*}}, prompt includes kept; nested includes merged
+  // and tagged), ready to be placed on the Studio canvas.
+  // Static paths: registered before GET /flows/:id.
+  // -------------------------------------------------------------------------
+  router.get("/flows/subflows", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    if (sourceDir === undefined) return ctx.json({ subflows: [] });
+    const dir = path.join(sourceDir, "subflows");
+    let files: string[] = [];
+    try {
+      files = (await fs.promises.readdir(dir)).filter((f) => /\.(ya?ml|json)$/i.test(f)).sort();
+    } catch {
+      return ctx.json({ subflows: [] });
+    }
+    // Which flows include which file (from the flows' source forms).
+    const usedBy = new Map<string, string[]>();
+    for (const flow of fileRegistry.list()) {
+      const origins = (fileRegistry.getSource?.(flow.id)?.definition.metadata as
+        | { $includeOrigins?: Record<string, string> }
+        | undefined)?.$includeOrigins;
+      for (const rel of new Set(Object.values(origins ?? {}))) {
+        usedBy.set(rel, [...(usedBy.get(rel) ?? []), flow.id]);
+      }
+    }
+    const subflows = [];
+    for (const f of files) {
+      const rel = `subflows/${f}`;
+      let parsed: Record<string, unknown> = {};
+      try {
+        const text = await fs.promises.readFile(path.join(dir, f), "utf-8");
+        const v = /\.json$/i.test(f) ? JSON.parse(text) : parseYaml(text);
+        if (v !== null && typeof v === "object" && !Array.isArray(v)) parsed = v as Record<string, unknown>;
+      } catch {
+        /* unreadable file: listed without details */
+      }
+      const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+      subflows.push({
+        path: rel,
+        ...(typeof parsed.name === "string" ? { name: parsed.name } : {}),
+        ...(typeof parsed.description === "string" ? { description: parsed.description } : {}),
+        nodeIds: nodes
+          .map((n) => (n !== null && typeof n === "object" ? (n as { id?: unknown }).id : undefined))
+          .filter((id): id is string => typeof id === "string"),
+        edgeCount: Array.isArray(parsed.edges) ? parsed.edges.length : 0,
+        usedBy: usedBy.get(rel) ?? [],
+      });
+    }
+    return ctx.json({ subflows });
+  });
+
+  router.get("/flows/subflows/content", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    const rel = (ctx.req.query("path") ?? "").trim();
+    if (sourceDir === undefined || !/^subflows\/[\w.-]+\.(ya?ml|json)$/i.test(rel)) {
+      return ctx.json(
+        { error: { message: "path must name a file in subflows/ (e.g. subflows/x.yaml).", type: "invalid_request_error" } },
+        400,
+      );
+    }
+    if (!fs.existsSync(path.join(sourceDir, rel))) {
+      return ctx.json({ error: { message: `Sub-flow ${rel} not found.`, type: "not_found_error" } }, 404);
+    }
+    // Same resolution as loading a flow that includes it, in source form.
+    const raw: Record<string, unknown> = { metadata: { $include: { subflows: [rel] } } };
+    resolveFlowSourceIncludes(raw, sourceDir, "<studio>");
+    const meta = (raw.metadata ?? {}) as Record<string, unknown>;
+    return ctx.json({
+      path: rel,
+      nodes: Array.isArray(raw.nodes) ? raw.nodes : [],
+      edges: Array.isArray(raw.edges) ? raw.edges : [],
+      edgeOrigins: meta.$includeEdgeOrigins ?? {},
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /flows/subflows/write — write ONE sub-flow file on its own, without
+  // touching the parent flow. The Studio uses this to "save this sub-flow"
+  // from its group on the canvas. The full flow's `/flows/write` still writes
+  // every sub-flow via the include-aware split; this is the surgical, single-
+  // file counterpart.
+  //   Body: { path: "subflows/x.yaml", nodes: [...], edges: [...] }
+  //   200:  { hash }
+  // Static path: registered before GET /flows/:id.
+  // -------------------------------------------------------------------------
+  router.post("/flows/subflows/write", async (ctx) => {
+    // Same authorization shape as POST /flows/write: flows:write (admin), with
+    // an explicit 403 for an authenticated operator that lacks it.
+    const actor = await guard(ctx, "flows:write");
+    if (!actor) {
+      const readActor = await guard(ctx, "flows:read");
+      if (readActor !== null) {
+        return ctx.json(
+          {
+            error: {
+              message: "Insufficient role: flow writing requires operator or admin role.",
+              type: "authorization_error",
+            },
+          },
+          403,
+        );
+      }
+      return unauthorized(ctx);
+    }
+    if (flowsDir === undefined) return requireFlowsDir(ctx);
+
+    let body: unknown;
+    try {
+      body = await ctx.req.json();
+    } catch {
+      return ctx.json(
+        { error: { message: "Request body must be valid JSON.", type: "invalid_request_error" } },
+        400,
+      );
+    }
+    const req = (body ?? {}) as { path?: unknown; nodes?: unknown; edges?: unknown };
+    const rel = typeof req.path === "string" ? req.path.trim() : "";
+    if (!/^subflows\/[\w.-]+\.(ya?ml|json)$/i.test(rel)) {
+      return ctx.json(
+        { error: { message: "Field 'path' must name a file in subflows/ (e.g. subflows/x.yaml).", type: "invalid_request_error" } },
+        400,
+      );
+    }
+    const nodes = Array.isArray(req.nodes) ? req.nodes : [];
+    const edges = Array.isArray(req.edges) ? req.edges : [];
+    if (nodes.length === 0) {
+      return ctx.json(
+        { error: { message: "A sub-flow needs at least one node.", type: "invalid_request_error" } },
+        400,
+      );
+    }
+
+    // Validate the fragment structurally (schema, duplicate ids, condition
+    // syntax) as a stand-alone mini-flow. A sub-flow fragment is not a runnable
+    // flow on its own — reachability/entry rules only apply once it is merged
+    // into a parent — so the semantic `validateFlow` is intentionally not run.
+    // Cross-boundary edges legitimately name parent nodes that aren't in the
+    // fragment; add lightweight placeholders for those so the edge-reference
+    // check doesn't reject an edge that resolves fine after the merge.
+    const fragmentNodeIds = new Set(
+      nodes.map((n) => (n !== null && typeof n === "object" ? (n as { id?: unknown }).id : undefined)),
+    );
+    const placeholders: Array<{ id: string; type: string }> = [];
+    for (const e of edges) {
+      if (e === null || typeof e !== "object") continue;
+      for (const end of ["source", "target"] as const) {
+        const id = (e as Record<string, unknown>)[end];
+        if (typeof id === "string" && !fragmentNodeIds.has(id) && !placeholders.some((p) => p.id === id)) {
+          placeholders.push({ id, type: "llm" });
+        }
+      }
+    }
+    const fragmentFlow = expandForValidation({
+      id: rel,
+      name: rel,
+      nodes: [...nodes, ...placeholders],
+      edges,
+    });
+    const structural = validateFlowDefinition(fragmentFlow);
+    if (!structural.success) {
+      return ctx.json(
+        {
+          error: {
+            message: `Sub-flow fragment failed validation: ${structural.error.reason}`,
+            type: "invalid_request_error",
+          },
+          details: structural.error.details,
+        },
+        400,
+      );
+    }
+
+    let targetPath: string;
+    try {
+      targetPath = resolveIncludeWritePath(flowsDir, rel);
+    } catch (err) {
+      const e = err as NodeJS.ErrnoException;
+      if (e.code === "PATH_TRAVERSAL") {
+        return ctx.json(
+          { error: { message: `Path traversal rejected: ${e.message}`, type: "invalid_request_error" } },
+          400,
+        );
+      }
+      throw err;
+    }
+
+    const ext = path.extname(targetPath).toLowerCase();
+    const fragment = { nodes, edges } as {
+      nodes: FlowDefinition["nodes"];
+      edges: FlowDefinition["edges"];
+    };
+
+    let existing: string | null = null;
+    try {
+      existing = await fs.promises.readFile(targetPath, "utf-8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+
+    // Comment-preserving merge into the existing YAML (same behaviour as the
+    // full-flow split), keeping other top-level keys (name, description, …)
+    // and not inventing an empty `edges` list the file never had.
+    let content: string;
+    if (existing !== null && existing.trim().length > 0 && (ext === ".yaml" || ext === ".yml")) {
+      try {
+        const current = parseYaml(existing) as Record<string, unknown> | null;
+        const base = current !== null && typeof current === "object" && !Array.isArray(current) ? current : {};
+        const next: Record<string, unknown> = { ...base, nodes: fragment.nodes };
+        if (fragment.edges.length > 0 || "edges" in base) next.edges = fragment.edges;
+        else delete next.edges;
+        content = mergeFlowIntoYaml(existing, next, { lineWidth: 120 });
+      } catch {
+        content = serializeSubflowFragment(ext, fragment);
+      }
+    } else {
+      // A fresh file: don't write an empty `edges: []` the sub-flow never had.
+      const fresh =
+        fragment.edges.length > 0 ? fragment : ({ nodes: fragment.nodes } as typeof fragment);
+      content = serializeSubflowFragment(ext, fresh);
+    }
+
+    await atomicWriteFile(targetPath, content);
+    const hash = sha256Hex(content);
+
+    auditLog?.record({
+      actor: actor.name,
+      role: actor.role,
+      action: "flows.subflows.write",
+      target: rel,
+      details: { path: targetPath, nodeCount: fragment.nodes.length, edgeCount: fragment.edges.length },
+    });
+
+    // Reflect the write immediately for subsequent reads/lists.
+    dbSource?.refresh?.();
+
+    return ctx.json({ hash });
+  });
+
+  // -------------------------------------------------------------------------
   // GET /flows/node-types — node type catalog for the Studio (forms, docs,
   // Copilot): every built-in type with its config keys, plus the tool ids of
   // connected MCP servers and the model shortcut names, so editors can offer
@@ -767,6 +1040,65 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
   });
 
   // -------------------------------------------------------------------------
+  // POST /flows/expressions/copilot — the expression builder's copilot: writes
+  // or changes one field value; checked with the engine's own code, never
+  // applied (the builder shows a diff to accept). Static path: registered
+  // BEFORE /flows/:id/copilot, which would otherwise take it (id "expressions").
+  //   Body: { kind, current, instruction, field?, vocabulary, variables?, runtimeAllowed?,
+  //           selection?: { start, end } }  (caret/selected range in `current`)
+  //   200:  { ok: true, expression, explanation, changed } | 422 { ok: false, message }
+  // -------------------------------------------------------------------------
+  router.post("/flows/expressions/copilot", async (ctx) => {
+    if (!(await guard(ctx, "flows:write"))) return unauthorized(ctx);
+    if (appConfig?.defaultLlm === undefined) {
+      return ctx.json(
+        { ok: false, message: "Copilot is not configured — set DEFAULT_LLM on the backend." },
+        501,
+      );
+    }
+    const body = (await ctx.req.json().catch(() => null)) as Partial<ExpressionCopilotInput> | null;
+    const kinds = ["template", "condition", "vars"];
+    if (
+      body === null ||
+      typeof body.kind !== "string" ||
+      !kinds.includes(body.kind) ||
+      typeof body.instruction !== "string" ||
+      body.instruction.trim() === "" ||
+      !Array.isArray(body.vocabulary)
+    ) {
+      return ctx.json(
+        {
+          error: {
+            message: "Required: kind (template|condition|vars), instruction (non-empty), vocabulary (array).",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const result = await proposeExpression(
+      {
+        kind: body.kind,
+        current: typeof body.current === "string" ? body.current : "",
+        instruction: body.instruction,
+        ...(typeof body.field === "string" ? { field: body.field } : {}),
+        vocabulary: body.vocabulary,
+        ...(body.variables && typeof body.variables === "object" ? { variables: body.variables } : {}),
+        runtimeAllowed: body.runtimeAllowed === true,
+        ...(isSelection(body.selection) ? { selection: body.selection } : {}),
+      },
+      createLlmProvider(appConfig.defaultLlm, appConfig),
+      {
+        context: {
+          constants: sourceDir !== undefined ? loadFlowConstants(sourceDir) : {},
+          env: publicEnv(),
+        },
+      },
+    );
+    return ctx.json(result, result.ok ? 200 : 422);
+  });
+
+  // -------------------------------------------------------------------------
   // POST /flows/:id/copilot — AI-assisted edit proposal (Stage 1; never writes)
   //
   //   Body: { definition: FlowDefinition, instruction: string }
@@ -789,7 +1121,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       );
     }
 
-    let body: { definition?: unknown; instruction?: unknown };
+    let body: { definition?: unknown; instruction?: unknown; focus?: unknown };
     try {
       body = await ctx.req.json();
     } catch {
@@ -830,6 +1162,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     }
 
     const model = createLlmProvider(appConfig.defaultLlm, appConfig);
+    const focus = parseCopilotFocus(body.focus);
     // Hand the copilot the SOURCE form so an accepted proposal keeps its
     // shortcuts/variables; it validates via `expand`.
     const result = await proposeFlowEdit(
@@ -842,6 +1175,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         shortcuts: Object.keys(
           (sourceDir !== undefined ? loadModelShortcuts(sourceDir)?.shortcuts : undefined) ?? {},
         ).sort(),
+        ...(focus !== undefined ? { focus } : {}),
       },
     );
 

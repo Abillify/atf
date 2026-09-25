@@ -10,12 +10,17 @@
  * 3. Variable resolution — `{{vars.<name>}}`
  */
 
-import { evaluateFlowVariables, type VariableContext } from "./variable-values.js";
+import {
+  createLoadTimeResolver,
+  currentVariableContext,
+  evaluateFlowVariables,
+  hasLoadTimePlaceholders,
+  type VariableContext,
+} from "./variable-values.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FlowDefinition } from "../../types/flow.js";
 import { parseFlowFile } from "../../util/parse-flow-file.js";
-import { VAR_PLACEHOLDER_RE } from "./validate.js";
 
 // ---------------------------------------------------------------------------
 // Prompt File Includes
@@ -304,69 +309,6 @@ function resolveSubflowIncludes(
 // ---------------------------------------------------------------------------
 
 /**
- * Pattern for variable references: `{{vars.<dotted.name>}}`.
- */
-const VAR_REF_RE = /\{\{\s*vars\.([\w.-]+)\s*\}\}/g;
-
-/**
- * Builds a recursive `{{vars.<name>}}` resolver bound to a variable map.
- */
-function createVariableResolver(
-  varMap: Record<string, unknown>,
-  onUnknown: (name: string) => void,
-): (value: unknown) => unknown {
-  const lookup = (dotted: string): unknown => {
-    const segments = dotted.split(".");
-    let cur: unknown = varMap;
-    for (const seg of segments) {
-      if (cur === null || cur === undefined || typeof cur !== "object") {
-        return undefined;
-      }
-      cur = (cur as Record<string, unknown>)[seg];
-    }
-    return cur;
-  };
-
-  const resolveString = (s: string): unknown => {
-    const exact = VAR_PLACEHOLDER_RE.exec(s);
-    if (exact !== null) {
-      const name = exact[1] ?? "";
-      const val = lookup(name);
-      if (val === undefined) {
-        onUnknown(name);
-        return s;
-      }
-      return val;
-    }
-    return s.replace(VAR_REF_RE, (match, name: string) => {
-      const val = lookup(name);
-      if (val === undefined) {
-        onUnknown(name);
-        return match;
-      }
-      return typeof val === "object" && val !== null
-        ? JSON.stringify(val)
-        : String(val);
-    });
-  };
-
-  const walk = (value: unknown): unknown => {
-    if (typeof value === "string") return resolveString(value);
-    if (Array.isArray(value)) return value.map(walk);
-    if (value !== null && typeof value === "object") {
-      const obj = value as Record<string, unknown>;
-      for (const key of Object.keys(obj)) {
-        obj[key] = walk(obj[key]);
-      }
-      return obj;
-    }
-    return value;
-  };
-
-  return walk;
-}
-
-/**
  * Resolves `{{vars.<name>}}` references in the `nodes` and `edges` of a raw flow
  * object (pre-validation) using `raw.variables` merged with optional overrides.
  * Mutates `raw` in place.
@@ -384,10 +326,18 @@ export function resolveRawFlowVariables(
     !Array.isArray(declared)
       ? (declared as Record<string, unknown>)
       : {};
-  if (Object.keys(baseVars).length === 0 && Object.keys(overrides ?? {}).length === 0) return;
+  if (
+    Object.keys(baseVars).length === 0 &&
+    Object.keys(overrides ?? {}).length === 0 &&
+    !hasLoadTimePlaceholders(raw.nodes, false) &&
+    !hasLoadTimePlaceholders(raw.edges, false)
+  ) {
+    return;
+  }
+  const ctx = context ?? currentVariableContext();
   // Variables may reference each other, constants, public env and contain
   // calculations — evaluate them before substituting into nodes/edges.
-  const { values: effective, errors } = evaluateFlowVariables(baseVars, overrides, context);
+  const { values: effective, errors } = evaluateFlowVariables(baseVars, overrides, ctx);
   for (const e of errors) {
     process.stderr.write(
       `${JSON.stringify({
@@ -399,18 +349,19 @@ export function resolveRawFlowVariables(
     );
   }
 
-  const warnUnknown = (name: string): void => {
+  const warnUnresolved = (placeholder: string, message: string): void => {
     process.stderr.write(
       `${JSON.stringify({
         level: "warn",
         component: "flow-parser",
         fileName,
-        reason: `Unknown flow variable referenced: "${name}" — leaving placeholder unresolved`,
+        reason: `${placeholder} left unresolved: ${message}`,
       })}\n`,
     );
   };
 
-  const walk = createVariableResolver(effective, warnUnknown);
+  // Nodes and edges: variables, constants, public env and calculations.
+  const walk = createLoadTimeResolver(effective, ctx, warnUnresolved);
   if (Array.isArray(raw.nodes)) {
     raw.nodes = raw.nodes.map(walk);
   }
@@ -477,13 +428,24 @@ function variableSetKey(vars: Record<string, unknown>): string {
  * behaviour of handing out a fresh clone each time was accidental rather than
  * relied upon.
  */
+/** Per-flow memo: does the flow need load-time resolution without variables? */
+const loadTimeMemo = new WeakMap<FlowDefinition, boolean>();
+function flowHasLoadTimePlaceholders(flow: FlowDefinition): boolean {
+  let has = loadTimeMemo.get(flow);
+  if (has === undefined) {
+    has = hasLoadTimePlaceholders(flow.nodes, false) || hasLoadTimePlaceholders(flow.edges, false);
+    loadTimeMemo.set(flow, has);
+  }
+  return has;
+}
+
 export function applyFlowVariables(
   flow: FlowDefinition,
   overrides?: Record<string, unknown>,
 ): FlowDefinition {
   const baseVars = flow.variables ?? {};
   const raw = { ...baseVars, ...(overrides ?? {}) };
-  if (Object.keys(raw).length === 0) return flow;
+  if (Object.keys(raw).length === 0 && !flowHasLoadTimePlaceholders(flow)) return flow;
 
   // Keyed on the RAW set: evaluation is a pure function of it plus constants
   // and env — a constants change reloads the flows (new memo keys), env is
@@ -501,8 +463,9 @@ export function applyFlowVariables(
     nodes: unknown[];
     edges: unknown[];
   };
-  const effective = evaluateFlowVariables(baseVars, overrides).values;
-  const walk = createVariableResolver(effective, () => {});
+  const ctx = currentVariableContext();
+  const effective = evaluateFlowVariables(baseVars, overrides, ctx).values;
+  const walk = createLoadTimeResolver(effective, ctx, () => {});
   clone.nodes = (clone.nodes as unknown[]).map(walk) as FlowDefinition["nodes"];
   clone.edges = (clone.edges as unknown[]).map(walk) as FlowDefinition["edges"];
 

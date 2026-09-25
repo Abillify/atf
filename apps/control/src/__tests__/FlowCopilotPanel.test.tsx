@@ -3,7 +3,7 @@
 
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import { describe, test, expect, vi, afterEach } from "vitest";
-import { FlowCopilotPanel } from "../components/FlowCopilotPanel";
+import { FlowCopilotPanel, describeCopilotFocus } from "../components/FlowCopilotPanel";
 import type { FlowDefinition } from "../types/flow";
 
 const definition: FlowDefinition = {
@@ -128,6 +128,51 @@ describe("FlowCopilotPanel", () => {
     );
     expect(screen.getByLabelText("Copilot instruction")).toHaveValue(
       "Fix this issue: bad edge",
+    );
+  });
+});
+
+describe("FlowCopilotPanel — selection", () => {
+  const renderWithFocus = () =>
+    render(
+      <FlowCopilotPanel
+        flowId="f1"
+        getDefinition={() => definition}
+        nodes={[]}
+        edges={[]}
+        onPreviewChange={() => {}}
+        onAccept={() => {}}
+        focus={{ nodeIds: ["router"], field: "systemPrompt", fieldSelection: "be brief" }}
+      />,
+    );
+  const ask = () => {
+    fireEvent.change(screen.getByLabelText("Copilot instruction"), { target: { value: "shorten this" } });
+    fireEvent.click(screen.getByText("Ask"));
+  };
+  const sentBody = () =>
+    JSON.parse(String(((global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![1] as RequestInit).body));
+
+  test("shows and sends the selection", async () => {
+    mockFetchOnce({ ok: false, message: "No change" }, false);
+    renderWithFocus();
+    expect(screen.getByTestId("copilot-focus")).toHaveTextContent("node router · field systemPrompt · selected “be brief”");
+    ask();
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(sentBody().focus).toEqual({ nodeIds: ["router"], field: "systemPrompt", fieldSelection: "be brief" });
+  });
+
+  test("can be switched off", async () => {
+    mockFetchOnce({ ok: false, message: "No change" }, false);
+    renderWithFocus();
+    fireEvent.click(screen.getByRole("checkbox"));
+    ask();
+    await waitFor(() => expect(global.fetch).toHaveBeenCalled());
+    expect(sentBody().focus).toBeUndefined();
+  });
+
+  test("describes several nodes and an edge", () => {
+    expect(describeCopilotFocus({ nodeIds: ["a", "b"], edge: { source: "a", target: "b" } })).toBe(
+      "2 nodes (a, b) · edge a → b",
     );
   });
 });

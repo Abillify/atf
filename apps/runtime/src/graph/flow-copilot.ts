@@ -185,6 +185,15 @@ If the instruction is vague (e.g. "make it better", "optimise"), propose at most
 clearly justified change and list further ideas only in the explanation. Never remove tools, \
 nodes or edges, and never rewrite prompts, unless the user asked for exactly that.
 
+Flow structure: a run starts at the FIRST node of the node list and follows the edges. Nodes \
+you add are appended at the end of the list. Every node must be reachable from the first node \
+through edges (parallel children and agent-harness workers excepted — they run inside their \
+parent), so whenever you add a node, also add the edge(s) connecting it (usually from the node \
+that should run before it). A node marked "empty placeholder" has no settings yet (a new flow \
+starts with one): build on it — configure it via updateNodes, or remove it and connect your \
+nodes — instead of leaving it next to your nodes. If you remove the first node, the next \
+remaining node in the list becomes the start.
+
 Edge "conditions" are expressions like classification.route == 'INKASSO' evaluated against \
 the run state. Every node id you reference must either already exist in the current flow or \
 be one you are adding in this same patch. Use empty string / empty array to mean "no change" \
@@ -426,6 +435,43 @@ export interface FlowCopilotOptions {
   expand?: (definition: FlowDefinition) => unknown;
   /** Model shortcut names the flow may reference (flows/model-shortcuts.yaml). */
   shortcuts?: readonly string[];
+  /** What the user has selected in the editor — "this node", "here" refer to it. */
+  focus?: CopilotFocus;
+}
+
+/** The editor selection an instruction may refer to. */
+export interface CopilotFocus {
+  /** Selected node ids. */
+  nodeIds: string[];
+  /** Selected edge. */
+  edge?: { source: string; target: string };
+  /** Settings field in focus on the (single) selected node, e.g. "systemPrompt" or "config.maxToolSteps". */
+  field?: string;
+  /** Text selected inside that field. */
+  fieldSelection?: string;
+}
+
+/** Prompt lines for the selection; ids that are not in the flow are dropped. */
+export function describeFocus(def: FlowDefinition, focus: CopilotFocus | undefined): string[] {
+  if (focus === undefined) return [];
+  const ids = new Set(def.nodes.map((n) => n.id));
+  const nodeIds = focus.nodeIds.filter((id) => ids.has(id));
+  const edge =
+    focus.edge !== undefined && ids.has(focus.edge.source) && ids.has(focus.edge.target) ? focus.edge : undefined;
+  if (nodeIds.length === 0 && edge === undefined) return [];
+  const lines = ["User's selection in the editor:"];
+  if (nodeIds.length > 0) lines.push(`- selected node${nodeIds.length === 1 ? "" : "s"}: ${nodeIds.join(", ")}`);
+  if (edge !== undefined) lines.push(`- selected edge: ${edge.source} -> ${edge.target}`);
+  if (nodeIds.length === 1 && focus.field !== undefined) {
+    lines.push(`- the user is editing its field: ${focus.field}`);
+    if (focus.fieldSelection !== undefined) {
+      lines.push(`- with this text selected in it: ${JSON.stringify(focus.fieldSelection.slice(0, 500))}`);
+    }
+  }
+  lines.push(
+    "Words like \"this\", \"these\", \"here\", \"the selected …\" (or an instruction naming no node) refer to this selection: change those, and nothing else unless the instruction asks for it.",
+  );
+  return lines;
 }
 
 /**
@@ -451,10 +497,25 @@ function compactJson(value: unknown): string {
   return JSON.stringify(shorten(value, 0));
 }
 
+/** A node with nothing but id and type (and empty defaults) — e.g. a new flow's first node. */
+export function isPlaceholderNode(n: FlowNode): boolean {
+  const { id: _id, type: _type, ...rest } = n;
+  void _id;
+  void _type;
+  return Object.values(rest).every(
+    (v) =>
+      v === undefined ||
+      (Array.isArray(v) && v.length === 0) ||
+      (v !== null && typeof v === "object" && Object.keys(v).length === 0),
+  );
+}
+
 /** Compact, token-frugal textual summary of the current flow for the prompt. */
 function describeFlow(def: FlowDefinition): string {
-  const nodeLines = def.nodes.map((n) => {
+  const nodeLines = def.nodes.map((n, i) => {
     const bits = [`id=${n.id}`, `type=${n.type}`];
+    if (i === 0) bits.push("(FIRST node — runs start here)");
+    if (isPlaceholderNode(n)) bits.push("(empty placeholder — no settings yet)");
     if (n.label) bits.push(`label=${JSON.stringify(n.label)}`);
     const shortcut = (n.llm as { shortcut?: string } | undefined)?.shortcut;
     if (shortcut) bits.push(`llm.shortcut=${shortcut}`);
@@ -519,6 +580,10 @@ export async function proposeFlowEdit(
         : "(none)"
     }`,
     "",
+    ...(() => {
+      const lines = describeFocus(definition, options.focus);
+      return lines.length > 0 ? [...lines, ""] : [];
+    })(),
     `Instruction: ${instruction.trim().slice(0, 2000)}`,
   ].join("\n");
 
@@ -577,11 +642,16 @@ export async function proposeFlowEdit(
       const reasons =
         outcome.validation?.errors.map((e) => `- ${e.path}: ${e.message}`).join("\n") ??
         `- ${outcome.problem}`;
+      const unreachable = outcome.validation?.errors.some((e) => /not reachable from the start/.test(e.message)) ?? false;
+      const hint = unreachable
+        ? "\nTo fix an unreachable node: add an edge to it from the node that should run before it (addEdges), " +
+          "or — if the first node is an unused placeholder — remove that placeholder (removeNodeIds) or configure it instead."
+        : "";
       messages.push(
         { role: "assistant", content: JSON.stringify(answer) },
         {
           role: "user",
-          content: `That patch was rejected:\n${reasons}\nReturn a corrected patch. Change only what is needed to fix these problems (use documented config keys and value shapes; drop a change you can't make valid).`,
+          content: `That patch was rejected:\n${reasons}${hint}\nReturn a corrected patch. Change only what is needed to fix these problems (use documented config keys and value shapes; drop a change you can't make valid).`,
         },
       );
     }

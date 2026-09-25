@@ -76,6 +76,11 @@ export interface DagreLayoutOptions {
    * between ranks instead of letting labels pile onto nodes.
    */
   labelSize?: { width: number; height: number };
+  /**
+   * Node id → cluster id. Nodes of one cluster (a sub-flow) are laid out as a
+   * compact group so the box drawn around them doesn't cover other nodes.
+   */
+  clusters?: Map<string, string>;
 }
 
 export function computeDagreLayout(
@@ -84,7 +89,8 @@ export function computeDagreLayout(
   options: DagreLayoutOptions = {},
 ): Map<string, DagrePosition> {
   const fallback = options.defaultSize ?? { width: NODE_W, height: NODE_H };
-  const g = new dagre.graphlib.Graph({ multigraph: true });
+  const clustered = options.clusters !== undefined && options.clusters.size > 0;
+  const g = new dagre.graphlib.Graph({ multigraph: true, compound: clustered });
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: "TB", // top → bottom
@@ -98,6 +104,15 @@ export function computeDagreLayout(
   for (const id of nodeIds) {
     const { width, height } = sizeOf(id);
     g.setNode(id, { width, height });
+  }
+  if (clustered) {
+    for (const [id, cluster] of options.clusters ?? []) {
+      if (!g.hasNode(id)) continue;
+      const key = `cluster:${cluster}`;
+      // Cluster padding leaves room for the box label above the group.
+      if (!g.hasNode(key)) g.setNode(key, { label: cluster, paddingTop: 34, paddingLeft: 20, paddingRight: 20, paddingBottom: 20 });
+      g.setParent(id, key);
+    }
   }
   edges.forEach((e, i) => {
     // Only add edges where both endpoints are in the graph (and skip self-loops,

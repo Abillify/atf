@@ -16,7 +16,9 @@
  */
 
 import dynamic from "next/dynamic";
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { OptimizePanel } from "../../../components/OptimizePanel";
+import type { FlowDefinition } from "../../../types/flow";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { RequireRole } from "../../../lib/auth/RequireRole";
 import { Button } from "../../../lib/ui";
@@ -152,139 +154,6 @@ async function deleteEvalCase(token: string | undefined, id: string): Promise<vo
 }
 
 // ---------------------------------------------------------------------------
-// Optimize panel (routing recommendations stub, Req. 17)
-// ---------------------------------------------------------------------------
-
-interface RoutingRecommendation {
-  flowId: string;
-  nodeId: string;
-  currentModel: string;
-  suggestedModel: string;
-  expectedCostSavingPct: number;
-  expectedQualityLossPct: number;
-  source: "eval-judge" | "model-quality-registry" | "unknown";
-  canary?: { flow: string; candidate: string; trafficPercent: number };
-}
-
-interface RoutingAdvice {
-  nodesExamined: number;
-  qualityDataAvailable: boolean;
-  recommendations: RoutingRecommendation[];
-}
-
-async function fetchRoutingAdvice(token: string | undefined): Promise<RoutingAdvice> {
-  const resp = await fetch(backendUrl("/optimizer/routing-advice"), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!resp.ok) {
-    const d = (await resp.json().catch(() => ({}))) as { error?: { message?: string } };
-    throw new Error(d.error?.message ?? `HTTP ${resp.status}`);
-  }
-  return (await resp.json()) as RoutingAdvice;
-}
-
-function OptimizePanel({
-  selectedFlowId,
-  token,
-}: {
-  selectedFlowId: string;
-  token: string | null;
-}) {
-  const { ready, isAuthenticated } = useAuth();
-  // Fetched on demand: the advisor scans every loaded flow.
-  const advice = useQuery<RoutingAdvice, Error>({
-    queryKey: ["routing-advice"],
-    queryFn: () => fetchRoutingAdvice(token ?? undefined),
-    enabled: false,
-    staleTime: 60_000,
-  });
-  const forFlow =
-    advice.data?.recommendations.filter((r) => r.flowId === selectedFlowId) ?? [];
-
-  return (
-    <section className="space-y-3">
-      <h3 className="text-sm font-semibold text-foreground">Optimize</h3>
-
-      {!selectedFlowId ? (
-        <p className="text-xs text-muted-foreground">
-          Select a flow to see routing recommendations.
-        </p>
-      ) : (
-        <div className="space-y-2">
-          <p className="text-xs text-muted-foreground">
-            Cheaper models for this flow&apos;s nodes that keep quality within the
-            threshold. Only nodes that declare{" "}
-            <code className="font-mono">config.routing.candidates</code> are
-            considered.
-          </p>
-
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full"
-            disabled={!ready || !isAuthenticated || advice.isFetching}
-            onClick={() => void advice.refetch()}
-          >
-            {advice.isFetching
-              ? "Checking…"
-              : advice.data
-                ? "Check again"
-                : "Check routing recommendations"}
-          </Button>
-
-          {advice.error && (
-            <p className="text-xs text-red-600">{advice.error.message}</p>
-          )}
-
-          {advice.data && forFlow.length === 0 && (
-            <p className="rounded border border-dashed border-border bg-muted p-2 text-xs text-muted-foreground">
-              {advice.data.nodesExamined === 0
-                ? "No loaded flow declares routing candidates (config.routing.candidates on a node), so there is nothing to compare yet."
-                : `No recommendation for ${selectedFlowId}: none of its candidate models is cheaper within the quality threshold (${advice.data.nodesExamined} node(s) examined across all flows).`}
-              {!advice.data.qualityDataAvailable &&
-                " No quality data is recorded yet, so quality loss can't be estimated."}
-            </p>
-          )}
-
-          {forFlow.map((r) => (
-            <div
-              key={`${r.nodeId}-${r.suggestedModel}`}
-              className="space-y-1 rounded border border-border bg-muted p-2 text-xs"
-            >
-              <div className="font-medium text-foreground">
-                Node <span className="font-mono">{r.nodeId}</span>
-              </div>
-              <div className="font-mono text-[11px]">
-                {r.currentModel} → <span className="text-green-700">{r.suggestedModel}</span>
-              </div>
-              <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                <span className="text-green-700">−{r.expectedCostSavingPct.toFixed(0)}% cost</span>
-                <span>−{r.expectedQualityLossPct.toFixed(1)}% quality</span>
-                <span>({r.source})</span>
-              </div>
-              {r.canary && (
-                <details>
-                  <summary className="cursor-pointer text-[11px] text-muted-foreground">
-                    Trial it as a canary
-                  </summary>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    Create flow <span className="font-mono">{r.canary.candidate}</span> with the
-                    suggested model, then add to <span className="font-mono">flows/canary.yaml</span>:
-                  </p>
-                  <pre className="mt-1 overflow-auto rounded bg-card p-1.5 font-mono text-[10px]">{`- flow: ${r.canary.flow}
-  candidate: ${r.canary.candidate}
-  trafficPercent: ${r.canary.trafficPercent}`}</pre>
-                </details>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-// ---------------------------------------------------------------------------
 // Main Studio page
 // ---------------------------------------------------------------------------
 
@@ -297,6 +166,9 @@ export default function StudioPage() {
 
   const [selectedFlowId, setSelectedFlowIdRaw] = useState("");
   const [builderDirty, setBuilderDirty] = useState(false);
+  /** The builder's current definition, for checks that run on the canvas (Optimize). */
+  const canvasDefinitionRef = useRef<(() => FlowDefinition) | null>(null);
+  const getCanvasDefinition = useCallback(() => canvasDefinitionRef.current?.() ?? null, []);
 
   // Deep-link support: /studio?flow=<id> opens that flow (e.g. Edit/Inspect on
   // /flows); no param starts a new flow. The selection is mirrored back into
@@ -304,12 +176,32 @@ export default function StudioPage() {
   // only once the param has been read, so the initial empty selection doesn't
   // wipe it.
   const [urlRead, setUrlRead] = useState(false);
+  // `&execution=<id>` (Live Graph → "Open in Studio") attaches that request to
+  // Run & Trace for the flow it ran on.
+  const [attach, setAttach] = useState<{ flowId: string; executionId: string } | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const flow = new URLSearchParams(window.location.search).get("flow");
-    if (flow !== null && flow !== "") setSelectedFlowIdRaw(flow);
+    const params = new URLSearchParams(window.location.search);
+    const flow = params.get("flow");
+    const execution = params.get("execution");
+    if (flow !== null && flow !== "") {
+      setSelectedFlowIdRaw(flow);
+      if (execution !== null && execution !== "") setAttach({ flowId: flow, executionId: execution });
+    }
     setUrlRead(true);
   }, []);
+  // Drop the execution param once Run & Trace moved on (new run, clear, other flow).
+  const detachExecution = useCallback(() => {
+    setAttach(null);
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("execution")) return;
+    url.searchParams.delete("execution");
+    window.history.replaceState(null, "", url.toString());
+  }, []);
+  useEffect(() => {
+    if (attach !== null && urlRead && selectedFlowId !== attach.flowId) detachExecution();
+  }, [attach, urlRead, selectedFlowId, detachExecution]);
   useEffect(() => {
     if (!urlRead || typeof window === "undefined") return;
     const url = new URL(window.location.href);
@@ -336,6 +228,10 @@ export default function StudioPage() {
     true,
   );
   const [assistOpen, setAssistOpen] = usePersistentToggle("studio.assist", true);
+  // An attached request is shown in the Run & Trace bar — make sure it's visible.
+  useEffect(() => {
+    if (attach !== null) setAssistOpen(true);
+  }, [attach, setAssistOpen]);
   const builderPanels = useMemo(
     () => ({ palette: paletteOpen, properties: propertiesOpen, assist: assistOpen }),
     [paletteOpen, propertiesOpen, assistOpen],
@@ -545,6 +441,10 @@ export default function StudioPage() {
                     onSaveEvalCase={handleSaveEvalCase}
                     onDeleteEvalCase={handleDeleteEvalCase}
                     panels={builderPanels}
+                    canvasDefinitionRef={canvasDefinitionRef}
+                    {...(attach !== null && attach.flowId === selectedFlowId
+                      ? { attachExecutionId: attach.executionId, onDetachExecution: detachExecution }
+                      : {})}
                   />
                 </div>
               </RequireRole>
@@ -637,6 +537,8 @@ export default function StudioPage() {
               <OptimizePanel
                 selectedFlowId={selectedFlowId}
                 token={token ?? null}
+                getCanvasDefinition={getCanvasDefinition}
+                canvasLabel={builderDirty ? "canvas (unsaved changes)" : "canvas"}
               />
 
               {/* Flow Diff panel — shows draft vs. published; only meaningful

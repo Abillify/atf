@@ -51,11 +51,25 @@ describe("extractSubFlow", () => {
   });
 
   test("honours an explicit entryNodeId", () => {
-    // Two independent nodes: without entryNodeId this would be ambiguous.
-    const sub = extractSubFlow(FLOW, ["clf", "tail"], { entryNodeId: "tail" });
+    // A loop: both nodes have an in-scope predecessor, so the entry is
+    // ambiguous without entryNodeId. (Two unconnected nodes would not do: the
+    // second could never run, and the graph compiler rejects that.)
+    const loop: FlowDefinition = {
+      id: "loop",
+      name: "Loop",
+      nodes: [
+        { id: "draft", type: "llm", systemPrompt: "draft" },
+        { id: "review", type: "llm", systemPrompt: "review" },
+      ],
+      edges: [
+        { source: "draft", target: "review" },
+        { source: "review", target: "draft", conditions: "hasErrors" },
+      ],
+    };
+    const sub = extractSubFlow(loop, ["draft", "review"], { entryNodeId: "review" });
     const first = sub.nodes[0];
     if (first === undefined) throw new Error("expected a first node");
-    expect(first.id).toBe("tail");
+    expect(first.id).toBe("review");
   });
 
   test("derives a stable, scoped flow id", () => {
@@ -76,10 +90,9 @@ describe("extractSubFlow", () => {
         { id: "a", type: "llm", systemPrompt: "a" },
         { id: "b", type: "llm", systemPrompt: "b" },
       ],
-      edges: [
-        { source: "fan", target: "a" },
-        { source: "fan", target: "b" },
-      ],
+      // No edges to the children: they run inside the parallel node (an edge
+      // to a parallel child is rejected by the graph compiler).
+      edges: [],
     };
     const sub = extractSubFlow(flowWithParallel, ["fan", "a"]);
     const fan = sub.nodes.find((n) => n.id === "fan");

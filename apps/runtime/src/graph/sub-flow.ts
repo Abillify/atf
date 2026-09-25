@@ -34,6 +34,7 @@
 
 import type { FlowDefinition, FlowNode } from "../types/flow.js";
 import { parallelChildId } from "../types/flow.js";
+import { inlineNodes } from "./edge-rules.js";
 import { validateFlow } from "./flow-validator.js";
 
 export interface ExtractSubFlowOptions {
@@ -98,7 +99,13 @@ export function extractSubFlow(
 
   // Determine the entry node.
   const inScopeTargets = new Set(edges.map((e) => e.target));
-  const candidates = [...scope].filter((id) => !inScopeTargets.has(id));
+  // Nodes that run inside another node (parallel children, harness workers)
+  // are never an entry — they are not graph nodes of their own.
+  const inline = inlineNodes(
+    flow.nodes.filter((n) => scope.has(n.id)),
+    edges,
+  );
+  const candidates = [...scope].filter((id) => !inScopeTargets.has(id) && !inline.has(id));
 
   let entryNodeId: string;
   if (options.entryNodeId !== undefined) {

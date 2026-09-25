@@ -781,7 +781,7 @@ A known root with a missing value renders empty. An unknown root stays as writte
 
 ## Variables, constants and calculations
 
-`variables` holds named values; nodes and edges reference them, and a request can override them. Variable values may reference each other, constants, allowlisted environment values, and calculate:
+`variables` holds named values; a request can override them. Load-time references — variables, constants, allowlisted environment values and calculations — work in variable values and in any node or edge value. They are resolved when the flow loads and again per request when variables are overridden:
 
 ```yaml
 variables:
@@ -793,17 +793,17 @@ variables:
 
 | Reference | Description |
 | --- | --- |
-| `{{vars.<name>}}` | A flow variable. Usable in node and edge values and in other variables' values (evaluated in dependency order; cycles are errors). Dotted names read into object values. |
-| `{{const.<name>}}` | A global constant from `constants.yaml`. Only in variable values. |
-| `{{env.FLOW_PUBLIC_<NAME>}}` | An environment value whose name starts with `FLOW_PUBLIC_`; no other environment variable is readable. Only in variable values. |
-| `{{= <expression> }}` | A calculation, only in variable values. Inside it references are written without braces (`vars.x`, `const.y`, `env.FLOW_PUBLIC_Z`), strings in single quotes. |
+| `{{vars.<name>}}` | A flow variable. Variable values may reference each other (evaluated in dependency order; cycles are errors). Dotted names read into object values. An undeclared variable is a warning, since a request may supply it. |
+| `{{const.<name>}}` | A global constant from `constants.yaml`. |
+| `{{env.FLOW_PUBLIC_<NAME>}}` | An environment value whose name starts with `FLOW_PUBLIC_`; no other environment variable is readable. |
+| `{{= <expression> }}` | A calculation over variables, constants and public env values. Inside it references are written without braces (`vars.x`, `const.y`, `env.FLOW_PUBLIC_Z`), strings in single quotes. Evaluated at load time, so it cannot read run-time values such as `context.*` or `classification.*`. |
 
 Rules:
 
 - A value that is exactly one placeholder keeps the referenced value's type (a number stays a number); inside longer text it is inserted as text.
-- Cycles, unknown references, environment variables outside `FLOW_PUBLIC_*`, and calculation errors are validation errors (`variables.<name>`).
+- Cycles, unknown constants, environment variables outside `FLOW_PUBLIC_*`, and calculation errors are validation errors (`variables.<name>`, or the node/edge path). An undeclared `{{vars.*}}` in a node or edge is a warning.
 - Variables supplied with a request are literals: they are never evaluated, but variables that reference them are.
-- Runtime placeholders (`{{context.*}}`, `{{classification.*}}`, …) inside a variable value are left for the run.
+- Runtime placeholders (`{{context.*}}`, `{{classification.*}}`, …) are left for the run; a calculation cannot read them.
 
 Calculation operators:
 

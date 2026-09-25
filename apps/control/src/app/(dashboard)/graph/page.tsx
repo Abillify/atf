@@ -12,6 +12,9 @@
  */
 
 import dynamic from "next/dynamic";
+import Link from "next/link";
+import { Workflow } from "lucide-react";
+import { studioRunHref } from "../../../lib/run-attach";
 import { useMemo, useState, useCallback } from "react";
 import { ExecutionPicker } from "../../../components/ExecutionPicker";
 import { MetricsSidebar } from "../../../components/MetricsSidebar";
@@ -115,6 +118,17 @@ export default function GraphPage() {
     };
   }, [pending, resolvedApprovals, scoping.effectiveExecutionId]);
 
+  // "Open in Studio": the shown request in the Studio's Run & Trace, for the
+  // flow it ran on (Studio test runs map back to their flow).
+  const studioHref = useMemo(() => {
+    const id = scoping.effectiveExecutionId;
+    if (id === null) return null;
+    const flowId =
+      scoping.pickerItems.find((p) => p.executionId === id)?.flowId ??
+      scoping.displayEvents.find((e) => e.flow_id)?.flow_id;
+    return flowId ? studioRunHref(flowId, id) : null;
+  }, [scoping.effectiveExecutionId, scoping.pickerItems, scoping.displayEvents]);
+
   // Lifted node selection state — shared between graph and sidebar
   const [selectedNode, setSelectedNode] = useState<NodeState | null>(null);
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>("metrics");
@@ -160,6 +174,16 @@ export default function GraphPage() {
             {isConnected ? "Connected" : "Disconnected"}
           </span>
           {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+          {studioHref !== null && (
+            <Link
+              href={studioHref}
+              className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              title="Open this request in the Studio's Run & Trace, as if it had been started there — trace it on the canvas and pin it as sample data"
+            >
+              <Workflow size={14} aria-hidden />
+              Open in Studio
+            </Link>
+          )}
         </div>
 
         {scoping.pickerItems.length === 0 ? (

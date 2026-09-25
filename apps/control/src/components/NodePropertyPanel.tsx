@@ -48,6 +48,14 @@ export interface NodePropertyPanelProps {
    * message, or null on success. Without it the id is read-only.
    */
   onRenameNode?: (oldId: string, newId: string) => string | null;
+  /**
+   * Which file the selected node is saved in: undefined = the flow file, else
+   * a sub-flow path. With `onOriginChange` the panel offers to move it.
+   */
+  origin?: string | undefined;
+  /** Sub-flow files available as targets (those on the canvas). */
+  originOptions?: string[];
+  onOriginChange?: (path: string | null) => void;
   onEdgeChange: (edge: EdgeSelection) => void;
   onDeleteEdge: (id: string) => void;
   /**
@@ -206,6 +214,7 @@ export function FlowSettingsPanel({
           )
         }
         onRename={(from, to) => onChange(renameFlowVariable(flow, from, to))}
+        nodes={flow.nodes}
         {...(catalog ? { catalog } : {})}
         {...(evaluateVariables ? { evaluate: evaluateVariables } : {})}
       />
@@ -231,6 +240,139 @@ export function FlowSettingsPanel({
 // ---------------------------------------------------------------------------
 // Node id heading with inline rename
 // ---------------------------------------------------------------------------
+
+type ModelSource = "shortcut" | "explicit";
+
+/**
+ * Where a node's model comes from: a shortcut from flows/model-shortcuts.yaml
+ * OR an explicit provider + model — never both (the parser expands the
+ * shortcut over provider/model, the flow schema rejects the mix). Switching
+ * removes the other side from the node; it is kept here so switching back
+ * during the session restores it.
+ */
+function ModelSourceFields({
+  node,
+  setLlm,
+  shortcuts,
+}: {
+  node: FlowNode;
+  setLlm: (patch: Record<string, unknown>) => void;
+  shortcuts?: string[] | undefined;
+}): React.JSX.Element {
+  const llm = node.llm;
+  const hasShortcut = !!llm?.shortcut;
+  const hasExplicit = !!llm?.provider || !!llm?.model;
+  const [mode, setMode] = useState<ModelSource>(
+    hasShortcut ? "shortcut" : hasExplicit ? "explicit" : (shortcuts?.length ?? 0) > 0 ? "shortcut" : "explicit",
+  );
+  const stash = useRef<{ shortcut?: string; provider?: string; model?: string }>({});
+
+  const switchTo = (next: ModelSource): void => {
+    if (next === mode) return;
+    if (next === "explicit") {
+      if (llm?.shortcut) stash.current.shortcut = llm.shortcut;
+      setLlm({ shortcut: undefined, provider: stash.current.provider, model: stash.current.model });
+    } else {
+      if (llm?.provider) stash.current.provider = llm.provider;
+      if (llm?.model) stash.current.model = llm.model;
+      setLlm({ provider: undefined, model: undefined, shortcut: stash.current.shortcut });
+    }
+    setMode(next);
+  };
+
+  const tab = (m: ModelSource, label: string, title: string) => (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={mode === m}
+      onClick={() => switchTo(m)}
+      title={title}
+      className={`flex-1 px-2 py-1 text-[11px] ${
+        mode === m ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
+      }`}
+    >
+      {label}
+    </button>
+  );
+
+  return (
+    <div className="space-y-2">
+      <div role="tablist" aria-label="Model source" className="flex overflow-hidden rounded border border-border">
+        {tab("shortcut", "Shortcut", "A named preset from flows/model-shortcuts.yaml (provider, model and parameters)")}
+        {tab("explicit", "Provider + model", "Name the provider and model directly")}
+      </div>
+      {mode === "shortcut" ? (
+        <Field
+          label="Shortcut"
+          hint="A name from flows/model-shortcuts.yaml or {{vars.…}}. It sets provider, model and the preset's parameters; parameters below override the preset's."
+        >
+          <FormulaInput
+            kind="vars"
+            replace
+            ariaLabel="Shortcut"
+            title="Model shortcut"
+            className={`${inputCls} font-mono text-xs`}
+            value={llm?.shortcut ?? ""}
+            placeholder="e.g. fast-pool or {{vars.model_main}}"
+            list={`shortcuts-${node.id}`}
+            onChange={(v) => setLlm({ shortcut: v || undefined })}
+          />
+          {shortcuts && (
+            <datalist id={`shortcuts-${node.id}`}>
+              {shortcuts.map((sc) => (
+                <option key={sc} value={sc} />
+              ))}
+            </datalist>
+          )}
+        </Field>
+      ) : (
+        <div className="flex gap-2">
+          <Field label="Provider">
+            <FormulaInput
+              kind="vars"
+              replace
+              ariaLabel="Provider"
+              className={inputCls}
+              list="studio-provider-options"
+              value={llm?.provider ?? ""}
+              onChange={(v) => setLlm({ provider: v || undefined })}
+            />
+            <datalist id="studio-provider-options">
+              {PROVIDERS.map((p) => (
+                <option key={p} value={p} />
+              ))}
+            </datalist>
+          </Field>
+          <Field label="Model">
+            <FormulaInput
+              kind="vars"
+              replace
+              ariaLabel="Model"
+              className={inputCls}
+              value={llm?.model ?? ""}
+              onChange={(v) => setLlm({ model: v || undefined })}
+            />
+          </Field>
+        </div>
+      )}
+      {mode === "shortcut" && hasExplicit && (
+        <p role="alert" className="flex items-start gap-2 text-[11px] text-amber-600">
+          <span>
+            This node also sets provider/model ({[llm?.provider, llm?.model].filter(Boolean).join(" · ")}), which the
+            shortcut overwrites.
+          </span>
+          <button
+            type="button"
+            onClick={() => setLlm({ provider: undefined, model: undefined })}
+            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-muted"
+          >
+            Remove
+          </button>
+        </p>
+      )}
+    </div>
+  );
+}
 
 function NodeIdHeading({
   id,
@@ -319,6 +461,9 @@ export function NodePropertyPanel({
   catalog,
   nodeIds = [],
   onFocusField,
+  origin,
+  originOptions = [],
+  onOriginChange,
 }: NodePropertyPanelProps): React.JSX.Element {
   const [tab, setTab] = useState<"form" | "json">("form");
 
@@ -421,6 +566,26 @@ export function NodePropertyPanel({
         </span>
       </div>
 
+      {onOriginChange && (
+        <label className="flex items-center gap-2 text-[11px]">
+          <span className="shrink-0 font-medium uppercase tracking-wide text-muted-foreground">Saved in</span>
+          <select
+            aria-label="Saved in"
+            value={origin ?? ""}
+            onChange={(e) => onOriginChange(e.target.value === "" ? null : e.target.value)}
+            className="min-w-0 flex-1 rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[11px]"
+            title="The file this node is written to on save — the flow file or a sub-flow (use “New subflow” in the palette to create one)"
+          >
+            <option value="">this flow's file</option>
+            {[...new Set([...originOptions, ...(origin ? [origin] : [])])].sort().map((p) => (
+              <option key={p} value={p}>
+                📄 {p}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+
       <div role="tablist" className="flex gap-1 text-xs">
         {(["form", "json"] as const).map((t) => (
           <button type="button"
@@ -476,63 +641,12 @@ export function NodePropertyPanel({
 
           {showLlm && (
             <Section title="Model">
-              <Field
-                label="Shortcut"
-                hint={
-                  node.llm?.shortcut
-                    ? "Provider, model and preset parameters come from flows/model-shortcuts.yaml. Fields below override them."
-                    : "Optional: a name from flows/model-shortcuts.yaml or {{vars.…}}, instead of provider + model."
-                }
-              >
-                <FormulaInput
-                  kind="vars"
-                  replace
-                  ariaLabel="Shortcut"
-                  title="Model shortcut"
-                  className={`${inputCls} font-mono text-xs`}
-                  value={node.llm?.shortcut ?? ""}
-                  placeholder="e.g. fast-pool or {{vars.model_main}}"
-                  list={`shortcuts-${node.id}`}
-                  onChange={(v) => setLlm({ shortcut: v || undefined })}
-                />
-                {catalog && (
-                  <datalist id={`shortcuts-${node.id}`}>
-                    {catalog.shortcuts.map((sc) => (
-                      <option key={sc} value={sc} />
-                    ))}
-                  </datalist>
-                )}
-              </Field>
-              <div className="flex gap-2">
-                <Field label="Provider">
-                  <FormulaInput
-                    kind="vars"
-                    replace
-                    ariaLabel="Provider"
-                    className={inputCls}
-                    list="studio-provider-options"
-                    value={node.llm?.provider ?? ""}
-                    placeholder={node.llm?.shortcut ? "from shortcut" : ""}
-                    onChange={(v) => setLlm({ provider: v || undefined })}
-                  />
-                  <datalist id="studio-provider-options">
-                    {PROVIDERS.map((p) => (
-                      <option key={p} value={p} />
-                    ))}
-                  </datalist>
-                </Field>
-                <Field label="Model">
-                  <FormulaInput
-                    kind="vars"
-                    replace
-                    ariaLabel="Model"
-                    className={inputCls}
-                    value={node.llm?.model ?? ""}
-                    placeholder={node.llm?.shortcut ? "from shortcut" : ""}
-                    onChange={(v) => setLlm({ model: v || undefined })}
-                  />
-                </Field>
-              </div>
+              <ModelSourceFields
+                key={node.id}
+                node={node}
+                setLlm={setLlm}
+                shortcuts={catalog?.shortcuts}
+              />
               <div className="flex gap-2">
                 <NumberOrVarInput
                   label="Temperature"

@@ -6,7 +6,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { diffFlows, edgeKey } from "../flow-diff.js";
+import { MAX_DETAILS, diffFlows, diffValues, edgeKey } from "../flow-diff.js";
 import type { FlowDefinition } from "../../types/flow.js";
 
 function flow(over: Partial<FlowDefinition> = {}): FlowDefinition {
@@ -107,5 +107,63 @@ describe("diffFlows", () => {
   it("keys edges by id when present", () => {
     expect(edgeKey({ id: "e1", source: "a", target: "b" })).toBe("a->b#e1");
     expect(edgeKey({ source: "a", target: "b" })).toBe("a->b");
+  });
+});
+
+describe("value details", () => {
+  const live: FlowDefinition = {
+    id: "n8n",
+    name: "n8n",
+    nodes: [{ id: "n8n-responder", type: "llm", llm: { shortcut: "{{vars.model_main}}" } } as FlowDefinition["nodes"][number]],
+    edges: [],
+  };
+  const draft: FlowDefinition = {
+    ...live,
+    nodes: [
+      {
+        ...live.nodes[0]!,
+        config: { routing: { strategy: "balanced", candidates: [{ shortcut: "qwen-lmstudio" }, { shortcut: "sonnet" }] } },
+      },
+      { id: "extra", type: "tool", tools: ["search"] },
+    ],
+    edges: [{ source: "n8n-responder", target: "extra", conditions: "x == 1" }],
+  };
+
+  it("lists what changed inside a node's config, and the full added entities", () => {
+    const d = diffFlows(live, draft);
+    expect(d.nodes.changed).toEqual([
+      {
+        id: "n8n-responder",
+        changedFields: ["config"],
+        details: [
+          {
+            path: "config",
+            kind: "added",
+            to: { routing: { strategy: "balanced", candidates: [{ shortcut: "qwen-lmstudio" }, { shortcut: "sonnet" }] } },
+          },
+        ],
+      },
+    ]);
+    expect(d.values?.nodes.added["extra"]).toEqual({ id: "extra", type: "tool", tools: ["search"] });
+    expect(d.values?.edges.added["n8n-responder->extra"]).toMatchObject({ conditions: "x == 1" });
+  });
+
+  it("goes down to the changed leaf, index by index in arrays", () => {
+    expect(
+      diffValues(
+        { routing: { strategy: "balanced", candidates: [{ shortcut: "a" }, { shortcut: "b" }] } },
+        { routing: { strategy: "cheapest", candidates: [{ shortcut: "a" }, { shortcut: "c" }, { shortcut: "d" }] } },
+        "config",
+      ),
+    ).toEqual([
+      { path: "config.routing.strategy", kind: "changed", from: "balanced", to: "cheapest" },
+      { path: "config.routing.candidates[1].shortcut", kind: "changed", from: "b", to: "c" },
+      { path: "config.routing.candidates[2]", kind: "added", to: { shortcut: "d" } },
+    ]);
+  });
+
+  it("caps the detail list", () => {
+    const big = (v: number) => Object.fromEntries(Array.from({ length: 500 }, (_, i) => [`k${i}`, v]));
+    expect(diffValues(big(1), big(2))).toHaveLength(MAX_DETAILS);
   });
 });

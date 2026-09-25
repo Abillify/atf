@@ -276,25 +276,30 @@ export const CONDITION_OPERATORS: ReferenceOperator[] = [
 // Flow variables
 // ---------------------------------------------------------------------------
 
+/**
+ * Load-time references: resolved when the flow loads (and again per request
+ * when variables are overridden), in variable values AND in any node or edge
+ * value. They cannot read run-time values — use runtime placeholders for those.
+ */
 export const VARIABLE_REFERENCES: ReferenceField[] = [
   {
     key: "{{vars.<name>}}",
     description:
-      "A flow variable. Usable in node and edge values and in other variables' values (evaluated in dependency order; cycles are errors). Dotted names read into object values.",
+      "A flow variable. Variable values may reference each other (evaluated in dependency order; cycles are errors). Dotted names read into object values. An undeclared variable is a warning, since a request may supply it.",
   },
   {
     key: "{{const.<name>}}",
-    description: "A global constant from `constants.yaml`. Only in variable values.",
+    description: "A global constant from `constants.yaml`.",
   },
   {
     key: "{{env.FLOW_PUBLIC_<NAME>}}",
     description:
-      "An environment value whose name starts with `FLOW_PUBLIC_`; no other environment variable is readable. Only in variable values.",
+      "An environment value whose name starts with `FLOW_PUBLIC_`; no other environment variable is readable.",
   },
   {
     key: "{{= <expression> }}",
     description:
-      "A calculation, only in variable values. Inside it references are written without braces (`vars.x`, `const.y`, `env.FLOW_PUBLIC_Z`), strings in single quotes.",
+      "A calculation over variables, constants and public env values. Inside it references are written without braces (`vars.x`, `const.y`, `env.FLOW_PUBLIC_Z`), strings in single quotes. Evaluated at load time, so it cannot read run-time values such as `context.*` or `classification.*`.",
   },
 ];
 

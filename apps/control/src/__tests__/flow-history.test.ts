@@ -30,6 +30,14 @@ describe("useFlowHistory", () => {
     expect(result.current.canRedo).toBe(false);
   });
 
+  test("moving another node to the front (a new entry) is an undoable change", () => {
+    const { result } = renderHook(() => useFlowHistory({ nodes: [node("a", 0), node("b", 0)], edges: noEdges }));
+    act(() => {
+      result.current.maybePush({ nodes: [node("b", 0), node("a", 0)], edges: noEdges });
+    });
+    expect(result.current.canUndo).toBe(true);
+  });
+
   test("maybePush enables undo, and undo restores the previous snapshot", () => {
     const initial = { nodes: [node("a", 0)], edges: noEdges };
     const { result } = renderHook(() => useFlowHistory(initial));

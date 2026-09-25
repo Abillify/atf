@@ -42,6 +42,7 @@ import {
   DEFAULT_DEBUG_TRACE_LIMITS,
   clampDebugNode,
   clampDebugTrace,
+  clampUtf8,
 } from "./debug-trace-limits.js";
 
 // ---------------------------------------------------------------------------
@@ -87,14 +88,16 @@ export interface DebugTraceStore {
 
   /**
    * Seals the trace as finished, recording the final status, accumulated token
-   * usage, and any stream errors. Safe to call even when the execution errored
-   * mid-stream — partial traces are still useful for debugging.
+   * usage, any stream errors and — when there was one — the answer the flow
+   * returned. Safe to call even when the execution errored mid-stream —
+   * partial traces are still useful for debugging.
    */
   finishTrace(
     executionId: string,
     status: "completed" | "error",
     usage: DebugUsage,
     errors: DebugStreamError[],
+    final?: { response: string; nodeId?: string },
   ): void;
 
   /** Returns the full trace for one execution, or `undefined` when not found. */
@@ -193,6 +196,7 @@ export class InMemoryDebugTraceStore implements DebugTraceStore {
     status: "completed" | "error",
     usage: DebugUsage,
     errors: DebugStreamError[],
+    final?: { response: string; nodeId?: string },
   ): void {
     const trace = this.traces.get(executionId);
     if (trace === undefined) return;
@@ -200,6 +204,10 @@ export class InMemoryDebugTraceStore implements DebugTraceStore {
     trace.finished_at = new Date().toISOString();
     trace.usage = usage;
     trace.errors = errors;
+    if (final !== undefined) {
+      trace.final_response = clampUtf8(final.response, this.limits.llmResultBytes);
+      if (final.nodeId !== undefined) trace.final_node_id = final.nodeId;
+    }
   }
 
   getTrace(executionId: string): DebugTrace | undefined {

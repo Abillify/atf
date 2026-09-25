@@ -194,7 +194,7 @@ describe("FlowSettingsPanel variables table", () => {
 			within(dialog).getByText("openai · qwen/qwen3.6-35b-a3b"),
 		).toBeTruthy();
 		expect(
-			within(dialog).getByText("Constants (flows/constants.yaml)"),
+			within(dialog).getByText("Constants"),
 		).toBeTruthy();
 		expect(
 			within(dialog).getByRole("toolbar", { name: "Calculation operators" }),
@@ -204,30 +204,57 @@ describe("FlowSettingsPanel variables table", () => {
 		expect(last.variables?.model_worker).toBe("fast-pool");
 	});
 
-	test("the ƒx offers other variables, constants, env and calculations", () => {
+	test("the ƒx offers other variables, constants, env, node results and calculations", () => {
 		const groups = variableValueGroups(
 			catalog,
 			flow.variables ?? {},
 			"model_worker",
+			[
+				{
+					id: "triage",
+					type: "classifier",
+					classifierSchema: {
+						classKey: "route",
+						schema: { type: "object", properties: { route: { type: "string" } } },
+					},
+				},
+			] as never,
 		);
-		expect(groups.map((g) => g.title)).toEqual([
-			"Flow variables",
-			"Constants (flows/constants.yaml)",
-			"Environment (FLOW_PUBLIC_*)",
-			"Calculation",
-			"Model shortcuts",
-			"Models",
-		]);
-		const varPaths = groups[0]?.symbols.map((x) => x.path);
-		expect(varPaths).not.toContain("vars.model_worker");
-		expect(groups[1]?.symbols[0]).toMatchObject({
+		const titles = groups.map((g) => g.title);
+		expect(titles).toEqual(
+			expect.arrayContaining([
+				"Flow variables",
+				"Constants",
+				"Environment",
+				"Node results",
+				"Request & user",
+				"Calculation",
+				"Model shortcuts",
+				"Models",
+			]),
+		);
+		const byTitle = (t: string) => groups.find((g) => g.title === t);
+		expect(byTitle("Flow variables")?.symbols.map((x) => x.path)).not.toContain(
+			"vars.model_worker",
+		);
+		expect(byTitle("Constants")?.symbols[0]).toMatchObject({
 			insert: "{{const.budget}}",
 			calcInsert: "const.budget",
 		});
-		expect(groups[2]?.symbols[0]?.insert).toBe("{{env.FLOW_PUBLIC_REGION}}");
+		expect(byTitle("Environment")?.symbols[0]?.insert).toBe("{{env.FLOW_PUBLIC_REGION}}");
+		// Node results are grouped per node; in a variable they are allowed
+		// (rendered where the variable is used).
+		const nodeField = byTitle("Node results")?.symbols[0];
+		expect(nodeField).toMatchObject({
+			path: "node.triage.classification.route",
+			section: "triage (classifier)",
+		});
+		expect(nodeField?.unavailable).toBeUndefined();
 		// Without constants/env the groups explain how to get them.
 		const bare = variableValueGroups(undefined, {}, undefined);
-		expect(bare[0]?.symbols[0]?.unavailable).toMatch(/constants.yaml/);
+		expect(bare.find((g) => g.title === "Constants")?.symbols[0]?.unavailable).toMatch(
+			/constants.yaml/,
+		);
 	});
 
 	test("inside a calculation the builder inserts a reference bare", () => {

@@ -36,6 +36,30 @@ interface CopilotFailureResponse {
 }
 type CopilotResponse = CopilotSuccessResponse | CopilotFailureResponse;
 
+/** What the user has selected in the builder — sent so "this node" / "here" resolve. */
+export interface CopilotFocus {
+  nodeIds: string[];
+  edge?: { source: string; target: string };
+  /** Settings field in focus on the single selected node. */
+  field?: string;
+  /** Text selected inside that field. */
+  fieldSelection?: string;
+}
+
+/** One-line description of the focus for the panel. */
+export function describeCopilotFocus(f: CopilotFocus): string {
+  const parts: string[] = [];
+  if (f.nodeIds.length === 1) parts.push(`node ${f.nodeIds[0]}`);
+  else if (f.nodeIds.length > 1) parts.push(`${f.nodeIds.length} nodes (${f.nodeIds.slice(0, 4).join(", ")}${f.nodeIds.length > 4 ? ", …" : ""})`);
+  if (f.edge) parts.push(`edge ${f.edge.source} → ${f.edge.target}`);
+  if (f.field) parts.push(`field ${f.field}`);
+  if (f.fieldSelection) {
+    const t = f.fieldSelection.replace(/\s+/g, " ");
+    parts.push(`selected “${t.length > 40 ? `${t.slice(0, 39)}…` : t}”`);
+  }
+  return parts.join(" · ");
+}
+
 export interface FlowCopilotPanelProps {
   flowId: string;
   token?: string;
@@ -49,6 +73,8 @@ export interface FlowCopilotPanelProps {
   onAccept: (proposed: FlowDefinition) => void;
   /** Set (and incremented) externally to prefill + focus the instruction field, e.g. from a "Fix with Copilot" button on a validation issue. */
   prefill?: { instruction: string; nonce: number };
+  /** The builder's current selection; sent with the instruction unless switched off. */
+  focus?: CopilotFocus;
 }
 
 export function FlowCopilotPanel({
@@ -60,7 +86,10 @@ export function FlowCopilotPanel({
   onPreviewChange,
   onAccept,
   prefill,
+  focus,
 }: FlowCopilotPanelProps): React.JSX.Element {
+  const [useFocus, setUseFocus] = useState(true);
+  const activeFocus = useFocus && focus && (focus.nodeIds.length > 0 || focus.edge) ? focus : undefined;
   const [expanded, setExpanded] = useState(false);
   const [instruction, setInstruction] = useState("");
   const [isLoading, setIsLoading] = useState(false);
@@ -100,6 +129,7 @@ export function FlowCopilotPanel({
           body: JSON.stringify({
             definition: getDefinition(),
             instruction,
+            ...(activeFocus ? { focus: activeFocus } : {}),
           }),
         },
       );
@@ -194,6 +224,16 @@ export function FlowCopilotPanel({
           {isLoading ? "Thinking…" : "Ask"}
         </Button>
       </div>
+
+      {focus && (focus.nodeIds.length > 0 || focus.edge) && (
+        <div className="flex items-center gap-1.5 pl-5 text-[11px] text-muted-foreground" data-testid="copilot-focus">
+          <label className="flex min-w-0 items-center gap-1.5" title="Send the selection so “this node”, “here” or “the selected text” refer to it">
+            <input type="checkbox" checked={useFocus} onChange={(e) => setUseFocus(e.target.checked)} />
+            <span className="shrink-0">Refers to:</span>
+            <span className={`truncate ${useFocus ? "text-foreground" : "line-through"}`}>{describeCopilotFocus(focus)}</span>
+          </label>
+        </div>
+      )}
 
       {expanded && error && (
         <div className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">

@@ -245,6 +245,44 @@ describe("file flow source form", () => {
     expect(bad.status).toBe(400);
   });
 
+  test("GET /flows/subflows lists sub-flow files with their nodes and users", async () => {
+    const body = (await (await buildApp().request("/flows/subflows")).json()) as {
+      subflows: Array<{ path: string; nodeIds: string[]; edgeCount: number; usedBy: string[] }>;
+    };
+    expect(body.subflows).toEqual([
+      { path: "subflows/sub.yaml", nodeIds: ["helper"], edgeCount: 1, usedBy: ["parent"] },
+    ]);
+  });
+
+  test("GET /flows/subflows/content returns a sub-flow in source form", async () => {
+    const res = await buildApp().request("/flows/subflows/content?path=subflows/sub.yaml");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      nodes: Array<{ id: string; type: string; llm?: unknown }>;
+      edges: Array<{ source: string; target: string }>;
+      edgeOrigins: Record<string, string>;
+    };
+    expect(body.nodes).toEqual([{ id: "helper", type: "llm", llm: { shortcut: "local-small" } }]);
+    expect(body.edges).toEqual([{ source: "answer", target: "helper" }]);
+    expect(body.edgeOrigins).toEqual({ "answer->helper": "subflows/sub.yaml" });
+    expect((await buildApp().request("/flows/subflows/content?path=../secrets.yaml")).status).toBe(400);
+    expect((await buildApp().request("/flows/subflows/content?path=subflows/nope.yaml")).status).toBe(404);
+  });
+
+  test("POST /flows/expressions/copilot reaches the expression copilot, not /flows/:id/copilot", async () => {
+    // Regression: registered after /flows/:id/copilot, the request was taken
+    // by the flow copilot (id "expressions") and failed with "Field
+    // 'definition' is not a valid flow".
+    const res = await buildApp().request("/flows/expressions/copilot", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind: "template", current: "", instruction: "x", vocabulary: [] }),
+    });
+    const body = (await res.json()) as { message?: string };
+    expect(res.status).toBe(501); // no DEFAULT_LLM in this test app
+    expect(body.message).toContain("Copilot is not configured");
+  });
+
   test("POST /flows/variables/evaluate evaluates like a flow load", async () => {
     const res = await buildApp().request("/flows/variables/evaluate", {
       method: "POST",
@@ -325,14 +363,126 @@ describe("file flow source form", () => {
 
     const res = await app.request("/flows/parent/diff?draft=true");
     expect(res.status).toBe(200);
-    const body = (await res.json()) as { from: { kind: string; file?: string }; diff: { nodes: { changed: Array<{ id: string; changedFields: string[] }> } } };
+    const body = (await res.json()) as { from: { kind: string; file?: string }; diff: { nodes: { changed: Array<{ id: string; changedFields: string[]; details?: unknown[] }> } } };
     expect(body.from).toEqual({ kind: "file", file: "parent.yaml" });
     // only the label differs — shortcuts/prompt includes are not reported as changes
-    expect(body.diff.nodes.changed).toEqual([{ id: "answer", changedFields: ["label"] }]);
+    expect(body.diff.nodes.changed).toEqual([
+      { id: "answer", changedFields: ["label"], details: [expect.objectContaining({ path: "label", to: "Changed" })] },
+    ]);
 
     const detail = (await (await app.request("/flows/parent")).json()) as { fileDefinition?: unknown; file?: unknown };
     expect(detail.file).toEqual({ name: "parent.yaml", format: "yaml" });
     expect(detail.fileDefinition).toBeDefined();
+  });
+
+  test("POST /flows/subflows/write updates one sub-flow file, keeping its comments", async () => {
+    const res = await buildApp().request("/flows/subflows/write", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: "subflows/sub.yaml",
+        nodes: [
+          { id: "helper", type: "llm", llm: { shortcut: "local-small" }, label: "Helper (edited)" },
+          { id: "extra", type: "llm", llm: { shortcut: "local-small" } },
+        ],
+        edges: [
+          { source: "answer", target: "helper" },
+          { source: "helper", target: "extra" },
+        ],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(typeof ((await res.json()) as { hash: string }).hash).toBe("string");
+
+    const subText = fs.readFileSync(path.join(dir, "subflows", "sub.yaml"), "utf-8");
+    // Comment preserved, the parent file is untouched.
+    expect(subText).toContain("# sub-flow header comment");
+    const parentText = fs.readFileSync(path.join(dir, "parent.yaml"), "utf-8");
+    expect(parentText).toContain("# why this flow exists — must survive a save");
+
+    const sub = parseYaml(subText) as { nodes: Array<Record<string, unknown>>; edges: unknown[] };
+    expect(sub.nodes.map((n) => n.id)).toEqual(["helper", "extra"]);
+    expect(must(sub.nodes.find((n) => n.id === "helper"), "helper").label).toBe("Helper (edited)");
+    // The shortcut reference is kept as authored, not expanded.
+    expect(sub.nodes[0]?.llm).toEqual({ shortcut: "local-small" });
+    expect(sub.edges).toHaveLength(2);
+  });
+
+  test("POST /flows/subflows/write creates a new sub-flow file", async () => {
+    const res = await buildApp().request("/flows/subflows/write", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        path: "subflows/fresh.yaml",
+        nodes: [{ id: "n1", type: "llm", llm: { shortcut: "local-small" } }],
+        edges: [],
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(fs.existsSync(path.join(dir, "subflows", "fresh.yaml"))).toBe(true);
+    const fresh = parseYaml(fs.readFileSync(path.join(dir, "subflows", "fresh.yaml"), "utf-8")) as {
+      nodes: Array<Record<string, unknown>>;
+      edges?: unknown;
+    };
+    expect(fresh.nodes.map((n) => n.id)).toEqual(["n1"]);
+    // An empty-edges sub-flow doesn't get an invented `edges:` key.
+    expect("edges" in fresh).toBe(false);
+  });
+
+  test("POST /flows/subflows/write rejects bad paths, empty fragments and invalid edges", async () => {
+    const post = (body: unknown) =>
+      buildApp().request("/flows/subflows/write", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    // path traversal / non-subflow path
+    expect((await post({ path: "../secrets.yaml", nodes: [{ id: "n", type: "llm" }] })).status).toBe(400);
+    expect((await post({ path: "parent.yaml", nodes: [{ id: "n", type: "llm" }] })).status).toBe(400);
+    // empty fragment
+    expect((await post({ path: "subflows/x.yaml", nodes: [] })).status).toBe(400);
+    // duplicate node id → structural validation fails
+    expect(
+      (await post({
+        path: "subflows/x.yaml",
+        nodes: [{ id: "a", type: "llm" }, { id: "a", type: "llm" }],
+      })).status,
+    ).toBe(400);
+    // A cross-boundary edge to a parent node NOT in the fragment is allowed —
+    // it resolves once the sub-flow is merged back into its parent.
+    expect(
+      (await post({
+        path: "subflows/x.yaml",
+        nodes: [{ id: "a", type: "llm" }],
+        edges: [{ source: "answer", target: "a" }],
+      })).status,
+    ).toBe(200);
+  });
+
+  test("POST /flows/subflows/write requires write permission", async () => {
+    const app = new Hono();
+    app.route(
+      "/",
+      createFlowsRouter({
+        fileRegistry: parser.getRegistry(),
+        // A guard that grants read but never write — mirrors an operator role.
+        operatorAuth: {
+          authorize: async (_auth: unknown, _token: unknown, perm: string) => ({
+            ok: perm === "flows:read",
+            actor: { name: "op", role: "operator", via: "token" },
+          }),
+        } as never,
+        authRequired: true,
+        flowsDir: dir,
+      }),
+    );
+    const res = await app.request("/flows/subflows/write", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: "subflows/x.yaml", nodes: [{ id: "n", type: "llm" }] }),
+    });
+    expect(res.status).toBe(403);
+    expect(fs.existsSync(path.join(dir, "subflows", "x.yaml"))).toBe(false);
   });
 
   test("POST /flows/expressions/evaluate checks and evaluates with sample values", async () => {

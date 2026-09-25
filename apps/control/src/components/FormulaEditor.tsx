@@ -32,8 +32,29 @@ import {
   useState,
 } from "react";
 import { createPortal } from "react-dom";
-import { Braces, Search, X } from "lucide-react";
+import {
+  Braces,
+  ChevronDown,
+  ChevronRight,
+  Eraser,
+  Hash,
+  List,
+  Search,
+  Sigma,
+  Sparkles,
+  ToggleLeft,
+  Type,
+  X,
+} from "lucide-react";
 import type { FlowReference } from "../lib/node-types";
+import { diffText } from "../lib/text-diff";
+import {
+  fetchFlowRuns,
+  fetchRunSample,
+  isStudioRun,
+  type PinnedRun,
+  type RunSummary,
+} from "../lib/run-samples";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import {
@@ -46,7 +67,9 @@ import {
   setPath,
   type FormulaGroup,
   type FormulaSymbol,
+  type VocabularyCatalog,
   insideCalculation,
+  symbolType,
   type FormulaKind,
 } from "../lib/formula";
 import type { FlowDefinition } from "../types/flow";
@@ -55,25 +78,57 @@ import type { FlowDefinition } from "../types/flow";
 // Context
 // ---------------------------------------------------------------------------
 
+/** Evaluates a variables map like the runtime (POST /flows/variables/evaluate). */
+export type VariablesEvaluator = (
+  variables: Record<string, unknown>,
+) => Promise<{ values: Record<string, unknown>; errors: Array<{ name: string; message: string }> }>;
+
 interface FormulaContextValue {
   flow: Pick<FlowDefinition, "nodes" | "variables">;
-  /** Placeholders, condition grammar, calculations (runtime reference data). */
-  reference: FlowReference | undefined;
+  /** Reference data, constants and public env from the node type catalog. */
+  catalog: (VocabularyCatalog & { reference?: FlowReference }) | undefined;
+  evaluateVariables: VariablesEvaluator | undefined;
+  runs: RunsContext | undefined;
+}
+
+/** Recorded runs of the flow and the one pinned as sample data. */
+export interface RunsContext {
+  flowId: string;
+  pinned: PinnedRun | null;
+  onPin: (run: PinnedRun | null) => void;
+  token?: string | undefined;
 }
 
 const FormulaContext = createContext<FormulaContextValue | null>(null);
 
 export function FormulaProvider({
   flow,
+  catalog,
   reference,
+  evaluateVariables,
+  runs,
   children,
 }: {
   flow: Pick<FlowDefinition, "nodes" | "variables">;
   /** From the node type catalog; without it only flow-derived entries are offered. */
+  catalog?: (VocabularyCatalog & { reference?: FlowReference }) | undefined;
+  /** Shorthand for `catalog={{ reference }}`. */
   reference?: FlowReference | undefined;
+  /** Lets the builder show what a field resolves to when the flow loads. */
+  evaluateVariables?: VariablesEvaluator | undefined;
+  /** Enables pinning a recorded run as sample data. */
+  runs?: RunsContext | undefined;
   children: React.ReactNode;
 }): React.JSX.Element {
-  const value = useMemo(() => ({ flow, reference }), [flow, reference]);
+  const value = useMemo(
+    () => ({
+      flow,
+      catalog: catalog ?? (reference ? { reference } : undefined),
+      evaluateVariables,
+      runs,
+    }),
+    [flow, catalog, reference, evaluateVariables, runs],
+  );
   return <FormulaContext.Provider value={value}>{children}</FormulaContext.Provider>;
 }
 
@@ -81,17 +136,26 @@ function useVocabulary(kind: FormulaKind): {
   groups: FormulaGroup[];
   variables: Record<string, unknown> | undefined;
   reference: FlowReference | undefined;
+  evaluateVariables: VariablesEvaluator | undefined;
+  runs: RunsContext | undefined;
 } {
   const ctx = useContext(FormulaContext);
   return useMemo(
     () => ({
-      groups: buildVocabulary(ctx?.flow ?? { nodes: [] }, kind, ctx?.reference),
+      groups: buildVocabulary(ctx?.flow ?? { nodes: [] }, kind, ctx?.catalog),
       variables: ctx?.flow.variables,
-      reference: ctx?.reference,
+      reference: ctx?.catalog?.reference,
+      evaluateVariables: ctx?.evaluateVariables,
+      runs: ctx?.runs,
     }),
     [ctx, kind],
   );
 }
+
+/** Load-time references in a draft: variables, constants, env, calculations. */
+const LOAD_TIME_RE = /\{\{\s*(=|vars\.|const\.|env\.)/;
+/** Scratch variable name used to evaluate a field's draft with the flow's variables. */
+const DRAFT_KEY = "__studio_draft__";
 
 const snippet = (path: string, kind: FormulaKind): string =>
   kind === "condition" ? path : `{{${path}}}`;
@@ -122,6 +186,110 @@ function insertAt(
 // Variable browser (shared by picker and editor)
 // ---------------------------------------------------------------------------
 
+const TYPE_ICON: Record<ReturnType<typeof symbolType>, React.ComponentType<{ size?: number; className?: string }>> = {
+  text: Type,
+  number: Hash,
+  boolean: ToggleLeft,
+  list: List,
+  object: Braces,
+  function: Sigma,
+};
+
+function SymbolRow({
+  sym,
+  kind,
+  onPick,
+  compact,
+  value,
+}: {
+  /** Sample value from the pinned run, if any. */
+  value?: unknown;
+  sym: FormulaSymbol;
+  kind: FormulaKind;
+  onPick: (text: string, symbol: FormulaSymbol) => void;
+  compact: boolean;
+}): React.JSX.Element {
+  const Icon = TYPE_ICON[symbolType(sym)];
+  const shown = sym.label ?? sym.insert ?? snippet(sym.path, kind);
+  if (sym.unavailable !== undefined && sym.path.endsWith(".none")) {
+    // Placeholder row of an empty group: just the explanation.
+    return <p className="px-1.5 py-1 text-[10px] italic text-muted-foreground">{sym.unavailable}</p>;
+  }
+  return (
+    <button
+      type="button"
+      disabled={sym.unavailable !== undefined}
+      title={sym.unavailable ?? sym.description}
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={() => onPick(sym.insert ?? snippet(sym.path, kind), sym)}
+      className="flex w-full items-start gap-1.5 rounded px-1.5 py-1 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+    >
+      <Icon size={12} aria-hidden className="mt-0.5 shrink-0 text-muted-foreground" />
+      <span className="min-w-0 flex-1">
+        <code className="block truncate font-mono text-[11px] text-foreground">{shown}</code>
+        {value !== undefined && typeof value !== "object" && !sym.path.startsWith("vars.") && !sym.path.startsWith("const.") && !sym.path.startsWith("env.") && (
+          <span className="block truncate font-mono text-[10px] text-emerald-700 dark:text-emerald-400" title="Value in the pinned run">
+            📌 {JSON.stringify(value)}
+          </span>
+        )}
+        {(!compact || sym.insert !== undefined) && (sym.unavailable ?? sym.description) && (
+          <span className="block truncate text-[10px] text-muted-foreground">{sym.unavailable ?? sym.description}</span>
+        )}
+      </span>
+    </button>
+  );
+}
+
+function Collapsible({
+  title,
+  count,
+  hint,
+  open,
+  onToggle,
+  level,
+  children,
+}: {
+  title: string;
+  count: number;
+  hint?: string | undefined;
+  open: boolean;
+  onToggle: () => void;
+  level: 0 | 1;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const Chevron = open ? ChevronDown : ChevronRight;
+  return (
+    <div className={level === 1 ? "ml-3" : "mb-1"}>
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={onToggle}
+        className={`flex w-full items-center gap-1 rounded px-1 py-1 text-left hover:bg-muted ${
+          level === 0
+            ? "text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
+            : "font-mono text-[11px] font-medium text-foreground"
+        }`}
+      >
+        <Chevron size={12} aria-hidden className="shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{title}</span>
+        <span className="text-[10px] font-normal text-muted-foreground">{count}</span>
+      </button>
+      {open && (
+        <div>
+          {hint && level === 0 && <p className="ml-5 mb-0.5 text-[10px] text-muted-foreground">{hint}</p>}
+          {children}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The data context as a tree: groups (Flow variables, Constants, Node results,
+ * …), optional sub-sections (the node a field belongs to), and entries with a
+ * type icon. Unavailable entries stay visible, disabled, with the reason.
+ * Searching filters and expands everything.
+ */
 function VariableBrowser({
   groups,
   kind,
@@ -129,7 +297,10 @@ function VariableBrowser({
   autoFocus = false,
   compact = false,
   emptyText,
+  sample,
 }: {
+  /** Pinned/sample values, shown next to the entries they fill. */
+  sample?: Record<string, unknown> | undefined;
   groups: FormulaGroup[];
   /** Shown when there is nothing to offer at all. */
   emptyText?: string;
@@ -140,22 +311,30 @@ function VariableBrowser({
   compact?: boolean;
 }): React.JSX.Element {
   const [q, setQ] = useState("");
+  const [toggled, setToggled] = useState<Record<string, boolean>>({});
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
     if (autoFocus) searchRef.current?.focus();
   }, [autoFocus]);
+  const query = q.trim().toLowerCase();
   const filtered = groups
     .map((g) => ({
       ...g,
       symbols: g.symbols.filter(
         (s) =>
-          !q ||
-          s.path.toLowerCase().includes(q.toLowerCase()) ||
-          (s.insert ?? "").toLowerCase().includes(q.toLowerCase()) ||
-          s.description.toLowerCase().includes(q.toLowerCase()),
+          !query ||
+          (!s.path.endsWith(".none") &&
+            [s.path, s.label ?? "", s.insert ?? "", s.description, s.section ?? ""].some((t) =>
+              t.toLowerCase().includes(query),
+            )),
       ),
     }))
     .filter((g) => g.symbols.length > 0);
+  // Groups with usable entries start open; searching opens everything.
+  const isOpen = (key: string, usable: boolean): boolean => (query ? true : (toggled[key] ?? usable));
+  const toggle = (key: string, usable: boolean): void =>
+    setToggled((t) => ({ ...t, [key]: !(t[key] ?? usable) }));
+
   return (
     <div className="flex min-h-0 flex-col gap-1.5">
       <div className="flex items-center gap-1.5 rounded border border-border bg-card px-2 py-1">
@@ -164,44 +343,59 @@ function VariableBrowser({
           ref={searchRef}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search variables…"
+          placeholder="Search variables, fields, functions…"
           aria-label="Search variables"
           className="min-w-0 flex-1 bg-transparent text-xs outline-none"
         />
       </div>
       <div className={`min-h-0 overflow-auto ${compact ? "max-h-64" : "flex-1"}`}>
-        {filtered.map((g) => (
-          <div key={g.title} className="mb-1.5">
-            <div className="px-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              {g.title}
-            </div>
-            {g.symbols.map((s) => (
-              <button
-                type="button"
-                key={s.path}
-                disabled={s.unavailable !== undefined}
-                title={s.unavailable ?? s.description}
-                onMouseDown={(e) => e.preventDefault()}
-                onClick={() => onPick(s.insert ?? snippet(s.path, kind), s)}
-                className="block w-full rounded px-1.5 py-1 text-left hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-              >
-                <code className="block truncate font-mono text-[11px] text-foreground">
-                  {s.insert ?? snippet(s.path, kind)}
-                </code>
-                {(!compact || s.insert !== undefined) && (
-                  <span className="block truncate text-[10px] text-muted-foreground">
-                    {s.unavailable ?? s.description}
-                  </span>
-                )}
-              </button>
-            ))}
-          </div>
-        ))}
+        {filtered.map((g) => {
+          const usable = g.symbols.some((s) => s.unavailable === undefined);
+          const sections = [...new Set(g.symbols.map((s) => s.section ?? ""))];
+          return (
+            <Collapsible
+              key={g.title}
+              title={g.title}
+              count={g.symbols.filter((s) => !s.path.endsWith(".none")).length}
+              hint={g.hint}
+              open={isOpen(g.title, usable)}
+              onToggle={() => toggle(g.title, usable)}
+              level={0}
+            >
+              {sections.map((sec) => {
+                const rows = g.symbols
+                  .filter((s) => (s.section ?? "") === sec)
+                  .map((s) => (
+                    <SymbolRow
+                      key={s.path}
+                      sym={s}
+                      kind={kind}
+                      onPick={onPick}
+                      compact={compact}
+                      value={sample ? getPath(sample, s.path) : undefined}
+                    />
+                  ));
+                if (sec === "") return <div key="-" className="ml-3">{rows}</div>;
+                const key = `${g.title}/${sec}`;
+                return (
+                  <Collapsible
+                    key={key}
+                    title={sec}
+                    count={rows.length}
+                    open={isOpen(key, false)}
+                    onToggle={() => toggle(key, false)}
+                    level={1}
+                  >
+                    <div className="ml-3">{rows}</div>
+                  </Collapsible>
+                );
+              })}
+            </Collapsible>
+          );
+        })}
         {filtered.length === 0 && (
           <p className="px-1 py-2 text-[11px] text-muted-foreground">
-            {groups.length === 0
-              ? emptyText ?? "This flow has no variables yet. Define them in Flow settings (click an empty spot on the canvas) and use them here as {{vars.name}}."
-              : "No variable matches."}
+            {groups.length === 0 ? (emptyText ?? "Nothing to insert here.") : "No match."}
           </p>
         )}
       </div>
@@ -250,16 +444,51 @@ export function FormulaEditorDialog({
   const vocabulary = useVocabulary(kind);
   const groups = groupsOverride ?? vocabulary.groups;
   const variables = vocabulary.variables;
+  // Any field: what it resolves to when the flow loads (variables, constants,
+  // env, calculations), evaluated by the runtime with the flow's variables.
+  const flowEvaluate = vocabulary.evaluateVariables;
+  const loadTimeEvaluate = useMemo(() => {
+    if (evaluate || kind === "condition" || !flowEvaluate) return undefined;
+    return async (d: string): Promise<{ value?: unknown; error?: string }> => {
+      const r = await flowEvaluate({ ...(variables ?? {}), [DRAFT_KEY]: d });
+      const error = r.errors.find((e) => e.name === DRAFT_KEY)?.message;
+      return error ? { error } : { value: r.values[DRAFT_KEY] };
+    };
+  }, [evaluate, kind, flowEvaluate, variables]);
   const [evaluated, setEvaluated] = useState<
     { state: "idle" | "checking" } | { state: "done"; value?: unknown; error?: string }
   >({ state: "idle" });
   // Mounted when opened (callers render it conditionally), so props seed state.
   const [draft, setDraft] = useState(value);
-  const [sample, setSample] = useState<Record<string, unknown>>(() =>
-    defaultSample(referencedPaths(value, kind), groups),
+  // Sample values: the pinned run's values, completed with defaults for
+  // anything the formula reads that the run did not record.
+  const pinned = vocabulary.runs?.pinned ?? null;
+  const seedSample = useCallback(
+    (text: string): Record<string, unknown> => {
+      let seeded: Record<string, unknown> = pinned ? structuredClone(pinned.sample) : {};
+      const defaults = defaultSample(referencedPaths(text, kind), groups);
+      for (const p of referencedPaths(text, kind)) {
+        if (getPath(seeded, p) === undefined && getPath(defaults, p) !== undefined) {
+          seeded = setPath(seeded, p, getPath(defaults, p));
+        }
+      }
+      return seeded;
+    },
+    [pinned, kind, groups],
   );
+  const [sample, setSample] = useState<Record<string, unknown>>(() => seedSample(value));
+  const pinnedId = pinned?.executionId;
+  const draftRef = useRef(value);
+  draftRef.current = draft;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-seed only when another run is pinned, not on every edit
+  useEffect(() => {
+    // Another run pinned while the builder is open: re-seed from it.
+    setSample(seedSample(draftRef.current));
+  }, [pinnedId]);
   const [check, setCheck] = useState<ConditionCheck>({ state: "idle" });
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  /** Caret / selected range in the editor, for the copilot (null until the user placed it). */
+  const [areaSel, setAreaSel] = useState<{ start: number; end: number } | null>(null);
   const titleId = useId();
 
   useEffect(() => {
@@ -305,13 +534,15 @@ export function FormulaEditorDialog({
     };
   }, [open, kind, draft, sample, token]);
 
-  // Variable values: evaluated by the runtime, debounced.
+  // Load-time result, evaluated by the runtime, debounced.
+  const hasLoadTime = LOAD_TIME_RE.test(draft);
+  const activeEvaluate = evaluate ?? (hasLoadTime ? loadTimeEvaluate : undefined);
   useEffect(() => {
-    if (!open || !evaluate) return;
+    if (!open || !activeEvaluate) return;
     let alive = true;
     setEvaluated({ state: "checking" });
     const t = setTimeout(() => {
-      evaluate(draft).then(
+      activeEvaluate(draft).then(
         (r) => alive && setEvaluated({ state: "done", ...r }),
         (err) =>
           alive &&
@@ -325,14 +556,22 @@ export function FormulaEditorDialog({
       alive = false;
       clearTimeout(t);
     };
-  }, [open, draft, evaluate]);
+  }, [open, draft, activeEvaluate]);
 
+  // Run-time preview (templates): rendered on the load-time result when there
+  // is one, so both stages show.
+  const loadTimeText =
+    activeEvaluate && evaluated.state === "done" && evaluated.error === undefined
+      ? typeof evaluated.value === "string"
+        ? evaluated.value
+        : JSON.stringify(evaluated.value)
+      : undefined;
   const preview = useMemo(
     () =>
-      kind === "template" || (kind === "vars" && !evaluate)
-        ? renderTemplatePreview(draft, sample, variables)
+      kind === "template" || (kind === "vars" && !activeEvaluate)
+        ? renderTemplatePreview(loadTimeText ?? draft, sample, variables)
         : undefined,
-    [kind, draft, sample, variables, evaluate],
+    [kind, draft, sample, variables, activeEvaluate, loadTimeText],
   );
   const hasCalculation = groups.some((g) => g.title === "Calculation");
 
@@ -391,6 +630,7 @@ export function FormulaEditorDialog({
           <h2 id={titleId} className="text-sm font-semibold">
             {title}
           </h2>
+          {vocabulary.runs && <RunPicker runs={vocabulary.runs} />}
           <span className="rounded bg-muted px-1.5 text-[10px] uppercase text-muted-foreground">
             {kind === "condition"
               ? "condition expression"
@@ -410,79 +650,95 @@ export function FormulaEditorDialog({
 
         <div className="grid min-h-0 flex-1 grid-cols-[260px_1fr_320px]">
           <aside className="flex min-h-0 flex-col border-r border-border p-3">
-            <VariableBrowser groups={groups} kind={kind} onPick={insert} />
+            <VariableBrowser groups={groups} kind={kind} onPick={insert} sample={sample} />
           </aside>
 
           <section className="flex min-h-0 flex-col gap-2 p-3">
-            {hasCalculation && (
-              <div className="flex flex-wrap gap-1" role="toolbar" aria-label="Calculation operators">
-                {(vocabulary.reference?.calculationOperators ?? []).map((op) => (
-                  <button
-                    type="button"
-                    key={op.label}
-                    title={op.description}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => insert(op.text)}
-                    className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] hover:bg-muted"
-                  >
-                    {op.label}
-                  </button>
-                ))}
-              </div>
-            )}
-            {kind === "condition" && (
-              <div className="flex flex-wrap gap-1" role="toolbar" aria-label="Operators">
-                {(vocabulary.reference?.conditionOperators ?? []).map((op) => (
-                  <button
-                    type="button"
-                    key={op.label}
-                    title={op.description}
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => insert(op.text)}
-                    className="rounded border border-border px-1.5 py-0.5 font-mono text-[11px] hover:bg-muted"
-                  >
-                    {op.label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <ExpressionCopilot
+              kind={kind}
+              field={title}
+              current={draft}
+              groups={groups}
+              sample={sample}
+              variables={variables}
+              token={token}
+              selection={areaSel}
+              onAccept={(next) => {
+                setDraft(next);
+                setAreaSel(null);
+                requestAnimationFrame(() => areaRef.current?.focus());
+              }}
+            />
+            <OperatorToolbar
+              label={kind === "condition" ? "Operators" : "Calculation operators"}
+              operators={
+                kind === "condition"
+                  ? (vocabulary.reference?.conditionOperators ?? [])
+                  : hasCalculation
+                    ? (vocabulary.reference?.calculationOperators ?? [])
+                    : []
+              }
+              onInsert={(text) => insert(text)}
+              onClear={() => {
+                setDraft("");
+                requestAnimationFrame(() => areaRef.current?.focus());
+              }}
+            />
             <textarea
               ref={areaRef}
               aria-label={title}
               value={draft}
               spellCheck={kind === "template"}
               onChange={(e) => setDraft(e.target.value)}
+              onSelect={(e) =>
+                setAreaSel({ start: e.currentTarget.selectionStart, end: e.currentTarget.selectionEnd })
+              }
               className="min-h-0 flex-1 resize-none rounded border border-border bg-background p-3 font-mono text-[13px] leading-relaxed outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
-            <p className="text-[10px] text-muted-foreground">
-              {kind === "condition"
-                ? "Evaluated by the runtime's safe evaluator. Identifiers read the run state; strings in single quotes. Cmd/Ctrl+Enter applies, Esc cancels."
-                : hasCalculation
-                  ? "{{vars.x}}, {{const.x}}, {{env.FLOW_PUBLIC_X}} are replaced when the flow loads; {{= … }} calculates (inside it write vars.x without braces, strings in single quotes). Cmd/Ctrl+Enter applies, Esc cancels."
-                  : "Placeholders {{path}} are filled in at run time; #[[file:prompts/x.md]] includes a prompt file. Cmd/Ctrl+Enter applies, Esc cancels."}
-            </p>
+            <BuilderHelp
+              kind={kind}
+              calculations={hasCalculation}
+              functions={vocabulary.reference?.calculationFunctions ?? []}
+              onInsert={(text) => insert(text)}
+              onInsertFunction={(fn) =>
+                insert(`{{= ${fn} }}`, { path: `fn.${fn}`, description: "", calcInsert: fn })
+              }
+            />
           </section>
 
           <aside className="flex min-h-0 flex-col gap-3 overflow-auto border-l border-border p-3">
-            <div>
-              <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                {kind === "condition" || evaluate ? "Result" : "Preview"}
-              </h3>
+            <div className="space-y-3">
               {kind === "condition" ? (
-                <ConditionResult check={check} />
-              ) : evaluate ? (
-                <ValueResult result={evaluated} />
-              ) : (
-                <div className="space-y-1">
-                  <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 font-mono text-[11px]">
-                    {preview?.text || <span className="text-muted-foreground">(empty)</span>}
-                  </pre>
-                  {preview && preview.unresolved.length > 0 && (
-                    <p className="text-[10px] text-amber-600">
-                      Without a value (renders empty): {preview.unresolved.join(", ")}
-                    </p>
-                  )}
+                <div>
+                  <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Result</h3>
+                  <ConditionResult check={check} />
                 </div>
+              ) : (
+                <>
+                  {activeEvaluate && (
+                    <div>
+                      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        When the flow loads
+                      </h3>
+                      <ValueResult result={evaluated} />
+                    </div>
+                  )}
+                  {(kind === "template" || !activeEvaluate) && (
+                    <div className="space-y-1">
+                      <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                        {kind === "template" ? "At run time (preview)" : "Preview"}
+                      </h3>
+                      <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 font-mono text-[11px]">
+                        {preview?.text || <span className="text-muted-foreground">(empty)</span>}
+                      </pre>
+                      {preview && preview.unresolved.length > 0 && (
+                        <p className="text-[10px] text-amber-600">
+                          Without a value (renders empty): {preview.unresolved.join(", ")}
+                        </p>
+                      )}
+                    </div>
+                  )}
+                </>
               )}
             </div>
 
@@ -542,6 +798,519 @@ export function FormulaEditorDialog({
   return typeof document !== "undefined" ? createPortal(dialog, document.body) : dialog;
 }
 
+
+/** What the copilot is told about the field's data: every entry with its ref, value and availability. */
+function vocabularyForCopilot(
+  groups: FormulaGroup[],
+  kind: FormulaKind,
+  sample: Record<string, unknown>,
+): Array<{ title: string; entries: Array<{ ref: string; description?: string; value?: unknown; unavailable?: string }> }> {
+  return groups.map((g) => ({
+    title: g.title,
+    entries: g.symbols
+      .filter((sym) => !sym.path.endsWith(".none"))
+      .map((sym) => {
+        const pinned = getPath(sample, sym.path);
+        const value = pinned !== undefined ? pinned : sym.example;
+        return {
+          ref: sym.label && sym.type === "function" ? sym.label : (sym.insert ?? snippet(sym.path, kind)),
+          ...(sym.description ? { description: sym.description } : {}),
+          ...(value !== undefined ? { value } : {}),
+          ...(sym.unavailable !== undefined ? { unavailable: sym.unavailable } : {}),
+        };
+      }),
+  }));
+}
+
+type CopilotState =
+  | { state: "idle" }
+  | { state: "asking" }
+  | { state: "proposal"; expression: string; explanation: string; changed: boolean }
+  | { state: "error"; message: string };
+
+/** "cursor at line 3, column 5" or "selected “…”" for the copilot hint. */
+export function describeEditorSelection(value: string, sel: { start: number; end: number }): string {
+  const start = Math.min(sel.start, sel.end);
+  const end = Math.max(sel.start, sel.end);
+  if (start === end) {
+    const before = value.slice(0, start);
+    const line = before.split("\n").length;
+    const column = start - before.lastIndexOf("\n");
+    return start === value.length ? "cursor at the end" : `cursor at line ${line}, column ${column}`;
+  }
+  const t = value.slice(start, end).replace(/\s+/g, " ");
+  return `selected “${t.length > 50 ? `${t.slice(0, 49)}…` : t}”`;
+}
+
+/**
+ * The builder's copilot: writes or changes the field from an instruction,
+ * using exactly the data the builder offers (with pinned values) and the
+ * field's grammar. The proposal — already checked by the runtime — is shown
+ * as a diff against the current value and applied only on Accept.
+ */
+function ExpressionCopilot({
+  kind,
+  field,
+  current,
+  groups,
+  sample,
+  variables,
+  token,
+  selection,
+  onAccept,
+}: {
+  kind: FormulaKind;
+  field: string;
+  current: string;
+  groups: FormulaGroup[];
+  sample: Record<string, unknown>;
+  variables: Record<string, unknown> | undefined;
+  token: string | undefined;
+  /** Caret or selected range in the editor; "here" / "this" in the instruction refer to it. */
+  selection?: { start: number; end: number } | null;
+  onAccept: (next: string) => void;
+}): React.JSX.Element {
+  const [instruction, setInstruction] = useState("");
+  const [useSelection, setUseSelection] = useState(true);
+  const sel =
+    selection && selection.start <= current.length && selection.end <= current.length ? selection : null;
+  const selectionLabel = sel ? describeEditorSelection(current, sel) : null;
+  const [st, setSt] = useState<CopilotState>({ state: "idle" });
+  const base = useRef(current);
+  // Run-time placeholders are usable here when the builder offers any of them.
+  const runtimeAllowed =
+    kind === "vars" &&
+    groups.some((g) =>
+      g.symbols.some((sym) => /^(context|node|turn|classification|classLabel|query|now)\b/.test(sym.path) && sym.unavailable === undefined),
+    );
+
+  const ask = (): void => {
+    if (!instruction.trim() || st.state === "asking") return;
+    base.current = current;
+    setSt({ state: "asking" });
+    fetch(backendUrl("/flows/expressions/copilot"), {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({
+        kind,
+        field,
+        current,
+        instruction,
+        vocabulary: vocabularyForCopilot(groups, kind, sample),
+        variables: variables ?? {},
+        runtimeAllowed,
+        ...(sel && useSelection ? { selection: sel } : {}),
+      }),
+    })
+      .then(async (r) => {
+        const body = (await r.json().catch(() => null)) as
+          | { ok: true; expression: string; explanation: string; changed: boolean }
+          | { ok: false; message: string }
+          | { error?: { message?: string } }
+          | null;
+        if (body && "ok" in body && body.ok) {
+          setSt({ state: "proposal", expression: body.expression, explanation: body.explanation, changed: body.changed });
+        } else {
+          const message =
+            (body && "message" in body && body.message) ||
+            (body && "error" in body && body.error?.message) ||
+            `HTTP ${r.status}`;
+          setSt({ state: "error", message: String(message) });
+        }
+      })
+      .catch((e: unknown) => setSt({ state: "error", message: e instanceof Error ? e.message : String(e) }));
+  };
+
+  return (
+    <div className="rounded-md border border-violet-200 bg-violet-50/50 p-2 dark:border-violet-900 dark:bg-violet-950/20">
+      <div className="flex items-center gap-1.5">
+        <Sparkles size={13} aria-hidden className="shrink-0 text-violet-600" />
+        <input
+          aria-label="Ask the expression copilot"
+          value={instruction}
+          onChange={(e) => setInstruction(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault();
+              ask();
+            }
+          }}
+          placeholder={
+            kind === "condition"
+              ? "Describe the condition, e.g. “route is INKASSO or the user asks about parking”"
+              : "Describe what to write or change, e.g. “half of the worker budget, rounded”"
+          }
+          className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
+        <button
+          type="button"
+          onClick={ask}
+          disabled={!instruction.trim() || st.state === "asking"}
+          className="rounded bg-violet-600 px-2 py-1 text-xs font-medium text-white hover:bg-violet-700 disabled:opacity-50"
+        >
+          {st.state === "asking" ? "Thinking…" : "Ask"}
+        </button>
+      </div>
+      {selectionLabel && (
+        <label
+          className="mt-1 flex items-center gap-1.5 pl-5 text-[11px] text-muted-foreground"
+          title="Send the cursor / selection so “here” or “this part” refer to it"
+          data-testid="expression-copilot-selection"
+        >
+          <input type="checkbox" checked={useSelection} onChange={(e) => setUseSelection(e.target.checked)} />
+          <span className="shrink-0">Refers to:</span>
+          <span className={`truncate ${useSelection ? "text-foreground" : "line-through"}`}>{selectionLabel}</span>
+        </label>
+      )}
+      {st.state === "error" && (
+        <p role="alert" className="mt-1.5 text-[11px] text-red-600">
+          {st.message}
+        </p>
+      )}
+      {st.state === "proposal" && (
+        <div className="mt-2 space-y-1.5" aria-label="Copilot proposal">
+          <p className="text-[11px] text-foreground">{st.explanation}</p>
+          {st.changed ? (
+            <DiffView before={base.current} after={st.expression} />
+          ) : (
+            <p className="text-[11px] italic text-muted-foreground">No change proposed.</p>
+          )}
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setSt({ state: "idle" })}
+              className="rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
+            >
+              Discard
+            </button>
+            {st.changed && (
+              <button
+                type="button"
+                onClick={() => {
+                  onAccept(st.expression);
+                  setSt({ state: "idle" });
+                  setInstruction("");
+                }}
+                className="rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground hover:opacity-90"
+              >
+                Accept
+              </button>
+            )}
+          </div>
+          {current !== base.current && (
+            <p className="text-[10px] text-amber-600">
+              The field changed since you asked — Accept replaces it with the proposal.
+            </p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Before → after, removed parts struck through in red, added parts in green. */
+export function DiffView({
+  before,
+  after,
+  ariaLabel = "Proposed change",
+}: {
+  before: string;
+  after: string;
+  ariaLabel?: string;
+}): React.JSX.Element {
+  const parts = useMemo(() => diffText(before, after), [before, after]);
+  return (
+    <pre
+      aria-label={ariaLabel}
+      className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-background p-2 font-mono text-[11px] leading-relaxed"
+    >
+      {parts.map((p, i) =>
+        p.type === "same" ? (
+          <span key={i}>{p.text}</span>
+        ) : p.type === "del" ? (
+          <del key={i} className="bg-red-100 text-red-800 decoration-red-500 dark:bg-red-950/50 dark:text-red-300">
+            {p.text}
+          </del>
+        ) : (
+          <ins key={i} className="bg-green-100 text-green-800 no-underline dark:bg-green-950/50 dark:text-green-300">
+            {p.text}
+          </ins>
+        ),
+      )}
+    </pre>
+  );
+}
+
+/** Pick a recorded run of the flow whose values fill the previews (📌 pinned). */
+export function RunPicker({ runs, className = "ml-4" }: { runs: RunsContext; className?: string }): React.JSX.Element {
+  const [list, setList] = useState<RunSummary[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = useCallback(() => {
+    setError(null);
+    fetchFlowRuns(runs.flowId, runs.token).then(setList, (e: unknown) =>
+      setError(e instanceof Error ? e.message : String(e)),
+    );
+  }, [runs.flowId, runs.token]);
+  useEffect(load, [load]);
+  const choose = (id: string): void => {
+    if (id === "") {
+      runs.onPin(null);
+      return;
+    }
+    setBusy(true);
+    setError(null);
+    fetchRunSample(id, runs.token).then(
+      (run) => {
+        runs.onPin(run);
+        setBusy(false);
+      },
+      (e: unknown) => {
+        setError(e instanceof Error ? e.message : String(e));
+        setBusy(false);
+      },
+    );
+  };
+  const label = (r: { started_at?: string; startedAt?: string; preview: string; flow_id?: string | null; flowId?: string | null }): string => {
+    const at = new Date(r.started_at ?? r.startedAt ?? "").toLocaleString(undefined, {
+      day: "2-digit",
+      month: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const studio = isStudioRun(r.flow_id ?? r.flowId ?? null) ? "Studio test · " : "";
+    return `${studio}${at} · ${r.preview || "(no message)"}`;
+  };
+  const pinned = runs.pinned;
+  const options = [...(list ?? [])];
+  if (pinned && !options.some((r) => r.execution_id === pinned.executionId)) {
+    options.unshift({
+      execution_id: pinned.executionId,
+      flow_id: pinned.flowId,
+      started_at: pinned.startedAt,
+      status: "completed",
+      preview: pinned.preview,
+    });
+  }
+  return (
+    <div className={`${className} flex min-w-0 items-center gap-1.5 text-[11px]`}>
+      <span className="shrink-0 text-muted-foreground" title="Values of a recorded run fill the previews and the tree">
+        📌 Sample data
+      </span>
+      <select
+        aria-label="Pinned run"
+        value={pinned?.executionId ?? ""}
+        disabled={busy}
+        onChange={(e) => choose(e.target.value)}
+        className="min-w-0 max-w-[26rem] truncate rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
+      >
+        <option value="">— none (example values) —</option>
+        {options.map((r) => (
+          <option key={r.execution_id} value={r.execution_id}>
+            {label(r)}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        onClick={load}
+        title="Reload the list of runs (run the flow in Run & Trace to add one)"
+        className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+      >
+        ↻
+      </button>
+      {list !== null && list.length === 0 && !pinned && (
+        <span className="text-muted-foreground">No runs yet — run the flow in Run &amp; Trace.</span>
+      )}
+      {error && <span role="alert" className="truncate text-red-600">{error}</span>}
+    </div>
+  );
+}
+
+type OperatorCategory = "start" | "arithmetic" | "comparison" | "logic" | "text" | "other";
+
+function operatorCategory(text: string): OperatorCategory {
+  const t = text.trim();
+  if (t.startsWith("{{=")) return "start";
+  if (["+", "-", "*", "/", "%"].includes(t)) return "arithmetic";
+  if (["==", "!=", ">", ">=", "<", "<="].includes(t)) return "comparison";
+  if (["&&", "||", "!"].includes(t)) return "logic";
+  if (t.startsWith(".") || t.startsWith("=~")) return "text";
+  return "other";
+}
+
+const CATEGORY_STYLE: Record<OperatorCategory, string> = {
+  start: "border-amber-300 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  arithmetic: "hover:bg-purple-50 hover:text-purple-700 dark:hover:bg-purple-900/30 dark:hover:text-purple-300",
+  comparison: "hover:bg-blue-50 hover:text-blue-700 dark:hover:bg-blue-900/30 dark:hover:text-blue-300",
+  logic: "hover:bg-green-50 hover:text-green-700 dark:hover:bg-green-900/30 dark:hover:text-green-300",
+  text: "hover:bg-pink-50 hover:text-pink-700 dark:hover:bg-pink-900/30 dark:hover:text-pink-300",
+  other: "hover:bg-muted",
+};
+
+const CATEGORY_ORDER: OperatorCategory[] = ["start", "arithmetic", "comparison", "logic", "text", "other"];
+
+/** Operators grouped by category (colour-coded), plus a Clear action. */
+function OperatorToolbar({
+  label,
+  operators,
+  onInsert,
+  onClear,
+}: {
+  label: string;
+  operators: Array<{ text: string; label: string; description: string }>;
+  onInsert: (text: string) => void;
+  onClear: () => void;
+}): React.JSX.Element {
+  const byCategory = CATEGORY_ORDER.map((c) => operators.filter((o) => operatorCategory(o.text) === c)).filter(
+    (g) => g.length > 0,
+  );
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" role="toolbar" aria-label={label}>
+      {byCategory.map((ops, i) => (
+        <div key={ops[0]?.label ?? i} className={`flex flex-wrap gap-1 ${i > 0 ? "border-l border-border pl-1.5" : ""}`}>
+          {ops.map((op) => (
+            <button
+              type="button"
+              key={op.label}
+              title={op.description}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onInsert(op.text)}
+              className={`min-w-[28px] rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[11px] transition-colors ${CATEGORY_STYLE[operatorCategory(op.text)]}`}
+            >
+              {op.label}
+            </button>
+          ))}
+        </div>
+      ))}
+      <button
+        type="button"
+        onClick={onClear}
+        title="Clear the expression"
+        className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+      >
+        <Eraser size={12} aria-hidden />
+        Clear
+      </button>
+    </div>
+  );
+}
+
+const EXAMPLES: Record<FormulaKind, string[]> = {
+  condition: [
+    "classification.route == 'INKASSO'",
+    "groups.includes('staff') && language == 'de'",
+    "lastMessageText =~ 'parkplatz|stellplatz'",
+    "!hasErrors && messageCount > 2",
+  ],
+  template: [
+    "Hallo {{context.userName}}, heute ist {{now.weekday}}, der {{now.date}}.",
+    "{{classification.client}}",
+    "{{= round(vars.max_tokens / 2) }}",
+  ],
+  vars: [
+    "{{const.research_max_tokens}}",
+    "{{= round(vars.max_tokens * 0.8) }}",
+    "{{= vars.language == 'de' ? 'Hallo' : 'Hello' }}",
+    "{{= concat('flow-', env.FLOW_PUBLIC_ENVIRONMENT) }}",
+  ],
+};
+
+/** Clickable examples and a short guide (conditions or calculations). */
+function BuilderHelp({
+  kind,
+  calculations,
+  functions,
+  onInsert,
+  onInsertFunction,
+}: {
+  kind: FormulaKind;
+  calculations: boolean;
+  functions: Array<{ text: string; label: string; description: string }>;
+  onInsert: (text: string) => void;
+  /** Inserts a function — bare inside a calculation, else wrapped in {{= }}. */
+  onInsertFunction: (fn: string) => void;
+}): React.JSX.Element {
+  return (
+    <div className="space-y-2 text-[11px]">
+      <div>
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Examples</p>
+        <div className="flex flex-wrap gap-1">
+          {EXAMPLES[kind].map((ex) => (
+            <button
+              type="button"
+              key={ex}
+              title="Insert this example"
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => onInsert(ex)}
+              className="rounded bg-muted px-1.5 py-0.5 text-left font-mono text-[10px] hover:bg-muted/70"
+            >
+              {ex}
+            </button>
+          ))}
+        </div>
+      </div>
+      {kind === "condition" ? (
+        <details className="rounded border border-border p-2">
+          <summary className="cursor-pointer font-medium">How conditions work</summary>
+          <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+            <li>Names read the run state: classification fields, node results, user and request data, run state (see the tree).</li>
+            <li>Text in single quotes: <code>route == 'INKASSO'</code>. Combine with <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> and parentheses.</li>
+            <li><code>=~</code> is a case-insensitive regex match; <code>.includes()</code>, <code>.startsWith()</code>, <code>.endsWith()</code>, <code>.length</code> work on text and lists.</li>
+            <li>Flow variables and constants are replaced textually when the flow loads — quote text: <code>'{"{{vars.x}}"}'</code>.</li>
+            <li>An empty condition means: always follow this edge.</li>
+          </ul>
+        </details>
+      ) : (
+        calculations && (
+          <details className="rounded border border-border p-2">
+            <summary className="cursor-pointer font-medium">How calculations work</summary>
+            <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
+              <li>
+                Wrap a calculation in <code>{"{{= … }}"}</code>, e.g. <code>{"{{= round(vars.max_tokens / 2) }}"}</code>.
+              </li>
+              <li>
+                Inside it, write references without braces: <code>vars.x</code>, <code>const.y</code>, <code>env.FLOW_PUBLIC_Z</code>; text in single quotes.
+              </li>
+              <li>
+                Operators: <code>+ - * / %</code> (<code>+</code> joins text), comparisons, <code>&amp;&amp; || !</code>, and <code>a ? b : c</code>.
+              </li>
+              <li>
+                Evaluated once when the flow loads — it cannot read run-time values such as <code>context.*</code> or <code>classification.*</code>.
+              </li>
+              <li>If the whole field is one calculation, the result keeps its type (a number stays a number).</li>
+            </ul>
+            {functions.length > 0 && (
+              <table className="mt-2 w-full text-[10px]">
+                <tbody>
+                  {functions.map((fn) => (
+                    <tr key={fn.label} className="align-top">
+                      <td className="py-0.5 pr-2">
+                        <button
+                          type="button"
+                          title="Insert"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => onInsertFunction(fn.text)}
+                          className="font-mono text-primary hover:underline"
+                        >
+                          {fn.label}
+                        </button>
+                      </td>
+                      <td className="py-0.5 text-muted-foreground">{fn.description}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </details>
+        )
+      )}
+    </div>
+  );
+}
 
 function ValueResult({
   result,

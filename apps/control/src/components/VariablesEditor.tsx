@@ -13,7 +13,8 @@
 import { Braces, Copy, Plus, Trash2 } from "lucide-react";
 import type React from "react";
 import { useEffect, useState } from "react";
-import type { FormulaGroup } from "../lib/formula";
+import { buildVocabulary, type FormulaGroup } from "../lib/formula";
+import type { FlowNode } from "../types/flow";
 import type { NodeTypeCatalog } from "../lib/node-types";
 import { FormulaEditorDialog, FormulaInput, FxPicker } from "./FormulaEditor";
 
@@ -25,17 +26,11 @@ type ValueEvaluator = (
 import { inputCls, JsonEditor } from "./form-controls";
 
 
-const short = (v: unknown): string => {
-	const text = JSON.stringify(v) ?? String(v);
-	return text.length > 60 ? `${text.slice(0, 59)}…` : text;
-};
-
 /**
- * What the ƒx picker of variable `self` offers: the other flow variables,
- * global constants (flows/constants.yaml), allowlisted env (FLOW_PUBLIC_*),
- * calculation building blocks, and the model shortcuts/models (those replace
- * the whole value). Inside a `{{= … }}` calculation references are inserted
- * bare (`vars.x`), elsewhere as placeholders (`{{vars.x}}`).
+ * What the ƒx builder of variable `self` offers: the shared vocabulary
+ * (`buildVocabulary` — other variables, constants, env, node results, request
+ * data, calculations; run-time placeholders render where the variable is
+ * used) plus the model shortcuts and models, which replace the whole value.
  */
 export function variableValueGroups(
 	catalog:
@@ -51,80 +46,15 @@ export function variableValueGroups(
 		| undefined,
 	variables: Record<string, unknown>,
 	self?: string,
+	nodes: FlowNode[] = [],
 ): FormulaGroup[] {
-	const groups: FormulaGroup[] = [];
-	const others = Object.entries(variables).filter(([n]) => n !== self);
-	if (others.length > 0) {
-		groups.push({
-			title: "Flow variables",
-			symbols: others.map(([n, v]) => ({
-				path: `vars.${n}`,
-				insert: `{{vars.${n}}}`,
-				calcInsert: `vars.${n}`,
-				description: `= ${short(v)}`,
-			})),
-		});
-	}
-	const constants = Object.entries(catalog?.constants ?? {});
-	groups.push({
-		title: "Constants (flows/constants.yaml)",
-		symbols:
-			constants.length > 0
-				? constants.map(([n, v]) => ({
-						path: `const.${n}`,
-						insert: `{{const.${n}}}`,
-						calcInsert: `const.${n}`,
-						description: `= ${short(v)}`,
-					}))
-				: [
-						{
-							path: "const.none",
-							description: "",
-							unavailable:
-								"No constants yet — add `constants: { name: value }` to flows/constants.yaml.",
-						},
-					],
-	});
-	const env = Object.entries(catalog?.publicEnv ?? {});
-	groups.push({
-		title: "Environment (FLOW_PUBLIC_*)",
-		symbols:
-			env.length > 0
-				? env.map(([n, v]) => ({
-						path: `env.${n}`,
-						insert: `{{env.${n}}}`,
-						calcInsert: `env.${n}`,
-						description: `= ${short(v)}`,
-					}))
-				: [
-						{
-							path: "env.none",
-							description: "",
-							unavailable:
-								"No FLOW_PUBLIC_* variables set in the runtime environment. Other env values are never exposed to flows.",
-						},
-					],
-	});
-	groups.push({
-		title: "Calculation",
-		symbols: [
-			{
-				path: "calc",
-				insert: "{{=  }}",
-				description: "Start a calculation: + − * / %, comparisons, a ? b : c",
-			},
-			// Functions from the runtime's reference data (docs/FLOWS.md source).
-			...(catalog?.reference?.calculationFunctions ?? []).map((fn) => ({
-				path: `fn.${fn.text.replace("()", "")}`,
-				insert: `{{= ${fn.text} }}`,
-				calcInsert: fn.text,
-				description: `${fn.label} — ${fn.description}`,
-			})),
-		],
+	const groups = buildVocabulary({ nodes, variables }, "vars", catalog, {
+		...(self !== undefined ? { forVariable: self } : {}),
 	});
 	if (catalog && catalog.shortcuts.length > 0) {
 		groups.push({
 			title: "Model shortcuts",
+			hint: "Replaces the whole value.",
 			symbols: catalog.shortcuts.map((name) => ({
 				path: `shortcut.${name}`,
 				insert: name,
@@ -136,11 +66,12 @@ export function variableValueGroups(
 	if ((catalog?.models?.length ?? 0) > 0) {
 		groups.push({
 			title: "Models",
+			hint: "Concrete model ids (for llm.model); replaces the whole value.",
 			symbols: (catalog?.models ?? []).map((id) => ({
 				path: `model.${id}`,
 				insert: id,
 				replace: true,
-				description: "concrete model id (for llm.model)",
+				description: "concrete model id",
 			})),
 		});
 	}
@@ -456,8 +387,11 @@ export function VariablesEditor({
 	onRename,
 	catalog,
 	evaluate,
+	nodes = [],
 }: {
 	value: Record<string, unknown> | undefined;
+	/** The flow's nodes — their result fields are offered in the ƒx builder. */
+	nodes?: FlowNode[];
 	/** Constants, env, shortcuts and models for the ƒx picker. */
 	catalog?: Parameters<typeof variableValueGroups>[0];
 	/** Evaluates the map like the runtime does — feeds the "→ result" preview. */
@@ -613,7 +547,7 @@ export function VariablesEditor({
 											name={name}
 											value={vars[name]}
 											onChange={(v) => setVar(name, v)}
-											groups={variableValueGroups(catalog, vars, name)}
+											groups={variableValueGroups(catalog, vars, name, nodes)}
 											{...(evaluate
 												? {
 														evaluate: (draft: string) =>

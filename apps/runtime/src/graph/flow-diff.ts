@@ -24,16 +24,30 @@ export interface FieldChange<T = unknown> {
   to: T;
 }
 
+/** One changed value inside a node/edge/metadata, addressed by its path. */
+export interface ValueChange {
+  /** Dotted path with array indices, e.g. `config.routing.candidates[1].shortcut`. */
+  path: string;
+  kind: "added" | "removed" | "changed";
+  /** Absent for `added`. */
+  from?: unknown;
+  /** Absent for `removed`. */
+  to?: unknown;
+}
+
 export interface NodeChange {
   id: string;
   /** Top-level node fields that differ (e.g. "llm", "tools", "config"). */
   changedFields: string[];
+  /** Every changed value, down to the leaves (capped, see {@link MAX_DETAILS}). */
+  details?: ValueChange[];
 }
 
 export interface EdgeChange {
   /** Stable edge key: `source->target` (with id suffix when present). */
   key: string;
   changedFields: string[];
+  details?: ValueChange[];
 }
 
 export interface FlowDiff {
@@ -54,6 +68,63 @@ export interface FlowDiff {
   };
   /** One-line human-readable summary. */
   summary: string;
+  /** Full definitions of added/removed nodes and edges (by id / edge key). */
+  values?: {
+    nodes: { added: Record<string, FlowNode>; removed: Record<string, FlowNode> };
+    edges: { added: Record<string, FlowEdge>; removed: Record<string, FlowEdge> };
+  };
+  /** Changed values inside `metadata` (when {@link FlowDiff.metadataChanged}). */
+  metadataDetails?: ValueChange[];
+}
+
+/** Cap per entity: a reviewer needs the changes, not a dump of a rewritten config. */
+export const MAX_DETAILS = 200;
+
+const isPlainObject = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Leaf-level differences between two values. Objects are compared key by key,
+ * arrays index by index (extra entries are added/removed); anything else that
+ * differs is one `changed` entry. Pure.
+ */
+export function diffValues(a: unknown, b: unknown, path = "", out: ValueChange[] = []): ValueChange[] {
+  if (out.length >= MAX_DETAILS) return out;
+  const at = (key: string | number): string =>
+    typeof key === "number" ? `${path}[${key}]` : path === "" ? key : `${path}.${key}`;
+  if (isPlainObject(a) && isPlainObject(b)) {
+    for (const key of new Set([...Object.keys(a), ...Object.keys(b)])) {
+      const inA = a[key] !== undefined;
+      const inB = b[key] !== undefined;
+      if (inA && !inB) out.push({ path: at(key), kind: "removed", from: a[key] });
+      else if (!inA && inB) out.push({ path: at(key), kind: "added", to: b[key] });
+      else if (inA && inB && stable(a[key]) !== stable(b[key])) diffValues(a[key], b[key], at(key), out);
+      if (out.length >= MAX_DETAILS) break;
+    }
+    return out;
+  }
+  if (Array.isArray(a) && Array.isArray(b)) {
+    const n = Math.max(a.length, b.length);
+    for (let i = 0; i < n && out.length < MAX_DETAILS; i++) {
+      if (i >= b.length) out.push({ path: at(i), kind: "removed", from: a[i] });
+      else if (i >= a.length) out.push({ path: at(i), kind: "added", to: b[i] });
+      else if (stable(a[i]) !== stable(b[i])) diffValues(a[i], b[i], at(i), out);
+    }
+    return out;
+  }
+  if (stable(a) !== stable(b)) {
+    if (a === undefined) out.push({ path, kind: "added", to: b });
+    else if (b === undefined) out.push({ path, kind: "removed", from: a });
+    else out.push({ path, kind: "changed", from: a, to: b });
+  }
+  return out;
+}
+
+/** Compared fields of a node/edge as one object (so paths start at the field). */
+function pick<T extends object>(obj: T, fields: ReadonlyArray<keyof T>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const f of fields) if (obj[f] !== undefined) out[f as string] = obj[f];
+  return out;
 }
 
 /** Stable key for an edge (id when present, else source→target). */
@@ -119,7 +190,13 @@ export function diffFlows(a: FlowDefinition, b: FlowDefinition): FlowDiff {
     const bn = bNodes.get(id);
     if (bn === undefined) continue;
     const fields = changedNodeFields(an, bn);
-    if (fields.length > 0) nodesChanged.push({ id, changedFields: fields });
+    if (fields.length > 0) {
+      nodesChanged.push({
+        id,
+        changedFields: fields,
+        details: diffValues(pick(an, NODE_FIELDS), pick(bn, NODE_FIELDS)),
+      });
+    }
   }
 
   // --- edges (keyed by source->target[#id]) ---
@@ -134,7 +211,13 @@ export function diffFlows(a: FlowDefinition, b: FlowDefinition): FlowDiff {
     const be = bEdges.get(k);
     if (be === undefined) continue;
     const fields = changedEdgeFields(ae, be);
-    if (fields.length > 0) edgesChanged.push({ key: k, changedFields: fields });
+    if (fields.length > 0) {
+      edgesChanged.push({
+        key: k,
+        changedFields: fields,
+        details: diffValues(pick(ae, EDGE_FIELDS), pick(be, EDGE_FIELDS)),
+      });
+    }
   }
 
   // --- scalar / metadata ---
@@ -176,5 +259,18 @@ export function diffFlows(a: FlowDefinition, b: FlowDefinition): FlowDiff {
     nodes: { added: nodesAdded, removed: nodesRemoved, changed: nodesChanged },
     edges: { added: edgesAdded, removed: edgesRemoved, changed: edgesChanged },
     summary,
+    values: {
+      nodes: {
+        added: Object.fromEntries(nodesAdded.map((id) => [id, bNodes.get(id) as FlowNode])),
+        removed: Object.fromEntries(nodesRemoved.map((id) => [id, aNodes.get(id) as FlowNode])),
+      },
+      edges: {
+        added: Object.fromEntries(edgesAdded.map((k) => [k, bEdges.get(k) as FlowEdge])),
+        removed: Object.fromEntries(edgesRemoved.map((k) => [k, aEdges.get(k) as FlowEdge])),
+      },
+    },
+    ...(metadataChanged
+      ? { metadataDetails: diffValues(a.metadata ?? {}, b.metadata ?? {}, "metadata") }
+      : {}),
   };
 }

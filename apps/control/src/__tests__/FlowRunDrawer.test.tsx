@@ -9,8 +9,9 @@ import type { FlowDefinition } from "../types/flow";
 vi.mock("../lib/auth/useAuth", () => ({
   useAuth: () => ({ token: undefined, isAuthenticated: true, renewNow: async () => null }),
 }));
+const monitor = vi.hoisted(() => ({ events: [] as unknown[] }));
 vi.mock("../hooks/useMonitoringEvents", () => ({
-  useMonitoringEvents: () => ({ events: [] }),
+  useMonitoringEvents: () => ({ events: monitor.events }),
 }));
 
 const run = vi.hoisted(() => ({
@@ -38,6 +39,7 @@ function renderDrawer(extra: Partial<Parameters<typeof FlowRunDrawer>[0]> = {}) 
 }
 
 beforeEach(() => {
+  monitor.events = [];
   run.register.mockReset();
   run.stream.mockReset();
   run.stream.mockImplementation(async function* () {
@@ -126,5 +128,31 @@ describe("FlowRunDrawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save eval case" }));
     await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent("Not saved: Missing required fields"));
     expect(screen.queryByText("Saved to the eval dataset.")).not.toBeInTheDocument();
+  });
+
+  test("a finished run can be pinned as sample data for the expression builder", async () => {
+    run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
+    const onPinRun = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = render(
+      <FlowRunDrawer flowId="f" onLiveStatesChange={() => {}} getDefinition={() => canvas} onPinRun={onPinRun} />,
+    );
+    fireEvent.change(screen.getByLabelText("Test prompt"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
+    // The monitoring stream reports the execution this run started.
+    monitor.events = [
+      {
+        execution_id: "exec-42",
+        node_id: "triage",
+        status: "completed",
+        start_time: new Date(Date.now() + 60_000).toISOString(),
+      },
+    ];
+    rerender(
+      <FlowRunDrawer flowId="f" onLiveStatesChange={() => {}} getDefinition={() => canvas} onPinRun={onPinRun} />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: /Pin as sample data/ }));
+    await waitFor(() => expect(screen.getByText(/Pinned as sample data/)).toBeInTheDocument());
+    expect(onPinRun).toHaveBeenCalledWith("exec-42");
   });
 });

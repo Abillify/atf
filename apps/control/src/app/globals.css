@@ -86,9 +86,14 @@
 
   /*
    * UI density tokens (UI-STYLE-GUIDE.md §11). "comfortable" is the default and
-   * matches the prior look; "compact" tightens data-dense surfaces (cards,
-   * table rows) for power users. Driven by `data-density` on <html> via the
-   * DensityProvider; theme-independent.
+   * matches the prior look; "compact" tightens the UI for power users. Driven
+   * by `data-density` on <html> via the DensityProvider; theme-independent.
+   *
+   * The primary lever is Tailwind v4's `--spacing` base: every spacing utility
+   * (p-*, m-*, gap-*, space-*, and sizing multiples) is derived as
+   * `calc(var(--spacing) * N)`, so shrinking it in compact mode tightens the
+   * whole UI at once — no per-component changes needed. The `--ui-*` tokens
+   * below add extra tightening to the data-dense surfaces (cards, table rows).
    */
   :root {
     --ui-card-p: 1rem; /* Card padding (comfortable = p-4) */
@@ -97,6 +102,8 @@
   }
 
   [data-density="compact"] {
+    /* 0.25rem → 0.2rem: scales every spacing/sizing utility to 80%. */
+    --spacing: 0.2rem;
     --ui-card-p: 0.625rem;
     --ui-cell-py: 0.25rem;
     --ui-cell-h: 2rem;

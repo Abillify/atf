@@ -16,9 +16,12 @@
 import type React from "react";
 import { useMemo, useState } from "react";
 import type { NodeType } from "../types/flow";
+import { type SubflowActions, SubflowPalette } from "./SubflowPalette";
 
 export interface FlowNodePaletteProps {
   onAddNode: (type: NodeType) => void;
+  /** Sub-flow actions (file flows with write access only). */
+  subflows?: SubflowActions | undefined;
   /** Icon-only rail (still draggable) to leave more room for the canvas. */
   collapsed?: boolean;
 }
@@ -104,6 +107,7 @@ export const PALETTE_DND_TYPE = "application/x-aiperator-node-type";
 export function FlowNodePalette({
   onAddNode,
   collapsed = false,
+  subflows,
 }: FlowNodePaletteProps): React.JSX.Element {
   const [query, setQuery] = useState("");
 
@@ -121,6 +125,7 @@ export function FlowNodePalette({
   if (collapsed) {
     return (
       <div className="flex h-full w-9 shrink-0 flex-col items-center gap-1 overflow-auto">
+        {subflows && <SubflowPalette actions={subflows} collapsed />}
         {NODE_CATALOG.map((n) => (
           <div
             key={n.type}
@@ -157,6 +162,7 @@ export function FlowNodePalette({
         className="rounded border border-border bg-card px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <div className="flex-1 space-y-1.5 overflow-auto pr-0.5">
+        {subflows && !query.trim() && <SubflowPalette actions={subflows} />}
         {filtered.map((n) => (
           <div
             key={n.type}

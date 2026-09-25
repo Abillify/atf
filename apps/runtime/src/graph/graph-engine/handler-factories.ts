@@ -2095,6 +2095,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
           })
         : undefined;
     let finalResponse: string | undefined;
+    let finalNodeId: string | undefined;
 
     try {
       // --- Threaded-history contract (see graph-engine/history-contract.ts) ---
@@ -2194,6 +2195,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
               message.content.trim().length > 0
             ) {
               finalResponse = message.content;
+              finalNodeId = nodeId;
             }
           }
           const nodeErrors = nodeUpdate.errors ?? [];
@@ -2396,6 +2398,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
           total_tokens: usage.totalTokens,
         },
         debugErrors,
+        finalResponse !== undefined
+          ? { response: finalResponse, ...(finalNodeId !== undefined ? { nodeId: finalNodeId } : {}) }
+          : undefined,
       );
     }
   }

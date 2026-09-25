@@ -45,9 +45,10 @@ need adaptation.
   `{{const.name}}`), environment values whose name starts with `FLOW_PUBLIC_`
   (`{{env.FLOW_PUBLIC_REGION}}`; no other env is ever exposed to flows), and calculations
   (`{{= round(vars.max_tokens / 2) }}`: arithmetic, comparisons, `a ? b : c` and a fixed set of
-  functions, no code execution). They are evaluated in dependency order; cycles, unknown
-  references and calculation errors are validation errors. Variables supplied with a request
-  are literals and are never evaluated.
+  functions, no code execution). The same references work in any node or edge value. They are
+  evaluated when the flow loads, in dependency order; cycles, unknown constants and calculation
+  errors are validation errors. Variables supplied with a request are literals and are never
+  evaluated.
 - **Node types.** Twelve built-ins: `llm` (streaming call with an optional agent tool loop),
   `tool` (deterministic MCP calls), `router` (edge evaluation without a model), `classifier`
   (structured JSON output that routing conditions can read), `parallel` (conditional
@@ -446,15 +447,21 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
 Control is a Next.js application for operating the platform.
 
 - Flow registry, and **Studio** for building and changing flows: a canvas with auto-layout and
-  dashed links for settings-defined references (parallel children, harness verifier and
-  delegates); a settings form per node type generated from Runtime's node type catalog
-  (`GET /flows/node-types`) with the full node type reference beside it; a variables table
+  tool links for settings-defined calls (parallel children, harness verifier and delegates) that
+  dock right → left, apart from the top → bottom flow, with Start and End showing where a run
+  begins and ends and what a request brings in and returns; the nodes of a sub-flow file drawn in
+  a labelled box, with a palette to extract a selection into `subflows/<name>.yaml` or place an
+  existing file on the canvas; a settings form per node type generated from Runtime's node type
+  catalog (`GET /flows/node-types`) with the full node type reference beside it; a variables table
   (typed values, usage counts, renaming that rewrites references); an expression builder
-  behind every ƒx button with a variable browser, operators, and a live result from Runtime;
-  drafts, publish, and diff against the live version; a Copilot that proposes changes,
-  including node settings, as a previewed overlay that must be accepted; and test runs of the
-  canvas state (an ephemeral test registration, never the live flow) or of the live flow, with
-  per-node tokens, cost, and saving a run as an eval case with an expected answer.
+  behind every ƒx button with a variable browser, operators, a live result from Runtime, values
+  from a pinned run, and a copilot for the field; drafts, publish, and diff against the live
+  version; a Copilot that proposes changes, including node settings, as a previewed overlay that
+  must be accepted; an Optimize panel with cheaper candidate models for the canvas or the live
+  flow; and test runs of the canvas state (an ephemeral test registration, never the live flow)
+  or of the live flow, with per-node tokens, cost, and saving a run as an eval case with an
+  expected answer. A request picked in the Live Graph can be attached to Run & Trace and
+  inspected there.
 - Execution history and trace viewer.
 - Approval inbox with role-gated decisions.
 - Cost, budget, and FinOps panels.

@@ -21,6 +21,7 @@
 import type React from "react";
 import { useEffect, useState, useCallback } from "react";
 import { backendUrl } from "../lib/backend-url";
+import { DiffView } from "./FormulaEditor";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend FlowDiff)
@@ -31,14 +32,25 @@ interface FieldChange {
   to: unknown;
 }
 
+/** One changed value, addressed by its path (e.g. `config.routing.strategy`). */
+export interface ValueChange {
+  path: string;
+  kind: "added" | "removed" | "changed";
+  from?: unknown;
+  to?: unknown;
+}
+
 interface NodeChange {
   id: string;
   changedFields: string[];
+  /** Absent from older runtimes. */
+  details?: ValueChange[];
 }
 
 interface EdgeChange {
   key: string;
   changedFields: string[];
+  details?: ValueChange[];
 }
 
 interface FlowDiff {
@@ -57,6 +69,12 @@ interface FlowDiff {
     changed: EdgeChange[];
   };
   summary: string;
+  /** Full definitions of added/removed nodes and edges (newer runtimes). */
+  values?: {
+    nodes: { added: Record<string, unknown>; removed: Record<string, unknown> };
+    edges: { added: Record<string, unknown>; removed: Record<string, unknown> };
+  };
+  metadataDetails?: ValueChange[];
 }
 
 interface DiffResponse {
@@ -90,14 +108,51 @@ function Badge({
   );
 }
 
+const pretty = (v: unknown): string => (typeof v === "string" ? v : JSON.stringify(v, null, 2) ?? String(v));
+
+/** One changed value: a word-level diff for changes, the value for additions/removals. */
+function ValueDetail({ change }: { change: ValueChange }): React.JSX.Element {
+  const badge = { added: "text-green-700", removed: "text-red-700", changed: "text-amber-700" }[change.kind];
+  return (
+    <div className="space-y-0.5" data-testid="diff-value">
+      <div className="flex items-baseline gap-1.5 text-[10px]">
+        <span className={`font-semibold uppercase ${badge}`}>{change.kind}</span>
+        <code className="break-all font-mono text-foreground">{change.path || "(value)"}</code>
+      </div>
+      {change.kind === "changed" ? (
+        <DiffView before={pretty(change.from)} after={pretty(change.to)} ariaLabel={`Change of ${change.path}`} />
+      ) : (
+        <ValueBlock value={change.kind === "added" ? change.to : change.from} kind={change.kind} />
+      )}
+    </div>
+  );
+}
+
+function ValueBlock({ value, kind }: { value: unknown; kind: "added" | "removed" }): React.JSX.Element {
+  return (
+    <pre
+      className={`max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border p-2 font-mono text-[11px] ${
+        kind === "added"
+          ? "border-green-200 bg-green-50/60 text-green-900 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200"
+          : "border-red-200 bg-red-50/60 text-red-900 line-through decoration-red-400/60 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+      }`}
+    >
+      {pretty(value)}
+    </pre>
+  );
+}
+
 function DiffRow({
   kind,
   label,
   detail,
+  children,
 }: {
   kind: "added" | "removed" | "changed" | "meta";
   label: string;
   detail?: string;
+  /** Expandable details (values); the row becomes a disclosure when given. */
+  children?: React.ReactNode;
 }) {
   const config = {
     added: { color: "bg-green-50 border-green-200", badge: "green" as const, prefix: "+" },
@@ -106,15 +161,45 @@ function DiffRow({
     meta: { color: "bg-blue-50 border-blue-200", badge: "blue" as const, prefix: "M" },
   }[kind];
 
-  return (
-    <div className={`flex items-start gap-2 rounded border px-2 py-1.5 ${config.color}`}>
+  const head = (
+    <>
       <Badge color={config.badge}>{config.prefix}</Badge>
-      <div className="min-w-0">
+      <div className="min-w-0 flex-1">
         <span className="font-mono text-xs text-foreground break-all">{label}</span>
         {detail && <p className="text-[10px] text-muted-foreground mt-0.5">{detail}</p>}
       </div>
-    </div>
+    </>
   );
+  if (!children) {
+    return <div className={`flex items-start gap-2 rounded border px-2 py-1.5 ${config.color}`}>{head}</div>;
+  }
+  return (
+    <details className={`group rounded border ${config.color}`}>
+      <summary className="flex cursor-pointer list-none items-start gap-2 px-2 py-1.5" title="Show the details">
+        {head}
+        <span aria-hidden className="text-[10px] text-muted-foreground transition-transform group-open:rotate-90">
+          ▸
+        </span>
+      </summary>
+      <div className="space-y-2 border-t border-border/60 bg-card px-2 py-2">{children}</div>
+    </details>
+  );
+}
+
+/** Detail list for a changed entity, or nothing (an older runtime sends none). */
+function detailsOf(details: ValueChange[] | undefined): React.ReactNode {
+  if (!details || details.length === 0) return undefined;
+  return details.map((c, i) => <ValueDetail key={`${c.path}-${i}`} change={c} />);
+}
+
+/** A metadata row lists how many values changed when details are there. */
+function detailProps(details: ValueChange[] | undefined): { detail?: string } {
+  return details && details.length > 0 ? { detail: `${details.length} value(s)` } : {};
+}
+
+/** Full definition of an added/removed entity, or nothing when not sent. */
+function valueOf(value: unknown, kind: "added" | "removed"): React.ReactNode {
+  return value === undefined ? undefined : <ValueBlock value={value} kind={kind} />;
 }
 
 // ---------------------------------------------------------------------------
@@ -265,15 +350,21 @@ export function FlowDiffPanel({
             />
           )}
           {diff.metadataChanged && (
-            <DiffRow kind="meta" label="metadata" />
+            <DiffRow kind="meta" label="metadata" {...detailProps(diff.metadataDetails)}>
+              {detailsOf(diff.metadataDetails)}
+            </DiffRow>
           )}
 
           {/* Node changes */}
           {diff.nodes.added.map((id) => (
-            <DiffRow key={`na-${id}`} kind="added" label={`node: ${id}`} />
+            <DiffRow key={`na-${id}`} kind="added" label={`node: ${id}`}>
+              {valueOf(diff.values?.nodes.added[id], "added")}
+            </DiffRow>
           ))}
           {diff.nodes.removed.map((id) => (
-            <DiffRow key={`nr-${id}`} kind="removed" label={`node: ${id}`} />
+            <DiffRow key={`nr-${id}`} kind="removed" label={`node: ${id}`}>
+              {valueOf(diff.values?.nodes.removed[id], "removed")}
+            </DiffRow>
           ))}
           {diff.nodes.changed.map((nc) => (
             <DiffRow
@@ -281,15 +372,21 @@ export function FlowDiffPanel({
               kind="changed"
               label={`node: ${nc.id}`}
               detail={nc.changedFields.join(", ")}
-            />
+            >
+              {detailsOf(nc.details)}
+            </DiffRow>
           ))}
 
           {/* Edge changes */}
           {diff.edges.added.map((key) => (
-            <DiffRow key={`ea-${key}`} kind="added" label={`edge: ${key}`} />
+            <DiffRow key={`ea-${key}`} kind="added" label={`edge: ${key}`}>
+              {valueOf(diff.values?.edges.added[key], "added")}
+            </DiffRow>
           ))}
           {diff.edges.removed.map((key) => (
-            <DiffRow key={`er-${key}`} kind="removed" label={`edge: ${key}`} />
+            <DiffRow key={`er-${key}`} kind="removed" label={`edge: ${key}`}>
+              {valueOf(diff.values?.edges.removed[key], "removed")}
+            </DiffRow>
           ))}
           {diff.edges.changed.map((ec) => (
             <DiffRow
@@ -297,7 +394,9 @@ export function FlowDiffPanel({
               kind="changed"
               label={`edge: ${ec.key}`}
               detail={ec.changedFields.join(", ")}
-            />
+            >
+              {detailsOf(ec.details)}
+            </DiffRow>
           ))}
         </div>
       )}

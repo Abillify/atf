@@ -42,7 +42,8 @@ no database migration and no independently versioned contract-package change.
   comparisons, `&&`/`||`, `a ? b : c`, and a fixed set of functions, using a dedicated parser and
   no code evaluation). A value that is exactly one placeholder keeps its type. Cycles, unknown
   references, non-allowlisted env, and calculation errors are reported by the validator as
-  `variables.<name>`. `constants.yaml` is a reserved file, never loaded as a flow; changing it
+  `variables.<name>`. The same references (constants, env, calculations) also work in any node
+  or edge value; unresolvable ones are reported with their node/edge path. `constants.yaml` is a reserved file, never loaded as a flow; changing it
   reloads all flows.
 - Runtime routes for the Studio: `GET /flows/node-types` (node type catalog with config fields,
   docs and examples, connected tool ids, model shortcuts with a one-line description, preset model
@@ -66,6 +67,48 @@ no database migration and no independently versioned contract-package change.
   classifier schema, priority) restricted to catalog-documented keys; its proposal is shown as an
   overlay on the canvas and must be accepted. Schema failures are reported per field, and an
   invalid proposal gets one repair round.
+- The Studio canvas separates the run's flow from tool connections: flow edges keep docking
+  bottom → top, while the links from a node to the nodes it calls (parallel children, harness
+  workers and verifier) dock at a handle on the caller's right edge and the called node's left
+  edge, drawn dashed and right-angled. The canvas toggle is now called "Tool links".
+- Sub-flows in the Studio: the nodes of each sub-flow file (`metadata.$include`) are drawn in a
+  coloured box labelled with the file name, and auto-layout keeps them together. The palette has a
+  Subflows section — "New subflow" (moves the selected nodes into `subflows/<name>.yaml`, or
+  starts it with one node) and "Include…" (lists `subflows/` with description, nodes and the flows
+  using each file, and places a file's nodes and edges on the canvas). Nodes dropped onto a box
+  join that sub-flow, and a node's settings show and change the file it is saved in. Saving writes
+  new files and updates `$include`. Backed by `GET /flows/subflows` and
+  `GET /flows/subflows/content?path=`.
+- A copilot in the Studio's expression builder writes or changes the field from an instruction
+  (`POST /flows/expressions/copilot`). It is given exactly what the builder offers for the field —
+  variables, constants, public env, node results, request and user data, run state, with pinned
+  run values and the reason where an entry does not work — plus the field's grammar (operators,
+  functions, rules). The proposal is checked with the engine's own condition parser, calculation
+  evaluator and placeholder rules (one repair round), shown as a diff against the current value,
+  and applied only when accepted.
+- Pinned run data in the Studio's expression builder: pick a recorded run of the flow (live or a
+  Studio test run) — or pin a test run right after it finished — and its query, user context and
+  node results fill the tree (📌) and the previews of prompts, tool arguments and conditions. The
+  pin is remembered per flow in the browser. Backed by `GET /monitoring/debug?flowId=` (runs of a
+  flow, including its Studio test runs, with the triggering message) and
+  `GET /monitoring/debug/:executionId/sample` (a run as sample values shaped like the run-time
+  roots).
+- Start and End on the Studio canvas: neither is a node of the flow definition, they make the
+  compiler's implicit rules visible — the run starts at the flow's first node, and it ends after a
+  node with no outgoing edge or one whose outgoing edges are all conditional and none matches.
+  Selecting them shows what a request brings in (query, user context, variables) and what the flow
+  returns, from the pinned run and from the run currently traced in Run & Trace.
+- An **Optimize** panel in the Studio shows cheaper candidate models for the nodes that declare
+  `config.routing.candidates`, with the expected cost saving, quality loss and where the quality
+  figure comes from. It reads either the definition on the canvas — unsaved edits and drafts
+  included — through the new `POST /optimizer/routing-advice`, which resolves shortcuts,
+  `{{vars.*}}` and `$include` like a flow file and saves nothing, or the flows the runtime has
+  loaded through `GET /optimizer/routing-advice`.
+- A request in the Live Graph opens in the Studio (`/studio?flow=…&execution=…`): Run & Trace
+  attaches to that execution — running or finished — and shows it as if it had been started there,
+  with the trace on the canvas, the prompt, the answer and the option to pin it as sample data.
+  Durable events are merged with live ones, so a late `running` event cannot regress a node that
+  has already finished.
 - Eval cases can be saved from a Studio test run with an expected answer and removed again from
   the Eval page (with confirmation) or right after saving in the Run & Trace panel.
 - Provider monitoring: `GET /monitoring/providers` reports per provider the protocol, seen models,
@@ -87,9 +130,21 @@ no database migration and no independently versioned contract-package change.
   monitoring without letting one flow's failures skip a provider for other flows.
 - The Studio's expression builder takes placeholders, condition fields and operators, and
   calculation operators and functions from the runtime (`reference` in `GET /flows/node-types`)
-  instead of its own copies.
+  instead of its own copies. It shows the whole data context in every field as a tree — flow
+  variables, constants, public env, node results per node, the latest classification, request
+  and user data, run state, date and time, calculation functions — and keeps entries that do not
+  work in the field visible but disabled, with the reason. Operators are grouped and
+  colour-coded, with a Clear action, clickable examples, a guide to conditions or calculations,
+  and for load-time references the value the field resolves to when the flow loads.
 - Studio canvas nodes are more compact, and the empty "not run yet" status dot is no longer shown
   on them (it read like an unconnected port).
+- An edge label is now part of the line: the text runs along the path inside a capsule outlined in
+  the edge's colour, instead of a separate box that cuts the line. It is dropped when it does not
+  fit on the edge, and it never renders upside down.
+- The optimizer routes are always mounted. Routing advice and trace analysis do not need the
+  self-optimizing loop, so the Studio's Optimize panel works without `OPTIMIZER_ENABLED`; the
+  loop's own endpoints answer `501` with the setting that enables them instead of returning
+  404 for the whole namespace.
 
 ### Removed
 
@@ -104,6 +159,8 @@ no database migration and no independently versioned contract-package change.
 - Saving an eval case from Studio posted to a non-existent route and without the required
   expected answer; it now posts to `/eval/cases` and reports failures instead of claiming success.
 - The canvas Fit control is visible in dark mode.
+- The expression builder inserted flow variables into conditions as `vars.x`, which conditions
+  cannot read; it now inserts `{{vars.x}}`, which is replaced when the flow loads.
 - The Studio's expression builder offered `{{context.tenantId}}`, which the request context does
   not have (it always rendered empty), and offered `{{classification.*}}` and `{{classLabel}}`
   for system prompts, where the runtime does not render them. It now lists only real fields and
@@ -124,6 +181,13 @@ no database migration and no independently versioned contract-package change.
   case failed with 403. HTML forms can send only GET and POST; cross-origin PUT/PATCH/DELETE need
   a CORS preflight, which the `CORS_ORIGINS` allowlist already governs. Cross-origin form POSTs
   are still rejected.
+- A `POST` that carries an `Authorization` header is no longer CSRF-checked. A page cannot set that
+  header cross-origin without a CORS preflight, which the `CORS_ORIGINS` allowlist governs, and the
+  credential is not one a browser attaches by itself, so the header itself rules out the
+  form-POST vector the check exists for. Without this, the dashboard's own body-less actions — for
+  example publishing a flow, where a missing Content-Type counts as form data — were refused with a
+  bare `Forbidden` whenever `Origin`/`Sec-Fetch-Site` were not exactly same-origin. A `POST`
+  without an `Authorization` header stays checked.
 - Flows can read environment values only through the `FLOW_PUBLIC_` prefix; no other variable,
   such as API keys, is readable by a flow. Variables supplied with a request are literals and are
   never evaluated as references or calculations.

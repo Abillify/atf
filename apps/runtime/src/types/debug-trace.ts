@@ -60,6 +60,14 @@ export interface DebugTrace {
   errors: DebugStreamError[];
 
   /**
+   * The answer the flow returned (last assistant message), bounded like
+   * `full_response`. Absent while running and when the flow produced none.
+   */
+  final_response?: string;
+  /** Node that produced {@link final_response}. */
+  final_node_id?: string;
+
+  /**
    * The text budgets that were applied to this trace when it was recorded.
    * Present on every trace the store accepted, so a reader can tell a bounded
    * excerpt from a complete text instead of guessing.

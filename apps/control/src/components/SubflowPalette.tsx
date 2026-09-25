@@ -1,0 +1,236 @@
+"use client";
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * The palette's "Subflows" section: create a new sub-flow (from the selected
+ * nodes, or with a first node) and include an existing sub-flow file. The
+ * builder does the canvas work; files are written on save.
+ */
+
+import { FilePlus2, FolderInput, Search } from "lucide-react";
+import type React from "react";
+import { useEffect, useState } from "react";
+import { Dialog } from "../lib/ui";
+import { fetchSubflows, type SubflowInfo, subflowLabel, subflowPathFor } from "../lib/subflows";
+
+export interface SubflowActions {
+  /** Nodes selected on the canvas (moved into a new sub-flow). */
+  selectedCount: number;
+  /** Sub-flow files already on the canvas. */
+  included: string[];
+  /** Includes a file; resolves to a status message. */
+  onInclude: (path: string) => Promise<string>;
+  /** Creates a sub-flow; returns an error message or null. */
+  onCreate: (name: string) => string | null;
+  token?: string | undefined;
+}
+
+function IncludeDialog({
+  open,
+  onClose,
+  actions,
+}: {
+  open: boolean;
+  onClose: () => void;
+  actions: SubflowActions;
+}): React.JSX.Element {
+  const [list, setList] = useState<SubflowInfo[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    setMessage(null);
+    fetchSubflows(actions.token).then(setList, (e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }, [open, actions.token]);
+  const query = q.trim().toLowerCase();
+  const shown = (list ?? []).filter(
+    (s) =>
+      !query ||
+      [s.path, s.name ?? "", s.description ?? "", ...s.nodeIds].some((t) => t.toLowerCase().includes(query)),
+  );
+  return (
+    <Dialog
+      open={open}
+      onClose={onClose}
+      title="Include a sub-flow"
+      description="Its nodes and edges are placed on the canvas in their own box and stay in their file; saving adds the file to this flow's metadata.$include."
+      className="max-w-2xl"
+    >
+      <div className="space-y-2">
+        <div className="flex items-center gap-1.5 rounded border border-border px-2 py-1">
+          <Search size={12} aria-hidden className="text-muted-foreground" />
+          <input
+            aria-label="Search sub-flows"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search by file, name, description or node id…"
+            className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+          />
+        </div>
+        {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
+        {message && <p className="text-xs text-teal-700 dark:text-teal-300">{message}</p>}
+        {list === null && !error && <p className="text-xs text-muted-foreground">Loading…</p>}
+        {list !== null && list.length === 0 && (
+          <p className="text-xs text-muted-foreground">No files in subflows/ yet — create one with “New subflow”.</p>
+        )}
+        <ul className="max-h-96 space-y-1.5 overflow-auto">
+          {shown.map((s) => {
+            const onCanvas = actions.included.includes(s.path);
+            return (
+              <li key={s.path} className="rounded border border-border p-2">
+                <div className="flex items-start gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-mono text-xs font-semibold text-foreground">📄 {subflowLabel(s.path)}</p>
+                    {s.name && <p className="text-[11px] text-foreground">{s.name}</p>}
+                    {s.description && (
+                      <p className="line-clamp-2 text-[10px] text-muted-foreground" title={s.description}>
+                        {s.description}
+                      </p>
+                    )}
+                    <p className="mt-0.5 text-[10px] text-muted-foreground">
+                      {s.nodeIds.length} node(s): <code>{s.nodeIds.slice(0, 6).join(", ")}{s.nodeIds.length > 6 ? ", …" : ""}</code>
+                      {s.edgeCount > 0 ? ` · ${s.edgeCount} edge(s)` : ""}
+                      {s.usedBy.length > 0 ? ` · used by ${s.usedBy.join(", ")}` : ""}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    disabled={onCanvas || busy !== null}
+                    onClick={() => {
+                      setBusy(s.path);
+                      setError(null);
+                      actions.onInclude(s.path).then(
+                        (msg) => {
+                          setMessage(msg);
+                          setBusy(null);
+                        },
+                        (e: unknown) => {
+                          setError(e instanceof Error ? e.message : String(e));
+                          setBusy(null);
+                        },
+                      );
+                    }}
+                    className="shrink-0 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
+                  >
+                    {onCanvas ? "On canvas" : busy === s.path ? "Including…" : "Include"}
+                  </button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </Dialog>
+  );
+}
+
+export function SubflowPalette({
+  actions,
+  collapsed = false,
+}: {
+  actions: SubflowActions;
+  collapsed?: boolean;
+}): React.JSX.Element {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [including, setIncluding] = useState(false);
+  const path = subflowPathFor(name);
+
+  const create = (): void => {
+    const err = actions.onCreate(name);
+    if (err) setError(err);
+    else {
+      setCreating(false);
+      setName("");
+      setError(null);
+    }
+  };
+
+  const dialog = <IncludeDialog open={including} onClose={() => setIncluding(false)} actions={actions} />;
+
+  if (collapsed) {
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setIncluding(true)}
+          title="Include a sub-flow"
+          aria-label="Include a sub-flow"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300"
+        >
+          <FolderInput size={15} aria-hidden />
+        </button>
+        {dialog}
+      </>
+    );
+  }
+
+  return (
+    <section aria-label="Subflows" className="rounded-md border border-teal-200 bg-teal-50/50 p-2 dark:border-teal-900 dark:bg-teal-950/20">
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-300">Subflows</p>
+      <div className="flex gap-1.5">
+        <button
+          type="button"
+          onClick={() => {
+            setCreating((c) => !c);
+            setError(null);
+          }}
+          aria-expanded={creating}
+          className="flex flex-1 items-center justify-center gap-1 rounded border border-teal-300 bg-card px-1.5 py-1 text-[11px] font-medium text-teal-800 hover:bg-teal-100 dark:border-teal-800 dark:text-teal-200 dark:hover:bg-teal-900/40"
+        >
+          <FilePlus2 size={13} aria-hidden />
+          New subflow
+        </button>
+        <button
+          type="button"
+          onClick={() => setIncluding(true)}
+          className="flex flex-1 items-center justify-center gap-1 rounded border border-teal-300 bg-card px-1.5 py-1 text-[11px] font-medium text-teal-800 hover:bg-teal-100 dark:border-teal-800 dark:text-teal-200 dark:hover:bg-teal-900/40"
+        >
+          <FolderInput size={13} aria-hidden />
+          Include…
+        </button>
+      </div>
+      {creating && (
+        <div className="mt-2 space-y-1">
+          <div className="flex gap-1">
+            <input
+              aria-label="New sub-flow name"
+              value={name}
+              autoFocus
+              onChange={(e) => {
+                setName(e.target.value);
+                setError(null);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") create();
+                if (e.key === "Escape") setCreating(false);
+              }}
+              placeholder="name, e.g. retrieval"
+              className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-1 text-xs"
+            />
+            <button
+              type="button"
+              onClick={create}
+              disabled={!path}
+              className="rounded bg-teal-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-teal-700 disabled:opacity-40"
+            >
+              Create
+            </button>
+          </div>
+          <p className="text-[10px] leading-snug text-muted-foreground">
+            {path ? <code>{path}</code> : "subflows/<name>.yaml"} —{" "}
+            {actions.selectedCount > 0
+              ? `the ${actions.selectedCount} selected node(s) move into it.`
+              : "starts with one node; drop more nodes onto its box. Select nodes first to move them in."}
+          </p>
+          {error && <p role="alert" className="text-[10px] text-red-600">{error}</p>}
+        </div>
+      )}
+      {dialog}
+    </section>
+  );
+}

@@ -84,8 +84,13 @@ export function NodeCard({
   const isTool = state.kind === "tool";
   const status = statusIndicator(state.status);
   const statusRing = state.approval ? approvalRing(state.approval) : status.ring;
-  const ringClass =
-    statusRing || (selected ? "ring-2 ring-offset-1 ring-blue-400" : "");
+  // Selection is a deliberate user action, so it wins over the passive
+  // status/approval ring: a selected node gets a bold, high-contrast ring plus
+  // a lift (shadow + slight scale) so it's unmistakable even on the coloured,
+  // ring-carrying cards. Unselected nodes keep their status/approval ring.
+  const ringClass = selected
+    ? "ring-4 ring-offset-2 ring-offset-background ring-sky-500 dark:ring-sky-400"
+    : statusRing;
   const badge = state.approval ? approvalBadge(state.approval) : null;
 
   return (
@@ -96,11 +101,12 @@ export function NodeCard({
       onClick={() => onClick?.(state)}
       onKeyDown={(e) => e.key === "Enter" && onClick?.(state)}
       className={`
-        relative w-full rounded-xl border-2 ${compact ? "px-2.5 py-1.5" : "px-3 py-2"} text-white shadow-md cursor-pointer
+        relative w-full rounded-xl border-2 ${compact ? "px-2.5 py-1.5" : "px-3 py-2"} text-white cursor-pointer
         hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-white
         transition-all duration-150 select-none
         ${isTool ? "border-dashed" : ""}
-        ${colorClass} ${ringClass} ${isPending ? "opacity-50" : ""}
+        ${selected ? "z-10 scale-[1.03] shadow-xl shadow-sky-500/30 brightness-110" : "shadow-md"}
+        ${colorClass} ${ringClass} ${isPending && !selected ? "opacity-50" : ""}
       `}
       style={
         compact

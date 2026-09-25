@@ -42,6 +42,7 @@
 
 import { Hono } from "hono";
 import type { DebugTraceStore } from "../monitoring/debug-trace-store.js";
+import { buildRunSample, traceBelongsToFlow } from "../monitoring/run-sample.js";
 import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
@@ -101,8 +102,43 @@ export function createDebugRouter(deps: DebugRouterDeps): Hono {
       ? Math.min(Math.max(rawLimit, 1), 200)
       : 50;
 
+    // Optional: only runs of one flow (including its Studio test runs), each
+    // with the triggering message, for the Studio's "pin run data" picker.
+    const flowId = ctx.req.query("flowId");
+    if (flowId !== undefined && flowId !== "") {
+      const traces = debugStore
+        .listRecent(200)
+        .filter((t) => traceBelongsToFlow(t.flow_id, flowId))
+        .slice(0, limit)
+        .map((t) => {
+          const full = debugStore.getTrace(t.execution_id);
+          return { ...t, preview: full !== undefined ? buildRunSample(full).preview : "" };
+        });
+      return ctx.json({ traces });
+    }
     const traces = debugStore.listRecent(limit);
     return ctx.json({ traces });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /monitoring/debug/:executionId/sample — the run as sample values for
+  // the Studio's expression builder (see monitoring/run-sample.ts)
+  // -------------------------------------------------------------------------
+  router.get("/monitoring/debug/:executionId/sample", async (ctx) => {
+    if (!(await authed(ctx))) return unauthorized(ctx);
+    const trace = debugStore.getTrace(ctx.req.param("executionId"));
+    if (trace === undefined) {
+      return ctx.json(
+        {
+          error: {
+            message: "Run not found — debug traces are kept for the last 200 executions only.",
+            type: "not_found_error",
+          },
+        },
+        404,
+      );
+    }
+    return ctx.json(buildRunSample(trace));
   });
 
   // -------------------------------------------------------------------------

@@ -3,6 +3,12 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type React from "react";
+import {
+  SUBFLOW_COLORS,
+  subflowBoxes,
+  subflowColorIndex,
+  subflowLabel,
+} from "../lib/subflows";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
@@ -27,11 +33,20 @@ import {
 import "@xyflow/react/dist/style.css";
 import { Map as MapIcon, Maximize2, Network, Waypoints, ZoomIn, ZoomOut } from "lucide-react";
 import type { RFNode, RFEdge, ReferenceEdge, ReferenceKind } from "../lib/flow-graph";
+import { connectionProblem, type EdgeLike, type NodeLike } from "../lib/edge-rules";
 import { useColorSchemeOrDefault } from "../lib/theme/ThemeProvider";
 import { usePersistentToggle } from "../hooks/usePersistentToggle";
 import { flowNodeToNodeState, mergeLiveState } from "../lib/flow-graph";
 import type { DiffInfo, GhostRFNode } from "../lib/flow-diff-view";
 import { NodeCard } from "./graph/NodeRenderer";
+import { labeledEdgeTypes } from "./graph/LabeledEdge";
+import {
+  END_ID,
+  START_ID,
+  entryProblem,
+  flowBoundaries,
+  isBoundaryId,
+} from "../lib/flow-boundaries";
 import { nodeTypeHex, type NodeState } from "./graph/graphUtils";
 import { EDITOR_NODE_W, EDITOR_NODE_H } from "./graph/GraphLayoutEngine";
 import type { NodeType, FlowNode } from "../types/flow";
@@ -58,6 +73,10 @@ export interface EdgeValidationState {
 // index signature for object type aliases.
 type EditableNodeData = {
   flowNode: FlowNode;
+  /** Calls other nodes as tools (parallel children, harness workers/verifier): handle on the right. */
+  toolOut?: boolean;
+  /** Is called as a tool by another node: handle on the left. */
+  toolIn?: boolean;
   liveState?: NodeState;
   validation?: NodeValidationState;
   /** Version-diff status for this node — added/changed (Phase 2). Ghost
@@ -82,7 +101,7 @@ function EditableNode({
   data,
   selected,
 }: NodeProps<EditableFlowNode>): React.JSX.Element {
-  const { flowNode, liveState, validation, diff, ghost, origin } = data;
+  const { flowNode, liveState, validation, diff, ghost, toolOut, toolIn } = data;
   const state = mergeLiveState(flowNodeToNodeState(flowNode), liveState);
   const hasError = (validation?.errors.length ?? 0) > 0;
   const hasWarning = !hasError && (validation?.warnings.length ?? 0) > 0;
@@ -147,26 +166,168 @@ function EditableNode({
             {diffBadge.glyph}
           </div>
         )}
-        {origin && (
-          <div
-            aria-hidden
-            title={`Saved to ${origin}`}
-            className="absolute -bottom-2 -left-2 flex h-5 w-5 items-center justify-center rounded-full border border-teal-700 bg-teal-500 text-[10px] shadow-sm"
-          >
-            📄
-          </div>
-        )}
       </div>
       <Handle
         type="source"
         position={Position.Bottom}
         className="!bg-muted-foreground"
       />
+      {/* Tool connections (set in node settings, not drawn by hand): the
+          caller docks on the right, the called node on the left — distinct
+          from the top→bottom flow of the run. */}
+      {toolOut && (
+        <Handle
+          id={TOOL_OUT}
+          type="source"
+          position={Position.Right}
+          isConnectable={false}
+          title="Calls other nodes as tools (defined in this node's settings)"
+          className="!h-2.5 !w-2.5 !rounded-[2px] !border !border-violet-700 !bg-violet-400"
+        />
+      )}
+      {toolIn && (
+        <Handle
+          id={TOOL_IN}
+          type="target"
+          position={Position.Left}
+          isConnectable={false}
+          title="Called as a tool by another node"
+          className="!h-2.5 !w-2.5 !rounded-[2px] !border !border-violet-700 !bg-violet-400"
+        />
+      )}
     </>
   );
 }
 
-const nodeTypes = { flowNode: EditableNode };
+type SubflowBoxData = {
+  path: string;
+  count: number;
+  color: number;
+  selected?: boolean;
+  onSelect?: (path: string) => void;
+};
+
+/** Coloured, labelled box behind the nodes of one sub-flow file (display only,
+ * except the label which selects the whole group when clicked). When the group
+ * is selected the box is drawn boldly (solid ring + tint) so the selection
+ * reads as a unit, matching the highlighted nodes inside it. */
+function SubflowBoxNode({ data }: NodeProps<Node<SubflowBoxData, "subflowBox">>): React.JSX.Element {
+  const c = SUBFLOW_COLORS[data.color] ?? SUBFLOW_COLORS[0];
+  return (
+    <div
+      // When selected the box is lifted above the edge layer (see zIndex in
+      // FlowCanvasInner), so we keep only a bold ring/border and NO fill tint —
+      // a fill would sit on top of the group's node cards and edge labels.
+      className={`h-full w-full rounded-xl border-2 transition-all ${
+        data.selected
+          ? "border-solid border-sky-500 ring-4 ring-sky-500/50 dark:border-sky-400 dark:ring-sky-400/50"
+          : `border-dashed ${c?.box ?? ""}`
+      }`}
+      data-testid={`subflow-box-${data.path}`}
+      data-selected={data.selected ? "true" : "false"}
+    >
+      <button
+        type="button"
+        onClick={(e) => {
+          e.stopPropagation();
+          data.onSelect?.(data.path);
+        }}
+        aria-pressed={data.selected ?? false}
+        title={`Sub-flow ${data.path} — click to select the whole group. Its nodes are saved to this file and merged into the flow via metadata.$include.`}
+        className={`pointer-events-auto absolute left-2 top-1.5 inline-flex max-w-[calc(100%-1rem)] cursor-pointer items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-semibold hover:brightness-95 ${
+          data.selected ? "bg-sky-500 text-white ring-2 ring-sky-300 dark:bg-sky-400 dark:text-sky-950" : (c?.label ?? "")
+        }`}
+        data-testid={`subflow-select-${data.path}`}
+      >
+        📄 {subflowLabel(data.path)}
+        <span className="font-normal opacity-70">· {data.count} node{data.count === 1 ? "" : "s"}</span>
+      </button>
+    </div>
+  );
+}
+
+/** What the Start / End cards show (canvas only, see lib/flow-boundaries). */
+export interface BoundaryCardInfo {
+  /** One line under the title — e.g. the pinned request's question or answer. */
+  summary?: string;
+  /** Status of the current run's request/response boundary. */
+  status?: NodeState["status"];
+}
+
+type BoundaryNodeData = {
+  kind: "start" | "end";
+  info: BoundaryCardInfo;
+  connectable: boolean;
+};
+
+const BOUNDARY_W = 200;
+const BOUNDARY_H = 52;
+const BOUNDARY_GAP = 70;
+
+const BOUNDARY_STATUS_RING: Record<NonNullable<BoundaryCardInfo["status"]>, string> = {
+  running: "ring-2 ring-sky-400 animate-pulse",
+  completed: "ring-2 ring-green-500",
+  error: "ring-2 ring-red-500",
+  pending: "",
+};
+
+/** Start / End of the flow — not nodes of the definition (lib/flow-boundaries). */
+function BoundaryNode({ data, selected }: NodeProps<Node<BoundaryNodeData, "boundary">>): React.JSX.Element {
+  const start = data.kind === "start";
+  const ring = data.info.status ? BOUNDARY_STATUS_RING[data.info.status] : "";
+  return (
+    <>
+      {!start && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          isConnectable={false}
+          className="!bg-muted-foreground"
+        />
+      )}
+      <div
+        data-testid={`boundary-${data.kind}`}
+        style={{ width: BOUNDARY_W, height: BOUNDARY_H }}
+        className={`flex flex-col justify-center rounded-full border-2 bg-card px-4 shadow-sm ${
+          start ? "border-emerald-500" : "border-slate-500 dark:border-slate-400"
+        } ${selected ? "outline outline-2 outline-offset-2 outline-sky-500" : ""} ${ring}`}
+        title={
+          start
+            ? "Where a request enters the flow. Click for the pinned request's input; drag from here to a node to make it the entry."
+            : "Where the flow returns its answer. Click for the pinned request's answer and the nodes the run can end after."
+        }
+      >
+        <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
+          <span aria-hidden className={start ? "text-emerald-600" : "text-slate-500"}>
+            {start ? "▶" : "■"}
+          </span>
+          {start ? "Start" : "End"}
+          <span className="font-normal text-muted-foreground">{start ? "· request in" : "· answer out"}</span>
+        </div>
+        {data.info.summary && (
+          <div className="truncate text-[10px] text-muted-foreground">{data.info.summary}</div>
+        )}
+      </div>
+      {start && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          isConnectable={data.connectable}
+          className="!bg-emerald-500"
+        />
+      )}
+    </>
+  );
+}
+
+const SUBFLOW_BOX_PREFIX = "subflow-box:";
+const BOUNDARY_EDGE_PREFIX = "boundary:";
+/** Handle ids of tool connections (reference edges). Flow edges use the unnamed top/bottom handles. */
+const TOOL_OUT = "tool-out";
+const TOOL_IN = "tool-in";
+const nodeTypes = { flowNode: EditableNode, subflowBox: SubflowBoxNode, boundary: BoundaryNode };
+/** Labels are drawn along the edge path, framed in the edge colour. */
+const edgeTypes = labeledEdgeTypes;
 
 /** Canvas-only label shortening; the full text stays in the edge's data and
  * is shown/edited in the properties panel. */
@@ -254,6 +415,25 @@ export interface FlowCanvasProps {
   onAutoLayout?: () => void;
   /** Bump to re-fit the viewport (e.g. after an auto-layout). */
   fitViewNonce?: number;
+  /**
+   * Called when a connection the operator drew was refused because it would
+   * be invalid (`lib/edge-rules.connectionProblem`) — the edge is not added.
+   * `reason` is a human-readable explanation for the status line.
+   */
+  onInvalidConnection?: (reason: string) => void;
+  /** Clicking a sub-flow's box label selects the whole group (all its nodes). */
+  onSelectSubflow?: (path: string) => void;
+  /** Sub-flow whose group is currently selected — its box is highlighted. */
+  selectedSubflowPath?: string | null;
+  /**
+   * Draws the flow's Start and End (lib/flow-boundaries) with what their
+   * cards show. Omit to draw neither.
+   */
+  boundaries?: { start: BoundaryCardInfo; end: BoundaryCardInfo };
+  /** Start or End was selected (null: neither). */
+  onSelectBoundary?: (kind: "start" | "end" | null) => void;
+  /** A connection was drawn from Start to `nodeId`: make it the entry. */
+  onSetEntry?: (nodeId: string) => void;
 }
 
 function FlowCanvasInner({
@@ -278,6 +458,12 @@ function FlowCanvasInner({
   referenceEdges,
   onAutoLayout,
   fitViewNonce,
+  onInvalidConnection,
+  onSelectSubflow,
+  selectedSubflowPath,
+  boundaries,
+  onSelectBoundary,
+  onSetEntry,
 }: FlowCanvasProps): React.JSX.Element {
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const colorScheme = useColorSchemeOrDefault();
@@ -327,7 +513,11 @@ function FlowCanvasInner({
         });
       }
       if (!editable || !onNodesChange) return;
-      const own = changes.filter((c) => !("id" in c) || !ghostIds.has(c.id));
+      const own = changes.filter(
+        (c) =>
+          !("id" in c) ||
+          (!ghostIds.has(c.id) && !c.id.startsWith(SUBFLOW_BOX_PREFIX) && !isBoundaryId(c.id)),
+      );
       if (own.length === 0) return;
       onNodesChange(
         applyNodeChanges(own, nodes as unknown as Node[]) as unknown as RFNode[],
@@ -339,9 +529,11 @@ function FlowCanvasInner({
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       if (!editable || !onEdgesChange) return;
+      const own = changes.filter((c) => !("id" in c) || !c.id.startsWith(BOUNDARY_EDGE_PREFIX));
+      if (own.length === 0) return;
       onEdgesChange(
         applyEdgeChanges(
-          changes,
+          own,
           edges as unknown as Edge[],
         ) as unknown as RFEdge[],
       );
@@ -349,9 +541,65 @@ function FlowCanvasInner({
     [editable, onEdgesChange, edges],
   );
 
+  // Adapters onto the shared edge-rule model (lib/edge-rules): the flow node
+  // (id/type/parallelNodes/config) and the edge's source/target/conditions are
+  // all the rules look at. Reference edges (tool links) are node settings, not
+  // flow edges, so they're deliberately excluded here.
+  const ruleNodes = useMemo<NodeLike[]>(
+    () =>
+      nodes.map((n) => ({
+        id: n.data.flowNode.id,
+        type: n.data.flowNode.type,
+        parallelNodes: n.data.flowNode.parallelNodes,
+        config: n.data.flowNode.config,
+      })),
+    [nodes],
+  );
+  const ruleEdges = useMemo<EdgeLike[]>(
+    () => edges.map((e) => ({ source: e.source, target: e.target, conditions: e.data?.conditions })),
+    [edges],
+  );
+
+  // Refuse a connection before React Flow ever draws it, so the invalid edge
+  // never flashes onto the canvas. A freshly drawn edge carries no condition,
+  // so the self-loop / duplicate / cycle rules (which only bind unconditional
+  // edges) apply — the operator adds a condition afterwards in the panel.
+  const connectionRejection = useCallback(
+    (conn: Connection | Edge): string | null => {
+      if (conn.source === null || conn.target === null) return null;
+      // Start → node: makes that node the entry (no edge is added).
+      if (conn.source === START_ID) {
+        if (!onSetEntry) return "The entry can't be changed here.";
+        return entryProblem(ruleNodes, ruleEdges, conn.target, nodeOrigins);
+      }
+      if (conn.target === END_ID) {
+        return "A run ends by itself after a node without outgoing edges — no edge to End is needed.";
+      }
+      return connectionProblem(ruleNodes, ruleEdges, {
+        source: conn.source,
+        target: conn.target,
+      });
+    },
+    [ruleNodes, ruleEdges, onSetEntry, nodeOrigins],
+  );
+
+  const isValidConnection = useCallback(
+    (conn: Connection | Edge): boolean => connectionRejection(conn) === null,
+    [connectionRejection],
+  );
+
   const handleConnect = useCallback(
     (conn: Connection) => {
       if (!editable || !onEdgesChange) return;
+      const problem = connectionRejection(conn);
+      if (problem !== null) {
+        onInvalidConnection?.(problem);
+        return;
+      }
+      if (conn.source === START_ID) {
+        onSetEntry?.(conn.target);
+        return;
+      }
       const id = `e-${conn.source}-${conn.target}-${Date.now()}`;
       const next = addEdge(
         { ...conn, id, data: {} } as Edge,
@@ -359,7 +607,7 @@ function FlowCanvasInner({
       ) as unknown as RFEdge[];
       onEdgesChange(next);
     },
-    [editable, onEdgesChange, edges],
+    [editable, onEdgesChange, edges, connectionRejection, onInvalidConnection, onSetEntry],
   );
 
   const handleDragOver = useCallback(
@@ -394,15 +642,49 @@ function FlowCanvasInner({
   // regardless of whether the caller memoizes its own `onSelectionChange`.
   const onSelectionChangeRef = useRef(onSelectionChange);
   onSelectionChangeRef.current = onSelectionChange;
+  const onSelectBoundaryRef = useRef(onSelectBoundary);
+  onSelectBoundaryRef.current = onSelectBoundary;
   const handleSelectionChange = useCallback(
     (sel: { nodes: Node[]; edges: Edge[] }) => {
+      // Start/End are not flow nodes: reported on their own channel.
+      const boundary = sel.nodes.length === 1 && isBoundaryId(sel.nodes[0]!.id) ? sel.nodes[0]!.id : null;
+      onSelectBoundaryRef.current?.(boundary === null ? null : boundary === START_ID ? "start" : "end");
       onSelectionChangeRef.current?.(
-        sel.nodes.map((n) => n.id),
-        sel.edges.map((e) => e.id),
+        sel.nodes.filter((n) => !isBoundaryId(n.id)).map((n) => n.id),
+        sel.edges.filter((e) => !e.id.startsWith(BOUNDARY_EDGE_PREFIX)).map((e) => e.id),
       );
     },
     [],
   );
+
+  // Start/End cards and the implicit entry/exit links (lib/flow-boundaries).
+  const boundaryLayout = useMemo(() => {
+    if (!boundaries || nodes.length === 0) return null;
+    const b = flowBoundaries(ruleNodes, ruleEdges);
+    const byId = new Map(nodes.map((n) => [n.id, n]));
+    const centerX = (ids: string[]): number => {
+      const xs = ids.map((id) => byId.get(id)?.position.x).filter((x): x is number => x !== undefined);
+      const x = xs.length > 0 ? xs.reduce((a, c) => a + c, 0) / xs.length : (nodes[0]?.position.x ?? 0);
+      return x + EDITOR_NODE_W / 2 - BOUNDARY_W / 2;
+    };
+    const minY = Math.min(...nodes.map((n) => n.position.y));
+    const maxY = Math.max(...nodes.map((n) => n.position.y));
+    const exitIds = b.exits.map((e) => e.nodeId);
+    return {
+      b,
+      start: { x: centerX(b.entryId !== null ? [b.entryId] : []), y: minY - BOUNDARY_GAP - BOUNDARY_H },
+      end: { x: centerX(exitIds), y: maxY + EDITOR_NODE_H + BOUNDARY_GAP },
+    };
+  }, [boundaries, nodes, ruleNodes, ruleEdges]);
+
+  // Nodes with tool connections get the side handles those edges dock to.
+  const { toolCallers, toolCallees } = useMemo(() => {
+    const refs = showReferences ? (referenceEdges ?? []) : [];
+    return {
+      toolCallers: new Set(refs.map((r) => r.source)),
+      toolCallees: new Set(refs.map((r) => r.target)),
+    };
+  }, [referenceEdges, showReferences]);
 
   const renderNodes = useMemo(() => {
     const real = nodes.map((n) => ({
@@ -413,9 +695,54 @@ function FlowCanvasInner({
         validation: nodeValidation?.get(n.id),
         diff: nodeDiff?.get(n.id),
         origin: nodeOrigins?.[n.id],
+        toolOut: toolCallers.has(n.id),
+        toolIn: toolCallees.has(n.id),
       },
     }));
-    if (!ghostNodes || ghostNodes.length === 0) return real;
+    // Sub-flow boxes behind their nodes, sized from the rendered nodes.
+    const boxes = nodeOrigins
+      ? subflowBoxes(nodes as never, nodeOrigins, { width: EDITOR_NODE_W, height: EDITOR_NODE_H })
+      : [];
+    const allPaths = boxes.map((b) => b.path);
+    const boxNodes = boxes.map((b) => ({
+      id: `${SUBFLOW_BOX_PREFIX}${b.path}`,
+      type: "subflowBox",
+      position: { x: b.x, y: b.y },
+      width: b.width,
+      height: b.height,
+      style: { width: b.width, height: b.height, pointerEvents: "none" as const },
+      // Behind the nodes by default. When selected, lift the box above the edge
+      // layer (edges/edge-labels render around zIndex 1000) so its highlight
+      // and label aren't hidden by an edge label crossing the group.
+      zIndex: b.path === selectedSubflowPath ? 1001 : -1,
+      selectable: false,
+      draggable: false,
+      connectable: false,
+      focusable: false,
+      deletable: false,
+      data: {
+        path: b.path,
+        count: b.nodeIds.length,
+        color: subflowColorIndex(b.path, allPaths),
+        selected: b.path === selectedSubflowPath,
+        ...(onSelectSubflow ? { onSelect: onSelectSubflow } : {}),
+      },
+    }));
+    const boundaryNodes =
+      boundaries && boundaryLayout
+        ? (["start", "end"] as const).map((kind) => ({
+            id: kind === "start" ? START_ID : END_ID,
+            type: "boundary",
+            position: boundaryLayout[kind],
+            width: BOUNDARY_W,
+            height: BOUNDARY_H,
+            draggable: false,
+            deletable: false,
+            connectable: editable,
+            data: { kind, info: boundaries[kind], connectable: editable },
+          }))
+        : [];
+    if (!ghostNodes || ghostNodes.length === 0) return [...boxNodes, ...real, ...boundaryNodes];
     const ghosts = ghostNodes.map((n) => ({
       ...n,
       // Visible (and edge-connectable) before React Flow has measured it.
@@ -424,12 +751,12 @@ function FlowCanvasInner({
       ...(ghostSizes.has(n.id) ? { measured: ghostSizes.get(n.id) } : {}),
       data: { flowNode: n.data.flowNode, ghost: n.ghostKind ?? "removed" },
     }));
-    return [...real, ...ghosts];
-  }, [nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, ghostSizes]);
+    return [...boxNodes, ...real, ...ghosts, ...boundaryNodes];
+  }, [boundaries, boundaryLayout, editable, nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, ghostSizes, toolCallers, toolCallees, onSelectSubflow, selectedSubflowPath]);
 
   const renderEdges = useMemo(() => {
     const real = edges.map((edge) => {
-      const e = { ...edge, label: shortLabel(edge.label) };
+      const e = { ...edge, type: "labeled", label: shortLabel(edge.label) };
       const validationState = edgeValidation?.get(e.id);
       const diffState = edgeDiff?.get(e.id);
       const hasError = (validationState?.errors.length ?? 0) > 0;
@@ -453,7 +780,6 @@ function FlowCanvasInner({
           strokeWidth: 2,
           ...(diffState?.status === "removed" ? { strokeDasharray: "4 3" } : {}),
         },
-        labelStyle: { fill: color, fontWeight: 600 },
       };
     });
     const refs =
@@ -462,6 +788,9 @@ function FlowCanvasInner({
             id: r.id,
             source: r.source,
             target: r.target,
+            sourceHandle: TOOL_OUT,
+            targetHandle: TOOL_IN,
+            type: "labeledStep",
             label: r.label,
             selectable: false,
             deletable: false,
@@ -471,27 +800,54 @@ function FlowCanvasInner({
               strokeDasharray: REFERENCE_STYLE[r.kind].dash,
               strokeWidth: 1.5,
             },
-            labelStyle: { fill: REFERENCE_STYLE[r.kind].stroke, fontSize: 10 },
             data: {},
           }))
         : [];
-    if (!ghostEdges || ghostEdges.length === 0) return [...real, ...refs];
+    // Implicit entry/exit links: dashed, display only.
+    const implicit = boundaryLayout
+      ? [
+          ...(boundaryLayout.b.entryId !== null ? [boundaryLayout.b.entryId] : []).map((id) => ({
+            id: `${BOUNDARY_EDGE_PREFIX}start-${id}`,
+            source: START_ID,
+            target: id,
+            type: "labeled",
+            selectable: false,
+            deletable: false,
+            focusable: false,
+            style: { stroke: "#10b981", strokeDasharray: "5 4", strokeWidth: 1.5 },
+            data: {},
+          })),
+          ...boundaryLayout.b.exits.map((x) => ({
+            id: `${BOUNDARY_EDGE_PREFIX}end-${x.nodeId}`,
+            source: x.nodeId,
+            target: END_ID,
+            type: "labeled",
+            ...(x.kind === "nomatch" ? { label: "no match" } : {}),
+            selectable: false,
+            deletable: false,
+            focusable: false,
+            style: { stroke: "#94a3b8", strokeDasharray: "5 4", strokeWidth: 1.5 },
+            data: {},
+          })),
+        ]
+      : [];
+    if (!ghostEdges || ghostEdges.length === 0) return [...real, ...refs, ...implicit];
     const ghosts = ghostEdges.map((e) => {
       const added = e.data?.ghostKind === "added";
       return {
         ...e,
+        type: "labeled",
         style: {
           stroke: added ? "#16a34a" : "#f87171",
           strokeWidth: 2,
           strokeDasharray: "4 3",
         },
         label: e.label ?? (added ? "proposed" : "removed"),
-        labelStyle: { fill: added ? "#15803d" : "#dc2626", fontWeight: 600 },
         selectable: false,
       };
     });
-    return [...real, ...refs, ...ghosts];
-  }, [edges, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences]);
+    return [...real, ...refs, ...ghosts, ...implicit];
+  }, [edges, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout]);
 
   return (
     <div
@@ -504,6 +860,7 @@ function FlowCanvasInner({
         nodes={renderNodes as unknown as Node[]}
         edges={renderEdges as unknown as Edge[]}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         nodesDraggable={editable}
         nodesConnectable={editable}
         elementsSelectable
@@ -512,6 +869,7 @@ function FlowCanvasInner({
         onNodesChange={handleNodesChange}
         onEdgesChange={handleEdgesChange}
         onConnect={handleConnect}
+        isValidConnection={isValidConnection}
         onSelectionChange={handleSelectionChange}
         onMoveEnd={(_e, viewport) => onViewportChange?.(viewport)}
         {...(defaultViewport !== undefined ? { defaultViewport } : {})}
@@ -552,8 +910,8 @@ function FlowCanvasInner({
           )}
           {referenceEdges && referenceEdges.length > 0 && (
             <CanvasButton
-              label="References"
-              title="Show dashed links defined inside node settings (parallel children, harness verifier/delegates). Display only — not routing edges."
+              label="Tool links"
+              title="Show tool connections — nodes one node calls (parallel children, harness workers and verifier), defined in its settings. They dock right → left and are dashed; the run's flow runs top → bottom."
               onClick={() => setShowReferences((v) => !v)}
               pressed={showReferences}
             >

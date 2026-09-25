@@ -22,7 +22,8 @@ import type { FlowDefinition } from "../types/flow.js";
 import { parallelChildId, parallelChildCondition } from "../types/flow.js";
 import { validateFlowDefinition } from "./flow-parser.js";
 import { validateConditionExpression } from "./condition-evaluator.js";
-import { evaluateFlowVariables } from "./flow-parser/variable-values.js";
+import { flowEdgeIssues } from "./edge-rules.js";
+import { checkLoadTimePlaceholders, evaluateFlowVariables } from "./flow-parser/variable-values.js";
 
 export interface ValidationIssue {
   /** Dotted path to the offending element, e.g. "edges[2].conditions". */
@@ -87,6 +88,12 @@ export function validateFlow(
   // Variable values: cross-references, constants, public env, calculations.
   for (const e of evaluateFlowVariables(flow.variables, undefined).errors) {
     errors.push({ path: `variables.${e.name}`, message: e.message });
+  }
+  // Load-time placeholders in node and edge values ({{vars.*}}, {{const.*}},
+  // {{env.FLOW_PUBLIC_*}}, {{= … }}). Unknown variables are warnings: a caller
+  // may supply them per request.
+  for (const issue of checkLoadTimePlaceholders(flow)) {
+    (issue.severity === "error" ? errors : warnings).push({ path: issue.path, message: issue.message });
   }
 
   // Routing condition expressions must parse.
@@ -246,6 +253,10 @@ export function validateFlow(
       });
     }
   }
+
+  // Edges the graph compiler would reject: to/from parallel children, from
+  // harness-only workers, and nodes unreachable from the entry.
+  for (const issue of flowEdgeIssues(flow.nodes, flow.edges)) errors.push(issue);
 
   // Cycle detection: detect directed cycles using DFS (Tarjan-like).
   // Only non-conditional edges are considered for hard cycles since conditional

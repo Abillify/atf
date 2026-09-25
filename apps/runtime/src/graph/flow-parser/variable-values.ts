@@ -171,3 +171,161 @@ export function evaluateFlowVariables(
   }
   return { values, errors };
 }
+
+// ---------------------------------------------------------------------------
+// Load-time placeholders in node and edge values
+// ---------------------------------------------------------------------------
+
+/** Any load-time placeholder: a variable, constant, public env value or calculation. */
+const LOAD_TIME_RE = /\{\{=([\s\S]*?)\}\}|\{\{\s*(vars|const|env)\.([\w.-]+)\s*\}\}/g;
+
+/**
+ * Cheap check whether a value contains anything the load-time resolver would
+ * touch. `withVars: false` ignores `{{vars.*}}` — without variables those can
+ * only stay unresolved, so a flow without variables needs work only for
+ * constants, env and calculations.
+ */
+export function hasLoadTimePlaceholders(value: unknown, withVars = true): boolean {
+  if (typeof value === "string") {
+    return (withVars ? /\{\{\s*(=|vars\.|const\.|env\.)/ : /\{\{\s*(=|const\.|env\.)/).test(value);
+  }
+  if (Array.isArray(value)) return value.some((v) => hasLoadTimePlaceholders(v, withVars));
+  if (value !== null && typeof value === "object") {
+    return Object.values(value).some((v) => hasLoadTimePlaceholders(v, withVars));
+  }
+  return false;
+}
+
+/**
+ * Resolves load-time placeholders in node and edge values against the
+ * EVALUATED variables: `{{vars.x}}`, `{{const.x}}`, `{{env.FLOW_PUBLIC_X}}` and
+ * `{{= … }}`. A value that is exactly one placeholder keeps the referenced
+ * value's type. A placeholder that cannot be resolved stays as written and is
+ * reported through `onError` (the flow still loads — the validator turns these
+ * into errors, see {@link checkLoadTimePlaceholders}). Runtime placeholders
+ * (`{{context.*}}`, `{{classification.*}}`, …) are left for the run.
+ *
+ * Returns a walker that mutates objects/arrays in place and returns the
+ * (possibly replaced) value.
+ */
+export function createLoadTimeResolver(
+  values: Record<string, unknown>,
+  context: VariableContext,
+  onError: (placeholder: string, message: string) => void,
+): (value: unknown) => unknown {
+  const lookup = (root: string, dotted: string): unknown => {
+    const [head = "", ...rest] = dotted.split(".");
+    if (root === "vars") {
+      const v = dig(values, [head, ...rest]);
+      if (v === undefined) throw new ExpressionError(`Unknown variable "vars.${dotted}".`);
+      return v;
+    }
+    if (root === "const") {
+      if (!(head in context.constants)) {
+        throw new ExpressionError(`Unknown constant "const.${head}" (flows/constants.yaml).`);
+      }
+      return dig(context.constants[head], rest);
+    }
+    if (!head.startsWith(PUBLIC_ENV_PREFIX)) {
+      throw new ExpressionError(
+        `env.${head} is not readable — only variables named ${PUBLIC_ENV_PREFIX}* are exposed to flows.`,
+      );
+    }
+    const v = context.env[head];
+    if (v === undefined) throw new ExpressionError(`Environment variable ${head} is not set.`);
+    return v;
+  };
+  const byPath = (path: string): unknown => {
+    const dot = path.indexOf(".");
+    return lookup(path.slice(0, dot), path.slice(dot + 1));
+  };
+  const resolveOne = (placeholder: string, calc: string | undefined, root?: string, dotted?: string): unknown =>
+    calc !== undefined ? evaluateExpression(calc, byPath) : lookup(root ?? "", dotted ?? "");
+
+  const resolveString = (s: string): unknown => {
+    if (!s.includes("{{")) return s;
+    const matches = [...s.matchAll(LOAD_TIME_RE)];
+    if (matches.length === 0) return s;
+    const only = matches[0];
+    if (matches.length === 1 && only !== undefined && only[0] === s) {
+      try {
+        return resolveOne(s, only[1], only[2], only[3]);
+      } catch (err) {
+        if (!(err instanceof ExpressionError)) throw err;
+        onError(s, err.message);
+        return s;
+      }
+    }
+    return s.replace(LOAD_TIME_RE, (match, calc: string | undefined, root: string | undefined, dotted: string | undefined) => {
+      try {
+        return asText(resolveOne(match, calc, root, dotted));
+      } catch (err) {
+        if (!(err instanceof ExpressionError)) throw err;
+        onError(match, err.message);
+        return match;
+      }
+    });
+  };
+
+  const walk = (value: unknown): unknown => {
+    if (typeof value === "string") return resolveString(value);
+    if (Array.isArray(value)) {
+      for (let i = 0; i < value.length; i++) value[i] = walk(value[i]);
+      return value;
+    }
+    if (value !== null && typeof value === "object") {
+      const obj = value as Record<string, unknown>;
+      for (const key of Object.keys(obj)) obj[key] = walk(obj[key]);
+      return obj;
+    }
+    return value;
+  };
+  return walk;
+}
+
+export interface PlaceholderIssue {
+  /** e.g. `nodes[2](answer).llm.parameters.maxTokens` */
+  path: string;
+  message: string;
+  /** Unknown `{{vars.*}}` are warnings: a caller may supply them per request. */
+  severity: "error" | "warning";
+}
+
+/**
+ * Finds load-time placeholders in a flow's nodes and edges that do not
+ * resolve (unknown variable/constant, env outside the allowlist, calculation
+ * error). Used by the validator; does not modify the flow.
+ */
+export function checkLoadTimePlaceholders(
+  flow: { variables?: Record<string, unknown>; nodes?: unknown[]; edges?: unknown[] },
+  context: VariableContext = currentVariableContext(),
+): PlaceholderIssue[] {
+  const { values } = evaluateFlowVariables(flow.variables, undefined, context);
+  const issues: PlaceholderIssue[] = [];
+  const visit = (value: unknown, path: string): void => {
+    if (typeof value === "string") {
+      if (!hasLoadTimePlaceholders(value)) return;
+      createLoadTimeResolver(values, context, (placeholder, message) => {
+        issues.push({
+          path,
+          message: `${placeholder}: ${message}`,
+          severity: /^\{\{\s*vars\./.test(placeholder) && message.startsWith("Unknown variable") ? "warning" : "error",
+        });
+      })(value);
+      return;
+    }
+    if (Array.isArray(value)) {
+      value.forEach((v, i) => visit(v, `${path}[${i}]`));
+      return;
+    }
+    if (value !== null && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) visit(v, `${path}.${k}`);
+    }
+  };
+  (flow.nodes ?? []).forEach((n, i) => {
+    const id = (n as { id?: unknown } | null)?.id;
+    visit(n, `nodes[${i}]${typeof id === "string" ? `(${id})` : ""}`);
+  });
+  (flow.edges ?? []).forEach((e, i) => visit(e, `edges[${i}]`));
+  return issues;
+}

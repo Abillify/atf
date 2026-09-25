@@ -37,7 +37,7 @@ bun run --filter @atf/runtime build
 | `/v1/chat/completions` | OpenAI-compatible chat, streaming over SSE. Flows appear as models |
 | `/v1/responses` | Responses API surface |
 | `/v1/models`, `/v1/embeddings` | Model listing and embeddings |
-| `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, test runs, node type catalog, variable and expression evaluation, Copilot |
+| `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, sub-flow files, test runs, node type catalog, variable and expression evaluation, Copilots |
 | `/runs/*`, `/:flowId/run` | Direct flow execution and run inspection |
 | `/triggers/*`, `/webhooks/*` | HMAC-signed webhook and scheduled starts |
 | `/integrations/rocketchat/events` | Rocket.Chat outgoing-integration receiver (off by default) |
@@ -47,6 +47,7 @@ bun run --filter @atf/runtime build
 | `/security/*` | Guardrails, red team, PII vault |
 | `/eval/*` | Evaluation runs and cases, shadow comparisons, canary state |
 | `/monitoring/*` | Execution event stream, debug traces, provider and pool health, provider testing |
+| `/optimizer/*` | Routing advice (cheaper candidate models) for loaded flows and for a posted definition, trace analysis, and the self-optimizing loop when `OPTIMIZER_ENABLED` |
 | `/health/live`, `/health/ready` | Liveness and readiness |
 | `/metrics` | Prometheus metrics |
 
