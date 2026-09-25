@@ -199,7 +199,8 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 | `systemPrompt` | recommended | Instructions for this step. Supports `#[[file:prompts/x.md]]` includes and `{{vars.*}}` / `{{context.*}}` / `{{node.<id>.classification.*}}` placeholders. |
 | `tools` | optional | MCP tool refs (`server/tool`, `server/*`) the agent loop may call. Empty = plain model call. |
 | `overrides` | optional | Conditional per-request overrides of llm/systemPrompt/tools. |
-| `priority` | optional | Queue priority for model requests from this node; higher runs first. |
+| `priority` | optional | Queue priority for model requests from this node; higher runs first. A flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes. |
+| `classifierSchema` | ignored | Not used — that is the `classifier` type. For a schema-constrained answer from an `llm` node use `config.finalAnswerContract` or a structured downstream classifier. |
 
 **Settings (`config`)**
 
@@ -305,8 +306,9 @@ Search-style results (vectorsearch) become grounding context and citations for t
 | Field | Use | Meaning for this type |
 | --- | --- | --- |
 | `tools` | required | Tool refs to call, in order. |
-| `llm` | ignored | Not used. |
-| `systemPrompt` | ignored | Not used. |
+| `overrides` | optional | Conditional per-request variants of `tools` — the only way to vary which tools this node calls. The `llm`/`systemPrompt` of a matching entry are resolved but unused, like the node-level ones. |
+| `llm` | ignored | Not used — no model is involved. |
+| `systemPrompt` | ignored | Not used — no model is involved. |
 
 **Settings (`config`)**
 
@@ -353,8 +355,9 @@ Expressions can read `classLabel`, `classification.<field>`, `node.<id>.classifi
 
 | Field | Use | Meaning for this type |
 | --- | --- | --- |
-| `llm` | ignored | Not used. |
-| `tools` | ignored | Not used. |
+| `llm` | ignored | Not used — routing is deterministic, no model runs. |
+| `systemPrompt` | ignored | Not used — no model runs. The routing logic lives in the edges' `conditions`. |
+| `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
 
 **Settings (`config`)**
 
@@ -392,6 +395,9 @@ Uses native structured output where the model supports it, otherwise a schema hi
 | `classifierSchema` | required | `{ classKey, schema }` — JSON Schema of the result; `classKey` names the label field. |
 | `llm` | recommended | Model; a pool gives per-model fallback. |
 | `systemPrompt` | recommended | Classification instructions; may reference earlier classifiers via `{{node.<id>.classification.*}}`. |
+| `priority` | optional | Queue priority for model requests from this node; a flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes. |
+| `tools` | ignored | Not used — a classifier makes one structured call and never enters a tool loop. Classify first, then let an `llm` or `tool` node act on the result. |
+| `overrides` | ignored | NOT applied: unlike `llm` and `tool` nodes, a classifier reads `llm`/`systemPrompt` directly and never consults `overrides`. Put the variation in the prompt or split the node. |
 
 **Settings (`config`)**
 
@@ -435,7 +441,10 @@ With `config.ragProfiles` it also acts as a **context assembler**: a retrieval p
 
 | Field | Use | Meaning for this type |
 | --- | --- | --- |
-| `parallelNodes` | optional | Child node ids, or `{ node, condition }` for conditional children. |
+| `parallelNodes` | recommended | Child node ids, or `{ node, condition }` for conditional children. Without it the node only runs `config.ragProfiles`. |
+| `llm` | ignored | Not used — the children carry their own models. The RAG compression model is `config.ragCompression.llm`. |
+| `systemPrompt` | ignored | Not used — the children carry their own prompts. |
+| `tools` | ignored | Not used — `config.ragProfiles` is compiled into the search calls, and children call their own tools. |
 
 **Settings (`config`)**
 
@@ -482,6 +491,14 @@ Embeds the latest user message, fetches the most similar chunks from `config.col
 
 - Simple single-collection grounding on the built-in vector store.
 
+**Node fields**
+
+| Field | Use | Meaning for this type |
+| --- | --- | --- |
+| `llm` | ignored | Not used. The embedding model is a deployment setting (`EMBEDDING_MODEL`), not a node field — this node cannot be pointed at a different one. |
+| `systemPrompt` | ignored | Not used — no model is prompted here. The retrieved chunks are injected for the NEXT llm node, whose prompt applies. |
+| `tools` | ignored | Not used — this node queries the platform vector store directly. For vectorsearch MCP collections use a `tool` or `parallel` node. |
+
 **Settings (`config`)**
 
 | Key | Type | Default | Description |
@@ -507,6 +524,14 @@ Recalls the memories most relevant to the request for the caller's scope and inj
 **When to use**
 
 - Personal assistants and support flows that should remember user facts.
+
+**Node fields**
+
+| Field | Use | Meaning for this type |
+| --- | --- | --- |
+| `llm` | ignored | Not used. Recall runs against the memory store with the deployment's embedding model, not a per-node one. |
+| `systemPrompt` | ignored | Not used — no model is prompted. The recalled memories become a system message for the next llm node. |
+| `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
 
 **Settings (`config`)**
 
@@ -543,6 +568,9 @@ Results either stay the delegated answers (`resultMode: delegated`, harness is t
 | Field | Use | Meaning for this type |
 | --- | --- | --- |
 | `llm` | optional | Default planner model (overridden by `config.plannerLlm`). |
+| `systemPrompt` | optional | Domain guidance for the PLANNER, prepended to the generic planning instructions — not a prompt for the delegated nodes (those carry their own). Ignored entirely when `config.plannerless` is true, because no planner runs. |
+| `tools` | ignored | Not used — the harness calls no tools itself, it delegates to the `config.allowlist` nodes, which carry their own tools. |
+| `overrides` | ignored | NOT applied: only `llm` and `tool` nodes consult `overrides`. |
 
 **Settings (`config`)**
 
@@ -599,6 +627,7 @@ Results either stay the delegated answers (`resultMode: delegated`, harness is t
 **Notes**
 
 - The verifier is referenced only via `verification.target`; the Studio draws that link dashed.
+- `systemPrompt` steers the planner only. A plannerless harness (`config.plannerless: true`) never reads it — the wording of the actual work belongs on the `allowlist` nodes.
 
 ### `transform` — Transform
 
@@ -610,6 +639,14 @@ Runs no model. `derive` rules look up the value of a classification field in a s
 
 - Map a classifier value to technical parameters.
 - Pull ids (ticket numbers) out of the message without an LLM.
+
+**Node fields**
+
+| Field | Use | Meaning for this type |
+| --- | --- | --- |
+| `llm` | ignored | Not used — the rules are deterministic, nothing is inferred. Use a `classifier` when you need a model. |
+| `systemPrompt` | ignored | Not used — no model runs. |
+| `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
 
 **Settings (`config`)**
 
@@ -627,6 +664,14 @@ A pass-through at run time; its config registers the flow with the webhook endpo
 **When to use**
 
 - Flows started by external systems or on a schedule.
+
+**Node fields**
+
+| Field | Use | Meaning for this type |
+| --- | --- | --- |
+| `llm` | ignored | Not used — the node is a pass-through at run time. |
+| `systemPrompt` | ignored | Not used. The message a trigger produces comes from `config.messageTemplate` / `config.scheduledMessage`. |
+| `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
 
 **Settings (`config`)**
 
@@ -660,6 +705,14 @@ Resolves the assistant for the request (from the request, a model name `assistan
 
 - First node of an assistant flow (paired with `assistant-learn` at the end).
 
+**Node fields**
+
+| Field | Use | Meaning for this type |
+| --- | --- | --- |
+| `systemPrompt` | ignored | Not used. The assistant's prompt sections are rendered from its own identity, skills and inbox — put flow-level wording on the answering `llm` node instead. |
+| `llm` | ignored | Not used — this node loads context, it does not call a model. |
+| `tools` | ignored | Not used. Which tools the assistant may use follows from its credentials and `config.requiresToolAuthority`. |
+
 **Settings (`config`)**
 
 | Key | Type | Default | Description |
@@ -677,6 +730,14 @@ Terminal node of an assistant flow: records what happened (depth, tools, aborts)
 **When to use**
 
 - Last node of an assistant flow.
+
+**Node fields**
+
+| Field | Use | Meaning for this type |
+| --- | --- | --- |
+| `llm` | ignored | Not used — the learning pass runs on the scheduler's own model, outside this node. |
+| `systemPrompt` | ignored | Not used — no model is prompted here. |
+| `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
 
 **Settings (`config`)**
 

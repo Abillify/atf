@@ -193,7 +193,8 @@ const LLM: NodeTypeDoc = {
     { key: "systemPrompt", usage: "recommended", description: "Instructions for this step. Supports `#[[file:prompts/x.md]]` includes and `{{vars.*}}` / `{{context.*}}` / `{{node.<id>.classification.*}}` placeholders." },
     { key: "tools", usage: "optional", description: "MCP tool refs (`server/tool`, `server/*`) the agent loop may call. Empty = plain model call." },
     { key: "overrides", usage: "optional", description: "Conditional per-request overrides of llm/systemPrompt/tools." },
-    { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; higher runs first." },
+    { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; higher runs first. A flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes." },
+    { key: "classifierSchema", usage: "ignored", description: "Not used — that is the `classifier` type. For a schema-constrained answer from an `llm` node use `config.finalAnswerContract` or a structured downstream classifier." },
   ],
   config: [
     {
@@ -484,8 +485,9 @@ const TOOL: NodeTypeDoc = {
   ],
   topLevel: [
     { key: "tools", usage: "required", description: "Tool refs to call, in order." },
-    { key: "llm", usage: "ignored", description: "Not used." },
-    { key: "systemPrompt", usage: "ignored", description: "Not used." },
+    { key: "overrides", usage: "optional", description: "Conditional per-request variants of `tools` — the only way to vary which tools this node calls. The `llm`/`systemPrompt` of a matching entry are resolved but unused, like the node-level ones." },
+    { key: "llm", usage: "ignored", description: "Not used — no model is involved." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — no model is involved." },
   ],
   config: [
     TOOL_ARGS_FIELD,
@@ -549,8 +551,9 @@ const ROUTER: NodeTypeDoc = {
   ].join("\n\n"),
   whenToUse: ["Branch after a classifier.", "Merge point that fans out to several alternatives."],
   topLevel: [
-    { key: "llm", usage: "ignored", description: "Not used." },
-    { key: "tools", usage: "ignored", description: "Not used." },
+    { key: "llm", usage: "ignored", description: "Not used — routing is deterministic, no model runs." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — no model runs. The routing logic lives in the edges' `conditions`." },
+    { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
   ],
   config: [],
   examples: [
@@ -577,6 +580,9 @@ const CLASSIFIER: NodeTypeDoc = {
     { key: "classifierSchema", usage: "required", description: "`{ classKey, schema }` — JSON Schema of the result; `classKey` names the label field." },
     { key: "llm", usage: "recommended", description: "Model; a pool gives per-model fallback." },
     { key: "systemPrompt", usage: "recommended", description: "Classification instructions; may reference earlier classifiers via `{{node.<id>.classification.*}}`." },
+    { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; a flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes." },
+    { key: "tools", usage: "ignored", description: "Not used — a classifier makes one structured call and never enters a tool loop. Classify first, then let an `llm` or `tool` node act on the result." },
+    { key: "overrides", usage: "ignored", description: "NOT applied: unlike `llm` and `tool` nodes, a classifier reads `llm`/`systemPrompt` directly and never consults `overrides`. Put the variation in the prompt or split the node." },
   ],
   config: [
     {
@@ -625,7 +631,12 @@ const PARALLEL: NodeTypeDoc = {
     "With `config.ragProfiles` it also acts as a **context assembler**: a retrieval plan per request profile, compiled at runtime into `vectorsearch/search` calls. Results of all sources are fused (reranker or score-only), deduplicated per document and injected as grounding context with citations.",
   ].join("\n\n"),
   whenToUse: ["Assemble context from several collections at once.", "Run independent enrichment steps (memory recall, vision extraction) side by side."],
-  topLevel: [{ key: "parallelNodes", usage: "optional", description: "Child node ids, or `{ node, condition }` for conditional children." }],
+  topLevel: [
+    { key: "parallelNodes", usage: "recommended", description: "Child node ids, or `{ node, condition }` for conditional children. Without it the node only runs `config.ragProfiles`." },
+    { key: "llm", usage: "ignored", description: "Not used — the children carry their own models. The RAG compression model is `config.ragCompression.llm`." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — the children carry their own prompts." },
+    { key: "tools", usage: "ignored", description: "Not used — `config.ragProfiles` is compiled into the search calls, and children call their own tools." },
+  ],
   config: [
     {
       key: "ragProfiles",
@@ -705,7 +716,11 @@ const RETRIEVAL: NodeTypeDoc = {
   description:
     "Embeds the latest user message, fetches the most similar chunks from `config.collection` in the platform vector store and injects them as grounding context and citations for the next LLM node. Requires RAG to be configured (vector store + embedding model); without a collection or RAG the node is a no-op and the flow runs ungrounded. For vectorsearch collections and multi-source plans use a `parallel` node with `ragProfiles` or a `tool` node instead.",
   whenToUse: ["Simple single-collection grounding on the built-in vector store."],
-  topLevel: [],
+  topLevel: [
+    { key: "llm", usage: "ignored", description: "Not used. The embedding model is a deployment setting (`EMBEDDING_MODEL`), not a node field — this node cannot be pointed at a different one." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — no model is prompted here. The retrieved chunks are injected for the NEXT llm node, whose prompt applies." },
+    { key: "tools", usage: "ignored", description: "Not used — this node queries the platform vector store directly. For vectorsearch MCP collections use a `tool` or `parallel` node." },
+  ],
   config: [
     { key: "collection", kind: "string", label: "Collection", required: true, description: "Vector collection to search. Without it the node does nothing." },
     { key: "topK", kind: "number", label: "Top K", integer: true, min: 1, default: 4, description: "Number of chunks to inject." },
@@ -722,7 +737,11 @@ const MEMORY: NodeTypeDoc = {
   description:
     "Recalls the memories most relevant to the request for the caller's scope and injects them as a system message for the next LLM. Memories are personalisation, not sources: they are not cited and don't affect the groundedness gate. No-op when memory is disabled or the request is anonymous.",
   whenToUse: ["Personal assistants and support flows that should remember user facts."],
-  topLevel: [],
+  topLevel: [
+    { key: "llm", usage: "ignored", description: "Not used. Recall runs against the memory store with the deployment's embedding model, not a per-node one." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — no model is prompted. The recalled memories become a system message for the next llm node." },
+    { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+  ],
   config: [
     { key: "topK", kind: "number", label: "Top K", integer: true, min: 1, default: "MEMORY_TOP_K, else 5", description: "Number of memories to recall." },
     { key: "minScore", kind: "number", label: "Min score", min: 0, max: 1, step: 0.05, description: "Minimum similarity for a memory to be included." },
@@ -741,7 +760,17 @@ const AGENT_HARNESS: NodeTypeDoc = {
     "Results either stay the delegated answers (`resultMode: delegated`, harness is the end node) or are aggregated into one context message for a downstream synthesizer (`context`).",
   ].join("\n\n"),
   whenToUse: ["Multi-step, multi-domain questions.", "Exhaustive research over a corpus (coverage queue)."],
-  topLevel: [{ key: "llm", usage: "optional", description: "Default planner model (overridden by `config.plannerLlm`)." }],
+  topLevel: [
+    { key: "llm", usage: "optional", description: "Default planner model (overridden by `config.plannerLlm`)." },
+    {
+      key: "systemPrompt",
+      usage: "optional",
+      description:
+        "Domain guidance for the PLANNER, prepended to the generic planning instructions — not a prompt for the delegated nodes (those carry their own). Ignored entirely when `config.plannerless` is true, because no planner runs.",
+    },
+    { key: "tools", usage: "ignored", description: "Not used — the harness calls no tools itself, it delegates to the `config.allowlist` nodes, which carry their own tools." },
+    { key: "overrides", usage: "ignored", description: "NOT applied: only `llm` and `tool` nodes consult `overrides`." },
+  ],
   config: [
     { key: "allowlist", kind: "node-list", label: "Delegation targets", required: true, description: "Node ids the harness may delegate to (at least one). The Studio draws them as dotted links when the harness is selected." },
     { key: "maxIterations", kind: "number", label: "Max iterations", integer: true, min: 1, max: 1000, default: 12, description: "Hard cap on plan/delegate rounds." },
@@ -806,7 +835,10 @@ const AGENT_HARNESS: NodeTypeDoc = {
     verification: { target: agent-verifier, passSignal: "VERIFIKATION OK", maxAttempts: 2 }`,
     },
   ],
-  notes: ["The verifier is referenced only via `verification.target`; the Studio draws that link dashed."],
+  notes: [
+    "The verifier is referenced only via `verification.target`; the Studio draws that link dashed.",
+    "`systemPrompt` steers the planner only. A plannerless harness (`config.plannerless: true`) never reads it — the wording of the actual work belongs on the `allowlist` nodes.",
+  ],
 };
 
 const TRANSFORM: NodeTypeDoc = {
@@ -816,7 +848,11 @@ const TRANSFORM: NodeTypeDoc = {
   description:
     "Runs no model. `derive` rules look up the value of a classification field in a static table and write the matched row's fields onto the classification (e.g. client → collection tags). `extract` rules apply a bounded regex to the user message (`from: query`) or a classification field and write a capture group to `target`. A non-match always writes an empty string, so the shape stays stable. At least one rule is required.",
   whenToUse: ["Map a classifier value to technical parameters.", "Pull ids (ticket numbers) out of the message without an LLM."],
-  topLevel: [],
+  topLevel: [
+    { key: "llm", usage: "ignored", description: "Not used — the rules are deterministic, nothing is inferred. Use a `classifier` when you need a model." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — no model runs." },
+    { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+  ],
   config: [
     {
       key: "derive",
@@ -844,7 +880,11 @@ const TRIGGER: NodeTypeDoc = {
   description:
     "A pass-through at run time; its config registers the flow with the webhook endpoint (`POST /triggers/:flowId`, HMAC-signed) or the scheduler. The Triggers page lists and test-fires registered triggers.",
   whenToUse: ["Flows started by external systems or on a schedule."],
-  topLevel: [],
+  topLevel: [
+    { key: "llm", usage: "ignored", description: "Not used — the node is a pass-through at run time." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used. The message a trigger produces comes from `config.messageTemplate` / `config.scheduledMessage`." },
+    { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+  ],
   config: [
     { key: "mode", kind: "enum", label: "Mode", options: ["webhook", "schedule"], required: true, description: "`webhook`: signed POST starts the flow. `schedule`: interval or cron." },
     { key: "webhookSecret", kind: "string", label: "Webhook secret", description: "HMAC-SHA256 secret to verify webhook signatures." },
@@ -867,7 +907,11 @@ const ASSISTANT_CONTEXT: NodeTypeDoc = {
   description:
     "Resolves the assistant for the request (from the request, a model name `assistant-<id>`, or `defaultAssistantId`) and injects its soul, skill index, peer inbox and credential state before the answering `llm` node. Fail-closed: without a complete (tenant, user, assistant) scope it passes the turn through with an explanatory message instead of borrowing another identity.",
   whenToUse: ["First node of an assistant flow (paired with `assistant-learn` at the end)."],
-  topLevel: [],
+  topLevel: [
+    { key: "systemPrompt", usage: "ignored", description: "Not used. The assistant's prompt sections are rendered from its own identity, skills and inbox — put flow-level wording on the answering `llm` node instead." },
+    { key: "llm", usage: "ignored", description: "Not used — this node loads context, it does not call a model." },
+    { key: "tools", usage: "ignored", description: "Not used. Which tools the assistant may use follows from its credentials and `config.requiresToolAuthority`." },
+  ],
   config: [
     { key: "defaultAssistantId", kind: "string", label: "Default assistant", description: "Assistant used when the request names none (max 64 chars)." },
     { key: "maxContextChars", kind: "number", label: "Context budget (chars)", integer: true, min: 500, max: 100_000, description: "Budget for all assistant-owned prompt sections." },
@@ -884,7 +928,11 @@ const ASSISTANT_LEARN: NodeTypeDoc = {
   description:
     "Terminal node of an assistant flow: records what happened (depth, tools, aborts), settles skill canaries and offers the turn to the learning scheduler. Never fails the turn — the answer has already been delivered. Requires an `assistant-context` node earlier in the flow.",
   whenToUse: ["Last node of an assistant flow."],
-  topLevel: [],
+  topLevel: [
+    { key: "llm", usage: "ignored", description: "Not used — the learning pass runs on the scheduler's own model, outside this node." },
+    { key: "systemPrompt", usage: "ignored", description: "Not used — no model is prompted here." },
+    { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+  ],
   config: [{ key: "learn", kind: "boolean", label: "Offer for learning", default: true, description: "False for flows whose turns should be recorded but never learned from." }],
   examples: [],
   notes: [],

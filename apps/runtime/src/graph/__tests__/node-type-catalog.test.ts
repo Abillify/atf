@@ -121,3 +121,121 @@ describe("node type catalog", () => {
     for (const k of allKeys) expect(ref).toContain(k);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Top-level node fields (`topLevel`)
+// ---------------------------------------------------------------------------
+//
+// `topLevel` is what the Studio uses to decide which node fields to offer, so a
+// gap there is not a documentation nit: the form either hides a field the engine
+// reads, or offers one nobody reads. These tests pin the declarations against
+// the code that actually does the reading.
+
+const GRAPH = path.resolve(import.meta.dir, "..");
+
+/** `usage` of a field on a type, or undefined when the type doesn't list it. */
+const usage = (type: string, key: string): string | undefined =>
+  nodeTypeDoc(type)?.topLevel.find((f) => f.key === key)?.usage;
+
+const typesDeclaring = (key: string): string[] =>
+  NODE_TYPE_CATALOG.filter((d) => (usage(d.type, key) ?? "ignored") !== "ignored")
+    .map((d) => d.type)
+    .sort();
+
+describe("node type catalog — top-level fields", () => {
+  test("every type takes a position on llm, systemPrompt and tools", () => {
+    // Leaving one out reads as "not applicable" in the docs and hides it in the
+    // Studio, which is the same outcome as `ignored` — but only `ignored` says
+    // so on purpose, and only it carries the reason.
+    const missing: string[] = [];
+    for (const doc of NODE_TYPE_CATALOG) {
+      for (const key of ["llm", "systemPrompt", "tools"]) {
+        if (usage(doc.type, key) === undefined) missing.push(`${doc.type}.${key}`);
+      }
+    }
+    expect(missing).toEqual([]);
+  });
+
+  test("every top-level entry explains itself, exactly once per field", () => {
+    for (const doc of NODE_TYPE_CATALOG) {
+      const keys = doc.topLevel.map((f) => f.key);
+      expect(new Set(keys).size).toBe(keys.length);
+      for (const f of doc.topLevel) {
+        // A bare "Not used." is why these were easy to get wrong: the reader
+        // needs to know where the setting belongs instead.
+        expect(f.description.length).toBeGreaterThan(20);
+      }
+    }
+  });
+
+  test("`overrides` is declared exactly for the handlers that resolve them", () => {
+    // `resolveNodeConfig` (graph-engine/node-config.ts) is the only code path
+    // that applies `node.overrides`. handlers/<type>.ts maps 1:1 to a node type
+    // (see handlers/index.ts), so importing it is the evidence.
+    const resolvers = fs
+      .readdirSync(path.join(GRAPH, "handlers"))
+      .filter((f) => f.endsWith(".ts") && f !== "index.ts")
+      .filter((f) =>
+        /resolveNodeConfig\s*\(/.test(
+          fs.readFileSync(path.join(GRAPH, "handlers", f), "utf8"),
+        ),
+      )
+      .map((f) => f.replace(/\.ts$/, ""))
+      .sort();
+
+    expect(resolvers).toEqual(["llm", "tool"]);
+    expect(typesDeclaring("overrides")).toEqual(resolvers);
+  });
+
+  test("`priority` is declared exactly for the types the queue reads it from", () => {
+    // The only reader of `node.priority` is the flow priority computation in
+    // graph-engine/handler-factories.ts, which filters on the node type.
+    const src = fs.readFileSync(
+      path.join(GRAPH, "graph-engine", "handler-factories.ts"),
+      "utf8",
+    );
+    const block =
+      /const flowPriority = Math\.max\(([\s\S]{0,400}?)\);/.exec(src)?.[1] ?? "";
+    expect(block).toContain("node.priority");
+    const queueTypes = [
+      ...new Set(
+        [...block.matchAll(/node\.type === "([\w-]+)"/g)].flatMap((m) =>
+          m[1] === undefined ? [] : [m[1]],
+        ),
+      ),
+    ].sort();
+
+    expect(queueTypes).toEqual(["classifier", "llm"]);
+    expect(typesDeclaring("priority")).toEqual(queueTypes);
+  });
+
+  test("`classifierSchema` and `parallelNodes` belong to exactly one type each", () => {
+    expect(typesDeclaring("classifierSchema")).toEqual(["classifier"]);
+    expect(typesDeclaring("parallelNodes")).toEqual(["parallel"]);
+  });
+
+  test("a type whose handler reads a field does not declare it ignored", () => {
+    // Direct reads in the handler file, e.g. `node.systemPrompt` in
+    // classifier.ts or `node.parallelNodes` in parallel.ts.
+    const wrong: string[] = [];
+    for (const doc of NODE_TYPE_CATALOG) {
+      const file = path.join(GRAPH, "handlers", `${doc.type}.ts`);
+      if (!fs.existsSync(file)) continue;
+      const src = fs.readFileSync(file, "utf8");
+      for (const key of [
+        "llm",
+        "systemPrompt",
+        "tools",
+        "classifierSchema",
+        "parallelNodes",
+        "overrides",
+      ]) {
+        const reads = new RegExp(`node\\.${key}\\b`).test(src);
+        if (reads && usage(doc.type, key) === "ignored") {
+          wrong.push(`${doc.type}.${key}`);
+        }
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+});
