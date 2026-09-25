@@ -20,8 +20,10 @@ releases:
 
 Reworks the Control Studio into a complete flow builder, extends flow variables with constants,
 allowlisted environment values, and calculations, and adds provider monitoring. All changes are
-backward compatible: existing flows, variables, and API clients keep working unchanged. There is
-no database migration and no independently versioned contract-package change.
+backward compatible: existing flows, variables, and API clients keep working unchanged. The only
+schema change is one added index (version 40, `execution_snapshots (flow_id, created_at DESC)`) —
+no table, column or data is changed — and there is no independently versioned contract-package
+change.
 
 ### Added
 
@@ -51,6 +53,70 @@ no database migration and no independently versioned contract-package change.
   `POST /flows/expressions/evaluate` (condition check against sample values), and
   `POST /flows/:id/test-run` (runs the canvas state through an ephemeral `<id>@studio-<nonce>`
   registration, max. 50, expiring after 30 minutes, never replacing the live flow).
+- **The node panel only offers fields the node type actually reads**, taken from the runtime's node
+  type catalog (`topLevel` in `GET /flows/node-types`) instead of a second list maintained in the
+  UI, which had drifted from the engine. A field the type ignores is hidden while unset; a field
+  that IS set on a type that ignores it stays visible with a warning, so a dead setting can be seen
+  and removed rather than sitting unread in the flow file. Without a catalog (offline, or an older
+  runtime) the previous defaults apply.
+- **`agent-harness` documents its `systemPrompt`**: it is guidance for the PLANNER, prepended to
+  the planning instructions — not a prompt for the delegated nodes, which carry their own. A
+  plannerless harness (`config.plannerless: true`) never reads it, so leaving it empty there is
+  correct and setting it has no effect. The field was offered in the Studio without any of this
+  being stated anywhere.
+- **Every node type now states its position on `llm`, `systemPrompt` and `tools`**, checked against
+  the handlers that do the reading. Previously seven types declared no node fields at all, which
+  reads as "not applicable" but is indistinguishable from an undocumented gap. Corrected along the
+  way, each with the reason and where the setting belongs instead: `tool` applies `overrides` (the
+  only way to vary its tool list) — that was undocumented; `classifier` does NOT apply `overrides`
+  (it reads `llm`/`systemPrompt` directly and never calls `resolveNodeConfig`), and it does read
+  `priority`; `parallel`'s `parallelNodes` is `recommended`, not `optional`; `retrieval` and
+  `memory` ignore `llm` (the embedding model is a deployment setting, not a node field);
+  `assistant-context` ignores `systemPrompt` (its prompt is rendered from the assistant's own
+  identity). Three new tests pin these claims to the code — the `resolveNodeConfig` callers, the
+  queue-priority type filter, and direct field reads per handler — so the catalog cannot drift from
+  the engine unnoticed.
+- The Studio only offers `priority` on the types whose priority the queue actually reads (`llm`,
+  `classifier`), and flags an `overrides` block on a type that never applies it.
+- **A flow save keeps its YAML anchors and aliases.** Several flows share a config block between
+  nodes via `&anchor` plus `*alias` references, but the definition the editor sends back is the
+  expanded form — nothing in it says which sites are the same block. The comment-preserving write
+  therefore replaced every alias with a literal copy: content stayed correct, the file grew by
+  about a third, the anchors were left with nothing referencing them, and one shared block quietly
+  became several independent ones, so a later edit to the anchor no longer reached the nodes that
+  used to follow it. An alias is now kept whenever the value at that site is unchanged; a site that
+  genuinely diverged is written out on its own, because it is no longer the shared value. The
+  result is verified by reading it back, and falls back to the expanding merge unless it parses to
+  exactly the submitted definition — which covers the one corrupting case, the anchor's own
+  definition being edited while an alias site is not.
+- **Prompt files are editable**: `GET /flows/prompts/content?path=prompts/x.md` and
+  `POST /flows/prompts/write` read and write the Markdown file behind a
+  `#[[file:prompts/x.md]]` system-prompt reference. Reading needs `flows:read`, writing
+  `flows:write`; both paths are pinned to the flow directory's `prompts/` subtree (traversal and
+  non-Markdown paths are rejected), the write is atomic and takes a `baseHash` for the same
+  409-on-conflict protection `/flows/write` has, and it is recorded as `flows.prompts.write` in the
+  audit log. In the Studio the node panel now shows an editor for each referenced prompt file
+  below the system prompt field: previously the field held only the reference, so the prompt text
+  of nearly every flow could not be changed from the UI. Saving the prompt file does not touch the
+  flow, and saving the flow leaves the reference intact.
+- **The eval judge runs against a real model.** `createLlmJudge` takes either an AI SDK model (what
+  `createLlmProvider` returns) or the previous `{ invoke }` shape, prompts it for a JSON verdict,
+  and reads the score from that JSON — a `<think>` block is stripped first, so a number inside the
+  reasoning can't be mistaken for the grade. A missing model or a reply without a score now throws
+  instead of scoring 0, because a fabricated failing grade is indistinguishable from a bad answer
+  and silently poisons every comparison built on it.
+- **The optimizer can optimize a flow that exists only as a file** in `FLOWS_DIR`: it reads the
+  source form the Studio edits when the flow has no online version. Promoting a variant publishes
+  an online version, which then takes precedence over the file, exactly as publishing from the
+  Studio does. Its synthetic definitions (`<flowId>@variant/<label>`, a scoped sub-flow) are
+  registered as ephemeral flows for the duration of the eval instead of being parked as drafts in
+  the flow store, which the runtime's executor never resolved — so a variant used to be evaluated
+  against the unchanged flow.
+- A finished Autopilot run links to the optimizer run holding its variants, scores and the promote
+  action.
+- A Studio "Canvas" run of a canvas with no unsaved edits runs the live flow under its real id, so
+  it counts as that flow's traffic (Autopilot and optimizer snapshots) instead of being recorded as
+  a throwaway `<id>@studio-…` test run. An edited canvas still runs ephemerally.
 - `GET /flows/:id` returns a file flow's source form (`sourceDefinition`: shortcuts,
   `{{vars.*}}`, prompt includes, and sub-flow origins kept), its file, and a content hash;
   `GET /flows` reports whether the flows directory is writable (`fileWriting`).
@@ -138,6 +204,17 @@ no database migration and no independently versioned contract-package change.
   and for load-time references the value the field resolves to when the flow loads.
 - Studio canvas nodes are more compact, and the empty "not run yet" status dot is no longer shown
   on them (it read like an unconnected port).
+- Every place that picks a flow — Optimizer, Autopilot, Security, the metrics filter — uses the
+  Studio's searchable picker instead of a native `<select>` of two dozen long German names, and the
+  multi-selects of Live Graph, History and Eval list flows by name with a search box. All of them
+  sort alphabetically by name with numbers in order ("Flow 9" before "Flow 10") and match on name
+  or id.
+- A running node is marked by an arc travelling around its border rather than a pulsing dot, on the
+  canvas, the Start/End cards and in the legend; the status colour moved from amber to sky, so
+  "running" is no longer the colour of a warning. `prefers-reduced-motion` gets a static ring.
+- Snapshots are queried per flow in the database (`list(limit, { flowId })`) instead of filtering a
+  global window afterwards, where busy flows crowded a quiet flow out of the window and made the
+  optimizer skip it for lack of samples. Backed by the new index.
 - An edge label is now part of the line: the text runs along the path inside a capsule outlined in
   the edge's colour, instead of a separate box that cuts the line. It is dropped when it does not
   fit on the edge, and it never renders upside down.
@@ -159,6 +236,23 @@ no database migration and no independently versioned contract-package change.
 - Saving an eval case from Studio posted to a non-existent route and without the required
   expected answer; it now posts to `/eval/cases` and reports failures instead of claiming success.
 - The canvas Fit control is visible in dark mode.
+- An optimizer run whose baseline could not be scored, or whose every variant failed, reported
+  `done` with nothing to compare; it now ends in `error` naming the reason (typically a judge
+  failure), and a judge error on a case is carried into that case's `error` instead of being
+  hidden in its assertions. The "too few snapshots" message says that Studio canvas test runs
+  deliberately don't count.
+- The Studio's Start/End links disappeared on any re-render — a click, an incoming run status —
+  because React Flow forgets the handle positions of a node handed back without its measured size,
+  and the measurement changes for those two cards were dropped. Links to the tool handle were
+  likewise lost when the handle appeared, since handles are only re-measured on a size change.
+- Edge labels on the canvas: two edges between the same pair of nodes share one curve and put both
+  labels in the same spot, now they sit at their own points along it; a label longer than the edge
+  is cut at the end with "…" and carries the full text as its tooltip instead of vanishing; a step
+  edge between close handles no longer zigzags right where its label sits; and identical delegation
+  labels fanning out from one harness are drawn once, on the link with the most room.
+- A node that only an `agent-harness` calls no longer floats unconnected on the canvas: its
+  delegation link stays drawn even while the harness is not selected, since it has no other link
+  that would explain it.
 - The expression builder inserted flow variables into conditions as `vars.x`, which conditions
   cannot read; it now inserts `{{vars.x}}`, which is replaced when the flow loads.
 - The Studio's expression builder offered `{{context.tenantId}}`, which the request context does
