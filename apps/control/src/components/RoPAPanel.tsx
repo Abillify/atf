@@ -11,7 +11,8 @@
  * platform's controls into a concrete auditor artefact focused on data lineage.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "../lib/ui";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
@@ -55,14 +56,14 @@ const STATUS_STYLE: Record<RoPAEntry["status"], string> = {
 };
 
 export function RoPAPanel(): React.JSX.Element {
-  const { token } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [map, setMap] = useState<DataFlowMap | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const downloadMarkdown = async (): Promise<void> => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setDownloading(true);
     setError(null);
     try {
@@ -80,7 +81,7 @@ export function RoPAPanel(): React.JSX.Element {
   };
 
   const fetchMap = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     setError(null);
     try {
@@ -92,7 +93,7 @@ export function RoPAPanel(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
     void fetchMap();
@@ -119,7 +120,7 @@ export function RoPAPanel(): React.JSX.Element {
           >
             {loading ? "Loading…" : "↻ Refresh"}
           </Button>
-          {token && (
+          {isAuthenticated && (
             <Button
               variant="outline"
               size="sm"

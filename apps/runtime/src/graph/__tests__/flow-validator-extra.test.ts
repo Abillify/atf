@@ -27,11 +27,13 @@ function baseFlow(over: Partial<FlowDefinition> = {}): FlowDefinition {
 }
 
 describe("validateFlow — schema stage", () => {
-  test("reports a single $ error for a schema-invalid definition", () => {
+  test("reports each schema problem of an invalid definition with its path", () => {
     const report = validateFlow({ name: "no id" });
     expect(report.valid).toBe(false);
-    expect(report.errors).toHaveLength(1);
-    expect(report.errors[0]?.path).toBe("$");
+    const paths = report.errors.map((e) => e.path);
+    expect(paths).toContain("id");
+    expect(paths).toContain("nodes");
+    expect(report.errors.every((e) => e.message.length > 0)).toBe(true);
   });
 
   test("captures flowId + counts in meta even for an invalid definition", () => {

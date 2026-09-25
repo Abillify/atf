@@ -81,9 +81,33 @@ nodes:                 # required, at least one
 edges: []              # required, may be empty
 ```
 
+**Variables** keep values you would otherwise repeat in one place. Nodes and edges reference
+them as `{{vars.<name>}}`; a request can override them. Variable values can themselves reference
+other variables, shared constants from `FLOWS_DIR/constants.yaml`, allowlisted environment
+values, and calculations:
+
+```yaml
+variables:
+  model_main: fast-pool                                  # a shortcut from model-shortcuts.yaml
+  max_tokens: "{{const.answer_max_tokens}}"              # constants.yaml → constants: { … }
+  max_tokens_draft: "{{= round(vars.max_tokens / 4) }}"  # calculation
+  region: "{{env.FLOW_PUBLIC_REGION}}"                   # only FLOW_PUBLIC_* env is readable
+nodes:
+  - id: step
+    type: llm
+    llm:
+      shortcut: "{{vars.model_main}}"
+      parameters: { maxTokens: "{{vars.max_tokens}}" }
+```
+
+Cycles, unknown references, and calculation errors fail validation. Variables supplied with a
+request are taken literally and never evaluated.
+
 The twelve built-in node types: `llm`, `tool`, `router`, `classifier`, `parallel`, `retrieval`,
 `memory`, `agent-harness`, `transform`, `trigger`, `assistant-context`, `assistant-learn`. Any
 other string resolves through the plugin node-handler registry.
 
-Full reference: [`docs/CAPABILITIES.md`](../../../docs/CAPABILITIES.md) and
-[`apps/runtime/README.md`](../../../apps/runtime/README.md).
+Complete reference of every field, node type setting, placeholder, condition operator and
+calculation function: [`docs/FLOWS.md`](../../docs/FLOWS.md) (generated from the engine's own
+schema and node type catalog). Overview: [`docs/CAPABILITIES.md`](../../docs/CAPABILITIES.md) and
+[`apps/runtime/README.md`](../../apps/runtime/README.md).

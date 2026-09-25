@@ -35,6 +35,7 @@ export {
 // --- Normalization (includes + variables) ---
 export {
   resolveFlowIncludes,
+  resolveFlowSourceIncludes,
   resolveRawFlowVariables,
   applyFlowVariables,
 } from "./flow-parser/normalize.js";
@@ -55,6 +56,9 @@ export function validateFlowSource(raw: unknown): ValidationResult {
 // --- Loader (service + registry) ---
 export {
   type FlowRegistry,
+  type FlowSourceRecord,
+  materializeFlowSource,
+  expandFlowSource,
   type FlowParserService,
   type FlowParserOptions,
   createFlowParserService,

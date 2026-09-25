@@ -11,7 +11,8 @@
  * objective made continuously observable.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback } from "react";
 import { Button } from "../lib/ui";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
@@ -54,13 +55,13 @@ function statusBadge(e: SloReportEntry): { label: string; cls: string } {
 }
 
 export function SloPanel(): React.JSX.Element {
-  const { token } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [data, setData] = useState<SloResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const fetchSlo = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     setError(null);
     try {
@@ -72,7 +73,7 @@ export function SloPanel(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
     void fetchSlo();

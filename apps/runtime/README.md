@@ -37,7 +37,7 @@ bun run --filter @atf/runtime build
 | `/v1/chat/completions` | OpenAI-compatible chat, streaming over SSE. Flows appear as models |
 | `/v1/responses` | Responses API surface |
 | `/v1/models`, `/v1/embeddings` | Model listing and embeddings |
-| `/flows/*` | Flow listing, validation, versions, editor operations |
+| `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, test runs, node type catalog, variable and expression evaluation, Copilot |
 | `/runs/*`, `/:flowId/run` | Direct flow execution and run inspection |
 | `/triggers/*`, `/webhooks/*` | HMAC-signed webhook and scheduled starts |
 | `/integrations/rocketchat/events` | Rocket.Chat outgoing-integration receiver (off by default) |
@@ -45,8 +45,8 @@ bun run --filter @atf/runtime build
 | `/mcp` | Exposes flows as MCP tools |
 | `/admin/*` | Tenants, keys, budgets, limits, policy, retention, GitOps |
 | `/security/*` | Guardrails, red team, PII vault |
-| `/eval/*` | Evaluation runs, shadow comparisons, canary state |
-| `/monitoring/*` | Execution event stream and debug traces |
+| `/eval/*` | Evaluation runs and cases, shadow comparisons, canary state |
+| `/monitoring/*` | Execution event stream, debug traces, provider and pool health, provider testing |
 | `/health/live`, `/health/ready` | Liveness and readiness |
 | `/metrics` | Prometheus metrics |
 
@@ -86,12 +86,19 @@ vLLM alongside LM Studio to coexist.
 Flows are YAML documents in `FLOWS_DIR`, validated against
 [`schemas/flow.schema.json`](schemas/flow.schema.json) and reloaded without a restart.
 
+Next to the flows, `FLOWS_DIR` holds shared files that are not flows: `model-shortcuts.yaml`
+(named engine/model presets and pools, referenced as `llm.shortcut`) and `constants.yaml`
+(values for `{{const.<name>}}` in flow variables). Flow `variables` can also reference each
+other, read `FLOW_PUBLIC_*` environment values, and calculate (`{{= … }}`); see
+[`docs/CAPABILITIES.md`](../../docs/CAPABILITIES.md). A change to either file reloads all flows.
+
 Node types: `llm`, `tool`, `router`, `classifier`, `parallel`, `retrieval`, `memory`,
 `agent-harness`, `transform`, `trigger`, `assistant-context`, and `assistant-learn`. Any other
 type string resolves through the plugin node-handler registry. Edges carry conditions evaluated
 by a safe expression evaluator against run state and classifier output.
 
-Examples: [`deploy/examples/flows/`](../../deploy/examples/flows/).
+Complete reference (generated): [`docs/FLOWS.md`](../../docs/FLOWS.md). Examples:
+[`deploy/examples/flows/`](../../deploy/examples/flows/).
 
 ## Layout
 

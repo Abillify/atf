@@ -2,11 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { render, screen, waitFor } from "@testing-library/react";
-import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, test, expect, vi, afterEach } from "vitest";
 import { PiiVaultPanel } from "../components/PiiVaultPanel";
 
+const auth = vi.hoisted(() => ({
+  current: {
+    token: "test-token" as string | undefined,
+    ready: true,
+    isAuthenticated: true,
+  },
+}));
+
 vi.mock("../lib/auth/useAuth", () => ({
-  useAuth: () => ({ token: "test-token", ready: true }),
+  useAuth: () => auth.current,
 }));
 
 function mockFetchOnce(body: unknown, ok = true): void {
@@ -20,6 +28,16 @@ function mockFetchOnce(body: unknown, ok = true): void {
 describe("PiiVaultPanel", () => {
   afterEach(() => {
     vi.restoreAllMocks();
+    auth.current = { token: "test-token", ready: true, isAuthenticated: true };
+  });
+
+  test("loads without a token when operator auth is open (AUTHN_MODE=disabled)", async () => {
+    auth.current = { token: undefined, ready: true, isAuthenticated: true };
+    mockFetchOnce({ enabled: false, durable: false, piiTypes: "all" });
+    render(<PiiVaultPanel />);
+    await waitFor(() =>
+      expect(screen.getByText(/Disabled\./)).toBeInTheDocument(),
+    );
   });
 
   test("shows loading state initially", () => {

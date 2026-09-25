@@ -3,7 +3,7 @@
 
 /**
  * Tests for the security-header and CSRF middleware wiring applied globally
- * in `src/index.ts` (`hono/secure-headers` + `hono/csrf`).
+ * in `src/index.ts` (`hono/secure-headers` + `csrfProtection()`).
  *
  * These exercise the SAME middleware factories with the SAME defaults `index.ts`
  * uses, on a minimal standalone Hono app — `src/index.ts` itself boots a full
@@ -20,16 +20,18 @@
 import { describe, test, expect } from "bun:test";
 import { Hono } from "hono";
 import { secureHeaders } from "hono/secure-headers";
-import { csrf } from "hono/csrf";
+import { csrfProtection } from "../csrf-protection.js";
 import { approvalWidgetEmbeddingMiddleware } from "../approval-widget-embedding.js";
 
 function buildApp(): Hono {
   const app = new Hono();
   app.use("*", approvalWidgetEmbeddingMiddleware);
   app.use("*", secureHeaders());
-  app.use("*", csrf());
+  app.use("*", csrfProtection());
   app.post("/v1/chat/completions", (ctx) => ctx.json({ ok: true }));
   app.get("/v1/chat/completions", (ctx) => ctx.json({ ok: true }));
+  app.delete("/eval/cases/:id", (ctx) => ctx.json({ removed: true }));
+  app.post("/webhooks/git", (ctx) => ctx.json({ ok: true }));
   app.get("/monitoring/approvals/:id/widget", (ctx) => {
     ctx.header(
       "Content-Security-Policy",
@@ -137,6 +139,32 @@ describe("csrf()", () => {
         Origin: "https://evil.example.com",
       },
       body: "{}",
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("still rejects a cross-origin form POST without a content type", async () => {
+    const res = await buildApp().request("https://api.example.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Origin: "https://evil.example.com" },
+      body: "x",
+    });
+    expect(res.status).toBe(403);
+  });
+
+  test("lets a body-less DELETE through (forms cannot send DELETE; cors() preflight governs it)", async () => {
+    const res = await buildApp().request("https://api.example.com/eval/cases/abc", {
+      method: "DELETE",
+      headers: { Origin: "http://localhost:3101" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("exempts HMAC-signed webhooks", async () => {
+    const res = await buildApp().request("https://api.example.com/webhooks/git", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Origin: "https://git.example.com" },
+      body: "a=b",
     });
     expect(res.status).toBe(200);
   });

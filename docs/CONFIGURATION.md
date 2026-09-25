@@ -590,6 +590,17 @@ Runtime walks the whole parsed environment for `{ provider, model }` shapes and 
 
 Per-protocol variables such as `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OLLAMA_BASE_URL`, `AZURE_*`, `BEDROCK_*`, and `ANTHROPIC_API_KEY` are **not** Runtime configuration. They remain in use only by the standalone smoke scripts under `apps/runtime/scripts/` and by model integration tests, which talk to providers directly and bypass the provider registry on purpose.
 
+## Flow-readable environment values
+
+Flow variables can read environment values as `{{env.FLOW_PUBLIC_<NAME>}}`, but **only** variables whose name starts with `FLOW_PUBLIC_`; every other variable stays invisible to flows. The values end up in prompts, tool arguments, and traces, so they reach model providers, operators, and logs. Never give a secret this prefix. Runtime reads them when a flow's variables are evaluated, so they are not validated at startup. See `apps/runtime/src/graph/flow-parser/flow-constants.ts`.
+
+```bash
+FLOW_PUBLIC_ENVIRONMENT=staging
+FLOW_PUBLIC_ORGANIZATION=Example Ltd
+```
+
+Values shared by all flows that are not deployment-specific belong in `FLOWS_DIR/constants.yaml` (`{{const.<name>}}`) instead, where they are versioned with the flows.
+
 ## Profiles
 
 `PROFILE` applies a curated bundle of defaults before validation. Explicit variables always win over a profile. Available profiles: `dev`, `secure`, `regulated`, `regulated-multitenant`, `performance`. See `apps/runtime/src/config/profiles.ts`.

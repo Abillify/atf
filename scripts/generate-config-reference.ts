@@ -72,7 +72,15 @@ const NON_CONFIG_NAMES = new Set([
 	// Test and CI gates. Present in source only to skip suites.
 	"CI",
 	"RUN_MODEL_INTEGRATION",
+	// Placeholder in docs/UI strings such as `{{env.NAME}}`.
+	"NAME",
 ]);
+
+/**
+ * `FLOW_PUBLIC_*` is an open prefix read by flows, not a fixed set of settings;
+ * it has its own section below. Names with it in the source are examples.
+ */
+const NON_CONFIG_PREFIXES = ["FLOW_PUBLIC_"];
 
 interface Section {
 	service: string;
@@ -377,6 +385,9 @@ async function collectEnvNames(directories: string[]): Promise<Set<string>> {
 		}
 	}
 	for (const name of NON_CONFIG_NAMES) names.delete(name);
+	for (const name of [...names]) {
+		if (NON_CONFIG_PREFIXES.some((p) => name.startsWith(p))) names.delete(name);
+	}
 	return names;
 }
 
@@ -511,6 +522,17 @@ function render(sections: Section[]): string {
 		"Runtime walks the whole parsed environment for `{ provider, model }` shapes and validates every reference at startup, so a typo in any model setting fails the boot rather than the first request that happens to use it.",
 		"",
 		"Per-protocol variables such as `OPENAI_API_KEY`, `GOOGLE_API_KEY`, `OLLAMA_BASE_URL`, `AZURE_*`, `BEDROCK_*`, and `ANTHROPIC_API_KEY` are **not** Runtime configuration. They remain in use only by the standalone smoke scripts under `apps/runtime/scripts/` and by model integration tests, which talk to providers directly and bypass the provider registry on purpose.",
+		"",
+		"## Flow-readable environment values",
+		"",
+		"Flow variables can read environment values as `{{env.FLOW_PUBLIC_<NAME>}}`, but **only** variables whose name starts with `FLOW_PUBLIC_`; every other variable stays invisible to flows. The values end up in prompts, tool arguments, and traces, so they reach model providers, operators, and logs. Never give a secret this prefix. Runtime reads them when a flow's variables are evaluated, so they are not validated at startup. See `apps/runtime/src/graph/flow-parser/flow-constants.ts`.",
+		"",
+		"```bash",
+		"FLOW_PUBLIC_ENVIRONMENT=staging",
+		"FLOW_PUBLIC_ORGANIZATION=Example Ltd",
+		"```",
+		"",
+		"Values shared by all flows that are not deployment-specific belong in `FLOWS_DIR/constants.yaml` (`{{const.<name>}}`) instead, where they are versioned with the flows.",
 		"",
 		"## Profiles",
 		"",

@@ -12,7 +12,7 @@
  * (`?draft=true`).
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "../../../lib/ui";
@@ -64,7 +64,7 @@ function endpointLabel(e: DiffEndpoint): string {
 function fetchFlowDiff(
   flowId: string,
   compareDraft: boolean,
-  token: string,
+  token: string | undefined,
 ): Promise<FlowDiffResponse> {
   const qs = compareDraft ? "?draft=true" : "";
   return authFetch(
@@ -104,15 +104,15 @@ function IdList({
 }
 
 export default function FlowDiffPage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [flowId, setFlowId] = useState("");
   const [compareDraft, setCompareDraft] = useState(false);
   const [submittedId, setSubmittedId] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<FlowDiffResponse, Error>({
     queryKey: ["flow", submittedId, "diff", compareDraft],
-    queryFn: () => fetchFlowDiff(submittedId!, compareDraft, token!),
-    enabled: !!submittedId && ready && !!token,
+    queryFn: () => fetchFlowDiff(submittedId!, compareDraft, token),
+    enabled: !!submittedId && ready && isAuthenticated,
   });
 
   const diff = data?.diff;

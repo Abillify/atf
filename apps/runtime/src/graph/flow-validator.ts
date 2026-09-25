@@ -22,6 +22,7 @@ import type { FlowDefinition } from "../types/flow.js";
 import { parallelChildId, parallelChildCondition } from "../types/flow.js";
 import { validateFlowDefinition } from "./flow-parser.js";
 import { validateConditionExpression } from "./condition-evaluator.js";
+import { evaluateFlowVariables } from "./flow-parser/variable-values.js";
 
 export interface ValidationIssue {
   /** Dotted path to the offending element, e.g. "edges[2].conditions". */
@@ -50,9 +51,25 @@ export function validateFlow(
   // Stage 1: schema + core semantics (duplicate ids, edge refs, empty conds).
   const result = validateFlowDefinition(raw);
   if (!result.success) {
+    // Name the node and field instead of a bare "Schema validation failed".
+    const rawNodes = (raw as { nodes?: Array<{ id?: unknown }> } | null)?.nodes;
+    const issueErrors = (result.error.issues ?? []).slice(0, 20).map((issue) => {
+      const [head, index, ...rest] = issue.path;
+      const nodeId =
+        head === "nodes" && typeof index === "number" && Array.isArray(rawNodes)
+          ? rawNodes[index]?.id
+          : undefined;
+      const path =
+        head === "nodes" && typeof index === "number"
+          ? `nodes[${index}]${typeof nodeId === "string" ? `(${nodeId})` : ""}${rest.map((p) => (typeof p === "number" ? `[${p}]` : `.${p}`)).join("")}`
+          : issue.path.length > 0
+            ? issue.path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".").replace(/\.\[/g, "[")
+            : "$";
+      return { path, message: issue.message };
+    });
     return {
       valid: false,
-      errors: [{ path: "$", message: result.error.reason }],
+      errors: issueErrors.length > 0 ? issueErrors : [{ path: "$", message: result.error.reason }],
       warnings: [],
       meta: {
         nodeCount: countNodes(raw),
@@ -66,6 +83,11 @@ export function validateFlow(
 
   const flow: FlowDefinition = result.data;
   const nodeIds = new Set(flow.nodes.map((n) => n.id));
+
+  // Variable values: cross-references, constants, public env, calculations.
+  for (const e of evaluateFlowVariables(flow.variables, undefined).errors) {
+    errors.push({ path: `variables.${e.name}`, message: e.message });
+  }
 
   // Routing condition expressions must parse.
   flow.edges.forEach((edge, i) => {

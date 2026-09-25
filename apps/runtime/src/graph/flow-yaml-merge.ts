@@ -58,8 +58,13 @@
  * No `any` at module boundaries.
  */
 
+import { isDeepStrictEqual } from "node:util";
 import {
   parseDocument,
+  parse as parseYaml,
+  Parser,
+  Composer,
+  CST,
   isMap,
   isSeq,
   isScalar,
@@ -288,6 +293,9 @@ export function mergeFlowIntoYaml(
   next: unknown,
   opts: { lineWidth?: number } = {},
 ): string {
+  const lossless = patchYamlLosslessly(existingYaml, next);
+  if (lossless !== null) return lossless;
+
   let doc: Document;
   try {
     doc = parseDocument(existingYaml);
@@ -314,4 +322,131 @@ export function mergeFlowIntoYaml(
   return doc.toString({
     lineWidth: opts.lineWidth ?? 120,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Lossless fast path
+// ---------------------------------------------------------------------------
+//
+// Re-serialising a `yaml` Document is NOT byte-stable even when nothing
+// changed: folded (`>`) and plain multi-line scalars are re-wrapped to
+// `lineWidth`, which rewrites hundreds of hand-wrapped lines in these flow
+// files. For the common editor saves that is avoidable:
+//
+//   - content unchanged            -> return the file text as is;
+//   - only scalar VALUES changed   -> rewrite just those scalars in the CST
+//     (a label, a prompt, a temperature, a model shortcut) and leave every
+//     other byte of the file untouched.
+//
+// Anything structural (keys added/removed, list length or order changed)
+// returns null and takes the Document merge above. The result is re-parsed and
+// must equal `next` exactly, so a styling surprise can never change content.
+
+/** Returns the patched text, or null when the fast path does not apply. */
+export function patchYamlLosslessly(existingYaml: string, next: unknown): string | null {
+  let current: unknown;
+  try {
+    current = parseYaml(existingYaml);
+  } catch {
+    return null;
+  }
+  if (isDeepStrictEqual(current, next)) return existingYaml;
+
+  const tokens = [...new Parser().parse(existingYaml)];
+  const docs = [...new Composer({ keepSourceTokens: true }).compose(tokens)];
+  const doc = docs[0];
+  if (docs.length !== 1 || doc === undefined || doc.errors.length > 0) return null;
+
+  const changes: Array<{ node: Scalar; value: unknown }> = [];
+  if (!collectScalarChanges(doc.contents, current, next, changes)) return null;
+
+  for (const { node, value } of changes) {
+    const token = node.srcToken;
+    if (token === undefined || !CST.isScalar(token)) return null;
+    try {
+      CST.setScalarValue(token, scalarSource(value), {
+        type: scalarStyleFor(token.type, value),
+      });
+    } catch {
+      return null;
+    }
+  }
+
+  const out = tokens.map((t) => CST.stringify(t)).join("");
+  try {
+    return isDeepStrictEqual(parseYaml(out), next) ? out : null;
+  } catch {
+    return null;
+  }
+}
+
+function collectScalarChanges(
+  node: unknown,
+  current: unknown,
+  next: unknown,
+  out: Array<{ node: Scalar; value: unknown }>,
+): boolean {
+  if (isDeepStrictEqual(current, next)) return true;
+
+  if (isPlainObject(current) && isPlainObject(next)) {
+    if (!isMap(node)) return false;
+    const keys = Object.keys(current);
+    if (keys.length !== Object.keys(next).length) return false;
+    for (const key of keys) {
+      if (!(key in next)) return false;
+      const pair = node.items.find(
+        (p) => isScalar(p.key) && String(p.key.value) === key,
+      );
+      if (pair === undefined) return false;
+      if (!collectScalarChanges(pair.value, current[key], next[key], out)) return false;
+    }
+    return true;
+  }
+
+  if (Array.isArray(current) && Array.isArray(next)) {
+    if (!isSeq(node) || current.length !== next.length) return false;
+    // Entries identified by `id` (nodes, edges) must keep their order —
+    // otherwise values would be patched onto the wrong entry's text/comments.
+    for (let i = 0; i < current.length; i++) {
+      const a = current[i];
+      const b = next[i];
+      if (isPlainObject(a) && isPlainObject(b) && a["id"] !== b["id"]) return false;
+      if (!collectScalarChanges(node.items[i], a, b, out)) return false;
+    }
+    return true;
+  }
+
+  const isLeaf = (v: unknown) => v === null || typeof v !== "object";
+  if (isLeaf(current) && isLeaf(next) && isScalar(node)) {
+    out.push({ node, value: next });
+    return true;
+  }
+  return false;
+}
+
+function scalarSource(value: unknown): string {
+  return value === null ? "null" : String(value);
+}
+
+/**
+ * Keeps the scalar's existing style where that still round-trips the value's
+ * type; a string that would read back as something else in plain style (a
+ * number, `true`, `{{vars.x}}`, …) is double-quoted, and a number/bool/null is
+ * written plain.
+ */
+function scalarStyleFor(current: CST.FlowScalar["type"] | CST.BlockScalar["type"], value: unknown): Scalar.Type {
+  if (typeof value !== "string") return "PLAIN";
+  if (current === "block-scalar") {
+    return "BLOCK_LITERAL";
+  }
+  if (current === "scalar") {
+    let readsBack = false;
+    try {
+      readsBack = parseYaml(value) === value && !value.includes("\n");
+    } catch {
+      readsBack = false;
+    }
+    return readsBack ? "PLAIN" : "QUOTE_DOUBLE";
+  }
+  return current === "single-quoted-scalar" ? "QUOTE_SINGLE" : "QUOTE_DOUBLE";
 }

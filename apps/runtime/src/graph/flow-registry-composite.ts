@@ -28,6 +28,29 @@ import type { FlowDefinition } from "../types/flow.js";
 import type { FlowRegistry } from "./flow-parser.js";
 import type { FlowStore } from "./flow-store.js";
 import type { Logger } from "../observability/logger.js";
+import { materializeFlowSource } from "./flow-parser.js";
+
+/**
+ * Online flows are stored in the editor's SOURCE form (model shortcuts,
+ * `{{vars.*}}`, prompt includes kept as references). Expand them exactly like a
+ * flow file on load before the engine sees them. Already-expanded definitions
+ * pass through unchanged; one that cannot be expanded is kept as stored (and
+ * logged) rather than silently dropped from the registry.
+ */
+export function materializeStoredFlow(
+  def: FlowDefinition,
+  flowsDir: string | undefined,
+  logger?: Logger,
+): FlowDefinition {
+  if (flowsDir === undefined) return def;
+  const result = materializeFlowSource(def, flowsDir, `online:${def.id}`);
+  if (result.success) return result.data;
+  logger?.warn("Online flow could not be expanded; serving it as stored", {
+    flow: def.id,
+    reason: result.error.reason,
+  });
+  return def;
+}
 
 /** Read snapshot of the online (DB) published flows. */
 export interface DbFlowSource {
@@ -48,6 +71,7 @@ class DbFlowSourceImpl implements DbFlowSource {
   constructor(
     private readonly store: FlowStore,
     private readonly logger?: Logger,
+    private readonly flowsDir?: string,
   ) {}
 
   get(id: string): FlowDefinition | undefined {
@@ -61,7 +85,12 @@ class DbFlowSourceImpl implements DbFlowSource {
   async refresh(): Promise<void> {
     try {
       const published = await this.store.listPublished();
-      this.snapshot = new Map(published.map((f) => [f.id, f]));
+      this.snapshot = new Map(
+        published.map((f) => [
+          f.id,
+          materializeStoredFlow(f, this.flowsDir, this.logger),
+        ]),
+      );
     } catch (err) {
       this.logger?.warn("Failed to refresh online flow snapshot", {
         error: err instanceof Error ? err.message : String(err),
@@ -88,8 +117,10 @@ class DbFlowSourceImpl implements DbFlowSource {
 export function createDbFlowSource(
   store: FlowStore,
   logger?: Logger,
+  /** Flows directory for shortcut/prompt-include expansion (read-only). */
+  flowsDir?: string,
 ): DbFlowSource {
-  return new DbFlowSourceImpl(store, logger);
+  return new DbFlowSourceImpl(store, logger, flowsDir);
 }
 
 /**

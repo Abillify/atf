@@ -324,6 +324,24 @@ export function loadModelShortcuts(flowsDir: string): ModelShortcutsData | null 
   return data;
 }
 
+/**
+ * One-line, human-readable summary of a shortcut for editors: `provider · model`
+ * for a single shortcut, `pool (strategy): a, b, …` for a pool. Unknown names
+ * yield `undefined`.
+ */
+export function describeShortcut(data: ModelShortcutsData, name: string): string | undefined {
+  const def = data.shortcuts[name];
+  if (def === undefined) return undefined;
+  const pair = (engine: string | undefined, model: string | undefined): string => {
+    const provider = engine !== undefined ? (data.engines[engine]?.provider ?? engine) : "?";
+    const id = model !== undefined ? (data.modelPresets[model]?.model ?? model) : "?";
+    return `${provider} · ${id}`;
+  };
+  if (!isPoolShortcut(def)) return pair(def.engine, def.model);
+  const members = def.members.map((m) => (m.shortcut !== undefined ? m.shortcut : pair(m.engine, m.model)));
+  return `pool (${def.strategy ?? "fallback"}): ${members.join(", ")}`;
+}
+
 /** Clears the in-memory shortcuts cache (used by tests). */
 export function clearModelShortcutsCache(): void {
   cache.clear();

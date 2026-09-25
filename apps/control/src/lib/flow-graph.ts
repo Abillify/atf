@@ -18,6 +18,12 @@ import type {
   UiNodeLayout,
 } from "../types/flow";
 import type { NodeState } from "../components/graph/graphUtils";
+import {
+  computeDagreLayout,
+  EDITOR_NODE_W,
+  EDITOR_NODE_H,
+} from "../components/graph/GraphLayoutEngine";
+import { parallelChildId } from "../types/flow";
 
 export interface RFNodeData {
   flowNode: FlowNode;
@@ -36,7 +42,18 @@ export interface RFEdge {
   source: string;
   target: string;
   label?: string;
-  data: { conditions?: string };
+  /**
+   * `syntheticId`: the edge had no `id` in the flow; ours is canvas-only.
+   * `extra`: any other fields the edge carries (e.g. `_comment`), written back
+   * untouched.
+   */
+  data: {
+    conditions?: string;
+    syntheticId?: boolean;
+    extra?: Record<string, unknown>;
+    /** Display-only overlay edge (Copilot proposal / version diff). */
+    ghostKind?: "added" | "removed";
+  };
   selected?: boolean;
 }
 
@@ -50,6 +67,87 @@ export function autoPosition(index: number): { x: number; y: number } {
 }
 
 export type LayoutMap = Record<string, { x: number; y: number }>;
+
+// ---------------------------------------------------------------------------
+// Reference edges — node-to-node links that live inside node fields rather
+// than in `edges`: parallel fan-out children and agent-harness verifier /
+// delegation targets. Display-only (never saved as edges), but without them
+// those nodes float unconnected on the canvas and auto-layout can't place them.
+// ---------------------------------------------------------------------------
+
+export type ReferenceKind = "parallel" | "verifies" | "delegates";
+
+export interface ReferenceEdge {
+  id: string;
+  source: string;
+  target: string;
+  kind: ReferenceKind;
+  label: string;
+}
+
+export function referenceEdges(nodes: FlowNode[]): ReferenceEdge[] {
+  const ids = new Set(nodes.map((n) => n.id));
+  const out: ReferenceEdge[] = [];
+  const push = (source: string, target: string, kind: ReferenceKind, label: string) => {
+    if (!ids.has(target) || source === target) return;
+    out.push({ id: `ref-${kind}-${source}-${target}`, source, target, kind, label });
+  };
+  for (const n of nodes) {
+    for (const entry of n.parallelNodes ?? []) {
+      const cond = typeof entry === "string" ? undefined : entry.condition;
+      push(n.id, parallelChildId(entry), "parallel", cond ? `parallel if ${cond}` : "parallel");
+    }
+    if (n.type === "agent-harness" && n.config) {
+      const verification = n.config["verification"] as { target?: unknown } | undefined;
+      if (typeof verification?.target === "string") {
+        push(n.id, verification.target, "verifies", "verifies");
+      }
+      const allowlist = n.config["allowlist"];
+      if (Array.isArray(allowlist)) {
+        for (const t of allowlist) {
+          if (typeof t === "string") push(n.id, t, "delegates", "delegates");
+        }
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Hierarchical auto-layout for the editor canvas. Uses the real edges plus the
+ * structural reference edges (parallel children, verifier) so nothing ends up
+ * stranded in the first rank. Delegation links only rank a worker that has
+ * no other incoming link — such a worker is reached solely through the harness
+ * and belongs below it, not stranded above it. A worker that is also wired in
+ * normally keeps its place: a harness may delegate to half the flow, and
+ * ranking on all of those links would flatten the graph.
+ */
+export function layoutEditorGraph(
+  nodes: FlowNode[],
+  edges: Array<{ source: string; target: string; label?: string }>,
+  sizes?: Map<string, { width: number; height: number }>,
+): LayoutMap {
+  const refs = referenceEdges(nodes);
+  const structural = refs.filter((r) => r.kind !== "delegates");
+  const reached = new Set([...edges, ...structural].map((e) => e.target));
+  const delegateOnly = refs.filter((r) => {
+    if (r.kind !== "delegates" || reached.has(r.target)) return false;
+    reached.add(r.target); // one delegator is enough to rank it
+    return true;
+  });
+  const positions = computeDagreLayout(
+    nodes.map((n) => n.id),
+    [...edges, ...structural, ...delegateOnly],
+    {
+      ...(sizes ? { sizes } : {}),
+      defaultSize: { width: EDITOR_NODE_W, height: EDITOR_NODE_H },
+      nodesep: 40,
+      ranksep: 70,
+      labelSize: { width: 190, height: 16 },
+    },
+  );
+  return Object.fromEntries(positions);
+}
 export type ViewportState = { x: number; y: number; zoom: number };
 
 /**
@@ -98,14 +196,34 @@ export function flowToGraph(def: FlowDefinition): {
   viewport?: ViewportState;
   nodeOrigins?: Record<string, string>;
 } {
-  const layout = layoutOf(def);
+  const stored = layoutOf(def);
+  // No (or incomplete) stored arrangement → lay the graph out hierarchically
+  // instead of dropping nodes into a fixed grid.
+  const layout =
+    def.nodes.length > 0 && def.nodes.some((n) => stored[n.id] === undefined)
+      ? { ...layoutEditorGraph(def.nodes, def.edges.map((e) => ({ ...e, label: e.label ?? e.conditions }))), ...stored }
+      : stored;
   const nodes: RFNode[] = def.nodes.map((n, i) => ({
     id: n.id,
     type: "flowNode",
     position: layout[n.id] ?? autoPosition(i),
     data: { flowNode: n },
   }));
-  const edges: RFEdge[] = def.edges.map((e, i) => ({
+  const edges: RFEdge[] = def.edges.map((e, i) => {
+    const {
+      id: _id,
+      source: _source,
+      target: _target,
+      conditions: _conditions,
+      label: _label,
+      ...extra
+    } = e as FlowEdge & Record<string, unknown>;
+    void _id;
+    void _source;
+    void _target;
+    void _conditions;
+    void _label;
+    return {
     id: e.id ?? `e${i}-${e.source}-${e.target}`,
     source: e.source,
     target: e.target,
@@ -117,8 +235,11 @@ export function flowToGraph(def: FlowDefinition): {
       : {}),
     data: {
       ...(e.conditions !== undefined ? { conditions: e.conditions } : {}),
+      ...(e.id === undefined ? { syntheticId: true } : {}),
+      ...(Object.keys(extra).length > 0 ? { extra } : {}),
     },
-  }));
+    };
+  });
   const viewport = viewportOf(def);
   const nodeOrigins = nodeOriginsOf(def);
   return {
@@ -137,11 +258,19 @@ export function flowToGraph(def: FlowDefinition): {
  * flow round-trips through here, completing the migration for that flow.
  */
 export function graphToFlow(
-  base: Pick<FlowDefinition, "id" | "name" | "description" | "metadata">,
+  base: Pick<FlowDefinition, "id" | "name" | "description" | "metadata"> &
+    Partial<FlowDefinition>,
   nodes: RFNode[],
   edges: RFEdge[],
   viewport?: ViewportState,
   nodeOrigins?: Record<string, string>,
+  /**
+   * Write `metadata.ui` (positions + viewport). The Studio skips it for a file
+   * flow that never had a stored layout and whose nodes weren't moved — the
+   * canvas lays such flows out deterministically, and adding the block would
+   * be the only change to an otherwise untouched file.
+   */
+  includeLayout = true,
 ): FlowDefinition {
   const layout: UiNodeLayout[] = nodes.map((n) => ({
     id: n.id,
@@ -166,15 +295,29 @@ export function graphToFlow(
         )
       : undefined;
 
+  // Carry every other top-level field (variables, pricing, dataClasses,
+  // recovery, …) through unchanged — the canvas only owns nodes, edges and the
+  // UI metadata, and dropping the rest on save would silently break the flow.
+  const {
+    nodes: _baseNodes,
+    edges: _baseEdges,
+    metadata: _baseMetadata,
+    description,
+    ...restTopLevel
+  } = base;
+  void _baseNodes;
+  void _baseEdges;
+  void _baseMetadata;
+
   return {
+    ...restTopLevel,
     id: base.id,
     name: base.name,
-    ...(base.description !== undefined
-      ? { description: base.description }
-      : {}),
+    ...(description !== undefined ? { description } : {}),
     nodes: nodes.map((n) => n.data.flowNode),
     edges: edges.map((e) => ({
-      id: e.id,
+      ...(e.data?.extra ?? {}),
+      ...(e.data?.syntheticId ? {} : { id: e.id }),
       source: e.source,
       target: e.target,
       ...(e.data.conditions !== undefined && e.data.conditions.length > 0
@@ -184,13 +327,21 @@ export function graphToFlow(
         ? { label: e.label }
         : {}),
     })),
-    metadata: {
-      ...restMetadata,
-      ui: { layout, ...(viewport !== undefined ? { viewport } : {}) },
-      ...(origins !== undefined && Object.keys(origins).length > 0
-        ? { $includeOrigins: origins }
-        : {}),
-    },
+    ...(() => {
+      const metadata = {
+        ...restMetadata,
+        ...(includeLayout
+          ? { ui: { layout, ...(viewport !== undefined ? { viewport } : {}) } }
+          : {}),
+        ...(origins !== undefined && Object.keys(origins).length > 0
+          ? { $includeOrigins: origins }
+          : {}),
+      };
+      // Don't invent an empty `metadata: {}` for a flow that has none.
+      return base.metadata !== undefined || Object.keys(metadata).length > 0
+        ? { metadata }
+        : {};
+    })(),
   };
 }
 
@@ -203,10 +354,10 @@ export function makeNode(type: NodeType, existingIds: string[]): FlowNode {
     n += 1;
     id = `${type}-${n}`;
   }
+  // No `llm` block: a node without one runs on the runtime's DEFAULT_LLM, which
+  // is guaranteed to be configured — unlike any provider/model we could guess
+  // here. The operator picks a shortcut or model in the properties panel.
   const node: FlowNode = { id, type };
-  if (type === "llm" || type === "classifier") {
-    node.llm = { provider: "openai", model: "gpt-4o-mini" };
-  }
   if (type === "tool") node.tools = [];
   if (type === "classifier") {
     node.classifierSchema = {
@@ -253,6 +404,7 @@ export function uniqueId(wantedId: string, existingIds: string[]): string {
 function nodeSubtitle(node: FlowNode): string | undefined {
   switch (node.type) {
     case "llm":
+      if (node.llm?.shortcut) return `⇢ ${node.llm.shortcut}`;
       return node.llm ? `${node.llm.provider}/${node.llm.model}` : "default LLM";
     case "tool":
       return `${node.tools?.length ?? 0} tool(s)`;
@@ -347,4 +499,70 @@ export function parseValidationPath(
     return { kind: "edge", id: edges[index]?.id, index };
   }
   return { kind: "global" };
+}
+
+// ---------------------------------------------------------------------------
+// Node references held in node settings (rename / delete)
+// ---------------------------------------------------------------------------
+
+/** Valid node id: what the runtime accepts and what reads well in YAML. */
+export const NODE_ID_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/;
+
+/**
+ * Rewrites every reference to `oldId` held INSIDE node settings — parallel
+ * children and agent-harness `allowlist` / `consequentialTargets` /
+ * `verification.target` — to `newId`, or removes it when `newId` is null
+ * (node deleted). Edges are not touched here. Returns the updated nodes and a
+ * human-readable list of what changed (for the status line).
+ */
+export function rewriteNodeReferences(
+  nodes: FlowNode[],
+  oldId: string,
+  newId: string | null,
+): { nodes: FlowNode[]; changes: string[] } {
+  const changes: string[] = [];
+  const out = nodes.map((node) => {
+    let next = node;
+
+    if (node.parallelNodes?.some((e) => parallelChildId(e) === oldId)) {
+      const entries = node.parallelNodes.flatMap((e) => {
+        if (parallelChildId(e) !== oldId) return [e];
+        if (newId === null) return [];
+        return [typeof e === "string" ? newId : { ...e, node: newId }];
+      });
+      next = { ...next, parallelNodes: entries };
+      changes.push(`${node.id}.parallelNodes`);
+    }
+
+    const config = node.config;
+    if (node.type === "agent-harness" && config) {
+      let cfg: Record<string, unknown> = config;
+      for (const key of ["allowlist", "consequentialTargets"] as const) {
+        const list = cfg[key];
+        if (Array.isArray(list) && list.includes(oldId)) {
+          const updated =
+            newId === null
+              ? list.filter((x) => x !== oldId)
+              : list.map((x) => (x === oldId ? newId : x));
+          cfg = { ...cfg, [key]: updated };
+          changes.push(`${node.id}.config.${key}`);
+        }
+      }
+      const verification = cfg["verification"] as { target?: unknown } | undefined;
+      if (verification?.target === oldId) {
+        if (newId === null) {
+          const { verification: _v, ...rest } = cfg;
+          void _v;
+          cfg = rest;
+          changes.push(`${node.id}.config.verification (removed — its target was deleted)`);
+        } else {
+          cfg = { ...cfg, verification: { ...verification, target: newId } };
+          changes.push(`${node.id}.config.verification.target`);
+        }
+      }
+      if (cfg !== config) next = { ...next, config: cfg };
+    }
+    return next;
+  });
+  return { nodes: out, changes };
 }

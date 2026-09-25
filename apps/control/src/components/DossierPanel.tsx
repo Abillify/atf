@@ -11,7 +11,8 @@
  * guarantees the platform provides — plus a downloadable Markdown export.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   Button,
   Table,
@@ -114,14 +115,14 @@ interface ComplianceDossier {
 // ---------------------------------------------------------------------------
 
 export function DossierPanel(): React.JSX.Element {
-  const { token } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [dossier, setDossier] = useState<ComplianceDossier | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const downloadMarkdown = async (): Promise<void> => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setDownloading(true);
     setError(null);
     try {
@@ -139,7 +140,7 @@ export function DossierPanel(): React.JSX.Element {
   };
 
   const fetchDossier = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     setError(null);
     try {
@@ -154,7 +155,7 @@ export function DossierPanel(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
     void fetchDossier();
@@ -181,7 +182,7 @@ export function DossierPanel(): React.JSX.Element {
           >
             {loading ? "Loading…" : "↻ Refresh"}
           </Button>
-          {token && (
+          {isAuthenticated && (
             <Button
               variant="outline"
               size="sm"

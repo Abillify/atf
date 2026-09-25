@@ -10,7 +10,8 @@
  * The preference is persisted to localStorage under `aiperator_theme`.
  */
 
-import React, {
+import type React from "react";
+import {
   createContext,
   useCallback,
   useContext,
@@ -115,4 +116,14 @@ export function useTheme(): ThemeContextValue {
     );
   }
   return ctx;
+}
+
+/**
+ * Current scheme without the provider requirement — for leaf widgets (e.g. the
+ * React Flow canvas) that are also rendered standalone in tests/stories.
+ */
+export function useColorSchemeOrDefault(
+  fallback: ColorScheme = "light",
+): ColorScheme {
+  return useContext(ThemeContext)?.colorScheme ?? fallback;
 }

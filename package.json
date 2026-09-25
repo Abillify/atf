@@ -22,6 +22,8 @@
     "supply-chain:images": "bun run scripts/generate-image-supply-chain.ts",
     "config-reference": "bun run scripts/generate-config-reference.ts",
     "config-reference:check": "bun run scripts/generate-config-reference.ts --check",
+    "flow-reference": "bun run apps/runtime/scripts/generate-flow-reference.ts",
+    "flow-reference:check": "bun run apps/runtime/scripts/generate-flow-reference.ts --check",
     "test:contracts": "bun run --filter @atf/system-integration test",
     "lint": "bunx biome lint --max-diagnostics=10000 .",
     "lint:baseline": "bun run scripts/check-lint-baseline.ts",

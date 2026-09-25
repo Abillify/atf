@@ -56,8 +56,11 @@ function deleteEvalCase(id: string, token: string | undefined): Promise<void> {
     backendUrl(`/eval/cases/${encodeURIComponent(id)}`),
     token,
     { method: "DELETE" },
-  ).then((r) => {
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+  ).then(async (r) => {
+    // 404: someone else already removed it — the list refresh shows the truth.
+    if (r.ok || r.status === 404) return;
+    const body = (await r.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? `HTTP ${r.status}`);
   });
 }
 
@@ -79,10 +82,14 @@ export default function EvalPage() {
     enabled: ready && isAuthenticated,
   });
 
+  // Two-step delete: the first click arms the row, the second deletes.
+  const [confirmId, setConfirmId] = React.useState<string | null>(null);
   const deleteMutation = useMutation({
     mutationFn: (id: string) => deleteEvalCase(id, token),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["eval", "cases"] }),
+    onSuccess: () => {
+      setConfirmId(null);
+      return queryClient.invalidateQueries({ queryKey: ["eval", "cases"] });
+    },
   });
 
   return (
@@ -114,6 +121,12 @@ export default function EvalPage() {
           className="rounded-md bg-red-50 p-4 text-sm text-red-700"
         >
           Failed to load eval cases: {error.message}
+        </div>
+      )}
+
+      {deleteMutation.error && (
+        <div role="alert" className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+          Failed to delete eval case: {deleteMutation.error.message}
         </div>
       )}
 
@@ -150,15 +163,40 @@ export default function EvalPage() {
                     {new Date(c.createdAt).toLocaleString()}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => deleteMutation.mutate(c.id)}
-                      disabled={deleteMutation.isPending}
-                      aria-label={`Delete eval case ${c.id}`}
-                    >
-                      Delete
-                    </Button>
+                    {confirmId === c.id ? (
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => deleteMutation.mutate(c.id)}
+                          disabled={deleteMutation.isPending}
+                          aria-label={`Confirm delete of eval case ${c.id}`}
+                        >
+                          {deleteMutation.isPending ? "Deleting…" : "Confirm delete"}
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => setConfirmId(null)}
+                          disabled={deleteMutation.isPending}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => {
+                          deleteMutation.reset();
+                          setConfirmId(c.id);
+                        }}
+                        disabled={deleteMutation.isPending}
+                        aria-label={`Delete eval case ${c.id}`}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </TableCell>
                 </TableRow>
               ))}

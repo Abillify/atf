@@ -14,10 +14,19 @@
 
 import { useCallback, useRef, useState } from "react";
 import type { RFNode, RFEdge } from "./flow-graph";
+import type { FlowDefinition } from "../types/flow";
 
 export interface FlowGraphSnapshot {
   nodes: RFNode[];
   edges: RFEdge[];
+  /**
+   * Flow-level settings (name, description, variables, pricing, …) so edits in
+   * the Flow settings panel are undoable like canvas edits. Its own
+   * `nodes`/`edges` are stale by design (the canvas owns those) and ignored.
+   */
+  base?: FlowDefinition;
+  /** Sub-flow file per node id (`$includeOrigins`). */
+  nodeOrigins?: Record<string, string>;
 }
 
 export interface UseFlowHistoryResult {
@@ -50,7 +59,10 @@ function signature(snapshot: FlowGraphSnapshot): string {
       conditions: e.data.conditions,
     }))
     .sort((a, b) => a.id.localeCompare(b.id));
-  return JSON.stringify({ nodes, edges });
+  const { nodes: _n, edges: _e, ...settings } = snapshot.base ?? ({} as Partial<FlowDefinition>);
+  void _n;
+  void _e;
+  return JSON.stringify({ nodes, edges, settings, origins: snapshot.nodeOrigins ?? {} });
 }
 
 export function useFlowHistory(

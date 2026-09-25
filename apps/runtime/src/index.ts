@@ -27,7 +27,6 @@ import type { MiddlewareHandler } from "hono";
 import { cors } from "hono/cors";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
-import { csrf } from "hono/csrf";
 import { loadConfig, checkProductionReadiness } from "./config/index.js";
 import {
   authMiddleware,
@@ -36,6 +35,7 @@ import {
 } from "./middleware/auth.js";
 import { resolveApiKey } from "./middleware/api-key-auth.js";
 import { approvalWidgetEmbeddingMiddleware } from "./middleware/approval-widget-embedding.js";
+import { csrfProtection } from "./middleware/csrf-protection.js";
 import {
   rateLimitMiddleware,
   preAuthRateLimitMiddleware,
@@ -97,7 +97,9 @@ import {
   createDbFlowSource,
   createCompositeRegistry,
   createVersionedRegistry,
+  materializeStoredFlow,
 } from "./graph/flow-registry-composite.js";
+import { createStudioTestRegistry } from "./graph/flow-registry-studio.js";
 import { createAbManager, type AbManager } from "./graph/flow-ab.js";
 import { createToolAuthzLoader } from "./graph/tool-authz-loader.js";
 import { createFlowMcpServer } from "./mcp/flow-mcp-server.js";
@@ -395,7 +397,7 @@ if (import.meta.main) {
   let flowRegistry = fileRegistry;
   if (config.flowEditorEnabled === true && flowStore !== undefined) {
     const flowStoreForAb = flowStore;
-    dbFlowSource = createDbFlowSource(flowStoreForAb, logger);
+    dbFlowSource = createDbFlowSource(flowStoreForAb, logger, config.flowsDir);
     await dbFlowSource.refresh();
     dbFlowSource.startPolling(10_000);
     flowRegistry = createCompositeRegistry(fileRegistry, dbFlowSource);
@@ -404,7 +406,10 @@ if (import.meta.main) {
       config.flowsDir,
       async (flow, version) => {
         const versions = await flowStoreForAb.listVersions(flow);
-        return versions.find((v) => v.version === version)?.definition;
+        const def = versions.find((v) => v.version === version)?.definition;
+        return def !== undefined
+          ? materializeStoredFlow(def, config.flowsDir, logger)
+          : undefined;
       },
       logger,
     );
@@ -419,6 +424,10 @@ if (import.meta.main) {
       });
     }
   }
+  // Outermost layer: throwaway definitions registered by the Studio's
+  // "Run & Trace" so it executes the canvas, not the live version.
+  const studioTests = createStudioTestRegistry(flowRegistry);
+  flowRegistry = studioTests;
 
   // 8. MCP
   const { mcpWrapper, knownToolIds, toolGroupSummarizer } = await buildMcp(
@@ -1148,34 +1157,8 @@ if (import.meta.main) {
   // X-Permitted-Cross-Domain-Policies — applies with no per-route exceptions.
   app.use("*", secureHeaders());
 
-  // CSRF protection for state-changing requests.
-  //
-  // `authMiddleware` (src/middleware/auth.ts) accepts a `token` COOKIE as a
-  // full credential on `/v1/*` (the Open WebUI OAuth-mode integration). A
-  // cookie is attached by the browser to a cross-origin request automatically
-  // — including a simple, non-JSON HTML <form> POST that a malicious page can
-  // auto-submit — so without this, any state-changing endpoint accepting such
-  // a body (form-urlencoded/multipart/text-plain) would execute with the
-  // victim's session even though CORS never allowed the origin to read the
-  // response. Hono's csrf() middleware closes exactly that vector: it checks
-  // `Sec-Fetch-Site`/`Origin` and rejects an unsafe-method request with a
-  // form-like content-type that did not originate same-site. JSON requests
-  // (application/json — what every /v1/* client actually sends) are
-  // unaffected; this only removes the form-submission bypass.
-  //
-  // Excluded: `/webhooks/*` (GitOps) and `/triggers/*` — these are
-  // server-to-server callbacks authenticated by an HMAC signature over the
-  // body, never by a browser-held cookie, so CSRF (which exists to protect
-  // COOKIE-carrying requests) does not apply to them. Some Git providers also
-  // post with a content-type csrf() would otherwise flag, and there is no
-  // browser Origin/Sec-Fetch-Site to evaluate for a server-side webhook
-  // sender in the first place.
-  const csrfProtection = csrf();
-  app.use("*", (ctx, next) =>
-    ctx.req.path.startsWith("/webhooks/") || ctx.req.path.startsWith("/triggers/")
-      ? next()
-      : csrfProtection(ctx, next),
-  );
+  // CSRF protection for form-submittable POSTs — see csrf-protection.ts.
+  app.use("*", csrfProtection());
 
   // Request logging + tracing
   app.use("*", async (ctx, next) => {
@@ -2058,6 +2041,12 @@ if (import.meta.main) {
     createFlowsRouter({
       fileRegistry,
       logger,
+      sourceDir: config.flowsDir,
+      studioTests,
+      // Enables POST /flows/write (Studio "Write to file"): writes go back into
+      // the flow's own file under FLOWS_DIR (comment-preserving, source form)
+      // and are picked up by the hot-reload watcher. Guarded by flows:write.
+      flowsDir: config.flowsDir,
       ...(flowStore !== undefined ? { store: flowStore } : {}),
       ...(dbFlowSource !== undefined ? { dbSource: dbFlowSource } : {}),
       ...(knownToolIds.size > 0 ? { knownToolIds } : {}),

@@ -11,6 +11,7 @@
  * Requirements: 1.1, 1.2, 1.4, 1.5, 18.1, 20.1
  */
 
+import { isStudioTestModel } from "../../graph/flow-registry-studio.js";
 import type { Context } from "hono";
 import {
   AUTH_PRINCIPAL_KEY,
@@ -449,6 +450,20 @@ export function resolveFlowRouting(opts: {
     abManager,
     flowGuardrailResolver,
   } = opts;
+
+  // A Studio test run names its throwaway definition explicitly; dispatch,
+  // canary and A/B must not redirect it to some other flow/version.
+  // It still counts as that flow for guardrail overrides (e.g. a PII vault)
+  // and metering, so `resolvedModel` is the real flow id.
+  if (isStudioTestModel(requestModel)) {
+    const baseFlowId = requestModel.slice(0, requestModel.indexOf("@"));
+    const override = flowGuardrailResolver?.resolve(baseFlowId);
+    return {
+      flowToRun: requestModel,
+      resolvedModel: baseFlowId,
+      ...(override !== undefined ? { runtimeGuardrailOverride: override } : {}),
+    };
+  }
 
   const resolvedModel = flowDispatcher
     ? flowDispatcher.resolveFlow(requestModel, requestCtx)

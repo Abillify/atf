@@ -2,10 +2,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useState } from "react";
-import { FlowEditor } from "./FlowEditor";
+import type React from "react";
+import { useRef, useState } from "react";
+import Link from "next/link";
 import { useFlows } from "../hooks/useFlows";
-import { emptyFlow } from "../lib/flow-graph";
 import {
   Button,
   Badge,
@@ -17,11 +17,16 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../lib/ui";
-import type { FlowDetail, FlowListEntry } from "../types/flow";
+import type { FlowDefinition, FlowListEntry } from "../types/flow";
 
 export interface FlowsTabProps {
   token?: string;
   enabled?: boolean;
+}
+
+/** Flows are edited and inspected in Studio; /flows is the registry. */
+export function studioHref(flowId?: string): string {
+  return flowId ? `/studio?flow=${encodeURIComponent(flowId)}` : "/studio";
 }
 
 function statusBadge(f: FlowListEntry): { label: string; variant: BadgeVariant } {
@@ -34,6 +39,22 @@ function statusBadge(f: FlowListEntry): { label: string; variant: BadgeVariant }
   return { label: "draft", variant: "default" };
 }
 
+// Links styled like the sm Buttons they sit next to.
+const LINK_BASE =
+  "inline-flex h-8 items-center justify-center rounded-md px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2";
+const LINK_OUTLINE = `${LINK_BASE} border border-border bg-transparent text-foreground hover:bg-muted`;
+const LINK_PRIMARY = `${LINK_BASE} bg-accent text-accent-foreground hover:opacity-90`;
+
+function download(name: string, content: string): void {
+  const blob = new Blob([content], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export function FlowsTab({
   token,
   enabled = true,
@@ -42,48 +63,71 @@ export function FlowsTab({
     enabled,
     ...(token !== undefined ? { token } : {}),
   });
-  const [open, setOpen] = useState<FlowDetail | null>(null);
-  const [loadingId, setLoadingId] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
 
-  const openFlow = async (id: string): Promise<void> => {
-    setLoadingId(id);
+  const exportFlow = async (id: string): Promise<void> => {
+    setBusyId(id);
     setErr(null);
     try {
-      setOpen(await actions.get(id));
+      const d = await actions.get(id);
+      const def = d.draft ?? d.published ?? d.sourceDefinition;
+      if (!def) throw new Error(`flow "${id}" has no definition`);
+      download(`${id}.json`, JSON.stringify(def, null, 2));
     } catch (e) {
-      setErr(e instanceof Error ? e.message : "failed to load flow");
+      setErr(e instanceof Error ? e.message : "failed to export flow");
     } finally {
-      setLoadingId(null);
+      setBusyId(null);
     }
   };
 
-  const newFlow = (): void => {
-    const id = window.prompt("New flow id (lowercase, no spaces):")?.trim();
-    if (!id) return;
-    if (actions.flows.some((f) => f.id === id)) {
-      setErr(`A flow with id "${id}" already exists.`);
+  const deleteFlow = async (id: string): Promise<void> => {
+    if (
+      !window.confirm(
+        `Delete flow "${id}"? This removes its draft, published version and history.`,
+      )
+    ) {
       return;
     }
-    setOpen({
-      id,
-      source: "online",
-      editable: true,
-      version: 0,
-      published: null,
-      draft: emptyFlow(id),
-    });
+    setBusyId(id);
+    setErr(null);
+    try {
+      if (!(await actions.remove(id))) setErr(`Deleting "${id}" failed.`);
+    } finally {
+      setBusyId(null);
+    }
   };
 
-  if (open !== null) {
-    return (
-      <FlowEditor
-        detail={open}
-        actions={actions}
-        onBack={() => setOpen(null)}
-      />
-    );
-  }
+  // Stores the imported definition as a draft under its own id, then opens it
+  // in Studio for review — nothing goes live until it is published there.
+  const importFlow = async (file: File): Promise<void> => {
+    setErr(null);
+    let def: FlowDefinition;
+    try {
+      def = JSON.parse(await file.text()) as FlowDefinition;
+    } catch {
+      setErr("Import failed: invalid JSON");
+      return;
+    }
+    const id = typeof def.id === "string" ? def.id.trim() : "";
+    if (!id) {
+      setErr("Import failed: the flow has no id");
+      return;
+    }
+    if (
+      actions.flows.some((f) => f.id === id) &&
+      !window.confirm(`Flow "${id}" exists. Replace its draft with the imported flow?`)
+    ) {
+      return;
+    }
+    try {
+      await actions.saveDraft(id, def);
+      window.location.assign(studioHref(id));
+    } catch (e) {
+      setErr(e instanceof Error ? `Import failed: ${e.message}` : "Import failed");
+    }
+  };
 
   return (
     <section className="space-y-3">
@@ -102,9 +146,30 @@ export function FlowsTab({
             Refresh
           </Button>
           {actions.onlineEditing && (
-            <Button variant="primary" size="sm" onClick={newFlow}>
-              + New flow
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => fileInput.current?.click()}
+              >
+                Import
+              </Button>
+              <input
+                ref={fileInput}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                aria-label="Import flow JSON"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f) void importFlow(f);
+                  e.target.value = "";
+                }}
+              />
+              <Link href={studioHref()} className={LINK_PRIMARY}>
+                + New flow
+              </Link>
+            </>
           )}
         </div>
       </div>
@@ -112,7 +177,7 @@ export function FlowsTab({
       {!actions.onlineEditing && (
         <p className="rounded border border-dashed border-border bg-card p-3 text-xs text-muted-foreground">
           Online editing is disabled — flows are inspected read-only and
-          validated. Set{" "}
+          validated in Studio. Set{" "}
           <span className="font-mono">FLOW_EDITOR_ENABLED=true</span> (with{" "}
           <span className="font-mono">DATABASE_URL</span> for durability) to
           author flows online.
@@ -132,7 +197,7 @@ export function FlowsTab({
               <TableHeaderCell className="text-center">Status</TableHeaderCell>
               <TableHeaderCell className="text-right">Nodes</TableHeaderCell>
               <TableHeaderCell className="text-right">Ver.</TableHeaderCell>
-              <TableHeaderCell className="text-right">Open</TableHeaderCell>
+              <TableHeaderCell className="text-right">Actions</TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -160,18 +225,31 @@ export function FlowsTab({
                     {f.version}
                   </TableCell>
                   <TableCell className="text-right">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => void openFlow(f.id)}
-                      disabled={loadingId === f.id}
-                    >
-                      {loadingId === f.id
-                        ? "…"
-                        : f.editable
-                          ? "Edit"
-                          : "Inspect"}
-                    </Button>
+                    <div className="flex justify-end gap-1.5">
+                      <Link href={studioHref(f.id)} className={LINK_OUTLINE}>
+                        {f.editable ? "Edit" : "Inspect"}
+                      </Link>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => void exportFlow(f.id)}
+                        disabled={busyId === f.id}
+                        title="Download the flow definition as JSON"
+                      >
+                        Export
+                      </Button>
+                      {actions.onlineEditing && f.source === "online" && f.editable && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => void deleteFlow(f.id)}
+                          disabled={busyId === f.id}
+                          className="text-red-600 dark:text-red-400"
+                        >
+                          Delete
+                        </Button>
+                      )}
+                    </div>
                   </TableCell>
                 </TableRow>
               );

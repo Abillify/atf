@@ -92,6 +92,15 @@ export function nodeTypeColor(type: NodeVisualType | undefined): string {
       return "bg-fuchsia-600 border-fuchsia-800";
     case "tool":
       return "bg-teal-600 border-teal-800";
+    case "agent-harness":
+      return "bg-rose-600 border-rose-800";
+    case "transform":
+      return "bg-lime-700 border-lime-900";
+    case "trigger":
+      return "bg-orange-600 border-orange-800";
+    case "assistant-context":
+    case "assistant-learn":
+      return "bg-sky-600 border-sky-800";
     case "boundary":
       return "bg-slate-600 border-slate-800";
     default:
@@ -115,6 +124,15 @@ export function nodeTypeHex(type: NodeVisualType | undefined): string {
       return "#c026d3";
     case "tool":
       return "#0d9488";
+    case "agent-harness":
+      return "#e11d48";
+    case "transform":
+      return "#4d7c0f";
+    case "trigger":
+      return "#ea580c";
+    case "assistant-context":
+    case "assistant-learn":
+      return "#0284c7";
     case "boundary":
       return "#475569";
     default:

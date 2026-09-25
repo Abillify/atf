@@ -357,7 +357,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
-  const [name, setName] = React.useState("FDS flow comparison");
+  const [name, setName] = React.useState("Flow comparison");
   const [selectedFlows, setSelectedFlows] = React.useState<string[]>([]);
   const [tasksJson, setTasksJson] = React.useState(DEFAULT_TASKS);
   const [concurrency, setConcurrency] = React.useState(2);
@@ -425,7 +425,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
           </label>
         </div>
         <div className="mt-4">
-          <FlowMultiSelect label="Select FDS flows" options={flows.map((flow) => flow.id)} value={selectedFlows} onChange={setSelectedFlows} />
+          <FlowMultiSelect label="Select flows" options={flows.map((flow) => flow.id)} value={selectedFlows} onChange={setSelectedFlows} />
         </div>
         <label className="mt-4 block text-xs font-medium text-foreground">
           Tasks and perfect answers (JSON)

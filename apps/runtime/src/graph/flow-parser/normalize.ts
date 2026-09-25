@@ -10,6 +10,7 @@
  * 3. Variable resolution — `{{vars.<name>}}`
  */
 
+import { evaluateFlowVariables, type VariableContext } from "./variable-values.js";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { FlowDefinition } from "../../types/flow.js";
@@ -131,6 +132,7 @@ function loadSubflowRaw(
   depth: number,
   maxDepth: number,
   visited: Set<string>,
+  resolvePrompts = true,
 ): { nodes: unknown[]; edges: unknown[] } {
   const empty = { nodes: [], edges: [] };
   if (depth > maxDepth) {
@@ -173,8 +175,17 @@ function loadSubflowRaw(
     return empty;
   }
 
-  resolvePromptIncludes(raw, flowsDir, absPath);
-  resolveSubflowIncludes(raw, flowsDir, absPath, depth + 1, maxDepth, visited);
+  if (resolvePrompts) resolvePromptIncludes(raw, flowsDir, absPath);
+  resolveSubflowIncludes(
+    raw,
+    flowsDir,
+    absPath,
+    depth + 1,
+    maxDepth,
+    visited,
+    undefined,
+    resolvePrompts,
+  );
 
   const nodes = Array.isArray(raw.nodes) ? raw.nodes : [];
   const edges = Array.isArray(raw.edges) ? raw.edges : [];
@@ -205,6 +216,8 @@ function resolveSubflowIncludes(
   maxDepth: number,
   visited: Set<string>,
   origins?: Record<string, string>,
+  resolvePrompts = true,
+  edgeOrigins?: Record<string, string>,
 ): void {
   const metadata = raw.metadata;
   if (typeof metadata !== "object" || metadata === null) return;
@@ -249,6 +262,7 @@ function resolveSubflowIncludes(
       depth,
       maxDepth,
       visited,
+      resolvePrompts,
     );
 
     for (const node of subNodes) {
@@ -277,6 +291,10 @@ function resolveSubflowIncludes(
 
     for (const edge of subEdges) {
       parentEdges.push(edge);
+      if (depth === 0 && edgeOrigins !== undefined) {
+        const key = includeEdgeKey(edge);
+        if (key !== undefined) edgeOrigins[key] = relPath.trim();
+      }
     }
   }
 }
@@ -357,6 +375,7 @@ export function resolveRawFlowVariables(
   raw: Record<string, unknown>,
   overrides: Record<string, unknown> | undefined,
   fileName: string,
+  context?: VariableContext,
 ): void {
   const declared = raw.variables;
   const baseVars =
@@ -365,8 +384,20 @@ export function resolveRawFlowVariables(
     !Array.isArray(declared)
       ? (declared as Record<string, unknown>)
       : {};
-  const effective = { ...baseVars, ...(overrides ?? {}) };
-  if (Object.keys(effective).length === 0) return;
+  if (Object.keys(baseVars).length === 0 && Object.keys(overrides ?? {}).length === 0) return;
+  // Variables may reference each other, constants, public env and contain
+  // calculations — evaluate them before substituting into nodes/edges.
+  const { values: effective, errors } = evaluateFlowVariables(baseVars, overrides, context);
+  for (const e of errors) {
+    process.stderr.write(
+      `${JSON.stringify({
+        level: "warn",
+        component: "flow-parser",
+        fileName,
+        reason: `Flow variable "${e.name}" could not be evaluated: ${e.message}`,
+      })}\n`,
+    );
+  }
 
   const warnUnknown = (name: string): void => {
     process.stderr.write(
@@ -451,10 +482,13 @@ export function applyFlowVariables(
   overrides?: Record<string, unknown>,
 ): FlowDefinition {
   const baseVars = flow.variables ?? {};
-  const effective = { ...baseVars, ...(overrides ?? {}) };
-  if (Object.keys(effective).length === 0) return flow;
+  const raw = { ...baseVars, ...(overrides ?? {}) };
+  if (Object.keys(raw).length === 0) return flow;
 
-  const key = variableSetKey(effective);
+  // Keyed on the RAW set: evaluation is a pure function of it plus constants
+  // and env — a constants change reloads the flows (new memo keys), env is
+  // fixed for the process lifetime.
+  const key = variableSetKey(raw);
   let variants = variantMemo.get(flow);
   if (variants === undefined) {
     variants = new Map();
@@ -467,6 +501,7 @@ export function applyFlowVariables(
     nodes: unknown[];
     edges: unknown[];
   };
+  const effective = evaluateFlowVariables(baseVars, overrides).values;
   const walk = createVariableResolver(effective, () => {});
   clone.nodes = (clone.nodes as unknown[]).map(walk) as FlowDefinition["nodes"];
   clone.edges = (clone.edges as unknown[]).map(walk) as FlowDefinition["edges"];
@@ -505,15 +540,90 @@ export function resolveFlowIncludes(
   fileName: string,
 ): void {
   resolvePromptIncludes(raw, flowsDir, fileName);
+  mergeSubflows(raw, flowsDir, fileName, true);
+}
+
+/**
+ * Editable SOURCE form of a flow: sub-flows are merged in (tagged via
+ * `metadata.$includeOrigins`, exactly as `resolveFlowIncludes` does) so the
+ * editor sees the whole graph, but every other indirection stays a reference —
+ * `#[[file:…]]` prompt includes, `{{vars.*}}` placeholders and `llm.shortcut`.
+ * Saving this form keeps the file's authoring structure intact instead of
+ * writing back what the parser expanded it to.
+ *
+ * `materializeFlowSource` (loader.ts) turns it into the runtime definition.
+ */
+export function resolveFlowSourceIncludes(
+  raw: Record<string, unknown>,
+  flowsDir: string,
+  fileName: string,
+): void {
+  mergeSubflows(raw, flowsDir, fileName, false);
+}
+
+/** Resolves `#[[file:…]]` prompt includes on every node (incl. merged sub-flow nodes). */
+export function resolveFlowPromptIncludes(
+  raw: Record<string, unknown>,
+  flowsDir: string,
+  fileName: string,
+): void {
+  resolvePromptIncludes(raw, flowsDir, fileName);
+}
+
+/**
+ * Key identifying a merged sub-flow edge in `metadata.$includeEdgeOrigins`:
+ * its `id`, or `source->target` for an id-less edge.
+ */
+export function includeEdgeKey(edge: unknown): string | undefined {
+  if (typeof edge !== "object" || edge === null) return undefined;
+  const e = edge as Record<string, unknown>;
+  if (typeof e.id === "string" && e.id.length > 0) return e.id;
+  if (typeof e.source === "string" && typeof e.target === "string") {
+    return `${e.source}->${e.target}`;
+  }
+  return undefined;
+}
+
+/** Source-form-only bookkeeping key; stripped before the runtime sees a flow. */
+export const INCLUDE_EDGE_ORIGINS_KEY = "$includeEdgeOrigins";
+
+function mergeSubflows(
+  raw: Record<string, unknown>,
+  flowsDir: string,
+  fileName: string,
+  resolvePrompts: boolean,
+): void {
   const origins: Record<string, string> = {};
-  resolveSubflowIncludes(raw, flowsDir, fileName, 0, 3, new Set<string>(), origins);
-  if (Object.keys(origins).length > 0) {
+  // Edge origins are only needed to write a SOURCE form back (an edge between
+  // nodes of two different sub-flows lives in one of those files, which the
+  // node origins alone can't tell). The runtime form stays as it always was.
+  const edgeOrigins: Record<string, string> | undefined = resolvePrompts
+    ? undefined
+    : {};
+  resolveSubflowIncludes(
+    raw,
+    flowsDir,
+    fileName,
+    0,
+    3,
+    new Set<string>(),
+    origins,
+    resolvePrompts,
+    edgeOrigins,
+  );
+  if (
+    Object.keys(origins).length > 0 ||
+    (edgeOrigins !== undefined && Object.keys(edgeOrigins).length > 0)
+  ) {
     const metadata = raw.metadata;
     const meta =
       typeof metadata === "object" && metadata !== null
         ? (metadata as Record<string, unknown>)
         : {};
-    meta.$includeOrigins = origins;
+    if (Object.keys(origins).length > 0) meta.$includeOrigins = origins;
+    if (edgeOrigins !== undefined && Object.keys(edgeOrigins).length > 0) {
+      meta[INCLUDE_EDGE_ORIGINS_KEY] = edgeOrigins;
+    }
     raw.metadata = meta;
   }
 }

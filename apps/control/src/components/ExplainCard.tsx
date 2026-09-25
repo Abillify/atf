@@ -15,7 +15,8 @@
  * execution id is currently loaded there.
  */
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
@@ -123,7 +124,7 @@ interface ExplainCardData {
 
 async function fetchExplainCard(
   executionId: string,
-  token: string,
+  token: string | undefined,
 ): Promise<ExplainCardData> {
   const res = await authFetch(
     backendUrl(`/monitoring/explain/${encodeURIComponent(executionId)}`),
@@ -162,8 +163,8 @@ export function ExplainCard({
     error,
   } = useQuery<ExplainCardData, Error>({
     queryKey: ["explain-card", executionId],
-    queryFn: () => fetchExplainCard(executionId, token!),
-    enabled: enabled && !!token && !!executionId,
+    queryFn: () => fetchExplainCard(executionId, token ?? undefined),
+    enabled: enabled && !!executionId,
   });
 
   // Download the Markdown via an authenticated fetch → blob, rather than a

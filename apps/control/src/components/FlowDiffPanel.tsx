@@ -18,7 +18,8 @@
  * Fits naturally into the Studio sidebar (width ≈ 320 px) or the flows page.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback } from "react";
 import { backendUrl } from "../lib/backend-url";
 
 // ---------------------------------------------------------------------------
@@ -59,8 +60,8 @@ interface FlowDiff {
 }
 
 interface DiffResponse {
-  from: { kind: string; version?: number };
-  to: { kind: string; version?: number };
+  from: { kind: string; version?: number; file?: string };
+  to: { kind: string; version?: number; file?: string };
   diff: FlowDiff;
 }
 
@@ -212,7 +213,11 @@ export function FlowDiffPanel({
   const { diff, from, to } = response;
 
   const fromLabel =
-    from.kind === "draft" ? "draft" : `v${from.version ?? "?"}`;
+    from.kind === "draft"
+      ? "draft"
+      : from.kind === "file"
+        ? `live file${from.file ? ` (${from.file})` : ""}`
+        : `v${from.version ?? "?"}`;
   const toLabel = to.kind === "draft" ? "draft" : `v${to.version ?? "?"}`;
 
   return (

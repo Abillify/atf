@@ -12,7 +12,8 @@
  * so there's nothing meaningful to count beyond "in progress right now".
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
@@ -27,13 +28,13 @@ interface PiiVaultStatus {
 }
 
 export function PiiVaultPanel(): React.JSX.Element {
-  const { token } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [status, setStatus] = useState<PiiVaultStatus | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const fetchStatus = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     try {
       const resp = await authFetch(backendUrl("/admin/pii-vault/status"), token);
@@ -45,7 +46,7 @@ export function PiiVaultPanel(): React.JSX.Element {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
     void fetchStatus();

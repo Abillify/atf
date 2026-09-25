@@ -19,7 +19,8 @@
  * no history yet.
  */
 
-import React, { useCallback, useEffect, useState } from "react";
+import type React from "react";
+import { useCallback, useEffect, useState } from "react";
 import { backendUrl } from "../lib/backend-url";
 import { Button } from "../lib/ui";
 import { buildDiffOverlay, type DiffOverlay } from "../lib/flow-diff-view";
@@ -101,19 +102,24 @@ export function FlowVersionBar({
             backendUrl(`/flows/${encodeURIComponent(flowId)}/diff?draft=true`),
             token,
           ),
-          fetchJson<{ published: FlowDefinition | null }>(
+          fetchJson<{
+            published: FlowDefinition | null;
+            /** Live file a never-published draft would replace. */
+            fileDefinition?: FlowDefinition;
+          }>(
             backendUrl(`/flows/${encodeURIComponent(flowId)}`),
             token,
           ),
         ]);
-        if (!diffResp || !detail?.published) {
-          setStatus("Could not load draft/published comparison.");
+        const baseline = detail?.published ?? detail?.fileDefinition;
+        if (!diffResp || !baseline) {
+          setStatus("Could not load the draft comparison.");
           onDiffOverlayChange(undefined);
           return;
         }
         setStatus(diffResp.diff.summary);
         onDiffOverlayChange(
-          buildDiffOverlay(detail.published, nodes, edges, diffResp.diff),
+          buildDiffOverlay(baseline, nodes, edges, diffResp.diff),
         );
         return;
       }
@@ -200,7 +206,7 @@ export function FlowVersionBar({
         className="rounded border border-border bg-card px-1.5 py-0.5 text-xs"
       >
         <option value="">— none —</option>
-        {hasDraft && <option value="draft">Draft ↔ Published</option>}
+        {hasDraft && <option value="draft">Draft ↔ live version</option>}
         {versions
           .filter((v) => v.version !== latestVersion)
           .map((v) => (

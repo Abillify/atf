@@ -13,7 +13,12 @@
  */
 
 import type { FlowDefinition, FlowDiff } from "../types/flow";
-import { flowToGraph, type RFNode, type RFEdge } from "./flow-graph";
+import {
+  flowToGraph,
+  layoutEditorGraph,
+  type RFNode,
+  type RFEdge,
+} from "./flow-graph";
 
 export type DiffStatus = "added" | "removed" | "changed";
 
@@ -22,11 +27,16 @@ export interface DiffInfo {
   changedFields?: string[];
 }
 
-/** A removed node re-created for display, positioned per the "from" version's own layout. Never interactive. */
+/**
+ * A display-only node that is not part of the editable graph. Never interactive.
+ * `removed` (default): a node of the compared "from" version that is gone now.
+ * `added`: a node a Copilot proposal would add (see `buildProposalOverlay`).
+ */
 export interface GhostRFNode extends RFNode {
   draggable: false;
   selectable: false;
   connectable: false;
+  ghostKind?: "removed" | "added";
 }
 
 export interface DiffOverlay {
@@ -124,6 +134,105 @@ export function buildDiffOverlay(
       target,
       data: {},
     }));
+
+  return { nodeDiff, edgeDiff, ghostNodes, ghostEdges };
+}
+
+/**
+ * Canvas overlay for a Copilot PROPOSAL — the opposite direction of
+ * `buildDiffOverlay`: `from` is the current canvas, `to` is the proposed flow,
+ * which is not on the canvas yet. So:
+ *
+ *  - nodes the proposal adds become green "added" ghosts, placed where the
+ *    proposed graph's hierarchical layout puts them, shifted to line up with
+ *    the existing nodes' real positions;
+ *  - nodes it removes / changes are badged in place (they are still on the
+ *    canvas until the proposal is accepted);
+ *  - edges it adds are drawn as ghost edges between real or ghost nodes;
+ *    edges it removes are badged in place.
+ */
+export function buildProposalOverlay(
+  currentNodes: RFNode[],
+  currentEdges: RFEdge[],
+  proposed: FlowDefinition,
+  diff: FlowDiff,
+): DiffOverlay {
+  const nodeDiff = new Map<string, DiffInfo>();
+  for (const id of diff.nodes.removed) nodeDiff.set(id, { status: "removed" });
+  for (const nc of diff.nodes.changed) {
+    nodeDiff.set(nc.id, { status: "changed", changedFields: nc.changedFields });
+  }
+
+  const onCanvas = new Map(currentNodes.map((n) => [n.id, n]));
+  const addedIds = new Set(diff.nodes.added.filter((id) => !onCanvas.has(id)));
+
+  // Where would the proposal's own layout put everything? Align it to the
+  // canvas by the average offset of nodes that exist on both sides.
+  const layout = layoutEditorGraph(
+    proposed.nodes,
+    proposed.edges.map((e) => ({ source: e.source, target: e.target, label: e.label ?? e.conditions })),
+  );
+  let dx = 0;
+  let dy = 0;
+  let shared = 0;
+  for (const [id, pos] of Object.entries(layout)) {
+    const real = onCanvas.get(id);
+    if (!real) continue;
+    dx += real.position.x - pos.x;
+    dy += real.position.y - pos.y;
+    shared++;
+  }
+  if (shared > 0) {
+    dx /= shared;
+    dy /= shared;
+  }
+
+  const ghostNodes: GhostRFNode[] = proposed.nodes
+    .filter((n) => addedIds.has(n.id))
+    .map((n) => {
+      const pos = layout[n.id] ?? { x: 0, y: 0 };
+      return {
+        id: n.id,
+        type: "flowNode" as const,
+        position: { x: pos.x + dx, y: pos.y + dy },
+        data: { flowNode: n },
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        ghostKind: "added" as const,
+      };
+    });
+
+  const drawable = (id: string): boolean => onCanvas.has(id) || addedIds.has(id);
+  const findEdgeId = (source: string, target: string): string | undefined =>
+    currentEdges.find((e) => e.source === source && e.target === target)?.id;
+
+  const edgeDiff = new Map<string, DiffInfo>();
+  for (const key of diff.edges.removed) {
+    const { source, target } = parseEdgeKey(key);
+    const id = findEdgeId(source, target);
+    if (id !== undefined) edgeDiff.set(id, { status: "removed" });
+  }
+  for (const ec of diff.edges.changed) {
+    const { source, target } = parseEdgeKey(ec.key);
+    const id = findEdgeId(source, target);
+    if (id !== undefined) edgeDiff.set(id, { status: "changed", changedFields: ec.changedFields });
+  }
+
+  const ghostEdges: RFEdge[] = diff.edges.added
+    .map((key) => ({ key, ...parseEdgeKey(key) }))
+    .filter(({ source, target }) => drawable(source) && drawable(target))
+    .map(({ key, source, target }) => {
+      const e = proposed.edges.find((x) => x.source === source && x.target === target);
+      const label = e?.label ?? e?.conditions;
+      return {
+        id: `ghost-added-${key}`,
+        source,
+        target,
+        ...(label ? { label } : {}),
+        data: { ghostKind: "added" },
+      };
+    });
 
   return { nodeDiff, edgeDiff, ghostNodes, ghostEdges };
 }

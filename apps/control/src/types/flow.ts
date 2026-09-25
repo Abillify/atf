@@ -13,7 +13,15 @@ export type NodeType =
   | "classifier"
   | "parallel"
   | "retrieval"
-  | "memory";
+  | "memory"
+  | "agent-harness"
+  | "transform"
+  | "trigger"
+  | "assistant-context"
+  | "assistant-learn";
+/** Wire protocols the runtime ships. `LlmConfig.provider` may also name an
+ * instance declared in the runtime's `PROVIDERS` env var (e.g. two vLLM
+ * servers), so it is typed as an open string. */
 export type Provider =
   | "openai"
   | "google"
@@ -23,19 +31,31 @@ export type Provider =
   | "anthropic";
 
 export interface LlmConfig {
-  provider: Provider;
+  /**
+   * Model-shortcut reference (flows/model-shortcuts.yaml), possibly via a
+   * variable (`{{vars.model_main}}`). In the editable source form a node may
+   * carry ONLY a shortcut; the runtime expands it to provider/model/parameters.
+   */
+  shortcut?: string;
+  provider: Provider | (string & {});
   model: string;
   parameters?: {
     temperature?: number;
     maxTokens?: number;
+    reasoningEffort?: string;
+    contextLength?: number;
     [k: string]: unknown;
   };
+  /** Model pool expanded by the flow parser (strategy + ordered candidates). */
+  pool?: { strategy?: string; candidates: LlmConfig[] };
 }
 
 export interface FlowNode {
   id: string;
   type: NodeType;
   label?: string;
+  /** Queue priority for requests reaching this node; higher runs first. */
+  priority?: number;
   llm?: LlmConfig;
   tools?: string[];
   systemPrompt?: string;
@@ -153,6 +173,12 @@ export interface FlowDetail {
   version: number;
   published: FlowDefinition | null;
   draft: FlowDefinition | null;
+  /** File flows: the authoring form (shortcuts/vars/prompt includes kept). */
+  sourceDefinition?: FlowDefinition;
+  /** File flows: the file the flow was loaded from. */
+  file?: { name: string; format: "yaml" | "json" };
+  /** File flows: SHA-256 of the file, for write conflict detection. */
+  hash?: string;
   updatedAt?: string;
   updatedBy?: string | null;
 }
@@ -192,8 +218,8 @@ export interface FlowDiff {
 }
 
 export interface FlowDiffResponse {
-  from: { kind: string; version?: number };
-  to: { kind: string; version?: number };
+  from: { kind: string; version?: number; file?: string };
+  to: { kind: string; version?: number; file?: string };
   diff: FlowDiff;
 }
 

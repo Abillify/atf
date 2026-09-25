@@ -15,10 +15,11 @@
  * the canvas state (and becomes a normal, undoable history entry).
  */
 
-import React, { useEffect, useState } from "react";
+import type React from "react";
+import { useEffect, useState } from "react";
 import { backendUrl } from "../lib/backend-url";
 import { Button } from "../lib/ui";
-import { buildDiffOverlay, type DiffOverlay } from "../lib/flow-diff-view";
+import { buildProposalOverlay, type DiffOverlay } from "../lib/flow-diff-view";
 import type { RFNode, RFEdge } from "../lib/flow-graph";
 import type { FlowDefinition, FlowValidationReport } from "../types/flow";
 
@@ -130,7 +131,9 @@ export function FlowCopilotPanel({
         summary: data.diff.summary,
       });
       onPreviewChange(
-        buildDiffOverlay(getDefinition(), nodes, edges, data.diff),
+        // Proposal direction: current canvas -> proposed flow. Added nodes
+        // aren't on the canvas yet, so they are drawn as ghosts.
+        buildProposalOverlay(nodes, edges, data.proposed, data.diff),
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

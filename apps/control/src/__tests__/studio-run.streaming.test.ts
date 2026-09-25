@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { afterEach, describe, expect, test, vi } from "vitest";
-import { streamChatCompletion } from "../components/StudioPlayground";
+import { streamChatCompletion } from "../lib/studio-run";
 
 const encoder = new TextEncoder();
 

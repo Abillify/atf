@@ -119,3 +119,20 @@ describe("validateFlow", () => {
     expect(r.warnings.filter((w) => w.path.includes("tools"))).toHaveLength(0);
   });
 });
+
+describe("validateFlow schema errors", () => {
+  test("name the node and field instead of a bare schema failure", () => {
+    const report = validateFlow({
+      id: "f",
+      name: "F",
+      nodes: [
+        { id: "router", type: "router" },
+        { id: "answer", type: "llm", llm: { model: "m" }, config: { maxToolSteps: 3 } },
+      ],
+      edges: [],
+    });
+    expect(report.valid).toBe(false);
+    expect(report.errors.some((e) => e.path.startsWith("nodes[1](answer).llm"))).toBe(true);
+    expect(report.errors.every((e) => e.message !== "Schema validation failed")).toBe(true);
+  });
+});

@@ -3,7 +3,7 @@
 
 import { render } from "@testing-library/react";
 import { describe, test, expect, vi } from "vitest";
-import React, { useState, useCallback } from "react";
+import { useState, useCallback } from "react";
 import { FlowCanvas } from "../components/FlowCanvas";
 import type { RFNode, RFEdge } from "../lib/flow-graph";
 
@@ -70,8 +70,8 @@ describe("FlowCanvas selection-change render loop (regression)", () => {
     errorSpy.mockRestore();
   });
 
-  // Mirrors FlowEditor: inline (unstable) handler that sets state.
-  test("does not loop with an inline onSelectionChange (FlowEditor)", () => {
+  // Inline (unstable) handler that sets state — the pattern the old FlowEditor used.
+  test("does not loop with an inline onSelectionChange", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
     function Harness() {
       const [nodes, setNodes] = useState<RFNode[]>(initialNodes);

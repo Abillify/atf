@@ -30,6 +30,36 @@ export interface ValidationError {
   fileName?: string;
   reason: string;
   details?: unknown;
+  /** Schema failures: each problem with its path (`nodes.3.llm.provider`). */
+  issues?: Array<{ path: Array<string | number>; message: string }>;
+}
+
+/**
+ * Zod issues → path + message pairs. For a union, the alternative that got
+ * furthest (deepest paths) is reported instead of the bare "Invalid input",
+ * which is what an operator actually needs to fix.
+ */
+export function describeSchemaIssues(
+  issues: ReadonlyArray<{ path: PropertyKey[]; message: string; code?: string; errors?: unknown }>,
+  base: Array<string | number> = [],
+): Array<{ path: Array<string | number>; message: string }> {
+  const out: Array<{ path: Array<string | number>; message: string }> = [];
+  for (const issue of issues) {
+    const path = [...base, ...issue.path.map((p) => (typeof p === "symbol" ? String(p) : p))];
+    const branches = issue.code === "invalid_union" && Array.isArray(issue.errors)
+      ? (issue.errors as Array<Array<{ path: PropertyKey[]; message: string; code?: string; errors?: unknown }>>)
+      : undefined;
+    if (branches && branches.length > 0) {
+      const depth = (b: typeof branches[number]): number =>
+        Math.max(0, ...b.map((i) => i.path.length));
+      const best = [...branches].sort((a, b) => depth(b) - depth(a) || a.length - b.length)[0]!;
+      const nested = describeSchemaIssues(best, path);
+      out.push(...(nested.length > 0 ? nested : [{ path, message: issue.message }]));
+      continue;
+    }
+    out.push({ path, message: issue.message });
+  }
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,17 +195,26 @@ const LlmPoolCandidateSchema: z.ZodType<LlmConfig> = z.lazy(() =>
   }),
 ) as unknown as z.ZodType<LlmConfig>;
 
-export const LlmConfigSchema: z.ZodType<LlmConfig> = z.object({
-  provider: ProviderSchema,
-  model: z.string().min(1).max(256),
-  parameters: LlmParametersSchema.optional(),
-  pool: z
-    .object({
-      strategy: PoolStrategySchema,
-      candidates: z.array(LlmPoolCandidateSchema).min(1),
-    })
-    .optional(),
-}) as unknown as z.ZodType<LlmConfig>;
+export const LlmConfigSchema: z.ZodType<LlmConfig> = z
+  .object({
+    provider: ProviderSchema.describe(
+      "A `PROVIDERS` instance name, a built-in protocol name, or a `{{vars.*}}` reference.",
+    ),
+    model: z.string().min(1).max(256).describe("Model id passed to the provider."),
+    parameters: LlmParametersSchema.optional().describe(
+      "Generation parameters (temperature 0–2, maxTokens 1–65536, contextLength, reasoningEffort, chatTemplateKwargs, extraBody, visionInput, providerOptions); max. 20 keys.",
+    ),
+    pool: z
+      .object({
+        strategy: PoolStrategySchema,
+        candidates: z.array(LlmPoolCandidateSchema).min(1),
+      })
+      .optional()
+      .describe("Set by the parser when a pool shortcut is expanded; not written by hand."),
+  })
+  .describe(
+    "The model of this node. In a flow file usually `{ shortcut: <name> }` from `model-shortcuts.yaml`, expanded to provider/model/parameters when the flow loads.",
+  ) as unknown as z.ZodType<LlmConfig>;
 
 const FinalAnswerContractSchema = z
   .object({
@@ -574,33 +613,76 @@ const RESERVED_NODE_IDS: ReadonlySet<string> = new Set([
  */
 export const FlowNodeSchema: z.ZodType<FlowNode> = z
   .object({
-    id: z.string().min(1),
-    type: z.string().min(1),
-    label: z.string().optional(),
-    priority: z.number().int().min(0).max(100).optional(),
+    id: z
+      .string()
+      .min(1)
+      .describe("Unique within the flow; edges and other nodes refer to it."),
+    type: z
+      .string()
+      .min(1)
+      .describe("A built-in node type (see the node types below) or a registered plugin type."),
+    label: z.string().optional().describe("Display name in the Studio and in traces."),
+    priority: z
+      .number()
+      .int()
+      .min(0)
+      .max(100)
+      .optional()
+      .describe(
+        "Queue priority 0–100 of `llm`/`classifier` nodes; a flow's effective priority is the maximum of its own and its nodes'.",
+      ),
     llm: LlmConfigSchema.optional(),
-    tools: z.array(z.string().max(128)).max(50).optional(),
-    config: z.record(z.string(), z.unknown()).optional(),
+    tools: z
+      .array(z.string().max(128))
+      .max(50)
+      .optional()
+      .describe("MCP tool refs the node may call: `server/tool`, or `server/*` for all tools of a server; max. 50."),
+    config: z
+      .record(z.string(), z.unknown())
+      .optional()
+      .describe("Type-specific settings; see the node type's settings table."),
     classifierSchema: z
       .object({
-        schema: z.record(z.string(), z.unknown()),
-        classKey: z.string().min(1),
+        schema: z
+          .record(z.string(), z.unknown())
+          .describe("JSON Schema of the structured classification the model must return."),
+        classKey: z
+          .string()
+          .min(1)
+          .describe("Schema field whose value becomes `classLabel` for routing."),
       })
-      .optional(),
-    systemPrompt: z.string().max(65536).optional(),
+      .optional()
+      .describe("Required for `classifier` nodes."),
+    systemPrompt: z
+      .string()
+      .max(65536)
+      .optional()
+      .describe(
+        "System prompt; may include prompt files (`#[[file:prompts/x.md]]`) and runtime placeholders (`{{context.*}}`, `{{now.*}}`, …).",
+      ),
     overrides: z
       .array(
         z
           .object({
-            whenClass: z.string().min(1).optional(),
-            whenClaim: z.string().min(1).max(1024).optional(),
-            whenParam: z.string().min(1).max(1024).optional(),
-            whenPlan: z.string().min(1).optional(),
-            whenGroup: z.string().min(1).optional(),
-            whenLanguage: z.string().min(1).optional(),
+            whenClass: z.string().min(1).optional().describe("Matches when `classLabel` equals this value."),
+            whenClaim: z
+              .string()
+              .min(1)
+              .max(1024)
+              .optional()
+              .describe("Condition expression over the caller's token claims."),
+            whenParam: z
+              .string()
+              .min(1)
+              .max(1024)
+              .optional()
+              .describe("Condition expression over the request parameters."),
+            whenPlan: z.string().min(1).optional().describe("Matches the tenant plan."),
+            whenGroup: z.string().min(1).optional().describe("Matches when the caller is in this group."),
+            whenLanguage: z.string().min(1).optional().describe("Matches the request language."),
             llm: LlmConfigSchema.optional(),
-            tools: z.array(z.string().max(128)).max(50).optional(),
-            systemPrompt: z.string().max(65536).optional(),
+            tools: z.array(z.string().max(128)).max(50).optional().describe("Replaces the node's tools."),
+            systemPrompt: z.string().max(65536).optional().describe("Replaces the node's system prompt."),
           })
           .refine(
             (o) =>
@@ -627,19 +709,29 @@ export const FlowNodeSchema: z.ZodType<FlowNode> = z
           ),
       )
       .max(20)
-      .optional(),
+      .optional()
+      .describe(
+        "Up to 20 variants of llm/tools/systemPrompt; all `when…` conditions of an entry must match, the first matching entry wins.",
+      ),
     parallelNodes: z
       .array(
         z.union([
           z.string().min(1),
           z.object({
-            node: z.string().min(1),
-            condition: z.string().max(1024).optional(),
+            node: z.string().min(1).describe("Child node id."),
+            condition: z
+              .string()
+              .max(1024)
+              .optional()
+              .describe("Condition expression; the child runs only when it is true."),
           }),
         ]),
       )
       .max(20)
-      .optional(),
+      .optional()
+      .describe(
+        "Children of a `parallel` node: node ids, or `{ node, condition }` to run a child conditionally; max. 20.",
+      ),
   })
   .superRefine((node, ctx) => {
     if (RESERVED_NODE_IDS.has(node.id)) {
@@ -729,11 +821,17 @@ export const FlowNodeSchema: z.ZodType<FlowNode> = z
  * - label: optional string
  */
 export const FlowEdgeSchema: z.ZodType<FlowEdge> = z.object({
-  id: z.string().optional(),
-  source: z.string().min(1),
-  target: z.string().min(1),
-  conditions: z.string().max(1024).optional(),
-  label: z.string().optional(),
+  id: z.string().optional().describe("Optional edge id."),
+  source: z.string().min(1).describe("Id of the node the edge leaves."),
+  target: z.string().min(1).describe("Id of the node the edge enters."),
+  conditions: z
+    .string()
+    .max(1024)
+    .optional()
+    .describe(
+      "Condition expression. Empty: the edge is always followed. The conditional edges leaving a node are checked in file order and the first that is true is taken; if none is, the run ends.",
+    ),
+  label: z.string().optional().describe("Display label in the Studio."),
 });
 
 /**
@@ -753,11 +851,25 @@ export const FlowEdgeSchema: z.ZodType<FlowEdge> = z.object({
  *   `maxAttempts` optionally lowers the per-flow ceiling.
  */
 export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
-  id: z.string().min(1),
-  name: z.string().min(1),
-  description: z.string().optional(),
-  priority: z.number().int().min(0).max(100).optional(),
-  variables: z.record(z.string(), z.unknown()).optional(),
+  id: z
+    .string()
+    .min(1)
+    .describe("Unique flow id; also the model name clients request."),
+  name: z.string().min(1).describe("Display name."),
+  description: z.string().optional().describe("What the flow does; shown in the Studio and model listing."),
+  priority: z
+    .number()
+    .int()
+    .min(0)
+    .max(100)
+    .optional()
+    .describe("Queue priority 0–100 under a concurrency cap (default 50); higher runs first."),
+  variables: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      "Named values referenced as `{{vars.<name>}}` in nodes and edges; overridable per request. Values may reference other variables, constants, `FLOW_PUBLIC_*` env and calculations.",
+    ),
   pricing: z
     .record(
       z.string(),
@@ -766,8 +878,14 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
         completion: z.number().min(0),
       }),
     )
-    .optional(),
-  dataClasses: z.array(z.enum(DATA_CLASSES)).optional(),
+    .optional()
+    .describe(
+      "Prices per 1,000,000 prompt/completion tokens keyed by model; override the central prices of `model-shortcuts.yaml` for cost accounting.",
+    ),
+  dataClasses: z
+    .array(z.enum(DATA_CLASSES))
+    .optional()
+    .describe("Data classes this flow processes; matched by the compliance policy's data rules."),
   requiredScopes: z
     .array(
       z
@@ -778,7 +896,8 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
         .regex(/\S/u, "scope must contain a non-whitespace character"),
     )
     .max(100)
-    .optional(),
+    .optional()
+    .describe("OAuth/OIDC scopes a caller needs to discover and run this flow; all are required."),
   recovery: z
     .object({
       retry: z.boolean(),
@@ -787,10 +906,26 @@ export const FlowDefinitionSchema: z.ZodType<FlowDefinition> = z.object({
       // dispatch time, so a flow can never exceed what the operator allows.
       maxAttempts: z.number().int().min(1).max(10).optional(),
     })
-    .optional(),
-  nodes: z.array(FlowNodeSchema).min(1).max(100),
-  edges: z.array(FlowEdgeSchema).min(0).max(500),
-  metadata: z.record(z.string(), z.unknown()).optional(),
+    .optional()
+    .describe(
+      "Crash recovery of async runs: `retry` states whether re-running from the start is safe; `maxAttempts` (1–10) lowers the global ceiling.",
+    ),
+  nodes: z.array(FlowNodeSchema).min(1).max(100).describe(
+      "The steps; 1–100. In a flow file optional when `metadata.$include` merges them in from sub-flows.",
+    ),
+  edges: z
+    .array(FlowEdgeSchema)
+    .min(0)
+    .max(500)
+    .describe(
+      "Connections between nodes; 0–500. The run starts at the first node; a node without an outgoing edge ends it. In a flow file optional when `metadata.$include` merges them in.",
+    ),
+  metadata: z
+    .record(z.string(), z.unknown())
+    .optional()
+    .describe(
+      "Free-form. Known keys: `version` (appears as flow_version in debug traces), `ui` (Studio layout), `$include.subflows` (sub-flow files).",
+    ),
 });
 
 // ---------------------------------------------------------------------------
@@ -878,6 +1013,7 @@ export function validateFlowDefinition(raw: unknown): ValidationResult {
       error: {
         reason: "Schema validation failed",
         details: zodResult.error.flatten(),
+        issues: describeSchemaIssues(zodResult.error.issues),
       },
     };
   }

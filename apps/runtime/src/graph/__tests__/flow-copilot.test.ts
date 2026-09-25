@@ -43,6 +43,9 @@ function blankNode(overrides: Partial<FlowPatch["addNodes"][number]>) {
     model: "",
     systemPrompt: "",
     tools: [],
+    shortcut: "",
+    configPatch: {},
+    fields: {},
     ...overrides,
   };
 }
@@ -72,13 +75,122 @@ function fakeModel(patch: FlowPatch | "throw"): LanguageModel {
 }
 
 describe("applyFlowPatch", () => {
-  test("adds a node with defaults when llm fields are blank", () => {
+  test("adds a node without inventing a model when llm fields are blank (DEFAULT_LLM applies)", () => {
     const patch = emptyPatch({
       addNodes: [blankNode({ id: "guard", type: "llm" })],
     });
     const proposed = applyFlowPatch(base, patch);
     const added = proposed.nodes.find((n) => n.id === "guard");
-    expect(added?.llm).toEqual({ provider: "openai", model: "gpt-4o-mini" });
+    expect(added?.llm).toBeUndefined();
+  });
+
+  test("sets a model shortcut and keeps existing parameters", () => {
+    const withParams = {
+      ...base,
+      nodes: base.nodes.map((n) =>
+        n.id === "llm" ? { ...n, llm: { provider: "openai", model: "m", parameters: { temperature: 0.2 } } } : n,
+      ),
+    } as FlowDefinition;
+    const proposed = applyFlowPatch(
+      withParams,
+      emptyPatch({ updateNodes: [blankNode({ id: "llm", type: "llm", shortcut: "fast-pool" })] }),
+    );
+    expect(proposed.nodes.find((n) => n.id === "llm")?.llm).toEqual({
+      shortcut: "fast-pool",
+      parameters: { temperature: 0.2 },
+    } as unknown as FlowDefinition["nodes"][number]["llm"]);
+  });
+
+  test("merges configPatchJson into the node config (null removes a key)", () => {
+    const withConfig = {
+      ...base,
+      nodes: base.nodes.map((n) =>
+        n.id === "llm"
+          ? { ...n, config: { maxToolSteps: 4, toolArgs: { "vectorsearch/search": { limit: 5 } }, dropRagContext: true } }
+          : n,
+      ),
+    } as FlowDefinition;
+    const proposed = applyFlowPatch(
+      withConfig,
+      emptyPatch({
+        updateNodes: [
+          blankNode({
+            id: "llm",
+            type: "llm",
+            tools: ["vectorsearch/search"],
+            configPatch: {
+              toolArgs: { "vectorsearch/search": { collection: "kanzlei" } },
+              maxToolSteps: 8,
+              dropRagContext: null,
+            },
+          }),
+        ],
+      }),
+    );
+    const node = proposed.nodes.find((n) => n.id === "llm");
+    expect(node?.tools).toEqual(["vectorsearch/search"]);
+    expect(node?.config).toEqual({
+      maxToolSteps: 8,
+      toolArgs: { "vectorsearch/search": { limit: 5, collection: "kanzlei" } },
+    });
+  });
+
+  test("empty values in a config patch mean no change; null removes", () => {
+    const withConfig = {
+      ...base,
+      nodes: base.nodes.map((n) => (n.id === "llm" ? { ...n, config: { maxToolSteps: 4, clientTools: false } } : n)),
+    } as FlowDefinition;
+    const proposed = applyFlowPatch(
+      withConfig,
+      emptyPatch({
+        updateNodes: [
+          blankNode({
+            id: "llm",
+            type: "llm",
+            configPatch: { errorStrategy: "continue", fallbackNodeId: "", requiresApproval: [], progress: {}, clientTools: null },
+          }),
+        ],
+      }),
+    );
+    expect(proposed.nodes.find((n) => n.id === "llm")?.config).toEqual({ maxToolSteps: 4, errorStrategy: "continue" });
+  });
+
+  test("drops config keys that aren't documented for the node type", () => {
+    const proposed = applyFlowPatch(
+      base,
+      emptyPatch({
+        updateNodes: [blankNode({ id: "llm", type: "llm", shortcut: "fast-pool", configPatch: { maxToolSteps: 10, shortcut: "fast-pool" } })],
+      }),
+    );
+    expect(proposed.nodes.find((n) => n.id === "llm")?.config).toEqual({ maxToolSteps: 10 });
+  });
+
+  test("repairs a config patch that arrives as a string with leaked brackets", () => {
+    const proposed = applyFlowPatch(
+      base,
+      emptyPatch({
+        updateNodes: [blankNode({ id: "llm", type: "llm", configPatch: '{"maxToolSteps": 10}]}], ' })],
+      }),
+    );
+    expect(proposed.nodes.find((n) => n.id === "llm")?.config).toEqual({ maxToolSteps: 10 });
+  });
+
+  test("fields sets parallel children but ignores unknown fields", () => {
+    const proposed = applyFlowPatch(
+      base,
+      emptyPatch({
+        addNodes: [
+          blankNode({
+            id: "fan",
+            type: "parallel",
+            fields: { parallelNodes: ["llm"], id: "hijack", llm: { provider: "x" } },
+          }),
+        ],
+      }),
+    );
+    const fan = proposed.nodes.find((n) => n.id === "fan");
+    expect(fan?.parallelNodes).toEqual(["llm"]);
+    expect(fan?.llm).toBeUndefined();
   });
 
   test("updates an existing node's system prompt without touching other fields", () => {
@@ -152,5 +264,94 @@ describe("proposeFlowEdit", () => {
     if (result.ok) throw new Error("expected failure");
     expect(result.validation).toBeDefined();
     expect(result.validation?.valid).toBe(false);
+  });
+});
+
+/** Fake model answering with each patch in turn (last one repeats). */
+function sequenceModel(patches: FlowPatch[]): { model: LanguageModel; calls: () => number; prompts: string[] } {
+  let n = 0;
+  const prompts: string[] = [];
+  const model = {
+    specificationVersion: "v3",
+    provider: "fake",
+    modelId: "fake-copilot",
+    doGenerate: async (opts: { prompt: unknown }) => {
+      prompts.push(JSON.stringify(opts.prompt));
+      const patch = patches[Math.min(n, patches.length - 1)];
+      n++;
+      return {
+        content: [{ type: "text" as const, text: JSON.stringify(patch) }],
+        finishReason: { unified: "stop" as const, raw: "stop" },
+        usage: {
+          inputTokens: { total: 1, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+          outputTokens: { total: 1, text: undefined, reasoning: undefined },
+        },
+        warnings: [],
+      };
+    },
+    doStream: async () => {
+      throw new Error("not used");
+    },
+  } as unknown as LanguageModel;
+  return { model, calls: () => n, prompts };
+}
+
+describe("proposeFlowEdit repair round", () => {
+  const broken = emptyPatch({ addEdges: [{ source: "llm", target: "ghost", conditions: "", label: "" }] });
+  const fixed = emptyPatch({ updateNodes: [blankNode({ id: "llm", type: "llm", label: "Answer" })] });
+
+  test("feeds validation errors back once and accepts the corrected patch", async () => {
+    const { model, calls, prompts } = sequenceModel([broken, fixed]);
+    const result = await proposeFlowEdit(base, "rename", model);
+    expect(result.ok).toBe(true);
+    expect(calls()).toBe(2);
+    expect(prompts[1]).toContain("That patch was rejected");
+    expect(prompts[1]).toContain("ghost");
+  });
+
+  test("reports the concrete problems when the correction fails too", async () => {
+    const { model, calls } = sequenceModel([broken, broken]);
+    const result = await proposeFlowEdit(base, "rename", model);
+    expect(result.ok).toBe(false);
+    expect(calls()).toBe(2);
+    if (!result.ok) {
+      expect(result.message).toContain("automatic correction");
+      expect(result.validation?.errors[0]?.message).toContain("ghost");
+    }
+  });
+});
+
+
+describe("proposeFlowEdit prompt and no-op handling", () => {
+  test("a proposal that changes nothing is reported, not offered for accept", async () => {
+    const { model } = sequenceModel([emptyPatch({ explanation: "I enabled cacheStable." })]);
+    const result = await proposeFlowEdit(base, "machs besser", model);
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.message).toContain("No change");
+      expect(result.message).toContain("I enabled cacheStable.");
+    }
+  });
+
+  test("the prompt shows every config key even of a large config", async () => {
+    const big = {
+      ...base,
+      nodes: base.nodes.map((n) =>
+        n.id === "llm"
+          ? {
+              ...n,
+              config: {
+                toolArgs: Object.fromEntries(
+                  Array.from({ length: 40 }, (_, i) => [`server/tool${i}`, { collection: "x".repeat(300) }]),
+                ),
+                toolSelection: { mode: "semantic", cacheStable: true },
+              },
+            }
+          : n,
+      ),
+    } as FlowDefinition;
+    const { model, prompts } = sequenceModel([emptyPatch({ updateNodes: [blankNode({ id: "llm", type: "llm", label: "x" })] })]);
+    await proposeFlowEdit(big, "anything", model);
+    expect(prompts[0]).toContain("cacheStable");
   });
 });

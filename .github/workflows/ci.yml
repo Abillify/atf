@@ -92,6 +92,9 @@ jobs:
       - name: Configuration reference is current
         run: bun run config-reference:check
 
+      - name: Flow reference and flow schema are current
+        run: bun run flow-reference:check
+
       # A regression gate, not a zero-findings gate. The tree carries pre-existing Biome
       # findings recorded in .biome-baseline.json; this fails only when they grow. The formatter
       # is intentionally excluded — see scripts/check-lint-baseline.ts.

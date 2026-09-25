@@ -34,7 +34,20 @@ need adaptation.
 
 - **Flows as files.** Workflows are YAML documents validated against
   `apps/runtime/schemas/flow.schema.json` and loaded from `FLOWS_DIR`. Changes are picked up
-  without a restart, so a flow is versionable and reviewable like source code.
+  without a restart, so a flow is versionable and reviewable like source code. The Studio can
+  write a flow back into its own file (operators with `flows:write`, only when `FLOWS_DIR` is
+  writable — mount it read-only to disable this). Writes keep the authoring form: model
+  shortcuts, `{{vars.*}}` references, prompt includes, sub-flow files and comments stay as
+  they are, and a value-only edit changes just those lines. Every field, node type setting and
+  expression is listed in the generated [FLOWS.md](FLOWS.md).
+- **Flow variables.** `variables` values can reference other variables (`{{vars.x}}`),
+  global constants from `FLOWS_DIR/constants.yaml` (`constants: { name: value }`, used as
+  `{{const.name}}`), environment values whose name starts with `FLOW_PUBLIC_`
+  (`{{env.FLOW_PUBLIC_REGION}}`; no other env is ever exposed to flows), and calculations
+  (`{{= round(vars.max_tokens / 2) }}`: arithmetic, comparisons, `a ? b : c` and a fixed set of
+  functions, no code execution). They are evaluated in dependency order; cycles, unknown
+  references and calculation errors are validation errors. Variables supplied with a request
+  are literals and are never evaluated.
 - **Node types.** Twelve built-ins: `llm` (streaming call with an optional agent tool loop),
   `tool` (deterministic MCP calls), `router` (edge evaluation without a model), `classifier`
   (structured JSON output that routing conditions can read), `parallel` (conditional
@@ -293,7 +306,8 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 ## Quality: evaluation, canary, shadow, replay
 
 - **Evaluation runs.** Datasets, automated judge scoring, and matrix runs across model and
-  prompt variants, suitable for use as a regression gate in CI.
+  prompt variants, suitable for use as a regression gate in CI. Eval cases can be collected from
+  Studio test runs, each with a reference answer, and removed again (`DELETE /eval/cases/:id`).
 - **Canary promotion.** A flow variant serves a fraction of traffic and is promoted or rolled
   back against configured criteria.
 - **Shadow mode.** Every production request additionally runs against a candidate flow. Both
@@ -431,11 +445,24 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
 
 Control is a Next.js application for operating the platform.
 
-- Flow list, editor, and graph visualization with live execution overlay.
+- Flow registry, and **Studio** for building and changing flows: a canvas with auto-layout and
+  dashed links for settings-defined references (parallel children, harness verifier and
+  delegates); a settings form per node type generated from Runtime's node type catalog
+  (`GET /flows/node-types`) with the full node type reference beside it; a variables table
+  (typed values, usage counts, renaming that rewrites references); an expression builder
+  behind every ƒx button with a variable browser, operators, and a live result from Runtime;
+  drafts, publish, and diff against the live version; a Copilot that proposes changes,
+  including node settings, as a previewed overlay that must be accepted; and test runs of the
+  canvas state (an ephemeral test registration, never the live flow) or of the live flow, with
+  per-node tokens, cost, and saving a run as an eval case with an expected answer.
 - Execution history and trace viewer.
 - Approval inbox with role-gated decisions.
 - Cost, budget, and FinOps panels.
-- Evaluation runs, canary status, shadow comparisons, autopilot state.
+- Evaluation runs and eval cases (list and delete), canary status, shadow comparisons,
+  autopilot state.
+- Provider and pool health (reachability, capabilities, call/error/token counters, admission
+  queue) and a provider testing bench (live model list, capability auto-test, ad-hoc prompt,
+  latency and throughput).
 - Tenant, key, and budget administration.
 - Compliance dossier and DSAR handling.
 - Assistants and skill registry administration.

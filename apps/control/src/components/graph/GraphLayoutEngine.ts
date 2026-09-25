@@ -60,38 +60,67 @@ export interface DagrePosition {
  * This is a pure function: no global state is mutated; calling it twice with the
  * same arguments produces identical output.
  */
+/** Compact card size used by the Studio editor canvas (see NodeCard `compact`). */
+export const EDITOR_NODE_W = 200;
+export const EDITOR_NODE_H = 56;
+
+export interface DagreLayoutOptions {
+  /** Per-node rendered size (e.g. React Flow's `measured`); falls back to `defaultSize`. */
+  sizes?: Map<string, { width: number; height: number }>;
+  /** Size for nodes without an entry in `sizes`. Default NODE_W × NODE_H. */
+  defaultSize?: { width: number; height: number };
+  nodesep?: number;
+  ranksep?: number;
+  /**
+   * Edges carrying a text label get a label box so Dagre reserves room for it
+   * between ranks instead of letting labels pile onto nodes.
+   */
+  labelSize?: { width: number; height: number };
+}
+
 export function computeDagreLayout(
   nodeIds: string[],
-  edges: Array<{ source: string; target: string }>,
+  edges: Array<{ source: string; target: string; label?: string }>,
+  options: DagreLayoutOptions = {},
 ): Map<string, DagrePosition> {
-  const g = new dagre.graphlib.Graph();
+  const fallback = options.defaultSize ?? { width: NODE_W, height: NODE_H };
+  const g = new dagre.graphlib.Graph({ multigraph: true });
   g.setDefaultEdgeLabel(() => ({}));
   g.setGraph({
     rankdir: "TB", // top → bottom
-    nodesep: 70, // horizontal gap between nodes in the same rank
-    ranksep: 90, // vertical gap between ranks
+    nodesep: options.nodesep ?? 70, // horizontal gap between nodes in the same rank
+    ranksep: options.ranksep ?? 90, // vertical gap between ranks
     marginx: 40,
     marginy: 40,
   });
 
+  const sizeOf = (id: string) => options.sizes?.get(id) ?? fallback;
   for (const id of nodeIds) {
-    g.setNode(id, { width: NODE_W, height: NODE_H });
+    const { width, height } = sizeOf(id);
+    g.setNode(id, { width, height });
   }
-  for (const e of edges) {
-    // Only add edges where both endpoints are in the graph
-    if (g.hasNode(e.source) && g.hasNode(e.target)) {
-      g.setEdge(e.source, e.target);
+  edges.forEach((e, i) => {
+    // Only add edges where both endpoints are in the graph (and skip self-loops,
+    // which Dagre routes around the node and which add nothing to the ranking).
+    if (!g.hasNode(e.source) || !g.hasNode(e.target) || e.source === e.target) {
+      return;
     }
-  }
+    const label =
+      e.label && options.labelSize
+        ? { width: options.labelSize.width, height: options.labelSize.height, labelpos: "c" }
+        : {};
+    g.setEdge(e.source, e.target, label, `e${i}`);
+  });
 
   dagre.layout(g);
 
   const positions = new Map<string, DagrePosition>();
   for (const id of nodeIds) {
     const n = g.node(id);
+    const { width, height } = sizeOf(id);
     if (n) {
       // Dagre returns centre coordinates; React Flow expects top-left
-      positions.set(id, { x: n.x - NODE_W / 2, y: n.y - NODE_H / 2 });
+      positions.set(id, { x: n.x - width / 2, y: n.y - height / 2 });
     } else {
       positions.set(id, { x: 0, y: 0 });
     }

@@ -15,11 +15,11 @@
  * signature — it only works for flows without a webhookSecret configured.
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
-import { Badge, Button, Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell } from "../../../lib/ui";
+import { Badge, Button, } from "../../../lib/ui";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors GET /triggers response from src/routes/triggers.ts)
@@ -52,7 +52,7 @@ function TestFirePanel({
   onClose,
 }: {
   flowId: string;
-  token: string;
+  token: string | undefined;
   onClose: () => void;
 }) {
   const [payload, setPayload] = useState('{"message": "test"}');
@@ -137,14 +137,14 @@ function TestFirePanel({
 // ---------------------------------------------------------------------------
 
 export default function TriggersPage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [flows, setFlows] = useState<TriggerFlow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [firingId, setFiringId] = useState<string | null>(null);
 
   const fetchTriggers = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     setError(null);
     try {
@@ -162,11 +162,11 @@ export default function TriggersPage() {
     // TypeScript type info, so exhaustive-deps' scope analysis can't tell the
     // cast's property name apart from the same-named outer binding.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
-    if (ready && token) void fetchTriggers();
-  }, [ready, token, fetchTriggers]);
+    if (ready && isAuthenticated) void fetchTriggers();
+  }, [ready, isAuthenticated, fetchTriggers]);
 
   const endpointBase =
     typeof window !== "undefined" ? `${window.location.protocol}//${window.location.host}` : "<base-url>";
@@ -238,7 +238,7 @@ export default function TriggersPage() {
                 {firingId === f.flowId ? "Close test" : "Test fire"}
               </Button>
             </div>
-            {firingId === f.flowId && token && (
+            {firingId === f.flowId && isAuthenticated && (
               <TestFirePanel flowId={f.flowId} token={token} onClose={() => setFiringId(null)} />
             )}
           </div>

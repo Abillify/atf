@@ -13,7 +13,8 @@
  * Designed to fit in the studio sidebar (≈280 px wide) or a full page.
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import type React from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { Badge, Button } from "../lib/ui";
@@ -126,13 +127,29 @@ export interface AutopilotPanelProps {
   flowId?: string;
   /** Maximum number of runs to show. Default 10. */
   limit?: number;
+  /** Known flows — renders a picker for the manual trigger instead of a free-text id. */
+  flows?: { id: string; name: string }[];
+  /**
+   * The flow is chosen by the host page (e.g. the Studio's flow picker): show
+   * it instead of offering yet another selector.
+   */
+  fixedFlow?: boolean;
 }
 
 export function AutopilotPanel({
   flowId,
   limit = 10,
+  flows,
+  fixedFlow = false,
 }: AutopilotPanelProps): React.JSX.Element {
-  const { token } = useAuth();
+  // isAuthenticated statt !!token: bei AUTHN_MODE=disabled gibt es kein Token,
+  // die Operator-Plane ist trotzdem erreichbar. Header nur mit echtem Token.
+  const { token, ready, isAuthenticated } = useAuth();
+  const authHeaders = useMemo((): Record<string, string> => {
+    const headers: Record<string, string> = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    return headers;
+  }, [token]);
   const [runs, setRuns] = useState<AutopilotRun[]>([]);
   const [governance, setGovernance] = useState<AutopilotGovernanceConfig | null>(null);
   const [loading, setLoading] = useState(true);
@@ -140,12 +157,19 @@ export function AutopilotPanel({
   const [triggering, setTriggering] = useState(false);
   const [triggerFlowId, setTriggerFlowId] = useState(flowId ?? "");
   const [triggerMsg, setTriggerMsg] = useState<string | null>(null);
+  /** Set when the backend reports the feature as unavailable (503). */
+  const [unavailable, setUnavailable] = useState<string | null>(null);
+
+  // Follow the Studio's flow selection.
+  useEffect(() => {
+    setTriggerFlowId(flowId ?? "");
+  }, [flowId]);
 
   const fetchGovernance = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     try {
       const resp = await fetch(backendUrl("/autopilot/config"), {
-        headers: { Authorization: `Bearer ${token}` },
+        headers: authHeaders,
       });
       if (!resp.ok) return;
       const data = (await resp.json()) as { config: AutopilotGovernanceConfig };
@@ -153,20 +177,37 @@ export function AutopilotPanel({
     } catch {
       /* governance display is best-effort; runs list is the primary content */
     }
-  }, [token]);
+  }, [authHeaders, ready, isAuthenticated]);
 
   const fetchRuns = useCallback(async () => {
-    if (!token) return;
+    if (!ready) return;
+    if (!isAuthenticated) {
+      setLoading(false);
+      setError("Not signed in.");
+      return;
+    }
     try {
       const url = flowId
         ? backendUrl(`/autopilot/runs/flow/${encodeURIComponent(flowId)}?limit=${limit}`)
         : backendUrl(`/autopilot/runs?limit=${limit}`);
-      const resp = await fetch(url, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!resp.ok) return;
+      const resp = await fetch(url, { headers: authHeaders });
+      if (!resp.ok) {
+        const d = (await resp.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        const message = d.error?.message ?? `HTTP ${resp.status}`;
+        if (resp.status === 503 || resp.status === 501) {
+          setUnavailable(message);
+          setError(null);
+        } else {
+          setError(message);
+        }
+        setRuns([]);
+        return;
+      }
       const data = (await resp.json()) as { runs: AutopilotRun[] };
       setRuns(data.runs ?? []);
+      setUnavailable(null);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -178,7 +219,7 @@ export function AutopilotPanel({
     // TypeScript type info, so exhaustive-deps' scope analysis can't tell the
     // cast's property name apart from the same-named outer binding.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, flowId, limit]);
+  }, [authHeaders, ready, isAuthenticated, flowId, limit]);
 
   // Initial load + poll while any run is in progress.
   // Two separate effects: one for initial/refetch-on-deps-change, one for polling.
@@ -202,7 +243,7 @@ export function AutopilotPanel({
   }, [fetchRuns, runs, isVisible]);
 
   const handleTrigger = useCallback(async () => {
-    if (!token || !triggerFlowId.trim()) return;
+    if (!isAuthenticated || !triggerFlowId.trim()) return;
     setTriggering(true);
     setTriggerMsg(null);
     try {
@@ -210,7 +251,7 @@ export function AutopilotPanel({
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token}`,
+          ...authHeaders,
         },
         body: JSON.stringify({ flowId: triggerFlowId.trim() }),
       });
@@ -231,7 +272,7 @@ export function AutopilotPanel({
     // TypeScript type info, so exhaustive-deps' scope analysis can't tell the
     // cast's property name apart from the same-named outer binding.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token, triggerFlowId, fetchRuns]);
+  }, [authHeaders, isAuthenticated, triggerFlowId, fetchRuns]);
 
   return (
     <div className="flex flex-col gap-3 text-sm">
@@ -265,20 +306,50 @@ export function AutopilotPanel({
         </div>
       )}
 
+      {unavailable && (
+        <div className="rounded border border-dashed border-border bg-muted px-3 py-2 text-[11px] text-muted-foreground">
+          <span className="font-medium text-foreground">Not available: </span>
+          {unavailable}
+        </div>
+      )}
+
       {/* Manual trigger */}
       <div className="flex flex-col gap-1.5">
         <div className="flex gap-1.5">
-          <input
-            value={triggerFlowId}
-            onChange={(e) => setTriggerFlowId(e.target.value)}
-            placeholder="flow-id"
-            className="flex-1 rounded border border-border px-2 py-1 text-xs font-mono"
-            aria-label="Flow ID for manual autopilot trigger"
-          />
+          {fixedFlow ? (
+            <span
+              className="min-w-0 flex-1 truncate rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-muted-foreground"
+              title="Chosen in the Studio's flow picker"
+            >
+              {triggerFlowId || "no flow selected"}
+            </span>
+          ) : flows ? (
+            <select
+              value={triggerFlowId}
+              onChange={(e) => setTriggerFlowId(e.target.value)}
+              className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1 text-xs"
+              aria-label="Flow for manual autopilot trigger"
+            >
+              <option value="">— select flow —</option>
+              {flows.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name} ({f.id})
+                </option>
+              ))}
+            </select>
+          ) : (
+            <input
+              value={triggerFlowId}
+              onChange={(e) => setTriggerFlowId(e.target.value)}
+              placeholder="flow-id"
+              className="flex-1 rounded border border-border px-2 py-1 text-xs font-mono"
+              aria-label="Flow ID for manual autopilot trigger"
+            />
+          )}
           <Button
             variant="primary"
             size="sm"
-            disabled={triggering || !triggerFlowId.trim()}
+            disabled={triggering || !triggerFlowId.trim() || unavailable !== null}
             onClick={() => void handleTrigger()}
           >
             {triggering ? "…" : "Trigger"}
@@ -292,7 +363,7 @@ export function AutopilotPanel({
       </div>
 
       {/* Runs list */}
-      {loading ? (
+      {unavailable ? null : loading ? (
         <div className="text-xs text-muted-foreground">Loading…</div>
       ) : error ? (
         <div className="text-xs text-red-600">{error}</div>

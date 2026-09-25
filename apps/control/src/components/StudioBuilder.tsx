@@ -17,7 +17,8 @@
  * Reuses: FlowCanvas, NodePropertyPanel, FlowNodePalette, FlowRunDrawer.
  */
 
-import React, {
+import type React from "react";
+import {
   useState,
   useMemo,
   useCallback,
@@ -25,12 +26,15 @@ import React, {
   useRef,
 } from "react";
 import { FlowCanvas, type NodeValidationState, type EdgeValidationState } from "./FlowCanvas";
-import { NodePropertyPanel, type EdgeSelection } from "./NodePropertyPanel";
+import {
+  NodePropertyPanel,
+  FlowSettingsPanel,
+  type EdgeSelection,
+} from "./NodePropertyPanel";
 import { FlowNodePalette } from "./FlowNodePalette";
 import { FlowRunDrawer } from "./FlowRunDrawer";
 import { FlowVersionBar } from "./FlowVersionBar";
 import { FlowCopilotPanel } from "./FlowCopilotPanel";
-import { computeDagreLayout } from "./graph/GraphLayoutEngine";
 import type { NodeState } from "./graph/graphUtils";
 import type { DiffOverlay } from "../lib/flow-diff-view";
 import {
@@ -41,6 +45,10 @@ import {
   emptyFlow,
   uniqueId,
   parseValidationPath,
+  referenceEdges as deriveReferenceEdges,
+  layoutEditorGraph,
+  rewriteNodeReferences,
+  NODE_ID_RE,
   type RFNode,
   type RFEdge,
   type ViewportState,
@@ -55,6 +63,9 @@ import type {
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { Button } from "../lib/ui";
+import type { PlaygroundResult } from "../lib/studio-run";
+import { useNodeTypeCatalog } from "../lib/node-types";
+import { FormulaProvider } from "./FormulaEditor";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -65,7 +76,44 @@ export interface StudioBuilderProps {
   flow: FlowListEntry | null;
   /** Called when the builder saves successfully — parent may refresh the flow list. */
   onSaved?: (flowId: string) => void;
+  /** Backend has a FlowStore (FLOW_EDITOR_ENABLED + DATABASE_URL): drafts/publish available. */
+  onlineEditing?: boolean;
+  /** Backend accepts file writes into FLOWS_DIR (POST /flows/write). */
+  fileWriting?: boolean;
+  /** Reports whether the canvas holds unsaved changes (for switch/leave guards). */
+  onDirtyChange?: (dirty: boolean) => void;
+  /** Panel visibility, owned by the page so all layout switches live in one place. */
+  panels?: StudioBuilderPanels;
+  /** Stores a Run & Trace prompt/answer as an eval case. */
+  /**
+   * Stores prompt + answer as an eval case with `expected` as the reference
+   * answer. Rejects with a readable message when it could not be stored.
+   */
+  /** Resolves with the created eval case's id (when the backend returns one). */
+  onSaveEvalCase?: (prompt: string, flowId: string, result: PlaygroundResult, expected: string) => Promise<string | undefined>;
+  onDeleteEvalCase?: (id: string) => Promise<void>;
+  /**
+   * The node being inspected (single selection) and the settings field in
+   * focus — the page shows that node type's documentation. Null when no
+   * single node is selected.
+   */
+  onInspect?: (info: { nodeId: string; type: string; field?: string } | null) => void;
 }
+
+export interface StudioBuilderPanels {
+  /** Full palette (false = icon rail). */
+  palette: boolean;
+  /** Node/edge properties panel. */
+  properties: boolean;
+  /** Copilot + Run & Trace bars. */
+  assist: boolean;
+}
+
+const ALL_PANELS: StudioBuilderPanels = {
+  palette: true,
+  properties: true,
+  assist: true,
+};
 
 // ---------------------------------------------------------------------------
 // Flow write API helpers
@@ -84,10 +132,11 @@ async function writeFlowToBackend(
   token: string | null,
   definition: FlowDefinition,
   baseHash: string | undefined,
+  format: "yaml" | "json",
 ): Promise<WriteResult> {
   const body = {
     id: definition.id,
-    format: "json",
+    format,
     definition,
     ...(baseHash !== undefined ? { baseHash } : {}),
   };
@@ -151,23 +200,154 @@ async function writeFlowToBackend(
 async function fetchFlowDefinition(
   token: string | null,
   flowId: string,
-): Promise<{ definition: FlowDefinition; hash?: string } | null> {
+): Promise<{
+  definition: FlowDefinition;
+  hash?: string;
+  kind: LoadedKind;
+  format?: "yaml" | "json";
+} | null> {
   try {
     const resp = await fetch(backendUrl(`/flows/${encodeURIComponent(flowId)}`), {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     });
     if (!resp.ok) return null;
     const data = (await resp.json()) as {
-      published?: FlowDefinition;
-      draft?: FlowDefinition;
+      source?: "file" | "online";
+      version?: number;
+      published?: FlowDefinition | null;
+      draft?: FlowDefinition | null;
+      sourceDefinition?: FlowDefinition;
+      file?: { name: string; format: "yaml" | "json" };
       hash?: string;
     };
-    const def = data.draft ?? data.published ?? null;
+    // File flows: edit the AUTHORING form (model shortcuts, {{vars.*}} and
+    // prompt includes kept as references) — saving the parser-expanded form
+    // would bake the expansion into the file/draft.
+    const def = data.draft ?? data.sourceDefinition ?? data.published ?? null;
     if (!def) return null;
-    return { definition: def, hash: data.hash };
+    const kind: LoadedKind = data.draft
+      ? { kind: "draft", version: data.version ?? 0 }
+      : data.source === "online"
+        ? { kind: "published", version: data.version ?? 0 }
+        : { kind: "file" };
+    return {
+      definition: def,
+      kind,
+      ...(data.hash !== undefined ? { hash: data.hash } : {}),
+      ...(data.file ? { format: data.file.format } : {}),
+    };
   } catch {
     return null;
   }
+}
+
+/** Which revision of the flow the canvas was loaded from. */
+type LoadedKind =
+  | { kind: "new" }
+  | { kind: "file" }
+  | { kind: "draft"; version: number }
+  | { kind: "published"; version: number };
+
+type StoreResult =
+  | { ok: true; validation?: FlowValidationReport; version?: number }
+  | { ok: false; error: string; validation?: FlowValidationReport };
+
+async function readStoreError(resp: Response): Promise<{
+  error: string;
+  validation?: FlowValidationReport;
+}> {
+  try {
+    const data = (await resp.json()) as {
+      error?: { message?: string };
+      validation?: FlowValidationReport;
+    };
+    return {
+      error: data.error?.message ?? `HTTP ${resp.status}`,
+      ...(data.validation ? { validation: data.validation } : {}),
+    };
+  } catch {
+    return { error: `HTTP ${resp.status}` };
+  }
+}
+
+/** PUT /flows/:id/draft — stores a WIP draft; the live flow is untouched. */
+async function saveDraftToBackend(
+  token: string | null,
+  definition: FlowDefinition,
+): Promise<StoreResult> {
+  try {
+    const resp = await fetch(
+      backendUrl(`/flows/${encodeURIComponent(definition.id)}/draft`),
+      {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify(definition),
+      },
+    );
+    if (!resp.ok) return { ok: false, ...(await readStoreError(resp)) };
+    const data = (await resp.json()) as {
+      validation?: FlowValidationReport;
+      record?: { version?: number };
+    };
+    return {
+      ok: true,
+      ...(data.validation ? { validation: data.validation } : {}),
+      ...(data.record?.version !== undefined
+        ? { version: data.record.version }
+        : {}),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Network error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/** POST /flows/:id/publish — validates the stored draft and makes it live. */
+async function publishOnBackend(
+  token: string | null,
+  flowId: string,
+): Promise<StoreResult> {
+  try {
+    const resp = await fetch(
+      backendUrl(`/flows/${encodeURIComponent(flowId)}/publish`),
+      {
+        method: "POST",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      },
+    );
+    if (!resp.ok) return { ok: false, ...(await readStoreError(resp)) };
+    const data = (await resp.json()) as {
+      validation?: FlowValidationReport;
+      record?: { version?: number };
+    };
+    return {
+      ok: true,
+      ...(data.validation ? { validation: data.validation } : {}),
+      ...(data.record?.version !== undefined
+        ? { version: data.record.version }
+        : {}),
+    };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Network error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/** Canonical form for dirty tracking — pan/zoom alone is not an edit. */
+function snapshotOf(def: FlowDefinition): string {
+  const ui = def.metadata?.ui;
+  const layoutOnly = ui ? { ...ui, viewport: undefined } : undefined;
+  return JSON.stringify({
+    ...def,
+    metadata: { ...def.metadata, ui: layoutOnly },
+  });
 }
 
 async function validateFlowOnBackend(
@@ -194,6 +374,9 @@ async function validateFlowOnBackend(
 // Keyboard-shortcut helpers
 // ---------------------------------------------------------------------------
 
+/** Validator message for a tool no connected MCP server offers. */
+const UNKNOWN_TOOL_RE = /^tool "([^"]+)" is not known to any connected MCP server$/;
+
 function isEditableTarget(el: EventTarget | null): boolean {
   if (!(el instanceof HTMLElement)) return false;
   return (
@@ -211,8 +394,15 @@ function isEditableTarget(el: EventTarget | null): boolean {
 export function StudioBuilder({
   flow,
   onSaved,
+  onlineEditing = false,
+  fileWriting = false,
+  onDirtyChange,
+  panels = ALL_PANELS,
+  onSaveEvalCase,
+  onDeleteEvalCase,
+  onInspect,
 }: StudioBuilderProps): React.JSX.Element {
-  const { token } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
 
   const [base, setBase] = useState<FlowDefinition>(() =>
     flow ? emptyFlow(flow.id) : emptyFlow("new-flow"),
@@ -228,6 +418,7 @@ export function StudioBuilder({
     "info" | "error" | "warn" | "ok"
   >("info");
   const [baseHash, setBaseHash] = useState<string | undefined>(undefined);
+  const [fileFormat, setFileFormat] = useState<"yaml" | "json">("yaml");
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [validation, setValidation] = useState<FlowValidationReport | null>(
@@ -248,8 +439,21 @@ export function StudioBuilder({
    * `src/graph/flow-parser/normalize.ts`. Empty for every other flow. */
   const [nodeOrigins, setNodeOrigins] = useState<Record<string, string>>({});
   const [subflowName, setSubflowName] = useState("");
+  const [loadedKind, setLoadedKind] = useState<LoadedKind>({ kind: "new" });
+  /** Snapshot of the last loaded/saved definition (null until the first load). */
+  const [baseline, setBaseline] = useState<string | null>(null);
+  const paletteCollapsed = !panels.palette;
+  const inspectorCollapsed = !panels.properties;
+  const assistBarsHidden = !panels.assist;
 
   const history = useFlowHistory({ nodes: [], edges: [] });
+  /** Positions as loaded — to tell whether the operator actually moved nodes. */
+  const loadedPositionsRef = useRef<Map<string, { x: number; y: number }>>(
+    new Map(),
+  );
+  const rememberPositions = (ns: RFNode[]): void => {
+    loadedPositionsRef.current = new Map(ns.map((n) => [n.id, n.position]));
+  };
   const clipboardRef = useRef<RFNode[]>([]);
   const skipHistoryRef = useRef(false);
 
@@ -289,7 +493,10 @@ export function StudioBuilder({
         setViewport(g.viewport);
         setNodeOrigins(g.nodeOrigins ?? {});
         setBaseHash(undefined);
-        history.reset({ nodes: g.nodes, edges: g.edges });
+        setLoadedKind({ kind: "new" });
+        setBaseline(snapshotOf(graphToFlow(empty, g.nodes, g.edges, undefined, g.nodeOrigins ?? {}, false)));
+        rememberPositions(g.nodes);
+        history.reset({ nodes: g.nodes, edges: g.edges, base: empty, nodeOrigins: g.nodeOrigins ?? {} });
         return;
       }
 
@@ -299,15 +506,19 @@ export function StudioBuilder({
       fetchFlowDefinition(token ?? null, flowToLoad.id)
         .then((result) => {
           if (result) {
-            const { definition, hash } = result;
+            const { definition, hash, kind, format } = result;
             setBase(definition);
+            setLoadedKind(kind);
+            setFileFormat(format ?? "yaml");
             const g = flowToGraph(definition);
             setNodes(g.nodes);
             setEdges(g.edges);
             setViewport(g.viewport);
             setNodeOrigins(g.nodeOrigins ?? {});
             setBaseHash(hash);
-            history.reset({ nodes: g.nodes, edges: g.edges });
+            setBaseline(snapshotOf(graphToFlow(definition, g.nodes, g.edges, undefined, g.nodeOrigins ?? {}, definition.metadata?.ui !== undefined)));
+            rememberPositions(g.nodes);
+            history.reset({ nodes: g.nodes, edges: g.edges, base: definition, nodeOrigins: g.nodeOrigins ?? {} });
           } else {
             const empty = emptyFlow(flowToLoad.id);
             setBase(empty);
@@ -317,7 +528,10 @@ export function StudioBuilder({
             setViewport(g.viewport);
             setNodeOrigins(g.nodeOrigins ?? {});
             setBaseHash(undefined);
-            history.reset({ nodes: g.nodes, edges: g.edges });
+            setLoadedKind({ kind: "new" });
+            setBaseline(snapshotOf(graphToFlow(empty, g.nodes, g.edges, undefined, g.nodeOrigins ?? {}, false)));
+            rememberPositions(g.nodes);
+            history.reset({ nodes: g.nodes, edges: g.edges, base: empty, nodeOrigins: g.nodeOrigins ?? {} });
             setStatus("Could not load flow — starting with empty canvas.");
             setStatusKind("warn");
           }
@@ -332,30 +546,88 @@ export function StudioBuilder({
   );
 
   useEffect(() => {
-    // Defer loading until the auth token is available when a real flow is
-    // requested — avoids a redundant unauthenticated fetch followed immediately
-    // by an authenticated one when the token hydrates from localStorage.
-    if (flow && !token) return;
+    // Defer loading until auth discovery is done — avoids a redundant
+    // unauthenticated fetch followed immediately by an authenticated one when
+    // the token hydrates. Gate on isAuthenticated rather than the token: with
+    // AUTHN_MODE=disabled there never is a token and the flow must still load.
+    if (flow && !(ready && isAuthenticated)) return;
     loadFlow(flow);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flow?.id, token]);
+  }, [flow?.id, ready, isAuthenticated]);
+
+  // Persist the canvas layout only when the flow already stores one or the
+  // operator moved/added nodes; otherwise saving must not add a `metadata.ui`
+  // block to a file that never had one.
+  const includeLayout = useMemo(() => {
+    if (base.metadata?.ui !== undefined) return true;
+    const loaded = loadedPositionsRef.current;
+    return nodes.some((n) => {
+      const p = loaded.get(n.id);
+      return p === undefined || p.x !== n.position.x || p.y !== n.position.y;
+    });
+  }, [base.metadata, nodes]);
 
   const currentDefinition = useCallback(
-    (): FlowDefinition => graphToFlow(base, nodes, edges, viewport, nodeOrigins),
-    [base, nodes, edges, viewport, nodeOrigins],
+    (): FlowDefinition =>
+      graphToFlow(base, nodes, edges, viewport, nodeOrigins, includeLayout),
+    [base, nodes, edges, viewport, nodeOrigins, includeLayout],
   );
+
+  // -------------------------------------------------------------------------
+  // Dirty tracking — compared against the snapshot taken after load/save.
+  // -------------------------------------------------------------------------
+  const snapshot = useMemo(
+    () =>
+      snapshotOf(
+        graphToFlow(base, nodes, edges, undefined, nodeOrigins, includeLayout),
+      ),
+    [base, nodes, edges, nodeOrigins, includeLayout],
+  );
+  const dirty = baseline !== null && snapshot !== baseline;
+
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+  }, [dirty, onDirtyChange]);
+
+  useEffect(() => {
+    if (!dirty) return;
+    const warn = (e: BeforeUnloadEvent): void => {
+      e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [dirty]);
 
   // -------------------------------------------------------------------------
   // Copilot accept — replaces the canvas state with the accepted proposal.
   // Picked up by the debounced history effect below as a normal, undoable edit.
   // -------------------------------------------------------------------------
-  const handleCopilotAccept = useCallback((proposed: FlowDefinition): void => {
-    setBase(proposed);
-    const g = flowToGraph(proposed);
-    setNodes(g.nodes);
-    setEdges(g.edges);
-    setNodeOrigins(g.nodeOrigins ?? {});
-  }, []);
+  // Latest proposal preview, so accepting places new nodes where the preview
+  // showed them.
+  const diffOverlayRef = useRef<DiffOverlay | undefined>(undefined);
+  diffOverlayRef.current = diffOverlay;
+
+  const handleCopilotAccept = useCallback(
+    (proposed: FlowDefinition): void => {
+      setBase(proposed);
+      const g = flowToGraph(proposed);
+      // Existing nodes stay exactly where they are on the canvas; new ones take
+      // the position the preview showed. Only if neither applies does the
+      // proposal's own layout decide.
+      const current = new Map(nodes.map((n) => [n.id, n.position]));
+      const previewed = new Map(
+        (diffOverlayRef.current?.ghostNodes ?? []).map((n) => [n.id, n.position]),
+      );
+      const placed = g.nodes.map((n) => ({
+        ...n,
+        position: current.get(n.id) ?? previewed.get(n.id) ?? n.position,
+      }));
+      setNodes(placed);
+      setEdges(g.edges);
+      setNodeOrigins(g.nodeOrigins ?? {});
+    },
+    [nodes],
+  );
 
   // -------------------------------------------------------------------------
   // Extract to sub-flow (Phase 4): tags the selected nodes with a new
@@ -395,26 +667,34 @@ export function StudioBuilder({
       skipHistoryRef.current = false;
       return;
     }
-    const t = setTimeout(() => history.maybePush({ nodes, edges }), 400);
+    const t = setTimeout(
+      () => history.maybePush({ nodes, edges, base, nodeOrigins }),
+      400,
+    );
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [nodes, edges]);
+  }, [nodes, edges, base, nodeOrigins]);
+
+  const applySnapshot = useCallback(
+    (snap: { nodes: RFNode[]; edges: RFEdge[]; base?: FlowDefinition; nodeOrigins?: Record<string, string> }) => {
+      skipHistoryRef.current = true;
+      setNodes(snap.nodes);
+      setEdges(snap.edges);
+      if (snap.base) setBase(snap.base);
+      if (snap.nodeOrigins) setNodeOrigins(snap.nodeOrigins);
+    },
+    [],
+  );
 
   const handleUndo = useCallback(() => {
     const snap = history.undo();
-    if (!snap) return;
-    skipHistoryRef.current = true;
-    setNodes(snap.nodes);
-    setEdges(snap.edges);
-  }, [history]);
+    if (snap) applySnapshot(snap);
+  }, [history, applySnapshot]);
 
   const handleRedo = useCallback(() => {
     const snap = history.redo();
-    if (!snap) return;
-    skipHistoryRef.current = true;
-    setNodes(snap.nodes);
-    setEdges(snap.edges);
-  }, [history]);
+    if (snap) applySnapshot(snap);
+  }, [history, applySnapshot]);
 
   // -------------------------------------------------------------------------
   // Inline validation — debounced dry-run against POST /flows/validate.
@@ -450,6 +730,9 @@ export function StudioBuilder({
         [validation.warnings, "warnings"] as const,
       ]) {
         for (const issue of issues) {
+          // Unknown MCP tools are reported per server below instead of
+          // ringing every node that uses a server this runtime can't reach.
+          if (level === "warnings" && UNKNOWN_TOOL_RE.test(issue.message)) continue;
           const parsed = parseValidationPath(issue.path, edges);
           if (parsed.kind === "node" && parsed.id) {
             add(nodeMap, parsed.id, issue.message, level);
@@ -465,8 +748,26 @@ export function StudioBuilder({
     return { nodeValidation: nodeMap, edgeValidation: edgeMap };
   }, [validation, edges]);
 
+  const { otherWarnings, unknownToolsByServer } = useMemo(() => {
+    const byServer = new Map<string, Set<string>>();
+    const others: FlowValidationReport["warnings"] = [];
+    for (const w of validation?.warnings ?? []) {
+      const m = UNKNOWN_TOOL_RE.exec(w.message);
+      if (!m) {
+        others.push(w);
+        continue;
+      }
+      const tool = m[1]!;
+      const server = tool.includes("/") ? tool.slice(0, tool.indexOf("/")) : "(no server prefix)";
+      const set = byServer.get(server) ?? new Set<string>();
+      set.add(tool);
+      byServer.set(server, set);
+    }
+    return { otherWarnings: others, unknownToolsByServer: byServer };
+  }, [validation]);
+
   const totalErrors = (validation?.errors.length ?? 0);
-  const totalWarnings = (validation?.warnings.length ?? 0);
+  const totalWarnings = otherWarnings.length;
 
   // -------------------------------------------------------------------------
   // Node CRUD
@@ -503,12 +804,120 @@ export function StudioBuilder({
     [],
   );
 
-  const deleteNode = useCallback((id: string): void => {
-    setNodes((ns) => ns.filter((n) => n.id !== id));
-    setEdges((es) => es.filter((e) => e.source !== id && e.target !== id));
-    setSelNode(null);
-    setSelectedNodeIds((ids) => ids.filter((i) => i !== id));
-  }, []);
+  /**
+   * Removes nodes AND every reference to them held in other nodes' settings
+   * (parallel children, harness allowlist/verifier), so a delete never leaves
+   * a dangling id behind. Undoable like any other edit.
+   */
+  const removeNodes = useCallback(
+    (ids: string[]): void => {
+      if (ids.length === 0) return;
+      const drop = new Set(ids);
+      let remaining = nodes
+        .filter((n) => !drop.has(n.id))
+        .map((n) => n.data.flowNode);
+      const changes: string[] = [];
+      for (const id of ids) {
+        const res = rewriteNodeReferences(remaining, id, null);
+        remaining = res.nodes;
+        changes.push(...res.changes);
+      }
+      const byId = new Map(remaining.map((fn) => [fn.id, fn]));
+      setNodes((ns) =>
+        ns
+          .filter((n) => !drop.has(n.id))
+          .map((n) => {
+            const fn = byId.get(n.id);
+            return fn && fn !== n.data.flowNode ? { ...n, data: { ...n.data, flowNode: fn } } : n;
+          }),
+      );
+      setEdges((es) => es.filter((e) => !drop.has(e.source) && !drop.has(e.target)));
+      setSelNode(null);
+      setSelectedNodeIds([]);
+      if (changes.length > 0) {
+        setStatus(
+          `Deleted ${ids.length} node(s) and removed their references in: ${[...new Set(changes)].join(", ")} (Cmd/Ctrl+Z to undo).`,
+        );
+        setStatusKind("info");
+      }
+    },
+    [nodes],
+  );
+
+  const deleteNode = useCallback((id: string): void => removeNodes([id]), [removeNodes]);
+
+  /**
+   * Renames a node and follows every reference: edges, parallel children,
+   * harness allowlist/verifier, its sub-flow origin. Returns an error message,
+   * or null on success.
+   */
+  const renameNode = useCallback(
+    (oldId: string, newId: string): string | null => {
+      const next = newId.trim();
+      if (next === oldId) return null;
+      if (!NODE_ID_RE.test(next)) {
+        return "Use letters, digits, - and _ (must start with a letter or digit).";
+      }
+      if (nodes.some((n) => n.id === next)) return `A node "${next}" already exists.`;
+
+      const { nodes: rewritten, changes } = rewriteNodeReferences(
+        nodes.map((n) => n.data.flowNode),
+        oldId,
+        next,
+      );
+      const byId = new Map(rewritten.map((fn) => [fn.id, fn]));
+      setNodes((ns) =>
+        ns.map((n) => {
+          const fn = byId.get(n.id) ?? n.data.flowNode;
+          return n.id === oldId
+            ? { ...n, id: next, data: { ...n.data, flowNode: { ...fn, id: next } } }
+            : fn !== n.data.flowNode
+              ? { ...n, data: { ...n.data, flowNode: fn } }
+              : n;
+        }),
+      );
+      setEdges((es) =>
+        es.map((e) =>
+          e.source === oldId || e.target === oldId
+            ? {
+                ...e,
+                source: e.source === oldId ? next : e.source,
+                target: e.target === oldId ? next : e.target,
+              }
+            : e,
+        ),
+      );
+      setNodeOrigins((o) => {
+        if (!(oldId in o)) return o;
+        const { [oldId]: origin, ...rest } = o;
+        return { ...rest, [next]: origin! };
+      });
+      // Keep the edge-origin bookkeeping of id-less sub-flow edges ("a->b").
+      setBase((b) => {
+        const eo = b.metadata?.["$includeEdgeOrigins"] as Record<string, string> | undefined;
+        if (!eo) return b;
+        const renamed = Object.fromEntries(
+          Object.entries(eo).map(([k, v]) => {
+            const [src, tgt] = k.split("->");
+            return tgt !== undefined && (src === oldId || tgt === oldId)
+              ? [`${src === oldId ? next : src}->${tgt === oldId ? next : tgt}`, v]
+              : [k, v];
+          }),
+        );
+        return { ...b, metadata: { ...b.metadata, $includeEdgeOrigins: renamed } };
+      });
+      const pos = loadedPositionsRef.current.get(oldId);
+      if (pos) loadedPositionsRef.current.set(next, pos);
+      setSelNode((cur) => (cur === oldId ? next : cur));
+      setSelectedNodeIds((ids) => ids.map((i) => (i === oldId ? next : i)));
+      setStatus(
+        `Renamed ${oldId} → ${next}${changes.length > 0 ? `; updated ${[...new Set(changes)].join(", ")}` : ""}.`,
+      );
+      setStatusKind("info");
+      return null;
+    },
+    [nodes],
+  );
 
   const updateEdge = useCallback((sel: EdgeSelection): void => {
     setEdges((es) =>
@@ -517,7 +926,7 @@ export function StudioBuilder({
           ? {
               ...e,
               label: sel.label ?? undefined,
-              data: { conditions: sel.conditions ?? undefined },
+              data: { ...e.data, conditions: sel.conditions ?? undefined },
             }
           : e,
       ),
@@ -556,16 +965,8 @@ export function StudioBuilder({
   // -------------------------------------------------------------------------
 
   const handleBulkDelete = useCallback(() => {
-    setNodes((ns) => {
-      const keepIds = new Set(ns.filter((n) => !n.selected).map((n) => n.id));
-      setEdges((es) =>
-        es.filter((e) => keepIds.has(e.source) && keepIds.has(e.target)),
-      );
-      return ns.filter((n) => !n.selected);
-    });
-    setSelNode(null);
-    setSelectedNodeIds([]);
-  }, []);
+    removeNodes(selectedNodeIds);
+  }, [selectedNodeIds, removeNodes]);
 
   const handleDuplicateSelected = useCallback(() => {
     setNodes((ns) => {
@@ -633,26 +1034,68 @@ export function StudioBuilder({
   // engine the read-only live monitor uses (GraphLayoutEngine.ts).
   // -------------------------------------------------------------------------
 
+  const [fitViewNonce, setFitViewNonce] = useState(0);
   const handleAutoLayout = useCallback(() => {
     setNodes((ns) => {
-      const positions = computeDagreLayout(
-        ns.map((n) => n.id),
-        edges.map((e) => ({ source: e.source, target: e.target })),
+      // Lay out with the sizes React Flow actually rendered, so long labels
+      // can't make neighbours overlap.
+      const sizes = new Map<string, { width: number; height: number }>();
+      for (const n of ns) {
+        const m = (n as { measured?: { width?: number; height?: number } }).measured;
+        if (m?.width && m.height) sizes.set(n.id, { width: m.width, height: m.height });
+      }
+      const positions = layoutEditorGraph(
+        ns.map((n) => n.data.flowNode),
+        edges.map((e) => ({
+          source: e.source,
+          target: e.target,
+          ...(e.label ? { label: e.label } : {}),
+        })),
+        sizes,
       );
       return ns.map((n) => ({
         ...n,
-        position: positions.get(n.id) ?? n.position,
+        position: positions[n.id] ?? n.position,
       }));
     });
+    setFitViewNonce((v) => v + 1);
   }, [edges]);
+
+  // Delegation links fan out from a harness to half the flow; draw them only
+  // while that harness is selected so they explain it without cluttering.
+  const referenceEdges = useMemo(
+    () =>
+      deriveReferenceEdges(nodes.map((n) => n.data.flowNode)).filter(
+        (r) => r.kind !== "delegates" || selectedNodeIds.includes(r.source),
+      ),
+    [nodes, selectedNodeIds],
+  );
 
   // -------------------------------------------------------------------------
   // Keyboard shortcuts
   // -------------------------------------------------------------------------
 
+  // Shortcuts (Cmd/Ctrl+A, Backspace, …) act on the canvas only while the
+  // operator is working in the builder — after a click elsewhere on the page
+  // (sidebar text, header) the browser's own behaviour applies again.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const builderActiveRef = useRef(false);
+  useEffect(() => {
+    const onPointerDown = (e: PointerEvent): void => {
+      builderActiveRef.current = rootRef.current?.contains(e.target as Node) ?? false;
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    return () => document.removeEventListener("pointerdown", onPointerDown, true);
+  }, []);
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent): void {
       if (isEditableTarget(e.target)) return;
+      const focusInBuilder =
+        e.target instanceof Node && e.target !== document.body
+          ? (rootRef.current?.contains(e.target) ?? false)
+          : builderActiveRef.current;
+      if (!focusInBuilder) return;
       const mod = e.metaKey || e.ctrlKey;
       const key = e.key.toLowerCase();
 
@@ -702,16 +1145,26 @@ export function StudioBuilder({
   // -------------------------------------------------------------------------
 
   const handleSave = useCallback(async (): Promise<void> => {
+    const def = currentDefinition();
+    if (
+      !window.confirm(
+        `Write "${def.id}" directly to its flow file?\n\n` +
+          "The runtime hot-reloads flow files, so this goes LIVE immediately — " +
+          "there is no draft or review step. Use \"Save draft\" to stage changes instead.",
+      )
+    ) {
+      return;
+    }
     setIsSaving(true);
-    setStatus("Saving…");
+    setStatus("Writing file…");
     setStatusKind("info");
 
-    const def = currentDefinition();
-    const result = await writeFlowToBackend(token ?? null, def, baseHash);
+    const result = await writeFlowToBackend(token ?? null, def, baseHash, fileFormat);
 
     if (result.ok) {
       setBaseHash(result.hash);
-      setStatus("Saved successfully.");
+      setBaseline(snapshotOf(def));
+      setStatus("Written to file — live now.");
       setStatusKind("ok");
       onSaved?.(def.id);
     } else if (result.conflict) {
@@ -727,16 +1180,17 @@ export function StudioBuilder({
       setStatusKind("error");
     }
     setIsSaving(false);
-  }, [currentDefinition, token, baseHash, onSaved]);
+  }, [currentDefinition, token, baseHash, fileFormat, onSaved]);
 
   const handleForceOverwrite = useCallback(async (): Promise<void> => {
     setIsSaving(true);
     setStatus("Overwriting…");
     setStatusKind("info");
     const def = currentDefinition();
-    const result = await writeFlowToBackend(token ?? null, def, undefined);
+    const result = await writeFlowToBackend(token ?? null, def, undefined, fileFormat);
     if (result.ok) {
       setBaseHash(result.hash);
+      setBaseline(snapshotOf(def));
       setStatus("Overwrite successful.");
       setStatusKind("ok");
       onSaved?.(def.id);
@@ -745,12 +1199,135 @@ export function StudioBuilder({
       setStatusKind("error");
     }
     setIsSaving(false);
+  }, [currentDefinition, token, fileFormat, onSaved]);
+
+  const handleSaveDraft = useCallback(async (): Promise<boolean> => {
+    const def = currentDefinition();
+    setIsSaving(true);
+    setStatus("Saving draft…");
+    setStatusKind("info");
+    const result = await saveDraftToBackend(token ?? null, def);
+    setIsSaving(false);
+    if (!result.ok) {
+      if (result.validation) setValidation(result.validation);
+      setStatus(`✗ Draft not saved: ${result.error}`);
+      setStatusKind("error");
+      return false;
+    }
+    if (result.validation) setValidation(result.validation);
+    setBaseline(snapshotOf(def));
+    setLoadedKind({ kind: "draft", version: result.version ?? 0 });
+    const issues = result.validation && !result.validation.valid;
+    setStatus(
+      issues
+        ? "Draft saved (has validation errors — fix them before publishing). The live flow is unchanged."
+        : "Draft saved. The live flow is unchanged until you publish.",
+    );
+    setStatusKind(issues ? "warn" : "ok");
+    onSaved?.(def.id);
+    return true;
   }, [currentDefinition, token, onSaved]);
+
+  const handlePublish = useCallback(async (): Promise<void> => {
+    const def = currentDefinition();
+    const shadows = flow?.source === "file" || flow?.shadowsFile;
+    if (
+      !window.confirm(
+        `Publish "${def.id}"? It becomes the live version for new requests.` +
+          (shadows
+            ? "\n\nThis flow also exists as a file — the published online version will take precedence over the file."
+            : ""),
+      )
+    ) {
+      return;
+    }
+    // Publish acts on the stored draft, so store the current canvas first.
+    if (dirty || loadedKind.kind !== "draft") {
+      const saved = await handleSaveDraft();
+      if (!saved) return;
+    }
+    setIsSaving(true);
+    setStatus("Publishing…");
+    setStatusKind("info");
+    const result = await publishOnBackend(token ?? null, def.id);
+    setIsSaving(false);
+    if (!result.ok) {
+      if (result.validation) setValidation(result.validation);
+      setStatus(`✗ Publish blocked: ${result.error}`);
+      setStatusKind("error");
+      if (result.validation && !result.validation.valid) setProblemsOpen(true);
+      return;
+    }
+    setLoadedKind({ kind: "published", version: result.version ?? 0 });
+    setStatus(
+      `Published${result.version !== undefined ? ` v${result.version}` : ""} — live now.`,
+    );
+    setStatusKind("ok");
+    onSaved?.(def.id);
+  }, [
+    currentDefinition,
+    flow?.source,
+    flow?.shadowsFile,
+    dirty,
+    loadedKind.kind,
+    handleSaveDraft,
+    token,
+    onSaved,
+  ]);
+
+  const handleDiscard = useCallback((): void => {
+    if (!window.confirm("Discard all unsaved changes on the canvas?")) return;
+    loadFlow(flow);
+    setStatus("Changes discarded.");
+    setStatusKind("info");
+  }, [loadFlow, flow]);
+
+  const catalog = useNodeTypeCatalog();
+  // Formula previews in the variables table: evaluated by the runtime, so
+  // the result is exactly what a flow load produces.
+  const evaluateVariables = useCallback(
+    async (variables: Record<string, unknown>) => {
+      const resp = await fetch(backendUrl("/flows/variables/evaluate"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: JSON.stringify({ variables }),
+      });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      return (await resp.json()) as {
+        values: Record<string, unknown>;
+        errors: Array<{ name: string; message: string }>;
+      };
+    },
+    [token],
+  );
+  // What the formula editors offer: the flow as it is on the canvas.
+  const formulaFlow = useMemo(
+    () => ({ nodes: nodes.map((n) => n.data.flowNode), variables: base.variables }),
+    [nodes, base.variables],
+  );
+  const nodeIdList = useMemo(() => nodes.map((n) => n.id), [nodes]);
+  const [focusedField, setFocusedField] = useState<string | undefined>(undefined);
 
   const selectedFlowNode = useMemo(
     () => nodes.find((n) => n.id === selNode)?.data.flowNode ?? null,
     [nodes, selNode],
   );
+
+  const inspectedId = selectedFlowNode?.id;
+  const inspectedType = selectedFlowNode?.type;
+  useEffect(() => {
+    setFocusedField(undefined);
+  }, [inspectedId]);
+  useEffect(() => {
+    onInspect?.(
+      inspectedId && inspectedType
+        ? { nodeId: inspectedId, type: inspectedType, ...(focusedField ? { field: focusedField } : {}) }
+        : null,
+    );
+  }, [inspectedId, inspectedType, focusedField, onInspect]);
 
   const selectedEdge: EdgeSelection | null = useMemo(() => {
     const e = edges.find((x) => x.id === selEdge);
@@ -769,6 +1346,37 @@ export function StudioBuilder({
     error: "text-red-600",
   };
 
+  const revisionBadge = ((): { text: string; cls: string; title: string } => {
+    switch (loadedKind.kind) {
+      case "new":
+        return {
+          text: "new · unsaved",
+          cls: "bg-muted text-muted-foreground",
+          title: "Not stored anywhere yet.",
+        };
+      case "file":
+        return {
+          text: "file",
+          cls: "bg-muted text-muted-foreground",
+          title:
+            "Loaded from FLOWS_DIR. Save draft creates an online draft; nothing goes live until you publish.",
+        };
+      case "draft":
+        return {
+          text: "draft",
+          cls: "bg-amber-50 text-amber-700 border border-amber-200",
+          title: "Editing the unpublished draft. The live flow is unchanged.",
+        };
+      case "published":
+        return {
+          text: `published v${loadedKind.version}`,
+          cls: "bg-green-50 text-green-700 border border-green-200",
+          title: "Editing a copy of the live version. Save draft to stage changes.",
+        };
+    }
+  })();
+  const showFileWrite = fileWriting && flow?.source !== "online";
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
@@ -778,20 +1386,30 @@ export function StudioBuilder({
   }
 
   return (
-    <div className="flex h-full flex-col gap-2 overflow-y-auto">
+    <FormulaProvider flow={formulaFlow} reference={catalog?.reference}>
+    <div ref={rootRef} className="flex h-full flex-col gap-2 overflow-y-auto">
       {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-2 border-b border-border pb-2">
         <span className="font-mono text-sm font-semibold text-foreground">
           {base.id}
         </span>
-        {flow?.source && (
-          <span className="rounded bg-muted px-1.5 text-[10px] uppercase text-muted-foreground">
-            {flow.source}
+        <span
+          className={`rounded px-1.5 text-[10px] uppercase ${revisionBadge.cls}`}
+          title={revisionBadge.title}
+        >
+          {revisionBadge.text}
+        </span>
+        {dirty && (
+          <span
+            className="rounded bg-blue-50 px-1.5 text-[10px] font-medium uppercase text-blue-700 border border-blue-200"
+            title="The canvas has changes that are not stored anywhere yet."
+          >
+            ● unsaved
           </span>
         )}
 
         <div className="flex items-center gap-1">
-          <button
+          <button type="button"
             onClick={handleUndo}
             disabled={!history.canUndo}
             title="Undo (Cmd/Ctrl+Z)"
@@ -800,7 +1418,7 @@ export function StudioBuilder({
           >
             ↶
           </button>
-          <button
+          <button type="button"
             onClick={handleRedo}
             disabled={!history.canRedo}
             title="Redo (Cmd/Ctrl+Shift+Z)"
@@ -809,18 +1427,11 @@ export function StudioBuilder({
           >
             ↷
           </button>
-          <button
-            onClick={handleAutoLayout}
-            title="Tidy up (auto-layout)"
-            className="rounded px-2 py-1 text-xs text-muted-foreground hover:bg-muted"
-          >
-            ⇕ Tidy up
-          </button>
         </div>
 
         {/* Validation summary */}
         {(totalErrors > 0 || totalWarnings > 0) && (
-          <button
+          <button type="button"
             onClick={() => setProblemsOpen((v) => !v)}
             className={`rounded px-2 py-0.5 text-[11px] font-medium ${
               totalErrors > 0
@@ -829,6 +1440,16 @@ export function StudioBuilder({
             }`}
           >
             {totalErrors > 0 ? `${totalErrors} error(s)` : `${totalWarnings} warning(s)`}
+          </button>
+        )}
+        {unknownToolsByServer.size > 0 && (
+          <button
+            type="button"
+            onClick={() => setProblemsOpen((v) => !v)}
+            title={`Tools on MCP servers this runtime isn't connected to: ${[...unknownToolsByServer.keys()].join(", ")}. They can't be checked here; they will work where those servers are connected.`}
+            className="rounded border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
+          >
+            {unknownToolsByServer.size} MCP server(s) not connected
           </button>
         )}
 
@@ -843,16 +1464,60 @@ export function StudioBuilder({
         />
 
         <div className="ml-auto flex flex-wrap items-center gap-2">
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={isSaving}
-            onClick={() => {
-              void handleSave();
-            }}
-          >
-            {isSaving ? "Saving…" : "Save to file"}
-          </Button>
+          {dirty && (
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isSaving}
+              onClick={handleDiscard}
+              title="Reload the stored version and drop canvas changes"
+            >
+              Discard
+            </Button>
+          )}
+          {showFileWrite && (
+            <Button
+              variant={onlineEditing ? "outline" : "primary"}
+              size="sm"
+              disabled={isSaving}
+              onClick={() => {
+                void handleSave();
+              }}
+              title="Write straight into the flow file in FLOWS_DIR — live immediately, no draft."
+            >
+              Write to file
+            </Button>
+          )}
+          {onlineEditing && (
+            <>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={isSaving}
+                onClick={() => {
+                  void handleSaveDraft();
+                }}
+                title="Store the canvas as an unpublished draft. Nothing goes live."
+              >
+                {isSaving ? "Saving…" : "Save draft"}
+              </Button>
+              <Button
+                variant="primary"
+                size="sm"
+                disabled={isSaving || totalErrors > 0}
+                onClick={() => {
+                  void handlePublish();
+                }}
+                title={
+                  totalErrors > 0
+                    ? "Fix the validation errors first."
+                    : "Save the draft and make it the live version."
+                }
+              >
+                Publish
+              </Button>
+            </>
+          )}
         </div>
       </div>
 
@@ -862,8 +1527,8 @@ export function StudioBuilder({
           className={`flex items-center gap-2 text-xs ${statusColors[statusKind]}`}
         >
           <span>{status}</span>
-          {statusKind === "warn" && (
-            <button
+          {statusKind === "warn" && status.startsWith("⚠ Conflict") && (
+            <button type="button"
               onClick={() => {
                 void handleForceOverwrite();
               }}
@@ -872,18 +1537,25 @@ export function StudioBuilder({
               Overwrite anyway
             </button>
           )}
+          <button type="button"
+            onClick={() => setStatus(null)}
+            aria-label="Dismiss status"
+            className="ml-auto rounded px-1 text-muted-foreground hover:text-foreground"
+          >
+            ×
+          </button>
         </div>
       )}
 
       {/* Problems panel */}
-      {problemsOpen && (totalErrors > 0 || totalWarnings > 0) && (
-        <div className="max-h-32 overflow-auto rounded border border-border bg-muted p-2 text-xs space-y-1">
+      {problemsOpen && (totalErrors > 0 || totalWarnings > 0 || unknownToolsByServer.size > 0) && (
+        <div className="max-h-48 overflow-auto rounded border border-border bg-muted p-2 text-xs space-y-1">
           {validation?.errors.map((issue, i) => (
             <div key={`err-${i}`} className="flex items-center gap-2 text-red-600">
               <span className="flex-1">
                 ✗ {issue.path}: {issue.message}
               </span>
-              <button
+              <button type="button"
                 onClick={() =>
                   setCopilotPrefill({
                     instruction: `Fix this issue: ${issue.message}`,
@@ -896,12 +1568,12 @@ export function StudioBuilder({
               </button>
             </div>
           ))}
-          {validation?.warnings.map((issue, i) => (
+          {otherWarnings.map((issue, i) => (
             <div key={`warn-${i}`} className="flex items-center gap-2 text-amber-600">
               <span className="flex-1">
                 ⚠ {issue.path}: {issue.message}
               </span>
-              <button
+              <button type="button"
                 onClick={() =>
                   setCopilotPrefill({
                     instruction: `Fix this issue: ${issue.message}`,
@@ -914,24 +1586,65 @@ export function StudioBuilder({
               </button>
             </div>
           ))}
+          {unknownToolsByServer.size > 0 && (
+            <details className="text-muted-foreground">
+              <summary className="cursor-pointer">
+                ⓘ {[...unknownToolsByServer.values()].reduce((n, t) => n + t.size, 0)} tool
+                reference(s) on {unknownToolsByServer.size} MCP server(s) this runtime
+                isn&apos;t connected to — not checkable here, not an error in the flow.
+              </summary>
+              <ul className="mt-1 space-y-0.5 pl-4">
+                {[...unknownToolsByServer.entries()].map(([server, tools]) => (
+                  <li key={server}>
+                    <span className="font-mono text-foreground">{server}</span>:{" "}
+                    <span className="font-mono">
+                      {[...tools].map((t) => t.slice(server.length + 1) || t).join(", ")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
         </div>
       )}
 
-      {/* Copilot (Phase 3: KI-Copilot im Builder) */}
-      <FlowCopilotPanel
-        key={`copilot-${canvasKey}`}
-        flowId={base.id}
-        token={token ?? undefined}
-        getDefinition={currentDefinition}
-        nodes={nodes}
-        edges={edges}
-        onPreviewChange={setDiffOverlay}
-        onAccept={handleCopilotAccept}
-        prefill={copilotPrefill}
-      />
-
-      {/* Run & Trace bar (Phase 1: Live-Test & Trace im Canvas) */}
-      <FlowRunDrawer key={canvasKey} flowId={base.id} onLiveStatesChange={setLiveStates} />
+      {/* Copilot (Phase 3) + Run & Trace (Phase 1) side by side on wide
+          screens so they cost one row of height instead of two. */}
+      <div
+        className={`grid gap-2 xl:grid-cols-2 ${assistBarsHidden ? "hidden" : ""}`}
+      >
+        <FlowCopilotPanel
+          key={`copilot-${canvasKey}`}
+          flowId={base.id}
+          token={token ?? undefined}
+          getDefinition={currentDefinition}
+          nodes={nodes}
+          edges={edges}
+          onPreviewChange={(overlay) => {
+            setDiffOverlay(overlay);
+            // Proposed nodes may land outside the current view — bring the
+            // whole preview into sight.
+            if (overlay && overlay.ghostNodes.length > 0) setFitViewNonce((v) => v + 1);
+          }}
+          onAccept={handleCopilotAccept}
+          prefill={copilotPrefill}
+        />
+        <FlowRunDrawer
+          key={canvasKey}
+          flowId={base.id}
+          onLiveStatesChange={setLiveStates}
+          getDefinition={currentDefinition}
+          liveAvailable={
+            flow !== null && (flow.source === "file" || flow.status === "published")
+          }
+          onValidationFailed={(report) => {
+            setValidation(report);
+            setProblemsOpen(true);
+          }}
+          {...(onSaveEvalCase ? { onSaveEvalCase } : {})}
+          {...(onDeleteEvalCase ? { onDeleteEvalCase } : {})}
+        />
+      </div>
 
       {/* Palette + canvas + property panel.
           `min-h-[320px]` keeps the graph usable even when the Copilot proposal
@@ -939,9 +1652,12 @@ export function StudioBuilder({
           the remaining Builder height; the parent column scrolls if the stacked
           controls ever exceed the available space. */}
       <div className="flex flex-1 min-h-[320px] gap-3 overflow-hidden">
-        <FlowNodePalette onAddNode={(type) => addNodeAt(type)} />
+        <FlowNodePalette
+          collapsed={paletteCollapsed}
+          onAddNode={(type) => addNodeAt(type)}
+        />
 
-        <div className="flex-1 min-h-0">
+        <div className="flex-1 min-h-0 min-w-0">
           <FlowCanvas
             key={canvasKey}
             nodes={nodes}
@@ -960,6 +1676,9 @@ export function StudioBuilder({
             ghostEdges={diffOverlay?.ghostEdges}
             nodeOrigins={nodeOrigins}
             onViewportChange={setViewport}
+            referenceEdges={referenceEdges}
+            onAutoLayout={handleAutoLayout}
+            fitViewNonce={fitViewNonce}
             {...(viewport !== undefined ? { defaultViewport: viewport } : {})}
             height="100%"
           />
@@ -968,10 +1687,11 @@ export function StudioBuilder({
         {/* Node/edge property panel, or bulk-action bar when multiple nodes are selected.
             tabIndex=0 so the scrollable region is keyboard-accessible even when
             it holds no focusable children (empty state) — WCAG 2.1.1. */}
+        {!inspectorCollapsed && (
         <aside
           tabIndex={0}
           aria-label="Node properties"
-          className="w-64 shrink-0 overflow-auto rounded-lg border border-border bg-card p-3 text-sm"
+          className="w-80 shrink-0 overflow-auto rounded-lg border border-border bg-card p-3 text-sm"
         >
           {selectedNodeIds.length > 1 ? (
             <div className="space-y-3">
@@ -1010,7 +1730,7 @@ export function StudioBuilder({
                     placeholder="name"
                     className="min-w-0 flex-1 rounded border border-border px-2 py-1 text-xs"
                   />
-                  <button
+                  <button type="button"
                     onClick={() => {
                       handleExtractSubflow(subflowName);
                       setSubflowName("");
@@ -1032,12 +1752,27 @@ export function StudioBuilder({
               edge={selectedEdge}
               onNodeChange={updateNode}
               onDeleteNode={deleteNode}
+              onRenameNode={renameNode}
+              {...(catalog ? { catalog } : {})}
+              nodeIds={nodeIdList}
+              onFocusField={setFocusedField}
               onEdgeChange={updateEdge}
               onDeleteEdge={deleteEdge}
+              emptyContent={
+                <FlowSettingsPanel
+                  flow={base}
+                  idEditable={flow === null}
+                  onChange={setBase}
+                  {...(catalog ? { catalog } : {})}
+                  evaluateVariables={evaluateVariables}
+                />
+              }
             />
           )}
         </aside>
+        )}
       </div>
     </div>
+    </FormulaProvider>
   );
 }

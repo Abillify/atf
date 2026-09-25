@@ -23,7 +23,7 @@
  *   - GET /api/traces/:executionId          → OTel spans (optional)
  */
 
-import React, { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
@@ -64,18 +64,18 @@ type TabId = "steps" | "waterfall" | "explain";
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
-async function fetchNodeEvents(executionId: string, token: string): Promise<NodeExecutionEvent[]> {
+async function fetchNodeEvents(executionId: string, token: string | undefined): Promise<NodeExecutionEvent[]> {
   const resp = await fetch(backendUrl(`/monitoring/history/${encodeURIComponent(executionId)}`), {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   const data = (await resp.json()) as { events: NodeExecutionEvent[] };
   return data.events ?? [];
 }
 
-async function fetchOtelSpans(executionId: string, token: string): Promise<OtelTracesResponse> {
+async function fetchOtelSpans(executionId: string, token: string | undefined): Promise<OtelTracesResponse> {
   const resp = await fetch(`/api/traces/${encodeURIComponent(executionId)}`, {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return resp.json() as Promise<OtelTracesResponse>;
@@ -86,9 +86,9 @@ interface ApprovalsResponse {
   resolved: ResolvedApproval[];
 }
 
-async function fetchApprovals(token: string): Promise<ApprovalsResponse> {
+async function fetchApprovals(token: string | undefined): Promise<ApprovalsResponse> {
   const resp = await fetch(backendUrl("/monitoring/approvals"), {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
   });
   // Approvals endpoint may not be configured — degrade silently.
   if (!resp.ok) return { pending: [], resolved: [] };
@@ -686,7 +686,7 @@ function SpanBar({
 // ---------------------------------------------------------------------------
 
 export default function TracesPage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [executionId, setExecutionId] = useState("");
   const [submittedId, setSubmittedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("steps");
@@ -699,15 +699,15 @@ export default function TracesPage() {
     error: eventsError,
   } = useQuery<NodeExecutionEvent[], Error>({
     queryKey: ["trace-events", submittedId],
-    queryFn: () => fetchNodeEvents(submittedId!, token!),
-    enabled: !!submittedId && ready && !!token,
+    queryFn: () => fetchNodeEvents(submittedId!, token),
+    enabled: !!submittedId && ready && isAuthenticated,
   });
 
   // ── Fetch approvals (filtered to this execution client-side) ─────────────
   const { data: approvalsData } = useQuery<ApprovalsResponse, Error>({
     queryKey: ["trace-approvals", submittedId],
-    queryFn: () => fetchApprovals(token!),
-    enabled: !!submittedId && ready && !!token,
+    queryFn: () => fetchApprovals(token),
+    enabled: !!submittedId && ready && isAuthenticated,
     // Approvals are ephemeral — stale after 30 s but kept in cache so switching
     // tabs doesn't refetch while the user is still reviewing the same execution.
     staleTime: 30_000,
@@ -735,8 +735,8 @@ export default function TracesPage() {
     error: spansError,
   } = useQuery<OtelTracesResponse, Error>({
     queryKey: ["traces", submittedId],
-    queryFn: () => fetchOtelSpans(submittedId!, token!),
-    enabled: !!submittedId && ready && !!token && tab === "waterfall",
+    queryFn: () => fetchOtelSpans(submittedId!, token),
+    enabled: !!submittedId && ready && isAuthenticated && tab === "waterfall",
     retry: false, // OTel may not be configured — fail silently
   });
 
@@ -964,7 +964,7 @@ export default function TracesPage() {
         <ExplainCard
           executionId={submittedId}
           token={token}
-          enabled={ready && !!token}
+          enabled={ready && isAuthenticated}
         />
       )}
     </div>

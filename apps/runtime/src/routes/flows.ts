@@ -29,7 +29,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import * as crypto from "node:crypto";
-import { stringify as stringifyYaml } from "yaml";
+import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { mergeFlowIntoYaml } from "../graph/flow-yaml-merge.js";
 import { Hono } from "hono";
 import type { FlowRegistry } from "../graph/flow-parser.js";
@@ -37,7 +37,25 @@ import type { FlowStore } from "../graph/flow-store.js";
 import { FlowStoreError } from "../graph/flow-store.js";
 import type { DbFlowSource } from "../graph/flow-registry-composite.js";
 import { validateFlow } from "../graph/flow-validator.js";
-import { validateFlowDefinition } from "../graph/flow-parser.js";
+import {
+  validateFlowDefinition,
+  expandFlowSource,
+} from "../graph/flow-parser.js";
+import { includeEdgeKey } from "../graph/flow-parser/normalize.js";
+import { materializeFlowSource } from "../graph/flow-parser.js";
+import type { StudioTestRegistry } from "../graph/flow-registry-studio.js";
+import {
+  COMMON_CONFIG_FIELDS,
+  NODE_TYPE_CATALOG,
+} from "../graph/node-type-catalog.js";
+import { describeShortcut, loadModelShortcuts } from "../graph/flow-parser/model-shortcuts.js";
+import { loadFlowConstants, publicEnv } from "../graph/flow-parser/flow-constants.js";
+import { evaluateFlowVariables } from "../graph/flow-parser/variable-values.js";
+import { FLOW_REFERENCE } from "../graph/flow-reference-data.js";
+import {
+  evaluateConditionExpression,
+  validateConditionExpression,
+} from "../graph/condition-evaluator.js";
 import { diffFlows } from "../graph/flow-diff.js";
 import { analyzeFlowCompatibility } from "../graph/flow-compatibility.js";
 import { collectFlowLlmConfigs, describeFlowCapabilities } from "../graph/flow-capabilities.js";
@@ -202,6 +220,21 @@ function parseIncludeOrigins(definition: FlowDefinition): Record<string, string>
   return Object.keys(result).length > 0 ? result : undefined;
 }
 
+/** Reads `metadata.$includeEdgeOrigins` (edge key -> relPath) off a source-form definition. */
+function parseIncludeEdgeOrigins(
+  definition: FlowDefinition,
+): Record<string, string> | undefined {
+  const raw = (definition.metadata as Record<string, unknown> | undefined)?.[
+    "$includeEdgeOrigins"
+  ];
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  return Object.fromEntries(
+    Object.entries(raw as Record<string, unknown>).filter(
+      (e): e is [string, string] => typeof e[1] === "string" && e[1].trim().length > 0,
+    ),
+  );
+}
+
 /** Serializes a bare `{nodes, edges}` sub-flow fragment per its file extension. */
 function serializeSubflowFragment(
   ext: string,
@@ -230,13 +263,25 @@ async function splitByIncludeOrigin(
   definition: FlowDefinition,
   origins: Record<string, string>,
   flowsDir: string,
+  options: {
+    /** `metadata.$includeEdgeOrigins` of a source-form definition. */
+    edgeOrigins?: Record<string, string>;
+    /** The parent file as currently on disk (parsed), if any. */
+    existingParent?: Record<string, unknown>;
+  } = {},
 ): Promise<FlowDefinition> {
   const originOf = (nodeId: string): string | undefined => origins[nodeId];
+  const edgeOrigins = options.edgeOrigins ?? {};
 
   const byOrigin = new Map<
     string,
     { nodes: FlowDefinition["nodes"]; edges: FlowDefinition["edges"] }
   >();
+  const bucketFor = (origin: string) => {
+    const bucket = byOrigin.get(origin) ?? { nodes: [], edges: [] };
+    byOrigin.set(origin, bucket);
+    return bucket;
+  };
   const parentNodes: FlowDefinition["nodes"] = [];
   for (const node of definition.nodes) {
     const origin = originOf(node.id);
@@ -244,21 +289,25 @@ async function splitByIncludeOrigin(
       parentNodes.push(node);
       continue;
     }
-    const bucket = byOrigin.get(origin) ?? { nodes: [], edges: [] };
-    bucket.nodes.push(node);
-    byOrigin.set(origin, bucket);
+    bucketFor(origin).nodes.push(node);
   }
 
   const parentEdges: FlowDefinition["edges"] = [];
   for (const edge of definition.edges) {
+    // An edge loaded from a sub-flow goes back to that file even when it links
+    // nodes of two different sub-flows; otherwise fall back to "both endpoints
+    // share an origin", and everything else stays with the parent.
+    const key = includeEdgeKey(edge);
+    const recorded = key !== undefined ? edgeOrigins[key] : undefined;
     const sourceOrigin = originOf(edge.source);
     const targetOrigin = originOf(edge.target);
-    const fragment =
-      sourceOrigin !== undefined && sourceOrigin === targetOrigin
-        ? byOrigin.get(sourceOrigin)
-        : undefined;
-    if (fragment !== undefined) {
-      fragment.edges.push(edge);
+    const origin =
+      recorded ??
+      (sourceOrigin !== undefined && sourceOrigin === targetOrigin
+        ? sourceOrigin
+        : undefined);
+    if (origin !== undefined) {
+      bucketFor(origin).edges.push(edge);
     } else {
       parentEdges.push(edge);
     }
@@ -266,26 +315,89 @@ async function splitByIncludeOrigin(
 
   for (const [relPath, fragment] of byOrigin) {
     const targetPath = resolveIncludeWritePath(flowsDir, relPath);
-    const content = serializeSubflowFragment(path.extname(targetPath), fragment);
+    const ext = path.extname(targetPath).toLowerCase();
+    let existing: string | null = null;
+    try {
+      existing = await fs.promises.readFile(targetPath, "utf-8");
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
+    }
+    let content: string;
+    if (existing !== null && (ext === ".yaml" || ext === ".yml")) {
+      // Same comment-preserving merge as the parent file; other top-level keys
+      // of the sub-flow file (description, notes, …) are kept as they are, and
+      // an `edges` key the file never had isn't invented.
+      try {
+        const current = parseYaml(existing) as Record<string, unknown> | null;
+        const base =
+          current !== null && typeof current === "object" && !Array.isArray(current)
+            ? current
+            : {};
+        const next: Record<string, unknown> = { ...base, nodes: fragment.nodes };
+        if (fragment.edges.length > 0 || "edges" in base) next.edges = fragment.edges;
+        else delete next.edges;
+        content = mergeFlowIntoYaml(existing, next, { lineWidth: 120 });
+      } catch {
+        content = serializeSubflowFragment(ext, fragment);
+      }
+    } else {
+      content = serializeSubflowFragment(ext, fragment);
+    }
     await atomicWriteFile(targetPath, content);
   }
 
-  const { $includeOrigins: _omit, ...restMetadata } = (definition.metadata ??
-    {}) as Record<string, unknown>;
+  const {
+    $includeOrigins: _omit,
+    $includeEdgeOrigins: _omitEdges,
+    ...restMetadata
+  } = (definition.metadata ?? {}) as Record<string, unknown>;
   void _omit;
-  const subflowPaths = [...byOrigin.keys()].sort();
+  void _omitEdges;
 
-  return {
+  // Keep the parent's existing `$include` directive (its other keys such as a
+  // `_comment`, and its order — the merge order matters) and only reconcile
+  // the list of files with what is still in use.
+  const existingMeta = options.existingParent?.["metadata"];
+  const existingInclude =
+    typeof existingMeta === "object" && existingMeta !== null
+      ? ((existingMeta as Record<string, unknown>)["$include"] as
+          | Record<string, unknown>
+          | undefined)
+      : undefined;
+  const inUse = [...byOrigin.keys()];
+  const previous = Array.isArray(existingInclude?.["subflows"])
+    ? (existingInclude["subflows"] as unknown[]).filter(
+        (p): p is string => typeof p === "string",
+      )
+    : [];
+  const subflowPaths = [
+    ...previous.filter((p) => inUse.includes(p.trim())),
+    ...inUse.filter((p) => !previous.some((q) => q.trim() === p)),
+  ];
+
+  const parent: Record<string, unknown> = {
     ...definition,
     nodes: parentNodes,
     edges: parentEdges,
     metadata: {
       ...restMetadata,
       ...(subflowPaths.length > 0
-        ? { $include: { subflows: subflowPaths } }
+        ? { $include: { ...(existingInclude ?? {}), subflows: subflowPaths } }
         : {}),
     },
   };
+  // A parent that only assembles sub-flows has no nodes/edges keys of its own;
+  // don't add empty ones.
+  for (const key of ["nodes", "edges"] as const) {
+    if (
+      (parent[key] as unknown[]).length === 0 &&
+      options.existingParent !== undefined &&
+      !(key in options.existingParent)
+    ) {
+      delete parent[key];
+    }
+  }
+  return parent as unknown as FlowDefinition;
 }
 
 /**
@@ -347,6 +459,18 @@ export interface FlowsRouterDeps {
    */
   flowsDir?: string;
   /**
+   * Flows directory used READ-ONLY to expand source-form definitions (model
+   * shortcuts, prompt includes) for validation and to serve a file flow's
+   * editable source. Independent of `flowsDir`, which additionally enables
+   * writing files.
+   */
+  sourceDir?: string;
+  /**
+   * Throwaway registry for Studio "Run & Trace" test runs
+   * (`POST /flows/:id/test-run`). When absent that endpoint returns 501.
+   */
+  studioTests?: StudioTestRegistry;
+  /**
    * Application configuration, used solely to resolve the LLM behind
    * `POST /flows/:id/copilot` (`appConfig.defaultLlm` + provider API keys via
    * `createLlmProvider`). When absent, or `defaultLlm` is unset, the copilot
@@ -395,6 +519,15 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     getCompliancePolicy,
   } = deps;
   const authRequired = deps.authRequired ?? false;
+  const sourceDir = deps.sourceDir ?? flowsDir;
+  /**
+   * Source-form definitions keep `llm.shortcut`, `{{vars.*}}` and prompt
+   * includes as references (that is what the editor saves). Validation must
+   * see what the runtime will run, so expand a copy first. A no-op for
+   * already-expanded definitions.
+   */
+  const expandForValidation = (def: unknown): unknown =>
+    sourceDir !== undefined ? expandFlowSource(def, sourceDir) : def;
   const operatorAuth =
     deps.operatorAuth ?? createOperatorAuthorizer({ authRequired });
   const logger = deps.logger;
@@ -429,6 +562,17 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       },
       401,
     );
+
+  /** Configured AND actually writable (a read-only mount must not offer writes). */
+  const flowsDirWritable = (): boolean => {
+    if (flowsDir === undefined) return false;
+    try {
+      fs.accessSync(flowsDir, fs.constants.W_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  };
 
   const requireStore = (ctx: import("hono").Context) =>
     ctx.json(
@@ -486,6 +630,105 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     return ctx.json({
       flows: [...entries.values()],
       onlineEditing: store !== undefined,
+      fileWriting: flowsDirWritable(),
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /flows/node-types — node type catalog for the Studio (forms, docs,
+  // Copilot): every built-in type with its config keys, plus the tool ids of
+  // connected MCP servers and the model shortcut names, so editors can offer
+  // them as choices. Static path: registered before GET /flows/:id.
+  // -------------------------------------------------------------------------
+  router.get("/flows/node-types", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    const shortcuts =
+      sourceDir !== undefined ? loadModelShortcuts(sourceDir) : null;
+    return ctx.json({
+      common: COMMON_CONFIG_FIELDS,
+      types: NODE_TYPE_CATALOG,
+      tools: [...(knownToolIds ?? [])].sort(),
+      shortcuts: shortcuts ? Object.keys(shortcuts.shortcuts ?? {}).sort() : [],
+      // name → "provider · model" / "pool (strategy): …" for pickers.
+      shortcutInfo: shortcuts
+        ? Object.fromEntries(
+            Object.keys(shortcuts.shortcuts ?? {}).map((n) => [
+              n,
+              describeShortcut(shortcuts, n) ?? "",
+            ]),
+          )
+        : {},
+      // Global constants (flows/constants.yaml) and the allowlisted env
+      // values — what `{{const.*}}` / `{{env.*}}` in variables can read.
+      constants: sourceDir !== undefined ? loadFlowConstants(sourceDir) : {},
+      publicEnv: publicEnv(),
+      // Placeholders, condition grammar, variable references, calculations —
+      // the same data docs/FLOWS.md is generated from.
+      reference: FLOW_REFERENCE,
+      // Concrete model ids of the central model presets (for `llm.model`).
+      models: shortcuts
+        ? [...new Set(Object.values(shortcuts.modelPresets ?? {}).map((p) => p.model))].sort()
+        : [],
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /flows/variables/evaluate — the Studio's variables table: evaluates a
+  // `variables` map (cross-references, {{const.*}}, {{env.FLOW_PUBLIC_*}},
+  // {{= calculations }}) exactly as a flow load does and returns the values.
+  //   Body: { variables: object }
+  //   200:  { values: object, errors: [{ name, message }] }
+  // -------------------------------------------------------------------------
+  router.post("/flows/variables/evaluate", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    const body = (await ctx.req.json().catch(() => null)) as { variables?: unknown } | null;
+    const vars = body?.variables;
+    if (typeof vars !== "object" || vars === null || Array.isArray(vars)) {
+      return ctx.json(
+        { error: { message: "`variables` must be an object.", type: "invalid_request_error" } },
+        400,
+      );
+    }
+    return ctx.json(
+      evaluateFlowVariables(vars as Record<string, unknown>, undefined, {
+        constants: sourceDir !== undefined ? loadFlowConstants(sourceDir) : {},
+        env: publicEnv(),
+      }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /flows/expressions/evaluate — the Studio's formula editor: checks a
+  // routing/condition expression and evaluates it against sample values with
+  // the runtime's own evaluator, so the preview is exactly what a run does.
+  //   Body: { expression: string, sample?: object }
+  //   200:  { valid: true, result: boolean } | { valid: false, error }
+  // -------------------------------------------------------------------------
+  router.post("/flows/expressions/evaluate", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    let body: { expression?: unknown; sample?: unknown };
+    try {
+      body = (await ctx.req.json()) as typeof body;
+    } catch {
+      body = {};
+    }
+    if (typeof body.expression !== "string") {
+      return ctx.json(
+        { error: { message: "Field 'expression' (string) is required.", type: "invalid_request_error" } },
+        400,
+      );
+    }
+    const expression = body.expression.slice(0, 4000);
+    if (expression.trim() === "") return ctx.json({ valid: true, result: true, empty: true });
+    const check = validateConditionExpression(expression);
+    if (!check.valid) return ctx.json({ valid: false, error: check.error });
+    const sample =
+      body.sample !== null && typeof body.sample === "object" && !Array.isArray(body.sample)
+        ? (body.sample as Record<string, unknown>)
+        : {};
+    return ctx.json({
+      valid: true,
+      result: evaluateConditionExpression(expression, sample as Parameters<typeof evaluateConditionExpression>[1]),
     });
   });
 
@@ -520,7 +763,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         400,
       );
     }
-    return ctx.json(validateFlow(body, knownToolIds));
+    return ctx.json(validateFlow(expandForValidation(body), knownToolIds));
   });
 
   // -------------------------------------------------------------------------
@@ -573,7 +816,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       );
     }
 
-    const parsed = validateFlowDefinition(body.definition);
+    const parsed = validateFlowDefinition(expandForValidation(body.definition));
     if (!parsed.success) {
       return ctx.json(
         {
@@ -587,9 +830,20 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     }
 
     const model = createLlmProvider(appConfig.defaultLlm, appConfig);
-    const result = await proposeFlowEdit(parsed.data, body.instruction, model, {
-      ...(knownToolIds !== undefined ? { knownToolIds } : {}),
-    });
+    // Hand the copilot the SOURCE form so an accepted proposal keeps its
+    // shortcuts/variables; it validates via `expand`.
+    const result = await proposeFlowEdit(
+      body.definition as FlowDefinition,
+      body.instruction,
+      model,
+      {
+        ...(knownToolIds !== undefined ? { knownToolIds } : {}),
+        expand: (def) => expandForValidation(def),
+        shortcuts: Object.keys(
+          (sourceDir !== undefined ? loadModelShortcuts(sourceDir)?.shortcuts : undefined) ?? {},
+        ).sort(),
+      },
+    );
 
     if (!result.ok) {
       return ctx.json(
@@ -620,6 +874,10 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     if (store !== undefined) {
       const rec = await store.get(id);
       if (rec !== undefined) {
+        // Not yet published online but live as a file: that file is what the
+        // draft would replace (for comparisons in the editor).
+        const fileBaseline =
+          rec.published === null ? fileRegistry.getSource?.(id) : undefined;
         return ctx.json({
           id,
           source: "online",
@@ -627,6 +885,15 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
           version: rec.version,
           published: rec.published,
           draft: rec.draft,
+          ...(fileBaseline !== undefined
+            ? {
+                fileDefinition: fileBaseline.definition,
+                file: {
+                  name: fileBaseline.fileName,
+                  format: /\.json$/i.test(fileBaseline.fileName) ? "json" : "yaml",
+                },
+              }
+            : {}),
           updatedAt: rec.updatedAt,
           updatedBy: rec.updatedBy,
         });
@@ -634,6 +901,20 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     }
     const fileFlow = fileRegistry.get(id);
     if (fileFlow !== undefined) {
+      // The editable source (shortcuts, {{vars.*}}, prompt includes kept as
+      // references) plus the file it lives in, so the editor saves back the
+      // authoring form into the SAME file instead of the expanded runtime form.
+      const src = fileRegistry.getSource?.(id);
+      let hash: string | undefined;
+      if (src !== undefined && sourceDir !== undefined) {
+        try {
+          hash = sha256Hex(
+            await fs.promises.readFile(path.join(sourceDir, src.fileName), "utf-8"),
+          );
+        } catch {
+          /* file vanished between load and request — serve without a hash */
+        }
+      }
       return ctx.json({
         id,
         source: "file",
@@ -641,6 +922,16 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         version: 0,
         published: fileFlow,
         draft: null,
+        ...(src !== undefined
+          ? {
+              sourceDefinition: src.definition,
+              file: {
+                name: src.fileName,
+                format: /\.json$/i.test(src.fileName) ? "json" : "yaml",
+              },
+            }
+          : {}),
+        ...(hash !== undefined ? { hash } : {}),
       });
     }
     return ctx.json(
@@ -649,6 +940,89 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       },
       404,
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /flows/:id/test-run — register the Studio canvas for a test run
+  //
+  //   Body: a flow definition in source form (what the editor holds).
+  //   200:  { model, expiresAt } — call /v1/chat/completions with `model`.
+  //   400:  { error, validation } when the definition would not run.
+  //
+  // Nothing is saved: the expanded definition lives in memory for a while
+  // under a throwaway id (see flow-registry-studio.ts). Requires flows:write
+  // because it lets the caller execute an arbitrary definition.
+  // -------------------------------------------------------------------------
+  router.post("/flows/:id/test-run", async (ctx) => {
+    const actor = await guard(ctx, "flows:write");
+    if (!actor) return unauthorized(ctx);
+    const studioTests = deps.studioTests;
+    if (studioTests === undefined) {
+      return ctx.json(
+        {
+          error: {
+            message: "Studio test runs are not available on this runtime.",
+            type: "not_implemented_error",
+          },
+        },
+        501,
+      );
+    }
+    let body: unknown;
+    try {
+      body = await ctx.req.json();
+    } catch {
+      return ctx.json(
+        {
+          error: {
+            message: "Request body must be valid JSON.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    if (body === null || typeof body !== "object") {
+      return ctx.json(
+        {
+          error: {
+            message: "Body must be a flow definition object.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const id = ctx.req.param("id");
+    const def = { ...(body as Record<string, unknown>), id };
+    const validation = validateFlow(expandForValidation(def), knownToolIds);
+    const materialized =
+      sourceDir !== undefined
+        ? materializeFlowSource(def, sourceDir, `studio-test:${id}`)
+        : validateFlowDefinition(def);
+    if (!validation.valid || !materialized.success) {
+      return ctx.json(
+        {
+          error: {
+            message: materialized.success
+              ? "The canvas has validation errors — fix them before testing."
+              : `The canvas is not a runnable flow: ${materialized.error.reason}`,
+            type: "invalid_request_error",
+          },
+          validation,
+        },
+        400,
+      );
+    }
+    const registered = studioTests.register(materialized.data);
+    auditLog?.record({
+      actor: actor.name,
+      role: actor.role,
+      action: "flows.test-run",
+      target: id,
+      details: { model: registered.model },
+    });
+    return ctx.json(registered);
   });
 
   // -------------------------------------------------------------------------
@@ -696,7 +1070,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       target: id,
     });
     // A draft can be saved while still invalid (WIP); the report guides the editor.
-    const validation = validateFlow(def, knownToolIds);
+    const validation = validateFlow(expandForValidation(def), knownToolIds);
     return ctx.json({ record, validation });
   });
 
@@ -720,7 +1094,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         400,
       );
     }
-    const validation = validateFlow(rec.draft, knownToolIds);
+    const validation = validateFlow(expandForValidation(rec.draft), knownToolIds);
     if (!validation.valid) {
       return ctx.json(
         {
@@ -892,11 +1266,28 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
 
     if (ctx.req.query("draft") === "true") {
       const rec = await store.get(id);
+      // A draft of a flow that is live as a FILE (never published online) is
+      // compared against that file — the version it would replace — in its
+      // source form, like the draft itself, so shortcuts/variables don't show
+      // up as spurious changes.
+      const fileSource = fileRegistry.getSource?.(id);
+      const liveFile =
+        fileSource?.definition ?? fileRegistry.get(id);
+      if (rec !== undefined && rec.draft !== null && rec.published === null && liveFile !== undefined) {
+        return ctx.json({
+          from: { kind: "file", ...(fileSource ? { file: fileSource.fileName } : {}) },
+          to: { kind: "draft" },
+          diff: diffFlows(liveFile as FlowDefinition, rec.draft),
+        });
+      }
       if (rec === undefined || rec.published === null || rec.draft === null) {
         return ctx.json(
           {
             error: {
-              message: `Flow '${id}' needs both a published version and a draft to diff.`,
+              message:
+                rec === undefined || rec.draft === null
+                  ? `Flow '${id}' has no draft to compare.`
+                  : `Flow '${id}' has no published version to compare the draft with.`,
               type: "invalid_request_error",
             },
           },
@@ -1239,9 +1630,23 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       }
 
       // Req. 22.2: path-traversal protection.
+      // An existing file flow is written back into the file it was loaded
+      // from (its name may differ from the id, and its format decides the
+      // serialisation) — never into a second `<id>.<format>` file next to it,
+      // which would give two files with the same flow id.
+      const existingFile = fileRegistry.getSource?.(req.id)?.fileName;
+      const format: "yaml" | "json" =
+        existingFile !== undefined
+          ? /\.json$/i.test(existingFile)
+            ? "json"
+            : "yaml"
+          : req.format;
       let targetPath: string;
       try {
-        targetPath = resolveFlowWritePath(flowsDir, req.id, req.format);
+        targetPath =
+          existingFile !== undefined
+            ? resolveIncludeWritePath(flowsDir, existingFile)
+            : resolveFlowWritePath(flowsDir, req.id, req.format);
       } catch (err) {
         const e = err as NodeJS.ErrnoException;
         if (e.code === "PATH_TRAVERSAL") {
@@ -1259,7 +1664,10 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       }
 
       // Req. 22.3: validate before writing.
-      const validation = validateFlow(req.definition, knownToolIds);
+      const validation = validateFlow(
+        expandForValidation(req.definition),
+        knownToolIds,
+      );
       if (!validation.valid) {
         return ctx.json(
           {
@@ -1279,16 +1687,46 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       // write each sub-flow's nodes/edges back to the file they came from
       // instead of flattening them into the parent — a no-op for the
       // overwhelming majority of flows, which don't use includes at all.
+      // Read the current file once: it serves both the conflict check below and
+      // the comment-preserving merge further down.
+      let currentContent: string | null = null;
+      try {
+        currentContent = await fs.promises.readFile(targetPath, "utf-8");
+      } catch (err) {
+        const e = err as NodeJS.ErrnoException;
+        if (e.code !== "ENOENT") throw err;
+        // File does not exist yet — a fresh write, nothing to preserve.
+      }
+
+      let existingParent: Record<string, unknown> | undefined;
+      if (currentContent !== null) {
+        try {
+          const parsed: unknown =
+            format === "json" ? JSON.parse(currentContent) : parseYaml(currentContent);
+          if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) {
+            existingParent = parsed as Record<string, unknown>;
+          }
+        } catch {
+          /* unparseable current file — split without it */
+        }
+      }
+
+      // Split the definition AS SUBMITTED (source form, schema-checked above via
+      // its expansion) so sub-flow files keep their shortcuts/variables too.
       let definitionToWrite: unknown = req.definition;
-      const parsedForSplit = validateFlowDefinition(req.definition);
-      if (parsedForSplit.success) {
-        const origins = parseIncludeOrigins(parsedForSplit.data);
+      const submitted = req.definition as FlowDefinition;
+      if (Array.isArray(submitted.nodes) && Array.isArray(submitted.edges)) {
+        const origins = parseIncludeOrigins(submitted);
         if (origins !== undefined) {
           try {
             definitionToWrite = await splitByIncludeOrigin(
-              parsedForSplit.data,
+              submitted,
               origins,
               flowsDir,
+              {
+                edgeOrigins: parseIncludeEdgeOrigins(submitted),
+                ...(existingParent !== undefined ? { existingParent } : {}),
+              },
             );
           } catch (err) {
             const e = err as NodeJS.ErrnoException;
@@ -1306,17 +1744,6 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
             throw err;
           }
         }
-      }
-
-      // Read the current file once: it serves both the conflict check below and
-      // the comment-preserving merge further down.
-      let currentContent: string | null = null;
-      try {
-        currentContent = await fs.promises.readFile(targetPath, "utf-8");
-      } catch (err) {
-        const e = err as NodeJS.ErrnoException;
-        if (e.code !== "ENOENT") throw err;
-        // File does not exist yet — a fresh write, nothing to preserve.
       }
 
       // Conflict detection (Req. 14.6): if caller supplied baseHash, compare
@@ -1347,7 +1774,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       let content: string;
       let commentsPreserved = false;
       try {
-        if (req.format === "yaml") {
+        if (format === "yaml") {
           // Merge into the existing document rather than re-serialising from
           // scratch. A plain `stringify()` produces equivalent YAML and drops
           // every comment — and in these flow files the comments hold the
@@ -1407,7 +1834,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         action: "flows.write",
         target: req.id,
         details: {
-          format: req.format,
+          format,
           path: targetPath,
           hash: newHash,
           commentsPreserved,
@@ -1416,7 +1843,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
 
       return ctx.json({
         id: req.id,
-        format: req.format,
+        format,
         path: targetPath,
         hash: newHash,
         // Lets the editor tell the operator whether the file's comments survived

@@ -13,7 +13,7 @@
  *   GET /monitoring/shadow/:flowId       — single-pair drill-down
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
@@ -80,7 +80,7 @@ function fmt(n: number | undefined, digits = 2): string {
 // ---------------------------------------------------------------------------
 
 export default function ShadowPage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [overview, setOverview] = useState<ShadowOverview | null>(null);
   const [comparisons, setComparisons] = useState<Comparison[]>([]);
   const [selectedFlow, setSelectedFlow] = useState<string | null>(null);
@@ -89,7 +89,7 @@ export default function ShadowPage() {
   const [error, setError] = useState<string | null>(null);
 
   const fetchAll = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     setError(null);
     try {
@@ -113,10 +113,10 @@ export default function ShadowPage() {
     // scope analysis can't tell the cast's property name apart from the
     // same-named outer binding.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   const fetchFlowStats = useCallback(async (flowId: string) => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     try {
       const res = await authFetch(backendUrl(`/monitoring/shadow/${encodeURIComponent(flowId)}`), token);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -124,11 +124,11 @@ export default function ShadowPage() {
     } catch {
       setFlowStats(null);
     }
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
-    if (ready && token) void fetchAll();
-  }, [ready, token, fetchAll]);
+    if (ready && isAuthenticated) void fetchAll();
+  }, [ready, isAuthenticated, fetchAll]);
 
   useEffect(() => {
     if (selectedFlow) void fetchFlowStats(selectedFlow);

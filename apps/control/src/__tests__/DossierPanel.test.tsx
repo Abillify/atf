@@ -6,7 +6,7 @@ import { describe, test, expect, vi, afterEach } from "vitest";
 import { DossierPanel } from "../components/DossierPanel";
 
 vi.mock("../lib/auth/useAuth", () => ({
-  useAuth: () => ({ token: "test-token", ready: true }),
+  useAuth: () => ({ token: "test-token", ready: true, isAuthenticated: true }),
 }));
 
 function baseDossier(overrides: Record<string, unknown> = {}) {

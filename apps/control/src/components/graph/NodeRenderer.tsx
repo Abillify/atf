@@ -17,9 +17,9 @@
  * Requirements: 11.2
  */
 
-import React from "react";
+import type React from "react";
 import { Handle, Position, type Node, type NodeProps } from "@xyflow/react";
-import { NODE_W, NODE_H } from "./GraphLayoutEngine";
+import { NODE_W, NODE_H, EDITOR_NODE_W } from "./GraphLayoutEngine";
 import {
   nodeTypeColor,
   nodeTypeLabel,
@@ -55,6 +55,12 @@ export interface NodeCardProps {
   barWidth?: number;
   /** Whether we're in timeline mode (shows the duration bar). */
   isTimeline?: boolean;
+  /**
+   * Editor density: fixed width, two-line label, no reserved height. The
+   * editor never shows latency/tokens/cost rows for idle nodes, so the
+   * monitor's 96px minimum was mostly empty space there.
+   */
+  compact?: boolean;
 }
 
 /**
@@ -71,6 +77,7 @@ export function NodeCard({
   onClick,
   barWidth,
   isTimeline,
+  compact = false,
 }: NodeCardProps): React.JSX.Element {
   const colorClass = nodeTypeColor(state.nodeType);
   const isPending = state.status === "pending";
@@ -89,13 +96,17 @@ export function NodeCard({
       onClick={() => onClick?.(state)}
       onKeyDown={(e) => e.key === "Enter" && onClick?.(state)}
       className={`
-        relative w-full rounded-xl border-2 px-3 py-2 text-white shadow-md cursor-pointer
+        relative w-full rounded-xl border-2 ${compact ? "px-2.5 py-1.5" : "px-3 py-2"} text-white shadow-md cursor-pointer
         hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-white
         transition-all duration-150 select-none
         ${isTool ? "border-dashed" : ""}
         ${colorClass} ${ringClass} ${isPending ? "opacity-50" : ""}
       `}
-      style={{ minWidth: NODE_W, minHeight: NODE_H }}
+      style={
+        compact
+          ? { width: EDITOR_NODE_W }
+          : { minWidth: NODE_W, minHeight: NODE_H }
+      }
     >
       {/* Duration bar — timeline mode only */}
       {isTimeline && barWidth != null && !isPending && (
@@ -107,14 +118,14 @@ export function NodeCard({
       )}
 
       {/* Top row: label + type badge */}
-      <div className="flex items-start justify-between gap-1 mb-1">
+      <div className={`flex items-start justify-between gap-1 ${compact ? "mb-0.5" : "mb-1"}`}>
         <div
           className="font-semibold text-xs leading-snug"
           style={{
             maxWidth: "75%",
             wordBreak: "break-word",
             display: "-webkit-box",
-            WebkitLineClamp: 3,
+            WebkitLineClamp: compact ? 2 : 3,
             WebkitBoxOrient: "vertical",
             overflow: "hidden",
           }}
@@ -137,7 +148,11 @@ export function NodeCard({
         </div>
       )}
 
-      {/* Middle row: status / latency / model */}
+      {/* Middle row: status / latency / model — empty for idle editor nodes */}
+      {(!compact ||
+        state.status === "running" ||
+        state.latency_ms != null ||
+        state.model) && (
       <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs opacity-85">
         {state.status === "running" && <span>⏳ running…</span>}
         {state.latency_ms != null && state.status !== "running" && (
@@ -152,6 +167,7 @@ export function NodeCard({
           </span>
         )}
       </div>
+      )}
 
       {/* Approval badge */}
       {badge && (
@@ -191,14 +207,18 @@ export function NodeCard({
         </div>
       )}
 
-      {/* Status dot (top-right) */}
-      <div
-        title={status.label}
-        aria-hidden
-        className={`absolute -top-2 -right-2 w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold shadow-sm ${status.dot}`}
-      >
-        {status.glyph}
-      </div>
+      {/* Status dot (top-right). The compact (Studio editor) card leaves out the
+          empty "pending" dot: without a run it carries no information and reads
+          like an unconnected port. */}
+      {!(compact && isPending) && (
+        <div
+          title={status.label}
+          aria-hidden
+          className={`absolute -top-2 -right-2 w-5 h-5 rounded-full border flex items-center justify-center text-[10px] font-bold shadow-sm ${status.dot}`}
+        >
+          {status.glyph}
+        </div>
+      )}
     </div>
   );
 }

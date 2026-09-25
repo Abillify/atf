@@ -13,11 +13,14 @@
  * coordinates via `onDropNodeType`.
  */
 
-import React, { useMemo, useState } from "react";
+import type React from "react";
+import { useMemo, useState } from "react";
 import type { NodeType } from "../types/flow";
 
 export interface FlowNodePaletteProps {
   onAddNode: (type: NodeType) => void;
+  /** Icon-only rail (still draggable) to leave more room for the canvas. */
+  collapsed?: boolean;
 }
 
 interface PaletteEntry {
@@ -70,12 +73,37 @@ const NODE_CATALOG: PaletteEntry[] = [
     icon: "🧵",
     description: "Recalls long-term memories for personalisation",
   },
+  {
+    type: "agent-harness",
+    label: "Agent harness",
+    icon: "🤖",
+    description: "Planner/worker loop with budgets, verification and delegation",
+  },
+  {
+    type: "transform",
+    label: "Transform",
+    icon: "🔣",
+    description: "Deterministic derive/extract rules on the flow state",
+  },
+  {
+    type: "assistant-context",
+    label: "Assistant context",
+    icon: "🪪",
+    description: "Loads a per-user assistant's context into the run",
+  },
+  {
+    type: "assistant-learn",
+    label: "Assistant learn",
+    icon: "📝",
+    description: "Writes learnings back to the per-user assistant",
+  },
 ];
 
 export const PALETTE_DND_TYPE = "application/x-aiperator-node-type";
 
 export function FlowNodePalette({
   onAddNode,
+  collapsed = false,
 }: FlowNodePaletteProps): React.JSX.Element {
   const [query, setQuery] = useState("");
 
@@ -89,6 +117,34 @@ export function FlowNodePalette({
         n.description.toLowerCase().includes(q),
     );
   }, [query]);
+
+  if (collapsed) {
+    return (
+      <div className="flex h-full w-9 shrink-0 flex-col items-center gap-1 overflow-auto">
+        {NODE_CATALOG.map((n) => (
+          <div
+            key={n.type}
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(PALETTE_DND_TYPE, n.type);
+              e.dataTransfer.effectAllowed = "copy";
+            }}
+            onDoubleClick={() => onAddNode(n.type)}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onAddNode(n.type);
+            }}
+            title={`${n.label} — ${n.description} (drag or double-click)`}
+            aria-label={`Add ${n.label} node`}
+            className="flex h-8 w-8 cursor-grab select-none items-center justify-center rounded-md border border-border bg-card text-sm hover:bg-accent/10 active:cursor-grabbing"
+          >
+            <span aria-hidden>{n.icon}</span>
+          </div>
+        ))}
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full w-56 shrink-0 flex-col gap-2">

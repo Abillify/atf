@@ -4,21 +4,26 @@
   "properties": {
     "id": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Unique flow id; also the model name clients request."
     },
     "name": {
       "type": "string",
-      "minLength": 1
+      "minLength": 1,
+      "description": "Display name."
     },
     "description": {
+      "description": "What the flow does; shown in the Studio and model listing.",
       "type": "string"
     },
     "priority": {
+      "description": "Queue priority 0–100 under a concurrency cap (default 50); higher runs first.",
       "type": "integer",
       "minimum": 0,
       "maximum": 100
     },
     "variables": {
+      "description": "Named values referenced as `{{vars.<name>}}` in nodes and edges; overridable per request. Values may reference other variables, constants, `FLOW_PUBLIC_*` env and calculations.",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -26,6 +31,7 @@
       "additionalProperties": {}
     },
     "pricing": {
+      "description": "Prices per 1,000,000 prompt/completion tokens keyed by model; override the central prices of `model-shortcuts.yaml` for cost accounting.",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -50,6 +56,7 @@
       }
     },
     "dataClasses": {
+      "description": "Data classes this flow processes; matched by the compliance policy's data rules.",
       "type": "array",
       "items": {
         "type": "string",
@@ -66,6 +73,7 @@
       }
     },
     "requiredScopes": {
+      "description": "OAuth/OIDC scopes a caller needs to discover and run this flow; all are required.",
       "maxItems": 100,
       "type": "array",
       "items": {
@@ -76,6 +84,7 @@
       }
     },
     "recovery": {
+      "description": "Crash recovery of async runs: `retry` states whether re-running from the start is safe; `maxAttempts` (1–10) lowers the global ceiling.",
       "type": "object",
       "properties": {
         "retry": {
@@ -101,83 +110,119 @@
         "properties": {
           "id": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Unique within the flow; edges and other nodes refer to it."
           },
           "type": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "A built-in node type (see the node types below) or a registered plugin type."
           },
           "label": {
+            "description": "Display name in the Studio and in traces.",
             "type": "string"
           },
           "priority": {
+            "description": "Queue priority 0–100 of `llm`/`classifier` nodes; a flow's effective priority is the maximum of its own and its nodes'.",
             "type": "integer",
             "minimum": 0,
             "maximum": 100
           },
           "llm": {
-            "type": "object",
-            "properties": {
-              "provider": {
-                "anyOf": [
-                  {
-                    "type": "string",
-                    "minLength": 1,
-                    "maxLength": 64
-                  },
-                  {
-                    "type": "string",
-                    "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
-                  }
-                ]
-              },
-              "model": {
-                "type": "string",
-                "minLength": 1,
-                "maxLength": 256
-              },
-              "parameters": {
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {}
-              },
-              "pool": {
+            "description": "The model of this node. In a flow file usually `{ shortcut: <name> }` from `model-shortcuts.yaml`, expanded to provider/model/parameters when the flow loads.",
+            "anyOf": [
+              {
                 "type": "object",
                 "properties": {
-                  "strategy": {
+                  "shortcut": {
                     "type": "string",
-                    "enum": [
-                      "fallback",
-                      "round-robin",
-                      "weighted-round-robin",
-                      "random",
-                      "weighted-random",
-                      "least-used"
-                    ]
+                    "minLength": 1,
+                    "description": "A model shortcut from `model-shortcuts.yaml`, or a `{{vars.*}}` reference to one. Expanded to provider, model and the preset's parameters when the flow loads."
                   },
-                  "candidates": {
-                    "minItems": 1,
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/$defs/__schema0"
-                    }
+                  "parameters": {
+                    "description": "Override the preset's parameters (node-level values win).",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
                   }
                 },
                 "required": [
-                  "candidates"
+                  "shortcut"
+                ],
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "properties": {
+                  "provider": {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 64
+                      },
+                      {
+                        "type": "string",
+                        "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
+                      }
+                    ],
+                    "description": "A `PROVIDERS` instance name, a built-in protocol name, or a `{{vars.*}}` reference."
+                  },
+                  "model": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 256,
+                    "description": "Model id passed to the provider."
+                  },
+                  "parameters": {
+                    "description": "Generation parameters (temperature 0–2, maxTokens 1–65536, contextLength, reasoningEffort, chatTemplateKwargs, extraBody, visionInput, providerOptions); max. 20 keys.",
+                    "type": "object",
+                    "propertyNames": {
+                      "type": "string"
+                    },
+                    "additionalProperties": {}
+                  },
+                  "pool": {
+                    "description": "Set by the parser when a pool shortcut is expanded; not written by hand.",
+                    "type": "object",
+                    "properties": {
+                      "strategy": {
+                        "type": "string",
+                        "enum": [
+                          "fallback",
+                          "round-robin",
+                          "weighted-round-robin",
+                          "random",
+                          "weighted-random",
+                          "least-used"
+                        ]
+                      },
+                      "candidates": {
+                        "minItems": 1,
+                        "type": "array",
+                        "items": {
+                          "$ref": "#/$defs/__schema0"
+                        }
+                      }
+                    },
+                    "required": [
+                      "candidates"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "provider",
+                  "model"
                 ],
                 "additionalProperties": false
               }
-            },
-            "required": [
-              "provider",
-              "model"
-            ],
-            "additionalProperties": false
+            ]
           },
           "tools": {
+            "description": "MCP tool refs the node may call: `server/tool`, or `server/*` for all tools of a server; max. 50.",
             "maxItems": 50,
             "type": "array",
             "items": {
@@ -186,6 +231,7 @@
             }
           },
           "config": {
+            "description": "Type-specific settings; see the node type's settings table.",
             "type": "object",
             "propertyNames": {
               "type": "string"
@@ -193,6 +239,7 @@
             "additionalProperties": {}
           },
           "classifierSchema": {
+            "description": "Required for `classifier` nodes.",
             "type": "object",
             "properties": {
               "schema": {
@@ -200,11 +247,13 @@
                 "propertyNames": {
                   "type": "string"
                 },
-                "additionalProperties": {}
+                "additionalProperties": {},
+                "description": "JSON Schema of the structured classification the model must return."
               },
               "classKey": {
                 "type": "string",
-                "minLength": 1
+                "minLength": 1,
+                "description": "Schema field whose value becomes `classLabel` for routing."
               }
             },
             "required": [
@@ -214,104 +263,144 @@
             "additionalProperties": false
           },
           "systemPrompt": {
+            "description": "System prompt; may include prompt files (`#[[file:prompts/x.md]]`) and runtime placeholders (`{{context.*}}`, `{{now.*}}`, …).",
             "type": "string",
             "maxLength": 65536
           },
           "overrides": {
+            "description": "Up to 20 variants of llm/tools/systemPrompt; all `when…` conditions of an entry must match, the first matching entry wins.",
             "maxItems": 20,
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
                 "whenClass": {
+                  "description": "Matches when `classLabel` equals this value.",
                   "type": "string",
                   "minLength": 1
                 },
                 "whenClaim": {
+                  "description": "Condition expression over the caller's token claims.",
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 1024
                 },
                 "whenParam": {
+                  "description": "Condition expression over the request parameters.",
                   "type": "string",
                   "minLength": 1,
                   "maxLength": 1024
                 },
                 "whenPlan": {
+                  "description": "Matches the tenant plan.",
                   "type": "string",
                   "minLength": 1
                 },
                 "whenGroup": {
+                  "description": "Matches when the caller is in this group.",
                   "type": "string",
                   "minLength": 1
                 },
                 "whenLanguage": {
+                  "description": "Matches the request language.",
                   "type": "string",
                   "minLength": 1
                 },
                 "llm": {
-                  "type": "object",
-                  "properties": {
-                    "provider": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "minLength": 1,
-                          "maxLength": 64
-                        },
-                        {
-                          "type": "string",
-                          "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
-                        }
-                      ]
-                    },
-                    "model": {
-                      "type": "string",
-                      "minLength": 1,
-                      "maxLength": 256
-                    },
-                    "parameters": {
-                      "type": "object",
-                      "propertyNames": {
-                        "type": "string"
-                      },
-                      "additionalProperties": {}
-                    },
-                    "pool": {
+                  "description": "The model of this node. In a flow file usually `{ shortcut: <name> }` from `model-shortcuts.yaml`, expanded to provider/model/parameters when the flow loads.",
+                  "anyOf": [
+                    {
                       "type": "object",
                       "properties": {
-                        "strategy": {
+                        "shortcut": {
                           "type": "string",
-                          "enum": [
-                            "fallback",
-                            "round-robin",
-                            "weighted-round-robin",
-                            "random",
-                            "weighted-random",
-                            "least-used"
-                          ]
+                          "minLength": 1,
+                          "description": "A model shortcut from `model-shortcuts.yaml`, or a `{{vars.*}}` reference to one. Expanded to provider, model and the preset's parameters when the flow loads."
                         },
-                        "candidates": {
-                          "minItems": 1,
-                          "type": "array",
-                          "items": {
-                            "$ref": "#/$defs/__schema0"
-                          }
+                        "parameters": {
+                          "description": "Override the preset's parameters (node-level values win).",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
                         }
                       },
                       "required": [
-                        "candidates"
+                        "shortcut"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "object",
+                      "properties": {
+                        "provider": {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 64
+                            },
+                            {
+                              "type": "string",
+                              "pattern": "^\\{\\{\\s*vars\\.([\\w.-]+)\\s*\\}\\}$"
+                            }
+                          ],
+                          "description": "A `PROVIDERS` instance name, a built-in protocol name, or a `{{vars.*}}` reference."
+                        },
+                        "model": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 256,
+                          "description": "Model id passed to the provider."
+                        },
+                        "parameters": {
+                          "description": "Generation parameters (temperature 0–2, maxTokens 1–65536, contextLength, reasoningEffort, chatTemplateKwargs, extraBody, visionInput, providerOptions); max. 20 keys.",
+                          "type": "object",
+                          "propertyNames": {
+                            "type": "string"
+                          },
+                          "additionalProperties": {}
+                        },
+                        "pool": {
+                          "description": "Set by the parser when a pool shortcut is expanded; not written by hand.",
+                          "type": "object",
+                          "properties": {
+                            "strategy": {
+                              "type": "string",
+                              "enum": [
+                                "fallback",
+                                "round-robin",
+                                "weighted-round-robin",
+                                "random",
+                                "weighted-random",
+                                "least-used"
+                              ]
+                            },
+                            "candidates": {
+                              "minItems": 1,
+                              "type": "array",
+                              "items": {
+                                "$ref": "#/$defs/__schema0"
+                              }
+                            }
+                          },
+                          "required": [
+                            "candidates"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "required": [
+                        "provider",
+                        "model"
                       ],
                       "additionalProperties": false
                     }
-                  },
-                  "required": [
-                    "provider",
-                    "model"
-                  ],
-                  "additionalProperties": false
+                  ]
                 },
                 "tools": {
+                  "description": "Replaces the node's tools.",
                   "maxItems": 50,
                   "type": "array",
                   "items": {
@@ -320,14 +409,21 @@
                   }
                 },
                 "systemPrompt": {
+                  "description": "Replaces the node's system prompt.",
                   "type": "string",
                   "maxLength": 65536
                 }
               },
-              "additionalProperties": false
+              "additionalProperties": false,
+              "patternProperties": {
+                "^_": {
+                  "description": "Annotation for readers; ignored by the parser."
+                }
+              }
             }
           },
           "parallelNodes": {
+            "description": "Children of a `parallel` node: node ids, or `{ node, condition }` to run a child conditionally; max. 20.",
             "maxItems": 20,
             "type": "array",
             "items": {
@@ -341,9 +437,11 @@
                   "properties": {
                     "node": {
                       "type": "string",
-                      "minLength": 1
+                      "minLength": 1,
+                      "description": "Child node id."
                     },
                     "condition": {
+                      "description": "Condition expression; the child runs only when it is true.",
                       "type": "string",
                       "maxLength": 1024
                     }
@@ -361,8 +459,14 @@
           "id",
           "type"
         ],
-        "additionalProperties": false
-      }
+        "additionalProperties": false,
+        "patternProperties": {
+          "^_": {
+            "description": "Annotation for readers; ignored by the parser."
+          }
+        }
+      },
+      "description": "The steps; 1–100. In a flow file optional when `metadata.$include` merges them in from sub-flows."
     },
     "edges": {
       "minItems": 0,
@@ -372,21 +476,26 @@
         "type": "object",
         "properties": {
           "id": {
+            "description": "Optional edge id.",
             "type": "string"
           },
           "source": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Id of the node the edge leaves."
           },
           "target": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "Id of the node the edge enters."
           },
           "conditions": {
+            "description": "Condition expression. Empty: the edge is always followed. The conditional edges leaving a node are checked in file order and the first that is true is taken; if none is, the run ends.",
             "type": "string",
             "maxLength": 1024
           },
           "label": {
+            "description": "Display label in the Studio.",
             "type": "string"
           }
         },
@@ -394,10 +503,17 @@
           "source",
           "target"
         ],
-        "additionalProperties": false
-      }
+        "additionalProperties": false,
+        "patternProperties": {
+          "^_": {
+            "description": "Annotation for readers; ignored by the parser."
+          }
+        }
+      },
+      "description": "Connections between nodes; 0–500. The run starts at the first node; a node without an outgoing edge ends it. In a flow file optional when `metadata.$include` merges them in."
     },
     "metadata": {
+      "description": "Free-form. Known keys: `version` (appears as flow_version in debug traces), `ui` (Studio layout), `$include.subflows` (sub-flow files).",
       "type": "object",
       "propertyNames": {
         "type": "string"
@@ -407,9 +523,7 @@
   },
   "required": [
     "id",
-    "name",
-    "nodes",
-    "edges"
+    "name"
   ],
   "additionalProperties": false,
   "$defs": {
@@ -480,6 +594,32 @@
       "additionalProperties": false
     }
   },
+  "patternProperties": {
+    "^_": {
+      "description": "Annotation for readers; ignored by the parser."
+    }
+  },
+  "anyOf": [
+    {
+      "required": [
+        "nodes",
+        "edges"
+      ]
+    },
+    {
+      "required": [
+        "metadata"
+      ],
+      "properties": {
+        "metadata": {
+          "type": "object",
+          "required": [
+            "$include"
+          ]
+        }
+      }
+    }
+  ],
   "$id": "https://aiperator.dev/schemas/flow.schema.json",
   "title": "aiperator Flow Definition",
   "description": "Structural schema for aiperator flow YAML/JSON files (flows/*.yaml). Generated from the Zod FlowDefinitionSchema — do not edit by hand; run `bun run scripts/export-flow-schema.ts`. Cross-field validation (node type/config compatibility, override well-formedness, edge reference integrity) is enforced at runtime, not by this schema — use `bun run scripts/cli.ts validate <file>` for full validation."

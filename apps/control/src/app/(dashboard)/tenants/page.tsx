@@ -12,7 +12,7 @@
  *   BYOK  GET/PUT/DELETE        /admin/tenants/:id/provider-keys
  */
 
-import React, { useState, useCallback } from "react";
+import { useState, } from "react";
 import { RequireRole } from "../../../lib/auth/RequireRole";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -21,7 +21,6 @@ import { authFetch } from "../../../lib/auth-fetch";
 import {
   Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent,
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
-  Dialog,
 } from "../../../lib/ui";
 
 // ---------------------------------------------------------------------------
@@ -489,7 +488,7 @@ function TenantList() {
         <span className="text-xs text-muted-foreground">{tenants.length} tenant(s)</span>
       </div>
 
-      {creating && token && (
+      {creating && isAuthenticated && (
         <div className="rounded-lg border border-border bg-card p-4">
           <p className="text-sm font-semibold text-foreground mb-3">Create tenant</p>
           <TenantForm token={token}
@@ -529,7 +528,7 @@ function TenantList() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
             </button>
-            {expanded === t.id && token && (
+            {expanded === t.id && isAuthenticated && (
               <TenantDetail tenant={t} token={token}
                 onEdited={() => void qc.invalidateQueries({ queryKey: ["admin", "tenants"] })}
                 onDeleted={() => setExpanded(null)} />

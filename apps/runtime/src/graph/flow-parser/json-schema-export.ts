@@ -31,6 +31,91 @@ import { FlowDefinitionSchema } from "./validate.js";
 
 export const FLOW_SCHEMA_ID = "https://aiperator.dev/schemas/flow.schema.json";
 
+type JsonObject = Record<string, unknown>;
+
+const isObject = (v: unknown): v is JsonObject =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+/**
+ * The Zod schema validates the RUNTIME form, in which the parser has already
+ * expanded `llm: { shortcut }` into provider/model/parameters. Flow FILES are
+ * written in the source form, so an editor validating them must also accept
+ * the shortcut form: `{ shortcut, parameters? }` (node-level parameters
+ * override the preset's; a provider/model next to a shortcut would be
+ * overwritten, so the form rejects them).
+ */
+function withShortcutForm(llm: JsonObject): JsonObject {
+  const { description, ...explicit } = llm;
+  const properties = isObject(explicit.properties) ? explicit.properties : {};
+  return {
+    ...(typeof description === "string" ? { description } : {}),
+    anyOf: [
+      {
+        type: "object",
+        properties: {
+          shortcut: {
+            type: "string",
+            minLength: 1,
+            description:
+              "A model shortcut from `model-shortcuts.yaml`, or a `{{vars.*}}` reference to one. Expanded to provider, model and the preset's parameters when the flow loads.",
+          },
+          ...(properties.parameters !== undefined
+            ? {
+                parameters: {
+                  ...(properties.parameters as JsonObject),
+                  description: "Override the preset's parameters (node-level values win).",
+                },
+              }
+            : {}),
+        },
+        required: ["shortcut"],
+        additionalProperties: false,
+      },
+      explicit,
+    ],
+  };
+}
+
+/** `_`-prefixed keys are annotations (`_comment`, `_comment_tools`, …); the parser ignores them. */
+const COMMENT_KEYS = { "^_": { description: "Annotation for readers; ignored by the parser." } };
+
+/**
+ * Adapts the runtime-form schema to what a flow FILE may contain (the form
+ * editors validate), without loosening anything else:
+ *
+ *   - `llm` accepts `{ shortcut, parameters? }` next to provider/model
+ *     ({@link withShortcutForm}), on nodes and overrides;
+ *   - flow, node, edge and override objects accept `_`-prefixed comment keys
+ *     (other unknown keys stay errors, so typos are still caught);
+ *   - `nodes`/`edges` may be omitted when `metadata.$include` merges them in
+ *     from sub-flow files.
+ */
+function adaptToSourceForm(schema: JsonObject): void {
+  const props = schema.properties as JsonObject | undefined;
+  const node = (props?.nodes as JsonObject | undefined)?.items as JsonObject | undefined;
+  const edge = (props?.edges as JsonObject | undefined)?.items as JsonObject | undefined;
+  const nodeProps = node?.properties as JsonObject | undefined;
+  const override = (nodeProps?.overrides as JsonObject | undefined)?.items as JsonObject | undefined;
+
+  for (const obj of [node, override]) {
+    const p = obj?.properties;
+    if (isObject(p) && isObject(p.llm)) p.llm = withShortcutForm(p.llm);
+  }
+  for (const obj of [schema, node, edge, override]) {
+    if (obj !== undefined) obj.patternProperties = COMMENT_KEYS;
+  }
+  if (Array.isArray(schema.required)) {
+    schema.required = schema.required.filter((k) => k !== "nodes" && k !== "edges");
+    schema.anyOf = [
+      { required: ["nodes", "edges"] },
+      {
+        required: ["metadata"],
+        properties: { metadata: { type: "object", required: ["$include"] } },
+      },
+    ];
+  }
+}
+
 /** Builds the exported JSON Schema. Pure — no file I/O. */
 export function buildFlowJsonSchema(): Record<string, unknown> {
   const jsonSchema = z.toJSONSchema(FlowDefinitionSchema, {
@@ -39,6 +124,7 @@ export function buildFlowJsonSchema(): Record<string, unknown> {
     // (validateFlowDefinition) and have no JSON Schema representation.
     unrepresentable: "any",
   }) as Record<string, unknown>;
+  adaptToSourceForm(jsonSchema);
   return {
     ...jsonSchema,
     $id: FLOW_SCHEMA_ID,

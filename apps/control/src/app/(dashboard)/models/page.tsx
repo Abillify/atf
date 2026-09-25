@@ -14,7 +14,7 @@
  * WebUI / API integrations).
  */
 
-import React, { useState, useCallback, useEffect } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
@@ -41,7 +41,7 @@ interface ModelObject {
 // API helpers
 // ---------------------------------------------------------------------------
 
-function fetchModels(token: string): Promise<ModelObject[]> {
+function fetchModels(token: string | undefined): Promise<ModelObject[]> {
   return authFetch(backendUrl("/v1/models"), token)
     .then((r) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -50,7 +50,7 @@ function fetchModels(token: string): Promise<ModelObject[]> {
     .then((d) => d.data);
 }
 
-function fetchModel(id: string, token: string): Promise<ModelObject> {
+function fetchModel(id: string, token: string | undefined): Promise<ModelObject> {
   return authFetch(backendUrl(`/v1/models/${encodeURIComponent(id)}`), token)
     .then((r) => {
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
@@ -68,7 +68,7 @@ function ModelDetail({
   onClose,
 }: {
   id: string;
-  token: string;
+  token: string | undefined;
   onClose: () => void;
 }) {
   const [model, setModel] = useState<ModelObject | null>(null);
@@ -148,7 +148,7 @@ function ModelDetail({
 // ---------------------------------------------------------------------------
 
 export default function ModelsPage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
   const [models, setModels] = useState<ModelObject[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,7 +156,7 @@ export default function ModelsPage() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!token) return;
+    if (!ready || !isAuthenticated) return;
     setLoading(true);
     setError(null);
     try {
@@ -166,11 +166,11 @@ export default function ModelsPage() {
     } finally {
       setLoading(false);
     }
-  }, [token]);
+  }, [token, ready, isAuthenticated]);
 
   useEffect(() => {
-    if (ready && token) void load();
-  }, [ready, token, load]);
+    if (ready && isAuthenticated) void load();
+  }, [ready, isAuthenticated, load]);
 
   const filtered = models.filter(
     (m) =>
@@ -258,7 +258,7 @@ export default function ModelsPage() {
               </button>
 
               {/* Detail panel */}
-              {expanded === m.id && token && (
+              {expanded === m.id && isAuthenticated && (
                 <ModelDetail id={m.id} token={token} onClose={() => setExpanded(null)} />
               )}
             </div>

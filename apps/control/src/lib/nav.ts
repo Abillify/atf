@@ -80,7 +80,7 @@ export const NAV_GROUPS: NavGroup[] = [
   {
     group: "Konfiguration",
     items: [
-      { href: "/flows", label: "Flows", hint: "Flow registry & editor", icon: GitBranch },
+      { href: "/flows", label: "Flows", hint: "Flow registry", icon: GitBranch },
       { href: "/flow-diff", label: "Flow Diff", hint: "Compare flow versions", icon: GitCompare },
       { href: "/triggers", label: "Triggers", hint: "Webhook-triggered flows", icon: Zap },
       { href: "/assistants", label: "Assistants", hint: "Per-user assistants & operator constraints", icon: UserCog },

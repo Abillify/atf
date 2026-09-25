@@ -3,13 +3,13 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * /flows — Flow Management route (Req. 9.1, 9.2, 9.3, 12.3).
+ * /flows — Flow registry (Req. 9.1, 9.2, 9.3, 12.3). Edit/Inspect open the flow in /studio.
  */
 
 import dynamic from "next/dynamic";
 import { useAuth } from "../../../lib/auth/useAuth";
 
-// Heavy panel with editor — loaded client-side only (Req. 12.3).
+// Flow registry — editing happens in Studio; loaded client-side only (Req. 12.3).
 const FlowsTab = dynamic(
   () => import("../../../components/FlowsTab").then((m) => m.FlowsTab),
   { ssr: false },

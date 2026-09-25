@@ -19,12 +19,32 @@ import {
   isFlowFileExtension,
 } from "../../util/parse-flow-file.js";
 import { logValidationError, validateFlowSource } from "./validate.js";
-import { resolveFlowIncludes, resolveRawFlowVariables } from "./normalize.js";
+import {
+  resolveFlowIncludes,
+  resolveFlowSourceIncludes,
+  resolveRawFlowVariables,
+  INCLUDE_EDGE_ORIGINS_KEY,
+} from "./normalize.js";
+
+/** Drops source-form-only bookkeeping from a clone headed for the runtime. */
+function stripSourceBookkeeping(raw: Record<string, unknown>): void {
+  const meta = raw.metadata;
+  if (typeof meta === "object" && meta !== null && !Array.isArray(meta)) {
+    delete (meta as Record<string, unknown>)[INCLUDE_EDGE_ORIGINS_KEY];
+  }
+}
+import type { ValidationResult } from "./validate.js";
 import {
   loadModelShortcuts,
   resolveModelShortcuts,
   MODEL_SHORTCUTS_BASE,
 } from "./model-shortcuts.js";
+import {
+  FLOW_CONSTANTS_BASE,
+  loadFlowConstants,
+  publicEnv,
+  setFlowConstantsDir,
+} from "./flow-constants.js";
 
 /**
  * Builds the pre-validation resolver callback passed to `validateFlowSource`:
@@ -42,7 +62,10 @@ function makeFlowValueResolver(
   fileName: string,
 ) => void {
   return (raw, overrides, fileName) => {
-    resolveRawFlowVariables(raw, overrides, fileName);
+    resolveRawFlowVariables(raw, overrides, fileName, {
+      constants: loadFlowConstants(flowsDir),
+      env: publicEnv(),
+    });
     const shortcuts = loadModelShortcuts(flowsDir);
     if (shortcuts !== null) {
       resolveModelShortcuts(raw, shortcuts, fileName);
@@ -61,6 +84,57 @@ function makeFlowValueResolver(
 export interface FlowRegistry {
   get(flowId: string): FlowDefinition | undefined;
   list(): FlowDefinition[];
+  /**
+   * Editable source form of a file flow (see `resolveFlowSourceIncludes`) and
+   * the file it came from. Optional: composite/versioned/test registries that
+   * have no file backing simply don't implement it.
+   */
+  getSource?(flowId: string): FlowSourceRecord | undefined;
+}
+
+/** A file flow's authoring form: references kept, sub-flows merged in. */
+export interface FlowSourceRecord {
+  definition: Record<string, unknown>;
+  /** File name relative to the flows directory, e.g. `abby-pii.yaml`. */
+  fileName: string;
+}
+
+/**
+ * The source form with every reference expanded against the variables' DEFAULT
+ * values (prompt includes, `{{vars.*}}`, `llm.shortcut`) — what schema and
+ * semantic checks (`validateFlow`) need to see. Not schema-validated; the input
+ * is not mutated.
+ */
+export function expandFlowSource(
+  source: unknown,
+  flowsDir: string,
+  fileName = "<source>",
+): unknown {
+  if (typeof source !== "object" || source === null) return source;
+  const clone = structuredClone(source) as Record<string, unknown>;
+  stripSourceBookkeeping(clone);
+  resolveFlowIncludes(clone, flowsDir, fileName);
+  makeFlowValueResolver(flowsDir)(clone, undefined, fileName);
+  return clone;
+}
+
+/**
+ * Turns a flow's source form (as served to/saved by the Studio editor) into
+ * the runtime definition — the same prompt-include, variable and model-shortcut
+ * expansion a flow file goes through on load. The input is not mutated.
+ */
+export function materializeFlowSource(
+  source: unknown,
+  flowsDir: string,
+  fileName = "<source>",
+): ValidationResult {
+  if (typeof source !== "object" || source === null) {
+    return validateFlowSource(source, makeFlowValueResolver(flowsDir));
+  }
+  const clone = structuredClone(source) as Record<string, unknown>;
+  stripSourceBookkeeping(clone);
+  resolveFlowIncludes(clone, flowsDir, fileName);
+  return validateFlowSource(clone, makeFlowValueResolver(flowsDir));
 }
 
 /**
@@ -68,6 +142,15 @@ export interface FlowRegistry {
  */
 class FlowRegistryImpl implements FlowRegistry {
   private readonly _flows = new Map<string, FlowDefinition>();
+  private readonly _sources = new Map<string, FlowSourceRecord>();
+
+  getSource(flowId: string): FlowSourceRecord | undefined {
+    return this._sources.get(flowId);
+  }
+
+  setSource(flowId: string, source: FlowSourceRecord): void {
+    this._sources.set(flowId, source);
+  }
 
   get(flowId: string): FlowDefinition | undefined {
     return this._flows.get(flowId);
@@ -87,6 +170,7 @@ class FlowRegistryImpl implements FlowRegistry {
 
   delete(flowId: string): void {
     this._flows.delete(flowId);
+    this._sources.delete(flowId);
   }
 }
 
@@ -145,6 +229,8 @@ const RESERVED_BASES = new Set([
   // Not a flow — bundles engine/model/preset/credential shortcuts consumed at
   // load time by the shortcut resolver. Must never be parsed as a live flow.
   MODEL_SHORTCUTS_BASE,
+  // Not a flow — global `{{const.*}}` values for flow variables.
+  FLOW_CONSTANTS_BASE,
 ]);
 
 /**
@@ -203,37 +289,7 @@ async function loadFlowFileAsync(
     return;
   }
 
-  if (typeof raw === "object" && raw !== null) {
-    resolveFlowIncludes(
-      raw as Record<string, unknown>,
-      path.dirname(filePath),
-      fileName,
-    );
-  }
-
-  const result = validateFlowSource(
-    raw,
-    makeFlowValueResolver(path.dirname(filePath)),
-  );
-  if (!result.success) {
-    logValidationError(fileName, result.error.reason, result.error.details);
-    return;
-  }
-
-  const flow = result.data;
-  const existingOwner = fileOwner.get(flow.id);
-
-  if (existingOwner !== undefined) {
-    if (existingOwner === fileName) {
-      registry.set(flow.id, flow);
-    } else {
-      logConflict(flow.id, existingOwner, fileName);
-    }
-    return;
-  }
-
-  registry.set(flow.id, flow);
-  fileOwner.set(flow.id, fileName);
+  registerParsedFlow(raw, filePath, fileName, registry, fileOwner);
 }
 
 /**
@@ -254,7 +310,25 @@ function loadFlowFile(
     return;
   }
 
+  registerParsedFlow(raw, filePath, fileName, registry, fileOwner);
+}
+
+/**
+ * Shared post-parse step of the sync and async loaders: builds the editable
+ * source form from a pristine copy, expands the runtime form, validates and
+ * registers both.
+ */
+function registerParsedFlow(
+  raw: unknown,
+  filePath: string,
+  fileName: string,
+  registry: FlowRegistryImpl,
+  fileOwner: Map<string, string>,
+): void {
+  let source: Record<string, unknown> | undefined;
   if (typeof raw === "object" && raw !== null) {
+    source = structuredClone(raw) as Record<string, unknown>;
+    resolveFlowSourceIncludes(source, path.dirname(filePath), fileName);
     resolveFlowIncludes(
       raw as Record<string, unknown>,
       path.dirname(filePath),
@@ -274,16 +348,13 @@ function loadFlowFile(
   const flow = result.data;
   const existingOwner = fileOwner.get(flow.id);
 
-  if (existingOwner !== undefined) {
-    if (existingOwner === fileName) {
-      registry.set(flow.id, flow);
-    } else {
-      logConflict(flow.id, existingOwner, fileName);
-    }
+  if (existingOwner !== undefined && existingOwner !== fileName) {
+    logConflict(flow.id, existingOwner, fileName);
     return;
   }
 
   registry.set(flow.id, flow);
+  if (source !== undefined) registry.setSource(flow.id, { definition: source, fileName });
   fileOwner.set(flow.id, fileName);
 }
 
@@ -324,6 +395,10 @@ class FlowParserServiceImpl implements FlowParserService {
       process.stderr.write(`${JSON.stringify(entry)}\n`);
       process.exit(1);
     }
+
+    // `{{const.*}}` in variables resolves against this directory's constants
+    // file, also for per-request resolution (applyFlowVariables).
+    setFlowConstantsDir(this.flowsDir);
 
     // Load all existing flow files, skipping reserved names
     const files = fs.readdirSync(this.flowsDir);
@@ -411,6 +486,13 @@ class FlowParserServiceImpl implements FlowParserService {
       }
       if (base === SHADOW_BASE) {
         this.options.onShadowChange?.();
+        return;
+      }
+      if (base === FLOW_CONSTANTS_BASE) {
+        // Constants feed variable evaluation — re-expand every flow (the
+        // constants cache invalidates by mtime).
+        this._reloadAllFlows();
+        this.options.onFlowChange?.();
         return;
       }
       if (base === MODEL_SHORTCUTS_BASE) {

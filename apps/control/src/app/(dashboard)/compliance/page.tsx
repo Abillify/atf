@@ -17,7 +17,7 @@
  *   GET  /v1/me/data                        — DSAR info note
  */
 
-import React, { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
@@ -90,7 +90,7 @@ function StatCard({ label, value, color = "gray" }: { label: string; value: stri
 // RetentionActionsPanel — sweep + forget + status
 // ---------------------------------------------------------------------------
 
-function RetentionActionsPanel({ token }: { token: string }) {
+function RetentionActionsPanel({ token }: { token: string | undefined }) {
   const [status, setStatus] = useState<ComplianceStatus | null>(null);
   const [sweepResult, setSweepResult] = useState<{ report: SweepEntry[]; purged: number } | null>(null);
   const [sweeping, setSweeping] = useState(false);
@@ -206,7 +206,7 @@ function RetentionActionsPanel({ token }: { token: string }) {
 // AuditAnchorPanel
 // ---------------------------------------------------------------------------
 
-function AuditAnchorPanel({ token }: { token: string }) {
+function AuditAnchorPanel({ token }: { token: string | undefined }) {
   const [anchor, setAnchor] = useState<AuditAnchor | null>(null);
   const [anchoring, setAnchoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -277,7 +277,7 @@ function AuditAnchorPanel({ token }: { token: string }) {
 // PolicySummaryPanel + EvaluatePanel (task #5)
 // ---------------------------------------------------------------------------
 
-function PolicySummaryPanel({ token }: { token: string }) {
+function PolicySummaryPanel({ token }: { token: string | undefined }) {
   const [cfg, setCfg] = useState<PolicyConfig | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -319,7 +319,7 @@ function PolicySummaryPanel({ token }: { token: string }) {
   );
 }
 
-function EvaluatePanel({ token }: { token: string }) {
+function EvaluatePanel({ token }: { token: string | undefined }) {
   const [action, setAction] = useState("chat.completion");
   const [tenantId, setTenantId] = useState("");
   const [model, setModel] = useState("");
@@ -425,7 +425,7 @@ function DSARInfoPanel() {
 // Main audit-report section (preserved from original)
 // ---------------------------------------------------------------------------
 
-function AuditReportSection({ token }: { token: string }) {
+function AuditReportSection({ token }: { token: string | undefined }) {
   const [report, setReport] = useState<AuditReport | null>(null);
   const [loading, setLoading] = useState(false);
   const [downloading, setDownloading] = useState(false);
@@ -571,9 +571,9 @@ function AuditReportSection({ token }: { token: string }) {
 // ---------------------------------------------------------------------------
 
 export default function CompliancePage() {
-  const { token, ready } = useAuth();
+  const { token, ready, isAuthenticated } = useAuth();
 
-  if (!ready || !token) {
+  if (!ready || !isAuthenticated) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
         Loading…

@@ -32,11 +32,12 @@ bun run --filter @atf/control build
 
 | Area | Function |
 | --- | --- |
-| Flows | List, editor, graph visualization with live execution overlay |
+| Flows | Registry; Studio for editing (canvas, per-type settings forms with node docs, variables table, ƒx expression builder, Copilot, drafts/publish/diff, test runs); graph visualization with live execution overlay |
+| Providers | Provider and pool health, provider testing bench |
 | Traces | Execution history, debug trace viewer, decision provenance |
 | Approvals | Reviewer inbox with pending count, role-gated approve and reject |
 | Cost | Spend per tenant, day, and model; budgets; anomalies; FinOps forecast |
-| Quality | Evaluation runs, canary status, shadow comparisons, autopilot state |
+| Quality | Evaluation runs and cases, canary status, shadow comparisons, autopilot state |
 | Compliance | Policy view, generated dossier, DSAR and erasure handling |
 | Tenants | Tenants, provider keys, budgets, limits |
 | Assistants | Assistant and skill registry administration |

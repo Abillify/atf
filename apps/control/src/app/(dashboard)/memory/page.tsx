@@ -8,7 +8,7 @@
  * Lists memory sessions and their entries via GET /memory/sessions.
  */
 
-import React, { useState } from "react";
+import { useState } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
@@ -29,8 +29,23 @@ interface MemorySession {
   entryCount: number;
 }
 
+/**
+ * Thrown when the backend answers a memory route with 404. That is not a
+ * transient network error but a deterministic "feature not mounted" signal:
+ * the runtime only registers `/admin/memory/*` when MEMORY_ENABLED=true and an
+ * EMBEDDING_MODEL is configured. Retrying it just keeps the spinner up, so we
+ * surface it as an explicit, non-retryable state instead.
+ */
+class MemoryDisabledError extends Error {
+  constructor() {
+    super("MEMORY_DISABLED");
+    this.name = "MemoryDisabledError";
+  }
+}
+
 function fetchSessions(token: string | undefined): Promise<MemorySession[]> {
   return authFetch(backendUrl("/admin/memory/sessions"), token).then((r) => {
+    if (r.status === 404) throw new MemoryDisabledError();
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     return r.json() as Promise<{ sessions: MemorySession[] }>;
   }).then((d) => d.sessions);
@@ -125,7 +140,14 @@ export default function MemoryPage() {
     queryKey: ["memory", "sessions"],
     queryFn: () => fetchSessions(token),
     enabled: ready && isAuthenticated,
+    // A 404 means the memory API is not mounted (feature disabled). Retrying it
+    // only prolongs the spinner, so fail fast for that case and keep the
+    // default backoff for genuinely transient errors.
+    retry: (failureCount, err) =>
+      !(err instanceof MemoryDisabledError) && failureCount < 3,
   });
+
+  const memoryDisabled = error instanceof MemoryDisabledError;
 
   const clearMutation = useMutation({
     mutationFn: (sessionId: string) => clearSession(sessionId, token),
@@ -149,7 +171,19 @@ export default function MemoryPage() {
         </div>
       )}
 
-      {error && (
+      {memoryDisabled && (
+        <div
+          role="status"
+          className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground"
+        >
+          Long-term memory is not enabled on this backend. Start the runtime
+          with <code className="font-mono">MEMORY_ENABLED=true</code> and a
+          configured <code className="font-mono">EMBEDDING_MODEL</code> to
+          manage memory sessions here.
+        </div>
+      )}
+
+      {error && !memoryDisabled && (
         <div
           role="alert"
           className="rounded-md bg-red-50 p-4 text-sm text-red-700"

@@ -2,14 +2,15 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useCallback, useMemo, useRef } from "react";
+import type React from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
   useReactFlow,
   Background,
-  Controls,
   MiniMap,
+  Panel,
   Handle,
   Position,
   addEdge,
@@ -24,11 +25,15 @@ import {
   applyEdgeChanges,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import type { RFNode, RFEdge } from "../lib/flow-graph";
+import { Map as MapIcon, Maximize2, Network, Waypoints, ZoomIn, ZoomOut } from "lucide-react";
+import type { RFNode, RFEdge, ReferenceEdge, ReferenceKind } from "../lib/flow-graph";
+import { useColorSchemeOrDefault } from "../lib/theme/ThemeProvider";
+import { usePersistentToggle } from "../hooks/usePersistentToggle";
 import { flowNodeToNodeState, mergeLiveState } from "../lib/flow-graph";
 import type { DiffInfo, GhostRFNode } from "../lib/flow-diff-view";
 import { NodeCard } from "./graph/NodeRenderer";
 import { nodeTypeHex, type NodeState } from "./graph/graphUtils";
+import { EDITOR_NODE_W, EDITOR_NODE_H } from "./graph/GraphLayoutEngine";
 import type { NodeType, FlowNode } from "../types/flow";
 import { PALETTE_DND_TYPE } from "./FlowNodePalette";
 
@@ -58,8 +63,9 @@ type EditableNodeData = {
   /** Version-diff status for this node — added/changed (Phase 2). Ghost
    * (removed) nodes carry `ghost: true` instead, see below. */
   diff?: DiffInfo;
-  /** True for a synthetic "removed in this version" node — display-only. */
-  ghost?: boolean;
+  /** Display-only overlay node: removed in the compared version, or proposed
+   * by the Copilot but not accepted yet. */
+  ghost?: "removed" | "added";
   /** Relative sub-flow file this node will be saved into (Phase 4, `$includeOrigins`). */
   origin?: string;
 };
@@ -89,9 +95,13 @@ function EditableNode({
     ...(validation?.errors ?? []),
     ...(validation?.warnings ?? []),
   ].join("\n");
-  const diffBadge = ghost ? DIFF_BADGE.removed : diff ? DIFF_BADGE[diff.status] : null;
-  const diffTitle = ghost
+  const diffBadge = ghost ? DIFF_BADGE[ghost] : diff ? DIFF_BADGE[diff.status] : null;
+  const diffTitle = ghost === "added"
+    ? "Proposed by the Copilot — accept to add it"
+    : ghost === "removed"
     ? "Removed in this version"
+    : diff?.status === "removed"
+    ? "Would be removed by the Copilot proposal"
     : (diff?.changedFields?.length ?? 0) > 0
       ? `Changed: ${diff!.changedFields!.join(", ")}`
       : diff?.status === "added"
@@ -106,10 +116,16 @@ function EditableNode({
         className="!bg-muted-foreground"
       />
       <div
-        className={`relative rounded-xl ${validationRing} ${ghost ? "opacity-50 border-2 border-dashed border-red-400" : ""}`}
+        className={`relative rounded-xl ${validationRing} ${
+          ghost === "added"
+            ? "opacity-80 outline outline-2 outline-offset-2 outline-dashed outline-green-500"
+            : ghost === "removed" || diff?.status === "removed"
+              ? "opacity-50 outline outline-2 outline-offset-2 outline-dashed outline-red-400"
+              : ""
+        }`}
         title={validationTitle || diffTitle || undefined}
       >
-        <NodeCard state={state} selected={selected} isTimeline={false} />
+        <NodeCard state={state} selected={selected} isTimeline={false} compact />
         {(hasError || hasWarning) && (
           <div
             aria-hidden
@@ -152,6 +168,52 @@ function EditableNode({
 
 const nodeTypes = { flowNode: EditableNode };
 
+/** Canvas-only label shortening; the full text stays in the edge's data and
+ * is shown/edited in the properties panel. */
+const MAX_EDGE_LABEL = 36;
+function shortLabel(label: unknown): string | undefined {
+  if (typeof label !== "string" || label.length === 0) return undefined;
+  return label.length > MAX_EDGE_LABEL ? `${label.slice(0, MAX_EDGE_LABEL - 1)}…` : label;
+}
+
+/** Reference links are drawn dashed and muted so they read as "wired via a
+ * node setting", not as a routing edge you can select or delete. */
+const REFERENCE_STYLE: Record<ReferenceKind, { stroke: string; dash: string }> = {
+  parallel: { stroke: "#8b5cf6", dash: "6 4" },
+  verifies: { stroke: "#e11d48", dash: "2 4" },
+  delegates: { stroke: "#0d9488", dash: "5 4" },
+};
+
+function CanvasButton({
+  label,
+  title,
+  onClick,
+  pressed,
+  children,
+}: {
+  label: string;
+  title: string;
+  onClick: () => void;
+  pressed?: boolean;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={title}
+      aria-label={title}
+      {...(pressed !== undefined ? { "aria-pressed": pressed } : {})}
+      className={`flex items-center gap-1 rounded px-1.5 py-1 text-[11px] font-medium hover:bg-muted ${
+        pressed === false ? "text-muted-foreground" : "text-foreground"
+      } ${pressed ? "bg-muted" : ""}`}
+    >
+      {children}
+      {label && <span>{label}</span>}
+    </button>
+  );
+}
+
 export interface FlowCanvasProps {
   nodes: RFNode[];
   edges: RFEdge[];
@@ -186,6 +248,12 @@ export interface FlowCanvasProps {
   onViewportChange?: (viewport: Viewport) => void;
   /** Initial viewport (pan + zoom) restored from the saved flow. */
   defaultViewport?: Viewport;
+  /** Display-only links derived from node settings (parallel children, harness targets). */
+  referenceEdges?: ReferenceEdge[];
+  /** Shows a "Tidy up" control on the canvas when provided. */
+  onAutoLayout?: () => void;
+  /** Bump to re-fit the viewport (e.g. after an auto-layout). */
+  fitViewNonce?: number;
 }
 
 function FlowCanvasInner({
@@ -207,20 +275,65 @@ function FlowCanvasInner({
   onDropNodeType,
   onViewportChange,
   defaultViewport,
+  referenceEdges,
+  onAutoLayout,
+  fitViewNonce,
 }: FlowCanvasProps): React.JSX.Element {
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
+  const colorScheme = useColorSchemeOrDefault();
+  const [showReferences, setShowReferences] = usePersistentToggle(
+    "canvas.showReferences",
+    true,
+  );
+  const [showMiniMap, setShowMiniMap] = usePersistentToggle(
+    "canvas.showMiniMap",
+    true,
+  );
+
+  useEffect(() => {
+    if (fitViewNonce === undefined || fitViewNonce === 0) return;
+    // Wait a frame so React Flow has applied the new positions first.
+    const id = requestAnimationFrame(() => {
+      void fitView({ padding: 0.1, duration: 300, maxZoom: 1 });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [fitViewNonce, fitView]);
+
+  // Ghost (overlay) nodes are not part of `nodes`, so React Flow's measurement
+  // changes for them would be dropped — and React Flow keeps an unmeasured
+  // node `visibility: hidden` and draws no edges to it. Keep their measured
+  // sizes here.
+  const ghostIds = useMemo(
+    () => new Set((ghostNodes ?? []).map((n) => n.id)),
+    [ghostNodes],
+  );
+  const [ghostSizes, setGhostSizes] = useState<
+    Map<string, { width: number; height: number }>
+  >(new Map());
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
+      const ghostDims = changes.filter(
+        (c): c is Extract<NodeChange, { type: "dimensions" }> =>
+          c.type === "dimensions" && ghostIds.has(c.id) && c.dimensions !== undefined,
+      );
+      if (ghostDims.length > 0) {
+        setGhostSizes((prev) => {
+          const next = new Map(prev);
+          for (const c of ghostDims) {
+            if (c.dimensions) next.set(c.id, c.dimensions);
+          }
+          return next;
+        });
+      }
       if (!editable || !onNodesChange) return;
+      const own = changes.filter((c) => !("id" in c) || !ghostIds.has(c.id));
+      if (own.length === 0) return;
       onNodesChange(
-        applyNodeChanges(
-          changes,
-          nodes as unknown as Node[],
-        ) as unknown as RFNode[],
+        applyNodeChanges(own, nodes as unknown as Node[]) as unknown as RFNode[],
       );
     },
-    [editable, onNodesChange, nodes],
+    [editable, onNodesChange, nodes, ghostIds],
   );
 
   const handleEdgesChange = useCallback(
@@ -305,13 +418,18 @@ function FlowCanvasInner({
     if (!ghostNodes || ghostNodes.length === 0) return real;
     const ghosts = ghostNodes.map((n) => ({
       ...n,
-      data: { flowNode: n.data.flowNode, ghost: true },
+      // Visible (and edge-connectable) before React Flow has measured it.
+      initialWidth: EDITOR_NODE_W,
+      initialHeight: EDITOR_NODE_H,
+      ...(ghostSizes.has(n.id) ? { measured: ghostSizes.get(n.id) } : {}),
+      data: { flowNode: n.data.flowNode, ghost: n.ghostKind ?? "removed" },
     }));
     return [...real, ...ghosts];
-  }, [nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes]);
+  }, [nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, ghostSizes]);
 
   const renderEdges = useMemo(() => {
-    const real = edges.map((e) => {
+    const real = edges.map((edge) => {
+      const e = { ...edge, label: shortLabel(edge.label) };
       const validationState = edgeValidation?.get(e.id);
       const diffState = edgeDiff?.get(e.id);
       const hasError = (validationState?.errors.length ?? 0) > 0;
@@ -324,24 +442,56 @@ function FlowCanvasInner({
             ? "#16a34a"
             : diffState?.status === "changed"
               ? "#f59e0b"
-              : undefined;
+              : diffState?.status === "removed"
+                ? "#f87171"
+                : undefined;
       if (color === undefined) return e;
       return {
         ...e,
-        style: { stroke: color, strokeWidth: 2 },
+        style: {
+          stroke: color,
+          strokeWidth: 2,
+          ...(diffState?.status === "removed" ? { strokeDasharray: "4 3" } : {}),
+        },
         labelStyle: { fill: color, fontWeight: 600 },
       };
     });
-    if (!ghostEdges || ghostEdges.length === 0) return real;
-    const ghosts = ghostEdges.map((e) => ({
-      ...e,
-      style: { stroke: "#f87171", strokeWidth: 2, strokeDasharray: "4 3" },
-      label: e.label ?? "removed",
-      labelStyle: { fill: "#dc2626", fontWeight: 600 },
-      selectable: false,
-    }));
-    return [...real, ...ghosts];
-  }, [edges, edgeValidation, edgeDiff, ghostEdges]);
+    const refs =
+      showReferences && referenceEdges
+        ? referenceEdges.map((r) => ({
+            id: r.id,
+            source: r.source,
+            target: r.target,
+            label: r.label,
+            selectable: false,
+            deletable: false,
+            focusable: false,
+            style: {
+              stroke: REFERENCE_STYLE[r.kind].stroke,
+              strokeDasharray: REFERENCE_STYLE[r.kind].dash,
+              strokeWidth: 1.5,
+            },
+            labelStyle: { fill: REFERENCE_STYLE[r.kind].stroke, fontSize: 10 },
+            data: {},
+          }))
+        : [];
+    if (!ghostEdges || ghostEdges.length === 0) return [...real, ...refs];
+    const ghosts = ghostEdges.map((e) => {
+      const added = e.data?.ghostKind === "added";
+      return {
+        ...e,
+        style: {
+          stroke: added ? "#16a34a" : "#f87171",
+          strokeWidth: 2,
+          strokeDasharray: "4 3",
+        },
+        label: e.label ?? (added ? "proposed" : "removed"),
+        labelStyle: { fill: added ? "#15803d" : "#dc2626", fontWeight: 600 },
+        selectable: false,
+      };
+    });
+    return [...real, ...refs, ...ghosts];
+  }, [edges, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences]);
 
   return (
     <div
@@ -366,18 +516,71 @@ function FlowCanvasInner({
         onMoveEnd={(_e, viewport) => onViewportChange?.(viewport)}
         {...(defaultViewport !== undefined ? { defaultViewport } : {})}
         fitView={defaultViewport === undefined}
+        fitViewOptions={{ maxZoom: 1 }}
+        minZoom={0.1}
+        colorMode={colorScheme}
         proOptions={{ hideAttribution: true }}
       >
         <Background />
-        <Controls showInteractive={false} />
-        <MiniMap
-          zoomable
-          pannable
-          nodeColor={(n) =>
-            nodeTypeHex((n.data as EditableNodeData | undefined)?.flowNode?.type)
-          }
-          className="!bg-muted"
-        />
+        {/* Labelled view controls — replaces React Flow's icon-only <Controls>,
+            which were unreadable in dark mode and unexplained. */}
+        <Panel
+          position="top-left"
+          className="!m-2 flex flex-wrap items-center gap-0.5 rounded-md border border-border bg-card p-0.5 shadow-sm"
+        >
+          <CanvasButton label="" title="Zoom in" onClick={() => void zoomIn({ duration: 150 })}>
+            <ZoomIn size={14} aria-hidden />
+          </CanvasButton>
+          <CanvasButton label="" title="Zoom out" onClick={() => void zoomOut({ duration: 150 })}>
+            <ZoomOut size={14} aria-hidden />
+          </CanvasButton>
+          <CanvasButton
+            label="Fit"
+            title="Fit the whole flow into view"
+            onClick={() => void fitView({ padding: 0.1, duration: 300, maxZoom: 1 })}
+          >
+            <Maximize2 size={14} aria-hidden />
+          </CanvasButton>
+          {onAutoLayout && (
+            <CanvasButton
+              label="Tidy up"
+              title="Re-arrange all nodes top-down by their connections (undo with Cmd/Ctrl+Z)"
+              onClick={onAutoLayout}
+            >
+              <Network size={14} aria-hidden />
+            </CanvasButton>
+          )}
+          {referenceEdges && referenceEdges.length > 0 && (
+            <CanvasButton
+              label="References"
+              title="Show dashed links defined inside node settings (parallel children, harness verifier/delegates). Display only — not routing edges."
+              onClick={() => setShowReferences((v) => !v)}
+              pressed={showReferences}
+            >
+              <Waypoints size={14} aria-hidden />
+            </CanvasButton>
+          )}
+          <CanvasButton
+            label="Map"
+            title="Show/hide the overview map (bottom right)"
+            onClick={() => setShowMiniMap((v) => !v)}
+            pressed={showMiniMap}
+          >
+            <MapIcon size={14} aria-hidden />
+          </CanvasButton>
+        </Panel>
+        {showMiniMap && (
+          <MiniMap
+            zoomable
+            pannable
+            ariaLabel="Overview map — drag to pan, scroll to zoom"
+            nodeColor={(n) =>
+              nodeTypeHex((n.data as EditableNodeData | undefined)?.flowNode?.type)
+            }
+            className="!bg-muted"
+            style={{ width: 140, height: 90 }}
+          />
+        )}
       </ReactFlow>
     </div>
   );

@@ -55,6 +55,11 @@
 			"testValue": "ExampleCustomerName"
 		},
 		{
+			"label": "former customer project code",
+			"pattern": "\\bExampleProjectCode\\b",
+			"testValue": "ExampleProjectCode"
+		},
+		{
 			"label": "former personal identifier",
 			"pattern": "example\\.person",
 			"testValue": "example.person"
