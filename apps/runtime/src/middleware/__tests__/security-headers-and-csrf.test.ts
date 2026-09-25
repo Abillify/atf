@@ -152,6 +152,23 @@ describe("csrf()", () => {
     expect(res.status).toBe(403);
   });
 
+  test("lets a body-less POST with an Authorization header through (the dashboard's publish)", async () => {
+    // A cross-origin page cannot set Authorization without a CORS preflight.
+    const res = await buildApp().request("https://api.example.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Origin: "http://localhost:3101", "Sec-Fetch-Site": "same-site", Authorization: "Bearer op" },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test("still rejects a cross-site body-less POST without Authorization (script can send it without preflight)", async () => {
+    const res = await buildApp().request("https://api.example.com/v1/chat/completions", {
+      method: "POST",
+      headers: { Origin: "https://evil.example.com", "Sec-Fetch-Site": "cross-site" },
+    });
+    expect(res.status).toBe(403);
+  });
+
   test("lets a body-less DELETE through (forms cannot send DELETE; cors() preflight governs it)", async () => {
     const res = await buildApp().request("https://api.example.com/eval/cases/abc", {
       method: "DELETE",

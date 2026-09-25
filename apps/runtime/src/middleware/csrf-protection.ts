@@ -22,6 +22,16 @@
  * reject every body-less DELETE the dashboard sends from its own (allowlisted)
  * origin — e.g. deleting an eval case — without closing any real vector.
  *
+ * A POST carrying an `Authorization` header is not checked either: a page
+ * cannot set that header cross-origin without a CORS preflight (governed by
+ * the cors() allowlist), and the credential is not one the browser attaches
+ * by itself. Without this, the dashboard's own body-less actions (e.g.
+ * publishing a flow — Hono's csrf() treats a missing Content-Type as
+ * `text/plain`) were refused whenever Origin/Sec-Fetch-Site were not exactly
+ * same-origin, as a bare "Forbidden" text the dashboard could only show as
+ * "HTTP 403". (A POST without Content-Type stays checked: script can send
+ * one cross-site without a preflight.)
+ *
  * Excluded: `/webhooks/*` (GitOps) and `/triggers/*` — server-to-server
  * callbacks authenticated by an HMAC signature over the body, never by a
  * browser-held cookie. Some Git providers also post with a content-type
@@ -36,6 +46,7 @@ export function csrfProtection(): MiddlewareHandler {
   const protect = csrf();
   return (ctx, next) =>
     ctx.req.method !== "POST" ||
+    ctx.req.header("authorization") !== undefined ||
     ctx.req.path.startsWith("/webhooks/") ||
     ctx.req.path.startsWith("/triggers/")
       ? next()
