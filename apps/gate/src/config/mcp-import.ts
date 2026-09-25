@@ -93,7 +93,7 @@ async function listRemoteTools(
           allowedHosts,
         ),
   });
-  const client = new Client({ name: "mcpgate-import", version: "0.7.2" }, { capabilities: {} });
+  const client = new Client({ name: "mcpgate-import", version: "0.8.0" }, { capabilities: {} });
 
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {

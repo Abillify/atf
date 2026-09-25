@@ -18,6 +18,12 @@ releases:
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-09-25
+
+Versions 0.4.0 through 0.7.2 are documented below but were never tagged, so this entry's compare
+link spans from `v0.3.0`, the last published tag, and it carries the work of those versions as
+well.
+
 Reworks the Control Studio into a complete flow builder, extends flow variables with constants,
 allowlisted environment values, and calculations, and adds provider monitoring. All changes are
 backward compatible: existing flows, variables, and API clients keep working unchanged. The only
@@ -877,7 +883,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.8.0
 [0.7.2]: https://github.com/abillify/atf/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/abillify/atf/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/abillify/atf/compare/v0.6.1...v0.7.0
