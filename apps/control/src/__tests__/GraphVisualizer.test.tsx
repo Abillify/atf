@@ -95,10 +95,11 @@ describe("GraphVisualizer", () => {
   // --- Status → indicator (dot), independent of node-type fill colour --------
 
   describe("status indicator (corner dot)", () => {
-    test("renders an amber (pulsing) dot for a running node", () => {
+    test("renders a rotating border instead of a dot for a running node", () => {
       render(<GraphVisualizer events={[makeEvent("node-a", "running")]} />);
       const nodeEl = screen.getByTestId("node-node-a");
-      expect(nodeEl.querySelector(".bg-amber-400")).toBeTruthy();
+      expect(nodeEl.querySelector(".node-running-border")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-sky-400")).toBeNull();
     });
 
     test("renders a green dot for a completed node", () => {
@@ -267,7 +268,7 @@ describe("GraphVisualizer", () => {
       );
       const nodeEl = screen.getByTestId("node-router");
       expect(nodeEl.querySelector(".bg-green-400")).toBeTruthy();
-      expect(nodeEl.querySelector(".bg-amber-400")).toBeFalsy();
+      expect(nodeEl.querySelector(".node-running-border")).toBeFalsy();
     });
 
     test("a genuinely new invocation (different start_time) still restarts the node", () => {
@@ -283,7 +284,7 @@ describe("GraphVisualizer", () => {
         />,
       );
       const nodeEl = screen.getByTestId("node-router");
-      expect(nodeEl.querySelector(".bg-amber-400")).toBeTruthy();
+      expect(nodeEl.querySelector(".node-running-border")).toBeTruthy();
     });
   });
 

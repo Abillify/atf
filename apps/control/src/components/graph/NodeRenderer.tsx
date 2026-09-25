@@ -81,6 +81,7 @@ export function NodeCard({
 }: NodeCardProps): React.JSX.Element {
   const colorClass = nodeTypeColor(state.nodeType);
   const isPending = state.status === "pending";
+  const isRunning = state.status === "running";
   const isTool = state.kind === "tool";
   const status = statusIndicator(state.status);
   const statusRing = state.approval ? approvalRing(state.approval) : status.ring;
@@ -213,10 +214,13 @@ export function NodeCard({
         </div>
       )}
 
+      {/* Running: a rotating border instead of a status dot. */}
+      {isRunning && <div aria-hidden className="node-running-border" />}
+
       {/* Status dot (top-right). The compact (Studio editor) card leaves out the
           empty "pending" dot: without a run it carries no information and reads
           like an unconnected port. */}
-      {!(compact && isPending) && (
+      {!(compact && isPending) && !isRunning && (
         <div
           title={status.label}
           aria-hidden

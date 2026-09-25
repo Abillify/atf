@@ -29,6 +29,7 @@ import {
   type Viewport,
   applyNodeChanges,
   applyEdgeChanges,
+  useUpdateNodeInternals,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Map as MapIcon, Maximize2, Network, Waypoints, ZoomIn, ZoomOut } from "lucide-react";
@@ -98,10 +99,19 @@ const DIFF_BADGE: Record<DiffInfo["status"], { glyph: string; className: string 
 };
 
 function EditableNode({
+  id,
   data,
   selected,
 }: NodeProps<EditableFlowNode>): React.JSX.Element {
   const { flowNode, liveState, validation, diff, ghost, toolOut, toolIn } = data;
+  // React Flow measures handles only when a node's size changes. The tool
+  // handles come and go (delegation links show while their harness is
+  // selected), so re-measure — or the links to a new handle are dropped.
+  const updateNodeInternals = useUpdateNodeInternals();
+  // biome-ignore lint/correctness/useExhaustiveDependencies: toolIn/toolOut are the trigger, not inputs
+  useEffect(() => {
+    updateNodeInternals(id);
+  }, [id, toolIn, toolOut, updateNodeInternals]);
   const state = mergeLiveState(flowNodeToNodeState(flowNode), liveState);
   const hasError = (validation?.errors.length ?? 0) > 0;
   const hasWarning = !hasError && (validation?.warnings.length ?? 0) > 0;
@@ -265,7 +275,7 @@ const BOUNDARY_H = 52;
 const BOUNDARY_GAP = 70;
 
 const BOUNDARY_STATUS_RING: Record<NonNullable<BoundaryCardInfo["status"]>, string> = {
-  running: "ring-2 ring-sky-400 animate-pulse",
+  running: "", // rotating border, see below
   completed: "ring-2 ring-green-500",
   error: "ring-2 ring-red-500",
   pending: "",
@@ -288,7 +298,7 @@ function BoundaryNode({ data, selected }: NodeProps<Node<BoundaryNodeData, "boun
       <div
         data-testid={`boundary-${data.kind}`}
         style={{ width: BOUNDARY_W, height: BOUNDARY_H }}
-        className={`flex flex-col justify-center rounded-full border-2 bg-card px-4 shadow-sm ${
+        className={`relative flex flex-col justify-center rounded-full border-2 bg-card px-4 shadow-sm ${
           start ? "border-emerald-500" : "border-slate-500 dark:border-slate-400"
         } ${selected ? "outline outline-2 outline-offset-2 outline-sky-500" : ""} ${ring}`}
         title={
@@ -306,6 +316,13 @@ function BoundaryNode({ data, selected }: NodeProps<Node<BoundaryNodeData, "boun
         </div>
         {data.info.summary && (
           <div className="truncate text-[10px] text-muted-foreground">{data.info.summary}</div>
+        )}
+        {data.info.status === "running" && (
+          <div
+            aria-hidden
+            className="node-running-border"
+            style={{ "--node-spin-radius": "9999px" } as React.CSSProperties}
+          />
         )}
       </div>
       {start && (
@@ -485,28 +502,32 @@ function FlowCanvasInner({
     return () => cancelAnimationFrame(id);
   }, [fitViewNonce, fitView]);
 
-  // Ghost (overlay) nodes are not part of `nodes`, so React Flow's measurement
-  // changes for them would be dropped — and React Flow keeps an unmeasured
-  // node `visibility: hidden` and draws no edges to it. Keep their measured
-  // sizes here.
+  // Ghost (overlay) nodes and the Start/End cards are not part of `nodes`, so
+  // React Flow's measurement changes for them would be dropped — and React
+  // Flow keeps an unmeasured node `visibility: hidden`, and forgets the handle
+  // positions of a node passed in again without `measured`, drawing no edges
+  // to it (the Start/End links vanished on every re-render, e.g. on a click or
+  // a run status change). Keep their measured sizes here.
   const ghostIds = useMemo(
     () => new Set((ghostNodes ?? []).map((n) => n.id)),
     [ghostNodes],
   );
-  const [ghostSizes, setGhostSizes] = useState<
+  const [overlaySizes, setOverlaySizes] = useState<
     Map<string, { width: number; height: number }>
   >(new Map());
 
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
-      const ghostDims = changes.filter(
+      const overlayDims = changes.filter(
         (c): c is Extract<NodeChange, { type: "dimensions" }> =>
-          c.type === "dimensions" && ghostIds.has(c.id) && c.dimensions !== undefined,
+          c.type === "dimensions" &&
+          (ghostIds.has(c.id) || isBoundaryId(c.id)) &&
+          c.dimensions !== undefined,
       );
-      if (ghostDims.length > 0) {
-        setGhostSizes((prev) => {
+      if (overlayDims.length > 0) {
+        setOverlaySizes((prev) => {
           const next = new Map(prev);
-          for (const c of ghostDims) {
+          for (const c of overlayDims) {
             if (c.dimensions) next.set(c.id, c.dimensions);
           }
           return next;
@@ -730,17 +751,21 @@ function FlowCanvasInner({
     }));
     const boundaryNodes =
       boundaries && boundaryLayout
-        ? (["start", "end"] as const).map((kind) => ({
-            id: kind === "start" ? START_ID : END_ID,
-            type: "boundary",
-            position: boundaryLayout[kind],
-            width: BOUNDARY_W,
-            height: BOUNDARY_H,
-            draggable: false,
-            deletable: false,
-            connectable: editable,
-            data: { kind, info: boundaries[kind], connectable: editable },
-          }))
+        ? (["start", "end"] as const).map((kind) => {
+            const id = kind === "start" ? START_ID : END_ID;
+            return {
+              id,
+              type: "boundary",
+              position: boundaryLayout[kind],
+              width: BOUNDARY_W,
+              height: BOUNDARY_H,
+              ...(overlaySizes.has(id) ? { measured: overlaySizes.get(id) } : {}),
+              draggable: false,
+              deletable: false,
+              connectable: editable,
+              data: { kind, info: boundaries[kind], connectable: editable },
+            };
+          })
         : [];
     if (!ghostNodes || ghostNodes.length === 0) return [...boxNodes, ...real, ...boundaryNodes];
     const ghosts = ghostNodes.map((n) => ({
@@ -748,15 +773,36 @@ function FlowCanvasInner({
       // Visible (and edge-connectable) before React Flow has measured it.
       initialWidth: EDITOR_NODE_W,
       initialHeight: EDITOR_NODE_H,
-      ...(ghostSizes.has(n.id) ? { measured: ghostSizes.get(n.id) } : {}),
+      ...(overlaySizes.has(n.id) ? { measured: overlaySizes.get(n.id) } : {}),
       data: { flowNode: n.data.flowNode, ghost: n.ghostKind ?? "removed" },
     }));
     return [...boxNodes, ...real, ...ghosts, ...boundaryNodes];
-  }, [boundaries, boundaryLayout, editable, nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, ghostSizes, toolCallers, toolCallees, onSelectSubflow, selectedSubflowPath]);
+  }, [boundaries, boundaryLayout, editable, nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, overlaySizes, toolCallers, toolCallees, onSelectSubflow, selectedSubflowPath]);
 
   const renderEdges = useMemo(() => {
+    // Edges between the same two nodes share one curve: number their labels
+    // so each gets its own spot along it (LabeledEdge `labelSlot`).
+    const pairKey = (e: { source: string; target: string }) => `${e.source}\u0000${e.target}`;
+    const pairCount = new Map<string, number>();
+    for (const edge of edges) {
+      if (edge.label) pairCount.set(pairKey(edge), (pairCount.get(pairKey(edge)) ?? 0) + 1);
+    }
+    const pairSeen = new Map<string, number>();
     const real = edges.map((edge) => {
-      const e = { ...edge, type: "labeled", label: shortLabel(edge.label) };
+      const count = pairCount.get(pairKey(edge)) ?? 0;
+      const index = edge.label ? (pairSeen.get(pairKey(edge)) ?? 0) : 0;
+      if (edge.label) pairSeen.set(pairKey(edge), index + 1);
+      const e = {
+        ...edge,
+        type: "labeled",
+        label: shortLabel(edge.label),
+        // The untruncated label, for the edge's tooltip.
+        data: {
+          ...edge.data,
+          fullLabel: edge.label,
+          ...(count > 1 ? { labelSlot: { index, count } } : {}),
+        },
+      };
       const validationState = edgeValidation?.get(e.id);
       const diffState = edgeDiff?.get(e.id);
       const hasError = (validationState?.errors.length ?? 0) > 0;
@@ -782,26 +828,45 @@ function FlowCanvasInner({
         },
       };
     });
+    // Tool links leave the caller from one handle and share its first stretch,
+    // so identical labels ("delegates" ×3) would pile up there: label only one
+    // per caller — colour and dash already tell the kind apart. It goes on the
+    // longest of them (the target furthest above/below), where it has room.
+    const yOf = new Map(nodes.map((n) => [n.id, n.position.y]));
+    const reach = (r: ReferenceEdge) =>
+      Math.abs((yOf.get(r.target) ?? 0) - (yOf.get(r.source) ?? 0));
+    const labelledRef = new Map<string, ReferenceEdge>();
+    for (const r of referenceEdges ?? []) {
+      const key = `${r.source}\u0000${r.label}`;
+      const current = labelledRef.get(key);
+      if (current === undefined || reach(r) > reach(current)) labelledRef.set(key, r);
+    }
     const refs =
       showReferences && referenceEdges
-        ? referenceEdges.map((r) => ({
-            id: r.id,
-            source: r.source,
-            target: r.target,
-            sourceHandle: TOOL_OUT,
-            targetHandle: TOOL_IN,
-            type: "labeledStep",
-            label: r.label,
-            selectable: false,
-            deletable: false,
-            focusable: false,
-            style: {
-              stroke: REFERENCE_STYLE[r.kind].stroke,
-              strokeDasharray: REFERENCE_STYLE[r.kind].dash,
-              strokeWidth: 1.5,
-            },
-            data: {},
-          }))
+        ? referenceEdges.map((r) => {
+            const labelHere = labelledRef.get(`${r.source}\u0000${r.label}`) === r;
+            return {
+              id: r.id,
+              source: r.source,
+              target: r.target,
+              sourceHandle: TOOL_OUT,
+              targetHandle: TOOL_IN,
+              type: "labeledStep",
+              ...(labelHere ? { label: r.label } : {}),
+              selectable: false,
+              deletable: false,
+              focusable: false,
+              style: {
+                stroke: REFERENCE_STYLE[r.kind].stroke,
+                strokeDasharray: REFERENCE_STYLE[r.kind].dash,
+                strokeWidth: 1.5,
+              },
+              data: {},
+            };
+          })
+            // Labelled links last: drawn on top, so the unlabelled ones that
+            // branch off the shared stretch can't run across the label.
+            .sort((a, b) => Number("label" in a) - Number("label" in b))
         : [];
     // Implicit entry/exit links: dashed, display only.
     const implicit = boundaryLayout
@@ -847,7 +912,7 @@ function FlowCanvasInner({
       };
     });
     return [...real, ...refs, ...ghosts, ...implicit];
-  }, [edges, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout]);
+  }, [edges, nodes, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout]);
 
   return (
     <div

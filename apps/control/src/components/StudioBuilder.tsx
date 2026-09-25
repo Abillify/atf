@@ -1474,14 +1474,21 @@ export function StudioBuilder({
   }, [edges, nodeOrigins]);
 
   // Delegation links fan out from a harness to half the flow; draw them only
-  // while that harness is selected so they explain it without cluttering.
-  const referenceEdges = useMemo(
-    () =>
-      deriveReferenceEdges(nodes.map((n) => n.data.flowNode)).filter(
-        (r) => r.kind !== "delegates" || selectedNodeIds.includes(r.source),
-      ),
-    [nodes, selectedNodeIds],
-  );
+  // while that harness is selected so they explain it without cluttering —
+  // except to a node with no other link at all (a worker only the harness
+  // calls), which would otherwise float unconnected on the canvas.
+  const referenceEdges = useMemo(() => {
+    const refs = deriveReferenceEdges(nodes.map((n) => n.data.flowNode));
+    const linked = new Set<string>();
+    for (const e of edges) {
+      linked.add(e.source);
+      linked.add(e.target);
+    }
+    for (const r of refs) if (r.kind !== "delegates") linked.add(r.target);
+    return refs.filter(
+      (r) => r.kind !== "delegates" || selectedNodeIds.includes(r.source) || !linked.has(r.target),
+    );
+  }, [nodes, edges, selectedNodeIds]);
 
   // -------------------------------------------------------------------------
   // Keyboard shortcuts

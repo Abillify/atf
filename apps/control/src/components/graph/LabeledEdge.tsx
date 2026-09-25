@@ -19,6 +19,13 @@ import {
  * The capsule is the path itself, stroked thick and dashed down to the label's
  * extent around the midpoint: an outer stroke in the edge colour, an inner one
  * in the canvas colour, the text on top.
+ *
+ * A label longer than the edge keeps its beginning and is cut at the end
+ * ("…"); the full text is the tooltip.
+ *
+ * Edges between the same two nodes are drawn on the same curve. The caller
+ * numbers them (`data.labelSlot`), and each label then sits at its own spot
+ * along the curve — 1/3 and 2/3 for two — instead of all in the middle.
  */
 
 const FONT_SIZE = 11;
@@ -49,11 +56,31 @@ function buildPath(
     targetY: ty,
     targetPosition: tp,
   };
-  return kind === "smoothstep" ? getSmoothStepPath(args)[0] : getBezierPath(args)[0];
+  if (kind !== "smoothstep") return getBezierPath(args)[0];
+  // A step leaves each handle straight for `offset` px (default 20). When the
+  // two handles are closer than twice that, both stubs overshoot the middle
+  // and the path zigzags there — right where the label sits. Keep them within
+  // half the gap.
+  const gap = sp === "left" || sp === "right" ? Math.abs(tx - sx) : Math.abs(ty - sy);
+  return getSmoothStepPath({ ...args, offset: Math.min(20, gap / 2) })[0];
+}
+
+/** This edge's label position among edges between the same two nodes. */
+export interface LabelSlot {
+  index: number;
+  count: number;
+}
+
+function labelSlot(data: unknown): LabelSlot {
+  const s = (data as { labelSlot?: Partial<LabelSlot> } | undefined)?.labelSlot;
+  return typeof s?.index === "number" && typeof s.count === "number" && s.count > 1 && s.index >= 0 && s.index < s.count
+    ? { index: s.index, count: s.count }
+    : { index: 0, count: 1 };
 }
 
 interface Measure {
   length: number;
+  /** Width of the full label text. */
   textWidth: number;
   /** Text would render upside down along the forward path. */
   flip: boolean;
@@ -69,6 +96,7 @@ function LabeledEdgeImpl({
   targetY,
   targetPosition,
   label,
+  data,
   style,
   markerEnd,
   markerStart,
@@ -79,15 +107,18 @@ function LabeledEdgeImpl({
   // direction would put it upside down.
   const reversed = buildPath(kind, targetX, targetY, targetPosition, sourceX, sourceY, sourcePosition);
   const text = typeof label === "string" && label.length > 0 ? label : undefined;
+  // The caller may have shortened `label` already; `data.fullLabel` is the original.
+  const fullText = typeof data?.fullLabel === "string" && data.fullLabel.length > 0 ? data.fullLabel : text;
 
   const pathRef = useRef<SVGPathElement>(null);
-  const textRef = useRef<SVGTextElement>(null);
+  // Measures the FULL label (hidden) — the visible one may be shortened.
+  const measureRef = useRef<SVGTextElement>(null);
   const [measure, setMeasure] = useState<Measure | null>(null);
 
   useLayoutEffect(() => {
     if (!text || path.length === 0) return;
     const p = pathRef.current;
-    const t = textRef.current;
+    const t = measureRef.current;
     let length = 0;
     let flip = targetX < sourceX;
     try {
@@ -125,13 +156,39 @@ function LabeledEdgeImpl({
   const textFill = color ?? "var(--xy-edge-label-color, var(--xy-edge-label-color-default))";
 
   const length = measure?.length ?? 0;
-  const segment = Math.min((measure?.textWidth ?? 0) + PAD * 2, Math.max(0, length - CAPSULE_W * 2));
+  // Where along the curve this label is centred, and how much of the curve it
+  // may take: all of it alone, an equal share next to parallel edges' labels.
+  const slot = labelSlot(data);
+  const center = (slot.index + 1) / (slot.count + 1);
+  // Room for text along the edge, and the part of the label that fits in it:
+  // cut at the end, never in the middle.
+  // A step edge turns twice; its middle point sits on the straight middle
+  // run (vertical between side handles), so the label must fit on that run —
+  // text bent round a corner piles its glyphs up.
+  const sideHandles = sourcePosition === "left" || sourcePosition === "right";
+  const straightRun =
+    kind === "smoothstep"
+      ? Math.abs(sideHandles ? targetY - sourceY : targetX - sourceX) - CAPSULE_W / 2
+      : Number.POSITIVE_INFINITY;
+  const room = Math.max(
+    0,
+    Math.min(length - CAPSULE_W * 2, length / slot.count - CAPSULE_W, straightRun) - PAD * 2,
+  );
+  const fullWidth = measure?.textWidth ?? 0;
+  let shown = text;
+  let shownWidth = fullWidth;
+  if (text && measure && length > 0 && fullWidth > room) {
+    const chars = Math.floor((text.length * room) / fullWidth) - 1;
+    shown = chars > 0 ? `${text.slice(0, chars).trimEnd()}…` : "";
+    shownWidth = chars > 0 ? (fullWidth * (chars + 1)) / text.length : 0;
+  }
+  const segment = Math.min(shownWidth + PAD * 2, room + PAD * 2);
   const capsuleDash =
     length > 0 && segment > 0
-      ? { strokeDasharray: `${segment} ${length}`, strokeDashoffset: -(length - segment) / 2 }
+      ? { strokeDasharray: `${segment} ${length}`, strokeDashoffset: -(center * length - segment / 2) }
       : undefined;
   // Only draw the frame when the label actually fits on the edge.
-  const fits = capsuleDash !== undefined && (measure?.textWidth ?? 0) + PAD * 2 <= segment;
+  const fits = capsuleDash !== undefined && shown !== "" && shownWidth + PAD * 2 <= segment + 0.5;
 
   return (
     <>
@@ -145,6 +202,7 @@ function LabeledEdgeImpl({
       />
       {text && (
         <g className="react-flow__edge-inline-label" data-testid={`edge-label-${id}`}>
+          {shown !== fullText && <title>{fullText}</title>}
           <path ref={pathRef} d={path} fill="none" stroke="none" />
           <path id={textPathId} d={measure?.flip ? reversed : path} fill="none" stroke="none" />
           {fits && (
@@ -175,7 +233,6 @@ function LabeledEdgeImpl({
             </>
           )}
           <text
-            ref={textRef}
             dy="0.35em"
             style={{
               fontSize: FONT_SIZE,
@@ -188,9 +245,21 @@ function LabeledEdgeImpl({
               visibility: measure ? "visible" : "hidden",
             }}
           >
-            <textPath href={`#${textPathId}`} startOffset="50%" textAnchor="middle">
-              {text}
+            <textPath
+              href={`#${textPathId}`}
+              // The reversed path runs target → source: mirror the position.
+              startOffset={`${(measure?.flip ? 1 - center : center) * 100}%`}
+              textAnchor="middle"
+            >
+              {shown}
             </textPath>
+          </text>
+          <text
+            ref={measureRef}
+            aria-hidden
+            style={{ fontSize: FONT_SIZE, fontWeight: 600, visibility: "hidden" }}
+          >
+            {text}
           </text>
         </g>
       )}

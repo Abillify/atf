@@ -172,7 +172,7 @@ export function statusIndicator(status: NodeState["status"]): {
       };
     case "running":
       return {
-        dot: "bg-amber-400 border-amber-600 animate-pulse",
+        dot: "bg-sky-400 border-sky-600 animate-pulse",
         glyph: "",
         ring: "",
         label: "running",

@@ -9,7 +9,7 @@
  * Requirements: 11.2
  */
 
-import React from "react";
+import type React from "react";
 import {
   nodeTypeHex,
   statusIndicator,
@@ -60,11 +60,21 @@ export function GraphLegend({ present }: GraphLegendProps) {
           const ind = statusIndicator(s);
           return (
             <div key={s} className="flex items-center gap-1.5">
-              <span
-                className={`inline-block w-3 h-3 rounded-full border text-[8px] leading-none flex items-center justify-center ${ind.dot}`}
-              >
-                {ind.glyph}
-              </span>
+              {s === "running" ? (
+                // Running nodes carry a rotating border, not a dot (NodeCard).
+                <span data-testid="legend-running" className="relative inline-block h-3 w-3">
+                  <span
+                    className="node-running-border"
+                    style={{ inset: 0, padding: 2, "--node-spin-radius": "9999px" } as React.CSSProperties}
+                  />
+                </span>
+              ) : (
+                <span
+                  className={`inline-block w-3 h-3 rounded-full border text-[8px] leading-none flex items-center justify-center ${ind.dot}`}
+                >
+                  {ind.glyph}
+                </span>
+              )}
               <span className="capitalize text-foreground">{s}</span>
             </div>
           );

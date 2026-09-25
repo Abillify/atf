@@ -127,9 +127,54 @@
     animation: ui-route-in 180ms ease-out;
   }
 
+  /* Running node (NodeCard, Start/End cards, legend): a light arc travelling around the card's border. Place it
+     inside a `relative` card; `--node-spin-radius` is the card's own radius
+     (default rounded-xl). The mask cuts the gradient down to a 3px ring just
+     outside the card's 2px border. */
+  @keyframes node-spin {
+    to {
+      --node-spin-angle: 360deg;
+    }
+  }
+
+  .node-running-border {
+    position: absolute;
+    inset: -5px;
+    padding: 3px;
+    border-radius: calc(var(--node-spin-radius, 0.75rem) + 3px);
+    /* A faint full ring, so the node reads as running at every angle, with a
+       bright arc sweeping over it. */
+    background: conic-gradient(
+      from var(--node-spin-angle),
+      rgb(56 189 248 / 0.35) 0turn,
+      rgb(56 189 248 / 0.35) 0.45turn,
+      rgb(14 165 233) 0.75turn,
+      rgb(255 255 255) 0.8turn,
+      rgb(56 189 248 / 0.35) 0.85turn
+    );
+    mask:
+      linear-gradient(#000 0 0) content-box exclude,
+      linear-gradient(#000 0 0);
+    pointer-events: none;
+    animation: node-spin 1.4s linear infinite;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .animate-route-in {
       animation: none;
     }
+
+    .node-running-border {
+      animation: none;
+      background: rgb(56 189 248);
+    }
   }
+}
+
+/* Registered so the gradient angle interpolates (unregistered custom
+   properties would jump from 0 to 360deg). Must stay outside @layer. */
+@property --node-spin-angle {
+  syntax: "<angle>";
+  inherits: false;
+  initial-value: 0deg;
 }
