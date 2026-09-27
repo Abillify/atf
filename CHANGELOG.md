@@ -18,6 +18,12 @@ releases:
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-09-27
+
+Version 0.8.0 is documented below but was never tagged either, so this entry's compare link
+spans from `v0.3.0`, the last published tag, and it carries the work of 0.4.0 through 0.8.0 as
+well.
+
 Adds Document Intelligence v2. The HTTP surface is additive — `/search`, `/ingest-file`, and the
 v1 Extract endpoints keep working — but the release runs database migrations in Search and
 creates a new schema in Extract, makes one breaking contract-package change, and tightens the
@@ -1129,7 +1135,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.0
 [0.8.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.8.0
 [0.7.2]: https://github.com/abillify/atf/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/abillify/atf/compare/v0.7.0...v0.7.1
