@@ -1,0 +1,2692 @@
+{
+	"version": "1.1.0",
+	"description": "Synthetic golden set for Document Intelligence v2 evaluation (tasks T0.1, T2.10). Four representative document types with 120 questions annotated with expected page, figure and table-cell answers, plus ground-truth extraction content (table cells, figure labels, BPMN nodes/edges) for the extraction-quality metrics. Content is synthetic and contains no confidential material.",
+	"documents": [
+		{
+			"id": "wms-spec",
+			"reference": "/golden/wms-pflichtenheft.docx",
+			"kind": "docx",
+			"title": "WMS-Pflichtenheft (synthetisch)",
+			"pages": 42,
+			"note": "Synthetic warehouse-management requirements spec: numbered sections, requirement tables, field lists."
+		},
+		{
+			"id": "process-bpmn",
+			"reference": "/golden/wareneingang-prozesse.pdf",
+			"kind": "bpmn",
+			"title": "Prozessdokumentation mit BPMN (synthetisch)",
+			"pages": 18,
+			"note": "Synthetic process manual embedding BPMN diagrams for goods receipt and returns."
+		},
+		{
+			"id": "ui-masks",
+			"reference": "/golden/masken-handbuch.pdf",
+			"kind": "ui_mask",
+			"title": "Maskenhandbuch (synthetisch)",
+			"pages": 24,
+			"note": "Synthetic screen manual with UI-mask screenshots and labelled fields."
+		},
+		{
+			"id": "plan-set",
+			"reference": "/golden/plansatz-halle.pdf",
+			"kind": "plan",
+			"title": "Plansatz Halle (synthetisch)",
+			"pages": 12,
+			"note": "Synthetic plan set: large-format technical drawings with title blocks and legends."
+		}
+	],
+	"questions": [
+		{
+			"id": "q-001",
+			"document": "wms-spec",
+			"question": "Welche Anforderung beschreibt die Teilfreigabe im Wareneingang?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-002",
+			"document": "wms-spec",
+			"question": "Wo ist die Rolle des Lagerleiters definiert?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-003",
+			"document": "wms-spec",
+			"question": "Welche Pflichtfelder hat die Wareneingangsmaske?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-004",
+			"document": "wms-spec",
+			"question": "Wie wird die Chargenverwaltung gefordert?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-005",
+			"document": "wms-spec",
+			"question": "Welche Anforderung regelt die Rückverfolgbarkeit?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-006",
+			"document": "wms-spec",
+			"question": "Wo steht die Definition des Begriffs Anmeldung?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-007",
+			"document": "wms-spec",
+			"question": "Welche Schnittstelle zum ERP wird verlangt?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-008",
+			"document": "wms-spec",
+			"question": "Welche Anforderung betrifft die Inventur?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-009",
+			"document": "wms-spec",
+			"question": "Wo werden die Berechtigungen beschrieben?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-010",
+			"document": "wms-spec",
+			"question": "Welche Anforderung nennt die Prüfung der Mengen?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-011",
+			"document": "wms-spec",
+			"question": "Wie wird die Sperrlagerlogik gefordert?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-012",
+			"document": "wms-spec",
+			"question": "Welche Anforderung beschreibt die Umlagerung?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-013",
+			"document": "wms-spec",
+			"question": "Wo ist der Freigabeprozess dokumentiert?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-014",
+			"document": "wms-spec",
+			"question": "Welche Felder hat die Freigabemaske?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-015",
+			"document": "wms-spec",
+			"question": "Welche Anforderung regelt die Etikettierung?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-016",
+			"document": "wms-spec",
+			"question": "Wo steht die Fehlerbehandlung bei Buchungen?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-017",
+			"document": "wms-spec",
+			"question": "Welche Anforderung betrifft die Kommissionierung?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-018",
+			"document": "wms-spec",
+			"question": "Wie wird die Nachschubsteuerung beschrieben?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-019",
+			"document": "wms-spec",
+			"question": "Welche Anforderung nennt die Bestandsführung?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-020",
+			"document": "wms-spec",
+			"question": "Wo ist die Definition der Teilmenge?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": []
+		},
+		{
+			"id": "q-021",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-001 in der Anforderungstabelle?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 15,
+					"row": 2,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-001",
+						"Anforderung A-001 des Wareneingangs",
+						"MUSS"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-022",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-002 in der Anforderungstabelle?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 29,
+					"row": 3,
+					"col": 3
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-002",
+						"Anforderung A-002 des Wareneingangs",
+						"SOLL"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-023",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-003 in der Anforderungstabelle?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 1,
+					"row": 4,
+					"col": 4
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-003",
+						"Anforderung A-003 des Wareneingangs",
+						"MUSS"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-024",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-004 in der Anforderungstabelle?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 15,
+					"row": 5,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-004",
+						"Anforderung A-004 des Wareneingangs",
+						"SOLL"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-025",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-005 in der Anforderungstabelle?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 29,
+					"row": 6,
+					"col": 3
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-005",
+						"Anforderung A-005 des Wareneingangs",
+						"MUSS"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-026",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-006 in der Anforderungstabelle?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 1,
+					"row": 7,
+					"col": 4
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-006",
+						"Anforderung A-006 des Wareneingangs",
+						"SOLL"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-027",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-007 in der Anforderungstabelle?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 15,
+					"row": 2,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-007",
+						"Anforderung A-007 des Wareneingangs",
+						"MUSS"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-028",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-008 in der Anforderungstabelle?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 29,
+					"row": 3,
+					"col": 3
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-008",
+						"Anforderung A-008 des Wareneingangs",
+						"SOLL"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-029",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-009 in der Anforderungstabelle?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 1,
+					"row": 4,
+					"col": 4
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-009",
+						"Anforderung A-009 des Wareneingangs",
+						"MUSS"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-030",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-010 in der Anforderungstabelle?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 15,
+					"row": 5,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-010",
+						"Anforderung A-010 des Wareneingangs",
+						"SOLL"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-031",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-011 in der Anforderungstabelle?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 29,
+					"row": 6,
+					"col": 3
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-011",
+						"Anforderung A-011 des Wareneingangs",
+						"MUSS"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-032",
+			"document": "wms-spec",
+			"question": "Welchen Wert hat Anforderung A-012 in der Anforderungstabelle?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 1,
+					"row": 7,
+					"col": 4
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"ID",
+						"Anforderung",
+						"Priorität"
+					],
+					[
+						"A-012",
+						"Anforderung A-012 des Wareneingangs",
+						"SOLL"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-033",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-1?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [
+				"fig-wms-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 1a",
+					"Feld 1b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-034",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-2?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-wms-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 2a",
+					"Feld 2b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-035",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-3?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-wms-3"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 3a",
+					"Feld 3b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-036",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-4?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [
+				"fig-wms-4"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 4a",
+					"Feld 4b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-037",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-5?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-wms-5"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 5a",
+					"Feld 5b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-038",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-6?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-wms-6"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 6a",
+					"Feld 6b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-039",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-7?",
+			"expectedPages": [
+				29
+			],
+			"expectedFigures": [
+				"fig-wms-7"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 7a",
+					"Feld 7b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-040",
+			"document": "wms-spec",
+			"question": "Welche Feldliste zeigt die Abbildung der Maske M-8?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-wms-8"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Feld 8a",
+					"Feld 8b",
+					"Speichern"
+				]
+			}
+		},
+		{
+			"id": "q-041",
+			"document": "process-bpmn",
+			"question": "Welche Aufgabe folgt auf die Wareneingangsprüfung im Prozess?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-bpmn-1"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-042",
+			"document": "process-bpmn",
+			"question": "Welches Gateway entscheidet über die Teilfreigabe?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-bpmn-2"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-043",
+			"document": "process-bpmn",
+			"question": "Welche Lane bearbeitet die Rücksendung?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-bpmn-3"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-044",
+			"document": "process-bpmn",
+			"question": "Wo beginnt der Wareneingangsprozess?",
+			"expectedPages": [
+				13
+			],
+			"expectedFigures": [
+				"fig-bpmn-4"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-045",
+			"document": "process-bpmn",
+			"question": "Welche Aufgabe schließt den Retourenprozess ab?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-bpmn-5"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-046",
+			"document": "process-bpmn",
+			"question": "Welche Pools zeigt das BPMN-Diagramm des Wareneingangs?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-bpmn-6"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-047",
+			"document": "process-bpmn",
+			"question": "Welcher Sequenzfluss verbindet Prüfung und Buchung?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-bpmn-1"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-048",
+			"document": "process-bpmn",
+			"question": "Welche Entscheidung trifft der Lagerleiter im Prozess?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-bpmn-2"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-049",
+			"document": "process-bpmn",
+			"question": "Welche Aufgabe erzeugt das Wareneingangsetikett?",
+			"expectedPages": [
+				17
+			],
+			"expectedFigures": [
+				"fig-bpmn-3"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-050",
+			"document": "process-bpmn",
+			"question": "Welches Ereignis startet die Reklamation?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-bpmn-4"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-051",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 1 des Prozesses?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-bpmn-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n0-start",
+						"label": "Start"
+					},
+					{
+						"id": "n0-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n0-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n0-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n0-start",
+						"to": "n0-pruefung"
+					},
+					{
+						"from": "n0-pruefung",
+						"to": "n0-gw"
+					},
+					{
+						"from": "n0-gw",
+						"to": "n0-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-052",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 2 des Prozesses?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-bpmn-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n1-start",
+						"label": "Start"
+					},
+					{
+						"id": "n1-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n1-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n1-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n1-start",
+						"to": "n1-pruefung"
+					},
+					{
+						"from": "n1-pruefung",
+						"to": "n1-gw"
+					},
+					{
+						"from": "n1-gw",
+						"to": "n1-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-053",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 3 des Prozesses?",
+			"expectedPages": [
+				13
+			],
+			"expectedFigures": [
+				"fig-bpmn-3"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n2-start",
+						"label": "Start"
+					},
+					{
+						"id": "n2-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n2-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n2-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n2-start",
+						"to": "n2-pruefung"
+					},
+					{
+						"from": "n2-pruefung",
+						"to": "n2-gw"
+					},
+					{
+						"from": "n2-gw",
+						"to": "n2-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-054",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 4 des Prozesses?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-bpmn-4"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n3-start",
+						"label": "Start"
+					},
+					{
+						"id": "n3-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n3-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n3-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n3-start",
+						"to": "n3-pruefung"
+					},
+					{
+						"from": "n3-pruefung",
+						"to": "n3-gw"
+					},
+					{
+						"from": "n3-gw",
+						"to": "n3-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-055",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 5 des Prozesses?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-bpmn-5"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n4-start",
+						"label": "Start"
+					},
+					{
+						"id": "n4-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n4-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n4-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n4-start",
+						"to": "n4-pruefung"
+					},
+					{
+						"from": "n4-pruefung",
+						"to": "n4-gw"
+					},
+					{
+						"from": "n4-gw",
+						"to": "n4-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-056",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 6 des Prozesses?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-bpmn-6"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n5-start",
+						"label": "Start"
+					},
+					{
+						"id": "n5-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n5-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n5-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n5-start",
+						"to": "n5-pruefung"
+					},
+					{
+						"from": "n5-pruefung",
+						"to": "n5-gw"
+					},
+					{
+						"from": "n5-gw",
+						"to": "n5-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-057",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 7 des Prozesses?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-bpmn-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n6-start",
+						"label": "Start"
+					},
+					{
+						"id": "n6-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n6-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n6-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n6-start",
+						"to": "n6-pruefung"
+					},
+					{
+						"from": "n6-pruefung",
+						"to": "n6-gw"
+					},
+					{
+						"from": "n6-gw",
+						"to": "n6-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-058",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 8 des Prozesses?",
+			"expectedPages": [
+				17
+			],
+			"expectedFigures": [
+				"fig-bpmn-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n7-start",
+						"label": "Start"
+					},
+					{
+						"id": "n7-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n7-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n7-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n7-start",
+						"to": "n7-pruefung"
+					},
+					{
+						"from": "n7-pruefung",
+						"to": "n7-gw"
+					},
+					{
+						"from": "n7-gw",
+						"to": "n7-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-059",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 9 des Prozesses?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-bpmn-3"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n8-start",
+						"label": "Start"
+					},
+					{
+						"id": "n8-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n8-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n8-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n8-start",
+						"to": "n8-pruefung"
+					},
+					{
+						"from": "n8-pruefung",
+						"to": "n8-gw"
+					},
+					{
+						"from": "n8-gw",
+						"to": "n8-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-060",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 10 des Prozesses?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-bpmn-4"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n9-start",
+						"label": "Start"
+					},
+					{
+						"id": "n9-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n9-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n9-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n9-start",
+						"to": "n9-pruefung"
+					},
+					{
+						"from": "n9-pruefung",
+						"to": "n9-gw"
+					},
+					{
+						"from": "n9-gw",
+						"to": "n9-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-061",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 11 des Prozesses?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-bpmn-5"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n10-start",
+						"label": "Start"
+					},
+					{
+						"id": "n10-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n10-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n10-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n10-start",
+						"to": "n10-pruefung"
+					},
+					{
+						"from": "n10-pruefung",
+						"to": "n10-gw"
+					},
+					{
+						"from": "n10-gw",
+						"to": "n10-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-062",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 12 des Prozesses?",
+			"expectedPages": [
+				13
+			],
+			"expectedFigures": [
+				"fig-bpmn-6"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n11-start",
+						"label": "Start"
+					},
+					{
+						"id": "n11-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n11-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n11-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n11-start",
+						"to": "n11-pruefung"
+					},
+					{
+						"from": "n11-pruefung",
+						"to": "n11-gw"
+					},
+					{
+						"from": "n11-gw",
+						"to": "n11-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-063",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 13 des Prozesses?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-bpmn-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n12-start",
+						"label": "Start"
+					},
+					{
+						"id": "n12-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n12-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n12-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n12-start",
+						"to": "n12-pruefung"
+					},
+					{
+						"from": "n12-pruefung",
+						"to": "n12-gw"
+					},
+					{
+						"from": "n12-gw",
+						"to": "n12-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-064",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 14 des Prozesses?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-bpmn-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n13-start",
+						"label": "Start"
+					},
+					{
+						"id": "n13-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n13-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n13-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n13-start",
+						"to": "n13-pruefung"
+					},
+					{
+						"from": "n13-pruefung",
+						"to": "n13-gw"
+					},
+					{
+						"from": "n13-gw",
+						"to": "n13-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-065",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 15 des Prozesses?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-bpmn-3"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n14-start",
+						"label": "Start"
+					},
+					{
+						"id": "n14-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n14-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n14-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n14-start",
+						"to": "n14-pruefung"
+					},
+					{
+						"from": "n14-pruefung",
+						"to": "n14-gw"
+					},
+					{
+						"from": "n14-gw",
+						"to": "n14-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-066",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 16 des Prozesses?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-bpmn-4"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n15-start",
+						"label": "Start"
+					},
+					{
+						"id": "n15-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n15-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n15-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n15-start",
+						"to": "n15-pruefung"
+					},
+					{
+						"from": "n15-pruefung",
+						"to": "n15-gw"
+					},
+					{
+						"from": "n15-gw",
+						"to": "n15-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-067",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 17 des Prozesses?",
+			"expectedPages": [
+				17
+			],
+			"expectedFigures": [
+				"fig-bpmn-5"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n16-start",
+						"label": "Start"
+					},
+					{
+						"id": "n16-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n16-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n16-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n16-start",
+						"to": "n16-pruefung"
+					},
+					{
+						"from": "n16-pruefung",
+						"to": "n16-gw"
+					},
+					{
+						"from": "n16-gw",
+						"to": "n16-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-068",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 18 des Prozesses?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-bpmn-6"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n17-start",
+						"label": "Start"
+					},
+					{
+						"id": "n17-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n17-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n17-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n17-start",
+						"to": "n17-pruefung"
+					},
+					{
+						"from": "n17-pruefung",
+						"to": "n17-gw"
+					},
+					{
+						"from": "n17-gw",
+						"to": "n17-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-069",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 19 des Prozesses?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-bpmn-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n18-start",
+						"label": "Start"
+					},
+					{
+						"id": "n18-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n18-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n18-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n18-start",
+						"to": "n18-pruefung"
+					},
+					{
+						"from": "n18-pruefung",
+						"to": "n18-gw"
+					},
+					{
+						"from": "n18-gw",
+						"to": "n18-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-070",
+			"document": "process-bpmn",
+			"question": "Welche Knoten und Kanten enthält das Teildiagramm 20 des Prozesses?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-bpmn-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedNodes": [
+					{
+						"id": "n19-start",
+						"label": "Start"
+					},
+					{
+						"id": "n19-pruefung",
+						"label": "Wareneingangsprüfung"
+					},
+					{
+						"id": "n19-gw",
+						"label": "Teilfreigabe?"
+					},
+					{
+						"id": "n19-end",
+						"label": "Ende"
+					}
+				],
+				"expectedEdges": [
+					{
+						"from": "n19-start",
+						"to": "n19-pruefung"
+					},
+					{
+						"from": "n19-pruefung",
+						"to": "n19-gw"
+					},
+					{
+						"from": "n19-gw",
+						"to": "n19-end"
+					}
+				]
+			}
+		},
+		{
+			"id": "q-071",
+			"document": "ui-masks",
+			"question": "Welche Felder hat die Anmeldemaske?",
+			"expectedPages": [
+				17
+			],
+			"expectedFigures": [
+				"fig-mask-1"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-072",
+			"document": "ui-masks",
+			"question": "Wo ist die Maske für die Teilfreigabe abgebildet?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-mask-2"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-073",
+			"document": "ui-masks",
+			"question": "Welche Schaltflächen zeigt die Wareneingangsmaske?",
+			"expectedPages": [
+				21
+			],
+			"expectedFigures": [
+				"fig-mask-3"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-074",
+			"document": "ui-masks",
+			"question": "Welche Pflichtfelder markiert die Freigabemaske?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-mask-4"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-075",
+			"document": "ui-masks",
+			"question": "Welche Maske zeigt die Chargenauswahl?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-mask-5"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-076",
+			"document": "ui-masks",
+			"question": "Wo ist die Suchmaske für Artikel abgebildet?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-mask-6"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-077",
+			"document": "ui-masks",
+			"question": "Welche Felder hat die Inventurmaske?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-mask-7"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-078",
+			"document": "ui-masks",
+			"question": "Welche Maske zeigt die Umlagerung?",
+			"expectedPages": [
+				19
+			],
+			"expectedFigures": [
+				"fig-mask-8"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-079",
+			"document": "ui-masks",
+			"question": "Welche Eingabefelder hat die Reklamationsmaske?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-mask-9"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-080",
+			"document": "ui-masks",
+			"question": "Wo ist die Übersichtsmaske dargestellt?",
+			"expectedPages": [
+				23
+			],
+			"expectedFigures": [
+				"fig-mask-10"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-081",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 1 auf dem Screenshot?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-mask-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 1",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-082",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 2 auf dem Screenshot?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-mask-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 2",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-083",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 3 auf dem Screenshot?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-mask-3"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 3",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-084",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 4 auf dem Screenshot?",
+			"expectedPages": [
+				19
+			],
+			"expectedFigures": [
+				"fig-mask-4"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 4",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-085",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 5 auf dem Screenshot?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-mask-5"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 5",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-086",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 6 auf dem Screenshot?",
+			"expectedPages": [
+				23
+			],
+			"expectedFigures": [
+				"fig-mask-6"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 6",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-087",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 7 auf dem Screenshot?",
+			"expectedPages": [
+				13
+			],
+			"expectedFigures": [
+				"fig-mask-7"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 7",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-088",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 8 auf dem Screenshot?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-mask-8"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 8",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-089",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 9 auf dem Screenshot?",
+			"expectedPages": [
+				17
+			],
+			"expectedFigures": [
+				"fig-mask-9"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 9",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-090",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 10 auf dem Screenshot?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-mask-10"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 10",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-091",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 11 auf dem Screenshot?",
+			"expectedPages": [
+				21
+			],
+			"expectedFigures": [
+				"fig-mask-1"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 11",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-092",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 12 auf dem Screenshot?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-mask-2"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 12",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-093",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 13 auf dem Screenshot?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-mask-3"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 13",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-094",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 14 auf dem Screenshot?",
+			"expectedPages": [
+				15
+			],
+			"expectedFigures": [
+				"fig-mask-4"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 14",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-095",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 15 auf dem Screenshot?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-mask-5"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 15",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-096",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 16 auf dem Screenshot?",
+			"expectedPages": [
+				19
+			],
+			"expectedFigures": [
+				"fig-mask-6"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 16",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-097",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 17 auf dem Screenshot?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-mask-7"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 17",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-098",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 18 auf dem Screenshot?",
+			"expectedPages": [
+				23
+			],
+			"expectedFigures": [
+				"fig-mask-8"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 18",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-099",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 19 auf dem Screenshot?",
+			"expectedPages": [
+				13
+			],
+			"expectedFigures": [
+				"fig-mask-9"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 19",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-100",
+			"document": "ui-masks",
+			"question": "Welches Feldlabel trägt das Eingabefeld 20 auf dem Screenshot?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-mask-10"
+			],
+			"expectedCells": [],
+			"extraction": {
+				"expectedLabels": [
+					"Eingabefeld 20",
+					"Abbrechen",
+					"Übernehmen"
+				]
+			}
+		},
+		{
+			"id": "q-101",
+			"document": "plan-set",
+			"question": "Welche Legende erklärt die Symbole im Hallenplan?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-plan-1"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-102",
+			"document": "plan-set",
+			"question": "Wo ist der Grundriss der Halle abgebildet?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-plan-2"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-103",
+			"document": "plan-set",
+			"question": "Welche Maße nennt der Schnitt A-A?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-plan-3"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-104",
+			"document": "plan-set",
+			"question": "Welches Planblatt zeigt die Regalzonen?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-plan-4"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-105",
+			"document": "plan-set",
+			"question": "Wo ist die Fluchtwegkennzeichnung dargestellt?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [
+				"fig-plan-5"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-106",
+			"document": "plan-set",
+			"question": "Welche Bemaßung hat das Tor im Plan?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [
+				"fig-plan-6"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-107",
+			"document": "plan-set",
+			"question": "Welches Blatt zeigt die Elektroinstallation?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [
+				"fig-plan-1"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-108",
+			"document": "plan-set",
+			"question": "Wo ist der Detailausschnitt der Rampe?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [
+				"fig-plan-2"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-109",
+			"document": "plan-set",
+			"question": "Welche Zeichnungsnummer trägt der Übersichtsplan?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [
+				"fig-plan-3"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-110",
+			"document": "plan-set",
+			"question": "Welche Zonen zeigt der Nutzungsplan?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [
+				"fig-plan-4"
+			],
+			"expectedCells": []
+		},
+		{
+			"id": "q-111",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 1 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 5,
+					"row": 1,
+					"col": 1
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 1",
+						"Wert-01"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-112",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 2 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 7,
+					"row": 2,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 2",
+						"Wert-02"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-113",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 3 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 9,
+					"row": 3,
+					"col": 1
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 3",
+						"Wert-03"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-114",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 4 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 11,
+					"row": 4,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 4",
+						"Wert-04"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-115",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 5 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				1
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 1,
+					"row": 1,
+					"col": 1
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 5",
+						"Wert-05"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-116",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 6 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				3
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 3,
+					"row": 2,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 6",
+						"Wert-06"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-117",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 7 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				5
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 5,
+					"row": 3,
+					"col": 1
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 7",
+						"Wert-07"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-118",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 8 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				7
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 7,
+					"row": 4,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 8",
+						"Wert-08"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-119",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 9 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				9
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 9,
+					"row": 1,
+					"col": 1
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 9",
+						"Wert-09"
+					]
+				]
+			}
+		},
+		{
+			"id": "q-120",
+			"document": "plan-set",
+			"question": "Welchen Wert trägt Feld 10 im Schriftfeld des Planblatts?",
+			"expectedPages": [
+				11
+			],
+			"expectedFigures": [],
+			"expectedCells": [
+				{
+					"page": 11,
+					"row": 2,
+					"col": 2
+				}
+			],
+			"extraction": {
+				"expectedTable": [
+					[
+						"Feld",
+						"Wert"
+					],
+					[
+						"Feld 10",
+						"Wert-10"
+					]
+				]
+			}
+		}
+	]
+}

@@ -1,41 +1,67 @@
 {
-  "name": "aiperator-trust-fabric",
-  "version": "0.8.0",
-  "private": true,
-  "description": "Self-hosted AI orchestration with policy, approvals, PII controls, audit evidence, retrieval, and governed MCP tools",
-  "author": "Abillify Technology GmbH <info@abillify.me>",
-  "license": "Elastic-2.0",
-  "repository": {"type": "git", "url": "https://github.com/Abillify/atf.git"},
-  "homepage": "https://github.com/Abillify/atf#readme",
-  "bugs": {"url": "https://github.com/Abillify/atf/issues"},
-  "packageManager": "bun@1.4.0",
-  "workspaces": ["apps/*", "packages/*", "integration/*"],
-  "scripts": {
-    "version:sync": "bun run scripts/check-product-version.ts",
-    "verify:version": "bun run scripts/check-product-version.ts --check",
-    "verify:public": "bun run scripts/verify-public-tree.ts",
-    "verify:public:release": "bun run scripts/verify-public-tree.ts --require-rules",
-    "spdx": "bun run scripts/apply-spdx-headers.ts",
-    "verify:spdx": "bun run scripts/apply-spdx-headers.ts --check",
-    "supply-chain": "bun run scripts/generate-supply-chain.ts",
-    "supply-chain:check": "bun run scripts/generate-supply-chain.ts --check",
-    "supply-chain:images": "bun run scripts/generate-image-supply-chain.ts",
-    "config-reference": "bun run scripts/generate-config-reference.ts",
-    "config-reference:check": "bun run scripts/generate-config-reference.ts --check",
-    "flow-reference": "bun run apps/runtime/scripts/generate-flow-reference.ts",
-    "flow-reference:check": "bun run apps/runtime/scripts/generate-flow-reference.ts --check",
-    "test:contracts": "bun run --filter @atf/system-integration test",
-    "lint": "bunx biome lint --max-diagnostics=10000 .",
-    "lint:baseline": "bun run scripts/check-lint-baseline.ts",
-    "format": "bunx biome format --write",
-    "check:budgets": "bun run scripts/report-budgets.ts --report",
-    "check:budgets:ci": "bun run scripts/report-budgets.ts --enforce",
-    "smoke:model-capabilities": "bun run --filter @atf/runtime smoke:model-capabilities",
-    "typecheck": "bun run --filter '*' typecheck",
-    "test": "bun run --filter '*' test",
-    "build": "bun run --filter '*' build"
-  },
-  "devDependencies": {"@biomejs/biome": "2.5.6", "@types/bun": "1.4.0", "bun-types": "1.4.0", "typescript": "7.0.2"},
-  "overrides": {"adm-zip": "0.6.0", "fast-uri": "3.1.6", "postcss": "8.5.26", "sharp": "0.35.4"},
-  "engines": {"bun": ">=1.4.0 <2", "node": ">=26 <27"}
+	"name": "aiperator-trust-fabric",
+	"version": "0.8.0",
+	"private": true,
+	"description": "Self-hosted AI orchestration with policy, approvals, PII controls, audit evidence, retrieval, and governed MCP tools",
+	"author": "Abillify Technology GmbH <info@abillify.me>",
+	"license": "Elastic-2.0",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/Abillify/atf.git"
+	},
+	"homepage": "https://github.com/Abillify/atf#readme",
+	"bugs": {
+		"url": "https://github.com/Abillify/atf/issues"
+	},
+	"packageManager": "bun@1.4.0",
+	"workspaces": [
+		"apps/*",
+		"packages/*",
+		"integration/*"
+	],
+	"scripts": {
+		"version:sync": "bun run scripts/check-product-version.ts",
+		"verify:version": "bun run scripts/check-product-version.ts --check",
+		"verify:public": "bun run scripts/verify-public-tree.ts",
+		"verify:public:release": "bun run scripts/verify-public-tree.ts --require-rules",
+		"spdx": "bun run scripts/apply-spdx-headers.ts",
+		"verify:spdx": "bun run scripts/apply-spdx-headers.ts --check",
+		"supply-chain": "bun run scripts/generate-supply-chain.ts",
+		"supply-chain:check": "bun run scripts/generate-supply-chain.ts --check",
+		"supply-chain:images": "bun run scripts/generate-image-supply-chain.ts",
+		"config-reference": "bun run scripts/generate-config-reference.ts",
+		"config-reference:check": "bun run scripts/generate-config-reference.ts --check",
+		"eval:fixture": "bun run scripts/eval/golden-set/build-fixture.ts",
+		"eval:retrieval": "bun run scripts/eval/retrieval.ts",
+		"eval:test": "bun test scripts/eval/metrics.test.ts scripts/eval/extraction-metrics.test.ts scripts/eval/golden-set.test.ts scripts/eval/retrieval.test.ts",
+		"eval:typecheck": "tsc --noEmit -p scripts/eval/tsconfig.json",
+		"flow-reference": "bun run apps/runtime/scripts/generate-flow-reference.ts",
+		"flow-reference:check": "bun run apps/runtime/scripts/generate-flow-reference.ts --check",
+		"test:contracts": "bun run --filter @atf/extract-contract test && bun run --filter @atf/system-integration test",
+		"lint": "bunx biome lint --max-diagnostics=10000 .",
+		"lint:baseline": "bun run scripts/check-lint-baseline.ts",
+		"format": "bunx biome format --write",
+		"check:budgets": "bun run scripts/report-budgets.ts --report",
+		"check:budgets:ci": "bun run scripts/report-budgets.ts --enforce",
+		"smoke:model-capabilities": "bun run --filter @atf/runtime smoke:model-capabilities",
+		"typecheck": "bun run --filter '*' typecheck",
+		"test": "bun run --filter '*' test",
+		"build": "bun run --filter '*' build"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "2.5.6",
+		"@types/bun": "1.4.0",
+		"bun-types": "1.4.0",
+		"typescript": "7.0.2"
+	},
+	"overrides": {
+		"adm-zip": "0.6.0",
+		"fast-uri": "3.1.6",
+		"postcss": "8.5.26",
+		"sharp": "0.35.4"
+	},
+	"engines": {
+		"bun": ">=1.4.0 <2",
+		"node": ">=26 <27"
+	}
 }

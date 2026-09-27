@@ -1,0 +1,108 @@
+{
+  "label": "baseline",
+  "pending": true,
+  "generated_at": "2026-09-27T06:17:39.939Z",
+  "fixture": {
+    "version": "1.1.0",
+    "path": "scripts/eval/golden-set/golden-set.v1.json",
+    "documents": 4,
+    "questions": 120
+  },
+  "parameters": {
+    "collection": "golden",
+    "base_url": "http://127.0.0.1:3002",
+    "cutoffs": [
+      5,
+      10
+    ],
+    "mode": "offline"
+  },
+  "metrics": {
+    "page": {
+      "5": {
+        "recallAtK": 0,
+        "mrr": 0,
+        "ndcgAtK": 0,
+        "evaluatedQueries": 120,
+        "skippedQueries": 0
+      },
+      "10": {
+        "recallAtK": 0,
+        "mrr": 0,
+        "ndcgAtK": 0,
+        "evaluatedQueries": 120,
+        "skippedQueries": 0
+      }
+    },
+    "figure": {
+      "5": {
+        "recallAtK": 0,
+        "mrr": 0,
+        "ndcgAtK": 0,
+        "evaluatedQueries": 78,
+        "skippedQueries": 42
+      },
+      "10": {
+        "recallAtK": 0,
+        "mrr": 0,
+        "ndcgAtK": 0,
+        "evaluatedQueries": 78,
+        "skippedQueries": 42
+      }
+    },
+    "mrr": {
+      "5": 0,
+      "10": 0
+    },
+    "figure_hit_rate": {
+      "5": {
+        "rate": 0,
+        "figureQuestions": 78,
+        "hits": 0
+      },
+      "10": {
+        "rate": 0,
+        "figureQuestions": 78,
+        "hits": 0
+      }
+    }
+  },
+  "extraction": {
+    "tableCell": {
+      "accuracy": 0,
+      "cases": 22,
+      "expectedCells": 112,
+      "matchedCells": 0
+    },
+    "label": {
+      "coverage": 0,
+      "cases": 28,
+      "expectedLabels": 84,
+      "coveredLabels": 0
+    },
+    "bpmn": {
+      "nodeRecall": 0,
+      "edgeRecall": 0,
+      "cases": 20,
+      "expectedNodes": 80,
+      "recoveredNodes": 0,
+      "expectedEdges": 60,
+      "recoveredEdges": 0
+    },
+    "pending": true
+  },
+  "coverage": {
+    "by_kind": {
+      "docx": 40,
+      "bpmn": 30,
+      "ui_mask": 30,
+      "plan": 20
+    },
+    "page_questions": 120,
+    "figure_questions": 78,
+    "cell_questions": 22,
+    "table_annotations": 22,
+    "label_annotations": 28,
+    "bpmn_annotations": 20
+  }
+}
