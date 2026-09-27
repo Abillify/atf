@@ -226,6 +226,12 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       throw unsupportedMediaType(resolved.reason, { filename: input.filename });
     }
     const format = resolved.format;
+    if (format.kind === "email") {
+      throw unsupportedMediaType(
+        "E-mail (EML) is ingested through the job pipeline (POST /v2/jobs, or /v1/ingest with a database)",
+        { filename: input.filename },
+      );
+    }
 
     // A per-conversion scratch directory. LibreOffice profiles, rendered pages
     // and the intermediate PDF all live here, and it is removed unconditionally
@@ -817,6 +823,8 @@ function extractorLabel(format: SupportedFormat): string {
       return "libreoffice+poppler";
     case "bpmn":
       return "native-bpmn";
+    case "email":
+      return "native-email";
     case "image":
       return "sharp";
   }

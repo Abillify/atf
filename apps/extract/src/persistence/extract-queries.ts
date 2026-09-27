@@ -301,6 +301,24 @@ export function setJobRevisionQuery(id: string, revisionId: string | null, fence
 }
 
 /**
+ * Re-point a job at another document reference: the canonical reference Search
+ * resolved for it (another format of an indexed document). Only valid before
+ * anything reference-derived (asset ids, revision) exists, i.e. before the
+ * source is prepared.
+ */
+export function setJobReferenceQuery(id: string, reference: string, fence?: Fence): Query {
+  const values: unknown[] = [id, reference];
+  return {
+    text: `
+      UPDATE ${EXTRACT_SCHEMA}.jobs
+         SET reference = $2, updated_at = NOW()
+       WHERE id = $1${fenceWhere(values, fence)}
+      RETURNING *`,
+    values,
+  };
+}
+
+/**
  * Start a new emit generation: bump `emit_generation` and forget the revision
  * id, so the next emit opens a fresh revision under a new Idempotency-Key.
  * Runs inside a fenced transaction together with the outbox reset.

@@ -252,7 +252,16 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "`/v2/jobs/{id}`. Without a database the route falls back to the original " +
           "synchronous convert→forward path.\n\n" +
           "`X-Allowed-Users` and `X-Allowed-Groups` may only *narrow* the caller's own " +
-          "identity; they cannot widen it.",
+          "identity; they cannot widen it.\n\n" +
+          "On the v2 job path every ingest is identified first: a file already indexed in the " +
+          "collection (same bytes, same normalised text, or — for the same reference without file " +
+          "extension — a near-identical text of the same version) is **skipped** and answered " +
+          "`status: skipped` with `duplicate_of`; it is recorded as an additional source of the " +
+          "indexed document. Another format of an indexed document is ingested as a new revision " +
+          "of it (`resolved_reference`), and only a newer version becomes the latest. Without " +
+          "`X-Version` the version is read from the first page (label, then date), else from " +
+          "`X-Source-Modified`. E-mails (`.eml`) are threaded; their attachments are ingested as " +
+          "documents of their own.",
         parameters: [
           {
             name: "X-Reference",
@@ -268,7 +277,33 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           { name: "X-Tags", in: "header", required: false, schema: { type: "string" } },
           { name: "X-Allowed-Users", in: "header", required: false, schema: { type: "string" } },
           { name: "X-Allowed-Groups", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Version", in: "header", required: false, schema: { type: "string" } },
+          {
+            name: "X-Version",
+            in: "header",
+            required: false,
+            description:
+              "Explicit document version (`2.1`, `Rev. C`, or a date `YYYY-MM-DD`). Skips version " +
+              "detection; orders the document's revisions in Search.",
+            schema: { type: "string", maxLength: 200 },
+          },
+          {
+            name: "X-Source-Modified",
+            in: "header",
+            required: false,
+            description:
+              "The source file's modification time (RFC 3339 with time zone): the version fallback " +
+              "when the first page states none.",
+            schema: { type: "string", format: "date-time" },
+          },
+          {
+            name: "X-Dedup",
+            in: "header",
+            required: false,
+            description:
+              "`auto` (default): skip exact duplicates and same-version near-duplicates of the same " +
+              "document; `exact`: skip only byte/text-identical duplicates; `off`: never skip.",
+            schema: { type: "string", enum: ["auto", "exact", "off"] },
+          },
           { name: "X-Valid-From", in: "header", required: false, description: "RFC 3339 validity start; timezone is required and the value is forwarded to Search.", schema: { type: "string", format: "date-time" } },
           {
             name: "X-Version-Mode",
@@ -293,8 +328,25 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                 schema: {
                   type: "object",
                   properties: {
-                    status: { type: "string" },
+                    status: { type: "string", enum: ["ok", "skipped"] },
+                    reason: { type: "string", description: "`duplicate` when `status` is `skipped`." },
                     reference: { type: "string" },
+                    resolved_reference: {
+                      type: "string",
+                      description:
+                        "The reference the document was ingested under when it differs from X-Reference " +
+                        "(another format of an indexed document).",
+                    },
+                    duplicate_of: {
+                      type: "object",
+                      description: "The indexed source a skipped upload duplicates.",
+                      additionalProperties: true,
+                    },
+                    version: {
+                      type: "object",
+                      description: "The version the document was ingested with, and where it came from.",
+                      additionalProperties: true,
+                    },
                     collection: { type: "string" },
                     contract: { type: "string" },
                     page_count: { type: "integer" },
@@ -467,7 +519,15 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "carries a config/pipeline/prompt-hash snapshot, a token budget, and a lease; a " +
           "worker with a valid lease epoch drives it through " +
           "`queued → preparing → processing → emitting → committing → completed`, resuming from " +
-          "the first unfinished unit after a crash.",
+          "the first unfinished unit after a crash.\n\n" +
+          "`allowedUsers` / `allowedGroups` set the document's readers, narrowed to the caller's own " +
+          "identity like the `/v1/ingest` headers; Search writes them onto every unit and asset " +
+          "check.\n\n" +
+          "Optional identity fields: `version` (explicit document version), `sourceModifiedAt` " +
+          "(RFC 3339 file time, the version fallback) and `dedup` (`auto` | `exact` | `off`). A job " +
+          "whose source is already indexed completes without extracting anything; its status " +
+          "carries `duplicateOf`. `resolvedReference` names the indexed document another format " +
+          "was ingested into, `version` the version it was ingested with.",
         requestBody: {
           required: true,
           content: { "application/json": { schema: { type: "object", additionalProperties: true } } },

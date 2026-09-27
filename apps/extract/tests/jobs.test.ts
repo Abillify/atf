@@ -90,6 +90,28 @@ describe("POST /v2/jobs · create", () => {
     expect(row?.prompt_hash).toMatch(/^[0-9a-f]{64}$/);
   });
 
+  it("stores the document ACL narrowed to the caller", async () => {
+    const app = buildApp();
+    const anonymous = await createJob(app);
+    expect(fakeStore.peek(anonymous.body.jobId)?.config.acl).toEqual({ allowedUsers: [], allowedGroups: [] });
+
+    // A service token asserting the uploading user, as the runtime calls it.
+    const asserting = buildApp({ API_TOKEN: "svc-token", AUTHN_MODE: "token" });
+    const res = await request(asserting)
+      .post("/v2/jobs")
+      .set("Authorization", "Bearer svc-token")
+      .set("X-User", "anna")
+      .set("X-Groups", "team,sales")
+      .send({
+        reference: "tests/privat.pdf",
+        sourceSha256: seededSha,
+        allowedUsers: ["anna", "mallory"],
+        allowedGroups: ["team", "admins"],
+      });
+    expect(res.status).toBe(201);
+    expect(fakeStore.peek(res.body.jobId)?.config.acl).toEqual({ allowedUsers: ["anna"], allowedGroups: ["team"] });
+  });
+
   it("rejects a job whose source is not stored", async () => {
     const app = buildApp();
     const res = await request(app)

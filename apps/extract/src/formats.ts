@@ -47,6 +47,11 @@ export type SourceKind =
    * `native:` asset.
    */
   | "bpmn"
+  /**
+   * E-mail (RFC 5322 `.eml`): parsed natively into one page per message, with
+   * no rendering and no model call. Attachments become their own jobs.
+   */
+  | "email"
   /** Single raster image: normalised by sharp, no text layer. */
   | "image";
 
@@ -116,6 +121,13 @@ export const SUPPORTED_FORMATS: readonly SupportedFormat[] = [
     family: "xml",
     label: "BPMN 2.0 (XML)",
   },
+  {
+    mimeType: "message/rfc822",
+    extensions: [".eml"],
+    kind: "email",
+    family: "email",
+    label: "E-Mail (EML)",
+  },
   { mimeType: "image/png", extensions: [".png"], kind: "image", family: "png", label: "PNG" },
   { mimeType: "image/jpeg", extensions: [".jpg", ".jpeg"], kind: "image", family: "jpeg", label: "JPEG" },
   { mimeType: "image/gif", extensions: [".gif"], kind: "image", family: "gif", label: "GIF" },
@@ -152,6 +164,7 @@ export type SniffedFamily =
   | "zip"
   | "ole"
   | "xml"
+  | "email"
   | "png"
   | "jpeg"
   | "gif"
@@ -182,7 +195,49 @@ export function sniffFamily(buffer: Uint8Array): SniffedFamily {
     buffer[11] === 0x50
   ) return "webp";
   if (looksLikeXml(buffer)) return "xml"; // BPMN 2.0 and other plain-XML dialects
+  if (looksLikeEmail(buffer)) return "email";
   return "unknown";
+}
+
+/** Header fields that mark an RFC 5322 message; two of them must appear. */
+const EMAIL_HEADER_NAMES = new Set([
+  "from", "to", "cc", "subject", "date", "message-id", "received", "return-path",
+  "mime-version", "delivered-to", "reply-to", "in-reply-to", "references", "sender",
+  "thread-index", "thread-topic", "content-type",
+]);
+
+/**
+ * Recognise an RFC 5322 message: its head is a block of `Name: value` header
+ * fields (with folded continuation lines) that includes at least two of the
+ * usual message headers, one of them `From`, `Date`, `Subject` or
+ * `Message-ID`. Only the first 16 KiB are read, and any line that is not a
+ * header field before the blank line ends the check negatively.
+ */
+function looksLikeEmail(buffer: Uint8Array): boolean {
+  const head = Buffer.from(buffer.buffer, buffer.byteOffset, Math.min(buffer.byteLength, 16_384))
+    .toString("latin1")
+    .replace(/^\uFEFF|^\xEF\xBB\xBF/, "");
+  const lines = head.split(/\r?\n/);
+  let known = 0;
+  let core = false;
+  let fields = 0;
+  for (const line of lines) {
+    if (line === "") break; // end of the header block
+    if (/^[ \t]/.test(line)) {
+      if (fields === 0) return false;
+      continue; // folded continuation
+    }
+    // mbox "From " separator line before the first header.
+    if (fields === 0 && line.startsWith("From ")) continue;
+    const match = /^([!-9;-~]+):/.exec(line);
+    if (match === null) return false;
+    fields++;
+    const name = (match[1] ?? "").toLowerCase();
+    if (EMAIL_HEADER_NAMES.has(name)) known++;
+    if (name === "from" || name === "date" || name === "subject" || name === "message-id") core = true;
+    if (fields > 400) break;
+  }
+  return known >= 2 && core;
 }
 
 /**

@@ -74,9 +74,24 @@ export interface SummarizeInput {
   signal?: AbortSignal | undefined;
 }
 
+/** A free-form completion on the summary model (system + user prompt). */
+export interface CompleteInput {
+  system: string;
+  user: string;
+  /** Output token cap; the configured summary cap when omitted. */
+  maxTokens?: number | undefined;
+  signal?: AbortSignal | undefined;
+}
+
 export interface SummaryClient {
   /** Generate one summary. Throws {@link TransientSummaryFailure} or {@link ExtractError}. */
   summarize(input: SummarizeInput): Promise<SummaryResult>;
+  /**
+   * One free-form completion on the same model and endpoint (used for the
+   * version-detection fallback). Optional so a test double without it works;
+   * callers then skip the model step.
+   */
+  complete?(input: CompleteInput): Promise<SummaryResult>;
   /** Reachability probe for `/health`. Never throws. */
   probe(): Promise<{ available: boolean; error?: string }>;
 }
@@ -133,21 +148,28 @@ export function createSummaryClient(config: SummaryConfig, logger: Logger): Summ
     return result;
   }
 
-  function buildBody(input: SummarizeInput): Record<string, unknown> {
+  function buildBody(input: SummarizeInput | CompleteInput): Record<string, unknown> {
+    const messages =
+      "system" in input
+        ? [
+            { role: "system", content: input.system },
+            { role: "user", content: input.user },
+          ]
+        : [
+            { role: "system", content: summarySystemPrompt(input.scope) },
+            {
+              role: "user",
+              content: buildSummaryUserPrompt({
+                scope: input.scope,
+                title: input.title,
+                content: input.content,
+              }),
+            },
+          ];
     return {
       model: config.model,
-      messages: [
-        { role: "system", content: summarySystemPrompt(input.scope) },
-        {
-          role: "user",
-          content: buildSummaryUserPrompt({
-            scope: input.scope,
-            title: input.title,
-            content: input.content,
-          }),
-        },
-      ],
-      max_tokens: config.maxTokens,
+      messages,
+      max_tokens: "system" in input && input.maxTokens !== undefined ? input.maxTokens : config.maxTokens,
       temperature: config.temperature,
       stream: false,
       // Only sent when configured: strict servers reject unknown fields, so an
@@ -159,7 +181,7 @@ export function createSummaryClient(config: SummaryConfig, logger: Logger): Summ
   }
 
   /** One request. Throws TransientSummaryFailure or ExtractError. */
-  async function requestOnce(input: SummarizeInput): Promise<SummaryResult> {
+  async function requestOnce(input: SummarizeInput | CompleteInput): Promise<SummaryResult> {
     const controller = new AbortController();
     const timeout =
       config.timeoutMs > 0
@@ -220,7 +242,7 @@ export function createSummaryClient(config: SummaryConfig, logger: Logger): Summ
     return { text: content.trim(), usage, requests: 1 };
   }
 
-  async function summarize(input: SummarizeInput): Promise<SummaryResult> {
+  async function summarize(input: SummarizeInput | CompleteInput): Promise<SummaryResult> {
     const usageTotal: SummaryUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let requests = 0;
     let lastTransient: Error | null = null;
@@ -242,7 +264,12 @@ export function createSummaryClient(config: SummaryConfig, logger: Logger): Summ
           if (attempt < config.maxRetries) {
             const delay = backoffDelay(attempt);
             logger.warn(
-              { scope: input.scope, attempt: attempt + 1, delayMs: Math.round(delay), err: error.message },
+              {
+                scope: "scope" in input ? input.scope : "complete",
+                attempt: attempt + 1,
+                delayMs: Math.round(delay),
+                err: error.message,
+              },
               "Summary request failed; retrying",
             );
             await sleep(delay);
@@ -273,7 +300,11 @@ export function createSummaryClient(config: SummaryConfig, logger: Logger): Summ
     }
   }
 
-  return { summarize, probe };
+  return {
+    summarize: (input: SummarizeInput) => summarize(input),
+    complete: (input: CompleteInput) => summarize(input),
+    probe,
+  };
 }
 
 /**

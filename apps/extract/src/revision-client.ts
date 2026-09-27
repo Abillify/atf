@@ -19,6 +19,7 @@
  *   HEAD   /v2/assets/{assetId}                               check a crop exists
  *   POST   …/revisions/{rev}/segments/{n}/commit             commit a segment
  *   POST   …/revisions/{rev}/commit                           final commit (document.end)
+ *   POST   /v2/sources/identify                               dedup + canonical reference
  *
  * ## Idempotency is the contract, not a nicety
  *
@@ -46,6 +47,9 @@ import {
   batchAckSchema,
   revisionStateSchema,
   commitResultSchema,
+  identifyResponseSchema,
+  type IdentifyRequest,
+  type IdentifyResponse,
   type Revision,
   type BatchAck,
   type RevisionState,
@@ -53,6 +57,7 @@ import {
   type Visibility,
 } from "@atf/extract-contract/v2";
 import { injectTraceHeaders } from "./trace-context.js";
+import { encodeHeaderValue } from "@atf/extract-contract/v1";
 
 /** Configuration slice, mirroring `SearchTargetConfig` plus the collection. */
 export interface RevisionClientConfig {
@@ -108,6 +113,10 @@ export interface RevisionClient {
   createRevision(args: {
     reference: string;
     idempotencyKey: string;
+    /** The source claim (`identify` sourceId) this revision indexes. */
+    sourceId?: string | undefined;
+    /** Who may read the document's units (sent as X-Allowed-Users / -Groups). */
+    acl?: { allowedUsers: readonly string[]; allowedGroups: readonly string[] } | undefined;
     visibility?: Visibility | undefined;
     collection?: string | undefined;
     signal?: AbortSignal | undefined;
@@ -166,6 +175,18 @@ export interface RevisionClient {
     collection?: string | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<CommitResult>;
+
+  /**
+   * Register the job's source claim and ask Search whether the source is new,
+   * a new version of an indexed document, or a duplicate. Optional so a
+   * transport without it (tests, an old deployment) skips identification.
+   * Returns null when Search does not offer the route (404/405).
+   */
+  identify?(args: {
+    request: IdentifyRequest;
+    collection?: string | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<IdentifyResponse | null>;
 }
 
 export function createRevisionClient(
@@ -233,6 +254,15 @@ export function createRevisionClient(
         "idempotency-key": args.idempotencyKey,
       };
       if (args.visibility !== undefined) headers["x-visibility"] = args.visibility;
+      if (args.sourceId !== undefined) headers["x-source-id"] = args.sourceId;
+      if (args.acl !== undefined) {
+        if (args.acl.allowedUsers.length > 0) {
+          headers["x-allowed-users"] = encodeHeaderValue(args.acl.allowedUsers.join(","));
+        }
+        if (args.acl.allowedGroups.length > 0) {
+          headers["x-allowed-groups"] = encodeHeaderValue(args.acl.allowedGroups.join(","));
+        }
+      }
       const response = await request(
         `/v2/documents/${encodeRef(args.reference)}/revisions`,
         { method: "POST", headers },
@@ -329,6 +359,24 @@ export function createRevisionClient(
       if (!response.ok) await classifyError(response, `commitSegment(${args.segment})`);
       const json: unknown = await response.json().catch(() => ({}));
       return commitResultSchema.parse(json);
+    },
+
+    async identify(args) {
+      const collection = args.collection ?? config.collection;
+      const response = await request(
+        "/v2/sources/identify",
+        {
+          method: "POST",
+          headers: { ...baseHeaders(collection), "content-type": "application/json" },
+          body: JSON.stringify(args.request),
+        },
+        args.signal,
+      );
+      // An older Search without the route: identification is skipped.
+      if (response.status === 404 || response.status === 405) return null;
+      if (!response.ok) await classifyError(response, "identify");
+      const json: unknown = await response.json().catch(() => ({}));
+      return identifyResponseSchema.parse(json);
     },
 
     async commit(args) {

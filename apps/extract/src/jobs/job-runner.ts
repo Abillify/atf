@@ -56,7 +56,33 @@ import {
   isValidBoundingBox,
   type BoundingBox,
 } from "@atf/extract-contract/v1";
-import type { AssetRef, Block, BBox, PageRecord, TileRef, Transcription } from "@atf/extract-contract/v2";
+import type {
+  AssetRef,
+  Block,
+  BBox,
+  IdentifyRequest,
+  IdentifyResponse,
+  PageRecord,
+  TileRef,
+  Transcription,
+} from "@atf/extract-contract/v2";
+import { Readable } from "node:stream";
+import { RevisionTransientError } from "../revision-client.js";
+import type { SourceStore } from "../source-store.js";
+import { resolveFormat } from "../formats.js";
+import { textFingerprint } from "./fingerprint.js";
+import {
+  EMAIL_KEY,
+  FINGERPRINT_MAX_PAGES,
+  IDENTITY_KEY,
+  attachmentReference,
+  childJobId,
+  identityOf,
+  identifyRequestFor,
+  ingestOptionsOf,
+  resolveVersion,
+  type JobIdentity,
+} from "./identity.js";
 import type { ExtractStore } from "../persistence/index.js";
 import {
   LeaseLostError,
@@ -296,6 +322,18 @@ export interface JobRunnerDeps {
    * "stays active" as a real, measured call.
    */
   metrics?: RunnerMetrics | null;
+  /**
+   * Search's source identification (dedup, canonical reference). Optional: a
+   * deployment without Search, or a test, ingests every source as before —
+   * no duplicate skipping, but the version is still detected and emitted.
+   */
+  identifier?: SourceIdentifier | null;
+  /**
+   * The content-addressed source store, for e-mail attachments: each one is
+   * stored and ingested as a job of its own. Without it attachments are only
+   * listed in the e-mail's text.
+   */
+  sourceStore?: SourceStore | null;
   /** The wall clock used for backoff decisions; injectable for tests. */
   now?: () => Date;
   /**
@@ -303,6 +341,15 @@ export interface JobRunnerDeps {
    * place. Injectable so tests can advance a fake clock instead of sleeping.
    */
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+/** The slice of the revision client the runner uses to identify a source. */
+export interface SourceIdentifier {
+  identify(args: {
+    request: IdentifyRequest;
+    collection?: string | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<IdentifyResponse | null>;
 }
 
 /**
@@ -505,6 +552,8 @@ interface VisionStageParsed {
 export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   const { store, renderer, events, config, logger } = deps;
   const emitter = deps.emitter ?? null;
+  const identifier = deps.identifier ?? null;
+  const sourceStore = deps.sourceStore ?? null;
   const analyzer = deps.analyzer ?? null;
   const metrics = deps.metrics ?? null;
   const fastPathEnabled = config.textFastPath === true;
@@ -613,7 +662,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }
 
   async function runJob(ctx: JobRunContext, abort: AbortController): Promise<JobRunOutcome> {
-    const { job, lease } = ctx;
+    const { lease } = ctx;
+    let job = ctx.job;
     const fence = lease.fence;
     const cfg = job.config as Record<string, unknown>;
     const reparseRequested = cfg[REPARSE_FLAG] === true;
@@ -674,6 +724,29 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       await store.setJobStatus(job.id, "preparing", null, fence);
     }
 
+    // ── identify, source phase: before any work, ask Search which document
+    //    this is (its canonical reference — another format of an indexed
+    //    document ingests as a new revision of it) and whether the very same
+    //    file is already indexed. Recorded on the job, so a resume skips it.
+    const ingestOptions = ingestOptionsOf(cfg);
+    let identity = identityOf(cfg);
+    if (identity === undefined) {
+      const step = await identifySourcePhase(job, ingestOptions.dedup);
+      if (step.kind === "paused") return step.outcome;
+      identity = step.identity;
+      if (identity.canonicalReference !== job.reference) {
+        logger.info(
+          { jobId: job.id, requested: job.reference, canonical: identity.canonicalReference },
+          "Ingesting as a new revision of the document indexed under the canonical reference",
+        );
+        job =
+          (await store.setJobReference(job.id, identity.canonicalReference, fence)) ??
+          { ...job, reference: identity.canonicalReference };
+      }
+      await saveIdentity(job.id, identity);
+    }
+    if (identity.decision === "duplicate") return finishDuplicate(job, identity);
+
     let prepared: PreparedSource;
     try {
       prepared = await renderer.prepare({
@@ -686,6 +759,28 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       return { status: "failed", error: err instanceof Error ? err.message : String(err) };
     }
 
+    // ── identify, content phase: the text fingerprint and the version, before
+    //    any model call, so a duplicate in another format costs no vision.
+    if (!identity.complete) {
+      let step: IdentifyStep;
+      try {
+        step = await identifyContentPhase(job, identity, prepared);
+      } catch (err) {
+        await prepared.close();
+        throw err;
+      }
+      if (step.kind === "paused") {
+        await prepared.close();
+        return step.outcome;
+      }
+      identity = step.identity;
+      await saveIdentity(job.id, identity);
+      if (identity.decision === "duplicate") {
+        await prepared.close();
+        return finishDuplicate(job, identity);
+      }
+    }
+
     // ── native path: BPMN / chart-free XLSX (design §10, no model) ────────
     if (prepared.native !== null) {
       try {
@@ -693,7 +788,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // Native records carry no model response; a reparse has nothing to do.
           await store.patchJobConfig(job.id, { [REPARSE_FLAG]: false }, fence);
         }
-        return await runNativeSource({ job, native: prepared.native, stageRunner, lease });
+        return await runNativeSource({ job, native: prepared.native, stageRunner, lease, cfg });
       } finally {
         await prepared.close();
       }
@@ -776,6 +871,27 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       });
       if (outcome.status !== "completed") return outcome;
 
+      // ── version from the transcribed first page: a scan has no text layer,
+      //    so the content phase could not read its version; the vision
+      //    transcription of page 1 can.
+      if (identity.version === undefined || identity.version.source === "source_modified") {
+        const firstPage = await firstPageText(job.id);
+        if (firstPage !== "") {
+          const version = await resolveVersion({
+            options: { ...ingestOptions, dedup: ingestOptions.dedup },
+            firstPageText: firstPage,
+            llm: deps.summaryClient ?? null,
+            signal: scope().signal,
+            onTokens: (tokens) => consumeTokens(job.id, tokens),
+            onLlmError: (err) => logger.warn({ jobId: job.id, err }, "Version detection by the text model failed"),
+          });
+          if (version !== undefined && version.source !== identity.version?.source) {
+            identity = { ...identity, version };
+            await saveIdentity(job.id, identity);
+          }
+        }
+      }
+
       // ── document pass (S7): strictly ordered, after the concurrent window ─
       const docPassOutcome = await runDocumentPass({
         job,
@@ -800,6 +916,193 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     } finally {
       await prepared.close();
     }
+  }
+
+  type IdentifyStep =
+    | { kind: "ok"; identity: JobIdentity }
+    | { kind: "paused"; outcome: JobRunOutcome };
+
+  type IdentifyCall =
+    | { kind: "ok"; response: IdentifyResponse | null }
+    | { kind: "paused"; outcome: JobRunOutcome };
+
+  /**
+   * Call Search's identify route. A transient failure (Search unreachable) is
+   * retried in place and then pauses the job on dependency, like the emitter;
+   * a permanent one (validation, auth) is logged and the job ingests without
+   * identification — dedup is an optimisation, never a reason to fail an
+   * ingest. `response: null` means "not identified".
+   */
+  async function callIdentify(request: IdentifyRequest, job: JobRow): Promise<IdentifyCall> {
+    if (identifier === null) return { kind: "ok", response: null };
+    const stall = { since: null as number | null };
+    for (let attempt = 1; ; attempt++) {
+      assertLive();
+      try {
+        const response = await identifier.identify({
+          request,
+          collection: job.collection ?? undefined,
+          signal: scope().signal,
+        });
+        return { kind: "ok", response };
+      } catch (err) {
+        assertLive();
+        if (err instanceof RevisionTransientError) {
+          logger.warn({ jobId: job.id, phase: request.phase, err: err.message, attempt }, "Source identification failed; retrying");
+          const retryAt = new Date(clock().getTime() + backoffMs(attempt, DEFAULT_BACKOFF));
+          const paused = await waitOrPause(stall, retryAt, scope().signal, true);
+          if (paused !== null) return { kind: "paused", outcome: paused };
+          continue;
+        }
+        logger.warn({ jobId: job.id, phase: request.phase, err }, "Source identification rejected; ingesting without dedup");
+        return { kind: "ok", response: null };
+      }
+    }
+  }
+
+  async function identifySourcePhase(job: JobRow, dedup: ReturnType<typeof ingestOptionsOf>["dedup"]): Promise<IdentifyStep> {
+    const base: JobIdentity = {
+      requestedReference: job.reference,
+      canonicalReference: job.reference,
+      decision: "unidentified",
+      registered: false,
+      complete: false,
+    };
+    const call = await callIdentify(
+      identifyRequestFor(job, { phase: "source", requestedReference: job.reference, dedup }),
+      job,
+    );
+    if (call.kind === "paused") return call;
+    if (call.response === null) return { kind: "ok", identity: base };
+    return {
+      kind: "ok",
+      identity: {
+        ...base,
+        canonicalReference: call.response.canonicalReference,
+        decision: call.response.decision,
+        registered: true,
+        ...(call.response.duplicateOf !== undefined ? { duplicateOf: call.response.duplicateOf } : {}),
+      },
+    };
+  }
+
+  /**
+   * The content phase: read the prepared source's text (no rendering), build
+   * the fingerprint, resolve the version, record an e-mail's headers, and ask
+   * Search again with all of it.
+   */
+  async function identifyContentPhase(
+    job: JobRow,
+    identity: JobIdentity,
+    prepared: PreparedSource,
+  ): Promise<IdentifyStep> {
+    const cfg = job.config as Record<string, unknown>;
+    const options = ingestOptionsOf(cfg);
+    let pages: string[] | null = null;
+    if (prepared.readText !== undefined) {
+      try {
+        pages = await prepared.readText(FINGERPRINT_MAX_PAGES, scope().signal);
+      } catch (err) {
+        assertLive();
+        logger.warn({ jobId: job.id, err }, "Reading the text layer for the fingerprint failed; continuing without");
+      }
+    }
+    // A fingerprint of only the first pages of a huge document would call two
+    // documents with the same beginning identical; skip it instead.
+    const fingerprint =
+      pages !== null && prepared.pageCount <= FINGERPRINT_MAX_PAGES ? textFingerprint(pages) : null;
+    const email = prepared.native?.email;
+    const version = await resolveVersion({
+      // An e-mail has no document version; only an explicit one counts.
+      options: email !== undefined ? { dedup: options.dedup, ...(options.version ? { version: options.version } : {}) } : options,
+      firstPageText: email !== undefined ? undefined : pages?.[0],
+      llm: deps.summaryClient ?? null,
+      signal: scope().signal,
+      onTokens: (tokens) => consumeTokens(job.id, tokens),
+      onLlmError: (err) => logger.warn({ jobId: job.id, err }, "Version detection by the text model failed"),
+    });
+    if (email !== undefined) {
+      const title = prepared.native?.title;
+      await store.patchJobConfig(
+        job.id,
+        {
+          [EMAIL_KEY]: email,
+          ...(typeof cfg.title !== "string" && title !== undefined ? { title } : {}),
+        },
+        scope().fence,
+      );
+    }
+
+    let next: JobIdentity = { ...identity, ...(version !== undefined ? { version } : {}), complete: true };
+    if (identity.registered) {
+      const call = await callIdentify(
+        identifyRequestFor(job, {
+          phase: "content",
+          requestedReference: identity.requestedReference,
+          dedup: options.dedup,
+          textHash: fingerprint?.textHash,
+          minhash: fingerprint?.minhash,
+          messageId: email?.messageId,
+          version,
+        }),
+        job,
+      );
+      if (call.kind === "paused") return call;
+      if (call.response !== null) {
+        next = {
+          ...next,
+          decision: call.response.decision,
+          ...(call.response.duplicateOf !== undefined ? { duplicateOf: call.response.duplicateOf } : {}),
+        };
+      }
+    }
+    logger.info(
+      {
+        jobId: job.id,
+        decision: next.decision,
+        version: next.version,
+        fingerprint: fingerprint !== null,
+        duplicateOf: next.duplicateOf?.reference,
+      },
+      "Source identified",
+    );
+    return { kind: "ok", identity: next };
+  }
+
+  async function saveIdentity(jobId: string, identity: JobIdentity): Promise<void> {
+    await store.patchJobConfig(jobId, { [IDENTITY_KEY]: identity }, scope().fence);
+  }
+
+  /** Book the tokens of a model call made outside a stage (version detection). */
+  async function consumeTokens(jobId: string, tokens: number): Promise<void> {
+    if (tokens > 0) await store.consumeJobTokens(jobId, tokens, scope().fence);
+  }
+
+  /** The text of page 1 as staged for emitting (the vision transcription). */
+  async function firstPageText(jobId: string): Promise<string> {
+    const row = await store.getEmitBatch(jobId, 1);
+    const record = (row?.payload as { record?: PageRecord } | null | undefined)?.record;
+    if (record === undefined || !Array.isArray(record.blocks)) return "";
+    return record.blocks
+      .map((b) => ("text" in b ? b.text : b.type === "list" ? b.items.join("\n") : ""))
+      .filter((t) => t !== "")
+      .join("\n");
+  }
+
+  /**
+   * End a job whose source is already indexed: nothing is extracted or sent.
+   * The source stays registered in Search as an additional source of the
+   * document it duplicates.
+   */
+  async function finishDuplicate(job: JobRow, identity: JobIdentity): Promise<JobRunOutcome> {
+    const dup = identity.duplicateOf;
+    const warning =
+      `Skipped: duplicate of ${dup?.reference ?? "an indexed source"}` +
+      `${dup?.filename !== undefined ? ` (${dup.filename})` : ""}, matched by ${dup?.match ?? "sha256"}`;
+    if (!job.warnings.includes(warning)) await store.appendJobWarning(job.id, warning, scope().fence);
+    logger.info({ jobId: job.id, reference: job.reference, duplicateOf: dup }, "Job skipped as a duplicate");
+    events.publish({ type: "done", jobId: job.id, status: "completed" });
+    return { status: "completed" };
   }
 
   /**
@@ -905,8 +1208,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     native: NonNullable<PreparedSource["native"]>;
     stageRunner: StageRunner;
     lease: JobRunContext["lease"];
+    cfg: Record<string, unknown>;
   }): Promise<JobRunOutcome> {
-    const { job, native, stageRunner, lease } = args;
+    const { job, native, stageRunner, lease, cfg } = args;
     const { fence } = scope();
     const pageCount = native.records.length;
     await store.setJobPageCount(job.id, pageCount, fence);
@@ -961,6 +1265,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       });
     }
 
+    // An e-mail's attachments become jobs of their own (before the e-mail is
+    // emitted, so a crash in between re-creates none twice: ids are stable).
+    if (native.attachments !== undefined && native.attachments.length > 0) {
+      await spawnAttachmentJobs(job, cfg, native.attachments, native.email?.date);
+    }
+
     await store.setJobStatus(job.id, "emitting", null, fence);
     if (emitter !== null) {
       const outcome = await emitWithRecovery(job.id, lease, createNativeAssetLoader(nativeBytes));
@@ -968,6 +1278,68 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     }
     events.publish({ type: "done", jobId: job.id, status: "completed" });
     return { status: "completed" };
+  }
+
+  /**
+   * Store each attachment in the source store and create a queued job for it,
+   * under `<e-mail reference>/<file name>`, with the e-mail as its parent (so
+   * Search groups it into the e-mail's thread) and the e-mail's date as its
+   * version fallback. The job id is derived from the parent job and the
+   * attachment's position, so a resumed parent never creates a second child.
+   * An attachment in a format Extract cannot read is listed in the e-mail's
+   * text only.
+   */
+  async function spawnAttachmentJobs(
+    job: JobRow,
+    cfg: Record<string, unknown>,
+    attachments: NonNullable<NonNullable<PreparedSource["native"]>["attachments"]>,
+    emailDate: string | undefined,
+  ): Promise<void> {
+    if (sourceStore === null) {
+      logger.info({ jobId: job.id, count: attachments.length }, "No source store; e-mail attachments are not ingested");
+      return;
+    }
+    const taken = new Set<string>();
+    for (const [index, attachment] of attachments.entries()) {
+      assertLive();
+      const reference = attachmentReference(job.reference, attachment.filename, taken);
+      const childId = childJobId(job.id, index);
+      if ((await store.getJob(childId)) !== null) continue;
+      const resolved = resolveFormat({
+        buffer: attachment.content,
+        filename: attachment.filename,
+        declaredMimeType: attachment.mimeType,
+      });
+      if (!resolved.ok) {
+        const warning = `Attachment "${attachment.filename}" not ingested: ${resolved.reason}`;
+        if (!job.warnings.includes(warning)) await store.appendJobWarning(job.id, warning, scope().fence);
+        continue;
+      }
+      const stored = await sourceStore.putStream(Readable.from(Buffer.from(attachment.content)), {
+        maxBytes: attachment.content.length,
+      });
+      const inherited = ["collection", "snapshot", "acl", "dedup", "pages"] as const;
+      await store.createJob({
+        id: childId,
+        reference,
+        source_sha256: stored.sha256,
+        status: "queued",
+        collection: job.collection,
+        config: {
+          ...Object.fromEntries(inherited.filter((k) => cfg[k] !== undefined).map((k) => [k, cfg[k]])),
+          source: { filename: attachment.filename, mimeType: resolved.format.mimeType, bytes: stored.size },
+          parent: { reference: job.reference, jobId: job.id },
+          ...(emailDate !== undefined ? { sourceModifiedAt: emailDate } : {}),
+        },
+        pipeline_hash: job.pipeline_hash,
+        prompt_hash: job.prompt_hash,
+        visibility: job.visibility,
+        priority: job.priority,
+        ...(job.token_budget !== null ? { token_budget: job.token_budget } : {}),
+        ...(job.callback_url !== null ? { callback_url: job.callback_url } : {}),
+      });
+      logger.info({ jobId: job.id, childJobId: childId, reference }, "E-mail attachment queued as its own job");
+    }
   }
 
   /**

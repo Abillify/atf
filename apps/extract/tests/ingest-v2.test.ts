@@ -223,3 +223,70 @@ describe("POST /v1/ingest · v2 wrapper", () => {
     expect(res.body.code).toBe("INGEST_JOB_FAILED");
   });
 });
+
+describe("POST /v1/ingest · identity headers and duplicates", () => {
+  it("stores X-Version, X-Source-Modified and X-Dedup on the job", async () => {
+    const app = buildApp(fakeWorker());
+    const res = await request(app)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "tests/v.pdf")
+      .set("X-Version", "3.1")
+      .set("X-Source-Modified", "2025-01-02T03:04:05+01:00")
+      .set("X-Dedup", "exact")
+      .send(PDF);
+    expect(res.status).toBe(200);
+    const job = fakeStore.peek(res.body.job_id);
+    expect(job?.config).toMatchObject({ version: "3.1", sourceModifiedAt: "2025-01-02T03:04:05+01:00", dedup: "exact" });
+  });
+
+  it("rejects a malformed X-Source-Modified or X-Dedup", async () => {
+    const app = buildApp(fakeWorker());
+    const bad = await request(app)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "tests/v.pdf")
+      .set("X-Source-Modified", "yesterday")
+      .send(PDF);
+    expect(bad.status).toBe(400);
+    const badDedup = await request(app)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "tests/v.pdf")
+      .set("X-Dedup", "maybe")
+      .send(PDF);
+    expect(badDedup.status).toBe(400);
+  });
+
+  it("answers a skipped duplicate with status skipped and duplicate_of", async () => {
+    const worker = async (): Promise<boolean> => {
+      const claimed = await fakeStore.claimNextJob("fake-worker", 60);
+      if (claimed === null) return false;
+      await fakeStore.patchJobConfig(claimed.id, {
+        identity: {
+          requestedReference: "tests/dup.docx",
+          canonicalReference: "tests/dup.pdf",
+          decision: "duplicate",
+          registered: true,
+          complete: true,
+          duplicateOf: { reference: "tests/dup.pdf", sourceId: "j0", match: "similar", similarity: 0.99 },
+        },
+      });
+      await fakeStore.setJobStatus(claimed.id, "completed");
+      return true;
+    };
+    const res = await request(buildApp(worker))
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "tests/dup.docx")
+      .send(PDF);
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      status: "skipped",
+      reason: "duplicate",
+      reference: "tests/dup.docx",
+      resolved_reference: "tests/dup.pdf",
+      duplicate_of: { reference: "tests/dup.pdf", match: "similar" },
+    });
+  });
+});

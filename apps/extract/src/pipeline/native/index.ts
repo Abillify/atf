@@ -36,10 +36,12 @@ import type {
 	AssetRef,
 	Block,
 	Cell,
+	EmailHeaders,
 	PageRecord,
 	TableBlock,
 } from "@atf/extract-contract/v2";
 import { parseBpmn } from "./bpmn.js";
+import { type EmailAttachment, type EmailMailbox, parseEmail, stripQuotedReply } from "./eml.js";
 import {
 	type DocxHeading,
 	type ParsedDocxHeadings,
@@ -378,4 +380,104 @@ export function buildDocxHeadingHints(buffer: Uint8Array): DocxHeadingHints {
 		levelByText.set(normalizeHeadingKey(heading.text), heading.level);
 	}
 	return { levelByText, headings: parsed.headings, warnings: parsed.warnings };
+}
+
+// ─── E-mail (EML) ─────────────────────────────────────────────────────────
+
+export type { EmailAttachment, EmailMailbox, ParsedEmail } from "./eml.js";
+export { htmlToText, parseEmail, stripQuotedReply } from "./eml.js";
+
+/** The native records of one e-mail plus what the job needs beyond them. */
+export interface EmailRecords extends NativeRecords {
+	/** Threading headers for `document.begin.email`. */
+	email: EmailHeaders;
+	/** The subject, as the document title. */
+	title: string;
+	/** Attachments to ingest as documents of their own. */
+	attachments: EmailAttachment[];
+	/** Subject and own text: the input for the fingerprint and version detection. */
+	text: string;
+}
+
+const FORWARD_SUBJECT = /^\s*(?:fw|fwd|wg|tr|vs|rv|enc|doorst)\s*:/i;
+
+function formatMailbox(m: EmailMailbox): string {
+	return m.name !== undefined ? `${m.name} <${m.address}>` : m.address;
+}
+
+/**
+ * Build the single-page record of an e-mail. The page reads like the message
+ * does: the subject as heading, a header paragraph (from, to, cc, date), the
+ * message's own text — quoted history and signature removed, see
+ * `stripQuotedReply` — and the attachment names. No render, no model call.
+ *
+ * A message without a Message-ID gets a stable synthetic one derived from its
+ * bytes, so re-ingesting the same file threads and deduplicates the same way.
+ */
+export function buildEmailRecords(buffer: Uint8Array): EmailRecords {
+	const parsed = parseEmail(buffer);
+	const warnings = [...parsed.warnings];
+	const subject = parsed.subject ?? "";
+	const title = subject !== "" ? subject : "(ohne Betreff)";
+	const own = stripQuotedReply(parsed.text, { isForward: FORWARD_SUBJECT.test(subject) });
+
+	const blocks: Block[] = [];
+	let n = 0;
+	const id = (): string => `p1-b${++n}`;
+	blocks.push({ id: id(), page: 1, type: "heading", level: 1, text: title, source: "native" });
+
+	const headerLines = [
+		parsed.from !== undefined ? `From: ${formatMailbox(parsed.from)}` : undefined,
+		parsed.to.length > 0 ? `To: ${parsed.to.map(formatMailbox).join(", ")}` : undefined,
+		parsed.cc.length > 0 ? `Cc: ${parsed.cc.map(formatMailbox).join(", ")}` : undefined,
+		parsed.date !== undefined ? `Date: ${parsed.date.replace("T", " ").replace(/:\d{2}\.\d{3}Z$/, " UTC")}` : undefined,
+	].filter((l): l is string => l !== undefined);
+	if (headerLines.length > 0) {
+		blocks.push({ id: id(), page: 1, type: "paragraph", text: headerLines.join("\n"), source: "native" });
+	}
+
+	for (const paragraph of own.text.split(/\n\s*\n/)) {
+		const text = paragraph.trim();
+		if (text !== "") blocks.push({ id: id(), page: 1, type: "paragraph", text, source: "native" });
+	}
+
+	const attachmentNames = parsed.attachments.map((a) => a.filename);
+	if (attachmentNames.length > 0) {
+		blocks.push({ id: id(), page: 1, type: "heading", level: 2, text: "Attachments", source: "native" });
+		blocks.push({ id: id(), page: 1, type: "list", items: attachmentNames, source: "native" });
+	}
+
+	const record: PageRecord = {
+		type: "page",
+		page: 1,
+		size: { wPt: 595, hPt: 842 },
+		class: "text",
+		blocks,
+		assets: [],
+		warnings,
+	};
+
+	const messageId = parsed.messageId ?? `sha256-${sha256Hex(buffer)}@atf-extract.invalid`;
+	const email: EmailHeaders = {
+		messageId,
+		inReplyTo: parsed.inReplyTo,
+		references: parsed.references,
+		...(parsed.threadIndexRoot !== undefined ? { threadIndexRoot: parsed.threadIndexRoot } : {}),
+		...(subject !== "" ? { subject } : {}),
+		...(parsed.from !== undefined ? { from: parsed.from } : {}),
+		to: parsed.to,
+		cc: parsed.cc,
+		...(parsed.date !== undefined ? { date: parsed.date } : {}),
+		attachments: attachmentNames,
+	};
+
+	return {
+		records: [record],
+		nativeAssets: [],
+		warnings,
+		email,
+		title,
+		attachments: parsed.attachments,
+		text: `${title}\n\n${own.text}`,
+	};
 }

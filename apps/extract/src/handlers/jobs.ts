@@ -41,6 +41,8 @@ import type { ExtractStore } from "../persistence/index.js";
 import type { JobRow, OperatorTransition } from "../persistence/types.js";
 import type { SourceStore } from "../source-store.js";
 import { toJobView } from "../jobs/job-view.js";
+import { getPrincipal } from "../request-principal.js";
+import { resolveAcl } from "./ingest.js";
 import { stageOrderIndex, type PipelineSnapshot } from "../jobs/snapshot.js";
 import {
   CROPS_STAGE,
@@ -124,6 +126,18 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
         pages: body.pages ?? null,
         collection: body.collection ?? deps.defaultCollection,
         snapshot,
+        // Identity inputs (see jobs/identity.ts): an explicit version skips
+        // detection, the file time is the last version fallback, and dedup
+        // governs whether a duplicate is skipped.
+        ...(body.version !== undefined ? { version: body.version } : {}),
+        ...(body.sourceModifiedAt !== undefined ? { sourceModifiedAt: body.sourceModifiedAt } : {}),
+        ...(body.dedup !== undefined ? { dedup: body.dedup } : {}),
+        // The document's readers, narrowed to the caller exactly like
+        // /v1/ingest; the emitter opens the Search revision with it.
+        acl: resolveAcl(getPrincipal(req), {
+          users: body.allowedUsers ?? [],
+          groups: body.allowedGroups ?? [],
+        }),
       },
       pipeline_hash: snapshot.pipelineHash,
       prompt_hash: snapshot.promptHash,

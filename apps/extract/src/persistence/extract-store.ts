@@ -130,6 +130,8 @@ export interface ExtractStore {
   setJobPageCount(id: string, pageCount: number, fence?: Fence): Promise<JobRow | null>;
   /** Record (or clear) the Search revision id the emitter opened for this job. */
   setJobRevision(id: string, revisionId: string | null, fence?: Fence): Promise<JobRow | null>;
+  /** Re-point the job at its canonical document reference (before preparation). */
+  setJobReference(id: string, reference: string, fence?: Fence): Promise<JobRow | null>;
   /** Atomically add to `tokens_used`, returning the updated row (budget ledger). */
   consumeJobTokens(id: string, tokens: number, fence?: Fence): Promise<JobRow | null>;
   /**
@@ -498,6 +500,8 @@ export function createExtractStore(
       oneFenced<JobRow>(q.setJobPageCountQuery(id, pageCount, fence), fence),
     setJobRevision: (id, revisionId, fence) =>
       oneFenced<JobRow>(q.setJobRevisionQuery(id, revisionId, fence), fence),
+    setJobReference: (id, reference, fence) =>
+      oneFenced<JobRow>(q.setJobReferenceQuery(id, reference, fence), fence),
     consumeJobTokens: (id, tokens, fence) =>
       oneFenced<JobRow>(q.consumeJobTokensQuery(id, tokens, fence), fence),
     reserveJobTokens: (id, tokens, fence) =>

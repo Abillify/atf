@@ -80,6 +80,7 @@ import type { LeaseGuard } from "./lease.js";
 import type { RevisionClient, AssetBody } from "../revision-client.js";
 import { RevisionPermanentError } from "../revision-client.js";
 import { mapOrdered } from "../queue.js";
+import { emailOf, identityOf, ingestOptionsOf, jobAcl } from "./identity.js";
 
 /** Tunables for the emitter, from `config.emitter` plus pipeline identity. */
 export interface EmitterConfig {
@@ -222,9 +223,16 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     // ── 1. open (or idempotently re-open) the revision ────────────────────
     let revisionId: string;
     try {
+      const identity = identityOf(job.config as Record<string, unknown>);
+      const acl = jobAcl(job);
       const revision = await revisions.createRevision({
         reference,
         idempotencyKey: revisionIdempotencyKey(job),
+        // The source claim Search registered for this job: the final switch
+        // marks it indexed. Absent when the source was never identified.
+        ...(identity?.registered === true ? { sourceId: job.id } : {}),
+        // The document's readers, resolved for the uploading caller.
+        ...(acl !== undefined ? { acl } : {}),
         visibility: job.visibility,
         collection,
       });
@@ -578,11 +586,22 @@ export function createEmitter(deps: EmitterDeps): Emitter {
 
   /** Build the document.begin record from the job's config snapshot. */
   function buildDocumentBegin(job: JobRow, pageCount: number): DocumentBeginRecord {
-    const source = (job.config as { source?: { filename?: string; mimeType?: string; bytes?: number } }).source ?? {};
+    const cfg = job.config as Record<string, unknown>;
+    const source = (cfg as { source?: { filename?: string; mimeType?: string; bytes?: number } }).source ?? {};
+    const identity = identityOf(cfg);
+    const email = emailOf(cfg);
+    const parentReference = ingestOptionsOf(cfg).parentReference;
+    const title = typeof cfg.title === "string" && cfg.title.trim() !== "" ? cfg.title.trim() : undefined;
     return {
       type: "document.begin",
       contract: config.contract,
       reference: job.reference,
+      ...(title !== undefined ? { title } : {}),
+      // Contract 2.1: the version orders the document's revisions in Search,
+      // the e-mail headers thread it, the parent groups an attachment.
+      ...(identity?.version !== undefined ? { version: identity.version } : {}),
+      ...(email !== undefined ? { email } : {}),
+      ...(parentReference !== undefined ? { parentReference } : {}),
       source: {
         filename: source.filename ?? job.reference,
         mimeType: source.mimeType ?? "application/octet-stream",

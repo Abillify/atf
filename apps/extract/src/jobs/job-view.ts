@@ -16,6 +16,7 @@
 
 import type { Job, StageProgress } from "@atf/extract-contract/v2";
 import type { JobRow, PageStageRow, StageStatus } from "../persistence/types.js";
+import { identityOf } from "./identity.js";
 
 /** The per-page stages, in pipeline order (design §9b.2). */
 export const PAGE_STAGES = [
@@ -175,6 +176,20 @@ export function toJobView(
   if (row.token_budget !== null) job.tokenBudget = Number(row.token_budget);
   if (row.cost_usd !== undefined) job.costUsd = Number(row.cost_usd);
   if (row.revision_id !== null) job.revisionId = row.revision_id;
+  // Identity (dedup / version chains): the caller sees the reference it asked
+  // for, plus the one the document was ingested under when Search resolved
+  // another format of an indexed document.
+  const identity = identityOf((row.config ?? {}) as Record<string, unknown>);
+  if (identity !== undefined) {
+    job.reference = identity.requestedReference;
+    if (identity.canonicalReference !== identity.requestedReference) {
+      job.resolvedReference = identity.canonicalReference;
+    }
+    if (identity.version !== undefined) job.version = identity.version;
+    if (identity.decision === "duplicate" && identity.duplicateOf !== undefined) {
+      job.duplicateOf = identity.duplicateOf;
+    }
+  }
   return job;
 }
 

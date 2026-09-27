@@ -83,6 +83,7 @@ describe("supported set", () => {
 			"application/vnd.openxmlformats-officedocument.presentationml.presentation",
 			"application/vnd.ms-visio.drawing",
 			"application/bpmn+xml",
+			"message/rfc822",
 			"image/png",
 			"image/jpeg",
 			"image/gif",

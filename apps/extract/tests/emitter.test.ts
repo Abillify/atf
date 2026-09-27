@@ -518,3 +518,66 @@ describe("emitter · document.begin pipeline stand and backlog gauge (requiremen
     });
   });
 });
+
+describe("emitter · document identity on document.begin (contract 2.1)", () => {
+  it("carries title, version, e-mail headers and parent, and the source claim", async () => {
+    const store = createFakeJobStore();
+    const seeded = await seedEmittingJob(store, 1);
+    await store.patchJobConfig(seeded.id, {
+      title: "AW: Angebot",
+      identity: {
+        requestedReference: REFERENCE,
+        canonicalReference: REFERENCE,
+        decision: "new",
+        registered: true,
+        complete: true,
+        version: { label: "2.1", source: "page_label" },
+      },
+      email: { messageId: "m1@x", inReplyTo: [], references: ["m0@x"], to: [], cc: [], attachments: [] },
+      parent: { reference: "mail/root.eml", jobId: "j0" },
+      acl: { allowedUsers: ["anna"], allowedGroups: [] },
+    });
+    const job = await store.getJob(seeded.id);
+    if (job === null) throw new Error("job vanished");
+    const search = createFakeSearch();
+    const created: Array<{ sourceId?: string }> = [];
+    const bodies = new Map<number, string>();
+    const createRevision = search.createRevision.bind(search);
+    const putBatch = search.putBatch.bind(search);
+    search.createRevision = async (args) => {
+      created.push(args);
+      return createRevision(args);
+    };
+    search.putBatch = async (args) => {
+      bodies.set(args.seq, new TextDecoder().decode(args.body));
+      return putBatch(args);
+    };
+
+    const outcome = await makeEmitter(store, search).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(outcome.status).toBe("committed");
+    expect(created[0]?.sourceId).toBe(job.id);
+    expect((created[0] as { acl?: unknown }).acl).toEqual({ allowedUsers: ["anna"], allowedGroups: [] });
+    const begin = JSON.parse((bodies.get(0) ?? "").split("\n")[0] ?? "{}") as Record<string, unknown>;
+    expect(begin).toMatchObject({
+      type: "document.begin",
+      title: "AW: Angebot",
+      version: { label: "2.1", source: "page_label" },
+      email: { messageId: "m1@x", references: ["m0@x"] },
+      parentReference: "mail/root.eml",
+    });
+  });
+
+  it("sends no source claim for an unidentified job", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 1);
+    const search = createFakeSearch();
+    const created: Array<{ sourceId?: string }> = [];
+    const createRevision = search.createRevision.bind(search);
+    search.createRevision = async (args) => {
+      created.push(args);
+      return createRevision(args);
+    };
+    await makeEmitter(store, search).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(created[0]?.sourceId).toBeUndefined();
+  });
+});

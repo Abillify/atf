@@ -65,6 +65,33 @@ describe("revision-client · request framing", () => {
     expect(headers["x-visibility"]).toBe("progressive");
   });
 
+  it("sends the source claim and the document ACL on revision create", async () => {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(
+        jsonResponse(201, {
+          revisionId: "rev-2",
+          reference: "doc/a.pdf",
+          status: "staging",
+          visibility: "on_commit",
+          createdAt: new Date().toISOString(),
+        }),
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createRevisionClient(CONFIG, testLogger);
+    await client.createRevision({
+      reference: "doc/a.pdf",
+      idempotencyKey: "job-9",
+      sourceId: "job-9",
+      acl: { allowedUsers: ["anna", "jürgen"], allowedGroups: ["team"] },
+    });
+    const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1].headers as Record<string, string>;
+    expect(headers["x-source-id"]).toBe("job-9");
+    // Non-ASCII ids travel base64-encoded, as Search's readHeader expects.
+    expect(headers["x-allowed-users"]).toBe(`base64:${Buffer.from("anna,jürgen").toString("base64")}`);
+    expect(headers["x-allowed-groups"]).toBe("team");
+  });
+
   it("PUTs a batch with the Content-Digest header at its seq", async () => {
     const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
       Promise.resolve(

@@ -57,6 +57,7 @@ import type { SourceStore } from "../source-store.js";
 import type { PipelineSnapshot } from "../jobs/snapshot.js";
 import { isTerminal } from "../jobs/state-machine.js";
 import type { JobRow } from "../persistence/types.js";
+import { identityOf } from "../jobs/identity.js";
 
 export interface IngestV2Metrics {
   recordDocument(mimeType: string, outcome: "ok" | "error"): void;
@@ -116,6 +117,40 @@ function resolveRequestAcl(req: Request): { allowedUsers: string[]; allowedGroup
   });
 }
 
+/**
+ * The identity inputs a `/v1/ingest` caller may pass as headers:
+ *
+ *   X-Version          explicit document version (skips detection)
+ *   X-Source-Modified  the file's modification time, RFC 3339 — the last
+ *                      version fallback
+ *   X-Dedup            auto (default) | exact | off
+ */
+export function readIdentityHeaders(req: Request): Record<string, string> {
+  const out: Record<string, string> = {};
+  const version = readHeader(req, "x-version")?.trim();
+  if (version !== undefined && version !== "") {
+    if (version.length > 200) throw validationError("X-Version must be at most 200 characters");
+    out.version = version;
+  }
+  const modified = readHeader(req, "x-source-modified")?.trim();
+  if (modified !== undefined && modified !== "") {
+    if (!RFC3339.test(modified) || Number.isNaN(Date.parse(modified))) {
+      throw validationError("X-Source-Modified must be an RFC 3339 timestamp with a time zone");
+    }
+    out.sourceModifiedAt = modified;
+  }
+  const dedup = readHeader(req, "x-dedup")?.trim().toLowerCase();
+  if (dedup !== undefined && dedup !== "") {
+    if (dedup !== "auto" && dedup !== "exact" && dedup !== "off") {
+      throw validationError("X-Dedup must be one of: auto, exact, off");
+    }
+    out.dedup = dedup;
+  }
+  return out;
+}
+
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
+
 export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler {
   const {
     store,
@@ -143,6 +178,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       const titleRaw = readHeader(req, "x-title")?.trim();
       const collection = readHeader(req, "x-collection")?.trim() || defaultCollection;
       const acl = resolveRequestAcl(req);
+      const identityInputs = readIdentityHeaders(req);
 
       // ── 1. store the source in the content-addressed store ────────────────
       // Idempotent by sha256, so a re-uploaded document dedupes for free and a
@@ -173,6 +209,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
           ...(titleRaw !== undefined && titleRaw !== ""
             ? { title: sanitizeFilename(titleRaw) }
             : {}),
+          ...identityInputs,
         },
         pipeline_hash: snapshot.pipelineHash,
         prompt_hash: snapshot.promptHash,
@@ -250,7 +287,32 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
         return;
       }
 
-      // ── 4c. small document completed: the historical synchronous shape ────
+      // ── 4c. skipped as a duplicate: nothing was indexed ───────────────────
+      const identity = identityOf(job.config as Record<string, unknown>);
+      const resolvedReference =
+        identity !== undefined && identity.canonicalReference !== reference
+          ? { resolved_reference: identity.canonicalReference }
+          : {};
+      if (identity?.decision === "duplicate") {
+        metrics.recordDocument(source.mimeType, "ok");
+        logger.info(
+          { reference, collection, jobId: id, duplicateOf: identity.duplicateOf },
+          "Document skipped as a duplicate",
+        );
+        res.status(200).json({
+          status: "skipped",
+          reason: "duplicate",
+          reference,
+          ...resolvedReference,
+          collection,
+          job_id: id,
+          ...(identity.duplicateOf !== undefined ? { duplicate_of: identity.duplicateOf } : {}),
+          warnings: job.warnings,
+        });
+        return;
+      }
+
+      // ── 4d. small document completed: the historical synchronous shape ────
       metrics.recordDocument(source.mimeType, "ok");
       const assets = await store.allAssets(id).catch(() => []);
       // A figure asset is staged with a null `variant`; a page image carries
@@ -280,6 +342,8 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       res.status(200).json({
         status: "ok",
         reference,
+        ...resolvedReference,
+        ...(identity?.version !== undefined ? { version: identity.version } : {}),
         collection,
         page_count: job.page_count ?? 0,
         figure_count: figureCount,

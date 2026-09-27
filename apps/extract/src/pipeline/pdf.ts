@@ -298,6 +298,33 @@ export async function extractPageText(
 }
 
 /**
+ * Extract the text layer of pages `1..lastPage` in ONE `pdftotext` call, one
+ * string per page (split on the form feed pdftotext ends each page with).
+ *
+ * Reading order rather than `-layout`: this text feeds the duplicate
+ * fingerprint and the version detection, which need the words in order, not
+ * their columns. A page without a text layer yields an empty string.
+ */
+export async function extractDocumentText(
+  pdfPath: string,
+  lastPage: number,
+  tools: PopplerTools,
+  options: RunOptions = {},
+): Promise<string[]> {
+  const { stdout } = await run(
+    binary(tools, "pdftotext"),
+    ["-f", "1", "-l", String(Math.max(1, lastPage)), "-enc", "UTF-8", pdfPath, "-"],
+    tools.home,
+    options,
+  );
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: NUL is exactly what must go
+  const pages = stdout.replace(/\u0000/g, "").split("\f");
+  // The output ends with a form feed, which leaves one empty trailing entry.
+  if (pages.length > lastPage) pages.length = lastPage;
+  return pages.map((page) => page.trimEnd());
+}
+
+/**
  * Extract the page geometry of one page via `pdftotext -bbox-layout`.
  *
  * Where {@link extractPageText} gives the *wording* of a page (a linearised

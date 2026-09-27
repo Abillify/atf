@@ -288,6 +288,12 @@ export function createFakeJobStore(): FakeJobStore {
       });
     },
 
+    async setJobReference(id, reference, fence) {
+      return updateJob(id, fence, (row) => {
+        row.reference = reference;
+      });
+    },
+
     async consumeJobTokens(id, tokens, fence) {
       return updateJob(id, fence, (row) => {
         row.tokens_used = Number(row.tokens_used) + tokens;

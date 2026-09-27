@@ -89,7 +89,12 @@ import { pass1PromptSet, pass2PromptSet } from "./vision/prompts.js";
 import { createSummaryClient, type SummaryClient } from "./summary/client.js";
 import { summaryPromptSet } from "./summary/prompts.js";
 import { createJobWorker, type JobWorker } from "./jobs/worker.js";
-import { createJobRunner, PIPELINE_REVISION, type JobRunnerDeps } from "./jobs/job-runner.js";
+import {
+  createJobRunner,
+  PIPELINE_REVISION,
+  type JobRunnerDeps,
+  type SourceIdentifier,
+} from "./jobs/job-runner.js";
 import type { JobRunner } from "./jobs/worker.js";
 import { createPageAnalyzer } from "./jobs/page-analyzer.js";
 import type { BboxLayoutCapability } from "./pipeline/pdf.js";
@@ -147,6 +152,12 @@ export interface AppOverrides {
    * defaults to one built from the Search target when configured, or null.
    */
   emitter?: Emitter | null;
+  /**
+   * Search's source identification (dedup, canonical reference). Injected in
+   * tests; defaults to the revision client when a Search target is configured.
+   * `null` disables identification.
+   */
+  sourceIdentifier?: SourceIdentifier | null;
   /**
    * When false (the default in tests), the background job worker loop is not
    * started even if a store is present, so an integration test drives ticks
@@ -732,21 +743,35 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
     // reconciles on resume (task 1.12). It is only built when a Search target is
     // configured; without one the runner still processes and reaches `emitting`
     // but sends nothing.
+    // One revision client serves the emitter and the source identification
+    // (dedup, canonical reference) the runner does before any work.
+    const revisionClient =
+      config.search !== null
+        ? createRevisionClient(
+            {
+              url: config.search.url,
+              token: config.search.token,
+              collection: config.search.collection,
+              timeoutMs: config.search.timeoutMs,
+            },
+            logger,
+          )
+        : null;
+    const identify = revisionClient?.identify;
+    const sourceIdentifier: SourceIdentifier | null =
+      overrides.sourceIdentifier !== undefined
+        ? overrides.sourceIdentifier
+        : // A test that injects its own emitter talks to no real Search.
+          overrides.emitter === undefined && revisionClient !== null && identify !== undefined
+          ? { identify: (args) => identify.call(revisionClient, args) }
+          : null;
     const emitter =
       overrides.emitter !== undefined
         ? overrides.emitter
-        : config.search !== null
+        : revisionClient !== null
           ? createEmitter({
               store,
-              revisions: createRevisionClient(
-                {
-                  url: config.search.url,
-                  token: config.search.token,
-                  collection: config.search.collection,
-                  timeoutMs: config.search.timeoutMs,
-                },
-                logger,
-              ),
+              revisions: revisionClient,
               config: {
                 emitBatchPages: config.emitter.emitBatchPages,
                 segmentPages: config.emitter.segmentPages,
@@ -823,6 +848,9 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
         maxTransientWaitMs: config.jobWorker.maxTransientWaitMs,
       },
       emitter,
+      identifier: sourceIdentifier,
+      // E-mail attachments are stored here and ingested as jobs of their own.
+      sourceStore,
       summaryClient,
       // The shared metrics registry: the fast-path route and fidelity counters
       // ("Anteil Fast-Path") and the per-stage duration/outcome/token series

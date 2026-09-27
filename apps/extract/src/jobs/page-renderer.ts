@@ -32,7 +32,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Logger } from "pino";
 import type { BoundingBox } from "@atf/extract-contract/v1";
-import type { PageRecord } from "@atf/extract-contract/v2";
+import type { EmailHeaders, PageRecord } from "@atf/extract-contract/v2";
 import { ExtractError, conversionFailed, unsupportedMediaType } from "../errors.js";
 import { resolveFormat, type SupportedFormat } from "../formats.js";
 import type { SourceStore } from "../source-store.js";
@@ -40,6 +40,8 @@ import { convertToPdf, isLibreOfficeKind, officeExtensionFor } from "../pipeline
 import {
   buildBpmnRecords,
   buildDocxHeadingHints,
+  buildEmailRecords,
+  type EmailAttachment,
   buildXlsxRecords,
   parseVsdx,
   type ParsedVsdx,
@@ -47,6 +49,7 @@ import {
   type DocxHeadingHints,
 } from "../pipeline/native/index.js";
 import {
+  extractDocumentText,
   extractPageText,
   readPageSize,
   readPdfInfo,
@@ -69,6 +72,7 @@ export interface PdfOps {
   readPageSize: typeof readPageSize;
   renderPage: typeof renderPage;
   extractPageText: typeof extractPageText;
+  extractDocumentText: typeof extractDocumentText;
   imageSize: typeof imageSize;
 }
 
@@ -77,8 +81,24 @@ const defaultPdfOps: PdfOps = {
   readPageSize,
   renderPage,
   extractPageText,
+  extractDocumentText,
   imageSize,
 };
+
+/** The plain text of a native page record (headings, paragraphs, list items, cells). */
+function pageRecordText(record: PageRecord): string {
+  const parts: string[] = [];
+  for (const block of record.blocks) {
+    if (block.type === "list") parts.push(block.items.join("\n"));
+    else if (block.type === "table") {
+      for (const row of [...block.headerRows, ...block.rows]) {
+        parts.push(row.map((c) => (typeof c === "string" ? c : c.text)).join(" "));
+      }
+    } else if (block.type === "figure") parts.push(block.description);
+    else parts.push(block.text);
+  }
+  return parts.join("\n");
+}
 
 /** A page image plus the geometry needed to resolve a normalised bbox. */
 export interface PageImage {
@@ -145,6 +165,14 @@ export interface NativeSource {
   /** `native:` asset bodies (the original source part) to upload verbatim. */
   nativeAssets: Array<{ assetId: string; localId: string; buffer: Uint8Array; mimeType: string }>;
   warnings: string[];
+  /** E-mail only: the threading headers for `document.begin.email`. */
+  email?: EmailHeaders;
+  /** E-mail only: the subject, used as the document title. */
+  title?: string;
+  /** E-mail only: attachments, each ingested as a document of its own. */
+  attachments?: EmailAttachment[];
+  /** The source's text for fingerprinting and version detection, when not the records'. */
+  text?: string;
 }
 
 export interface PreparedSource {
@@ -186,6 +214,14 @@ export interface PreparedSource {
   readonly pdfPath: string | null;
   /** The scratch directory poppler tools should treat as `HOME`. */
   readonly home: string;
+  /**
+   * The text of pages `1..maxPages`, one string per page, without rendering:
+   * the PDF text layer in one poppler call, or a native source's own text.
+   * Null when the source has no text layer (a single image). Optional so a
+   * test renderer without it still works — the job then skips the text
+   * fingerprint and page-text version detection.
+   */
+  readText?(maxPages: number, signal?: AbortSignal): Promise<string[] | null>;
   /** Render page N and read its text layer. */
   render(page: number, signal?: AbortSignal): Promise<RenderedPageInput>;
   /**
@@ -255,6 +291,10 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       vsdxStructure: null,
       pdfPath: null,
       home: "",
+      async readText(maxPages) {
+        if (native.text !== undefined) return [native.text];
+        return native.records.slice(0, maxPages).map(pageRecordText);
+      },
       async render() {
         throw new Error(`render() called on a native-only ${format.label} source`);
       },
@@ -287,6 +327,24 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     }
     const format = resolved.format;
     const reference = args.reference ?? args.sourceSha256;
+
+    // ── E-mail: parse natively, no render, no model ───────────────────────
+    if (format.kind === "email") {
+      const built = buildEmailRecords(buffer);
+      return nativeOnlyPrepared(
+        format,
+        {
+          records: built.records,
+          nativeAssets: [],
+          warnings: built.warnings,
+          email: built.email,
+          title: built.title,
+          attachments: built.attachments,
+          text: built.text,
+        },
+        null,
+      );
+    }
 
     // ── BPMN: parse natively, no render, no model (requirement 10.1) ──────
     if (format.kind === "bpmn") {
@@ -417,6 +475,16 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       vsdxStructure,
       pdfPath: pageSource.kind === "pdf" ? pageSource.pdfPath : null,
       home: workDir,
+
+      async readText(maxPages, signal) {
+        if (pageSource.kind !== "pdf") return null;
+        return pdfOps.extractDocumentText(
+          pageSource.pdfPath,
+          Math.min(maxPages, pageCount),
+          tools,
+          subprocessOptions(signal),
+        );
+      },
 
       async render(page, signal) {
         if (pageSource.kind === "image") {
