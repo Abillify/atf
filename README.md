@@ -221,7 +221,7 @@ setting that governs it.
   headers, identifier-aware RRF, rerank-with-context, small-to-big expansion, transcribed
   visual content (BPMN, masks, plans, charts) and per-figure assets, feeding a RAG node that
   can attach or `inspect_image` on demand. See the
-  [spec](.kiro/specs/document-intelligence-v2/) and the
+  [migration guide](docs/document-intelligence-v2-migration.md) and the
   [phase completion reports](docs/document-intelligence-v2-phase-5-completion.md).
 - **Tool access** — MCP tools declared in YAML over SQL, HTTP, MQTT, MCP proxy, and webhooks.
   Parameters are bound, never interpolated.

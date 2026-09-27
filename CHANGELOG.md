@@ -18,12 +18,40 @@ releases:
 
 ## [Unreleased]
 
+Adds Document Intelligence v2. The HTTP surface is additive — `/search`, `/ingest-file`, and the
+v1 Extract endpoints keep working — but the release runs database migrations in Search and
+creates a new schema in Extract, makes one breaking contract-package change, and tightens the
+conversion-callback SSRF policy in a way that can refuse existing internal receivers (see
+**Security**). No executable flow in this repository changes; the research flows that use the new
+navigation tools live in the private deployment repository and carry their own
+`metadata.version` bumps. The upgrade path, rollback, and corpus re-ingest are described in
+[docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md).
+
+- **Search migrations.** The global schema advances from version 4 to 7: version 5 adds the v2
+  ingest staging tables (`vs_revisions`, `vs_ingest_batches`, `vs_segments`,
+  `vs_document_revisions`) and `vs_assets` with a backfill from `vs_document_assets`; version 6
+  adds the shared identifier index `vs_identifiers`; version 7 reconciles these system tables
+  eagerly at startup. Every collection table advances from version 11 to 14: v2 index-unit
+  columns (12), unit relationship columns `parent_unit_id`, `prev_unit_id`, `next_unit_id`,
+  `block_ids`, `figure_refs`, and `table_id` (13), and the identifier FTS vector `ts_ident` with its GIN index (14). All added
+  columns are nullable, so legacy rows migrate forward untouched and are searched as before.
+- **Extract schema.** With `EXTRACT_DATABASE_URL` set, Extract creates its own `extract` schema
+  (tracked in `extract.schema_migrations`, target version 2): `jobs`, `page_stages`,
+  `figure_stages`, `tile_stages`, `docpass_state`, `emit_outbox`, `asset_outbox`, and `uploads`.
+  Version 2 adds token reservations, the emit generation, auto-resume, and the owning page of an
+  outboxed asset. Without the variable no schema is created, and v2 jobs, resumable uploads, and
+  `source_url` pulls are unavailable.
+- **Contract.** `@atf/extract-contract` advances from 1.1.0 to 2.0.0. This is breaking for
+  importers: the package root now exports the v2 NDJSON record stream, and the v1 marker grammar
+  is available only under the `@atf/extract-contract/v1` subpath (`./v2` is also exported
+  explicitly). Code importing v1 symbols from the root must switch to `/v1`.
+
 ### Added
 
 - **Document Intelligence v2**, an end-to-end rework of the document ingestion, indexing, and
-  retrieval path, delivered across phases 0–5. It is additive: the v1 `/search` path and the v1
-  extract contract keep working unchanged, and the new Search schema columns are nullable so a
-  legacy row is searched exactly as before.
+  retrieval path, delivered across phases 0–5. The v1 `/search` path and the v1 extract HTTP
+  path keep working unchanged, and the new Search schema columns are nullable so a legacy row is
+  searched exactly as before.
   - **Resumable, contract-versioned ingestion.** A persistent Extract job (lease, epoch, token
     budget, per-unit stage checkpoints) and a Search revision (idempotency key, staged batches,
     TTL) are joined by an at-least-once emitter that reconciles against the receiver, so a
@@ -38,8 +66,10 @@ releases:
     dedup; a streaming document pass builds the outline, merges cross-page tables, resolves
     references, and extracts identifiers; figures get a snapped bounding box and a structured
     transcription per kind (BPMN, masks, drawings, charts, table images); large formats are
-    tiled with overlap and stored as `tile:` assets. Native parsers read DOCX, XLSX, BPMN, PPTX,
-    and VSDX instead of rendering and guessing.
+    tiled with overlap and stored as `tile:` assets. Native parsers read DOCX heading levels,
+    XLSX worksheets as tables, BPMN as a `process` transcription, and VSDX shapes and connectors
+    instead of rendering and guessing; PPTX goes through LibreOffice → PDF like before, and
+    DOCX and VSDX keep that render for the page image.
   - **Multi-level index and retrieval.** Units at `chunk`, `table`, `figure`, `section`, `page`,
     and `document` level with a relationship graph and a contextual embedding header; German
     stemming plus an identifier vector and a third RRF list for exact codes; rerank with
@@ -56,9 +86,68 @@ releases:
     tiling knobs (`TILE_TARGET_PIXELS`, `TILE_OVERLAP_FRACTION`, `TILE_MAX_PER_PAGE`), an
     optional model-free outline finalize pass (`FINALIZE_PASS`) with selective re-embedding, and
     a corpus re-ingest CLI that migrates existing corpora in `version` mode ordered by usage
-    with proven asset-id stability. No new runtime dependency was introduced. See the
-    [spec](.kiro/specs/document-intelligence-v2/) and the per-phase completion reports under
-    `docs/document-intelligence-v2-phase-*-completion.md`.
+    with proven asset-id stability. See the
+    [migration guide](docs/document-intelligence-v2-migration.md) and the per-phase completion
+    reports under `docs/document-intelligence-v2-phase-*-completion.md`.
+- **Extract v2 endpoints**: resumable uploads (`POST /v2/uploads`, `PATCH /v2/uploads/{id}`,
+  `POST /v2/uploads/{id}/complete`, with `source_url` as an alternative to uploading bytes);
+  persistent jobs (`POST`/`GET /v2/jobs`, `GET /v2/jobs/{id}`, and the actions `pause`,
+  `resume`, `cancel`, `retry-failed`, and `reparse` under `/v2/jobs/{id}/`); a Jobs tab in the
+  Extract UI backed by `/ui/jobs`; and on-demand page or region rendering
+  (`POST /v2/render`, own rate limit, `extract.admin` scope). The upload, job, and UI job routes
+  are mounted only when `EXTRACT_DATABASE_URL` is set.
+- **Search v2 endpoints**: the revision protocol under `/v2/documents/{ref}/revisions` (open;
+  status and abort of `{rev}`; `batches/{seq}`, `segments/{n}/commit`, `commit`, and
+  `heartbeat`), `PUT`/`GET /v2/assets/{assetId}`, and `POST /v2/search`.
+- **Nine MCP navigation tools** in Search: `get_outline`, `get_section`, `get_pages`,
+  `get_context`, `list_figures`, `get_asset`, `get_table`, `find_identifier`, and `follow_ref`.
+- **Runtime**: `imageInspection.assetSource` (`server`, optional `collection` and `variant`)
+  enables `asset:<id>[#bbox]` references in `inspect_image`, fetched through MCP `get_asset`;
+  `ragProfiles` v2 adds `expand`, `granularity`, `include_assets`, and
+  `assets: { attach, maxImages, variant }`.
+- **Evaluation scripts** at the repository root: `eval:fixture` (golden-set fixture),
+  `eval:retrieval` (retrieval harness), `eval:test`, and `eval:typecheck`.
+- **Configuration.** Notable new variables — Extract: `EXTRACT_DATABASE_URL`,
+  `SOURCE_STORE_DIR`, `UPLOAD_TMP_DIR`, `SOURCE_URL_ALLOWED_HOSTS`, `SOURCE_URL_MAX_BYTES`,
+  `SOURCE_URL_TIMEOUT_MS`, `JOB_LEASE_SECONDS`, `EMIT_BATCH_PAGES`, `TEXT_FAST_PATH`,
+  `FIGURE_PASS2_KINDS`, `RENDER_RATE_LIMIT`, `RENDER_MAX_PIXELS`, plus the large-job, tiling,
+  and `FINALIZE_PASS` knobs above; Search: `ASSET_STORE_BACKEND`, `ASSET_STORE_DIR`,
+  `BATCH_WORKER`, `REVISION_TTL`, `RRF_WEIGHT_IDENTIFIER`, `CONTEXTUAL_CHUNK_LLM`, and
+  `TOKENIZE_URL`. [docs/CONFIGURATION.md](docs/CONFIGURATION.md) lists every variable with its
+  default; [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md)
+  says which ones an upgrade needs.
+- Extract `/metrics` exposes the text-fidelity gate as `extract_text_fidelity_checks_total`,
+  `extract_text_fidelity_divergences_total`, and `extract_text_fidelity_missing_tokens_total`.
+- Extract `/health` probes `pdftotext -bbox-layout` once per process (again on `?deep=1`) and
+  reports it as `bbox_layout`. A missing capability is reported, not fatal: the deterministic
+  page analysis is skipped and pages fall through to vision.
+
+### Changed
+
+- New runtime dependencies: `fast-xml-parser` 5.11.1, `fflate` 0.8.3, and `pg` 8.23.0 in
+  Extract (native OOXML/BPMN parsing and the `extract` schema), and `sharp` 0.35.4 in Search
+  (asset variants). Third-party notices and the supply-chain inventory are regenerated.
+- The quickstart Extract image (`deploy/examples/Dockerfile`) additionally installs LibreOffice
+  impress and draw for PPTX and VSDX, and the build fails if `pdftotext` lacks `-bbox-layout` or
+  a converter is missing. Custom Extract images need the same packages.
+- Extract's production-readiness gate flags an empty `SOURCE_URL_ALLOWED_HOSTS` when the v2
+  routes are mounted (fatal in production, a warning elsewhere), and warns in production when
+  `EXTRACT_DATABASE_URL` is unset, since v2 jobs, resumable uploads, and `source_url` pulls are
+  then disabled.
+
+### Security
+
+- **Conversion callbacks without `CALLBACK_ALLOWED_HOSTS` reach public addresses only.** The
+  callback host is resolved at delivery, the connection is pinned to the validated address, and
+  every resolved address must be public unicast: private, loopback, CGNAT, ULA, multicast, and
+  their IPv4-embedded forms are refused, as IP literals already at request time. This is
+  breaking for internal orchestrators on cluster DNS names or private addresses, which must now
+  be listed in `CALLBACK_ALLOWED_HOSTS`. An allowlisted host may resolve to private space but
+  never to a link-local or metadata address.
+- **`source_url` pulls** are guarded by the same host rules plus an address check that applies
+  with or without `SOURCE_URL_ALLOWED_HOSTS`: every resolved address must be public, the
+  connection is pinned against DNS rebinding, and each redirect hop is re-validated. See
+  [SECURITY.md](SECURITY.md).
 
 ## [0.8.0] — 2026-09-25
 

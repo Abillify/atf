@@ -26,7 +26,7 @@ _Requirements: 18.3, 18.4_
 | 2.5 | Extract | Pass 2 je Abbildungstyp (`process`, `fields`, `drawing`, `data`, `table_image`), Eingabe Ausschnitt + `regionText`, Label-Coverage-Prüfung mit einmaliger Wiederholung, Steuerung über `FIGURE_PASS2_KINDS`. |
 | 2.6 | Extract | Streaming-Dokument-Pass: Gliederungsstapel, `sectionPath` je Block, Tabellen-Zusammenführung, Bildunterschriften/Querverweise, Bezeichner-Extraktion; Zustand je Seite in `docpass_state`, strikt in Seitenreihenfolge. |
 | 2.7 | Extract | Summary-Hierarchie (Abschnitts-, Kapitel-, Dokument-Summary) je als Stufe mit Checkpoint. |
-| 2.8 | Extract | Native Parser: DOCX-Überschriftenebenen, XLSX (exceljs), BPMN (Pools/Lanes/Tasks/Gateways/Flows → `process`, Asset `native:`), PPTX über LibreOffice. |
+| 2.8 | Extract | Native Parser: DOCX-Überschriftenebenen, XLSX (fflate + fast-xml-parser), BPMN (Pools/Lanes/Tasks/Gateways/Flows → `process`, Asset `native:`), PPTX über LibreOffice. |
 | 2.9 | Extract | Text-Fast-Path: deterministische Blockbildung aus der Geometrie für `text`-Seiten ohne Kandidaten, Summaries gebündelt; Fidelity-Gate mit Rückfall auf Vision, Anteil als Metrik. |
 | 2.10 | Eval/Docs | Dieser Bericht; Extraktionsmetriken im Harness (Tabellenzellen, Label-Coverage, BPMN-Knoten-/Kanten-Recall); Golden-Set um Ground-Truth-Annotationen erweitert; Baseline erweitert; Deployment-Runbook. |
 

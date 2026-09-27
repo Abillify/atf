@@ -1,24 +1,42 @@
 # @atf/extract
 
 Document-to-Markdown extraction against the [`atf-extract`](../../packages/extract-contract)
-contract. Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into Markdown that
-`@atf/search` can index with page numbers, figure entries and per-page summaries
-intact.
+contract. Converts PDF, DOC, DOCX, XLS, XLSX, PPTX, VSDX, BPMN, PNG, JPEG, GIF, TIFF, BMP and
+WebP into Markdown (v1) or a v2 NDJSON record stream that `@atf/search` can index with page
+numbers, figure entries and per-page summaries intact.
 
 ```
 POST /v1/convert   document in, canonical Markdown out
 POST /v1/ingest    convert and index in Search, including figure crops
-GET  /             operator upload UI, SSO login
+POST /v2/uploads   resumable chunked upload or source_url pull   (needs EXTRACT_DATABASE_URL)
+POST /v2/jobs      persistent, resumable extraction job           (needs EXTRACT_DATABASE_URL)
+POST /v2/render    on-demand page or region render from a stored source
+GET  /             operator upload UI, SSO login; /ui/jobs is the job overview
 GET  /health       liveness plus converter-binary and model reachability
 GET  /metrics      Prometheus, including pages, token spend and queue depth
 GET  /openapi.json
 ```
 
+## Supported formats
+
+| Format | How it becomes pages |
+| --- | --- |
+| PDF | used directly |
+| DOC, DOCX | LibreOffice → PDF. On the v2 job path the DOCX styles additionally give authoritative heading levels for the outline |
+| XLS, XLSX | LibreOffice → PDF. On the v2 job path an XLSX is read natively into one `table` block per worksheet and only rendered when it embeds a chart or image |
+| PPTX | LibreOffice → PDF |
+| VSDX | LibreOffice → PDF for the page image; on the v2 job path the shape text and connector graph are also read natively from the package |
+| BPMN 2.0 XML | parsed natively into a `process` transcription, no render and no model call; the original XML is kept as a `native:` asset. Only the v2 job path handles it |
+| PNG, JPEG, GIF, TIFF, BMP, WebP | normalised to a one-page document by sharp |
+
+Types are sniffed from magic bytes, extension and declared `Content-Type` together
+(`src/formats.ts`); a declaration alone never routes bytes into a parser.
+
 ## How a page is converted
 
-Every format funnels through one PDF page loop. A PDF is used directly; DOCX and
-XLSX become a PDF via LibreOffice first; a single image becomes a one-page
-document. That is why page numbers, page images and text offsets agree across
+Every rendered format funnels through one PDF page loop. A PDF is used directly;
+the Office formats (DOC, DOCX, XLS, XLSX, PPTX, VSDX) become a PDF via LibreOffice
+first; a single image becomes a one-page document. That is why page numbers, page images and text offsets agree across
 formats — and why a Word document has page numbers at all, which a direct OOXML
 parser cannot provide because it never lays the document out.
 
@@ -83,10 +101,10 @@ throw away 199 good pages because of one, after having already paid for them.
 
 ## Running it
 
-Requires `poppler-utils` (PDF) and `libreoffice` (DOC/DOCX/XLS/XLSX) on `PATH`. Without
-LibreOffice the service is healthy but reports
-`degraded_formats: ["doc","docx","xls","xlsx"]`; without poppler it is unhealthy, because
-nothing works.
+Requires `poppler-utils` (PDF) and `libreoffice` (DOC/DOCX/XLS/XLSX/PPTX/VSDX) on `PATH`.
+Without LibreOffice the service is healthy but reports
+`degraded_formats: ["doc","docx","xls","xlsx"]` (PPTX and VSDX need it too but are not listed
+there); without poppler it is unhealthy, because nothing works.
 
 ```bash
 cp .env.example .env          # set VISION_URL and VISION_MODEL
@@ -107,7 +125,12 @@ ingest path Extract orchestrates and calls Search over two thin HTTP requests.
 
 ### What one `POST /v1/ingest` does
 
-`SEARCH_URL` must be set. In order:
+`SEARCH_URL` must be set. When `EXTRACT_DATABASE_URL` is set as well, `/v1/ingest` is a
+thin wrapper around a v2 job: the upload is stored in the source store, a job is created
+and, for a small document, driven inline so the synchronous response is preserved; the
+job's emitter writes the revision and figure assets through Search's v2 revision API (see
+[v2 jobs](#v2-persistent-jobs)). Without a database the original synchronous path below
+runs. In order:
 
 1. **Convert** the upload to canonical Markdown plus figure crops (the crop
    bytes stay in memory). `X-Reference` is mandatory here, unlike `/v1/convert`:
@@ -173,14 +196,98 @@ addressable, never where the *images* are attached.
 
 ### The alternative: `POST /ingest-file` in Search
 
-`CONVERTER_URL` must be set. Search proxies the upload here, takes the Markdown,
-and runs its own ingest path unchanged. Figure *descriptions* are indexed, so a
-search for what a diagram shows still finds it, but figure *images* are not
-stored — forwarding Markdown does not carry bytes. Responses say so with
-`X-Figure-Assets: not-stored`.
+`CONVERTER_URL` must be set in Search, and this service needs `EXTRACT_DATABASE_URL`.
+Search uploads the bytes here through `/v2/uploads` (one chunk), creates a job with
+`POST /v2/jobs` and answers `202` with the `job_id` and a `Location` pointing at
+`/v2/jobs/{id}`. The job's emitter stores the revision *and* the figure images in
+Search, so the former `X-Figure-Assets: not-stored` gap is closed. `CONVERTER_TOKEN`
+therefore needs `extract.ingest` (and `extract.admin` for Search's `/v2/render` zoom
+path).
 
-Use `POST /v1/ingest` here when figures should be viewable, `POST /ingest-file`
-when the simplest possible wiring matters more.
+Use `POST /v1/ingest` when the caller wants a synchronous result, `POST /ingest-file`
+when Search should be the only entry point and polling a job is fine.
+
+## v2 persistent jobs
+
+The v1 routes convert in process: a crash loses the conversion, and a 10 000-page source
+cannot arrive in one POST. v2 adds durable sources and jobs. The upload and job routes are
+mounted only when `EXTRACT_DATABASE_URL` is set; all v2 state lives in a dedicated `extract`
+schema on that Postgres, created by Extract's own migration runner.
+Without it the service stays database-free and serves the v1 paths only. Migration steps:
+[`docs/document-intelligence-v2-migration.md`](../../docs/document-intelligence-v2-migration.md).
+
+### Sources: `/v2/uploads`
+
+| Route | Purpose |
+| --- | --- |
+| `POST /v2/uploads` | Open a resumable session (`reference` via `X-Reference` or body, optional `size` and whole-file `sha256` / `X-Checksum-Sha256`). A JSON body with `source_url` instead pulls the source in one shot |
+| `HEAD /v2/uploads/{id}` | Report the confirmed byte offset in `Upload-Offset`, so a client resumes exactly there |
+| `PATCH /v2/uploads/{id}` | Append one chunk. `Upload-Offset` must equal the confirmed offset (otherwise 409 with the true offset); an optional `X-Chunk-Checksum-Sha256` is verified before the chunk touches the session file |
+| `POST /v2/uploads/{id}/complete` | Verify the whole-file sha256 and move the file into the content-addressed store. Idempotent on replay |
+
+Chunks stream through `UPLOAD_TMP_DIR`; only a verified file lands in `SOURCE_STORE_DIR`,
+under a path derived from its sha256, so identical bytes dedupe and a job can always
+re-render from the one durable copy. `MAX_UPLOAD_BYTES` bounds a session. The offset lives
+in Postgres and the bytes on the volume, so both directories must be persistent and shared
+by every replica.
+
+A `source_url` pull is the same SSRF primitive as `X-Callback-URL`, with stricter address
+rules. Only http(s) without credentials; link-local and metadata names are refused; when
+`SOURCE_URL_ALLOWED_HOSTS` is set the host must match it (`.example.com` matches
+subdomains); every resolved A/AAAA address must be public, even for an allowlisted host,
+so a source cannot live on a private, loopback, CGNAT or ULA address. The connection is
+pinned to the validated address, at most three redirects are followed and each hop is
+re-validated. The body streams into the store with `SOURCE_URL_MAX_BYTES` and
+`SOURCE_URL_TIMEOUT_MS` as bounds. With the database enabled, the production gate flags an
+empty `SOURCE_URL_ALLOWED_HOSTS`.
+
+### Jobs: `/v2/jobs`
+
+| Route | Purpose |
+| --- | --- |
+| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `collection`, `pages`, `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`. 201 with the queued job |
+| `GET /v2/jobs` | List jobs newest first (`limit` 1–100, default 25; `offset`) |
+| `GET /v2/jobs/{id}` | Status, per-stage progress, warnings, tokens, cost and ETA |
+| `POST /v2/jobs/{id}/pause` | Hold a queued or running job |
+| `POST /v2/jobs/{id}/resume` | Re-queue a paused job; optional body `{ resumePolicy, restartStage }` |
+| `POST /v2/jobs/{id}/cancel` | Abandon a non-terminal job |
+| `POST /v2/jobs/{id}/retry-failed` | Re-queue only the failed units |
+| `POST /v2/jobs/{id}/reparse` | Re-apply the parser to persisted raw model responses, with no new model calls |
+
+`GET` needs `extract.admin`; everything else `extract.ingest`. `/ui/jobs` serves the same
+router to the operator console through the session cookie; its writes additionally pass
+the CSRF guard and require `UI_OPERATOR_GROUP`.
+
+A job moves through `queued → preparing → processing → emitting → committing → completed`,
+or ends `failed` / `cancelled`. `paused` carries a reason: `budget` (the `tokenBudget`
+would be exceeded by the next call, estimated with `VISION_TOKEN_ESTIMATE`), `dependency`
+(vision, text LLM or Search stayed unreachable for `JOB_MAX_TRANSIENT_WAIT_MS`; resumes
+automatically on recovery) or `manual`. Illegal transitions are a 409.
+
+Workers claim jobs from `extract.jobs` under a lease (`JOB_LEASE_SECONDS`) renewed on a
+heartbeat (`JOB_HEARTBEAT_INTERVAL_MS`). Every write is fenced on the lease epoch, and
+every operator action revokes the lease, so a partitioned worker can neither overwrite a
+job another worker took over nor keep spending model calls after a cancel. Stages are
+checkpointed, so a resume continues at the first unfinished unit. Creation freezes the
+config and the pipeline/prompt hash onto the job; when they differ on resume,
+`resumePolicy` decides: `pin`, `continue` or `restart-stage`. Jobs above
+`LARGE_JOB_PAGE_THRESHOLD` pages run in a separate lane capped at
+`LARGE_JOB_MAX_CONCURRENCY` across the fleet, so small uploads do not wait days behind a
+large plan.
+
+The emitter streams staged pages to Search's revision API in batches of
+`EMIT_BATCH_PAGES`, commits a segment every `SEGMENT_PAGES` pages, uploads assets with
+`ASSET_UPLOAD_CONCURRENCY` and reconciles against the revision state on resume, so nothing
+is sent twice or lost. It needs `SEARCH_URL`; without it a job is processed but nothing is
+emitted.
+
+### On-demand render: `/v2/render`
+
+`POST /v2/render` with `{ source, page, bbox?, targetPixels?, filename? }` renders a page,
+or a normalised `[x0,y0,x1,y1]` region of it, from the stored source and returns a PNG.
+Full-resolution images are never pre-stored; Search calls this route for zoom and caches
+the result as an asset variant. Output is clamped to `RENDER_MAX_PIXELS`, the route has
+its own `RENDER_RATE_LIMIT` and needs `extract.admin`. It does not require the database.
 
 ## Response modes
 
@@ -220,12 +327,28 @@ on a path where the bytes usually go straight to Search.
 ## Security
 
 `X-Callback-URL` is a blind server-side request forgery primitive: it makes this
-service issue a request to a caller-chosen address. Link-local and metadata
-addresses (`169.254.0.0/16`, `metadata.google.internal`) are refused
-unconditionally. Everything else the container can reach is permitted unless
-`CALLBACK_ALLOWED_HOSTS` is set — the empty default keeps the feature usable out
-of the box, and the production readiness gate flags it so the trade-off is a
-decision rather than an inheritance.
+service issue a request to a caller-chosen address. The controls
+(`src/handlers/callback.ts`):
+
+- Only http(s), no credentials in the URL.
+- Link-local and metadata addresses (`169.254.0.0/16`, IPv6 `fe80:`, their
+  IPv4-mapped forms, `metadata.google.internal`) are refused unconditionally.
+- **Without `CALLBACK_ALLOWED_HOSTS`, only public addresses are reachable.** Every
+  resolved A/AAAA address must be public unicast; private, loopback, CGNAT, ULA,
+  multicast and IPv4-embedded forms of those are refused. An IP literal is rejected
+  with a 400 at request time, a DNS name at delivery time (terminal, not retried).
+  An internal orchestrator therefore has to be listed.
+- **With `CALLBACK_ALLOWED_HOSTS`**, the host must match an entry (`.example.com`
+  matches subdomains). An allowlisted host may resolve to private space, never to a
+  link-local or metadata address.
+- The connection is pinned to the validated address, so a second DNS answer (DNS
+  rebinding) cannot redirect it; TLS still verifies the host name. Every retry
+  resolves and validates again.
+
+The production readiness gate flags an empty `CALLBACK_ALLOWED_HOSTS`, because
+callbacks could then target any public host and internal receivers are refused.
+The v2 `source_url` pull reuses these controls with a stricter rule (see
+[Sources](#sources-v2uploads)).
 
 Other properties worth knowing:
 
@@ -240,7 +363,7 @@ Other properties worth knowing:
   bytes into LibreOffice.
 - **Images are bounded by decoded pixels, not bytes.** A 100 KiB PNG can declare
   30 000 × 30 000 pixels; `MAX_UPLOAD_BYTES` does not catch that.
-- **`/v1/*` accepts only machine credentials, `/ui/*` only the session cookie.**
+- **`/v1/*` and `/v2/*` accept only machine credentials, `/ui/*` only the session cookie.**
   A cookie authenticating an API call turns a CSRF into a document upload; a
   bearer token authenticating the UI makes the UI credential a full programmatic
   one.
@@ -255,7 +378,8 @@ visible before a config is promoted.
 ## Configuration
 
 Full reference: [`docs/CONFIGURATION.md`](../../docs/CONFIGURATION.md), generated
-from `src/config.ts`. Only `VISION_URL` and `VISION_MODEL` are required. The ones
+from `src/config.ts`; rollout order for the v2 variables:
+[`docs/document-intelligence-v2-migration.md`](../../docs/document-intelligence-v2-migration.md). Only `VISION_URL` and `VISION_MODEL` are required. The ones
 worth deciding deliberately:
 
 | Variable | Default | Why it matters |
@@ -267,7 +391,61 @@ worth deciding deliberately:
 | `CONVERT_CONCURRENCY` | 2 | Each conversion holds a LibreOffice process and page buffers |
 | `PAGE_CONCURRENCY` | 4 | Pages of one document in flight against the model |
 | `QUEUE_MAX_DEPTH` | 32 | Beyond it uploads get 503 with `Retry-After`, which a caller can act on |
-| `CALLBACK_ALLOWED_HOSTS` | (empty) | Closes the SSRF surface described above |
+| `CALLBACK_ALLOWED_HOSTS` | (empty) | Empty allows public hosts only; list internal receivers explicitly |
+| `SUBPROCESS_TIMEOUT_MS` | 120000 | Turns a hung poppler/LibreOffice call into a warning or retryable failure; 0 disables |
+
+The v2 groups. Worker, lane, emitter and source-store values are validated at startup even
+without a database, so a bad value fails early:
+
+| Variable | Default | Why it matters |
+| --- | --- | --- |
+| **Database** | | |
+| `EXTRACT_DATABASE_URL` | (unset) | Enables v2 uploads, jobs and the job worker; schema `extract`. Unset keeps the service database-free |
+| `EXTRACT_DB_POOL_MAX` | 10 | Pooled connections (1–128) |
+| `EXTRACT_DB_STATEMENT_TIMEOUT_MS` | 30000 | Per-query ceiling; 0 disables |
+| **Job worker** | | |
+| `JOB_LEASE_SECONDS` | 60 | Lease before another worker may take a job over (5–3600) |
+| `JOB_HEARTBEAT_INTERVAL_MS` | 20000 | Must stay well below the lease |
+| `JOB_POLL_INTERVAL_MS` | 2000 | Wait after an empty queue poll |
+| `JOB_MAX_TRANSIENT_WAIT_MS` | 900000 | Dependency outage tolerated before `paused(reason=dependency)` |
+| `VISION_TOKEN_ESTIMATE` | 4096 | Per-page estimate the budget guard checks before a vision call |
+| **Source store and uploads** | | |
+| `SOURCE_STORE_DIR` | `${TEMP_DIR}/sources` | Content-addressed sources; use a persistent, shared volume |
+| `UPLOAD_TMP_DIR` | `${TEMP_DIR}/uploads` | In-progress upload scratch; persistent, since resumable offsets live in Postgres |
+| `SOURCE_URL_ALLOWED_HOSTS` | (empty) | `source_url` allowlist; the gate flags it empty once the database is on |
+| `SOURCE_URL_MAX_BYTES` | 2147483648 | Largest pulled source (2 GiB) |
+| `SOURCE_URL_TIMEOUT_MS` | 300000 | Per-attempt pull timeout |
+| **Large-job lane** | | |
+| `LARGE_JOB_PAGE_THRESHOLD` | 1000 | Jobs with more pages run in the large lane |
+| `LARGE_JOB_MAX_CONCURRENCY` | 1 | Large jobs leased fleet-wide at once |
+| **Emitter** | | |
+| `EMIT_BATCH_PAGES` | 20 | Pages per NDJSON batch to Search; bounds emitter memory |
+| `SEGMENT_PAGES` | 250 | Pages between segment commits (what `progressive` visibility exposes early); also the inline limit of the v2 `/v1/ingest` wrapper |
+| `ASSET_UPLOAD_CONCURRENCY` | 4 | Parallel crop/page uploads to Search (1–64) |
+| `FINALIZE_PASS` | true | Model-free outline correction at document end; Search re-embeds only units whose section path changed |
+| **Figure Pass 2** | | |
+| `FIGURE_PASS2_KINDS` | `bpmn,flowchart,ui_mask,technical_drawing,chart,table_image` | Figure kinds that get a structured second transcription |
+| `FIGURE_PASS2_MIN_AREA` | 0.02 | Smallest figure (fraction of page area) worth a Pass-2 call |
+| `LABEL_COVERAGE_MIN` | 60 | Percent of figure labels the transcription must contain; below it a warning and one retry |
+| **Tiling (large-format pages)** | | |
+| `TILE_TARGET_PIXELS` | 2000 | Long edge a tile is rendered towards; drives tile count and DPI |
+| `TILE_OVERLAP_FRACTION` | 0.1 | Overlap between adjacent tiles (0–0.5) |
+| `TILE_MAX_PER_PAGE` | 16 | Ceiling on tiles per page, a budget guard |
+| **Text fast path** | | |
+| `TEXT_FAST_PATH` | true | Text-only pages with usable bbox geometry skip the vision call |
+| `TEXT_FAST_PATH_MAX_INK_RATIO` | 0.04 | Max ink outside text blocks; above it the page goes to vision |
+| **On-demand render** | | |
+| `RENDER_MAX_PIXELS` | 40000000 | Pixel ceiling of a `/v2/render` response |
+| `RENDER_RATE_LIMIT` | 240 | Requests/min/IP for `/v2/render`; 0 disables |
+| **Summary text LLM (optional)** | | |
+| `SUMMARY_URL` | (unset) | Full chat-completions URL, used as-is. Unset skips the summary hierarchy |
+| `SUMMARY_MODEL` | (unset) | Required when `SUMMARY_URL` is set |
+| `SUMMARY_API_KEY` | (unset) | Optional bearer credential |
+| `SUMMARY_TIMEOUT_MS` | 120000 | 0 disables |
+| `SUMMARY_TEMPERATURE` | 0.1 | |
+| `SUMMARY_MAX_TOKENS` | 512 | Output budget per summary |
+| `SUMMARY_MAX_RETRIES` | 3 | |
+| `SUMMARY_REASONING_EFFORT` | (unset) | Forwarded as `chat_template_kwargs` only when set |
 
 ## Tests
 

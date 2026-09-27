@@ -317,8 +317,11 @@ the v1 contract path keep working unchanged.
   box and summary; a second pass produces a structured transcription per kind (BPMN/flowchart →
   `process`, masks → `fields`, drawings, charts, table images). Large formats are split into
   overlapping **tiles**, each transcribed and merged, kept as `tile:` assets so a zoom is served
-  from the tile rather than a downscaled page. Structured source formats (DOCX, XLSX, BPMN,
-  PPTX, VSDX) are read by **native parsers** rather than rendered and guessed. An optional
+  from the tile rather than a downscaled page. Structured source formats are read by **native
+  parsers** rather than rendered and guessed: DOCX heading levels, XLSX worksheets as tables,
+  BPMN as a `process` transcription, and VSDX shapes and connectors (DOCX and VSDX keep the
+  LibreOffice → PDF render for the page image). PPTX has no native parser; it is converted to
+  PDF by LibreOffice and follows the PDF path. An optional
   **finalize pass** corrects outline metadata at document end and re-embeds only the units whose
   heading path changed.
 - **Multi-level index with contextual embedding (Search).** From the blocks Search builds the
@@ -346,9 +349,10 @@ the v1 contract path keep working unchanged.
   lane (`LARGE_JOB_MAX_CONCURRENCY`), and `PAGE_CONCURRENCY` is tuned against the vLLM batch
   capacity (see [DEPLOYMENT.md](DEPLOYMENT.md)).
 
-The design lives in [`.kiro/specs/document-intelligence-v2/`](.kiro/specs/document-intelligence-v2/);
-the per-phase completion reports under `docs/document-intelligence-v2-phase-*-completion.md`
-record what each phase delivered and how it is verified.
+The upgrade path is described in
+[docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md); the
+per-phase completion reports under `docs/document-intelligence-v2-phase-*-completion.md` record
+what each phase delivered and how it is verified.
 
 ## State
 

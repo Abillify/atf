@@ -87,6 +87,28 @@ bun run eval:retrieval -- \
   --extractions reports/extractions.baseline.json   # optional: score extraction metrics
 ```
 
+All flags of `retrieval.ts`:
+
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--collection <name>` | `documents` | Search collection to query |
+| `--fixture <path>` | `scripts/eval/golden-set/golden-set.v1.json` | golden-set fixture (e.g. an internal, annotated one) |
+| `--base-url <url>` | `$SEARCH_BASE_URL`, else `http://127.0.0.1:3002` | Search base URL (trailing `/` is stripped) |
+| `--token <bearer>` | `$SEARCH_TOKEN`, else none | bearer token, needed when Search runs with `AUTHN_MODE` enabled |
+| `--k <list>` | `5,10` | comma-separated positive integer cutoffs for the @k metrics |
+| `--out <prefix>` | `reports/retrieval` | report path prefix (`<out>.<label>.{json,md}`) |
+| `--label <name>` | `run` | run label used in the report file names |
+| `--v2` | off | target `POST /v2/search` instead of v1 `POST /search` |
+| `--responses <path>` | — | replay captured responses offline instead of calling Search |
+| `--capture <path>` | — | write the raw per-question results of a live run |
+| `--extractions <path>` | — | produced extraction output for the extraction-quality metrics |
+| `--min-page-recall <0–1>` | — | release gate: exit non-zero when Page Recall at the largest `--k` is below the floor |
+| `--min-figure-recall <0–1>` | — | release gate: exit non-zero when Figure Recall at the largest `--k` is below the floor |
+
+`SEARCH_BASE_URL` and `SEARCH_TOKEN` are environment fallbacks: an explicit
+`--base-url` / `--token` always wins. Prefer the environment variable for the
+token so it does not end up in shell history.
+
 ### Targeting the v2 pipeline (`--v2`, task 3.7 / 3.10)
 
 By default the harness runs each question against v1 `POST /search`. Add `--v2`
