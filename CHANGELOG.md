@@ -18,6 +18,15 @@ releases:
 
 ## [Unreleased]
 
+### Changed
+
+- **Control** (`@atf/control`): `next` 16.3.5 → 16.3.6, `lucide-react` 1.45.0 → 1.48.0.
+- **Runtime** (`@atf/runtime`): `@langchain/core` 1.2.11 → 1.2.13, `@langchain/langgraph`
+  1.4.16 → 1.4.18 (transitively `@langchain/langgraph-sdk` 1.11.2 → 1.12.0).
+- **Search** (`@atf/search`): dev `fast-check` 4.9.0 → 4.10.2, aligned with the other
+  workspaces.
+- **Workspace override**: transitive `adm-zip` (via `onnxruntime-node`) 0.6.0 → 0.6.1.
+
 ### Fixed
 
 - **Search Node.js artifact.** `build:node` now marks `sharp` as external, matching Extract.

@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "85082c6a6efbe2a2add5dbf58e167dacf092d0f31386b4d70fd0d4860ae09635"
+        "value": "c745f3284a4c9d1a1f45350da0eb0b0bfe490a3cd97bd886666c9b1e199d607a"
       }
     ]
   },
@@ -1193,16 +1193,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.2.11",
+      "bom-ref": "pkg:npm/%40langchain%2Fcore@1.2.13",
       "group": "@langchain",
       "name": "core",
-      "version": "1.2.11",
+      "version": "1.2.13",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Fcore@1.2.11",
+      "purl": "pkg:npm/%40langchain%2Fcore@1.2.13",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1212,16 +1212,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.4.16",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph@1.4.18",
       "group": "@langchain",
       "name": "langgraph",
-      "version": "1.4.16",
+      "version": "1.4.18",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph@1.4.16",
+      "purl": "pkg:npm/%40langchain%2Flanggraph@1.4.18",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1250,16 +1250,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.11.2",
+      "bom-ref": "pkg:npm/%40langchain%2Flanggraph-sdk@1.12.0",
       "group": "@langchain",
       "name": "langgraph-sdk",
-      "version": "1.11.2",
+      "version": "1.12.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.11.2",
+      "purl": "pkg:npm/%40langchain%2Flanggraph-sdk@1.12.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1307,16 +1307,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.5",
+      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.6",
       "group": "@next",
       "name": "env",
-      "version": "16.3.5",
+      "version": "16.3.6",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fenv@16.3.5",
+      "purl": "pkg:npm/%40next%2Fenv@16.3.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1326,16 +1326,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-darwin-arm64@16.3.5",
+      "bom-ref": "pkg:npm/%40next%2Fswc-darwin-arm64@16.3.6",
       "group": "@next",
       "name": "swc-darwin-arm64",
-      "version": "16.3.5",
+      "version": "16.3.6",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-darwin-arm64@16.3.5",
+      "purl": "pkg:npm/%40next%2Fswc-darwin-arm64@16.3.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3281,15 +3281,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/adm-zip@0.6.0",
+      "bom-ref": "pkg:npm/adm-zip@0.6.1",
       "name": "adm-zip",
-      "version": "0.6.0",
+      "version": "0.6.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/adm-zip@0.6.0",
+      "purl": "pkg:npm/adm-zip@0.6.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5369,24 +5369,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-check@4.9.0",
-      "name": "fast-check",
-      "version": "4.9.0",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/fast-check@4.9.0",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/fast-deep-equal@3.1.3",
       "name": "fast-deep-equal",
       "version": "3.1.3",
@@ -6737,15 +6719,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/lucide-react@1.45.0",
+      "bom-ref": "pkg:npm/lucide-react@1.48.0",
       "name": "lucide-react",
-      "version": "1.45.0",
+      "version": "1.48.0",
       "licenses": [
         {
           "expression": "ISC"
         }
       ],
-      "purl": "pkg:npm/lucide-react@1.45.0",
+      "purl": "pkg:npm/lucide-react@1.48.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7223,15 +7205,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/next@16.3.5",
+      "bom-ref": "pkg:npm/next@16.3.6",
       "name": "next",
-      "version": "16.3.5",
+      "version": "16.3.6",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/next@16.3.5",
+      "purl": "pkg:npm/next@16.3.6",
       "properties": [
         {
           "name": "atf:compliance:classification",

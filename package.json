@@ -55,7 +55,7 @@
 		"typescript": "7.0.2"
 	},
 	"overrides": {
-		"adm-zip": "0.6.0",
+		"adm-zip": "0.6.1",
 		"fast-uri": "3.1.6",
 		"postcss": "8.5.26",
 		"sharp": "0.35.4"
