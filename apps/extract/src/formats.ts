@@ -37,6 +37,16 @@ export type SourceKind =
   | "word"
   /** Spreadsheet: converted to PDF by LibreOffice, then the PDF path. */
   | "spreadsheet"
+  /** Presentation (PPTX): converted to PDF by LibreOffice, then the PDF path. */
+  | "presentation"
+  /** Visio drawing (VSDX): converted to PDF by LibreOffice, then the PDF path. */
+  | "visio"
+  /**
+   * BPMN 2.0 XML: parsed natively into a `process` transcription, with no
+   * rendering and no model call (design §10.1). The original XML is kept as a
+   * `native:` asset.
+   */
+  | "bpmn"
   /** Single raster image: normalised by sharp, no text layer. */
   | "image";
 
@@ -83,6 +93,29 @@ export const SUPPORTED_FORMATS: readonly SupportedFormat[] = [
     family: "ole",
     label: "Excel (XLS)",
   },
+  {
+    mimeType: "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    extensions: [".pptx"],
+    kind: "presentation",
+    family: "zip",
+    label: "PowerPoint (PPTX)",
+  },
+  {
+    mimeType: "application/vnd.ms-visio.drawing",
+    extensions: [".vsdx"],
+    kind: "visio",
+    family: "zip",
+    label: "Visio (VSDX)",
+  },
+  {
+    // BPMN 2.0 is an XML dialect; the OMG registers this type for it. The bytes
+    // are an XML document, not a ZIP or OLE container, so its family is `xml`.
+    mimeType: "application/bpmn+xml",
+    extensions: [".bpmn"],
+    kind: "bpmn",
+    family: "xml",
+    label: "BPMN 2.0 (XML)",
+  },
   { mimeType: "image/png", extensions: [".png"], kind: "image", family: "png", label: "PNG" },
   { mimeType: "image/jpeg", extensions: [".jpg", ".jpeg"], kind: "image", family: "jpeg", label: "JPEG" },
   { mimeType: "image/gif", extensions: [".gif"], kind: "image", family: "gif", label: "GIF" },
@@ -118,6 +151,7 @@ export type SniffedFamily =
   | "pdf"
   | "zip"
   | "ole"
+  | "xml"
   | "png"
   | "jpeg"
   | "gif"
@@ -147,7 +181,42 @@ export function sniffFamily(buffer: Uint8Array): SniffedFamily {
     buffer[10] === 0x42 &&
     buffer[11] === 0x50
   ) return "webp";
+  if (looksLikeXml(buffer)) return "xml"; // BPMN 2.0 and other plain-XML dialects
   return "unknown";
+}
+
+/**
+ * Recognise a plain-XML document (no ZIP/OLE container). Checked last, after
+ * every binary container signature, so a `.docx`/`.xlsx`/`.pptx` ZIP never
+ * reaches it. An XML file may lead with a UTF-8/UTF-16 BOM and any amount of
+ * whitespace before `<?xml …` or a root element `<name`, so the leading bytes
+ * are skipped before the marker is checked. Only the head is inspected.
+ */
+function looksLikeXml(buffer: Uint8Array): boolean {
+  let index = 0;
+  // Skip a UTF-8 BOM. (UTF-16 BOMs would put NUL bytes between characters,
+  // which the ASCII marker check below tolerates via the same skip.)
+  if (buffer[0] === 0xef && buffer[1] === 0xbb && buffer[2] === 0xbf) index = 3;
+  else if (buffer[0] === 0xff && buffer[1] === 0xfe) index = 2;
+  else if (buffer[0] === 0xfe && buffer[1] === 0xff) index = 2;
+  // Skip leading whitespace and any interleaved NUL from a UTF-16 encoding.
+  const isSkippable = (byte: number | undefined): boolean =>
+    byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d || byte === 0x00;
+  while (index < buffer.length && index < 64 && isSkippable(buffer[index])) index++;
+  const at = (offset: number): number | undefined => buffer[index + offset];
+  // `<?xml` — an XML declaration.
+  if (at(0) === 0x3c && at(1) === 0x3f) return true; // "<?"
+  // A root element `<name` or `<ns:name`: `<` followed by a name-start char.
+  if (at(0) === 0x3c) {
+    const next = at(1);
+    if (next === undefined) return false;
+    const isNameStart =
+      (next >= 0x41 && next <= 0x5a) || // A-Z
+      (next >= 0x61 && next <= 0x7a) || // a-z
+      next === 0x5f; // _
+    return isNameStart;
+  }
+  return false;
 }
 
 /**

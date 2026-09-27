@@ -34,8 +34,9 @@
 
 import type { RequestHandler } from "express";
 import type { Logger } from "pino";
-import { EXTRACT_CONTRACT_ID } from "@atf/extract-contract";
+import { EXTRACT_CONTRACT_ID } from "@atf/extract-contract/v1";
 import { probe as probeBinary } from "../pipeline/exec.js";
+import { probeBboxLayout, type PopplerTools } from "../pipeline/pdf.js";
 import type { WorkQueue } from "../queue.js";
 import type { VisionClient } from "../vision/client.js";
 import type { SearchClient } from "../search-client.js";
@@ -80,12 +81,29 @@ export interface HealthHandlerDeps {
   };
   /** Injectable for tests, which must not spawn processes. */
   probeBinary?: HealthProbe;
+  /**
+   * The `pdftotext -bbox-layout` capability probe (requirement 7.1), injectable
+   * so tests need not spawn poppler. Defaults to the real probe.
+   */
+  probeBboxLayout?: (tools: PopplerTools) => Promise<{
+    supported: boolean;
+    version: string | null;
+    reason?: string;
+  }>;
 }
 
 export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
   const { queue, vision, searchClient, config, logger } = deps;
   const runBinaryProbe = deps.probeBinary ?? probeBinary;
+  const runBboxLayoutProbe = deps.probeBboxLayout ?? probeBboxLayout;
   const cache = new Map<string, CachedProbe>();
+  // The `-bbox-layout` capability is a property of the binary, so it is cached
+  // for the life of the process rather than re-probed per request.
+  let bboxLayoutCap: {
+    supported: boolean;
+    version: string | null;
+    reason?: string;
+  } | null = null;
 
   async function cached(
     key: string,
@@ -145,6 +163,30 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
       const poppler = { pdfinfo, pdftotext, pdftoppm };
       const popplerAvailable = Object.values(poppler).every((state) => state.available);
 
+      // The `-bbox-layout` capability the deterministic page analysis (S2)
+      // depends on (requirement 7.1). Probed once and cached for the process,
+      // re-probed on `?deep=1`. It is *reported*, never fatal: a v1-only
+      // deployment that never runs the analyzed stage does not need it, so a
+      // missing capability degrades S2 (page falls through to vision) rather
+      // than taking the container out of rotation.
+      if (bboxLayoutCap === null || force) {
+        const tools: PopplerTools = {
+          binDir: config.popplerBinDir,
+          home: config.tempDir,
+        };
+        bboxLayoutCap = await runBboxLayoutProbe(tools).catch((err) => ({
+          supported: false,
+          version: null,
+          reason: err instanceof Error ? err.message : String(err),
+        }));
+        if (!bboxLayoutCap.supported) {
+          logger.warn(
+            { reason: bboxLayoutCap.reason, version: bboxLayoutCap.version },
+            "pdftotext -bbox-layout unavailable; the deterministic page analysis (S2) will be skipped and pages fall through to vision",
+          );
+        }
+      }
+
       // LibreOffice is only needed for Word and spreadsheet inputs, so its
       // absence degrades those formats rather than the whole service.
       const degraded: string[] = [];
@@ -171,22 +213,32 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
         },
         supported_types: supportedMimeTypes().filter((mimeType) => {
           const kind = formatByMimeType(mimeType)?.kind;
-          return libreoffice.available || (kind !== "word" && kind !== "spreadsheet");
+          return (
+            libreoffice.available || (kind !== "word" && kind !== "spreadsheet")
+          );
         }),
         dependencies: {
           poppler,
+          // The `-bbox-layout` capability for the deterministic page analysis
+          // (S2). Reported for observability; not part of the healthy gate.
+          bbox_layout: bboxLayoutCap,
           libreoffice,
           vision: visionState,
           search:
             searchClient === null
-              ? { available: true, error: "not configured; /v1/ingest is disabled" }
+              ? {
+                  available: true,
+                  error: "not configured; /v1/ingest is disabled",
+                }
               : searchState,
         },
         ...(degraded.length > 0 ? { degraded_formats: degraded } : {}),
       });
     })().catch((error: unknown) => {
       logger.error({ err: error }, "Health check itself failed");
-      res.status(503).json({ status: "unhealthy", error: "The health check failed" });
+      res
+        .status(503)
+        .json({ status: "unhealthy", error: "The health check failed" });
     });
   };
 }

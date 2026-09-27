@@ -28,16 +28,41 @@
  *      readiness gate flags the unset allowlist, so the trade-off is a decision
  *      an operator makes rather than one they inherit silently.
  *
- * DNS rebinding is not addressed here: the hostname is validated and then
- * resolved again by `fetch`. Closing that would require resolving to an address,
- * checking it, and connecting to that address, which Node's fetch does not
- * expose. The allowlist is the control that actually holds, which is why the gate
- * pushes towards it.
+ * On top of those literal checks, delivery resolves the host itself and applies
+ * the address classification shared with the `source_url` pull (source-url.ts):
+ *
+ *   3. **Without an allowlist, only public addresses are reachable.** Every
+ *      resolved A/AAAA address must be public unicast (`isForbiddenAddress`):
+ *      private, loopback, CGNAT, ULA, multicast and the IPv4-embedded forms of
+ *      those are refused — the literal form already at request time, a DNS name
+ *      at delivery time. An internal orchestrator must therefore be listed in
+ *      `CALLBACK_ALLOWED_HOSTS`.
+ *   4. **An allowlisted host may resolve to private space** (the operator named
+ *      it), but never to a link-local / metadata address
+ *      (`isLinkLocalOrMetadataAddress`).
+ *   5. **The connection is pinned to the validated address** through the socket
+ *      `lookup` hook (`pinnedLookup`), so a second DNS answer (DNS rebinding)
+ *      cannot redirect the actual TCP connection. TLS still verifies against
+ *      the host name. Each retry resolves and validates again.
  */
 
+import http from "node:http";
+import https from "node:https";
+import { isIP } from "node:net";
 import type { Logger } from "pino";
 import { validationError } from "../errors.js";
 import { injectTraceHeaders } from "../trace-context.js";
+// Circular with source-url.ts (which imports FORBIDDEN_HOST_PATTERNS and
+// isHostAllowed from here). Safe: both modules only use each other's bindings
+// inside function bodies, never during module evaluation.
+import {
+  defaultHostResolver,
+  isForbiddenAddress,
+  isLinkLocalOrMetadataAddress,
+  pinnedLookup,
+  type HostResolver,
+  type ResolvedAddress,
+} from "./source-url.js";
 
 export interface CallbackConfig {
   callbackMaxRetries: number;
@@ -46,8 +71,15 @@ export interface CallbackConfig {
   callbackAllowedHosts: string[];
 }
 
-/** Addresses that are never a legitimate callback target. */
-const FORBIDDEN_HOST_PATTERNS: readonly RegExp[] = [
+/**
+ * Addresses that are never a legitimate target for a caller-supplied URL.
+ *
+ * Exported so the `source_url` pull (task 1.4) refuses exactly the same set:
+ * the SSRF surface of "the server fetches an address the caller chose" is the
+ * same whether the address is a callback or a source, so the control must be
+ * the same too.
+ */
+export const FORBIDDEN_HOST_PATTERNS: readonly RegExp[] = [
   // IPv4 link-local, which is where cloud instance metadata lives.
   /^169\.254\./,
   // The IPv6 equivalent, and IPv4-mapped forms of the same.
@@ -93,8 +125,115 @@ export function resolveCallbackUrl(raw: string, config: CallbackConfig): URL {
     );
   }
 
+  // An IP literal is judged now, before any work is done, with the same policy
+  // delivery applies to resolved addresses (see callbackAddressRefusal).
+  const literal = host.replace(/^\[|\]$/g, "");
+  if (isIP(literal) !== 0) {
+    const refusal = callbackAddressRefusal([literal], config);
+    if (refusal !== null) throw validationError(`X-Callback-URL ${refusal}`);
+  }
+
   return url;
 }
+
+/**
+ * Why a set of resolved addresses may not receive a callback, or null when
+ * they may. Every address must pass — a host that answers with one permitted
+ * and one refused address is refused, because the connection could otherwise
+ * be steered to the refused one.
+ *
+ * Without an allowlist only public unicast addresses pass. With one (the host
+ * was already matched against it), private space is allowed because the
+ * operator named the host, but link-local / metadata addresses never are.
+ */
+export function callbackAddressRefusal(
+  addresses: readonly string[],
+  config: CallbackConfig,
+): string | null {
+  if (addresses.some((address) => isLinkLocalOrMetadataAddress(address))) {
+    return "points at a link-local or metadata address";
+  }
+  if (config.callbackAllowedHosts.length === 0 && addresses.some((a) => isForbiddenAddress(a))) {
+    return (
+      "points at a private, loopback or reserved address; list the host in " +
+      "CALLBACK_ALLOWED_HOSTS to permit an internal receiver"
+    );
+  }
+  return null;
+}
+
+/** Thrown when the callback host resolves to a refused address (terminal). */
+class CallbackAddressRefused extends Error {}
+
+/**
+ * Resolve the callback host and return the single validated address the
+ * connection is pinned to. DNS failures are retryable (plain Error); a refused
+ * address is terminal ({@link CallbackAddressRefused}).
+ */
+async function resolveCallbackAddress(
+  url: URL,
+  config: CallbackConfig,
+  resolver: HostResolver,
+): Promise<ResolvedAddress> {
+  const literal = url.hostname.replace(/^\[|\]$/g, "");
+  const literalFamily = isIP(literal);
+  const addresses: ResolvedAddress[] =
+    literalFamily !== 0
+      ? [{ address: literal, family: literalFamily === 6 ? 6 : 4 }]
+      : await resolver(literal);
+  const first = addresses[0];
+  if (first === undefined) throw new Error("callback host has no A/AAAA records");
+  const refusal = callbackAddressRefusal(
+    addresses.map((entry) => entry.address),
+    config,
+  );
+  if (refusal !== null) throw new CallbackAddressRefused(`callback host ${refusal}`);
+  return first;
+}
+
+/** The part of a callback response delivery needs. */
+export interface CallbackResponse {
+  status: number;
+}
+
+/**
+ * Issues one POST to `url`, connecting to `pinned` instead of re-resolving the
+ * host. Injectable for tests; the default is {@link pinnedPostRequest}.
+ */
+export type CallbackRequester = (
+  url: URL,
+  pinned: ResolvedAddress,
+  init: { headers: Record<string, string>; body: string; signal: AbortSignal },
+) => Promise<CallbackResponse>;
+
+/**
+ * POST over node:http(s) with a `lookup` hook that only ever returns the
+ * validated address. Redirects are never followed (node:http does not follow
+ * them), so a 3xx is reported as a refusal like any other non-5xx status.
+ */
+export const pinnedPostRequest: CallbackRequester = (url, pinned, init) =>
+  new Promise<CallbackResponse>((resolve, reject) => {
+    const client = url.protocol === "https:" ? https : http;
+    const request = client.request(
+      url,
+      {
+        method: "POST",
+        headers: { ...init.headers, "content-length": String(Buffer.byteLength(init.body)) },
+        signal: init.signal,
+        lookup: pinnedLookup(pinned),
+        // A fresh socket per attempt: a pooled keep-alive socket was connected
+        // under an earlier validation and must not be reused for this one.
+        agent: false,
+      },
+      (response) => {
+        // The receiver's body is irrelevant; drain it so the socket closes.
+        response.resume();
+        resolve({ status: response.statusCode ?? 0 });
+      },
+    );
+    request.on("error", reject);
+    request.end(init.body);
+  });
 
 /** Exact match, or a `.example.com` suffix entry matching any subdomain. */
 export function isHostAllowed(host: string, allowed: readonly string[]): boolean {
@@ -119,6 +258,10 @@ export interface DeliverCallbackArgs {
   body: unknown;
   config: CallbackConfig;
   logger: Logger;
+  /** Injectable for tests; defaults to DNS resolution via node:dns. */
+  resolver?: HostResolver;
+  /** Injectable for tests; defaults to {@link pinnedPostRequest}. */
+  requestImpl?: CallbackRequester;
 }
 
 /**
@@ -135,6 +278,8 @@ export interface DeliverCallbackArgs {
  */
 export async function deliverCallback(args: DeliverCallbackArgs): Promise<void> {
   const { url, jobId, body, config, logger } = args;
+  const resolver = args.resolver ?? defaultHostResolver;
+  const doRequest = args.requestImpl ?? pinnedPostRequest;
   const payload = JSON.stringify(body);
 
   for (let attempt = 0; attempt <= config.callbackMaxRetries; attempt++) {
@@ -150,17 +295,18 @@ export async function deliverCallback(args: DeliverCallbackArgs): Promise<void> 
       };
       injectTraceHeaders(headers);
 
-      const response = await fetch(url, {
-        method: "POST",
+      // Resolve + validate on every attempt and pin the connection to the
+      // validated address, so neither a DNS change between attempts nor a
+      // rebinding answer during connect can reach a refused address. The
+      // caller-supplied target is never redirected (node:http does not follow).
+      const pinned = await resolveCallbackAddress(url, config, resolver);
+      const response = await doRequest(url, pinned, {
         headers,
         body: payload,
         signal: controller.signal,
-        // The callback target is caller-supplied; following a redirect would let
-        // it bounce the request somewhere the allowlist never approved.
-        redirect: "manual",
       });
 
-      if (response.ok) {
+      if (response.status >= 200 && response.status < 300) {
         logger.info({ jobId, status: response.status }, "Conversion callback delivered");
         return;
       }
@@ -176,6 +322,15 @@ export async function deliverCallback(args: DeliverCallbackArgs): Promise<void> 
         "Conversion callback failed; retrying",
       );
     } catch (error) {
+      if (error instanceof CallbackAddressRefused) {
+        // Terminal: the host resolves to an address this policy never
+        // reaches; retrying cannot make it acceptable.
+        logger.error(
+          { jobId, host: url.hostname, err: error.message },
+          "Conversion callback refused by the address policy; not retrying",
+        );
+        return;
+      }
       logger.warn(
         { jobId, attempt: attempt + 1, err: error instanceof Error ? error.message : String(error) },
         "Conversion callback could not be delivered; retrying",

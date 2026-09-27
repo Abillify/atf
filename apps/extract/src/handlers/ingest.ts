@@ -31,7 +31,7 @@
 import { randomUUID } from "node:crypto";
 import type { Request, RequestHandler } from "express";
 import type { Logger } from "pino";
-import { collectFigures, type IngestHeaderOptions } from "@atf/extract-contract";
+import { collectFigures, type IngestHeaderOptions } from "@atf/extract-contract/v1";
 import { validationError } from "../errors.js";
 import { readHeader, readListHeader, parseBooleanHeader } from "../header-utils.js";
 import { getPrincipal, runWithPrincipal, type RequestPrincipal } from "../request-principal.js";
@@ -136,6 +136,52 @@ function parseIngestOptions(req: Request, defaultCollection: string): IngestHead
   const chunkSize = readHeader(req, "x-chunk-size");
   const chunkOverlap = readHeader(req, "x-chunk-overlap");
 
+  // Chunking / structure overrides. Each mirrors the accepted range in
+  // apps/search/src/ingest-header-parser.ts: absent → Search's default, a
+  // valid value → override, anything else → 400 here rather than a late 400
+  // from Search after a conversion has already been paid for.
+  const lateChunkingAlpha = parseFloatHeader(readHeader(req, "x-late-chunking-alpha"), {
+    min: 0,
+    max: 1,
+    name: "X-Late-Chunking-Alpha",
+  });
+  const breakpointPercentile = parseIntHeader(readHeader(req, "x-breakpoint-percentile"), {
+    min: 1,
+    max: 99,
+    name: "X-Breakpoint-Percentile",
+  });
+  const contextPrefixSize = parseIntHeader(readHeader(req, "x-context-prefix-size"), {
+    min: 0,
+    name: "X-Context-Prefix-Size",
+  });
+  const chapterSplitMaxChunks = parseIntHeader(readHeader(req, "x-chapter-split-max-chunks"), {
+    min: 0,
+    name: "X-Chapter-Split-Max-Chunks",
+  });
+
+  const summarize = parseBooleanHeader(readHeader(req, "x-summarize"));
+  if (summarize === null) {
+    throw validationError("X-Summarize must be one of: 1/0, true/false, yes/no, on/off");
+  }
+
+  const quantizationRaw = readHeader(req, "x-quantization")?.trim().toLowerCase();
+  if (quantizationRaw !== undefined && quantizationRaw !== "" && quantizationRaw !== "none" && quantizationRaw !== "binary") {
+    throw validationError('X-Quantization must be "none" or "binary"');
+  }
+
+  const documentStructureRaw = readHeader(req, "x-document-structure")?.trim().toLowerCase();
+  if (documentStructureRaw !== undefined && documentStructureRaw !== "" && documentStructureRaw !== "auto" && documentStructureRaw !== "off") {
+    throw validationError('X-Document-Structure must be "auto" or "off"');
+  }
+
+  const summaryModeRaw = readHeader(req, "x-summary-mode")?.trim().toLowerCase();
+  if (
+    summaryModeRaw !== undefined && summaryModeRaw !== "" &&
+    !["auto", "generate", "embedded", "off"].includes(summaryModeRaw)
+  ) {
+    throw validationError('X-Summary-Mode must be one of: auto, generate, embedded, off');
+  }
+
   return {
     collection: readHeader(req, "x-collection")?.trim() || defaultCollection,
     allowedUsers: acl.allowedUsers,
@@ -151,9 +197,55 @@ function parseIngestOptions(req: Request, defaultCollection: string): IngestHead
     ...(chunkSize !== undefined ? { chunkSize: Number.parseInt(chunkSize, 10) } : {}),
     ...(chunkOverlap !== undefined ? { chunkOverlap: Number.parseInt(chunkOverlap, 10) } : {}),
     ...(semanticChunking !== undefined ? { semanticChunking } : {}),
+    ...(lateChunkingAlpha !== undefined ? { lateChunkingAlpha } : {}),
+    ...(breakpointPercentile !== undefined ? { breakpointPercentile } : {}),
+    ...(contextPrefixSize !== undefined ? { contextPrefixSize } : {}),
+    ...(chapterSplitMaxChunks !== undefined ? { chapterSplitMaxChunks } : {}),
+    ...(summarize !== undefined ? { summarize } : {}),
+    ...(quantizationRaw !== undefined && quantizationRaw !== ""
+      ? { quantization: quantizationRaw as "none" | "binary" }
+      : {}),
+    ...(documentStructureRaw !== undefined && documentStructureRaw !== ""
+      ? { documentStructure: documentStructureRaw as "auto" | "off" }
+      : {}),
+    ...(summaryModeRaw !== undefined && summaryModeRaw !== ""
+      ? { summaryMode: summaryModeRaw as "auto" | "generate" | "embedded" | "off" }
+      : {}),
     ...(readListHeader(req, "x-tags").length > 0 ? { tags: readListHeader(req, "x-tags") } : {}),
     ...(metadata !== undefined ? { metadata } : {}),
   };
+}
+
+/** Parse an integer-valued override header with range validation. */
+function parseIntHeader(
+  value: string | undefined,
+  opts: { min?: number; max?: number; name: string },
+): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number(value.trim());
+  if (
+    !Number.isInteger(parsed) ||
+    (opts.min !== undefined && parsed < opts.min) ||
+    (opts.max !== undefined && parsed > opts.max)
+  ) {
+    const range =
+      opts.max !== undefined ? `${opts.min}–${opts.max}` : `an integer ≥ ${opts.min ?? 0}`;
+    throw validationError(`${opts.name} must be ${opts.max !== undefined ? "an integer in " + range : range}`);
+  }
+  return parsed;
+}
+
+/** Parse a float-valued override header with range validation. */
+function parseFloatHeader(
+  value: string | undefined,
+  opts: { min: number; max: number; name: string },
+): number | undefined {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number(value.trim());
+  if (!Number.isFinite(parsed) || parsed < opts.min || parsed > opts.max) {
+    throw validationError(`${opts.name} must be a number in ${opts.min}–${opts.max}`);
+  }
+  return parsed;
 }
 
 export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {

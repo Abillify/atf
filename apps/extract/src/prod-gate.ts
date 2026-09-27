@@ -193,9 +193,30 @@ export function checkProductionReadiness(
   // else the container can reach is fair game without an allowlist.
   if (config.callbackAllowedHosts.length === 0) {
     flag(
-      "CALLBACK_ALLOWED_HOSTS is empty — X-Callback-URL may target any host this container " +
-        "can reach, which is a blind server-side request forgery primitive. List the hosts " +
-        "your orchestrator actually uses.",
+      "CALLBACK_ALLOWED_HOSTS is empty — X-Callback-URL may target any public host, which is " +
+        "a blind server-side request forgery primitive towards the internet, and internal " +
+        "receivers are refused. List the hosts your orchestrator actually uses.",
+    );
+  }
+  // The `source_url` pull is the same SSRF primitive, and is only reachable when
+  // the v2 upload routes are mounted (i.e. a database is configured). With the
+  // routes live, an empty allowlist fails closed in production.
+  if (config.database !== null && config.sourceUrl.allowedHosts.length === 0) {
+    flag(
+      "SOURCE_URL_ALLOWED_HOSTS is empty — a v2 upload's source_url may target any host this " +
+        "container can reach, which is a server-side request forgery primitive. List the hosts " +
+        "your sources actually come from.",
+    );
+  }
+
+  // ── Persistence ───────────────────────────────────────────────────────────
+  // Without a database the service runs the v1 synchronous paths only: no
+  // persistent, resumable v2 jobs, no resumable uploads and no source_url
+  // pulls. A legitimate deployment shape, so a warning rather than a failure.
+  if (isProd && config.database === null) {
+    warnings.push(
+      "EXTRACT_DATABASE_URL is unset — v2 jobs, resumable uploads and source_url pulls are " +
+        "disabled, and an interrupted conversion cannot resume. Configure it for large documents.",
     );
   }
 

@@ -11,9 +11,11 @@
  * `pipeline.test.ts`, which uses a PNG so it needs no external binaries.
  */
 
+import { createServer, type ServerResponse } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import request from "supertest";
-import { serializeDocument } from "@atf/extract-contract";
+import { serializeDocument } from "@atf/extract-contract/v1";
 import { createApp, type AppOverrides } from "../src/index.js";
 import type { Config } from "../src/config.js";
 import { QueueSaturatedError } from "../src/queue.js";
@@ -49,6 +51,54 @@ function buildApp(
     ...overrides,
   });
   return { ...created, config };
+}
+
+interface CallbackReceiver {
+  /** Base URL, e.g. `http://127.0.0.1:12345`. */
+  url: string;
+  /** Request bodies in arrival order. */
+  received: string[];
+  /** With `hold`, answer the oldest held request with 204. */
+  releaseNext: () => void;
+  close: () => Promise<void>;
+}
+
+/** A loopback HTTP server that records callback bodies (optionally holding responses). */
+async function startCallbackReceiver(options: { hold?: boolean } = {}): Promise<CallbackReceiver> {
+  const received: string[] = [];
+  const held: ServerResponse[] = [];
+  const server = createServer((req, res) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (chunk: Buffer) => chunks.push(chunk));
+    req.on("end", () => {
+      received.push(Buffer.concat(chunks).toString("utf-8"));
+      if (options.hold) {
+        held.push(res);
+      } else {
+        res.statusCode = 204;
+        res.end();
+      }
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+  const { port } = server.address() as AddressInfo;
+  return {
+    url: `http://127.0.0.1:${port}`,
+    received,
+    releaseNext: () => {
+      const res = held.shift();
+      if (res) {
+        res.statusCode = 204;
+        res.end();
+      }
+    },
+    close: () =>
+      new Promise<void>((resolve) => {
+        for (const res of held.splice(0)) res.end();
+        server.closeAllConnections();
+        server.close(() => resolve());
+      }),
+  };
 }
 
 const cleanups: Array<() => void> = [];
@@ -353,16 +403,22 @@ describe("POST /v1/convert", () => {
   });
 
   describe("asynchronous delivery", () => {
-    it("returns 202 and posts the result to the callback", async () => {
-      const fetchMock = vi.fn(
-        async (_url: URL, _init: RequestInit) => new Response(null, { status: 204 }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
+    // Delivery resolves the host and connects to the pinned, validated address
+    // over node:http, so the receiver is a real loopback server. Loopback is
+    // only reachable because the test allow-lists it explicitly.
+    let receiver: CallbackReceiver | undefined;
+    afterEach(async () => {
+      await receiver?.close();
+      receiver = undefined;
+    });
 
-      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "hooks.test" }))
+    it("returns 202 and posts the result to the callback", async () => {
+      receiver = await startCallbackReceiver();
+
+      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "127.0.0.1" }))
         .post("/v1/convert")
         .set("Content-Type", "application/pdf")
-        .set("X-Callback-URL", "http://hooks.test/done")
+        .set("X-Callback-URL", `${receiver.url}/done`)
         .send(PDF_BYTES);
 
       expect(response.status).toBe(202);
@@ -370,35 +426,43 @@ describe("POST /v1/convert", () => {
       expect(response.body.job_id).toBeTypeOf("string");
 
       // Delivery is detached from the response, so wait for the microtask chain.
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalled());
-      const init = fetchMock.mock.calls[0]?.[1];
-      const delivered = JSON.parse(String(init?.body));
+      const received = receiver.received;
+      await vi.waitFor(() => expect(received.length).toBeGreaterThan(0));
+      const delivered = JSON.parse(received[0] ?? "");
       expect(delivered.status).toBe("completed");
       expect(delivered.markdown).toContain("## Seite 1");
     });
 
-    it("emits extract-compatible progress callbacks when explicitly enabled", async () => {
-      const fetchMock = vi.fn(
-        async (_url: URL, _init: RequestInit) => new Response(null, { status: 204 }),
-      );
-      vi.stubGlobal("fetch", fetchMock);
-
-      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "hooks.test" }))
+    it("refuses a loopback callback that is not allow-listed", async () => {
+      receiver = await startCallbackReceiver();
+      const response = await request(app())
         .post("/v1/convert")
         .set("Content-Type", "application/pdf")
-        .set("X-Callback-URL", "http://hooks.test/done")
+        .set("X-Callback-URL", `${receiver.url}/done`)
+        .send(PDF_BYTES);
+
+      expect(response.status).toBe(400);
+      expect(response.body.error).toMatch(/private, loopback or reserved/);
+      expect(receiver.received).toHaveLength(0);
+    });
+
+    it("emits extract-compatible progress callbacks when explicitly enabled", async () => {
+      receiver = await startCallbackReceiver();
+
+      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "127.0.0.1" }))
+        .post("/v1/convert")
+        .set("Content-Type", "application/pdf")
+        .set("X-Callback-URL", `${receiver.url}/done`)
         .set("X-Callback-Events", "extract")
         .send(PDF_BYTES);
 
       expect(response.status).toBe(202);
+      const received = receiver.received;
       await vi.waitFor(() => {
-        const lastCall = fetchMock.mock.calls.at(-1);
-        const payload = JSON.parse(String(lastCall?.[1]?.body));
+        const payload = JSON.parse(received.at(-1) ?? "{}");
         expect(payload.status).toBe("completed");
       });
-      const payloads = fetchMock.mock.calls.map((call) =>
-        JSON.parse(String(call[1]?.body)),
-      );
+      const payloads = received.map((body) => JSON.parse(body));
       expect(payloads[0]).toMatchObject({
         type: "queued",
         jobId: response.body.job_id,
@@ -420,32 +484,27 @@ describe("POST /v1/convert", () => {
     });
 
     it("coalesces progress when a callback receiver is slow", async () => {
-      const pending: Array<(response: Response) => void> = [];
-      const fetchMock = vi.fn(
-        (_url: URL, _init: RequestInit) =>
-          new Promise<Response>((resolve) => pending.push(resolve)),
-      );
-      vi.stubGlobal("fetch", fetchMock);
+      // The receiver holds every response until the test releases it.
+      receiver = await startCallbackReceiver({ hold: true });
 
-      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "hooks.test" }))
+      const response = await request(app({ CALLBACK_ALLOWED_HOSTS: "127.0.0.1" }))
         .post("/v1/convert")
         .set("Content-Type", "application/pdf")
-        .set("X-Callback-URL", "http://hooks.test/done")
+        .set("X-Callback-URL", `${receiver.url}/done`)
         .set("X-Callback-Events", "extract")
         .send(PDF_BYTES);
 
       expect(response.status).toBe(202);
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-      pending.shift()?.(new Response(null, { status: 204 }));
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-      pending.shift()?.(new Response(null, { status: 204 }));
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3));
+      const { received, releaseNext } = receiver;
+      await vi.waitFor(() => expect(received).toHaveLength(1));
+      releaseNext();
+      await vi.waitFor(() => expect(received).toHaveLength(2));
+      releaseNext();
+      await vi.waitFor(() => expect(received).toHaveLength(3));
 
-      const terminal = JSON.parse(
-        String((fetchMock.mock.calls[2]?.[1] as RequestInit | undefined)?.body),
-      );
+      const terminal = JSON.parse(received[2] ?? "{}");
       expect(terminal.status).toBe("completed");
-      pending.shift()?.(new Response(null, { status: 204 }));
+      releaseNext();
     });
 
     it("refuses a callback outside the allow-list before doing any work", async () => {
@@ -527,6 +586,51 @@ describe("POST /v1/ingest", () => {
       .set("X-Collection", "other")
       .send(PDF_BYTES);
     expect(search.calls[0]?.collection).toBe("other");
+  });
+
+  it("passes the chunking and structure overrides through to Search", async () => {
+    const search = stubSearchClient();
+    await request(app(searchEnv, { searchClient: search }))
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a")
+      .set("X-Chunk-Size", "512")
+      .set("X-Chunk-Overlap", "64")
+      .set("X-Breakpoint-Percentile", "80")
+      .set("X-Late-Chunking-Alpha", "0.5")
+      .set("X-Context-Prefix-Size", "0")
+      .set("X-Chapter-Split-Max-Chunks", "25")
+      .set("X-Document-Structure", "off")
+      .set("X-Summary-Mode", "generate")
+      .set("X-Quantization", "binary")
+      .set("X-Semantic-Chunking", "true")
+      .set("X-Summarize", "true")
+      .set("X-FTS-Language", "german")
+      .send(PDF_BYTES);
+    const options = search.calls[0]?.options;
+    expect(options?.chunkSize).toBe(512);
+    expect(options?.chunkOverlap).toBe(64);
+    expect(options?.breakpointPercentile).toBe(80);
+    expect(options?.lateChunkingAlpha).toBe(0.5);
+    expect(options?.contextPrefixSize).toBe(0);
+    expect(options?.chapterSplitMaxChunks).toBe(25);
+    expect(options?.documentStructure).toBe("off");
+    expect(options?.summaryMode).toBe("generate");
+    expect(options?.quantization).toBe("binary");
+    expect(options?.semanticChunking).toBe(true);
+    expect(options?.summarize).toBe(true);
+    expect(options?.ftsLanguage).toBe("german");
+  });
+
+  it("rejects an out-of-range override rather than passing it on", async () => {
+    const response = await request(app(searchEnv, { searchClient: stubSearchClient() }))
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a")
+      .set("X-Breakpoint-Percentile", "150")
+      .send(PDF_BYTES);
+    expect(response.status).toBe(400);
+    expect(response.body.error).toMatch(/X-Breakpoint-Percentile/);
   });
 
   it("rejects malformed metadata rather than passing it on", async () => {

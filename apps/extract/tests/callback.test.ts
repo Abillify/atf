@@ -1,13 +1,19 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  callbackAddressRefusal,
   deliverCallback,
   isHostAllowed,
+  pinnedPostRequest,
   resolveCallbackUrl,
   type CallbackConfig,
+  type CallbackRequester,
 } from "../src/handlers/callback.js";
+import type { HostResolver, ResolvedAddress } from "../src/handlers/source-url.js";
 import { testLogger } from "./helpers.js";
 
 const OPEN: CallbackConfig = {
@@ -98,100 +104,154 @@ describe("resolveCallbackUrl", () => {
   });
 });
 
+describe("resolveCallbackUrl · IP literals", () => {
+  it.each(["http://10.0.0.5/hook", "http://127.0.0.1:9000/hook", "http://[::1]/hook", "http://[fd12::1]/"])(
+    "refuses the private/loopback literal %s without an allow-list",
+    (url) => {
+      expect(() => resolveCallbackUrl(url, OPEN)).toThrow(/private, loopback or reserved/);
+    },
+  );
+
+  it("permits an allow-listed private literal, but never a metadata literal", () => {
+    const config = { ...OPEN, callbackAllowedHosts: ["127.0.0.1", "100.100.100.200"] };
+    expect(resolveCallbackUrl("http://127.0.0.1:9000/hook", config).hostname).toBe("127.0.0.1");
+    expect(() => resolveCallbackUrl("http://100.100.100.200/", config)).toThrow(
+      /link-local or metadata address/,
+    );
+  });
+
+  it("refuses an IPv4-mapped metadata literal", () => {
+    // The URL parser serialises it as ::ffff:a9fe:a9fe.
+    expect(() => resolveCallbackUrl("http://[::ffff:169.254.169.254]/", OPEN)).toThrow(
+      /link-local or metadata address/,
+    );
+  });
+});
+
+describe("callbackAddressRefusal", () => {
+  it("accepts public addresses in open mode", () => {
+    expect(callbackAddressRefusal(["93.184.216.34", "2606:2800:220:1::1"], OPEN)).toBeNull();
+  });
+
+  it("refuses a mixed public/private answer in open mode", () => {
+    expect(callbackAddressRefusal(["93.184.216.34", "10.1.2.3"], OPEN)).toMatch(/private/);
+  });
+
+  it("lets an allow-listed host resolve to private space but not to metadata", () => {
+    expect(callbackAddressRefusal(["10.1.2.3"], RESTRICTED)).toBeNull();
+    expect(callbackAddressRefusal(["10.1.2.3", "169.254.169.254"], RESTRICTED)).toMatch(
+      /metadata/,
+    );
+    expect(callbackAddressRefusal(["fd00:ec2::254"], RESTRICTED)).toMatch(/metadata/);
+    expect(callbackAddressRefusal(["fe80::1"], RESTRICTED)).toMatch(/metadata/);
+  });
+});
+
+type RequestCall = Parameters<CallbackRequester>;
+
+/** A requester stub answering with `statuses` in order (last one repeats). */
+function stubRequester(statuses: number[]) {
+  const calls: RequestCall[] = [];
+  const impl = vi.fn(async (...args: RequestCall) => {
+    calls.push(args);
+    return { status: statuses[Math.min(calls.length - 1, statuses.length - 1)] ?? 204 };
+  });
+  return { impl, calls };
+}
+
+const PUBLIC: HostResolver = async () => [{ address: "93.184.216.34", family: 4 }];
+
 describe("deliverCallback", () => {
   const url = new URL("https://hooks.example/done");
 
-  it("posts the payload with the job id", async () => {
-    // A fresh Response per call: a Response body can only be read once, so a
-    // shared instance makes the second attempt fail for the wrong reason. The
-    // parameters are typed so `mock.calls` keeps its tuple shape.
-    const fetchMock = vi.fn(
-      async (_url: URL, _init: RequestInit) => new Response(null, { status: 204 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-
+  it("posts the payload with the job id to the pinned address", async () => {
+    const { impl, calls } = stubRequester([204]);
     await deliverCallback({
       url,
       jobId: "job-1",
       body: { status: "completed" },
       config: OPEN,
       logger: testLogger,
+      resolver: PUBLIC,
+      requestImpl: impl,
     });
-
-    const init = fetchMock.mock.calls[0]?.[1];
-    expect(init).toBeDefined();
-    expect(init?.method).toBe("POST");
-    expect((init?.headers as Record<string, string> | undefined)?.["x-job-id"]).toBe("job-1");
+    const [calledUrl, pinned, init] = calls[0] ?? [];
+    expect(calledUrl?.toString()).toBe("https://hooks.example/done");
+    expect(pinned).toEqual({ address: "93.184.216.34", family: 4 });
+    expect(init?.headers["x-job-id"]).toBe("job-1");
     expect(JSON.parse(String(init?.body))).toEqual({ status: "completed" });
   });
 
-  it("refuses to follow a redirect", async () => {
+  it("treats a redirect as a refusal and does not follow it", async () => {
     // Following one would let the caller bounce the request somewhere the
     // allow-list never approved.
-    const fetchMock = vi.fn(
-      async (_url: URL, _init: RequestInit) => new Response(null, { status: 204 }),
-    );
-    vi.stubGlobal("fetch", fetchMock);
-    await deliverCallback({ url, jobId: "j", body: {}, config: OPEN, logger: testLogger });
-    expect(fetchMock.mock.calls[0]?.[1].redirect).toBe("manual");
-  });
-
-  it("does not retry a 4xx", async () => {
-    // The receiver understood and refused; repeating wastes the budget.
-    const fetchMock = vi.fn(async () => new Response("no", { status: 404 }));
-    vi.stubGlobal("fetch", fetchMock);
+    const { impl } = stubRequester([302]);
     await deliverCallback({
       url,
       jobId: "j",
       body: {},
       config: { ...OPEN, callbackMaxRetries: 3 },
       logger: testLogger,
+      resolver: PUBLIC,
+      requestImpl: impl,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(impl).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not retry a 4xx", async () => {
+    // The receiver understood and refused; repeating wastes the budget.
+    const { impl } = stubRequester([404]);
+    await deliverCallback({
+      url,
+      jobId: "j",
+      body: {},
+      config: { ...OPEN, callbackMaxRetries: 3 },
+      logger: testLogger,
+      resolver: PUBLIC,
+      requestImpl: impl,
+    });
+    expect(impl).toHaveBeenCalledTimes(1);
   });
 
   it("retries a 5xx up to the configured budget", async () => {
-    const fetchMock = vi.fn(async () => new Response("boom", { status: 500 }));
-    vi.stubGlobal("fetch", fetchMock);
+    const { impl } = stubRequester([500]);
     await deliverCallback({
       url,
       jobId: "j",
       body: {},
       config: { ...OPEN, callbackMaxRetries: 2 },
       logger: testLogger,
+      resolver: PUBLIC,
+      requestImpl: impl,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(impl).toHaveBeenCalledTimes(3);
   });
 
   it("stops retrying once delivery succeeds", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(new Response("boom", { status: 500 }))
-      .mockResolvedValueOnce(new Response("", { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
+    const { impl } = stubRequester([500, 200]);
     await deliverCallback({
       url,
       jobId: "j",
       body: {},
       config: { ...OPEN, callbackMaxRetries: 3 },
       logger: testLogger,
+      resolver: PUBLIC,
+      requestImpl: impl,
     });
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(impl).toHaveBeenCalledTimes(2);
   });
 
   it("bounds a callback attempt when the receiver never responds", async () => {
-    const fetchMock = vi.fn(
-      (_url: URL, init: RequestInit) =>
-        new Promise<Response>((_resolve, reject) => {
-          init.signal?.addEventListener(
+    const impl = vi.fn(
+      (_url: URL, _pinned: ResolvedAddress, init: { signal: AbortSignal }) =>
+        new Promise<{ status: number }>((_resolve, reject) => {
+          init.signal.addEventListener(
             "abort",
             () => reject(new DOMException("aborted", "AbortError")),
             { once: true },
           );
         }),
     );
-    vi.stubGlobal("fetch", fetchMock);
-
     await expect(
       deliverCallback({
         url,
@@ -199,15 +259,124 @@ describe("deliverCallback", () => {
         body: {},
         config: { ...OPEN, callbackTimeoutMs: 1 },
         logger: testLogger,
+        resolver: PUBLIC,
+        requestImpl: impl,
       }),
     ).resolves.toBeUndefined();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(impl).toHaveBeenCalledTimes(1);
   });
 
   it("never throws, because there is nobody left to tell", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("ENOTFOUND")));
+    const impl = vi.fn().mockRejectedValue(new Error("ECONNRESET"));
     await expect(
-      deliverCallback({ url, jobId: "j", body: {}, config: OPEN, logger: testLogger }),
+      deliverCallback({
+        url,
+        jobId: "j",
+        body: {},
+        config: OPEN,
+        logger: testLogger,
+        resolver: PUBLIC,
+        requestImpl: impl,
+      }),
     ).resolves.toBeUndefined();
+  });
+
+  it("retries a DNS failure like a network failure", async () => {
+    const resolver = vi
+      .fn<HostResolver>()
+      .mockRejectedValueOnce(new Error("ENOTFOUND"))
+      .mockResolvedValue([{ address: "93.184.216.34", family: 4 }]);
+    const { impl } = stubRequester([204]);
+    await deliverCallback({
+      url,
+      jobId: "j",
+      body: {},
+      config: { ...OPEN, callbackMaxRetries: 1 },
+      logger: testLogger,
+      resolver,
+      requestImpl: impl,
+    });
+    expect(resolver).toHaveBeenCalledTimes(2);
+    expect(impl).toHaveBeenCalledTimes(1);
+  });
+
+  it("never connects when the host resolves to a private address (open mode, no retry)", async () => {
+    // DNS rebinding / internal name: the literal check passed, the resolved
+    // address must still be public.
+    const resolver = vi.fn<HostResolver>(async () => [{ address: "10.0.0.7", family: 4 }]);
+    const { impl } = stubRequester([204]);
+    await deliverCallback({
+      url,
+      jobId: "j",
+      body: {},
+      config: { ...OPEN, callbackMaxRetries: 3 },
+      logger: testLogger,
+      resolver,
+      requestImpl: impl,
+    });
+    expect(impl).not.toHaveBeenCalled();
+    expect(resolver).toHaveBeenCalledTimes(1);
+  });
+
+  it("never connects when an allow-listed host resolves to a metadata address", async () => {
+    const resolver: HostResolver = async () => [{ address: "169.254.169.254", family: 4 }];
+    const { impl } = stubRequester([204]);
+    await deliverCallback({
+      url: new URL("https://orchestrator.internal/hook"),
+      jobId: "j",
+      body: {},
+      config: RESTRICTED,
+      logger: testLogger,
+      resolver,
+      requestImpl: impl,
+    });
+    expect(impl).not.toHaveBeenCalled();
+  });
+
+  it("delivers to an allow-listed internal host resolving to private space", async () => {
+    const resolver: HostResolver = async () => [{ address: "10.0.0.7", family: 4 }];
+    const { impl, calls } = stubRequester([204]);
+    await deliverCallback({
+      url: new URL("https://orchestrator.internal/hook"),
+      jobId: "j",
+      body: {},
+      config: RESTRICTED,
+      logger: testLogger,
+      resolver,
+      requestImpl: impl,
+    });
+    expect(calls[0]?.[1]).toEqual({ address: "10.0.0.7", family: 4 });
+  });
+});
+
+describe("pinnedPostRequest", () => {
+  let server: Server | undefined;
+  afterEach(async () => {
+    await new Promise<void>((resolve) => (server ? server.close(() => resolve()) : resolve()));
+    server = undefined;
+  });
+
+  it("connects to the pinned address, never re-resolving the host name", async () => {
+    const received: Array<{ host?: string; body: string; method?: string }> = [];
+    server = createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c: Buffer) => chunks.push(c));
+      req.on("end", () => {
+        received.push({ host: req.headers.host, body: Buffer.concat(chunks).toString(), method: req.method });
+        res.statusCode = 204;
+        res.end();
+      });
+    });
+    await new Promise<void>((resolve) => server?.listen(0, "127.0.0.1", () => resolve()));
+    const { port } = server.address() as AddressInfo;
+    // `.invalid` never resolves (RFC 6761); reaching the server proves the
+    // socket used the pinned address and the Host header kept the name.
+    const response = await pinnedPostRequest(
+      new URL(`http://pinned.invalid:${port}/hook`),
+      { address: "127.0.0.1", family: 4 },
+      { headers: { "content-type": "application/json" }, body: '{"ok":true}', signal: new AbortController().signal },
+    );
+    expect(response.status).toBe(204);
+    expect(received).toEqual([{ host: `pinned.invalid:${port}`, body: '{"ok":true}', method: "POST" }]);
   });
 });

@@ -258,3 +258,62 @@ describe("createVisionClient", () => {
     });
   });
 });
+
+describe("analyzeFigure (Pass 2, task 2.5)", () => {
+  const FIGURE = {
+    page: 3,
+    figureId: "p3-f1",
+    kind: "ui_mask",
+    regionText: "Lieferant Datum",
+    caption: "Maske WE01",
+    image: { buffer: TINY_PNG, mimeType: "image/png" },
+  };
+
+  it("sends the per-kind system prompt, the region text and the crop", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(completion('{"format":"fields","areas":[],"actions":[]}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createVisionClient(CONFIG, testLogger).analyzeFigure(FIGURE);
+    expect(result.raw).toContain('"format":"fields"');
+    expect(result.truncated).toBe(false);
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe("http://model.test/v1/chat/completions");
+    const body = JSON.parse(String(init.body)) as {
+      messages: Array<{ role: string; content: unknown }>;
+    };
+    // System prompt is the ui_mask Pass-2 prompt.
+    expect(String(body.messages[0]?.content)).toContain('"format": "fields"');
+    const userContent = body.messages[1]?.content as Array<Record<string, unknown>>;
+    expect(userContent[0]?.["text"]).toContain("Lieferant Datum");
+    expect(userContent[0]?.["text"]).toContain("Maske WE01");
+    const imageUrl = userContent[1]?.["image_url"] as Record<string, unknown> | undefined;
+    expect(imageUrl?.["url"]).toMatch(/^data:image\/png;base64,/);
+    expect(imageUrl?.["detail"]).toBe("high");
+  });
+
+  it("escalates the token budget on truncation, like the page path", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(completion("partial", "length"))
+      .mockResolvedValueOnce(completion('{"format":"fields","areas":[],"actions":[]}'));
+    vi.stubGlobal("fetch", fetchMock);
+
+    const result = await createVisionClient(CONFIG, testLogger).analyzeFigure(FIGURE);
+    expect(result.requests).toBe(2);
+    // Second request used the next-larger budget.
+    const first = JSON.parse(String((fetchMock.mock.calls[0] as [string, RequestInit])[1].body)) as { max_tokens: number };
+    const second = JSON.parse(String((fetchMock.mock.calls[1] as [string, RequestInit])[1].body)) as { max_tokens: number };
+    expect(first.max_tokens).toBe(100);
+    expect(second.max_tokens).toBe(200);
+  });
+
+  it("rejects a kind that has no Pass-2 prompt", async () => {
+    vi.stubGlobal("fetch", vi.fn());
+    await expect(
+      createVisionClient(CONFIG, testLogger).analyzeFigure({ ...FIGURE, kind: "photo" }),
+    ).rejects.toBeInstanceOf(ExtractError);
+  });
+});

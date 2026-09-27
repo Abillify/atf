@@ -15,12 +15,18 @@
  * type, and a generated document that omitted it would be worse than no document.
  */
 
-import { EXTRACT_CONTRACT_ID, EXTRACT_CONTRACT_VERSION } from "@atf/extract-contract";
+import { EXTRACT_CONTRACT_ID, EXTRACT_CONTRACT_VERSION } from "@atf/extract-contract/v1";
 import { supportedMimeTypes } from "./formats.js";
 
 export interface OpenApiOptions {
   serverUrl: string;
   ingestEnabled: boolean;
+  /**
+   * True when a database is configured, so the persistent v2 job path — the
+   * resumable upload protocol and the job API — is mounted. Without a database
+   * those routes are absent (see index.ts), so the document must omit them too.
+   */
+  v2Enabled?: boolean;
 }
 
 export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknown> {
@@ -154,7 +160,9 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             required: false,
             description:
               "Switches to asynchronous delivery. Restricted by CALLBACK_ALLOWED_HOSTS; " +
-              "link-local and metadata addresses are always refused.",
+              "link-local and metadata addresses are always refused. Without an allowlist the " +
+              "host must resolve to public addresses only (private/loopback receivers must be " +
+              "allowlisted); delivery connects to the validated, pinned address.",
             schema: { type: "string", format: "uri" },
           },
           {
@@ -235,10 +243,14 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
       post: {
         summary: "Convert a document and index it in Search",
         description:
-          "Ingest happens before the figure crops are stored, because Search resolves the " +
-          "owning document for every asset. A crop that fails to store does not fail the " +
-          "ingest: the document is indexed and its figure descriptions are retrievable, only " +
-          "the image is missing.\n\n" +
+          "When a database and a Search target are both configured, this route is a wrapper " +
+          "around the v2 job path: the upload is stored in the content-addressed source " +
+          "store, a v2 job is created, and its emitter streams the revision **and figure " +
+          "assets** into Search. A small document is driven inline and answered **200** with " +
+          "the completed result (the historical synchronous shape, now including `job_id` and " +
+          "`revision_id`); a large one is answered **202** with the job id to poll at " +
+          "`/v2/jobs/{id}`. Without a database the route falls back to the original " +
+          "synchronous convert→forward path.\n\n" +
           "`X-Allowed-Users` and `X-Allowed-Groups` may only *narrow* the caller's own " +
           "identity; they cannot widen it.",
         parameters: [
@@ -273,7 +285,9 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
         requestBody: uploadRequestBody,
         responses: {
           "200": {
-            description: "Converted and indexed",
+            description:
+              "Converted and indexed (small document, driven inline). Figure assets are " +
+              "stored when the v2 job path is active.",
             content: {
               "application/json": {
                 schema: {
@@ -287,7 +301,29 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                     figure_count: { type: "integer" },
                     assets_stored: { type: "integer" },
                     assets_failed: { type: "integer" },
+                    job_id: { type: "string", description: "Present on the v2 job path." },
+                    revision_id: { type: "string", description: "Present on the v2 job path." },
                     warnings: { type: "array", items: { type: "string" } },
+                  },
+                },
+              },
+            },
+          },
+          "202": {
+            description:
+              "Accepted (v2 job path, large document). The body carries the job id and a poll " +
+              "path; the Location header points at the job.",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    status: { type: "string" },
+                    job_id: { type: "string" },
+                    reference: { type: "string" },
+                    collection: { type: "string" },
+                    page_count: { type: "integer" },
+                    poll: { type: "string" },
                   },
                 },
               },
@@ -296,8 +332,256 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "400": { description: "Malformed request, or X-Reference missing" },
           "401": { description: "Unauthenticated" },
           "403": { description: "Missing the extract.ingest scope" },
-          "502": { description: "Search rejected the ingest" },
+          "502": { description: "Search rejected the ingest, or the job failed" },
           "503": { description: "The conversion queue is full" },
+        },
+      },
+    };
+  }
+
+  if (options.v2Enabled === true) {
+    const uploadOffsetHeader = {
+      "Upload-Offset": {
+        schema: { type: "integer", minimum: 0 },
+        description: "The last confirmed byte offset — the point a resume must continue from.",
+      },
+    };
+
+    // ── Resumable, content-addressed source upload (Requirements 4.13, 4.14, 6.2)
+    paths["/v2/uploads"] = {
+      post: {
+        summary: "Open a resumable upload session, or pull a source_url in one shot",
+        description:
+          "A JSON body with `source_url` pulls the source in one request (SSRF-guarded by " +
+          "`SOURCE_URL_ALLOWED_HOSTS`; hosts resolving to private, loopback, link-local, ULA, " +
+          "CGNAT or metadata addresses are always refused, the connection is pinned to the " +
+          "validated IP, and redirects are re-validated per hop) and answers **201** `completed`. Any other " +
+          "request opens a resumable session and answers **201** `open` with an `upload_id` " +
+          "and offset 0. A `reference` is required (X-Reference header or `reference` field); " +
+          "the whole-file sha256 may be declared here (`X-Checksum-Sha256`) or at complete time.",
+        parameters: [
+          { name: "X-Reference", in: "header", required: false, schema: { type: "string" } },
+          {
+            name: "X-Checksum-Sha256",
+            in: "header",
+            required: false,
+            description: "Expected whole-file sha256; a bare or `sha256:`-prefixed 64-char hex digest.",
+            schema: { type: "string" },
+          },
+        ],
+        requestBody: {
+          required: false,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                properties: {
+                  reference: { type: "string" },
+                  size: { type: "integer", minimum: 0, description: "Declared total size; rejected past MAX_UPLOAD_BYTES." },
+                  sha256: { type: "string" },
+                  source_url: { type: "string", format: "uri", description: "http(s) only; no credentials in the URL." },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "201": {
+            description: "Session opened, or source_url pulled and stored.",
+            headers: { Location: { schema: { type: "string" }, description: "Session URL for a resumable open." } },
+            content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+          },
+          "400": { description: "Missing reference, bad digest, or a rejected source_url", content: { "application/json": { schema: errorSchema } } },
+          "401": { description: "Unauthenticated" },
+          "403": { description: "Missing the extract.ingest scope" },
+          "413": { description: "Declared size exceeds MAX_UPLOAD_BYTES" },
+          "502": { description: "The source_url pull failed", content: { "application/json": { schema: errorSchema } } },
+        },
+      },
+    };
+
+    paths["/v2/uploads/{id}"] = {
+      head: {
+        summary: "Report the confirmed resume offset",
+        description:
+          "Returns the last confirmed byte offset in `Upload-Offset` (and `Upload-Status`, " +
+          "`Upload-Length`), so a client resuming after an abort knows exactly where to continue.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": { description: "Session state", headers: { ...uploadOffsetHeader, "Upload-Status": { schema: { type: "string" } }, "Upload-Length": { schema: { type: "integer" } } } },
+          "404": { description: "No such session" },
+        },
+      },
+      patch: {
+        summary: "Append one chunk",
+        description:
+          "`Upload-Offset` must equal the confirmed offset — a mismatch is a **409** carrying " +
+          "the true offset, never a silently misplaced write. The chunk is streamed to disk, " +
+          "its per-chunk sha256 (`X-Chunk-Checksum-Sha256`, optional) is verified, and only " +
+          "then is the offset advanced. A crash before the advance leaves the chunk re-sendable.",
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" } },
+          { name: "Upload-Offset", in: "header", required: true, schema: { type: "integer", minimum: 0 } },
+          { name: "X-Chunk-Checksum-Sha256", in: "header", required: false, schema: { type: "string" } },
+        ],
+        requestBody: {
+          required: true,
+          content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
+        },
+        responses: {
+          "204": { description: "Chunk confirmed", headers: uploadOffsetHeader },
+          "400": { description: "Missing/invalid Upload-Offset or a chunk checksum mismatch", content: { "application/json": { schema: errorSchema } } },
+          "404": { description: "No such session" },
+          "409": { description: "Upload-Offset does not match the confirmed offset", headers: uploadOffsetHeader, content: { "application/json": { schema: errorSchema } } },
+        },
+      },
+    };
+
+    paths["/v2/uploads/{id}/complete"] = {
+      post: {
+        summary: "Finalize a session and move it into the source store",
+        description:
+          "Verifies the whole-file sha256 and moves the assembled file into the " +
+          "content-addressed SourceStore. Idempotent: completing an already-completed session " +
+          "returns the stored digest. A whole-file checksum mismatch reopens the session at " +
+          "offset 0 so the client can re-send.",
+        parameters: [
+          { name: "id", in: "path", required: true, schema: { type: "string" } },
+          { name: "X-Checksum-Sha256", in: "header", required: false, schema: { type: "string" } },
+        ],
+        responses: {
+          "200": { description: "Stored", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "400": { description: "Whole-file checksum mismatch (session reopened)", content: { "application/json": { schema: errorSchema } } },
+          "404": { description: "No such session" },
+          "409": { description: "Session incomplete or inconsistent", content: { "application/json": { schema: errorSchema } } },
+        },
+      },
+    };
+
+    // ── Persistent, fortsetzbare Jobs (Requirement 4.1, 4.4, 4.5, 4.8–4.12) ──
+    paths["/v2/jobs"] = {
+      post: {
+        summary: "Create a persistent extraction job",
+        description:
+          "Creates a durable job over an already-stored source (referenced by sha256). The job " +
+          "carries a config/pipeline/prompt-hash snapshot, a token budget, and a lease; a " +
+          "worker with a valid lease epoch drives it through " +
+          "`queued → preparing → processing → emitting → committing → completed`, resuming from " +
+          "the first unfinished unit after a crash.",
+        requestBody: {
+          required: true,
+          content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+        },
+        responses: {
+          "201": { description: "Job created", headers: { Location: { schema: { type: "string" } } }, content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "400": { description: "Malformed request", content: { "application/json": { schema: errorSchema } } },
+          "401": { description: "Unauthenticated" },
+          "403": { description: "Missing the extract.ingest scope" },
+        },
+      },
+    };
+
+    paths["/v2/jobs/{id}"] = {
+      get: {
+        summary: "Job status",
+        description:
+          "Per-stage progress, warnings, accumulated cost, and a remaining-time estimate, plus " +
+          "the paused reason when the job is `paused(reason=dependency|budget)`.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": { description: "Job state", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "404": { description: "No such job" },
+        },
+      },
+    };
+
+    const jobAction = (verb: string, note: string) => ({
+      post: {
+        summary: `Job control: ${verb}`,
+        description: note,
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": { description: "Applied", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "404": { description: "No such job" },
+          "409": { description: "The job is not in a state that accepts this action", content: { "application/json": { schema: errorSchema } } },
+        },
+      },
+    });
+
+    paths["/v2/jobs/{id}/pause"] = jobAction("pause", "Pause a running job; a heartbeat keeps its revision TTL alive.");
+    paths["/v2/jobs/{id}/resume"] = jobAction("resume", "Resume a paused job at the first unfinished unit.");
+    paths["/v2/jobs/{id}/cancel"] = jobAction("cancel", "Cancel a job; already-committed segments remain.");
+    paths["/v2/jobs/{id}/retry-failed"] = jobAction(
+      "retry-failed",
+      "Retry only the units marked failed, leaving completed units untouched (Requirement 4.10).",
+    );
+    paths["/v2/jobs/{id}/reparse"] = jobAction(
+      "reparse",
+      "Re-apply the parser to the persisted raw model responses without any new model calls (Requirement 4.6).",
+    );
+
+    paths["/v2/render"] = {
+      post: {
+        summary: "Render a page or region on demand",
+        description:
+          "Renders a full page, or a normalised bbox region of it, ON DEMAND from the " +
+          "content-addressed source — full-resolution page images are never pre-stored " +
+          "(Requirement 6.8). Search, which carries no poppler, calls this for zoom / " +
+          "full-resolution and caches the result as an asset variant (Requirement 14.4). " +
+          "The output area is PIXEL-LIMITED (`RENDER_MAX_PIXELS`): a large `targetPixels` " +
+          "or a poster-sized crop has its render resolution clamped DOWN, and the response " +
+          "reports the actual size via `X-Render-Width/Height/Dpi` and `X-Render-Clamped`. " +
+          "The endpoint has its own rate limit (`RENDER_RATE_LIMIT`). Rendering the same " +
+          "`(source, page, bbox, targetPixels)` is deterministic.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["source", "page"],
+                properties: {
+                  source: {
+                    type: "string",
+                    pattern: "^[0-9a-f]{64}$",
+                    description: "sha256 of the already-stored source.",
+                  },
+                  page: { type: "integer", minimum: 1, description: "1-based page number." },
+                  bbox: {
+                    type: "array",
+                    items: { type: "number", minimum: 0, maximum: 1 },
+                    minItems: 4,
+                    maxItems: 4,
+                    description: "Optional normalised crop [x0,y0,x1,y1] in [0,1]; omitted renders the whole page.",
+                  },
+                  targetPixels: {
+                    type: "integer",
+                    minimum: 16,
+                    description: "Desired long-edge pixel count; clamped to RENDER_MAX_PIXELS.",
+                  },
+                  filename: { type: "string", description: "Optional filename hint for the source format." },
+                },
+                additionalProperties: false,
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description: "The rendered PNG. Size/dpi are in the X-Render-* headers.",
+            headers: {
+              "X-Render-Width": { schema: { type: "integer" } },
+              "X-Render-Height": { schema: { type: "integer" } },
+              "X-Render-Dpi": { schema: { type: "integer" } },
+              "X-Render-Clamped": { schema: { type: "string", enum: ["0", "1"] } },
+            },
+            content: { "image/png": { schema: { type: "string", format: "binary" } } },
+          },
+          "400": { description: "Malformed request or page out of range", content: { "application/json": { schema: errorSchema } } },
+          "401": { description: "Unauthenticated" },
+          "403": { description: "Missing the extract.admin scope" },
+          "404": { description: "No stored source for the given sha256", content: { "application/json": { schema: errorSchema } } },
+          "429": { description: "Render rate limit exceeded" },
         },
       },
     };

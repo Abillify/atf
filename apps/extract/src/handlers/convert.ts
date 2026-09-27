@@ -43,7 +43,7 @@ import {
   serializePage,
   type ConvertResponse,
   type ExtractedDocument,
-} from "@atf/extract-contract";
+} from "@atf/extract-contract/v1";
 import { ExtractError, toErrorBody, validationError } from "../errors.js";
 import { readHeader, parseBooleanHeader } from "../header-utils.js";
 import { QueueSaturatedError, type QueueSubmitHooks, type WorkQueue } from "../queue.js";

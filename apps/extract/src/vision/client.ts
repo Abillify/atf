@@ -40,7 +40,14 @@ import type { Logger } from "pino";
 import { visionUnavailable } from "../errors.js";
 import { injectTraceHeaders } from "../trace-context.js";
 import { toDataUrl } from "../pipeline/raster.js";
-import { PAGE_SYSTEM_PROMPT, buildPageUserPrompt } from "./prompts.js";
+import {
+  PAGE_SYSTEM_PROMPT,
+  buildPageUserPrompt,
+  buildFigureUserPrompt,
+  pass2SystemPrompt,
+  type PromptHeadingCandidate,
+  type PrevPageContext,
+} from "./prompts.js";
 
 export interface VisionClientConfig {
   /** Base URL; `/v1/chat/completions` is appended. */
@@ -81,15 +88,74 @@ export interface AnalyzePageInput {
   pageCount: number;
   rawText: string;
   image: { buffer: Uint8Array; mimeType: string };
+  /**
+   * Numbered-heading candidates for this page from the deterministic S2
+   * analysis (design §5 S2/S3, task 2.3). Passed to the Pass-1 prompt as a hint
+   * so the model confirms the outline rather than reinventing it. Optional: the
+   * legacy sync path and a page S2 could not analyse simply omit it.
+   */
+  headingCandidates?: readonly PromptHeadingCandidate[] | undefined;
+  /**
+   * Bounded context carried over from the previous page (heading chain, last
+   * table header). Lets a mid-section or mid-table page place itself without the
+   * whole document in context.
+   */
+  prevPage?: PrevPageContext | undefined;
   /** Aborts the request when the client disconnects. */
   signal?: AbortSignal | undefined;
 }
 
+/**
+ * Input to a Pass-2 figure transcription (design §5 S5, task 2.5). The crop is
+ * rendered at `FIGURE_DPI` by the caller; `regionText` is the poppler text
+ * inside the figure's box (task 2.4). `kind` selects the per-kind system
+ * prompt; a kind with no Pass-2 prompt is a caller error (the runner gates on
+ * `FIGURE_PASS2_KINDS` before ever calling this).
+ */
+export interface AnalyzeFigureInput {
+  /** The page the figure sits on, for logging. */
+  page: number;
+  /** The figure's document-unique id, for logging. */
+  figureId: string;
+  /** The figure's kind; selects the per-kind Pass-2 system prompt. */
+  kind: string;
+  /** The verbatim text-layer words inside the figure's box (task 2.4). */
+  regionText: string;
+  /** The figure's caption, when Pass 1 supplied one. */
+  caption?: string | undefined;
+  /** The high-resolution crop, rendered at FIGURE_DPI. */
+  image: { buffer: Uint8Array; mimeType: string };
+  /** Aborts the request when the client disconnects. */
+  signal?: AbortSignal | undefined;
+}
+
+export interface VisionFigureResult {
+  /** Raw response text, for the per-format parser in `response.ts`. */
+  raw: string;
+  usage: VisionUsage;
+  /** Total requests made, including retries and escalations. */
+  requests: number;
+  /** True when even the largest budget was exhausted. */
+  truncated: boolean;
+  /** The budget that produced the returned response. */
+  maxTokens: number;
+}
+
 export interface VisionClient {
   analyzePage(input: AnalyzePageInput): Promise<VisionPageResult>;
+  /**
+   * Run Pass 2 on a single figure crop (design §5 S5, task 2.5). Reuses the
+   * same endpoint, retry axes and budget escalation as {@link analyzePage} —
+   * only the messages differ (a per-kind system prompt plus the figure user
+   * prompt). Returns the model's raw response for the per-format parser.
+   */
+  analyzeFigure(input: AnalyzeFigureInput): Promise<VisionFigureResult>;
   /** Reachability probe for `/health`. Never throws. */
   probe(): Promise<{ available: boolean; error?: string }>;
 }
+
+/** An OpenAI-compatible chat message, the unit both passes build. */
+type ChatMessage = { role: "system" | "user"; content: unknown };
 
 interface ChatChoice {
   message?: { content?: unknown };
@@ -154,34 +220,11 @@ export function createVisionClient(
     return result;
   }
 
-  function buildBody(input: AnalyzePageInput, maxTokens: number): Record<string, unknown> {
+  /** Build a chat-completion body from a ready messages array. */
+  function buildBody(messages: ChatMessage[], maxTokens: number): Record<string, unknown> {
     return {
       model: config.visionModel,
-      messages: [
-        { role: "system", content: PAGE_SYSTEM_PROMPT },
-        {
-          role: "user",
-          content: [
-            {
-              type: "text",
-              text: buildPageUserPrompt({
-                page: input.page,
-                pageCount: input.pageCount,
-                rawText: input.rawText,
-              }),
-            },
-            {
-              type: "image_url",
-              image_url: {
-                url: toDataUrl(input.image.buffer, input.image.mimeType),
-                // "high" keeps the server from downscaling a page to a thumbnail,
-                // which makes table text unreadable regardless of RENDER_DPI.
-                detail: "high",
-              },
-            },
-          ],
-        },
-      ],
+      messages,
       max_tokens: maxTokens,
       temperature: config.visionTemperature,
       top_p: config.visionTopP,
@@ -193,10 +236,78 @@ export function createVisionClient(
     };
   }
 
+  /** The Pass-1 page messages: system prompt + user prompt + page image. */
+  function pageMessages(input: AnalyzePageInput): ChatMessage[] {
+    return [
+      { role: "system", content: PAGE_SYSTEM_PROMPT },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: buildPageUserPrompt({
+              page: input.page,
+              pageCount: input.pageCount,
+              rawText: input.rawText,
+              headingCandidates: input.headingCandidates,
+              prevPage: input.prevPage,
+            }),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: toDataUrl(input.image.buffer, input.image.mimeType),
+              // "high" keeps the server from downscaling a page to a thumbnail,
+              // which makes table text unreadable regardless of RENDER_DPI.
+              detail: "high",
+            },
+          },
+        ],
+      },
+    ];
+  }
+
+  /** The Pass-2 figure messages: per-kind system prompt + user prompt + crop. */
+  function figureMessages(input: AnalyzeFigureInput): ChatMessage[] {
+    const system = pass2SystemPrompt(input.kind);
+    if (system === undefined) {
+      // Defensive: the runner gates on FIGURE_PASS2_KINDS, so a kind with no
+      // prompt should never reach here. Fail loudly rather than send a request
+      // with an empty system prompt.
+      throw visionUnavailable(`No Pass-2 prompt for figure kind "${input.kind}"`, {
+        page: input.page,
+      });
+    }
+    return [
+      { role: "system", content: system },
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text: buildFigureUserPrompt({
+              kind: input.kind,
+              regionText: input.regionText,
+              caption: input.caption,
+            }),
+          },
+          {
+            type: "image_url",
+            image_url: {
+              url: toDataUrl(input.image.buffer, input.image.mimeType),
+              detail: "high",
+            },
+          },
+        ],
+      },
+    ];
+  }
+
   /** One request. Throws TransientVisionFailure or TruncatedVisionResponse. */
   async function requestOnce(
-    input: AnalyzePageInput,
+    messages: ChatMessage[],
     maxTokens: number,
+    ctx: { page: number; signal?: AbortSignal | undefined },
   ): Promise<{ raw: string; usage: VisionUsage }> {
     const controller = new AbortController();
     const timeout =
@@ -204,28 +315,28 @@ export function createVisionClient(
         ? setTimeout(() => controller.abort(new Error("timeout")), config.visionTimeoutMs)
         : null;
     const onExternalAbort = (): void => controller.abort(new Error("client disconnected"));
-    input.signal?.addEventListener("abort", onExternalAbort, { once: true });
+    ctx.signal?.addEventListener("abort", onExternalAbort, { once: true });
 
     let response: Response;
     try {
       response = await fetch(endpoint, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify(buildBody(input, maxTokens)),
+        body: JSON.stringify(buildBody(messages, maxTokens)),
         signal: controller.signal,
       });
     } catch (error) {
       // A client disconnect is not the model's fault and must not be retried;
       // everything else at this layer is a network condition and is.
-      if (input.signal?.aborted === true) {
-        throw visionUnavailable("The request was aborted by the client", { page: input.page });
+      if (ctx.signal?.aborted === true) {
+        throw visionUnavailable("The request was aborted by the client", { page: ctx.page });
       }
       throw new TransientVisionFailure(
         error instanceof Error ? error.message : String(error),
       );
     } finally {
       if (timeout !== null) clearTimeout(timeout);
-      input.signal?.removeEventListener("abort", onExternalAbort);
+      ctx.signal?.removeEventListener("abort", onExternalAbort);
     }
 
     if (!response.ok) {
@@ -237,7 +348,7 @@ export function createVisionClient(
         response.status >= 500 || response.status === 408 || response.status === 429;
       const message = `The vision endpoint returned HTTP ${response.status}: ${body.slice(0, 500)}`;
       if (retryable) throw new TransientVisionFailure(message);
-      throw visionUnavailable(message, { page: input.page, status: response.status });
+      throw visionUnavailable(message, { page: ctx.page, status: response.status });
     }
 
     let payload: ChatResponse;
@@ -270,7 +381,16 @@ export function createVisionClient(
     return { raw: content, usage };
   }
 
-  async function analyzePage(input: AnalyzePageInput): Promise<VisionPageResult> {
+  /**
+   * The shared request loop for both passes: the two retry axes (transient
+   * retry in place, truncation escalation to the next budget) and the
+   * exhaustion-is-not-failure return. Both `analyzePage` and `analyzeFigure`
+   * differ only in the messages they build, so both funnel through here.
+   */
+  async function runWithEscalation(
+    messages: ChatMessage[],
+    ctx: { page: number; signal?: AbortSignal | undefined; what: string },
+  ): Promise<VisionPageResult> {
     const usageTotal: VisionUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let requests = 0;
     let lastTransient: Error | null = null;
@@ -286,12 +406,12 @@ export function createVisionClient(
       // Transient retries are per budget: escalating resets the counter, because
       // a truncation is not evidence that the endpoint is unhealthy.
       for (let attempt = 0; attempt <= config.visionMaxRetries; attempt++) {
-        if (input.signal?.aborted === true) {
-          throw visionUnavailable("The request was aborted by the client", { page: input.page });
+        if (ctx.signal?.aborted === true) {
+          throw visionUnavailable("The request was aborted by the client", { page: ctx.page });
         }
         requests++;
         try {
-          const result = await requestOnce(input, maxTokens);
+          const result = await requestOnce(messages, maxTokens, ctx);
           addUsage(result.usage);
           return { raw: result.raw, usage: usageTotal, requests, truncated: false, maxTokens };
         } catch (error) {
@@ -300,7 +420,8 @@ export function createVisionClient(
             lastTruncation = error;
             logger.warn(
               {
-                page: input.page,
+                page: ctx.page,
+                what: ctx.what,
                 maxTokens,
                 nextBudget: budgets[budgetIndex + 1] ?? null,
                 partialLength: error.partial.length,
@@ -314,7 +435,7 @@ export function createVisionClient(
             if (attempt < config.visionMaxRetries) {
               const delay = backoffDelay(attempt);
               logger.warn(
-                { page: input.page, attempt: attempt + 1, delayMs: Math.round(delay), err: error.message },
+                { page: ctx.page, what: ctx.what, attempt: attempt + 1, delayMs: Math.round(delay), err: error.message },
                 "Vision request failed; retrying",
               );
               await sleep(delay);
@@ -332,10 +453,10 @@ export function createVisionClient(
 
     if (lastTruncation !== null) {
       // Exhausted every budget. Return the partial response rather than nothing:
-      // a flagged 80% page beats a missing page, and the flag reaches the
-      // document's warnings and /metrics.
+      // a flagged 80% result beats a missing one, and the flag reaches the
+      // warnings and /metrics.
       logger.error(
-        { page: input.page, largestBudget: budgets.at(-1) ?? 0 },
+        { page: ctx.page, what: ctx.what, largestBudget: budgets.at(-1) ?? 0 },
         "Vision response was still truncated at the largest token budget",
       );
       return {
@@ -349,8 +470,24 @@ export function createVisionClient(
 
     throw visionUnavailable(
       `The vision endpoint failed after ${requests} attempt(s): ${lastTransient?.message ?? "unknown error"}`,
-      { page: input.page, requests },
+      { page: ctx.page, requests },
     );
+  }
+
+  async function analyzePage(input: AnalyzePageInput): Promise<VisionPageResult> {
+    return runWithEscalation(pageMessages(input), {
+      page: input.page,
+      signal: input.signal,
+      what: "page",
+    });
+  }
+
+  async function analyzeFigure(input: AnalyzeFigureInput): Promise<VisionFigureResult> {
+    return runWithEscalation(figureMessages(input), {
+      page: input.page,
+      signal: input.signal,
+      what: `figure ${input.figureId} (${input.kind})`,
+    });
   }
 
   async function probe(): Promise<{ available: boolean; error?: string }> {
@@ -372,5 +509,5 @@ export function createVisionClient(
     }
   }
 
-  return { analyzePage, probe };
+  return { analyzePage, analyzeFigure, probe };
 }

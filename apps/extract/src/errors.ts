@@ -45,6 +45,12 @@ export type ExtractErrorCode =
   | "CONTRACT_VIOLATION"
   /** Work queue is saturated. */
   | "QUEUE_SATURATED"
+  /** A referenced resource (e.g. an upload session) does not exist. */
+  | "NOT_FOUND"
+  /** The request conflicts with the current state (e.g. a wrong upload offset). */
+  | "CONFLICT"
+  /** Fetching a caller-supplied `source_url` failed. */
+  | "SOURCE_FETCH_FAILED"
   /** Client disconnected before the conversion finished. */
   | "CLIENT_ABORTED";
 
@@ -60,6 +66,9 @@ const STATUS_BY_CODE: Record<ExtractErrorCode, number> = {
   INGEST_FAILED: 502,
   CONTRACT_VIOLATION: 500,
   QUEUE_SATURATED: 503,
+  NOT_FOUND: 404,
+  CONFLICT: 409,
+  SOURCE_FETCH_FAILED: 502,
   CLIENT_ABORTED: 499,
 };
 
@@ -75,6 +84,7 @@ const RETRYABLE: ReadonlySet<ExtractErrorCode> = new Set<ExtractErrorCode>([
   "VISION_UNAVAILABLE",
   "INGEST_FAILED",
   "QUEUE_SATURATED",
+  "SOURCE_FETCH_FAILED",
 ]);
 
 export class ExtractError extends Error {
@@ -132,6 +142,21 @@ export function visionUnavailable(
 
 export function ingestFailed(message: string, context?: Record<string, unknown>): ExtractError {
   return new ExtractError("INGEST_FAILED", message, context);
+}
+
+export function notFound(message: string, context?: Record<string, unknown>): ExtractError {
+  return new ExtractError("NOT_FOUND", message, context);
+}
+
+export function conflict(message: string, context?: Record<string, unknown>): ExtractError {
+  return new ExtractError("CONFLICT", message, context);
+}
+
+export function sourceFetchFailed(
+  message: string,
+  context?: Record<string, unknown>,
+): ExtractError {
+  return new ExtractError("SOURCE_FETCH_FAILED", message, context);
 }
 
 /** True when the failure is the caller's to fix. */

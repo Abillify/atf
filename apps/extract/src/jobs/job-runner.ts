@@ -1,0 +1,2987 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+
+/**
+ * jobs/job-runner.ts
+ *
+ * The real {@link JobRunner}: the v1 per-page pipeline ported onto stages and a
+ * DB-backed ordered scheduler (design §9b; task 1.7, requirements 4.2, 6.1).
+ *
+ * ## What it does
+ *
+ * The v1 pipeline rendered every page in parallel with `mapOrdered`, collected
+ * the whole document in memory, and returned it. That is fine for a 40-page
+ * upload and impossible for a 10 000-page job: the array alone would be
+ * gigabytes. This runner replaces the in-memory fan-out with a *DB-backed
+ * ordered scheduler*. It repeatedly asks the store for the next window of
+ * unfinished page numbers (`nextRunnablePages`, LIMIT `PAGE_CONCURRENCY`), runs
+ * those pages concurrently through their stages, and loops. The store's `LIMIT`
+ * is what keeps memory flat: the runner never holds more than `PAGE_CONCURRENCY`
+ * pages, and never builds a full-document array (requirement 6.1).
+ *
+ * Each page runs the same work v1 did, now as {@link StageRunner} stages so a
+ * resume reuses completed checkpoints without a model call (requirement 4.2):
+ *
+ *   render   deterministic — rasterise the page and read its text layer
+ *   vision1  the one model call — summary, figures, body Markdown
+ *   parse    deterministic — the tolerant v1 parser over the raw response
+ *   crops    deterministic — cut each figure and stage it to the asset outbox
+ *   emitted  the page's emit-outbox row is staged (the cursor stage)
+ *
+ * `render` and `parse` are folded onto `vision1` in one `runStage` closure —
+ * the model call is the expensive, checkpointed unit, and its raw response is
+ * what a `reparse` re-parses. The crop and emit steps have their own cursor
+ * checkpoints so a resume that already sent a page does not re-cut its crops.
+ *
+ * Figure crops are written to the asset staging area (`asset_outbox`) the moment
+ * they are produced, and the page's emit-outbox row is staged as soon as the
+ * page's stages complete — both in page order. The actual send to Search is task
+ * 1.12; here we only stage. As each page finishes, a {@link JobEvent} is
+ * published so the SSE stream and the callback (task 1.14 wires the callback
+ * itself) are fed from job/stage events rather than from an in-memory pipeline.
+ *
+ * ## What it does NOT do
+ *
+ * No Search-side revision/commit, no emitter send/reconcile, no streaming
+ * document pass, no tiling, no new prompts. This is the structural port; the
+ * vision prompt and parser are reused verbatim.
+ */
+
+import { AsyncLocalStorage } from "node:async_hooks";
+import type { Logger } from "pino";
+import { buildAssetId, figureLocalId, pageLocalId, tileLocalId, sha256Hex } from "@atf/extract-contract";
+import {
+  buildFigureId,
+  buildFigurePlaceholder,
+  isValidBoundingBox,
+  type BoundingBox,
+} from "@atf/extract-contract/v1";
+import type { AssetRef, Block, BBox, PageRecord, TileRef, Transcription } from "@atf/extract-contract/v2";
+import type { ExtractStore } from "../persistence/index.js";
+import {
+  LeaseLostError,
+  type JobRow,
+  type AssetOutboxRow,
+  type Fence,
+  type PageStageRow,
+  type StageUnit,
+} from "../persistence/types.js";
+import type { StageKey } from "../persistence/extract-queries.js";
+import type { VisionClient } from "../vision/client.js";
+import {
+  parseVisionPage,
+  parseTranscription,
+  labelCoverage,
+  type ParsedVisionPage,
+} from "../vision/response.js";
+import type { FigureCrop } from "../pipeline/raster.js";
+import type { JobRunContext, JobRunner, JobRunOutcome } from "./worker.js";
+import type { JobEventBus } from "./events.js";
+import {
+  BudgetExhaustedError,
+  DEFAULT_BACKOFF,
+  PermanentStageError,
+  StageNotDueError,
+  TransientStageError,
+  backoffMs,
+  createStageRunner,
+  isStageOutput,
+  recordModelResponse,
+  unlimitedBudget,
+  type BudgetLedger,
+  type StageExecution,
+  type StageOutput,
+  type StageRunner,
+} from "./stage-runner.js";
+import {
+  RESTARTABLE_STAGES,
+  reusePolicyFor,
+  standKey as standKeyOf,
+  stageOrderIndex,
+  type PipelineSnapshot,
+} from "./snapshot.js";
+import { createDbBudgetLedger } from "./budget.js";
+import {
+  classifyRenderedPage,
+  resolvePageSizePt,
+  type Classification,
+  type PageClass,
+} from "./page-classifier.js";
+import { planTiles, shouldTilePage } from "../pipeline/tiling.js";
+import { mergeTileTranscriptions, type TileContribution } from "../pipeline/tile-merge.js";
+import {
+  buildTextFastPathBlocks,
+  checkFastPathCoverage,
+  checkFastPathFidelity,
+  detectFastPathCandidates,
+  fastPathEligibility,
+  fastPathMarkdown,
+} from "../pipeline/text-fast-path.js";
+import {
+  MARKDOWN_BLOCKS_VERSION,
+  headingDisplayText,
+  parseMarkdownBlocks,
+  tableHeaderText,
+} from "../pipeline/markdown-blocks.js";
+import type { PrevPageContext } from "../vision/prompts.js";
+import { SUMMARY_PROMPT_VERSION } from "../summary/prompts.js";
+import { TransientSummaryFailure } from "../summary/client.js";
+import type { StageObservation } from "../http-metrics.js";
+import { createDedupRegistry, renderHash, type DedupRegistry } from "./page-dedup.js";
+import type { PageAnalyzer, PreparedAnalyzer } from "./page-analyzer.js";
+import type { PageAnalysis } from "../pipeline/bbox-layout.js";
+import { snapFigureBBox } from "../pipeline/bbox-snap.js";
+import type { FigureKind } from "@atf/extract-contract/v2";
+import type { PreparedSource, PageImage, PageRenderer, RenderedPageInput } from "./page-renderer.js";
+import type { Emitter, AssetLoader } from "./emitter.js";
+import type { AssetBody } from "../revision-client.js";
+import {
+  createDocumentPass,
+  parseDocpassState,
+  type DocpassState,
+} from "./docpass/document-pass.js";
+import type { SummaryClient } from "../summary/client.js";
+import { createSummaryGenerator, type SummaryGenerator } from "../summary/generator.js";
+import type { EmitOutcome } from "./emitter.js";
+
+/** The per-page stages, in order. The last one is the scheduler's cursor. */
+export const RENDER_STAGE = "render";
+export const VISION1_STAGE = "vision1";
+export const CROPS_STAGE = "crops";
+/** The per-figure Pass-2 stage (design §5 S5, task 2.5); keyed per figure. */
+export const FIGURE2_STAGE = "figure2";
+
+/** The per-tile transcription stage (design §5 S6, task 5.1); keyed per tile. */
+export const TILED_STAGE = "tiled";
+/**
+ * The strictly-ordered streaming document pass (design §5 S7, §9a.2; task 2.6).
+ * Runs AFTER the concurrent per-page stages, walking pages 1..N in order and
+ * carrying the running state persisted in `docpass_state`.
+ */
+export const DOCPASS_STAGE = "docpass";
+export const EMITTED_STAGE = "emitted";
+
+/**
+ * The stage whose `done` checkpoint marks a page fully processed by the
+ * concurrent scheduler. The document pass (S7) runs after every page reaches
+ * this cursor, so it is deliberately the pre-docpass cursor: the concurrent
+ * window drives pages to `emitted` (base record staged), then the ordered
+ * document pass enriches each in page order.
+ */
+export const CURSOR_STAGE = EMITTED_STAGE;
+
+/** Tunables for a run. */
+export interface JobRunnerConfig {
+  /** Pages of one job in flight at once; bounds the scheduler's memory. */
+  pageConcurrency: number;
+  /** Rough per-page token estimate for the budget guard before a model call. */
+  visionTokenEstimate: number;
+  /** Recorded on the page record's pipeline-ish fields. */
+  visionModel: string;
+  renderDpi: number;
+  /**
+   * FIGURE_DPI — the resolution a figure crop is re-rendered at for Pass 2
+   * (design §5 S5, task 2.5). The crop shown to the Pass-2 model is rendered at
+   * this DPI, higher than the model-resolution page, so small labels stay
+   * legible.
+   */
+  figureDpi: number;
+  /** The figure kinds that get a Pass-2 transcription (FIGURE_PASS2_KINDS). */
+  figurePass2Kinds: FigureKind[];
+  /**
+   * The smallest figure, as a fraction of page area, worth a Pass-2 call
+   * (FIGURE_PASS2_MIN_AREA). A figure below this fraction is described only.
+   */
+  figurePass2MinArea: number;
+  /**
+   * The minimum percentage of a figure's `labels` that must appear in its
+   * Pass-2 transcription before it is trusted (LABEL_COVERAGE_MIN). Below it,
+   * Extract warns and retries Pass 2 once.
+   */
+  labelCoverageMin: number;
+  /**
+   * The long edge, in pixels, a single tile of a large-format page is rendered
+   * towards (TILE_TARGET_PIXELS; design §5 S6, task 5.1). Drives the tile count
+   * and per-tile DPI. Default 2000 when omitted.
+   */
+  tileTargetPixels?: number;
+  /**
+   * The fraction a tile's own extent adjacent tiles overlap by
+   * (TILE_OVERLAP_FRACTION; requirement 8.5). Default 0.1 (10 %) when omitted.
+   */
+  tileOverlapFraction?: number;
+  /**
+   * Hard ceiling on `cols × rows` tiles for one page (TILE_MAX_PER_PAGE; budget
+   * guard, requirement 8.6). Default 16 when omitted.
+   */
+  tileMaxPerPage?: number;
+  /**
+   * Hard pixel ceiling on a single tile's rendered area (RENDER_MAX_PIXELS).
+   * Default 40 MP when omitted; keeps a tile decode under the bomb guard.
+   */
+  renderMaxPixels?: number;
+  /**
+   * Enable the deterministic text fast-path (TEXT_FAST_PATH; task 2.9,
+   * requirement 7.5). When true, a `text` page with no table/figure candidates
+   * and usable S2 geometry builds its blocks from that geometry with no vision
+   * call. Default off when omitted, so a runner constructed without this config
+   * behaves exactly as before this task.
+   */
+  textFastPath?: boolean;
+  /**
+   * The ink-outside-blocks ceiling for fast-path eligibility
+   * (TEXT_FAST_PATH_MAX_INK_RATIO; requirement 7.5). A `text` page qualifies
+   * only when its ink outside the text blocks is at or below this fraction.
+   * Default 0.04 when omitted.
+   */
+  textFastPathMaxInkRatio?: number;
+  /**
+   * The summary text-LLM model id (task 2.7), folded into a summary stage's
+   * input hash so a model change recomputes. Undefined when SUMMARY_URL is not
+   * configured (the summary pass is then skipped).
+   */
+  summaryModel?: string | undefined;
+  /**
+   * Rough per-summary output-token estimate for the budget guard before a
+   * summary model call (task 2.7). Default 512 when omitted.
+   */
+  summaryTokenEstimate?: number | undefined;
+  /**
+   * JOB_MAX_TRANSIENT_WAIT_MS (requirement 4.8): how long a run keeps retrying
+   * a transiently failing dependency (vision, text LLM, Search) in place, with
+   * backoff, before it hands the job back as `paused(dependency)` with an
+   * auto-resume instant. Default 0: pause on the first transient stall.
+   */
+  maxTransientWaitMs?: number;
+}
+
+export interface JobRunnerDeps {
+  store: ExtractStore;
+  vision: VisionClient;
+  renderer: PageRenderer;
+  events: JobEventBus;
+  config: JobRunnerConfig;
+  logger: Logger;
+  /**
+   * The deterministic S2 page analyzer (task 2.1). Optional: when present, the
+   * runner analyses each page's geometry and feeds the numbered-heading
+   * candidates to the Pass-1 prompt (task 2.3, requirement 8.1/9.2). Absent in a
+   * deployment or test that has not wired S2 — the page then falls through to
+   * vision with no hints, exactly as before this task.
+   */
+  analyzer?: PageAnalyzer | null;
+  /**
+   * The outbox emitter (task 1.12). Optional: a deployment without Search runs
+   * processing → emitting and completes without sending anything, exactly as
+   * before this task. When present, the runner invokes it in the `emitting`
+   * phase, streaming the staged outbox to Search and reconciling on resume.
+   */
+  emitter?: Emitter | null;
+  /**
+   * The text-LLM client for the summary hierarchy (task 2.7, requirement 9.5).
+   * Optional: a deployment without `SUMMARY_URL` passes `null`, the summary pass
+   * is skipped cleanly and `document.end.summaries` stays empty — the job still
+   * completes. When present, the document pass produces section summaries as
+   * sections close and chapter/document summaries at the end, each a
+   * checkpointed stage over this client. The per-job generator is constructed
+   * inside the run so it binds to the run's stage runner and budget ledger.
+   */
+  summaryClient?: SummaryClient | null;
+  /**
+   * Observability hooks (task 2.9, requirement 18.1). Optional so the runner is
+   * testable with a no-op. `recordFastPath` counts each page's route — the
+   * deterministic text fast-path or the vision path — which `/metrics` exposes
+   * as the "Anteil Fast-Path" share. `recordTextFidelity` keeps the fast-path
+   * page's fidelity check on the same counter a vision page uses, so the check
+   * "stays active" as a real, measured call.
+   */
+  metrics?: RunnerMetrics | null;
+  /** The wall clock used for backoff decisions; injectable for tests. */
+  now?: () => Date;
+  /**
+   * Wait `ms` (or until `signal` aborts) before retrying a transient stall in
+   * place. Injectable so tests can advance a fake clock instead of sleeping.
+   */
+  sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
+}
+
+/**
+ * Per-run context carried through async continuations (the concurrent page
+ * window included), so the lease fence and the run's stand reach every write
+ * and every input hash without threading them through each helper.
+ */
+interface RunScope {
+  fence: Fence;
+  signal: AbortSignal;
+  stand: PipelineSnapshot;
+  standKey: string;
+}
+
+/** Config keys the runner keeps on the job row. */
+const REPARSE_FLAG = "reparse";
+const REPARSE_APPLIED_FLAG = "reparseApplied";
+const RESTART_APPLIED_MARKER = "restartApplied";
+
+/** Model-calling stages, reused regardless of hash while a reparse is applied. */
+function isModelStage(stage: string): boolean {
+  return (
+    stage === VISION1_STAGE ||
+    stage === FIGURE2_STAGE ||
+    stage === TILED_STAGE ||
+    stage.startsWith("summary:")
+  );
+}
+
+/** Default sleep: a timer that resolves early (without throwing) on abort. */
+function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (signal.aborted || ms <= 0) {
+      resolve();
+      return;
+    }
+    const timer = setTimeout(done, ms);
+    function done(): void {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    }
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
+
+/** The observability surface the runner records against (task 2.9). */
+export interface RunnerMetrics {
+  /** Count a page's route: the deterministic fast path, or the vision path. */
+  recordFastPath(route: "fast-path" | "vision"): void;
+  /** Record a text-fidelity check outcome for a page. */
+  recordTextFidelity(options: { flagged: boolean; missingTokens: number }): void;
+  /**
+   * Record one stage execution (requirement 18.1): outcome, duration and model
+   * tokens. Optional so a metrics stub without it still type-checks; the
+   * production wiring passes the shared {@link import("../http-metrics.js").HttpMetrics}.
+   */
+  recordStage?(observation: StageObservation): void;
+}
+
+/**
+ * The Prometheus stage label of a checkpoint stage. Summary stages carry the
+ * section id in their stage string (`summary:section:<id>`); they collapse onto
+ * one bounded `summary` label.
+ */
+function stageMetricLabel(stage: string): string {
+  return stage.startsWith("summary:") ? "summary" : stage;
+}
+
+/**
+ * Version of the per-page pipeline behaviour this runner implements (S2
+ * analyzer wiring, typed Markdown blocks, previous-page context, real page
+ * sizes, fast-path fallback, dedup reuse of Pass 2/tiles). Folded into the
+ * pipeline snapshot (`index.ts`), so a deployment that changes it trips a
+ * pinned job's `resume_policy` instead of silently mixing two behaviours.
+ */
+export const PIPELINE_REVISION = "2.1.0";
+
+/** The persisted parsed shape of the vision stage, enough to rebuild a page. */
+interface VisionStageParsed {
+  summary: string | undefined;
+  markdown: string;
+  figures: Array<{
+    id: string;
+    description: string;
+    /**
+     * The model-supplied figure kind (task 2.3). Optional so a checkpoint
+     * written before this field existed still loads; `buildPageRecord` falls
+     * back to `"other"`.
+     */
+    kind?: FigureKind | undefined;
+    caption?: string | undefined;
+    bbox: BoundingBox | undefined;
+    /**
+     * The deterministically snapped figure bbox (task 2.4, S4): the Pass-1
+     * bbox expanded 3 %, trimmed to the ink and aligned to the adjacent text
+     * blocks. Used for the crop and the emitted block so both reflect the
+     * refined region. Optional so a checkpoint written before S4 existed still
+     * loads; `buildPageRecord`/crops then fall back to the raw `bbox`.
+     */
+    snappedBbox?: BoundingBox | undefined;
+    /**
+     * The verbatim words of the text layer inside the snapped bbox (task 2.4,
+     * requirement 8.2). Undefined for a scan or a container without
+     * `-bbox-layout` geometry.
+     */
+    regionText?: string | undefined;
+    /** `regionText` deduplicated and normalised (task 2.4). */
+    labels?: string[] | undefined;
+    /**
+     * The structured Pass-2 transcription (task 2.5, S5). Filled by the
+     * per-figure `figure2` stage for a gated kind; absent for a figure that got
+     * no Pass 2 (kind not in `FIGURE_PASS2_KINDS`, below the minimum area, or
+     * the budget ran out). Persisted on the figure so `buildPageRecord` emits it
+     * on the v2 figure block and a resume replays it with no model call.
+     */
+    transcription?: Transcription | undefined;
+  }>;
+  /**
+   * Tables the model flagged as crossing a page boundary (task 2.3, requirement
+   * 9.2). Carried on the checkpoint so the document pass (task 2.6) can merge
+   * them. Optional so a checkpoint written before this field existed still
+   * loads.
+   */
+  tables?: Array<{ index: number; continues: boolean; continuationOf: boolean }>;
+  warnings: string[];
+  usedOcr: boolean;
+  usage: { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
+  truncated: boolean;
+  size: { wPt: number; hPt: number };
+  imageWidth: number;
+  imageHeight: number;
+  /**
+   * The deterministic page class (task 2.2). Persisted on the vision checkpoint
+   * so a checkpoint reuse (resume or a render-hash duplicate) keeps the same
+   * classification without re-running the classifier.
+   */
+  pageClass?: PageClass;
+  /**
+   * The page's render hash (task 2.2, requirement 7.4). Persisted so a later
+   * identical page can reuse this page's vision result instead of calling the
+   * model again. `null` when the image could not be hashed.
+   */
+  renderHash?: string | null;
+  /**
+   * True when this page took the deterministic text fast-path (task 2.9,
+   * requirement 7.5): its blocks were built from the S2 geometry with NO vision
+   * call, so `usage` is all-zero. Persisted so a resume replays the page from
+   * its checkpoint with no model call, exactly like a vision page. Optional so
+   * a checkpoint written before this field existed still loads.
+   */
+  fastPath?: boolean;
+  /**
+   * The deterministic blocks built from the S2 geometry on the fast path (task
+   * 2.9). Present only when `fastPath` is true; `buildPageRecord` emits these
+   * verbatim instead of deriving a paragraph from the (empty) vision markdown.
+   */
+  fastPathBlocks?: Block[];
+  /**
+   * The previous-page context actually handed to the Pass-1 prompt (design §5
+   * S3), and its hash. `null` when the page ran without context (first page,
+   * page N−1 not finished yet, fast path, or a dedup copy). Recorded on the
+   * checkpoint so the input that shaped the model's answer is auditable; see
+   * {@link prevPageContextFor} for why it is deliberately NOT part of the
+   * vision1 input hash.
+   */
+  prevPageContext?: PrevPageContext | null;
+  prevPageContextHash?: string | null;
+  /**
+   * The page this page's vision result was copied from by the render-hash
+   * dedup (requirement 7.4). Set only on a duplicate; Pass 2 and tiling then
+   * copy the source page's `figure2`/`tiled` results instead of calling the
+   * model again.
+   */
+  dedupOf?: number;
+  /**
+   * The result of the large-format tiling stage (design §5 S6, task 5.1,
+   * requirement 8.5). Present only for a page that was split into overlapping
+   * tiles (`drawing` class or over-A3): it carries the merged per-tile
+   * transcription and the `tile:` asset refs, which `buildPageRecord` emits as
+   * a page-spanning `technical_drawing` figure block with `tiles[]`. Absent for
+   * a normal (single-tile) page. Filled by `runTilePass` after the figure Pass
+   * 2 stage; persisted only implicitly via the per-tile `tiled` checkpoints, so
+   * a resume replays each tile with no model call and re-merges deterministically.
+   */
+  tiled?: {
+    /** The merged, overlap-deduplicated transcription of the whole plan. */
+    transcription: Transcription;
+    /** The rendered tiles as `tile` asset refs, in grid order. */
+    tiles: TileRef[];
+  };
+}
+
+/**
+ * Build the real job runner. It advances the job through `preparing →
+ * processing → emitting`, drives every page through its stages in strict order
+ * with bounded concurrency, and returns a terminal-ish outcome the worker
+ * finalises (`completed`/`paused`/`failed`).
+ */
+export function createJobRunner(deps: JobRunnerDeps): JobRunner {
+  const { store, renderer, events, config, logger } = deps;
+  const emitter = deps.emitter ?? null;
+  const analyzer = deps.analyzer ?? null;
+  const metrics = deps.metrics ?? null;
+  const fastPathEnabled = config.textFastPath === true;
+  const fastPathMaxInkRatio = config.textFastPathMaxInkRatio ?? 0.04;
+  const clock = deps.now ?? (() => new Date());
+  const sleep = deps.sleep ?? defaultSleep;
+  const maxTransientWaitMs = Math.max(0, config.maxTransientWaitMs ?? 0);
+
+  // ── run scope and guarded model clients ───────────────────────────────
+  // The run's fence, stand and abort signal travel with the async context, so
+  // the helpers below (and the concurrent page window) see them without extra
+  // parameters. The model clients are wrapped once: every call carries the
+  // run's AbortSignal (a lost lease cancels in-flight calls and refuses new
+  // ones), and every response is recorded against the running stage so its raw
+  // bytes and tokens are persisted even when the stage fails afterwards.
+  const runScope = new AsyncLocalStorage<RunScope>();
+
+  function scope(): RunScope {
+    const current = runScope.getStore();
+    if (current === undefined) throw new Error("job-runner: no active run scope");
+    return current;
+  }
+
+  /** Throw LeaseLostError once the run has been aborted. */
+  function assertLive(): void {
+    const current = runScope.getStore();
+    if (current?.signal.aborted) throw new LeaseLostError(current.fence);
+  }
+
+  function withRunSignal<T extends { signal?: AbortSignal | undefined }>(input: T): T {
+    const current = runScope.getStore();
+    if (current === undefined) return input;
+    const signal =
+      input.signal !== undefined ? AbortSignal.any([input.signal, current.signal]) : current.signal;
+    return { ...input, signal };
+  }
+
+  async function guardedCall<R extends { raw: string }>(call: () => Promise<R>): Promise<R> {
+    assertLive();
+    let result: R;
+    try {
+      result = await call();
+    } catch (err) {
+      // An abort caused by a lost lease surfaces as a lost lease, not as a
+      // vision outage (which would be retried).
+      assertLive();
+      throw err;
+    }
+    recordModelResponse(result);
+    assertLive();
+    return result;
+  }
+
+  const vision: VisionClient = {
+    analyzePage: (input) => guardedCall(() => deps.vision.analyzePage(withRunSignal(input))),
+    analyzeFigure: (input) => guardedCall(() => deps.vision.analyzeFigure(withRunSignal(input))),
+    probe: () => deps.vision.probe(),
+  };
+
+  const innerSummary = deps.summaryClient ?? null;
+  const summaryClient: SummaryClient | null =
+    innerSummary === null
+      ? null
+      : {
+          async summarize(input) {
+            assertLive();
+            const result = await innerSummary.summarize(input);
+            recordModelResponse({ raw: result.text, usage: result.usage, requests: result.requests });
+            assertLive();
+            return result;
+          },
+          probe: () => innerSummary.probe(),
+        };
+
+  /** The input hash of a stage: its own inputs plus the run's stand. */
+  function stageHash(parts: ReadonlyArray<string | number>): string {
+    return sha256Hex([...parts, `stand:${scope().standKey}`].join("\n"));
+  }
+
+  async function run(ctx: JobRunContext): Promise<JobRunOutcome> {
+    const { job, lease } = ctx;
+    const abort = new AbortController();
+    const onOuterAbort = (): void => abort.abort();
+    if (ctx.signal !== undefined) {
+      if (ctx.signal.aborted) abort.abort();
+      else ctx.signal.addEventListener("abort", onOuterAbort, { once: true });
+    }
+    const stand: PipelineSnapshot = ctx.stand ?? {
+      pipelineHash: job.pipeline_hash ?? "",
+      promptHash: job.prompt_hash ?? "",
+    };
+    const runContext: RunScope = {
+      fence: lease.fence,
+      signal: abort.signal,
+      stand,
+      standKey: standKeyOf(stand),
+    };
+    try {
+      return await runScope.run(runContext, () => runJob(ctx, abort));
+    } catch (err) {
+      if (err instanceof LeaseLostError) abort.abort();
+      throw err;
+    } finally {
+      ctx.signal?.removeEventListener("abort", onOuterAbort);
+    }
+  }
+
+  async function runJob(ctx: JobRunContext, abort: AbortController): Promise<JobRunOutcome> {
+    const { job, lease } = ctx;
+    const fence = lease.fence;
+    const cfg = job.config as Record<string, unknown>;
+    const reparseRequested = cfg[REPARSE_FLAG] === true;
+    const reparseApplied = reparseRequested || cfg[REPARSE_APPLIED_FLAG] === true;
+    const policy = reusePolicyFor(ctx.resume);
+
+    // resume_policy (requirement 4.12): continue reuses every finished
+    // checkpoint whatever its hash; restart-stage reuses the ones before the
+    // restart stage; a reparse reuses the (re-parsed) model checkpoints so the
+    // rebuilt downstream never calls a model for a unit that already has one.
+    const reuse = (stage: string, _unit: StageUnit): boolean =>
+      policy.reuseDoneRegardlessOfHash(stage) || (reparseApplied && isModelStage(stage));
+    const recordStage = metrics?.recordStage;
+    const stageRunner = createStageRunner({
+      store,
+      lease,
+      logger,
+      now: clock,
+      stand: scope().stand,
+      reuseDoneRegardlessOfHash: reuse,
+      signal: abort.signal,
+      // Every stage execution feeds the per-stage metrics (requirement 18.1).
+      ...(recordStage !== undefined
+        ? {
+            onStage: (observation: StageExecution) =>
+              recordStage.call(metrics, {
+                stage: stageMetricLabel(observation.stage),
+                outcome: observation.outcome,
+                durationMs: observation.durationMs,
+                tokens: observation.tokens,
+              }),
+          }
+        : {}),
+    });
+    const budget: BudgetLedger =
+      job.token_budget !== null ? createDbBudgetLedger(store, job.id, fence) : unlimitedBudget;
+
+    // The summary generator binds to this run's stage runner and budget ledger,
+    // so each summary is a checkpointed, budget-gated stage. The stand key is
+    // folded into the model slot of its input hash, so a changed prompt/pipeline
+    // stand recomputes summaries exactly like every other model stage.
+    const summaryGenerator: SummaryGenerator | null =
+      summaryClient !== null
+        ? createSummaryGenerator({
+            client: summaryClient,
+            stageRunner,
+            logger,
+            jobId: job.id,
+            sourceSha256: job.source_sha256,
+            model: `${config.summaryModel ?? ""}|stand:${scope().standKey}`,
+            budget,
+            tokenEstimate: config.summaryTokenEstimate ?? 512,
+          })
+        : null;
+
+    // ── preparing: resolve and prepare the source ─────────────────────────
+    if (job.status === "queued") {
+      await store.setJobStatus(job.id, "preparing", null, fence);
+    }
+
+    let prepared: PreparedSource;
+    try {
+      prepared = await renderer.prepare({
+        sourceSha256: job.source_sha256,
+        filename: filenameOf(job),
+        reference: job.reference,
+      });
+    } catch (err) {
+      logger.error({ jobId: job.id, err }, "Job source preparation failed");
+      return { status: "failed", error: err instanceof Error ? err.message : String(err) };
+    }
+
+    // ── native path: BPMN / chart-free XLSX (design §10, no model) ────────
+    if (prepared.native !== null) {
+      try {
+        if (reparseRequested) {
+          // Native records carry no model response; a reparse has nothing to do.
+          await store.patchJobConfig(job.id, { [REPARSE_FLAG]: false }, fence);
+        }
+        return await runNativeSource({ job, native: prepared.native, stageRunner, lease });
+      } finally {
+        await prepared.close();
+      }
+    }
+
+    // Bind the deterministic S2 analyzer to this run's prepared PDF.
+    const preparedAnalyzer: PreparedAnalyzer | null =
+      analyzer !== null && prepared.pdfPath !== null
+        ? analyzer.forSource({ pdfPath: prepared.pdfPath, home: prepared.home })
+        : null;
+
+    try {
+      const pageCount = pagesToProcess(job, prepared.pageCount);
+      await store.setJobPageCount(job.id, pageCount, fence);
+      events.publish({ type: "prepared", jobId: job.id, pageCount });
+
+      // ── processing: drive pages through stages in order ─────────────────
+      await store.setJobStatus(job.id, "processing", null, fence);
+
+      // ── reparse (requirement 4.6): re-apply the parsers to every persisted
+      //    raw response, then rebuild the downstream — no model call ───────
+      if (reparseRequested) {
+        const reparsed = await reparseCheckpoints({
+          job,
+          pageCount,
+          prepared,
+          analyzer: preparedAnalyzer,
+          stageRunner,
+        });
+        await store.invalidateDownstream(
+          job.id,
+          {
+            fromPage: 1,
+            stages: [CROPS_STAGE, EMITTED_STAGE, DOCPASS_STAGE],
+            deleteAssets: true,
+            configPatch: { [REPARSE_FLAG]: false, [REPARSE_APPLIED_FLAG]: true },
+          },
+          fence,
+        );
+        logger.info({ jobId: job.id, reparsed }, "Reparse applied; downstream invalidated for rebuild");
+      }
+
+      // ── restart-stage (requirement 4.12): recompute from the restart stage
+      //    on for every page. Applied once per stand; the marker makes a
+      //    resume of an interrupted restart continue instead of starting over.
+      if (policy.restartFrom !== null) {
+        const marker = `${scope().standKey}:${RESTARTABLE_STAGES[policy.restartFrom] ?? "vision1"}`;
+        if (cfg[RESTART_APPLIED_MARKER] !== marker) {
+          const cropsIdx = stageOrderIndex(CROPS_STAGE);
+          await store.invalidateDownstream(
+            job.id,
+            {
+              fromPage: 1,
+              stages:
+                policy.restartFrom <= cropsIdx
+                  ? [CROPS_STAGE, EMITTED_STAGE, DOCPASS_STAGE]
+                  : [EMITTED_STAGE, DOCPASS_STAGE],
+              deleteAssets: policy.restartFrom <= cropsIdx,
+              configPatch: { [RESTART_APPLIED_MARKER]: marker },
+            },
+            fence,
+          );
+          logger.info({ jobId: job.id, marker }, "restart-stage applied; downstream invalidated");
+        }
+      }
+
+      // Render-hash dedup registry for this run (task 2.2, requirement 7.4).
+      const dedup = createDedupRegistry();
+
+      const outcome = await drivePages({
+        job,
+        pageCount,
+        prepared,
+        analyzer: preparedAnalyzer,
+        stageRunner,
+        budget,
+        events,
+        dedup,
+        abort,
+      });
+      if (outcome.status !== "completed") return outcome;
+
+      // ── document pass (S7): strictly ordered, after the concurrent window ─
+      const docPassOutcome = await runDocumentPass({
+        job,
+        pageCount,
+        analyzer: preparedAnalyzer,
+        stageRunner,
+        budget,
+        summaryGenerator,
+        headingLevelHints: prepared.docxHeadingHints?.levelByText ?? null,
+      });
+      if (docPassOutcome.status !== "completed") return docPassOutcome;
+
+      // ── emitting: stream the staged outbox to Search and reconcile ──────
+      const emitOutcome = await runEmit({ job, prepared, lease });
+      if (emitOutcome.status !== "completed") return emitOutcome;
+
+      if (reparseApplied) {
+        await store.patchJobConfig(job.id, { [REPARSE_APPLIED_FLAG]: false }, fence);
+      }
+      events.publish({ type: "done", jobId: job.id, status: "completed" });
+      return { status: "completed" };
+    } finally {
+      await prepared.close();
+    }
+  }
+
+  /**
+   * Wait for `retryAt` when it falls within the run's transient-wait budget
+   * (requirement 4.8: retry with backoff first, pause only after
+   * JOB_MAX_TRANSIENT_WAIT), else return the `paused(dependency)` outcome with
+   * the auto-resume instant.
+   */
+  async function waitOrPause(
+    stall: { since: number | null },
+    retryAt: Date,
+    signal: AbortSignal,
+    withRetryAt: boolean,
+  ): Promise<JobRunOutcome | null> {
+    const nowMs = clock().getTime();
+    if (stall.since === null) stall.since = nowMs;
+    if (retryAt.getTime() - stall.since <= maxTransientWaitMs) {
+      await sleep(Math.max(0, retryAt.getTime() - nowMs), signal);
+      assertLive();
+      return null;
+    }
+    return withRetryAt
+      ? { status: "paused", reason: "dependency", retryAt }
+      : { status: "paused", reason: "dependency" };
+  }
+
+  /**
+   * Drive the emitting phase. Transitions the job to `emitting`, then (when an
+   * emitter is configured) streams the staged outbox to Search. The AssetLoader
+   * re-renders each crop deterministically from the prepared source — the crop
+   * bytes were never persisted, only their checksum was, so re-rendering from
+   * the one durable source keeps storage flat and the resume byte-identical.
+   */
+  async function runEmit(args: {
+    job: JobRow;
+    prepared: PreparedSource;
+    lease: JobRunContext["lease"];
+  }): Promise<JobRunOutcome> {
+    const { job, prepared, lease } = args;
+    await store.setJobStatus(job.id, "emitting", null, lease.fence);
+    if (emitter === null) return { status: "completed" };
+    const loader = createCropLoader({ job, prepared });
+    return emitWithRecovery(job.id, lease, loader);
+  }
+
+  /**
+   * Run the emitter until it commits, recovering in place where that is safe:
+   *
+   *   - `transient` / `incomplete` (Search unreachable, commit still missing
+   *     parts): retry with backoff inside JOB_MAX_TRANSIENT_WAIT, then pause on
+   *     dependency — the outbox is intact, the auto-resume reconciles.
+   *   - `conflict` (a batch digest clashes with the revision, e.g. its content
+   *     was rebuilt): start ONE new emit generation — a fresh revision under a
+   *     new Idempotency-Key — and emit again; a second conflict fails the job
+   *     with a clear message instead of pausing forever.
+   */
+  async function emitWithRecovery(
+    jobId: string,
+    lease: JobRunContext["lease"],
+    loader: AssetLoader,
+  ): Promise<JobRunOutcome> {
+    if (emitter === null) return { status: "completed" };
+    const signal = scope().signal;
+    let regenerated = false;
+    let attempt = 0;
+    const stall = { since: null as number | null };
+    for (;;) {
+      assertLive();
+      const fresh = await store.getJob(jobId);
+      if (fresh === null) return { status: "failed", error: `job ${jobId} vanished` };
+      const outcome: EmitOutcome = await emitter.emit(fresh, lease, loader);
+      if (outcome.status === "committed") return { status: "completed" };
+      if (outcome.status === "conflict") {
+        if (!regenerated) {
+          regenerated = true;
+          logger.warn({ jobId, reason: outcome.reason }, "Emit conflict; starting a new emit generation");
+          await store.resetEmitGeneration(jobId, lease.fence);
+          continue;
+        }
+        return {
+          status: "failed",
+          error: `Search rejected the revision content with 409 even after a new emit generation: ${outcome.reason}`,
+        };
+      }
+      attempt += 1;
+      logger.warn({ jobId, status: outcome.status, reason: outcome.reason, attempt }, "Emit not committed");
+      const retryAt = new Date(clock().getTime() + backoffMs(attempt, DEFAULT_BACKOFF));
+      const paused = await waitOrPause(stall, retryAt, signal, false);
+      if (paused !== null) return paused;
+    }
+  }
+
+  /**
+   * Drive a natively-parsed source (BPMN, chart-free XLSX): no vision, no
+   * rendering, no document pass (design §10). The contract records were already
+   * built during `prepare`. This stages one emit-outbox row per record and one
+   * asset-outbox row per referenced asset (in page order, all fenced), then runs
+   * the emitting phase directly. `native:` asset bytes (the original `.bpmn`
+   * XML) are held in memory for this run and served verbatim by the loader.
+   */
+  async function runNativeSource(args: {
+    job: JobRow;
+    native: NonNullable<PreparedSource["native"]>;
+    stageRunner: StageRunner;
+    lease: JobRunContext["lease"];
+  }): Promise<JobRunOutcome> {
+    const { job, native, stageRunner, lease } = args;
+    const { fence } = scope();
+    const pageCount = native.records.length;
+    await store.setJobPageCount(job.id, pageCount, fence);
+    events.publish({ type: "prepared", jobId: job.id, pageCount });
+    await store.setJobStatus(job.id, "processing", null, fence);
+
+    const nativeBytes = new Map(native.nativeAssets.map((a) => [a.assetId, a]));
+
+    for (const record of native.records) {
+      assertLive();
+      const page = record.page;
+      const emitted = await store.getStage("page", { job_id: job.id, page, stage: EMITTED_STAGE });
+      const emittedHash = stageHash(["native-emit", job.source_sha256, page]);
+      if (emitted?.status === "done") continue; // staged on a previous run
+      // Stage every asset the record references (page image, figure, native).
+      for (const asset of record.assets) {
+        await store.stageAsset(
+          {
+            job_id: job.id,
+            asset_id: asset.assetId,
+            page,
+            ...(asset.checksum !== undefined ? { checksum: asset.checksum } : {}),
+            variant: asset.kind === "native" ? "native" : asset.kind === "page" ? "page" : null,
+            mime_type: asset.mimeType ?? "image/png",
+          },
+          fence,
+        );
+        events.publish({
+          type: "asset",
+          jobId: job.id,
+          page,
+          assetId: asset.assetId,
+          kind: asset.kind === "figure" ? "figure" : "page",
+        });
+      }
+      await stageEmitRow(job, page, record);
+      // Advance the emitted cursor so a resume does not re-stage the page.
+      await stageRunner.runStage<{ page: number }, null>({
+        unit: "page",
+        key: { job_id: job.id, page, stage: EMITTED_STAGE },
+        inputHash: emittedHash,
+        fn: async () => ({ raw: null, parsed: { page } }),
+      });
+      events.publish({
+        type: "page",
+        jobId: job.id,
+        page,
+        pageCount,
+        record,
+        assetIds: record.assets.map((a) => a.assetId),
+        usage: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+    }
+
+    await store.setJobStatus(job.id, "emitting", null, fence);
+    if (emitter !== null) {
+      const outcome = await emitWithRecovery(job.id, lease, createNativeAssetLoader(nativeBytes));
+      if (outcome.status !== "completed") return outcome;
+    }
+    events.publish({ type: "done", jobId: job.id, status: "completed" });
+    return { status: "completed" };
+  }
+
+  /**
+   * An {@link AssetLoader} for a native source. A `native:` asset resolves to
+   * its held bytes (the original `.bpmn` XML); any other asset (a native page
+   * placeholder) has no bytes and is skipped, exactly as the emitter tolerates a
+   * missing crop.
+   */
+  function createNativeAssetLoader(
+    bytes: Map<string, { assetId: string; buffer: Uint8Array; mimeType: string }>,
+  ): AssetLoader {
+    return {
+      async load(row: AssetOutboxRow): Promise<AssetBody | null> {
+        const entry = bytes.get(row.asset_id);
+        if (entry === undefined) return null;
+        return {
+          assetId: entry.assetId,
+          buffer: entry.buffer,
+          mimeType: entry.mimeType,
+          checksum: sha256Hex(entry.buffer),
+          kind: "native",
+        };
+      },
+    };
+  }
+
+  /**
+   * An {@link AssetLoader} that resolves an asset-outbox row to its bytes by
+   * re-rendering the crop from the prepared source. The page comes from the
+   * outbox row's `page` column and the bbox from THAT page's staged record — a
+   * single-row lookup, cached for a handful of pages — so the loader never
+   * loads every page payload (requirement 6.1). Only a legacy row without a
+   * page falls back to a one-time index over the staged records.
+   */
+  function createCropLoader(deps: { job: JobRow; prepared: PreparedSource }): AssetLoader {
+    const { job, prepared } = deps;
+    interface CropEntry {
+      page: number;
+      bbox: BBox | undefined;
+      kind: string;
+    }
+    const PAGE_CACHE = 16;
+    const byPage = new Map<number, Map<string, CropEntry>>();
+    let legacyIndex: Map<string, CropEntry> | null = null;
+
+    function entriesOf(record: PageRecord): Map<string, CropEntry> {
+      const map = new Map<string, CropEntry>();
+      for (const asset of record.assets) {
+        map.set(asset.assetId, { page: asset.page ?? record.page, bbox: asset.bbox, kind: asset.kind });
+      }
+      return map;
+    }
+
+    async function pageEntries(page: number): Promise<Map<string, CropEntry>> {
+      const cached = byPage.get(page);
+      if (cached !== undefined) return cached;
+      const row = await store.getEmitBatch(job.id, page);
+      const record = (row?.payload as { record?: PageRecord } | null)?.record;
+      const entries = record !== undefined ? entriesOf(record) : new Map<string, CropEntry>();
+      byPage.set(page, entries);
+      if (byPage.size > PAGE_CACHE) {
+        const oldest = byPage.keys().next().value;
+        if (oldest !== undefined) byPage.delete(oldest);
+      }
+      return entries;
+    }
+
+    async function legacyEntry(assetId: string): Promise<CropEntry | undefined> {
+      if (legacyIndex === null) {
+        const built = new Map<string, CropEntry>();
+        const meta = await store.listEmitBatchMeta(job.id);
+        const window = 50;
+        const last = meta.reduce((m, r) => Math.max(m, r.page_to), 0);
+        for (let from = 1; from <= last; from += window) {
+          for (const row of await store.emitBatchesInRange(job.id, from, from + window - 1)) {
+            const record = (row.payload as { record?: PageRecord } | null)?.record;
+            if (record === undefined) continue;
+            for (const [id, entry] of entriesOf(record)) built.set(id, entry);
+          }
+        }
+        legacyIndex = built;
+      }
+      return legacyIndex.get(assetId);
+    }
+
+    return {
+      async load(row: AssetOutboxRow): Promise<AssetBody | null> {
+        const entry =
+          row.page !== undefined && row.page !== null
+            ? (await pageEntries(Number(row.page))).get(row.asset_id)
+            : await legacyEntry(row.asset_id);
+        if (entry === undefined) return null;
+        try {
+          // A figure crop OR a tile: both are a bbox region re-rendered from the
+          // source (design §5 S6 — tile bytes are not stored, they reproduce on
+          // demand exactly like a figure crop).
+          if (
+            (entry.kind === "figure" || entry.kind === "tile") &&
+            entry.bbox !== undefined &&
+            isValidBoundingBox(entry.bbox)
+          ) {
+            const pageImage = await prepared.render(entry.page);
+            const crop = await prepared.renderFigureCrop(
+              entry.page,
+              entry.bbox as unknown as BoundingBox,
+              pageImage.image,
+            );
+            return {
+              assetId: row.asset_id,
+              buffer: crop.buffer,
+              mimeType: crop.mimeType,
+              checksum: sha256Hex(crop.buffer),
+              kind: entry.kind,
+            };
+          }
+          // A page image (or a figure without a usable bbox): the full page.
+          const rendered = await prepared.render(entry.page);
+          return {
+            assetId: row.asset_id,
+            buffer: rendered.image.buffer,
+            mimeType: rendered.image.mimeType,
+            checksum: sha256Hex(rendered.image.buffer),
+            kind: "page",
+          };
+        } catch (err) {
+          logger.warn({ jobId: job.id, assetId: row.asset_id, err }, "Crop re-render failed");
+          return null;
+        }
+      },
+    };
+  }
+
+  /**
+   * The reparse pass (requirement 4.6): walk the document in page windows and
+   * re-apply the current parsers to every persisted raw response — Pass 1
+   * (`vision1`, re-snapping figure bboxes deterministically from a re-render),
+   * Pass 2 (`figure2`) and tiles (`tiled`) — WITHOUT any model call. Units that
+   * failed permanently but kept their raw response (a parse/post-processing
+   * failure) are repaired too. Returns how many checkpoints were rewritten.
+   */
+  async function reparseCheckpoints(args: {
+    job: JobRow;
+    pageCount: number;
+    prepared: PreparedSource;
+    analyzer: PreparedAnalyzer | null;
+    stageRunner: StageRunner;
+  }): Promise<number> {
+    const { job, pageCount, prepared, stageRunner } = args;
+    const WINDOW = 100;
+    const threshold = config.labelCoverageMin / 100;
+    let count = 0;
+    for (let from = 1; from <= pageCount; from += WINDOW) {
+      assertLive();
+      const to = Math.min(pageCount, from + WINDOW - 1);
+      const figuresByPage = new Map<number, VisionStageParsed["figures"]>();
+
+      for (const row of await store.listStagesWindow("page", job.id, VISION1_STAGE, from, to)) {
+        let parsed = row.status === "done" ? parsedOfRow<VisionStageParsed>(row) : undefined;
+        if (reparseable(row)) {
+          const result = await stageRunner.reparseRow<VisionStageParsed, string>("page", row, (raw, existing) =>
+            rebuildVisionFromRaw(existing, raw, prepared, args.analyzer),
+          );
+          if (result !== null) {
+            parsed = result.parsed;
+            count += 1;
+          }
+        }
+        if (parsed !== undefined) figuresByPage.set(row.page, parsed.figures);
+      }
+
+      for (const row of await store.listStagesWindow("figure", job.id, FIGURE2_STAGE, from, to)) {
+        if (!reparseable(row)) continue;
+        const figure = figuresByPage.get(row.page)?.find((f) => f.id === row.figure_id);
+        if (figure === undefined) continue; // the figure no longer exists after Pass-1 reparse
+        const kind = figure.kind ?? "other";
+        const labels = figure.labels ?? [];
+        const result = await stageRunner.reparseRow("figure", row, (raw: string) => {
+          const reparsed = parseTranscription(kind, raw);
+          if (reparsed === null) return undefined;
+          const coverage = labelCoverage(labels, reparsed.transcription);
+          const warnings = [...reparsed.warnings];
+          if (labels.length > 0 && coverage < threshold) {
+            warnings.push(
+              `Pass 2 für Abbildung ${figure.id}: Label-Coverage ${(coverage * 100).toFixed(0)} % unter ${config.labelCoverageMin} % (reparse).`,
+            );
+          }
+          return { transcription: reparsed.transcription, coverage, warnings };
+        });
+        if (result !== null) count += 1;
+      }
+
+      for (const row of await store.listStagesWindow("tile", job.id, TILED_STAGE, from, to)) {
+        if (!reparseable(row)) continue;
+        const result = await stageRunner.reparseRow("tile", row, (raw: string) => {
+          const reparsed = parseTranscription("technical_drawing", raw);
+          if (reparsed === null) return undefined;
+          return { transcription: reparsed.transcription, warnings: reparsed.warnings };
+        });
+        if (result !== null) count += 1;
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Rebuild a page's Pass-1 stage result from its persisted raw response: the
+   * tolerant parser, then the deterministic S4 refinement (re-rendering the page
+   * only when a figure has a croppable bbox). Fields that do not come from the
+   * response (render geometry, page class, render hash, usage) are kept from
+   * the previous result, or re-derived deterministically for a unit that failed
+   * before it ever had one. Returns undefined when the page cannot be rendered.
+   */
+  async function rebuildVisionFromRaw(
+    existing: PageStageRow,
+    raw: string,
+    prepared: PreparedSource,
+    preparedAnalyzer: PreparedAnalyzer | null,
+  ): Promise<VisionStageParsed | undefined> {
+    const page = existing.page;
+    const prev = existing.status === "done" ? parsedOfRow<VisionStageParsed>(existing) : undefined;
+    if (prev?.fastPath === true) return undefined;
+    const stored = isStageOutput(existing.output) ? (existing.output as StageOutput) : undefined;
+    const response = stored?.response;
+    const parsedPage = parseVisionPage(raw, page);
+    const croppable = parsedPage.figures.some((f) => isCroppable(f.bbox));
+
+    let rendered: Awaited<ReturnType<PreparedSource["render"]>> | null = null;
+    if (prev === undefined || croppable) {
+      try {
+        rendered = await prepared.render(page);
+      } catch (err) {
+        logger.warn({ jobId: existing.job_id, page, err }, "Reparse: page could not be re-rendered");
+        return undefined;
+      }
+    }
+    const analysis = croppable || prev === undefined ? await runPageAnalysis(preparedAnalyzer, page) : null;
+    const image: PageImage = rendered?.image ?? { buffer: new Uint8Array(0), mimeType: "image/png", width: 1, height: 1 };
+    const figures = await refineFigures(parsedPage.figures, image, analysis);
+    // Geometry and class are kept from the previous result (a reparse must not
+    // change the tile grid, which would require new model calls); a unit that
+    // never had a result derives them deterministically from the re-render.
+    const sizePt =
+      prev?.size !== undefined
+        ? { widthPt: prev.size.wPt, heightPt: prev.size.hPt }
+        : resolvePageSizePt(rendered ?? { image }, analysis, config.renderDpi);
+    const pageClass: PageClass =
+      prev?.pageClass ??
+      (rendered !== null
+        ? (
+            await classifyRenderedPage({
+              imageBuffer: rendered.image.buffer,
+              rawText: rendered.rawText,
+              usedOcr: rendered.usedOcr,
+              sizePt,
+              analysis,
+            })
+          ).class
+        : "text");
+    const truncated = prev?.truncated ?? response?.truncated ?? false;
+    const hash =
+      prev?.renderHash !== undefined
+        ? prev.renderHash
+        : rendered !== null
+          ? await renderHash(rendered.image.buffer)
+          : null;
+    return {
+      summary: parsedPage.summary,
+      markdown: parsedPage.markdown,
+      figures,
+      tables: parsedPage.tables.map((t) => ({
+        index: t.index,
+        continues: t.continues,
+        continuationOf: t.continuationOf,
+      })),
+      warnings: [...parsedPage.warnings, ...(truncated ? [TRUNCATION_WARNING] : [])],
+      usedOcr: prev?.usedOcr ?? rendered?.usedOcr ?? false,
+      usage: prev?.usage ?? {
+        requests: response?.requests ?? 0,
+        promptTokens: response?.promptTokens ?? 0,
+        completionTokens: response?.completionTokens ?? 0,
+        totalTokens: response?.totalTokens ?? 0,
+      },
+      truncated,
+      size: { wPt: sizePt.widthPt, hPt: sizePt.heightPt },
+      imageWidth: prev?.imageWidth ?? image.width,
+      imageHeight: prev?.imageHeight ?? image.height,
+      pageClass,
+      renderHash: hash,
+      // Not derived from the response: carried over unchanged.
+      ...(prev?.prevPageContext !== undefined ? { prevPageContext: prev.prevPageContext } : {}),
+      ...(prev?.prevPageContextHash !== undefined ? { prevPageContextHash: prev.prevPageContextHash } : {}),
+      ...(prev?.dedupOf !== undefined ? { dedupOf: prev.dedupOf } : {}),
+    };
+  }
+
+  /**
+   * The strictly-ordered streaming document pass (design §5 S7, §9a.2; task
+   * 2.6, requirements 9.1–9.4, 4.7).
+   *
+   * ## Why a separate ordered phase
+   *
+   * The per-page vision/crops/figure2 stages ran concurrently, which is correct
+   * because they are order-independent. S7 is not: page N's `sectionPath` is the
+   * heading stack from pages 1..N-1, a table on page N merges only if page N-1
+   * left one open, furniture is a rolling window, and the identifier index and
+   * refs accumulate across the whole document. So this phase runs once, after
+   * the concurrent window has driven every page to the `emitted` cursor (its
+   * BASE record staged), and folds the pages in strict ascending order.
+   *
+   * ## Resume is exact and idempotent
+   *
+   * For each page the three writes — the enriched emit payload, the running
+   * state after the page, and the page's `docpass` checkpoint — commit in ONE
+   * transaction. A crash therefore leaves either all three or none: on resume
+   * the pass continues from `lastPage + 1`, whose emit payload is guaranteed to
+   * still be the BASE record, so `applyPage` never runs twice over an already
+   * enriched record. A summary pause returns before the page commits, for the
+   * same reason (the summaries produced so far are checkpointed stages and are
+   * reused without a model call). Each page reads exactly its own outbox row —
+   * no per-page scan over the whole outbox (the old O(N²) pattern).
+   */
+  async function runDocumentPass(args: {
+    job: JobRow;
+    pageCount: number;
+    analyzer: PreparedAnalyzer | null;
+    stageRunner: StageRunner;
+    budget: BudgetLedger;
+    summaryGenerator: SummaryGenerator | null;
+    /** DOCX authoritative heading levels (requirement 10.3), or null. */
+    headingLevelHints: ReadonlyMap<string, number> | null;
+  }): Promise<JobRunOutcome> {
+    const { job, pageCount, analyzer: preparedAnalyzer, stageRunner, summaryGenerator } = args;
+    const { fence, stand } = scope();
+
+    // Rehydrate the running state from the last finished page (design §9a.2).
+    const persisted = await store.latestDocpassState(job.id);
+    const initial: DocpassState = parseDocpassState(persisted?.state ?? null);
+    const pass = createDocumentPass(
+      initial,
+      args.headingLevelHints !== null ? { headingLevelHints: args.headingLevelHints } : {},
+    );
+    const resumeFrom = Math.max(0, initial.lastPage) + 1;
+
+    // Whether the summary pass still needs to run its document-end finalize. If
+    // the whole per-page loop was already done on a prior run (resumeFrom >
+    // pageCount) we still finalize, because a resume may have stopped between
+    // the last page and the chapter/document summaries.
+    if (resumeFrom > pageCount) {
+      return finalizeSummaries(pass, pageCount);
+    }
+
+    for (let page = resumeFrom; page <= pageCount; page++) {
+      assertLive();
+      const pageStarted = Date.now();
+      // The BASE record was staged by the emitted stage. A missing record means
+      // the page failed permanently upstream; skip it but keep the state moving.
+      const baseRow = await store.getStage("page", { job_id: job.id, page, stage: EMITTED_STAGE });
+      const emitRow = await store.getEmitBatch(job.id, page);
+      const payload = emitRow?.payload as { record?: PageRecord } | null | undefined;
+      const record = payload?.record;
+      if (baseRow === null || baseRow.status !== "done" || record === undefined) {
+        logger.debug({ jobId: job.id, page }, "Document pass: no base record for page; skipping");
+        // Advance the checkpoint so a resume does not re-examine this page.
+        await stageRunner.runStage<{ page: number }, null>({
+          unit: "page",
+          key: { job_id: job.id, page, stage: DOCPASS_STAGE },
+          inputHash: stageHash(["docpass", job.source_sha256, page, "skip"]),
+          fn: async () => ({ raw: null, parsed: { page } }),
+        });
+        continue;
+      }
+
+      // This page's deterministic S2 geometry (heading heights, furniture
+      // bands). Best-effort and never throws; null when unavailable.
+      const analysis = await runPageAnalysis(preparedAnalyzer, page);
+      const applied = pass.applyPage(record, analysis);
+
+      // ── Summary hierarchy (task 2.7, requirement 9.5) ─────────────────
+      // A section that closed on this page gets its summary now. A text-LLM
+      // outage pauses the job on dependency, a budget exhaustion on budget.
+      // Nothing of this page is committed before the summaries succeed, so the
+      // resume re-applies the page to its untouched base record.
+      if (summaryGenerator !== null && applied.closedSections.length > 0) {
+        try {
+          await summaryGenerator.onSectionsClosed(applied.closedSections, pass);
+        } catch (err) {
+          const outcome = summaryPauseOutcome(err, job.id, page);
+          if (outcome !== null) return outcome;
+          throw err;
+        }
+      }
+
+      // Enriched payload + state after this page + docpass checkpoint: one
+      // transaction (requirement 4.7), so the resume point and the enriched
+      // record can never disagree.
+      await store.commitDocpassPage(
+        job.id,
+        {
+          page,
+          payload: { ...(payload ?? {}), type: "page", page, record: applied.record },
+          state: pass.snapshot(),
+          checkpoint: {
+            job_id: job.id,
+            page,
+            stage: DOCPASS_STAGE,
+            input_hash: stageHash(["docpass", job.source_sha256, page]),
+            status: "done",
+            output: { raw: null, parsed: { page }, stand },
+            next_attempt_at: null,
+            error: null,
+          },
+        },
+        fence,
+      );
+      // The docpass checkpoint is written in the page's own transaction above,
+      // not through the stage runner, so its metric is recorded here.
+      metrics?.recordStage?.({ stage: DOCPASS_STAGE, outcome: "done", durationMs: Date.now() - pageStarted });
+      // No `page` event is published here: the concurrent phase already emitted
+      // one per page for the SSE/callback stream.
+    }
+
+    logger.info({ jobId: job.id, pages: pageCount }, "Document pass complete");
+
+    // ── document-end summaries (chapter + document, and any still-open
+    //    section) — a checkpointed stage each, after the last page.
+    return finalizeSummaries(pass, pageCount);
+
+    /**
+     * Produce the document-end summaries (still-open sections, chapters, the
+     * document) via the generator, persisting the final state. Returns a pause
+     * outcome when the text-LLM is unreachable or the budget ran out, else
+     * `completed`. A no-generator deployment is an immediate `completed`.
+     */
+    async function finalizeSummaries(
+      finalPass: import("./docpass/document-pass.js").DocumentPass,
+      last: number,
+    ): Promise<JobRunOutcome> {
+      if (summaryGenerator === null) return { status: "completed" };
+      const outline = finalPass.outline(last);
+      try {
+        await summaryGenerator.finalize(finalPass, outline, last);
+      } catch (err) {
+        const paused = summaryPauseOutcome(err, job.id, last);
+        if (paused !== null) {
+          // Keep the summaries produced so far on the final state; the page
+          // loop is complete, so this only adds summary nodes.
+          await store.saveDocpassState(job.id, last, finalPass.snapshot(), fence);
+          return paused;
+        }
+        throw err;
+      }
+      // Persist the produced chapter/document summaries so the emitter reads
+      // them from the latest docpass_state.
+      await store.saveDocpassState(job.id, last, finalPass.snapshot(), fence);
+      return { status: "completed" };
+    }
+  }
+
+  /**
+   * Map a summary-stage failure to a job pause outcome, or `null` when it is not
+   * a pause-worthy failure (the caller rethrows). A budget exhaustion pauses on
+   * `budget`; a transient text-LLM outage pauses on `dependency` with the
+   * checkpoint's retry instant, so the auto-resume picks it up once it is due.
+   */
+  function summaryPauseOutcome(err: unknown, jobId: string, page: number): JobRunOutcome | null {
+    if (err instanceof BudgetExhaustedError) {
+      logger.info({ jobId, page }, "Summary paused: token budget exhausted");
+      return { status: "paused", reason: "budget" };
+    }
+    if (err instanceof StageNotDueError) {
+      return { status: "paused", reason: "dependency", retryAt: err.retryAt };
+    }
+    if (err instanceof TransientStageError) {
+      logger.warn({ jobId, page, err: err.message }, "Summary paused: text-LLM unreachable");
+      return { status: "paused", reason: "dependency" };
+    }
+    return null;
+  }
+
+  /**
+   * The ordered scheduler loop. Pulls the next window of unfinished, DUE pages
+   * from the store (bounded by `pageConcurrency`), runs them concurrently, and
+   * repeats until every page is finished. Never materialises the full page list.
+   *
+   * Backoff is honoured end to end: a page with any unit in its retry backoff is
+   * not handed out, and when nothing is due while pages are still unfinished
+   * the loop waits for the earliest retry instant — within
+   * JOB_MAX_TRANSIENT_WAIT — and otherwise returns `paused(dependency)` with
+   * that instant, so the claim resumes the job automatically. It never reports
+   * `completed` while a page is unfinished.
+   */
+  async function drivePages(args: {
+    job: JobRow;
+    pageCount: number;
+    prepared: PreparedSource;
+    analyzer: PreparedAnalyzer | null;
+    stageRunner: StageRunner;
+    budget: BudgetLedger;
+    events: JobEventBus;
+    dedup: DedupRegistry;
+    abort: AbortController;
+  }): Promise<JobRunOutcome> {
+    const { job, pageCount, prepared, stageRunner, budget, dedup, abort } = args;
+    const concurrency = Math.max(1, config.pageConcurrency);
+
+    // Cumulative usage lives as two numbers, not a per-page array.
+    const cumulative = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const stall = { since: null as number | null };
+    let blindRounds = 0;
+
+    for (;;) {
+      assertLive();
+      const now = clock();
+      const pages = await store.nextRunnablePages(job.id, pageCount, CURSOR_STAGE, concurrency, now);
+      if (pages.length === 0) {
+        const finished = await store.finishedPageCount(job.id, CURSOR_STAGE);
+        if (finished >= pageCount) break;
+        // Pages are unfinished but none is due: wait for the earliest retry.
+        const retryAt =
+          (await store.earliestRetryAt(job.id, now)) ??
+          new Date(now.getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF));
+        const paused = await waitOrPause(stall, retryAt, abort.signal, true);
+        if (paused !== null) return paused;
+        continue;
+      }
+
+      // Run this window concurrently. A lost lease in any page aborts the run at
+      // once, so the other pages start no further model calls.
+      const results = await Promise.allSettled(
+        pages.map((page) =>
+          runPage({ job, page, pageCount, prepared, analyzer: args.analyzer, stageRunner, budget, dedup }).catch(
+            (err: unknown) => {
+              if (err instanceof LeaseLostError) abort.abort();
+              throw err;
+            },
+          ),
+        ),
+      );
+
+      let progressed = false;
+      let untracked = false;
+      for (const [index, result] of results.entries()) {
+        const page = pages[index] ?? 0;
+        if (result.status === "fulfilled") {
+          if (result.value.paused) {
+            // Budget ran out before a model call: park the job. The checkpoint
+            // was left untouched so a resume recomputes in place.
+            return { status: "paused", reason: "budget" };
+          }
+          if (result.value.completed) {
+            progressed = true;
+            cumulative.requests += result.value.usage.requests;
+            cumulative.promptTokens += result.value.usage.promptTokens;
+            cumulative.completionTokens += result.value.usage.completionTokens;
+            cumulative.totalTokens += result.value.usage.totalTokens;
+            args.events.publish({
+              type: "page",
+              jobId: job.id,
+              page,
+              pageCount,
+              record: result.value.record,
+              assetIds: result.value.assetIds,
+              usage: { ...cumulative },
+            });
+          }
+        } else {
+          const reason: unknown = result.reason;
+          if (reason instanceof LeaseLostError || abort.signal.aborted) {
+            throw reason instanceof LeaseLostError ? reason : new LeaseLostError(scope().fence);
+          }
+          if (reason instanceof BudgetExhaustedError) return { status: "paused", reason: "budget" };
+          // A transient stage failure left a retryable checkpoint with backoff;
+          // the scheduler skips the page until it is due. Anything else wrote
+          // no backoff, so the loop backs off itself before the next window.
+          if (!(reason instanceof TransientStageError)) untracked = true;
+          logger.warn({ jobId: job.id, page, err: reason }, "Page stage failed transiently");
+        }
+      }
+
+      if (progressed) {
+        stall.since = null;
+        blindRounds = 0;
+      } else if (untracked) {
+        const retryAt = new Date(clock().getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF));
+        const paused = await waitOrPause(stall, retryAt, abort.signal, true);
+        if (paused !== null) return paused;
+      }
+    }
+
+    return { status: "completed" };
+  }
+
+  /** Result of running one page through its stages. */
+  interface PageResult {
+    completed: boolean;
+    paused: boolean;
+    record: PageRecord;
+    assetIds: string[];
+    usage: { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
+  }
+
+  /**
+   * Run one page: vision (render+model+parse folded into the checkpointed
+   * stage), crops, then stage the emit-outbox row. On a resume the vision and
+   * crop stages are reused from their checkpoints without a model call.
+   */
+  async function runPage(args: {
+    job: JobRow;
+    page: number;
+    pageCount: number;
+    prepared: PreparedSource;
+    analyzer: PreparedAnalyzer | null;
+    stageRunner: StageRunner;
+    budget: BudgetLedger;
+    dedup: DedupRegistry;
+  }): Promise<PageResult> {
+    const { job, page, pageCount, prepared, stageRunner, budget, dedup } = args;
+    const preparedAnalyzer = args.analyzer;
+    const key = (stage: string): StageKey => ({ job_id: job.id, page, stage });
+    const empty: PageResult["usage"] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+
+    // Hold the rendered page image for the crop step; it is discarded when the
+    // page finishes, so memory does not accumulate across pages.
+    let pageImage: PageImage | null = null;
+
+    // Source, page, render DPI, model, the fast-path knobs that decide whether
+    // the page is built without the model, and (via stageHash) the run's
+    // pipeline/prompt stand — so a changed prompt recomputes (design §9b.2).
+    const visionInputHash = stageHash([
+      job.source_sha256,
+      page,
+      config.renderDpi,
+      config.visionModel,
+      `fastPath:${fastPathEnabled ? fastPathMaxInkRatio : "off"}`,
+    ]);
+
+    // ── vision stage (render + model + parse, one checkpoint) ─────────────
+    let visionParsed: VisionStageParsed;
+    try {
+      const result = await stageRunner.runStage<VisionStageParsed | undefined, string>({
+        unit: "page",
+        key: key(VISION1_STAGE),
+        // The input hash pins render DPI + model + page; a resume with the same
+        // stand reuses the checkpoint. The source sha256 anchors the content.
+        inputHash: visionInputHash,
+        budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate },
+        fn: async () => {
+          let rendered: Awaited<ReturnType<PreparedSource["render"]>>;
+          try {
+            rendered = await prepared.render(page);
+          } catch (error) {
+            // A per-page render/text failure (broken xref, decoder choke) is
+            // permanent for THIS page: mark it failed with a warning and let the
+            // job continue, exactly as v1 collapsed a bad page to an empty one
+            // rather than failing the whole document.
+            throw new PermanentStageError(
+              `render failed on page ${page}: ${errMessage(error)}`,
+              `Die Seite konnte nicht gerendert oder ihr Text nicht extrahiert werden: ${errMessage(error)}`,
+            );
+          }
+          pageImage = rendered.image;
+
+          // ── render-hash dedup (task 2.2, requirement 7.4) ──────────────
+          // If an already-processed page rendered identically, reuse its vision
+          // result verbatim instead of calling the model again. The reuse is a
+          // deterministic copy of the source page's persisted vision checkpoint
+          // — no model call, no budget spend — exactly the "reuse the vision
+          // result" the requirement asks for.
+          const hash = await renderHash(rendered.image.buffer);
+          const decision = dedup.register(page, hash);
+          if (decision.kind === "duplicate") {
+            const reused = await reuseVisionFromPage(job, decision.sourcePage, page, rendered);
+            if (reused !== null) {
+              // A deterministic stage result: raw carried over so `reparse`
+              // still works, tokensUsed 0 so the budget is not charged twice.
+              return { raw: reused.raw, parsed: reused.parsed, tokensUsed: 0 };
+            }
+            // The source checkpoint was not ready (e.g. still in flight in the
+            // same window); fall through to a fresh, correct vision call.
+          }
+
+          // ── S2 heading candidates as a Pass-1 hint (task 2.3) ──────────
+          // Best-effort and order-independent: the analyzer never throws (it
+          // degrades to an empty analysis), so a page with no text layer or a
+          // container without `-bbox-layout` simply passes no hints. The
+          // analysis is cheap (no model) and not itself checkpointed here — the
+          // ordered `analyzed` stage is task 2.6's concern; here we only need
+          // the per-page heading candidates the prompt consumes.
+          const analysis = await runPageAnalysis(preparedAnalyzer, page);
+          const headingCandidates = analysis?.headingCandidates.map((c) => ({
+            numbering: c.numbering,
+            text: c.text,
+          }));
+
+          // ── S2 classification (task 2.2, requirement 7.2) ─────────────
+          // The real page size in points (never pixels) and the ink outside
+          // the S2 text blocks drive the class, which in turn gates the fast
+          // path and the tiling stage.
+          const sizePt = resolvePageSizePt(rendered, analysis, config.renderDpi);
+          const classification = await classifyRenderedPage({
+            imageBuffer: rendered.image.buffer,
+            rawText: rendered.rawText,
+            usedOcr: rendered.usedOcr,
+            sizePt,
+            analysis,
+          });
+
+          // ── text fast-path (task 2.9, requirements 7.5, 18.1) ──────────
+          // A `text` page with no table/figure candidates and usable S2
+          // geometry builds its blocks deterministically from that geometry —
+          // NO vision call, tokensUsed 0. The gate is conservative: any anomaly
+          // (not text, no geometry, too much ink outside the blocks, a flagged
+          // fidelity check, incomplete coverage of the text layer, a table or
+          // figure candidate) falls the page back to the vision path below.
+          if (fastPathEnabled && analysis !== null) {
+            const fast = await tryFastPath(page, rendered, analysis, classification, sizePt);
+            if (fast !== null) {
+              return { raw: null, parsed: fast, tokensUsed: 0 };
+            }
+          }
+
+          // ── previous-page context (design §5 S3) ───────────────────────
+          const prev = await prevPageContextFor(job, page);
+
+          // This page takes the vision path (either the fast path was disabled
+          // / ineligible, or there was no S2 analysis). Count the route so the
+          // "Anteil Fast-Path" share (requirement 18.1) reflects it.
+          metrics?.recordFastPath("vision");
+          const response = await vision.analyzePage({
+            page,
+            pageCount,
+            rawText: rendered.rawText,
+            image: { buffer: rendered.image.buffer, mimeType: rendered.image.mimeType },
+            ...(headingCandidates !== undefined && headingCandidates.length > 0
+              ? { headingCandidates }
+              : {}),
+            ...(prev.context !== null ? { prevPage: prev.context } : {}),
+          });
+          const parsed = parseVisionPage(response.raw, page);
+          // ── S4 deterministic refinement (task 2.4, requirement 8.2) ────
+          // Snap each figure bbox to the ink + text blocks and pull the
+          // text-layer words inside it. Folded into the vision1 checkpoint
+          // (not a separate stage) because it consumes exactly what this stage
+          // already has to hand — the rendered page image and this page's S2
+          // analysis — and its output must be persisted so a resume reuses the
+          // snapped bbox and regionText without recomputing. See the S4 note in
+          // `refineFigures`.
+          const refined = await refineFigures(parsed.figures, rendered.image, analysis);
+          const stageParsed: VisionStageParsed = {
+            summary: parsed.summary,
+            markdown: parsed.markdown,
+            figures: refined,
+            tables: parsed.tables.map((t) => ({
+              index: t.index,
+              continues: t.continues,
+              continuationOf: t.continuationOf,
+            })),
+            warnings: [...parsed.warnings, ...(response.truncated ? [TRUNCATION_WARNING] : [])],
+            usedOcr: rendered.usedOcr,
+            usage: { requests: response.requests, ...response.usage },
+            truncated: response.truncated,
+            size: { wPt: sizePt.widthPt, hPt: sizePt.heightPt },
+            imageWidth: rendered.image.width,
+            imageHeight: rendered.image.height,
+            pageClass: classification.class,
+            renderHash: hash,
+            prevPageContext: prev.context,
+            prevPageContextHash: prev.hash,
+          };
+          return { raw: response.raw, parsed: stageParsed, tokensUsed: response.usage.totalTokens };
+        },
+      });
+      // A reused/resumed checkpoint carries the source page's render hash;
+      // re-register it so a *third* identical page still points at a source.
+      if (result.parsed?.renderHash != null) {
+        dedup.register(page, result.parsed.renderHash);
+      }
+      if (result.parsed === undefined) {
+        // The vision stage failed permanently (its checkpoint is `failed`). Do
+        // not lose the document over one page: emit an empty page carrying the
+        // failure warning and advance the cursor so the scheduler moves past it,
+        // exactly as v1 did.
+        const warning = result.row.error ?? "Die Seite konnte nicht verarbeitet werden.";
+        const record: PageRecord = { ...emptyRecord(page), warnings: [warning] };
+        await stageEmitRow(job, page, record);
+        await stageRunner.runStage<{ page: number }, null>({
+          unit: "page",
+          key: key(EMITTED_STAGE),
+          inputHash: stageHash(["emit", job.source_sha256, page]),
+          fn: async () => ({ raw: null, parsed: { page } }),
+        });
+        return { completed: true, paused: false, record, assetIds: [], usage: empty };
+      }
+      visionParsed = result.parsed;
+    } catch (err) {
+      if (err instanceof BudgetExhaustedError) {
+        return { completed: false, paused: true, record: emptyRecord(page), assetIds: [], usage: empty };
+      }
+      throw err;
+    }
+
+    // ── crops stage: cut each figure and stage it to the asset area ───────
+    const cropKey = key(CROPS_STAGE);
+    const existingCrops = await store.getStage("page", cropKey);
+    const assetIds: string[] = [];
+    if (existingCrops === null || existingCrops.status !== "done") {
+      // Re-render is only possible while we still hold the page image (i.e. the
+      // vision stage just ran). On a pure resume where vision was reused, the
+      // page image is null; re-render it deterministically for the crops.
+      if (pageImage === null && visionParsed.figures.some((f) => isCroppable(f.bbox))) {
+        const rendered = await prepared.render(page);
+        pageImage = rendered.image;
+      }
+      const staged = await stageCrops({
+        job,
+        page,
+        prepared,
+        pageImage,
+        figures: visionParsed.figures,
+      });
+      assetIds.push(...staged);
+      // A page image is always addressable as an asset even without figures.
+      await lease_guardStageAsset(args.job, page, pageAssetId(job.reference, page), "page");
+      await args.stageRunner.runStage<{ assetIds: string[] }, null>({
+        unit: "page",
+        key: cropKey,
+        inputHash: stageHash(["crops", job.source_sha256, page]),
+        fn: async () => ({ raw: null, parsed: { assetIds } }),
+      });
+    } else {
+      const parsed = (existingCrops.output as { parsed?: { assetIds?: string[] } } | null)?.parsed;
+      if (parsed?.assetIds !== undefined) assetIds.push(...parsed.assetIds);
+    }
+
+    // ── figure Pass 2 (S5): a checkpointed stage per gated figure ─────────
+    // Each figure that passes the gate (kind ∈ FIGURE_PASS2_KINDS, area ≥ the
+    // minimum, budget available) gets its own `figure2` checkpoint. The
+    // resulting transcription is written back onto `visionParsed.figures` so
+    // the page record built below emits it, and a resume replays the checkpoint
+    // with no model call. A budget exhaustion pauses the job cleanly, exactly
+    // like the page-budget path.
+    try {
+      await runFigurePass2({ job, page, prepared, stageRunner, budget, visionParsed });
+    } catch (err) {
+      if (err instanceof BudgetExhaustedError) {
+        return { completed: false, paused: true, record: emptyRecord(page), assetIds, usage: empty };
+      }
+      throw err;
+    }
+
+    // ── tiling (S6): split a large-format page into overlapping tiles ─────
+    // A `drawing` page or a sheet over A3 is transcribed tile-by-tile at a
+    // higher effective resolution and the results merged, with each tile stored
+    // as a `tile` asset (design §5 S6, task 5.1, requirement 8.5). A normal page
+    // is a single tile and is left untouched. Budget exhaustion pauses the job
+    // cleanly, exactly like the figure Pass-2 path above.
+    try {
+      const tileAssetIds = await runTilePass({ job, page, prepared, stageRunner, budget, visionParsed });
+      assetIds.push(...tileAssetIds);
+    } catch (err) {
+      if (err instanceof BudgetExhaustedError) {
+        return { completed: false, paused: true, record: emptyRecord(page), assetIds, usage: empty };
+      }
+      throw err;
+    }
+
+    // ── fast-path page summary (requirement 7.5, design §5 S3) ────────────
+    // A fast-path page made no vision call, so it has no Pass-1 summary. When
+    // the text-LLM is configured, it gets one as its own checkpointed,
+    // budget-gated stage; without it the page simply carries none.
+    try {
+      await runFastPathSummary({ job, page, stageRunner, budget, visionParsed });
+    } catch (err) {
+      if (err instanceof BudgetExhaustedError) {
+        return { completed: false, paused: true, record: emptyRecord(page), assetIds, usage: empty };
+      }
+      throw err;
+    }
+
+    // ── build the v2 page record ──────────────────────────────────────────
+    const record = buildPageRecord(job.reference, page, visionParsed);
+
+    // ── emitted stage: stage the page's emit-outbox row (cursor) ──────────
+    await stageEmitRow(job, page, record);
+    await stageRunner.runStage<{ page: number }, null>({
+      unit: "page",
+      key: key(EMITTED_STAGE),
+      // The block-model version is part of the emitted record's inputs: a new
+      // Markdown → block mapping must not be mistaken for the staged record.
+      inputHash: stageHash(["emit", job.source_sha256, page, `blocks:${MARKDOWN_BLOCKS_VERSION}`]),
+      fn: async () => ({ raw: null, parsed: { page } }),
+    });
+
+    return {
+      completed: true,
+      paused: false,
+      record,
+      assetIds,
+      usage: visionParsed.usage,
+    };
+  }
+
+  /**
+   * Reuse an already-processed identical page's vision result (task 2.2,
+   * requirement 7.4). Loads the source page's `vision1` checkpoint; when it is
+   * `done` with a persisted raw response, returns a stage result that carries
+   * the source's raw + parsed but re-anchored to this page's size/image
+   * dimensions (so crops and the record use this page's own geometry, which is
+   * identical anyway). Returns `null` when the source checkpoint is not ready —
+   * the caller then falls back to a fresh vision call.
+   */
+  async function reuseVisionFromPage(
+    job: JobRow,
+    sourcePage: number,
+    page: number,
+    rendered: Awaited<ReturnType<PreparedSource["render"]>>,
+  ): Promise<{ raw: string | null; parsed: VisionStageParsed } | null> {
+    const sourceRow = await store.getStage("page", {
+      job_id: job.id,
+      page: sourcePage,
+      stage: VISION1_STAGE,
+    });
+    if (sourceRow === null || sourceRow.status !== "done") return null;
+    const output = sourceRow.output as { raw?: unknown; parsed?: VisionStageParsed } | null;
+    const sourceParsed = output?.parsed;
+    if (sourceParsed === undefined) return null;
+
+    logger.debug(
+      { jobId: job.id, page, sourcePage },
+      "Identical render hash; reusing the source page's vision result (no model call)",
+    );
+    // Figure ids are page-scoped (`p<page>-f<n>`) and must be document-unique,
+    // so the copy re-ids them for this page — exactly the ids a re-parse of the
+    // copied raw response as this page yields — and rewrites the body
+    // placeholders in lockstep.
+    let markdown = sourceParsed.markdown;
+    const figures = sourceParsed.figures.map((figure, index) => {
+      const id = buildFigureId(page, index + 1);
+      markdown = markdown.split(buildFigurePlaceholder(figure.id)).join(buildFigurePlaceholder(id));
+      const { transcription: _transcription, ...rest } = figure;
+      return { ...rest, id };
+    });
+    // A fast-path source carries page-stamped blocks; re-stamp them likewise.
+    const fastPathBlocks = sourceParsed.fastPathBlocks?.map((block) => ({
+      ...block,
+      id: block.id.replace(/^p\d+-/, `p${page}-`),
+      page,
+    }));
+    const parsed: VisionStageParsed = {
+      ...sourceParsed,
+      markdown,
+      figures,
+      ...(fastPathBlocks !== undefined ? { fastPathBlocks } : {}),
+      // Re-anchor to this page's own (identical) rendered geometry. Size and
+      // class are the source's: the render is byte-identical.
+      usedOcr: rendered.usedOcr,
+      imageWidth: rendered.image.width,
+      imageHeight: rendered.image.height,
+      // The reused copy costs no tokens.
+      usage: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      // Pass 2 / tiling copy the source page's results (no model call).
+      dedupOf: sourceParsed.dedupOf ?? sourcePage,
+      // The copy was not produced from any context of its own.
+      prevPageContext: null,
+      prevPageContextHash: null,
+    };
+    const raw = typeof output?.raw === "string" ? output.raw : null;
+    return { raw, parsed };
+  }
+
+  /**
+   * The finished result of a dedup source page's per-figure / per-tile stage
+   * (requirement 7.4), or `null` when it is not `done` yet (e.g. still in
+   * flight in the same window) — the caller then runs the stage normally. The
+   * raw response is carried along so a `reparse` of the copy still works.
+   */
+  async function dedupSourceResult<P>(
+    unit: "figure" | "tile",
+    key: StageKey,
+  ): Promise<{ raw: string | null; parsed: P } | null> {
+    const row = await store.getStage(unit, key);
+    if (row === null || row.status !== "done" || !isStageOutput(row.output)) return null;
+    const output = row.output as StageOutput<P | null, unknown>;
+    if (output.parsed === null || output.parsed === undefined) return null;
+    logger.debug(
+      { jobId: key.job_id, sourcePage: key.page, stage: key.stage },
+      "Duplicate page: reusing the source page's stage result (no model call)",
+    );
+    return { raw: typeof output.raw === "string" ? output.raw : null, parsed: output.parsed };
+  }
+
+  /**
+   * Attempt the deterministic text fast-path for a page (task 2.9, requirements
+   * 7.5, 18.1). Returns a fully-formed {@link VisionStageParsed} when the page
+   * qualifies — built from the S2 geometry with NO model call, all-zero usage —
+   * or `null` when the eligibility gate says the page must go through vision.
+   *
+   * The gate (every step conservative — any doubt → `null`, vision runs):
+   *   1. {@link fastPathEligibility} on the page's classification (computed by
+   *      the caller WITH the ink-outside-blocks ratio): text class, usable
+   *      geometry, ink at or below the ceiling;
+   *   2. no table/figure candidate in the geometry or the text layer
+   *      ({@link detectFastPathCandidates}: column-aligned lines, captions);
+   *   3. the built blocks cover the text layer's words
+   *      ({@link checkFastPathCoverage});
+   *   4. the fidelity check (requirement 7.5) does not flag — a flagged check
+   *      falls back to vision instead of emitting a divergent page.
+   *
+   * Records the fidelity outcome and, on success, the fast-path route. Never
+   * throws: any failure degrades to `null` so the page safely uses vision.
+   */
+  async function tryFastPath(
+    page: number,
+    rendered: RenderedPageInput,
+    analysis: PageAnalysis,
+    classification: Classification,
+    sizePt: { widthPt: number; heightPt: number },
+  ): Promise<VisionStageParsed | null> {
+    try {
+      const decision = fastPathEligibility({
+        enabled: fastPathEnabled,
+        classification,
+        analysis,
+        maxInkRatio: fastPathMaxInkRatio,
+      });
+      if (!decision.eligible) {
+        logger.debug({ page, reason: decision.reason }, "Text fast-path declined; using vision");
+        return null;
+      }
+
+      const candidates = detectFastPathCandidates(analysis, rendered.rawText);
+      if (candidates.table || candidates.figure) {
+        logger.debug({ page, candidates }, "Text fast-path declined: table/figure candidate; using vision");
+        return null;
+      }
+
+      const blocks = buildTextFastPathBlocks(analysis, page);
+      if (blocks.length === 0) {
+        // No blocks could be built despite passing the gate (all-empty text):
+        // let vision handle it rather than emit an empty page.
+        return null;
+      }
+
+      // The blocks must reproduce the text layer: a word the geometry lost
+      // (text outside every block, a dropped run) means the page is not what
+      // the text layer says, so vision handles it.
+      const coverage = checkFastPathCoverage(rendered.rawText, blocks);
+      if (!coverage.complete) {
+        logger.debug({ page, coverage: coverage.ratio }, "Text fast-path declined: incomplete token coverage");
+        return null;
+      }
+
+      // The fidelity check stays active (requirement 7.5) and is binding: a
+      // flagged divergence between blocks and text layer falls back to vision.
+      const fidelity = checkFastPathFidelity(rendered.rawText, blocks);
+      metrics?.recordTextFidelity({ flagged: fidelity.flagged, missingTokens: fidelity.missing.length });
+      if (fidelity.flagged) {
+        logger.info(
+          { page, missing: fidelity.missing.length },
+          "Text fast-path declined: fidelity check flagged a divergence; using vision",
+        );
+        return null;
+      }
+      metrics?.recordFastPath("fast-path");
+
+      logger.debug({ page, blocks: blocks.length }, "Text fast-path: blocks built from S2, no vision call");
+
+      const parsed: VisionStageParsed = {
+        summary: undefined,
+        // No Pass-1 summary on the fast path (no vision call); the separate,
+        // checkpointed `summary:page` stage fills it over the text-LLM when one
+        // is configured. The page markdown is left empty because the blocks
+        // below are authoritative.
+        markdown: "",
+        figures: [],
+        tables: [],
+        warnings: [],
+        usedOcr: false,
+        usage: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        truncated: false,
+        size: { wPt: sizePt.widthPt, hPt: sizePt.heightPt },
+        imageWidth: rendered.image.width,
+        imageHeight: rendered.image.height,
+        pageClass: "text",
+        renderHash: await renderHash(rendered.image.buffer),
+        fastPath: true,
+        fastPathBlocks: blocks,
+      };
+      return parsed;
+    } catch (err) {
+      logger.warn({ page, err }, "Text fast-path failed; falling back to vision");
+      return null;
+    }
+  }
+
+  /**
+   * Run the deterministic S2 analysis for a page, returning `null` when there
+   * is no analyzer bound. Never throws — the analyzer degrades to an empty
+   * analysis on any per-page failure — so a hint that cannot be produced simply
+   * is not produced, and the page falls through to vision unhinted.
+   */
+  async function runPageAnalysis(
+    preparedAnalyzer: PreparedAnalyzer | null,
+    page: number,
+  ): Promise<PageAnalysis | null> {
+    if (preparedAnalyzer === null) return null;
+    const started = Date.now();
+    try {
+      const analysis = await preparedAnalyzer.analyze(page, scope().signal);
+      metrics?.recordStage?.({ stage: "analyzed", outcome: "done", durationMs: Date.now() - started });
+      return analysis;
+    } catch (err) {
+      assertLive();
+      metrics?.recordStage?.({ stage: "analyzed", outcome: "failed_transient", durationMs: Date.now() - started });
+      logger.warn({ page, err }, "S2 page analysis failed; continuing without heading hints");
+      return null;
+    }
+  }
+
+  /**
+   * The previous-page context for page N's Pass-1 prompt (design §5 S3, ≤300
+   * tokens): the headings of page N−1 (from its blocks) and the header row of a
+   * table page N−1 left open (`continues`).
+   *
+   * ## Why this is resume-idempotent without being in the input hash
+   *
+   * Pages run concurrently, so whether page N−1 is finished when page N starts
+   * depends on scheduling. The context is therefore used ONLY when page N−1's
+   * `vision1` checkpoint is already `done`; otherwise page N runs without it —
+   * never waiting on N−1, so there is no ordering deadlock. The context is NOT
+   * folded into the `vision1` input hash: a resume would otherwise see N−1 done
+   * (where the first run did not), compute a different hash and pay for a
+   * second model call for an already finished page. Instead the context that
+   * was actually used, and its hash, are persisted on page N's checkpoint; a
+   * resume reuses that checkpoint verbatim (same input hash), so the result is
+   * identical and no model is called twice. The full heading chain from pages
+   * 1..N−1 is the ordered document pass's state and is not available here;
+   * page N−1's own headings are the bounded stand-in the design allows.
+   */
+  async function prevPageContextFor(
+    job: JobRow,
+    page: number,
+  ): Promise<{ context: PrevPageContext | null; hash: string | null }> {
+    const none = { context: null, hash: null };
+    if (page <= 1) return none;
+    const row = await store.getStage("page", { job_id: job.id, page: page - 1, stage: VISION1_STAGE });
+    if (row === null || row.status !== "done") return none;
+    const prevParsed = parsedOfRow<VisionStageParsed>(row);
+    if (prevParsed === undefined) return none;
+    const blocks =
+      prevParsed.fastPath === true && prevParsed.fastPathBlocks !== undefined
+        ? prevParsed.fastPathBlocks
+        : parseMarkdownBlocks(prevParsed.markdown, { page: page - 1, source: "vision" }).items.flatMap((i) =>
+            i.kind === "block" ? [i.block] : [],
+          );
+    const headingChain = blocks.flatMap((b) => (b.type === "heading" ? [headingDisplayText(b)] : []));
+    let lastTableHeader: string | undefined;
+    for (const block of blocks) {
+      if (block.type === "table" && block.continues === true) lastTableHeader = tableHeaderText(block);
+    }
+    if (headingChain.length === 0 && lastTableHeader === undefined) return none;
+    const context: PrevPageContext = {
+      headingChain,
+      ...(lastTableHeader !== undefined ? { lastTableHeader } : {}),
+    };
+    return { context, hash: sha256Hex(JSON.stringify(context)) };
+  }
+
+  /**
+   * The page summary of a fast-path page (requirement 7.5): a fast-path page
+   * made no vision call and so has no Pass-1 summary. When the text-LLM is
+   * configured it is produced as its own checkpointed, budget-gated stage
+   * `summary:page` over the page's block text; a resume reuses the checkpoint
+   * with no model call. Without a summary client (or on a vision page) this is
+   * a no-op. A text-LLM outage surfaces as a transient stage failure, so the
+   * page backs off and the job pauses on dependency like a vision outage.
+   */
+  async function runFastPathSummary(args: {
+    job: JobRow;
+    page: number;
+    stageRunner: StageRunner;
+    budget: BudgetLedger;
+    visionParsed: VisionStageParsed;
+  }): Promise<void> {
+    const { job, page, stageRunner, budget, visionParsed } = args;
+    if (summaryClient === null || visionParsed.fastPath !== true || visionParsed.summary !== undefined) return;
+    const content = fastPathMarkdown(visionParsed.fastPathBlocks ?? []);
+    if (content.trim() === "") return;
+    // A render-hash duplicate copies the source page's summary (no call).
+    let sourceCopy: { raw: string | null; parsed: { summary: string } } | null = null;
+    if (visionParsed.dedupOf !== undefined) {
+      const row = await store.getStage("page", { job_id: job.id, page: visionParsed.dedupOf, stage: "summary:page" });
+      const copied = row?.status === "done" ? parsedOfRow<{ summary: string }>(row) : undefined;
+      if (copied !== undefined && typeof copied.summary === "string") {
+        sourceCopy = { raw: copied.summary, parsed: copied };
+      }
+    }
+    const result = await stageRunner.runStage<{ summary: string } | undefined, string>({
+      unit: "page",
+      key: { job_id: job.id, page, stage: "summary:page" },
+      inputHash: stageHash([
+        "summary:page",
+        job.source_sha256,
+        page,
+        SUMMARY_PROMPT_VERSION,
+        config.summaryModel ?? "",
+        sha256Hex(content),
+      ]),
+      ...(sourceCopy !== null
+        ? {}
+        : { budget: { ledger: budget, estimatedTokens: config.summaryTokenEstimate ?? 512 } }),
+      fn: async () => {
+        if (sourceCopy !== null) return { raw: sourceCopy.raw, parsed: sourceCopy.parsed, tokensUsed: 0 };
+        try {
+          const res = await summaryClient.summarize({ scope: "page", content });
+          return { raw: res.text, parsed: { summary: res.text }, tokensUsed: res.usage.totalTokens };
+        } catch (err) {
+          if (err instanceof TransientSummaryFailure) throw new TransientStageError(err.message, err);
+          throw err;
+        }
+      },
+    });
+    const summary = result.parsed?.summary?.trim();
+    if (summary !== undefined && summary !== "") visionParsed.summary = summary;
+  }
+
+  /**
+   * Run Pass 2 (S5) for each gated figure on a page (task 2.5, requirements
+   * 8.3/8.4/8.6). For each figure it decides — via {@link pass2Gate} — whether
+   * Pass 2 applies, and when it does runs a per-figure `figure2` stage that
+   * calls the vision model once (twice on a low-coverage retry), parses the
+   * response into a validated {@link Transcription}, and persists it on the
+   * checkpoint. The transcription is written back onto the in-memory figure so
+   * the page record emits it; on a resume the checkpoint is reused verbatim
+   * with no model call.
+   *
+   * Gating and coverage:
+   *  - a kind outside `FIGURE_PASS2_KINDS`, a figure below the minimum area, or
+   *    a figure with no usable bbox is skipped (no stage, no model call);
+   *  - after Pass 2, label coverage is measured against the figure's `labels`;
+   *    below `LABEL_COVERAGE_MIN` a warning is pushed and Pass 2 is retried
+   *    exactly once, then whatever coverage results is accepted (still warned).
+   *
+   * A budget exhaustion propagates as {@link BudgetExhaustedError} so the caller
+   * pauses the job; a transcription failure never fails the page (the parser
+   * degrades to a markdown transcription, and a permanent stage failure just
+   * leaves the figure without a transcription and a warning on the job).
+   */
+  async function runFigurePass2(args: {
+    job: JobRow;
+    page: number;
+    prepared: PreparedSource;
+    stageRunner: StageRunner;
+    budget: BudgetLedger;
+    visionParsed: VisionStageParsed;
+  }): Promise<void> {
+    const { job, page, prepared, stageRunner, budget, visionParsed } = args;
+    const kinds = new Set<string>(config.figurePass2Kinds);
+    const pageWarnings: string[] = [];
+
+    // Hold at most one figure-DPI page render, cut per figure and discarded
+    // when the page finishes so memory does not accumulate.
+    let figurePage: PageImage | null = null;
+
+    for (const figure of visionParsed.figures) {
+      const gate = pass2Gate(figure, kinds, config.figurePass2MinArea);
+      if (!gate.run) continue;
+
+      const bbox = gate.bbox;
+      const figureKey: StageKey = {
+        job_id: job.id,
+        page,
+        figure_id: figure.id,
+        stage: FIGURE2_STAGE,
+      };
+      // The input hash pins the crop's inputs: source, page, figure, kind, DPI,
+      // model and the snapped bbox. A resume with the same stand reuses the
+      // checkpoint; a changed bbox (a re-run S4) recomputes.
+      // The run's pipeline/prompt stand and the coverage threshold (it decides
+      // the retry) are part of the input too (design §9b.2).
+      const inputHash = stageHash([
+        "figure2",
+        job.source_sha256,
+        page,
+        figure.id,
+        figure.kind ?? "other",
+        config.figureDpi,
+        config.visionModel,
+        config.labelCoverageMin,
+        bbox.join(","),
+      ]);
+
+      type Figure2Parsed = { transcription: Transcription; coverage: number; warnings: string[] };
+
+      // ── dedup (requirement 7.4): a duplicate page copies the source page's
+      //    finished Pass-2 result for the same figure — no model call, no
+      //    budget. Figures are re-id'd in order, so ordinal n maps to n.
+      const sourceCopy =
+        visionParsed.dedupOf !== undefined
+          ? await dedupSourceResult<Figure2Parsed>("figure", {
+              job_id: job.id,
+              page: visionParsed.dedupOf,
+              figure_id: buildFigureId(visionParsed.dedupOf, figureOrdinalOf(figure.id)),
+              stage: FIGURE2_STAGE,
+            })
+          : null;
+
+      const result = await stageRunner.runStage<Figure2Parsed | undefined, string>({
+        unit: "figure",
+        key: figureKey,
+        inputHash,
+        ...(sourceCopy !== null
+          ? {}
+          : { budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate } }),
+        fn: async () => {
+          if (sourceCopy !== null) return { raw: sourceCopy.raw, parsed: sourceCopy.parsed, tokensUsed: 0 };
+          // Render the figure-DPI crop once per figure (reusing the figure-DPI
+          // page render across figures on the page).
+          if (figurePage === null) {
+            const rendered = await prepared.render(page);
+            // renderFigureCrop re-renders at figureDpi internally when it beats
+            // the model resolution; pass the model page as the fallback source.
+            figurePage = rendered.image;
+          }
+          const crop = await prepared
+            .renderFigureCrop(page, bbox as unknown as BoundingBox, figurePage)
+            .catch(() => null);
+          if (crop === null) {
+            throw new PermanentStageError(
+              `figure crop failed on page ${page} figure ${figure.id}`,
+              `Die Abbildung konnte für Pass 2 nicht ausgeschnitten werden.`,
+            );
+          }
+
+          const kind = figure.kind ?? "other";
+          const regionText = figure.regionText ?? "";
+          const labels = figure.labels ?? [];
+
+          // First Pass-2 call.
+          let response = await vision.analyzeFigure({
+            page,
+            figureId: figure.id,
+            kind,
+            regionText,
+            ...(figure.caption !== undefined ? { caption: figure.caption } : {}),
+            image: { buffer: crop.buffer, mimeType: crop.mimeType },
+          });
+          let tokensUsed = response.usage.totalTokens;
+          let parsed = parseTranscription(kind, response.raw);
+          if (parsed === null) {
+            // Defensive: the gate guarantees a parser exists for this kind.
+            throw new PermanentStageError(
+              `no Pass-2 parser for kind ${kind}`,
+              `Für den Abbildungstyp ${kind} gibt es keine Pass-2-Transkription.`,
+            );
+          }
+          const warnings = [...parsed.warnings];
+          let coverage = labelCoverage(labels, parsed.transcription);
+
+          // Label-coverage check with a single retry (requirement 8.4).
+          const threshold = config.labelCoverageMin / 100;
+          if (labels.length > 0 && coverage < threshold) {
+            warnings.push(
+              `Pass 2 für Abbildung ${figure.id}: Label-Coverage ${(coverage * 100).toFixed(0)} % unter ${config.labelCoverageMin} %; wird einmal wiederholt.`,
+            );
+            const retry = await vision.analyzeFigure({
+              page,
+              figureId: figure.id,
+              kind,
+              regionText,
+              ...(figure.caption !== undefined ? { caption: figure.caption } : {}),
+              image: { buffer: crop.buffer, mimeType: crop.mimeType },
+            });
+            tokensUsed += retry.usage.totalTokens;
+            const retryParsed = parseTranscription(kind, retry.raw);
+            if (retryParsed !== null) {
+              const retryCoverage = labelCoverage(labels, retryParsed.transcription);
+              // Keep whichever attempt covered more of the labels.
+              if (retryCoverage >= coverage) {
+                response = retry;
+                parsed = retryParsed;
+                coverage = retryCoverage;
+                warnings.push(...retryParsed.warnings);
+              }
+            }
+            if (coverage < threshold) {
+              warnings.push(
+                `Pass 2 für Abbildung ${figure.id}: Label-Coverage weiterhin ${(coverage * 100).toFixed(0)} % nach Wiederholung.`,
+              );
+            }
+          }
+
+          return {
+            raw: response.raw,
+            parsed: { transcription: parsed.transcription, coverage, warnings },
+            tokensUsed,
+          };
+        },
+      });
+
+      if (result.parsed !== undefined) {
+        figure.transcription = result.parsed.transcription;
+        for (const warning of result.parsed.warnings) {
+          if (!pageWarnings.includes(warning)) pageWarnings.push(warning);
+        }
+      }
+      // A permanent figure failure (crop/parser) is recorded on the job by the
+      // stage runner; the figure simply keeps no transcription. Do not fail the
+      // page over one figure.
+    }
+
+    if (pageWarnings.length > 0) {
+      visionParsed.warnings = [...visionParsed.warnings, ...pageWarnings];
+    }
+  }
+
+  /**
+   * Run the large-format tiling stage (S6) for a page (design §5 S6, task 5.1,
+   * requirements 8.5, 14.4). A page classified as `drawing`, or whose long edge
+   * exceeds A3, is split into an N×M grid of overlapping tiles; each tile gets
+   * its own checkpointed `tiled` stage that renders the tile crop, transcribes
+   * it with the technical-drawing prompt, and is stored as a `tile` asset. The
+   * per-tile transcriptions are merged (overlap deduplicated) and written onto
+   * `visionParsed.tiled` so `buildPageRecord` emits a page-spanning
+   * `technical_drawing` figure block with `tiles[]`.
+   *
+   * Mirrors {@link runFigurePass2}: one checkpoint per tile keyed on
+   * `(job, page, tile_id, tiled)` with an input hash that pins source, page,
+   * tile bbox, DPI, model and prompt kind, so a resume replays each tile with
+   * no model call and the merge re-runs deterministically. A budget exhaustion
+   * propagates as {@link BudgetExhaustedError}; a per-tile transcription failure
+   * never fails the page (the tile simply contributes no transcription).
+   *
+   * Returns the `tile` asset ids staged, in grid order (empty for a normal,
+   * single-tile page — the stage is then a no-op).
+   */
+  async function runTilePass(args: {
+    job: JobRow;
+    page: number;
+    prepared: PreparedSource;
+    stageRunner: StageRunner;
+    budget: BudgetLedger;
+    visionParsed: VisionStageParsed;
+  }): Promise<string[]> {
+    const { job, page, prepared, stageRunner, budget, visionParsed } = args;
+
+    const size = { widthPt: visionParsed.size.wPt, heightPt: visionParsed.size.hPt };
+    if (!shouldTilePage(visionParsed.pageClass, size)) return [];
+
+    const grid = planTiles(size, {
+      tileTargetPixels: config.tileTargetPixels ?? 2000,
+      overlapFraction: config.tileOverlapFraction ?? 0.1,
+      maxTiles: config.tileMaxPerPage ?? 16,
+      maxPixels: config.renderMaxPixels ?? 40_000_000,
+    });
+    // A page that fits in a single tile is not actually tiled — leave it to the
+    // ordinary figure path so we do not emit a redundant whole-page "tile".
+    if (grid.singleTile) return [];
+
+    logger.debug(
+      { jobId: job.id, page, cols: grid.cols, rows: grid.rows, dpi: grid.dpi },
+      "Tiling large-format page into an overlapping grid (S6)",
+    );
+
+    // Hold at most one model-resolution page render, reused as the crop source
+    // for every tile and discarded when the page finishes.
+    let tilePage: PageImage | null = null;
+    const contributions: TileContribution[] = [];
+    const tileRefs: TileRef[] = [];
+    const assetIds: string[] = [];
+    const pageWarnings: string[] = [];
+
+    for (const tile of grid.tiles) {
+      const localId = tileLocalId(`p${page}-${tile.tileId}`);
+      const assetId = buildAssetId(job.reference, localId);
+      const tileKey: StageKey = {
+        job_id: job.id,
+        page,
+        tile_id: tile.tileId,
+        stage: TILED_STAGE,
+      };
+      // Pin the tile's inputs: source, page, tile bbox, grid DPI, model and the
+      // drawing prompt kind. A resume with the same stand reuses the checkpoint;
+      // a different page size (a re-render) recomputes.
+      // The run's pipeline/prompt stand is folded in by stageHash (§9b.2).
+      const inputHash = stageHash([
+        "tiled",
+        job.source_sha256,
+        page,
+        tile.tileId,
+        grid.dpi,
+        config.visionModel,
+        "technical_drawing",
+        tile.bbox.join(","),
+      ]);
+
+      type TileParsed = { transcription: Transcription; warnings: string[] };
+
+      // ── dedup (requirement 7.4): a duplicate page has the identical grid;
+      //    copy the source page's finished transcription of the same tile.
+      const sourceCopy =
+        visionParsed.dedupOf !== undefined
+          ? await dedupSourceResult<TileParsed>("tile", {
+              job_id: job.id,
+              page: visionParsed.dedupOf,
+              tile_id: tile.tileId,
+              stage: TILED_STAGE,
+            })
+          : null;
+
+      const result = await stageRunner.runStage<TileParsed | undefined, string>({
+        unit: "tile",
+        key: tileKey,
+        inputHash,
+        ...(sourceCopy !== null
+          ? {}
+          : { budget: { ledger: budget, estimatedTokens: config.visionTokenEstimate } }),
+        fn: async () => {
+          if (sourceCopy !== null) return { raw: sourceCopy.raw, parsed: sourceCopy.parsed, tokensUsed: 0 };
+          if (tilePage === null) {
+            const rendered = await prepared.render(page);
+            tilePage = rendered.image;
+          }
+          const crop = await prepared
+            .renderFigureCrop(page, tile.bbox as unknown as BoundingBox, tilePage)
+            .catch(() => null);
+          if (crop === null) {
+            throw new PermanentStageError(
+              `tile crop failed on page ${page} tile ${tile.tileId}`,
+              `Eine Kachel konnte für die Transkription nicht ausgeschnitten werden.`,
+            );
+          }
+          // Transcribe the tile as a technical drawing; the region text is not
+          // available per-tile (S4 runs per figure, not per tile), so the model
+          // works from the crop alone, which is the plan-prompt case in §5 S6.
+          const response = await vision.analyzeFigure({
+            page,
+            figureId: `${page}:${tile.tileId}`,
+            kind: "technical_drawing",
+            regionText: "",
+            image: { buffer: crop.buffer, mimeType: crop.mimeType },
+          });
+          const parsed = parseTranscription("technical_drawing", response.raw);
+          if (parsed === null) {
+            throw new PermanentStageError(
+              "no tile transcription parser",
+              "Für die Kachel-Transkription gibt es keinen Parser.",
+            );
+          }
+          return {
+            raw: response.raw,
+            parsed: { transcription: parsed.transcription, warnings: parsed.warnings },
+            tokensUsed: response.usage.totalTokens,
+          };
+        },
+      });
+
+      // Every tile is an addressable `tile` asset regardless of whether its
+      // transcription succeeded — the bytes reproduce on demand from the source
+      // and the asset is what the research zoom serves from (requirement 14.4).
+      await lease_guardStageTileAsset(job, page, assetId);
+      assetIds.push(assetId);
+      tileRefs.push({ tileId: `p${page}-${tile.tileId}`, assetId, bbox: tile.bbox });
+      events.publish({ type: "asset", jobId: job.id, page, assetId, kind: "tile" });
+
+      if (result.parsed !== undefined) {
+        contributions.push({ tileId: tile.tileId, transcription: result.parsed.transcription });
+        for (const warning of result.parsed.warnings) {
+          if (!pageWarnings.includes(warning)) pageWarnings.push(warning);
+        }
+      } else {
+        contributions.push({ tileId: tile.tileId, transcription: undefined });
+      }
+    }
+
+    // Merge the per-tile transcriptions, deduplicating the overlap band, and
+    // attach the result plus the tile refs to the page for `buildPageRecord`.
+    const transcription = mergeTileTranscriptions(contributions);
+    visionParsed.tiled = { transcription, tiles: tileRefs };
+    if (pageWarnings.length > 0) {
+      visionParsed.warnings = [...visionParsed.warnings, ...pageWarnings];
+    }
+    return assetIds;
+  }
+
+  /** Cut and stage each croppable figure; return the asset ids in figure order. */
+  async function stageCrops(args: {
+    job: JobRow;
+    page: number;
+    prepared: PreparedSource;
+    pageImage: PageImage | null;
+    figures: VisionStageParsed["figures"];
+  }): Promise<string[]> {
+    const { job, page, prepared, pageImage, figures } = args;
+    const ids: string[] = [];
+    for (const figure of figures) {
+      const assetId = buildAssetId(job.reference, figureLocalId(figure.id));
+      let crop: FigureCrop | null = null;
+      if (pageImage !== null) {
+        // Prefer the S4-snapped bbox (task 2.4) so the crop reflects the refined
+        // region; fall back to the raw Pass-1 bbox, then the full page.
+        const snapped = isCroppable(figure.snappedBbox) ? figure.snappedBbox : undefined;
+        const bbox = snapped ?? (isCroppable(figure.bbox) ? figure.bbox : ([0, 0, 1, 1] as BoundingBox));
+        crop = await prepared.renderFigureCrop(page, bbox, pageImage).catch(() => null);
+      }
+      await lease_guardStageAsset(
+        job,
+        page,
+        assetId,
+        "figure",
+        crop !== null ? sha256Hex(crop.buffer) : undefined,
+      );
+      ids.push(assetId);
+      events.publish({ type: "asset", jobId: job.id, page, assetId, kind: "figure" });
+    }
+    return ids;
+  }
+
+  /**
+   * Stage an asset-outbox row (idempotent), fenced on the lease in SQL: a
+   * zombie worker cannot stage assets into a job it no longer owns. The owning
+   * page is recorded so the emitter resolves the asset without a payload scan.
+   */
+  async function lease_guardStageAsset(
+    job: JobRow,
+    page: number,
+    assetId: string,
+    kind: "figure" | "page",
+    checksum?: string,
+  ): Promise<void> {
+    await store.stageAsset(
+      {
+        job_id: job.id,
+        asset_id: assetId,
+        page,
+        ...(checksum !== undefined ? { checksum } : {}),
+        variant: kind === "page" ? "page" : null,
+        mime_type: "image/png",
+      },
+      scope().fence,
+    );
+  }
+
+  /**
+   * Stage a `tile` asset-outbox row (idempotent), fenced on the lease. A tile
+   * carries no checksum here — its bytes reproduce deterministically from the
+   * content-addressed source on demand (the {@link AssetLoader} re-renders the
+   * tile bbox), exactly like a figure crop, so nothing is stored eagerly.
+   */
+  async function lease_guardStageTileAsset(
+    job: JobRow,
+    page: number,
+    assetId: string,
+  ): Promise<void> {
+    await store.stageAsset(
+      {
+        job_id: job.id,
+        asset_id: assetId,
+        page,
+        variant: null,
+        mime_type: "image/png",
+      },
+      scope().fence,
+    );
+  }
+
+  /**
+   * Stage the page's emit-outbox row (fenced; one page per row, the emitter
+   * batches). The payload records the pipeline/prompt stand the page's Pass-1
+   * result came from (requirement 4.12): under `resume_policy=continue` a
+   * document mixes stands, and this is where each page's stand is auditable.
+   * The staged record is the page's BASE record; the document pass enriches it.
+   */
+  async function stageEmitRow(job: JobRow, page: number, record: PageRecord): Promise<void> {
+    const current = scope();
+    const visionRow = await store.getStage("page", { job_id: job.id, page, stage: VISION1_STAGE });
+    const recorded = isStageOutput(visionRow?.output) ? (visionRow.output as StageOutput).stand : undefined;
+    const stand = recorded ?? current.stand;
+    const payload = { type: "page", page, record, stand };
+    await store.stageEmitBatch(
+      {
+        job_id: job.id,
+        seq: page,
+        digest: sha256Hex(JSON.stringify(payload)),
+        page_from: page,
+        page_to: page,
+        payload,
+      },
+      current.fence,
+    );
+  }
+
+  return { run };
+}
+
+// ── mapping helpers ──────────────────────────────────────────────────────
+
+const TRUNCATION_WARNING =
+  "Die Modellantwort war auch beim größten Token-Budget abgeschnitten; der Seiteninhalt ist unvollständig.";
+
+/** The parsed result of a checkpoint row, or undefined when it has none. */
+function parsedOfRow<T>(row: PageStageRow): T | undefined {
+  const output = row.output;
+  if (isStageOutput(output)) return (output.parsed ?? undefined) as T | undefined;
+  return undefined;
+}
+
+/**
+ * True when a checkpoint carries a raw model response a reparse can re-read:
+ * a finished unit, or one that failed permanently after the model answered. A
+ * unit in a transient backoff is left for its retry.
+ */
+function reparseable(row: PageStageRow): boolean {
+  if (!isStageOutput(row.output) || typeof row.output.raw !== "string") return false;
+  return row.status === "done" || (row.status === "failed" && row.next_attempt_at === null);
+}
+
+/** A human-readable message from any thrown value. */
+function errMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** The ordinal `n` of a page-scoped figure id `p<page>-f<n>` (1 when unparsable). */
+function figureOrdinalOf(figureId: string): number {
+  const match = /-f(\d+)$/.exec(figureId);
+  const n = match?.[1] !== undefined ? Number.parseInt(match[1], 10) : Number.NaN;
+  return Number.isFinite(n) && n > 0 ? n : 1;
+}
+
+/** A figure has a usable, positive-area bbox. */
+function isCroppable(bbox: BoundingBox | undefined): bbox is BoundingBox {
+  return bbox !== undefined && isValidBoundingBox(bbox);
+}
+
+/** The normalised area (0–1) of a bbox `[x1,y1,x2,y2]`. */
+function bboxArea(bbox: BoundingBox): number {
+  return Math.max(0, bbox[2] - bbox[0]) * Math.max(0, bbox[3] - bbox[1]);
+}
+
+/**
+ * Decide whether a figure gets Pass 2 (task 2.5, requirement 8.6). A figure
+ * runs Pass 2 only when its kind is in `FIGURE_PASS2_KINDS`, it has a usable
+ * bbox, and that bbox covers at least `minArea` of the page. The Pass-2 crop
+ * uses the S4-snapped bbox when present (task 2.4), falling back to the raw
+ * Pass-1 bbox. Returns the bbox to crop when Pass 2 should run.
+ */
+function pass2Gate(
+  figure: VisionStageParsed["figures"][number],
+  kinds: ReadonlySet<string>,
+  minArea: number,
+): { run: false } | { run: true; bbox: BoundingBox } {
+  const kind = figure.kind ?? "other";
+  if (!kinds.has(kind)) return { run: false };
+  const bbox = isCroppable(figure.snappedBbox)
+    ? figure.snappedBbox
+    : isCroppable(figure.bbox)
+      ? figure.bbox
+      : undefined;
+  if (bbox === undefined) return { run: false };
+  if (bboxArea(bbox) < minArea) return { run: false };
+  return { run: true, bbox };
+}
+
+/** Convert a v1 (readonly) bbox to the v2 record's mutable tuple. */
+function toBBox(bbox: BoundingBox): BBox {
+  return [bbox[0], bbox[1], bbox[2], bbox[3]];
+}
+
+/** The page-image asset id for a page. */
+function pageAssetId(reference: string, page: number): string {
+  return buildAssetId(reference, pageLocalId(page));
+}
+
+/**
+ * S4 deterministic refinement of the Pass-1 figures (task 2.4, requirement
+ * 8.2). For each figure with a usable bbox, snap the box to the ink and the
+ * adjacent text blocks and collect the text-layer words inside it as
+ * `regionText`/`labels`; a figure without a box is passed through untouched.
+ *
+ * This is deliberately folded onto the `vision1` checkpoint rather than being a
+ * separate `refined` stage. S4 is deterministic and its only inputs are the
+ * rendered page image and this page's S2 analysis — both already in hand inside
+ * the vision stage — so computing it here and persisting the result on the
+ * checkpoint means a resume (or a render-hash reuse) replays the snapped bbox
+ * and region text with no recompute, which a separate stage would only
+ * duplicate. The concurrent scheduler drives whole pages, not per-stage fan-out
+ * within a page, so a distinct S4 stage would add a checkpoint round-trip
+ * without changing resume behaviour. `snapFigureBBox` never throws, so a page
+ * is never failed over refinement.
+ *
+ * Returns the figures in input order with `snappedBbox`/`regionText`/`labels`
+ * filled in where available.
+ */
+async function refineFigures(
+  figures: ParsedVisionPage["figures"],
+  image: PageImage,
+  analysis: PageAnalysis | null,
+): Promise<VisionStageParsed["figures"]> {
+  const refined: VisionStageParsed["figures"] = [];
+  for (const f of figures) {
+    const base = { id: f.id, description: f.description, kind: f.kind, caption: f.caption, bbox: f.bbox };
+    if (!isCroppable(f.bbox)) {
+      refined.push(base);
+      continue;
+    }
+    const result = await snapFigureBBox(toBBox(f.bbox), {
+      image: { buffer: image.buffer, width: image.width, height: image.height },
+      analysis,
+    });
+    refined.push({
+      ...base,
+      snappedBbox: result.bbox as unknown as BoundingBox,
+      ...(result.regionText !== undefined ? { regionText: result.regionText } : {}),
+      ...(result.labels !== undefined ? { labels: result.labels } : {}),
+    });
+  }
+  return refined;
+}
+
+/**
+ * Build a contract-valid v2 page record from the parsed vision output.
+ *
+ * The Pass-1 body Markdown is mapped to typed blocks by the deterministic
+ * {@link parseMarkdownBlocks} (headings with numbering, paragraphs, lists,
+ * tables with cells and continuation flags, code); each figure block is placed
+ * at its `![figure_<id>]` position in the reading order, and figures the body
+ * never referenced follow at the end. A fast-path page emits its S2 blocks
+ * verbatim. Because the mapping is a pure function of the persisted
+ * checkpoint, a resume or a `reparse` rebuilds the identical record.
+ */
+function buildPageRecord(
+  reference: string,
+  page: number,
+  parsed: VisionStageParsed,
+): PageRecord {
+  const blocks: Block[] = [];
+  const warnings = [...parsed.warnings];
+  const assets: AssetRef[] = [];
+
+  // ── figure blocks, keyed by figure id for placement in the flow ──────────
+  const figureBlocks = new Map<string, Block>();
+  const figureOrder: string[] = [];
+  let figureOrdinal = 0;
+  for (const figure of parsed.figures) {
+    figureOrdinal += 1;
+    const assetId = buildAssetId(reference, figureLocalId(figure.id));
+    // Prefer the S4-snapped bbox (task 2.4) for the emitted block and asset so
+    // consumers see the refined region; fall back to the raw Pass-1 bbox, then
+    // the full page.
+    const resolvedBbox = isCroppable(figure.snappedBbox)
+      ? figure.snappedBbox
+      : isCroppable(figure.bbox)
+        ? figure.bbox
+        : ([0, 0, 1, 1] as BoundingBox);
+    const bbox = toBBox(resolvedBbox);
+    figureOrder.push(figure.id);
+    figureBlocks.set(figure.id, {
+      id: `p${page}-fb${figureOrdinal}`,
+      page,
+      type: "figure",
+      figureId: figure.id,
+      // The model-supplied kind (task 2.3); falls back to "other" for a
+      // checkpoint written before this field existed.
+      kind: figure.kind ?? "other",
+      ...(figure.caption !== undefined ? { caption: figure.caption } : {}),
+      description: figure.description,
+      // The verbatim text-layer words inside the snapped bbox and their
+      // deduplicated labels (task 2.4, requirement 8.2). Absent for a scan or a
+      // container without `-bbox-layout` geometry.
+      ...(figure.regionText !== undefined ? { regionText: figure.regionText } : {}),
+      ...(figure.labels !== undefined && figure.labels.length > 0 ? { labels: figure.labels } : {}),
+      // The structured Pass-2 transcription (task 2.5, S5). Present only for a
+      // gated kind that ran Pass 2; `renderMarkdown` renders it per format.
+      ...(figure.transcription !== undefined ? { transcription: figure.transcription } : {}),
+      bbox,
+      assetId,
+    });
+    assets.push({ assetId, kind: "figure", localId: figureLocalId(figure.id), page, bbox });
+  }
+
+  // ── body blocks in reading order ─────────────────────────────────────────
+  if (parsed.fastPath === true && parsed.fastPathBlocks !== undefined) {
+    // A fast-path page carries its blocks (heading/paragraph/list, all
+    // source:"text-layer") built from the S2 geometry; no vision markdown.
+    blocks.push(...parsed.fastPathBlocks);
+  } else if (parsed.markdown.trim() !== "") {
+    const body = parseMarkdownBlocks(parsed.markdown, {
+      page,
+      source: parsed.usedOcr ? "vision" : "text-layer",
+    });
+    for (const item of body.items) {
+      if (item.kind === "block") {
+        blocks.push(item.block);
+        continue;
+      }
+      // A figure placeholder: the figure block goes exactly here.
+      const figureBlock = figureBlocks.get(item.figureId);
+      if (figureBlock !== undefined) {
+        blocks.push(figureBlock);
+        figureBlocks.delete(item.figureId);
+      }
+    }
+    warnings.push(...body.warnings);
+  }
+  // Figures the body did not reference follow the text, in figure order.
+  for (const id of figureOrder) {
+    const figureBlock = figureBlocks.get(id);
+    if (figureBlock !== undefined) blocks.push(figureBlock);
+  }
+
+  // ── tiling (S6): a page-spanning drawing figure with its tiles ───────────
+  // A large-format page that was tiled (design §5 S6, task 5.1) emits one
+  // `technical_drawing` figure covering the whole page. It carries the merged,
+  // overlap-deduplicated transcription and the `tiles[]` refs; each tile is a
+  // `tile` asset addressable by its own bbox for the research zoom (requirement
+  // 14.4). The tile bytes are not stored — they reproduce on demand from the
+  // content-addressed source, exactly like a figure crop.
+  if (parsed.tiled !== undefined && parsed.tiled.tiles.length > 0) {
+    figureOrdinal += 1;
+    const wholePage = toBBox([0, 0, 1, 1] as BoundingBox);
+    const figureId = `p${page}-tiled`;
+    const figureAssetId = buildAssetId(reference, figureLocalId(figureId));
+    blocks.push({
+      id: `p${page}-fb${figureOrdinal}`,
+      page,
+      type: "figure",
+      figureId,
+      kind: "technical_drawing",
+      description:
+        "Großformatige Seite, in überlappende Kacheln zerlegt und zusammengeführt (S6).",
+      transcription: parsed.tiled.transcription,
+      tiles: parsed.tiled.tiles,
+      bbox: wholePage,
+      assetId: figureAssetId,
+    });
+    // The whole-page figure crop asset (the plan as one image).
+    assets.push({
+      assetId: figureAssetId,
+      kind: "figure",
+      localId: figureLocalId(figureId),
+      page,
+      bbox: wholePage,
+    });
+    // Each tile as its own addressable `tile` asset with its region bbox.
+    for (const tile of parsed.tiled.tiles) {
+      assets.push({
+        assetId: tile.assetId,
+        kind: "tile",
+        localId: tileLocalId(tile.tileId),
+        page,
+        bbox: tile.bbox,
+      });
+    }
+  }
+
+  // The page image itself is always an addressable asset.
+  assets.push({
+    assetId: buildAssetId(reference, pageLocalId(page)),
+    kind: "page",
+    localId: pageLocalId(page),
+    page,
+  });
+
+  return {
+    type: "page",
+    page,
+    size: { wPt: parsed.size.wPt, hPt: parsed.size.hPt },
+    // The deterministic page class (task 2.2, requirement 7.2). Falls back to
+    // the v1 heuristic for a checkpoint written before this field existed.
+    class: parsed.pageClass ?? (parsed.usedOcr ? "scan" : "text"),
+    ...(parsed.summary !== undefined ? { summary: parsed.summary } : {}),
+    blocks,
+    assets,
+    warnings,
+    // `fastPath` records that the page took the deterministic text fast-path
+    // (task 2.9); a consumer and the eval harness read it as the per-page
+    // fast-path signal alongside the /metrics counter.
+    fidelity: { ocr: parsed.usedOcr, ...(parsed.fastPath === true ? { fastPath: true } : {}) },
+  };
+}
+
+/** A minimal valid page record, for the budget-pause path. */
+function emptyRecord(page: number): PageRecord {
+  return {
+    type: "page",
+    page,
+    size: { wPt: 1, hPt: 1 },
+    class: "text",
+    blocks: [],
+    assets: [],
+    warnings: [],
+  };
+}
+
+/** The number of pages this job should process, honouring a page-range config. */
+function pagesToProcess(job: JobRow, sourcePageCount: number): number {
+  const pages = (job.config as { pages?: unknown }).pages;
+  if (pages !== null && typeof pages === "object" && pages !== undefined) {
+    const range = pages as { to?: unknown };
+    if (typeof range.to === "number" && range.to > 0) {
+      return Math.min(sourcePageCount, Math.trunc(range.to));
+    }
+  }
+  return sourcePageCount;
+}
+
+/** The source filename, from the config snapshot when present, else the reference. */
+function filenameOf(job: JobRow): string {
+  const source = (job.config as { source?: { filename?: unknown } }).source;
+  if (source !== undefined && typeof source.filename === "string" && source.filename !== "") {
+    return source.filename;
+  }
+  return job.reference;
+}
+
+export type { PageRenderer } from "./page-renderer.js";
+export type { ParsedVisionPage };

@@ -103,9 +103,28 @@ export async function convertToPdf(
   return join(outputDir, first);
 }
 
-/** Extension LibreOffice needs to pick the exact import filter. */
+/** The source kinds LibreOffice lays out to PDF before the normal PDF path. */
+const LIBREOFFICE_KINDS = new Set<SupportedFormat["kind"]>([
+  "word",
+  "spreadsheet",
+  "presentation",
+  "visio",
+]);
+
+/** True when a format is converted to PDF by LibreOffice (design §10.4). */
+export function isLibreOfficeKind(format: SupportedFormat): boolean {
+  return LIBREOFFICE_KINDS.has(format.kind);
+}
+
+/**
+ * Extension LibreOffice needs to pick the exact import filter.
+ *
+ * PPTX and VSDX join Word/Excel here: LibreOffice lays each out to PDF and the
+ * normal PDF pipeline takes over, so a presentation gets page images and a
+ * Visio drawing gets its shape text with no bespoke renderer (design §10.4).
+ */
 export function officeExtensionFor(format: SupportedFormat): string {
-  if (format.kind !== "word" && format.kind !== "spreadsheet") {
+  if (!isLibreOfficeKind(format)) {
     throw new Error(`No Office extension for ${format.label}`);
   }
   const extension = format.extensions[0];

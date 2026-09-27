@@ -41,6 +41,26 @@ Step 4 renders the page twice on purpose. Crops are shown to a human in a search
 result, so they should be sharper than the model's input, and re-rasterising a
 page costs milliseconds next to a model call that costs seconds.
 
+## Text-layer fidelity check
+
+The prompt makes the text layer authoritative for wording, but that is enforced
+by instruction alone — nothing stops a model from silently "correcting" an
+article number or a date, and the result looks plausible. So when a page *has* a
+text layer (`ocr: false`), a deterministic check compares the risky tokens of
+that layer — numbers and mixed identifiers like `BA2b` or `WU-123` — against the
+produced Markdown. If a page lost enough of them (both an absolute count and a
+share of the page's tokens, so a dropped footer number never trips it), it gets
+a page warning naming the missing values.
+
+It never rewrites the output. A deterministic replacement would need a reliable
+alignment between the restructured Markdown and the linearised text layer, which
+does not exist, and would destroy the legitimate omissions the prompt asks for
+(headers, page numbers). The warning is the honest primitive: it makes the
+instruction measurable and surfaces the one failure class that matters, leaving
+the human to judge. The signal is also aggregated at `/metrics` as
+`extract_text_fidelity_checks_total`, `extract_text_fidelity_divergences_total`
+and `extract_text_fidelity_missing_tokens_total`.
+
 ## Two retry axes
 
 A page fails in two unrelated ways and conflating them handles both badly:
@@ -79,21 +99,88 @@ mock model, so a conversion can be exercised without a GPU.
 
 ## Search integration
 
-Two paths exist and they differ in exactly one observable way.
+Extract converts; Search chunks, embeds, versions and serves. Extract owns none
+of Search's indexing logic and Search owns no document converter — Search would
+otherwise need poppler and LibreOffice on its query path, a document-parser
+attack surface and minutes-long CPU work competing with query latency. So on the
+ingest path Extract orchestrates and calls Search over two thin HTTP requests.
 
-**`POST /v1/ingest` here** — needs `SEARCH_URL`. Converts, indexes, and then
-stores figure crops via `PUT /document-assets/:assetId`. Ingest must complete
-first: Search resolves the owning document for every asset and answers
-`404 Associated document is not visible` otherwise.
+### What one `POST /v1/ingest` does
 
-**`POST /ingest-file` in Search** — needs `CONVERTER_URL`. Proxies the upload
-here, takes the Markdown, and runs Search's own ingest path unchanged. Figure
-*descriptions* are indexed, so a search for what a diagram shows still finds it,
-but figure *images* are not stored — forwarding Markdown does not carry bytes.
-Responses say so with `X-Figure-Assets: not-stored`.
+`SEARCH_URL` must be set. In order:
 
-Use the first when figures should be viewable, the second when the simplest
-possible wiring matters more.
+1. **Convert** the upload to canonical Markdown plus figure crops (the crop
+   bytes stay in memory). `X-Reference` is mandatory here, unlike `/v1/convert`:
+   it is the row key Search stores under, so defaulting it to a filename would
+   let two `scan.pdf` uploads overwrite each other.
+2. **`POST /ingest` to Search** with the Markdown as the `text/markdown` body and
+   the `X-…` headers the contract builds. Every ingest parameter Search accepts
+   can be set on the request and is forwarded — routing (`X-Collection`,
+   `X-Reference`, `X-Title`, `X-Source`, `X-Link`, `X-Version`, `X-Version-Mode`,
+   `X-Valid-From`), access control (`X-Allowed-Users` / `X-Allowed-Groups`,
+   narrowed to the caller), and the full chunking and structure surface
+   (`X-Chunk-Size`, `X-Chunk-Overlap`, `X-Semantic-Chunking`,
+   `X-Breakpoint-Percentile`, `X-Late-Chunking-Alpha`, `X-Context-Prefix-Size`,
+   `X-Chapter-Split-Max-Chunks`, `X-Quantization`, `X-Summarize`,
+   `X-Summary-Mode`, `X-Document-Structure`, `X-Fts-Language`, `X-Tags`,
+   `X-Metadata`). Out-of-range values are rejected here with a 400 before a
+   conversion is paid for, rather than surfacing as a late 400 from Search.
+   Search then chunks the document, embeds every chunk, and upserts the rows.
+   Crucially, each `<figure>`
+   in the Markdown becomes its own *figure chunk* whose `chunk.asset_id` and
+   `chunk.parent_ref` are written into the row — the hook the image will hang on.
+3. **`PUT /document-assets/:assetId` to Search, once per figure.** Only now are
+   the crops storable. The `assetId` is `sha256(reference + figureId)`, which
+   Search re-derives and verifies, and the bytes land in a separate
+   `vs_document_assets` table.
+
+The response reports `page_count`, `figure_count`, `assets_stored`,
+`assets_failed` and per-page `warnings`.
+
+### Why the order is fixed, not a preference
+
+The asset upload is a *conditional* insert: Search stores the crop only if a
+visible chunk row already exists whose `chunk.asset_id` and `chunk.parent_ref`
+match the request. That figure row is created by the `/ingest` run. Upload the
+crops first and the condition matches nothing, so Search answers
+`404 Associated document is not visible`. There is no foreign key — the link
+*is* that JSONB match — so ingest must complete before any asset upload.
+
+A crop that fails to store does not fail the ingest: the document is already
+indexed and the figure descriptions are already retrievable, so only the
+thumbnail is missing. The per-figure outcome is counted into `assets_failed`
+rather than rolled back — a complete index minus one thumbnail beats no index.
+
+### Chapter splitting does not orphan assets
+
+Search may split a large document into chapter sub-documents — either from its
+own `chapterSplitMaxChunks` default or when a caller sets
+`X-Chapter-Split-Max-Chunks` on the ingest. When it does, only the *text* is
+split: the chapter rows get derived references like `<reference>/1. Einleitung`,
+and the text chunks follow them. The **figures do not move**. They are expanded once from the whole
+document into a flat set of figure chunks, and every one keeps
+`parent_ref = <original reference>` and its `asset_id = sha256(<original
+reference> + figureId)` — independent of how many chapters the prose became.
+
+That is exactly what makes the crop upload keep working. Extract stores every
+figure against the one reference it converted, and sends that reference as
+`X-Document-Reference` on each `PUT /document-assets/:assetId`. The asset's
+visibility condition (`chunk.parent_ref = X-Document-Reference AND
+chunk.asset_id = assetId`) resolves against those unchanged figure rows, whether
+or not Search chaptered the prose. So a 400-page manual split into 30 chapters
+still stores and serves every figure: splitting changes where the *text* is
+addressable, never where the *images* are attached.
+
+### The alternative: `POST /ingest-file` in Search
+
+`CONVERTER_URL` must be set. Search proxies the upload here, takes the Markdown,
+and runs its own ingest path unchanged. Figure *descriptions* are indexed, so a
+search for what a diagram shows still finds it, but figure *images* are not
+stored — forwarding Markdown does not carry bytes. Responses say so with
+`X-Figure-Assets: not-stored`.
+
+Use `POST /v1/ingest` here when figures should be viewable, `POST /ingest-file`
+when the simplest possible wiring matters more.
 
 ## Response modes
 

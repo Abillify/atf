@@ -58,6 +58,43 @@ describe("loadConfig", () => {
     });
   });
 
+  describe("figure Pass-2 gating (task 2.5)", () => {
+    it("defaults to every structured figure kind", () => {
+      expect(loadTestConfig().figurePass2Kinds).toEqual([
+        "bpmn",
+        "flowchart",
+        "ui_mask",
+        "technical_drawing",
+        "chart",
+        "table_image",
+      ]);
+    });
+
+    it("parses and de-duplicates a custom kind list", () => {
+      const config = loadTestConfig({ FIGURE_PASS2_KINDS: "bpmn, chart ,bpmn" });
+      expect(config.figurePass2Kinds).toEqual(["bpmn", "chart"]);
+    });
+
+    it("rejects an unknown kind rather than silently dropping it", () => {
+      expect(() => loadTestConfig({ FIGURE_PASS2_KINDS: "bpmn,banana" })).toThrow(
+        /FIGURE_PASS2_KINDS/,
+      );
+    });
+
+    it("defaults the minimum area and the label-coverage threshold", () => {
+      const config = loadTestConfig();
+      expect(config.figurePass2MinArea).toBeCloseTo(0.02, 5);
+      expect(config.labelCoverageMin).toBe(60);
+    });
+
+    it("bounds the minimum area to a fraction and coverage to a percentage", () => {
+      expect(() => loadTestConfig({ FIGURE_PASS2_MIN_AREA: "1.5" })).toThrow(
+        /FIGURE_PASS2_MIN_AREA/,
+      );
+      expect(() => loadTestConfig({ LABEL_COVERAGE_MIN: "150" })).toThrow(/LABEL_COVERAGE_MIN/);
+    });
+  });
+
   describe("page label", () => {
     it("defaults to the German marker used by existing corpora", () => {
       expect(loadTestConfig().pageLabel).toBe("Seite");
@@ -217,5 +254,15 @@ describe("loadConfig", () => {
 
   it("allows the vision timeout to be disabled explicitly", () => {
     expect(loadTestConfig({ VISION_TIMEOUT_MS: "0" }).visionTimeoutMs).toBe(0);
+  });
+
+  describe("FINALIZE_PASS (task 5.4, requirement 9.6)", () => {
+    it("enables the optional outline finalize pass by default", () => {
+      expect(loadTestConfig().emitter.finalizePass).toBe(true);
+    });
+
+    it("can be disabled to emit the streaming outline as-is", () => {
+      expect(loadTestConfig({ FINALIZE_PASS: "false" }).emitter.finalizePass).toBe(false);
+    });
   });
 });

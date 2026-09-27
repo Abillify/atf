@@ -18,7 +18,7 @@
 
 import { describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
-import { validateDocument } from "@atf/extract-contract";
+import { validateDocument } from "@atf/extract-contract/v1";
 import { createExtractor, type ExtractorConfig } from "../src/pipeline/extract.js";
 import { normalizeImageToPage } from "../src/pipeline/raster.js";
 import type { VisionClient } from "../src/vision/client.js";
@@ -34,6 +34,7 @@ const CONFIG: ExtractorConfig = {
   libreofficeBin: "libreoffice",
   popplerBinDir: null,
   pageConcurrency: 2,
+  subprocessTimeoutMs: 120_000,
   visionModel: "test-vlm",
 };
 
@@ -41,6 +42,7 @@ const noopMetrics = {
   recordPage: vi.fn(),
   recordVision: vi.fn(),
   recordFigures: vi.fn(),
+  recordTextFidelity: vi.fn(),
 };
 
 /** A 400×300 PNG with a distinguishable region, so a crop can be verified. */
@@ -83,6 +85,15 @@ function fixedVision(raw: string, truncated = false): VisionClient {
         usage: { promptTokens: 100, completionTokens: 200, totalTokens: 300 },
         requests: 1,
         truncated,
+        maxTokens: 8192,
+      };
+    },
+    async analyzeFigure() {
+      return {
+        raw: '{"format":"markdown","text":"stub"}',
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        requests: 1,
+        truncated: false,
         maxTokens: 8192,
       };
     },
@@ -224,6 +235,9 @@ describe("image extraction", () => {
     // Failing the document would throw away pages already paid for.
     const failing: VisionClient = {
       analyzePage: async () => {
+        throw visionUnavailable("model down");
+      },
+      analyzeFigure: async () => {
         throw visionUnavailable("model down");
       },
       probe: async () => ({ available: true }),

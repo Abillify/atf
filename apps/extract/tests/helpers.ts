@@ -11,7 +11,7 @@ import {
   type ExtractedDocument,
   type ExtractedFigure,
   type ExtractedPage,
-} from "@atf/extract-contract";
+} from "@atf/extract-contract/v1";
 import { loadConfig, type Config } from "../src/config.js";
 import type { Extractor, ExtractResult } from "../src/pipeline/extract.js";
 import type { VisionClient } from "../src/vision/client.js";
@@ -188,6 +188,15 @@ export function stubVisionClient(available = true): VisionClient {
         maxTokens: 8192,
       };
     },
+    async analyzeFigure() {
+      return {
+        raw: '{"format":"markdown","text":"stub"}',
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        requests: 1,
+        truncated: false,
+        maxTokens: 8192,
+      };
+    },
     async probe() {
       return available ? { available: true } : { available: false, error: "stubbed as down" };
     },
@@ -203,6 +212,7 @@ export interface RecordingSearchClient extends SearchClient {
     cropIds: string[];
     allowedUsers: readonly string[] | undefined;
     allowedGroups: readonly string[] | undefined;
+    options: import("@atf/extract-contract/v1").IngestHeaderOptions | undefined;
   }>;
 }
 
@@ -220,6 +230,7 @@ export function stubSearchClient(options: { error?: Error; assetsFailed?: number
         cropIds: [...args.crops.keys()],
         allowedUsers: args.options?.allowedUsers,
         allowedGroups: args.options?.allowedGroups,
+        options: args.options,
       });
       const assetsFailed = options.assetsFailed ?? 0;
       return {

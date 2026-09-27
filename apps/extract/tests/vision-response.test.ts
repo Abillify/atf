@@ -7,8 +7,8 @@ import { parseVisionPage } from "../src/vision/response.js";
 /** A fictional appliance manual; the fixtures deliberately name no real domain. */
 const WELL_FORMED = `<summary>Die Seite beschreibt die Inbetriebnahme.</summary>
 <figures>
-<figure id="1" bbox="[0.0800, 0.2100, 0.4900, 0.5600]">Ablaufdiagramm der Inbetriebnahme mit einem Entscheidungspunkt.</figure>
-<figure id="2" bbox="[0.5100, 0.2100, 0.9200, 0.5600]">Foto eines Bedienfelds.</figure>
+<figure id="1" kind="flowchart" bbox="[0.0800, 0.2100, 0.4900, 0.5600]" caption="Abbildung 1: Ablauf">Ablaufdiagramm der Inbetriebnahme mit einem Entscheidungspunkt.</figure>
+<figure id="2" kind="photo" bbox="[0.5100, 0.2100, 0.9200, 0.5600]">Foto eines Bedienfelds.</figure>
 </figures>
 <markdown>
 # Einleitung
@@ -170,5 +170,115 @@ describe("parseVisionPage", () => {
       1,
     );
     expect(parsed.summary).toBe("Erst. Dann.");
+  });
+
+  describe("v2 figure kind and caption (task 2.3, requirement 8.1)", () => {
+    it("reads a recognised kind and the caption verbatim", () => {
+      const parsed = parseVisionPage(WELL_FORMED, 3);
+      expect(parsed.figures[0]?.kind).toBe("flowchart");
+      expect(parsed.figures[0]?.caption).toBe("Abbildung 1: Ablauf");
+      // The description stays the 2–3 sentence summary from the element body.
+      expect(parsed.figures[0]?.description).toContain("Ablaufdiagramm");
+    });
+
+    it("keeps a figure without a caption (caption is optional)", () => {
+      const parsed = parseVisionPage(WELL_FORMED, 3);
+      expect(parsed.figures[1]?.kind).toBe("photo");
+      expect(parsed.figures[1]?.caption).toBeUndefined();
+    });
+
+    it("defaults an unknown kind to other and flags it", () => {
+      const parsed = parseVisionPage(
+        '<figures><figure id="1" kind="sankey" bbox="[0,0,1,1]">X</figure></figures><markdown>x</markdown>',
+        1,
+      );
+      expect(parsed.figures[0]?.kind).toBe("other");
+      expect(parsed.warnings.join(" ")).toContain('defaulted to "other"');
+    });
+
+    it("defaults a missing kind to other", () => {
+      const parsed = parseVisionPage(
+        '<figures><figure id="1" bbox="[0,0,1,1]">X</figure></figures><markdown>x</markdown>',
+        1,
+      );
+      expect(parsed.figures[0]?.kind).toBe("other");
+    });
+
+    it("accepts every contract kind case-insensitively", () => {
+      const kinds = [
+        "bpmn",
+        "flowchart",
+        "ui_mask",
+        "technical_drawing",
+        "chart",
+        "table_image",
+        "photo",
+        "diagram",
+        "other",
+      ];
+      for (const kind of kinds) {
+        const parsed = parseVisionPage(
+          `<figures><figure id="1" kind="${kind.toUpperCase()}" bbox="[0,0,1,1]">X</figure></figures><markdown>x</markdown>`,
+          1,
+        );
+        expect(parsed.figures[0]?.kind).toBe(kind);
+      }
+    });
+  });
+
+  describe("v2 table continuation (task 2.3, requirement 9.2)", () => {
+    it("marks a table that continues onto the next page", () => {
+      const parsed = parseVisionPage(
+        '<markdown><table data-continues="true"><tr><th>A</th></tr></table></markdown>',
+        1,
+      );
+      expect(parsed.tables).toEqual([{ index: 0, continues: true, continuationOf: false }]);
+    });
+
+    it("marks a table that continues from the previous page", () => {
+      const parsed = parseVisionPage(
+        '<markdown><table data-continuation="true"><tr><th>A</th></tr></table></markdown>',
+        1,
+      );
+      expect(parsed.tables).toEqual([{ index: 0, continues: false, continuationOf: true }]);
+    });
+
+    it("reports one entry per flagged table, in body order, skipping plain tables", () => {
+      const body =
+        "<table><tr><td>plain</td></tr></table>" +
+        '<table data-continues="true"><tr><td>x</td></tr></table>' +
+        "<table><tr><td>plain2</td></tr></table>" +
+        '<table data-continuation="true"><tr><td>y</td></tr></table>';
+      const parsed = parseVisionPage(`<markdown>${body}</markdown>`, 1);
+      expect(parsed.tables).toEqual([
+        { index: 1, continues: true, continuationOf: false },
+        { index: 3, continues: false, continuationOf: true },
+      ]);
+    });
+
+    it("leaves the table HTML untouched in the body", () => {
+      const parsed = parseVisionPage(
+        '<markdown><table data-continues="true"><tr><th colspan="2">Kopf</th></tr></table></markdown>',
+        1,
+      );
+      expect(parsed.markdown).toContain('colspan="2"');
+      expect(parsed.markdown).toContain("data-continues");
+    });
+
+    it("treats a bare boolean attribute as true", () => {
+      const parsed = parseVisionPage(
+        "<markdown><table data-continues><tr><td>x</td></tr></table></markdown>",
+        1,
+      );
+      expect(parsed.tables[0]?.continues).toBe(true);
+    });
+
+    it("returns no tables for a page with only plain tables", () => {
+      const parsed = parseVisionPage(
+        "<markdown><table><tr><td>x</td></tr></table></markdown>",
+        1,
+      );
+      expect(parsed.tables).toEqual([]);
+    });
   });
 });

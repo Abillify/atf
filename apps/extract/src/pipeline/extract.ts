@@ -54,7 +54,7 @@ import {
   type ExtractedFigure,
   type ExtractedPage,
   type PageLabel,
-} from "@atf/extract-contract";
+} from "@atf/extract-contract/v1";
 import { ExtractError, conversionFailed, unsupportedMediaType } from "../errors.js";
 import { resolveFormat, type SupportedFormat } from "../formats.js";
 import { mapOrdered } from "../queue.js";
@@ -63,11 +63,43 @@ import { parseVisionPage } from "../vision/response.js";
 import { convertToPdf, officeExtensionFor } from "./office.js";
 import {
   extractPageText,
+  readPageSize,
   readPdfInfo,
   renderPage,
+  type PdfPageSize,
   type PopplerTools,
+  type RenderedPage,
 } from "./pdf.js";
-import { cropFigure, imageSize, normalizeImageToPage, type FigureCrop } from "./raster.js";
+import type { RunOptions } from "./exec.js";
+import {
+  adaptiveRenderDpi,
+  cropFigure,
+  imageSize,
+  normalizeImageToPage,
+  type FigureCrop,
+} from "./raster.js";
+import { checkTextFidelity, textFidelityWarning } from "./text-fidelity.js";
+
+/**
+ * The poppler operations the orchestrator depends on, injected so a test can
+ * make a single page fail without a corrupt fixture and without touching the
+ * other pages. In production these are the real functions from `pdf.ts`.
+ */
+export interface PdfOps {
+  readPdfInfo: typeof readPdfInfo;
+  readPageSize: typeof readPageSize;
+  renderPage: typeof renderPage;
+  extractPageText: typeof extractPageText;
+  imageSize: typeof imageSize;
+}
+
+const defaultPdfOps: PdfOps = {
+  readPdfInfo,
+  readPageSize,
+  renderPage,
+  extractPageText,
+  imageSize,
+};
 
 /** Configuration slice the extractor needs. */
 export interface ExtractorConfig {
@@ -79,6 +111,8 @@ export interface ExtractorConfig {
   libreofficeBin: string;
   popplerBinDir: string | null;
   pageConcurrency: number;
+  /** Wall-clock ceiling on each poppler/LibreOffice invocation; 0 disables. */
+  subprocessTimeoutMs: number;
   /** Recorded in the pipeline descriptor so an index can be audited later. */
   visionModel: string;
 }
@@ -93,6 +127,7 @@ export interface ExtractorMetrics {
     outputTokens: number;
   }): void;
   recordFigures(detected: number, rendered: number): void;
+  recordTextFidelity(options: { flagged: boolean; missingTokens: number }): void;
 }
 
 export interface ExtractorDeps {
@@ -100,6 +135,8 @@ export interface ExtractorDeps {
   logger: Logger;
   vision: VisionClient;
   metrics: ExtractorMetrics;
+  /** Overridable poppler operations. Defaults to the real `pdf.ts` functions. */
+  pdfOps?: PdfOps;
 }
 
 export interface ExtractProgress {
@@ -163,6 +200,19 @@ export interface Extractor {
 
 export function createExtractor(deps: ExtractorDeps): Extractor {
   const { config, logger, vision, metrics } = deps;
+  const pdfOps = deps.pdfOps ?? defaultPdfOps;
+
+  /**
+   * Base run options for a poppler/LibreOffice call: the configured subprocess
+   * timeout plus the client's abort signal. A hung child otherwise ties up a
+   * `PAGE_CONCURRENCY` slot indefinitely (Requirement 2.9).
+   */
+  function subprocessOptions(signal: AbortSignal | undefined): RunOptions {
+    return {
+      ...(config.subprocessTimeoutMs > 0 ? { timeoutMs: config.subprocessTimeoutMs } : {}),
+      ...(signal !== undefined ? { signal } : {}),
+    };
+  }
 
   async function extract(input: ExtractInput): Promise<ExtractResult> {
     const startedAt = Date.now();
@@ -393,18 +443,87 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         {
           binary: config.libreofficeBin,
           workDir,
-          ...(input.signal !== undefined ? { signal: input.signal } : {}),
+          ...subprocessOptions(input.signal),
         },
       );
     }
 
-    const info = await readPdfInfo(pdfPath, tools, {
-      ...(input.signal !== undefined ? { signal: input.signal } : {}),
-    });
+    const info = await pdfOps.readPdfInfo(pdfPath, tools, subprocessOptions(input.signal));
     if (info.pageCount < 1) {
       throw conversionFailed("The document reports no pages", { filename: input.filename });
     }
     return { pageCount: info.pageCount, pageSource: { kind: "pdf", pdfPath } };
+  }
+
+  /**
+   * Render one PDF page at a DPI chosen from that page's own size.
+   *
+   * The size comes from `pdfinfo -f N -l N`, not a document-level hint, because a
+   * document can mix sizes — an A4 report with a folded-out A0 plan is the case
+   * that matters. A page larger than the preferred DPI would produce is scaled
+   * down (`adaptiveRenderDpi`) so it stays under the pixel ceiling and is
+   * rendered rather than dropped (Requirement 2.7). A page whose size cannot be
+   * read falls back to the preferred DPI.
+   */
+  async function renderPdfPage(
+    pdfPath: string,
+    pageNumber: number,
+    workDir: string,
+    tools: PopplerTools,
+    input: ExtractInput,
+  ): Promise<RenderedPage> {
+    const runOptions = subprocessOptions(input.signal);
+    let pageSize: PdfPageSize | null = null;
+    try {
+      pageSize = await pdfOps.readPageSize(pdfPath, pageNumber, tools, runOptions);
+    } catch {
+      // A size probe failure is not fatal: render at the preferred DPI and let
+      // the pixel guard in the renderer catch a genuinely oversized page.
+      pageSize = null;
+    }
+    const dpi =
+      pageSize !== null ? adaptiveRenderDpi(pageSize, config.renderDpi) : config.renderDpi;
+    if (pageSize !== null && dpi < config.renderDpi) {
+      logger.info(
+        { reference: input.reference, page: pageNumber, pageSize, dpi, renderDpi: config.renderDpi },
+        "Page is large; rendering DPI adapted to stay under the pixel limit",
+      );
+    }
+    return pdfOps.renderPage(pdfPath, pageNumber, dpi, join(workDir, "render"), tools, runOptions);
+  }
+
+  /** The empty, warned page a failed page collapses to, so the run continues. */
+  function failedPage(
+    pageNumber: number,
+    error: unknown,
+    pageStartedAt: number,
+    format: SupportedFormat,
+    reference: string,
+  ): PageOutcome {
+    logger.error(
+      { reference, page: pageNumber, err: error },
+      "Page render or text extraction failed; continuing with an empty page",
+    );
+    // No vision call happened, so this is not counted as a vision failure; the
+    // page still lands in the per-page and document warnings.
+    metrics.recordPage(format.mimeType, Date.now() - pageStartedAt);
+    return {
+      page: {
+        page: pageNumber,
+        markdown: "",
+        figures: [],
+        warnings: [
+          `Die Seite konnte nicht gerendert oder ihr Text nicht extrahiert werden: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        ],
+      },
+      crops: new Map(),
+      usedOcr: false,
+      usage: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      pageMs: Date.now() - pageStartedAt,
+      visionMs: 0,
+    };
   }
 
   /** Convert one page: render, read text, ask the model, cut crops. */
@@ -420,7 +539,7 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     const { pageNumber, pageCount, pageSource, input, format, workDir, tools } = args;
     const pageStartedAt = Date.now();
     const warnings: string[] = [];
-    const runOptions = input.signal !== undefined ? { signal: input.signal } : {};
+    const runOptions = subprocessOptions(input.signal);
 
     let image: PageImage;
     let rawText = "";
@@ -430,22 +549,29 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       // An uploaded image has no text layer by definition; the model transcribes
       // from the pixels, which is reported as OCR.
     } else {
-      const rendered = await renderPage(
-        pageSource.pdfPath,
-        pageNumber,
-        config.renderDpi,
-        join(workDir, "render"),
-        tools,
-        runOptions,
-      );
-      const size = await imageSize(rendered.buffer);
-      image = {
-        buffer: rendered.buffer,
-        mimeType: "image/png",
-        width: size.width,
-        height: size.height,
-      };
-      rawText = await extractPageText(pageSource.pdfPath, pageNumber, tools, runOptions);
+      // Rendering and text extraction shell out to poppler, and any of the three
+      // calls can fail on a single malformed page — a broken xref, an image the
+      // decoder chokes on, a subprocess timeout. Failing here would abort the
+      // whole document and throw away every other page, so a per-page failure is
+      // caught and turned into an empty page carrying a warning; the run
+      // continues (Requirement 2.8).
+      try {
+        const rendered = await renderPdfPage(pageSource.pdfPath, pageNumber, workDir, tools, input);
+        const size = await pdfOps.imageSize(rendered.buffer);
+        image = {
+          buffer: rendered.buffer,
+          mimeType: "image/png",
+          width: size.width,
+          height: size.height,
+        };
+        rawText = await pdfOps.extractPageText(pageSource.pdfPath, pageNumber, tools, runOptions);
+      } catch (error) {
+        // A client disconnect aborts the whole run; anything else costs this page
+        // and nothing more.
+        if (error instanceof ExtractError && error.code === "CLIENT_ABORTED") throw error;
+        if (input.signal?.aborted === true) throw error;
+        return failedPage(pageNumber, error, pageStartedAt, format, input.reference);
+      }
     }
 
     const usedOcr = rawText.trim() === "";
@@ -509,6 +635,19 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     }
 
     warnings.push(...parsed.warnings);
+
+    // Verify the model kept the text layer's wording. Only meaningful when there
+    // was an authoritative text layer to compare against — an OCR page has no
+    // ground truth, so the check would compare the model's output to itself.
+    if (!usedOcr) {
+      const fidelity = checkTextFidelity(rawText, parsed.markdown);
+      metrics.recordTextFidelity({
+        flagged: fidelity.flagged,
+        missingTokens: fidelity.missing.length,
+      });
+      const fidelityWarning = textFidelityWarning(fidelity);
+      if (fidelityWarning !== undefined) warnings.push(fidelityWarning);
+    }
 
     const { figures, crops } = await renderFigures({
       parsed,
@@ -575,15 +714,15 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       config.figureDpi > config.renderDpi
     ) {
       try {
-        const rendered = await renderPage(
+        const rendered = await pdfOps.renderPage(
           pageSource.pdfPath,
           pageNumber,
           config.figureDpi,
           join(workDir, "figures"),
           tools,
-          input.signal !== undefined ? { signal: input.signal } : {},
+          subprocessOptions(input.signal),
         );
-        const size = await imageSize(rendered.buffer);
+        const size = await pdfOps.imageSize(rendered.buffer);
         cropSource = {
           buffer: rendered.buffer,
           mimeType: "image/png",
@@ -673,7 +812,11 @@ function extractorLabel(format: SupportedFormat): string {
       return "poppler";
     case "word":
     case "spreadsheet":
+    case "presentation":
+    case "visio":
       return "libreoffice+poppler";
+    case "bpmn":
+      return "native-bpmn";
     case "image":
       return "sharp";
   }

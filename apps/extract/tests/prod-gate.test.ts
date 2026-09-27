@@ -153,6 +153,31 @@ describe("checkProductionReadiness", () => {
       const report = checkProductionReadiness(prodConfig({ CALLBACK_ALLOWED_HOSTS: "orchestrator.internal" }));
       expect(report.fatal.join(" ")).not.toContain("CALLBACK_ALLOWED_HOSTS");
     });
+
+    it("fails closed on an empty SOURCE_URL_ALLOWED_HOSTS when source_url is live (database set)", () => {
+      const report = checkProductionReadiness(
+        prodConfig({ EXTRACT_DATABASE_URL: "postgres://extract:secret@db.internal:5432/extract" }),
+      );
+      expect(report.fatal.join(" ")).toContain("SOURCE_URL_ALLOWED_HOSTS is empty");
+    });
+
+    it("accepts a configured SOURCE_URL_ALLOWED_HOSTS", () => {
+      const report = checkProductionReadiness(
+        prodConfig({
+          EXTRACT_DATABASE_URL: "postgres://extract:secret@db.internal:5432/extract",
+          SOURCE_URL_ALLOWED_HOSTS: ".files.example",
+        }),
+      );
+      expect(report.fatal.join(" ")).not.toContain("SOURCE_URL_ALLOWED_HOSTS");
+    });
+  });
+
+  describe("persistence", () => {
+    it("only warns when EXTRACT_DATABASE_URL is unset in production", () => {
+      const report = checkProductionReadiness(prodConfig());
+      expect(report.fatal.join(" ")).not.toContain("EXTRACT_DATABASE_URL");
+      expect(report.warnings.join(" ")).toContain("EXTRACT_DATABASE_URL is unset");
+    });
   });
 
   describe("outbound credentials", () => {

@@ -29,6 +29,51 @@ const buckets = [
 /** Page conversion spans seconds to minutes, so it needs its own bucket set. */
 const pageBuckets = [0.5, 1, 2.5, 5, 10, 20, 40, 80, 160, 320, Number.POSITIVE_INFINITY];
 
+/**
+ * A v2 pipeline stage ranges from a millisecond (a deterministic parse) to
+ * minutes (a tiled vision pass or the document pass), so its buckets span both.
+ */
+const stageBuckets = [
+  0.01, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60, 120, 300, 600, Number.POSITIVE_INFINITY,
+];
+
+/**
+ * How one execution of a v2 pipeline stage ended (requirement 18.1):
+ *   - `done`: the stage ran and its checkpoint was written;
+ *   - `reused`: an existing checkpoint with the same input hash was reused, so
+ *     no work (and no model call) happened;
+ *   - `failed_transient`: failed with a retryable error (timeout, 5xx, 429);
+ *   - `failed_permanent`: failed for good (invalid input, retries exhausted).
+ */
+export type StageOutcome = "done" | "reused" | "failed_transient" | "failed_permanent";
+
+export const STAGE_OUTCOMES: readonly StageOutcome[] = [
+  "done",
+  "reused",
+  "failed_transient",
+  "failed_permanent",
+];
+
+/** One observation for {@link HttpMetrics.recordStage}. */
+export interface StageObservation {
+  /** Stage name, e.g. `analyzed`, `vision1`, `figure2`, `tiled`, `docpass`, `emitted`. */
+  stage: string;
+  outcome: StageOutcome;
+  /** Wall-clock duration of the stage execution; omitted → no histogram sample. */
+  durationMs?: number;
+  /** Model tokens (input + output) the stage consumed; omitted/0 → no increment. */
+  tokens?: number;
+}
+
+/**
+ * Stage names become a label, so they are bounded: anything that is not a
+ * short lower-case identifier collapses to `other` instead of opening a new
+ * series per arbitrary string.
+ */
+function stageLabel(stage: string): string {
+  return /^[a-z][a-z0-9_]{0,31}$/.test(stage) ? stage : "other";
+}
+
 interface Histogram {
   buckets: number[];
   count: number;
@@ -77,9 +122,27 @@ export class HttpMetrics {
   private visionOutputTokens = 0;
   private figuresDetected = 0;
   private figuresRendered = 0;
+  /** Pages whose text layer was checked against the model output. */
+  private textFidelityChecks = 0;
+  /** Pages flagged for losing too many risky tokens. */
+  private textFidelityDivergences = 0;
+  /** Distinct risky tokens that went missing across all flagged pages. */
+  private textFidelityMissingTokens = 0;
+  /** Pages that took the deterministic text fast-path (no vision call). */
+  private fastPathPages = 0;
+  /** Pages that took the vision path. Together with the above → "Anteil Fast-Path". */
+  private visionPathPages = 0;
   private queueDepth = 0;
   private queueActive = 0;
   private queueRejected = 0;
+
+  // ── v2 stage metrics (requirement 18.1) ──────────────────────────────────
+  private readonly stageDurations = new Map<string, Histogram>();
+  /** Keyed `stage|outcome`. */
+  private readonly stageOutcomes = new Map<string, number>();
+  private readonly stageTokens = new Map<string, number>();
+  /** Emit-outbox rows staged but not yet acknowledged by Search. */
+  private emitBacklog = 0;
 
   private readonly loop = monitorEventLoopDelay({ resolution: 20 });
 
@@ -139,6 +202,24 @@ export class HttpMetrics {
     this.figuresRendered += rendered;
   }
 
+  recordTextFidelity(options: { flagged: boolean; missingTokens: number }): void {
+    this.textFidelityChecks++;
+    if (options.flagged) {
+      this.textFidelityDivergences++;
+      this.textFidelityMissingTokens += options.missingTokens;
+    }
+  }
+
+  /**
+   * Count a page's processing route (task 2.9, requirement 18.1). The share of
+   * `route="fast-path"` over the total is the "Anteil Fast-Path" — how many
+   * pages skipped the vision model via the deterministic text fast-path.
+   */
+  recordFastPath(route: "fast-path" | "vision"): void {
+    if (route === "fast-path") this.fastPathPages++;
+    else this.visionPathPages++;
+  }
+
   setQueue(state: { depth: number; active: number }): void {
     this.queueDepth = state.depth;
     this.queueActive = state.active;
@@ -146,6 +227,36 @@ export class HttpMetrics {
 
   recordQueueRejection(): void {
     this.queueRejected++;
+  }
+
+  /**
+   * Record one v2 stage execution: bumps `extract_stage_total{stage,outcome}`,
+   * observes `extract_stage_duration_seconds{stage}` when `durationMs` is a
+   * finite number, and adds `tokens` to `extract_stage_tokens_total{stage}`.
+   * Negative or non-finite values are ignored rather than corrupting a series.
+   */
+  recordStage(observation: StageObservation): void {
+    const stage = stageLabel(observation.stage);
+    if (!STAGE_OUTCOMES.includes(observation.outcome)) return;
+    const key = `${stage}|${observation.outcome}`;
+    this.stageOutcomes.set(key, (this.stageOutcomes.get(key) ?? 0) + 1);
+    const { durationMs, tokens } = observation;
+    if (durationMs !== undefined && Number.isFinite(durationMs) && durationMs >= 0) {
+      const histogram = this.stageDurations.get(stage) ?? emptyHistogram(stageBuckets.length);
+      observeHistogram(histogram, stageBuckets, durationMs / 1000);
+      this.stageDurations.set(stage, histogram);
+    }
+    if (tokens !== undefined && Number.isFinite(tokens) && tokens > 0) {
+      this.stageTokens.set(stage, (this.stageTokens.get(stage) ?? 0) + Math.round(tokens));
+    }
+  }
+
+  /**
+   * Set the hand-over backlog gauge `extract_emit_outbox_pending`: emit-outbox
+   * rows that are staged but not yet acknowledged by Search, across all jobs.
+   */
+  setEmitBacklog(pending: number): void {
+    this.emitBacklog = Number.isFinite(pending) && pending > 0 ? Math.floor(pending) : 0;
   }
 
   render(): string {
@@ -237,6 +348,19 @@ export class HttpMetrics {
       "# TYPE extract_figures_total counter",
       `extract_figures_total{stage="detected"} ${this.figuresDetected}`,
       `extract_figures_total{stage="rendered"} ${this.figuresRendered}`,
+      "# HELP extract_text_fidelity_checks_total Pages whose text layer was compared against the model output",
+      "# TYPE extract_text_fidelity_checks_total counter",
+      `extract_text_fidelity_checks_total ${this.textFidelityChecks}`,
+      "# HELP extract_text_fidelity_divergences_total Pages flagged for losing too many risky tokens from the text layer",
+      "# TYPE extract_text_fidelity_divergences_total counter",
+      `extract_text_fidelity_divergences_total ${this.textFidelityDivergences}`,
+      "# HELP extract_text_fidelity_missing_tokens_total Distinct risky tokens missing across flagged pages",
+      "# TYPE extract_text_fidelity_missing_tokens_total counter",
+      `extract_text_fidelity_missing_tokens_total ${this.textFidelityMissingTokens}`,
+      "# HELP extract_pages_fast_path_total Pages by processing route (fast-path vs vision); the fast-path share is \"Anteil Fast-Path\"",
+      "# TYPE extract_pages_fast_path_total counter",
+      `extract_pages_fast_path_total{route="fast-path"} ${this.fastPathPages}`,
+      `extract_pages_fast_path_total{route="vision"} ${this.visionPathPages}`,
       "# HELP extract_queue_depth Conversions waiting for a slot",
       "# TYPE extract_queue_depth gauge",
       `extract_queue_depth ${this.queueDepth}`,
@@ -246,6 +370,9 @@ export class HttpMetrics {
       "# HELP extract_queue_rejected_total Uploads refused because the queue was full",
       "# TYPE extract_queue_rejected_total counter",
       `extract_queue_rejected_total ${this.queueRejected}`,
+      "# HELP extract_emit_outbox_pending Emit-outbox rows staged but not yet acknowledged by Search",
+      "# TYPE extract_emit_outbox_pending gauge",
+      `extract_emit_outbox_pending ${this.emitBacklog}`,
       "# HELP extract_http_in_flight_requests Requests currently in flight",
       "# TYPE extract_http_in_flight_requests gauge",
       `extract_http_in_flight_requests ${this.inFlight}`,
@@ -253,6 +380,42 @@ export class HttpMetrics {
       "# TYPE extract_nodejs_event_loop_lag_seconds gauge",
       `extract_nodejs_event_loop_lag_seconds ${this.loop.mean / 1e9 || 0}`,
     );
+
+    lines.push(
+      "# HELP extract_stage_duration_seconds Duration of one v2 pipeline stage execution",
+      "# TYPE extract_stage_duration_seconds histogram",
+    );
+    for (const [stage, histogram] of this.stageDurations) {
+      const label = `stage="${escapeLabel(stage)}"`;
+      for (let i = 0; i < stageBuckets.length; i++) {
+        const edge = stageBuckets[i] ?? Number.POSITIVE_INFINITY;
+        const le = Number.isFinite(edge) ? String(edge) : "+Inf";
+        lines.push(
+          `extract_stage_duration_seconds_bucket{${label},le="${le}"} ${histogram.buckets[i] ?? 0}`,
+        );
+      }
+      lines.push(
+        `extract_stage_duration_seconds_sum{${label}} ${histogram.sum}`,
+        `extract_stage_duration_seconds_count{${label}} ${histogram.count}`,
+      );
+    }
+    lines.push(
+      "# HELP extract_stage_total v2 pipeline stage executions by stage and outcome",
+      "# TYPE extract_stage_total counter",
+    );
+    for (const [key, value] of this.stageOutcomes) {
+      const [stage = "", outcome = ""] = key.split("|");
+      lines.push(
+        `extract_stage_total{stage="${escapeLabel(stage)}",outcome="${escapeLabel(outcome)}"} ${value}`,
+      );
+    }
+    lines.push(
+      "# HELP extract_stage_tokens_total Model tokens consumed by v2 pipeline stage",
+      "# TYPE extract_stage_tokens_total counter",
+    );
+    for (const [stage, value] of this.stageTokens) {
+      lines.push(`extract_stage_tokens_total{stage="${escapeLabel(stage)}"} ${value}`);
+    }
 
     return `${lines.join("\n")}\n`;
   }

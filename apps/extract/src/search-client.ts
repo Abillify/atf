@@ -41,7 +41,7 @@ import {
   collectFigures,
   type ExtractedDocument,
   type IngestHeaderOptions,
-} from "@atf/extract-contract";
+} from "@atf/extract-contract/v1";
 import { ingestFailed } from "./errors.js";
 import { injectTraceHeaders } from "./trace-context.js";
 

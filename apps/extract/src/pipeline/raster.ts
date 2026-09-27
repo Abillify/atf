@@ -21,7 +21,7 @@
 
 import sharp, { type Metadata } from "sharp";
 import { decode as decodeBmp } from "bmp-js";
-import { boundingBoxToPixels, type BoundingBox, type FigureMimeType } from "@atf/extract-contract";
+import { boundingBoxToPixels, type BoundingBox, type FigureMimeType } from "@atf/extract-contract/v1";
 import { conversionFailed } from "../errors.js";
 
 /**
@@ -31,10 +31,77 @@ import { conversionFailed } from "../errors.js";
  * decoded. `MAX_UPLOAD_BYTES` does not catch that, because the bomb is small on
  * the wire; the limit has to be on decoded pixels.
  */
-const MAX_PIXELS = 40_000_000; // ~40 MP, comfortably above an A0 page at 300 dpi
+// ~40 MP. This is a memory ceiling, not a paper-size statement: the earlier
+// comment claimed it sat "comfortably above an A0 page at 300 dpi", which is
+// simply wrong — A0 (841×1189 mm) at 300 dpi is ~140 MP, more than three times
+// this. That is precisely why a large page must have its DPI adapted downward
+// (see `adaptiveRenderDpi`) before it is rendered, rather than rendered at a
+// fixed DPI and then rejected here for being too many pixels.
+const MAX_PIXELS = 40_000_000;
 // bmp-js expands to ABGR before we create Sharp's RGB input, so BMP needs a
 // stricter budget to keep peak memory bounded under conversion concurrency.
 const MAX_BMP_PIXELS = 10_000_000;
+
+/**
+ * The pixel ceiling a rendered PDF page must stay under.
+ *
+ * Shared with the renderer so the DPI chosen for a page and the limit enforced
+ * on the resulting image are the same number, and a page can never be rendered
+ * at a DPI that the very next decode step will reject as a decompression bomb.
+ */
+export const MAX_RENDER_PIXELS = MAX_PIXELS;
+
+/**
+ * The edge length, in pixels, that adaptive rendering aims a page's longer side
+ * at. Chosen so ordinary A4/Letter pages still land near `RENDER_DPI` while a
+ * poster-sized page is scaled down instead of dropped: at ~2400 px the long
+ * edge of an A4 page (~11.7 in) works out to ~205 dpi, right at the knee where
+ * small table text stops improving with resolution.
+ */
+const TARGET_LONG_EDGE_PX = 2400;
+
+/** One inch is 72 PostScript points; poppler reports page size in points. */
+const POINTS_PER_INCH = 72;
+
+/**
+ * Choose the DPI to rasterise a page at, given its size in PostScript points.
+ *
+ * Requirement 2.7: a page larger than A3 must have its DPI lowered so the
+ * rendered image stays under the pixel limit, never dropped. The preferred DPI
+ * (`RENDER_DPI`) is used as-is for ordinary pages; a large page is scaled down
+ * on two independent grounds and the stricter wins:
+ *
+ *   1. a target for the longer edge, so a poster does not render at a resolution
+ *      that produces a needlessly enormous image for the model, and
+ *   2. the hard pixel ceiling `MAX_RENDER_PIXELS`, so the decode never trips the
+ *      decompression-bomb guard.
+ *
+ * The result is clamped to `minDpi` so a genuinely vast page still yields a
+ * legible-enough image rather than being scaled into a thumbnail.
+ */
+export function adaptiveRenderDpi(
+  pageSize: { widthPt: number; heightPt: number },
+  preferredDpi: number,
+  options: { minDpi?: number; maxPixels?: number; targetLongEdgePx?: number } = {},
+): number {
+  const { minDpi = 72, maxPixels = MAX_RENDER_PIXELS, targetLongEdgePx = TARGET_LONG_EDGE_PX } =
+    options;
+
+  const widthIn = pageSize.widthPt / POINTS_PER_INCH;
+  const heightIn = pageSize.heightPt / POINTS_PER_INCH;
+  if (!(widthIn > 0) || !(heightIn > 0)) return preferredDpi;
+
+  const longEdgeIn = Math.max(widthIn, heightIn);
+  const areaIn2 = widthIn * heightIn;
+
+  // DPI at which the longer edge hits the target pixel count.
+  const dpiForLongEdge = targetLongEdgePx / longEdgeIn;
+  // DPI at which the total pixel count hits the ceiling (pixels grow with dpi²).
+  const dpiForPixelCeiling = Math.sqrt(maxPixels / areaIn2);
+
+  const dpi = Math.min(preferredDpi, dpiForLongEdge, dpiForPixelCeiling);
+  return Math.max(minDpi, Math.floor(dpi));
+}
 
 function isBmp(buffer: Uint8Array): boolean {
   return buffer.length >= 2 && buffer[0] === 0x42 && buffer[1] === 0x4d;
