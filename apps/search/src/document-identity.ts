@@ -561,6 +561,11 @@ export interface DocumentInfo {
   version?: DocumentVersion;
   email?: EmailHeaders;
   parentReference?: string;
+  /** The caller's document attributes (contract 2.2), stored on every unit. */
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  link?: string;
+  sourceLabel?: string;
 }
 
 /** Project a `document.begin` record onto the persisted {@link DocumentInfo}. */
@@ -569,12 +574,20 @@ export function documentInfoOf(begin: {
   version?: DocumentVersion | undefined;
   email?: EmailHeaders | undefined;
   parentReference?: string | undefined;
+  tags?: string[] | undefined;
+  metadata?: Record<string, unknown> | undefined;
+  link?: string | undefined;
+  sourceLabel?: string | undefined;
 }): DocumentInfo | undefined {
   const info: DocumentInfo = {
     ...(begin.title ? { title: begin.title } : {}),
     ...(begin.version ? { version: begin.version } : {}),
     ...(begin.email ? { email: begin.email } : {}),
     ...(begin.parentReference ? { parentReference: begin.parentReference } : {}),
+    ...(begin.tags && begin.tags.length > 0 ? { tags: begin.tags } : {}),
+    ...(begin.metadata && Object.keys(begin.metadata).length > 0 ? { metadata: begin.metadata } : {}),
+    ...(begin.link ? { link: begin.link } : {}),
+    ...(begin.sourceLabel ? { sourceLabel: begin.sourceLabel } : {}),
   };
   return Object.keys(info).length > 0 ? info : undefined;
 }
@@ -592,6 +605,12 @@ export function parseDocumentInfo(value: unknown): DocumentInfo {
     ...(typeof raw.parentReference === "string" && raw.parentReference !== ""
       ? { parentReference: raw.parentReference }
       : {}),
+    ...(stringArray(raw.tags).length > 0 ? { tags: stringArray(raw.tags) } : {}),
+    ...(raw.metadata !== null && typeof raw.metadata === "object" && !Array.isArray(raw.metadata)
+      ? { metadata: raw.metadata as Record<string, unknown> }
+      : {}),
+    ...(typeof raw.link === "string" && raw.link !== "" ? { link: raw.link } : {}),
+    ...(typeof raw.sourceLabel === "string" && raw.sourceLabel !== "" ? { sourceLabel: raw.sourceLabel } : {}),
   };
 }
 

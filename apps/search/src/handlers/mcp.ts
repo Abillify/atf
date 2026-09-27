@@ -35,6 +35,7 @@
  *   list_folders     — explore the folder structure
  *   find_folders     — resolve a folder name to its path anywhere in the tree
  *   get_document     — reassemble one document from its chunks
+ *   get_thread       — read an e-mail thread's messages chronologically
  *   get_document_asset — fetch one authorized original figure as MCP image content
  *   get_documents    — reassemble every document beneath a folder
  *   get_summary      — stored summary of one document
@@ -47,6 +48,8 @@
  * so it shares all existing retry, circuit-breaker, and cache logic.
  */
 
+import type { DocumentGroup } from "../document-identity.js";
+import { FIGURE_KINDS } from "../figure-kinds.js";
 import { randomUUID } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
@@ -74,6 +77,7 @@ import {
   encodeCursor,
   decodeCursor,
   normalizePathPrefix,
+  normalizeReference,
 } from "../postgres-client.js";
 import type { QueryEmbeddingCache } from "../query-cache.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
@@ -273,6 +277,13 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
     return { scope, acl };
   };
 
+  /** The e-mail thread / attachment parent a document belongs to, if any. */
+  const documentGroupOf = async (collection: string, baseRef: string): Promise<DocumentGroup | undefined> => {
+    if (postgresClient.resolveDocumentGroups === undefined) return undefined;
+    const res = await postgresClient.resolveDocumentGroups(collection, accessScopeForMcp(), [baseRef]);
+    return res.ok ? res.result.get(baseRef) : undefined;
+  };
+
   const server = new McpServer({
     name: "vectorsearch",
     version: "1.0.0",
@@ -352,7 +363,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       },
       budgets: ["maxDurationMs","maxRetrievalDocuments"],
       scopeMatrix: {
-        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_document_asset","get_documents","get_summary","get_summaries","get_outline","get_section","get_pages","get_context","list_figures","get_asset","get_table","find_identifier","follow_ref"], anyOf: ["retrieve","search","read","tool:<name>"] },
+        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_thread","get_document_asset","get_documents","get_summary","get_summaries","get_outline","get_section","get_pages","get_context","list_figures","get_asset","get_table","find_identifier","follow_ref"], anyOf: ["retrieve","search","read","tool:<name>"] },
         ingest: { tools: ["ingest"], anyOf: ["write","ingest","tool:ingest"] },
         delete: { tools: ["delete_document"], anyOf: ["write","delete","tool:delete_document"] },
         legacyOptionalCalls: "unchanged",
@@ -790,7 +801,9 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .string()
         .min(1)
         .optional()
-        .describe("v2 filter: only figures of this kind, e.g. ui_mask | process | drawing."),
+        .describe(
+          `v2 filter: only figures of this kind: ${FIGURE_KINDS.join(" | ")}. Aliases: process (bpmn + flowchart), drawing (technical_drawing), data (chart), mask (ui_mask), table (table_image).`,
+        ),
       section_prefix: z
         .array(z.string().min(1))
         .min(1)
@@ -1106,15 +1119,16 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           fallbackReason: rerankOutcome.fallbackReason,
         };
       }
-      if (groupByDocument || expand === "document") {
-        rankedResults = await attachDocumentGroups({
-          postgresClient,
-          collection: col,
-          scope: accessScopeForMcp(),
-          results: rankedResults,
-          logger,
-        });
-      }
+      // Every hit names its e-mail thread / attachment parent (one query), so a
+      // model sees a message is part of a conversation and can read it whole
+      // with get_thread — not only when grouping.
+      rankedResults = await attachDocumentGroups({
+        postgresClient,
+        collection: col,
+        scope: accessScopeForMcp(),
+        results: rankedResults,
+        logger,
+      });
       if (groupByDocument) {
         rankedResults = groupResultsByDocument(rankedResults);
       }
@@ -1210,6 +1224,8 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         modified: r.modified,
         valid_from: r.valid_from?.toISOString() ?? null,
         effective_valid_from: r.effective_valid_from.toISOString(),
+        ...(r.document_group ? { document_group: r.document_group } : {}),
+        ...(r.group_members ? { group_members: r.group_members } : {}),
         ...("expanded" in r && r.expanded ? { expanded: r.expanded } : {}),
         // v2 hit fields (design §7.2), only in v2 mode so legacy output is unchanged.
         ...(v2
@@ -2138,12 +2154,20 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .describe(
           "Character offset to start from (default: 0). Use with max_chars to page through a document whose previous call returned truncated=true.",
         ),
+      valid_at: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe(
+          "RFC 3339 instant with timezone: read the version valid at that time (the same version search's valid_at selects). Default: the current version.",
+        ),
     },
-    async ({ reference, collection, max_chars, offset }) => {
+    async ({ reference, collection, max_chars, offset, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       const result = await postgresClient.getDocument(col, accessScopeForMcp(), reference, {
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(max_chars !== undefined ? { maxChars: max_chars } : {}),
         ...(offset !== undefined ? { offset } : {}),
       });
@@ -2187,9 +2211,138 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         startTime,
         detail: { collection: col, reference },
       });
+      // An e-mail names its thread, so the caller knows the message is one
+      // part of a conversation (read it whole with get_thread).
+      const group = await documentGroupOf(col, result.result.reference);
       return {
         content: [
-          { type: "text", text: JSON.stringify(result.result, null, 2) },
+          {
+            type: "text",
+            text: JSON.stringify(group ? { ...result.result, document_group: group } : result.result, null, 2),
+          },
+        ],
+      };
+    },
+  );
+
+  server.tool(
+    "get_thread",
+    "Read a whole e-mail thread: every message of the conversation in chronological order, each with its reference, sender/recipients/date header and its own text (quoted history is not repeated). Pass any message's reference (a search hit's base_ref) or a thread id (document_group.id). Bounded by max_chars — check 'truncated'. Cite each statement with the reference of the message it comes from.",
+    {
+      reference: z
+        .string()
+        .min(1)
+        .describe("A message's reference/base_ref, or the thread id from a hit's document_group.id"),
+      collection: z
+        .string()
+        .optional()
+        .describe(`Collection to read from (default: "${defaultCollection}")`),
+      max_chars: z
+        .number()
+        .int()
+        .min(1000)
+        .max(2_000_000)
+        .optional()
+        .describe("Maximum characters over all messages (default: 200000)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Number of messages to skip (pagination; pass the previous call's next_offset when truncated=true)"),
+      path_prefix: z
+        .string()
+        .optional()
+        .describe('Only messages beneath this folder path (e.g. "/Kunde A"); messages of the thread elsewhere are left out and counted in "outside_prefix".'),
+    },
+    async ({ reference, collection, max_chars, offset, path_prefix }) => {
+      const startTime = Date.now();
+      const col = collection ?? defaultCollection;
+      await authorize(col);
+      const scope = accessScopeForMcp();
+      const budget = max_chars ?? 200_000;
+      const prefix = normalizePathPrefix(path_prefix);
+      if (postgresClient.listThreadMembers === undefined || postgresClient.resolveDocumentGroups === undefined) {
+        return { content: [{ type: "text", text: "Threads are not supported by this backend." }], isError: true };
+      }
+      // A message reference resolves to its thread; anything else is taken as
+      // the thread id itself.
+      const doc = await postgresClient.getDocument(col, scope, reference, { maxChars: 1000 });
+      const baseRef = doc.ok && doc.result ? doc.result.reference : undefined;
+      const group = baseRef ? await documentGroupOf(col, baseRef) : undefined;
+      if (baseRef && (group === undefined || group.kind !== "email_thread")) {
+        return {
+          content: [{ type: "text", text: `"${baseRef}" is not part of an e-mail thread; read it with get_document.` }],
+          isError: true,
+        };
+      }
+      const threadId = group?.id ?? reference;
+      const members = await postgresClient.listThreadMembers(col, scope, threadId);
+      if (!members.ok || members.result.length === 0) {
+        emitQueryActivity({ tool: "get_thread", summary: `${reference} in ${col} — not found`, status: "error", startTime, detail: { collection: col, reference } });
+        return { content: [{ type: "text", text: `No e-mail thread found for "${reference}" in collection "${col}".` }], isError: true };
+      }
+      const messages: Array<{ reference: string; title: string | null; content: string; truncated: boolean }> = [];
+      let used = 0;
+      let truncated = false;
+      // A folder scope keeps a comparison side from reading the other side's
+      // messages of a shared thread.
+      const inScope = members.result.filter((m) => prefix === "" || normalizeReference(m).startsWith(`${prefix}/`));
+      const outsidePrefix = members.result.length - inScope.length;
+      const start = Math.min(offset ?? 0, inScope.length);
+      let nextOffset: number | null = null;
+      for (let i = start; i < inScope.length; i++) {
+        const member = inScope[i] as string;
+        if (used >= budget) {
+          truncated = true;
+          nextOffset = i;
+          break;
+        }
+        const read = await postgresClient.getDocument(col, scope, member, { maxChars: Math.max(1000, budget - used) });
+        // A message the caller may not see (row ACL) or that was deleted.
+        if (!read.ok || read.result === null) continue;
+        messages.push({
+          reference: read.result.reference,
+          title: read.result.title,
+          content: read.result.content,
+          truncated: read.result.truncated === true,
+        });
+        if (read.result.truncated === true) {
+          // This message itself did not fit: the next call starts after it.
+          truncated = true;
+          nextOffset = i + 1 < inScope.length ? i + 1 : null;
+          used = budget;
+        } else {
+          used += read.result.content.length;
+        }
+      }
+      emitQueryActivity({
+        tool: "get_thread",
+        summary: `${messages.length} message${messages.length === 1 ? "" : "s"} of thread ${group?.title ?? threadId}`,
+        status: "ok",
+        startTime,
+        detail: { collection: col, reference, thread_id: threadId, messages: messages.length, truncated },
+      });
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                thread_id: threadId,
+                subject: group?.title ?? messages[0]?.title ?? null,
+                messages,
+                count: messages.length,
+                total: inScope.length,
+                offset: start,
+                truncated,
+                ...(nextOffset !== null ? { next_offset: nextOffset } : {}),
+                ...(outsidePrefix > 0 ? { outside_prefix: outsidePrefix } : {}),
+              },
+              null,
+              2,
+            ),
+          },
         ],
       };
     },
@@ -2321,12 +2474,20 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .describe(
           "Maximum combined content length across all returned documents (default: 200000). Guards against overflowing the context.",
         ),
+      valid_at: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe(
+          "RFC 3339 instant with timezone: read the version valid at that time (the same version search's valid_at selects). Default: the current version.",
+        ),
     },
-    async ({ path_prefix, collection, limit, max_chars }) => {
+    async ({ path_prefix, collection, limit, max_chars, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       const result = await postgresClient.getDocumentsByPrefix(col, accessScopeForMcp(), {
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(path_prefix !== undefined ? { pathPrefix: path_prefix } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(max_chars !== undefined ? { maxChars: max_chars } : {}),
@@ -2393,12 +2554,24 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .string()
         .optional()
         .describe(`Collection to read from (default: "${defaultCollection}")`),
+      valid_at: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe(
+          "RFC 3339 instant with timezone: read the version valid at that time (the same version search's valid_at selects). Default: the current version.",
+        ),
     },
-    async ({ reference, collection }) => {
+    async ({ reference, collection, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
-      const result = await postgresClient.getSummary(col, accessScopeForMcp(), reference);
+      const result = await postgresClient.getSummary(
+        col,
+        accessScopeForMcp(),
+        reference,
+        valid_at !== undefined ? { validAt: valid_at } : undefined,
+      );
       if (!result.ok) {
         emitQueryActivity({
           tool: "get_summary",
@@ -2477,12 +2650,20 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .min(0)
         .optional()
         .describe("Number of documents to skip (pagination, default: 0)"),
+      valid_at: z
+        .string()
+        .datetime({ offset: true })
+        .optional()
+        .describe(
+          "RFC 3339 instant with timezone: read the version valid at that time (the same version search's valid_at selects). Default: the current version.",
+        ),
     },
-    async ({ collection, path_prefix, limit, offset }) => {
+    async ({ collection, path_prefix, limit, offset, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       const result = await postgresClient.getSummaries(col, accessScopeForMcp(), {
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(path_prefix !== undefined ? { pathPrefix: path_prefix } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(offset !== undefined ? { offset } : {}),
@@ -2502,7 +2683,17 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           isError: true,
         };
       }
-      const { summaries, total } = result.result;
+      const { summaries: entries, total } = result.result;
+      // Each e-mail names its thread, so a triage sees the messages of one
+      // conversation together (and can read it whole with get_thread).
+      const groups =
+        entries.length > 0 && postgresClient.resolveDocumentGroups !== undefined
+          ? await postgresClient.resolveDocumentGroups(col, accessScopeForMcp(), entries.map((e) => e.reference))
+          : undefined;
+      const summaries = entries.map((e) => {
+        const group = groups?.ok ? groups.result.get(e.reference) : undefined;
+        return group ? { ...e, document_group: group } : e;
+      });
       emitQueryActivity({
         tool: "get_summaries",
         summary: `${summaries.length} of ${total} summar${total === 1 ? "y" : "ies"} in ${col}${path_prefix ? " " + path_prefix : ""}`,

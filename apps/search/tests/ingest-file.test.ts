@@ -180,6 +180,43 @@ describe("POST /ingest-file", () => {
     expect(calls[3]?.body).toMatchObject({ collection: "specs" });
   });
 
+  it("passes title, tags, metadata, link, source and identity headers to the job", async () => {
+    const { app, calls } = buildApp();
+    await request(app)
+      .post("/ingest-file")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a")
+      .set("X-Title", "Pflichtenheft")
+      .set("X-Tags", "kunde-a, wms")
+      .set("X-Metadata", JSON.stringify({ projekt: "WMS" }))
+      .set("X-Link", "https://dms.example/1")
+      .set("X-Source", "DMS")
+      .set("X-Version", "3.1")
+      .set("X-Dedup", "exact")
+      .send(PDF);
+    expect(calls[3]?.body).toMatchObject({
+      title: "Pflichtenheft",
+      tags: ["kunde-a", "wms"],
+      metadata: { projekt: "WMS" },
+      link: "https://dms.example/1",
+      sourceLabel: "DMS",
+      version: "3.1",
+      dedup: "exact",
+    });
+  });
+
+  it("rejects an X-Metadata that is not a JSON object before uploading", async () => {
+    const { app, fetchMock } = buildApp();
+    const response = await request(app)
+      .post("/ingest-file")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a")
+      .set("X-Metadata", "nope")
+      .send(PDF);
+    expect(response.status).toBe(400);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("no longer advertises that figure assets are not stored", async () => {
     // The v2 job's emitter stores figure assets, so the old limitation header
     // must be gone.

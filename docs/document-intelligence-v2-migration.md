@@ -118,8 +118,15 @@ was never removed. No v1 route or stored v1 data is altered by enabling or disab
 
 ## Reprocessing existing corpora
 
-Enabling v2 does not re-extract anything already indexed. To move an existing corpus onto the
-richer v2 extraction, run the re-ingest CLI `apps/extract/scripts/corpus-migrate.ts` after
+Enabling v2 does not re-extract anything already indexed. Documents that went through the v2
+path before these changes also keep what they were ingested with: no tags or metadata on their
+units if they came through `/ingest-file`, headerless rows for table continuations, no
+paragraph continuation across page breaks, no child documents for DOCX embeddings, and the
+quoted history of e-mail replies removed even when the parent was never ingested. Re-ingest
+those documents (or the affected collection) to pick up the new behaviour; the whole-document
+reads (`get_document`, `get_summaries`) are fixed at read time and need no re-ingest.
+
+To move an existing corpus onto the richer v2 extraction, run the re-ingest CLI `apps/extract/scripts/corpus-migrate.ts` after
 steps 1–4:
 
 ```bash

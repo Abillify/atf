@@ -155,7 +155,26 @@ Behaviour worth knowing:
   `group_by: document` / MCP `group_by_document` merge a thread into one result
   (chronological content, `document_group` on the hit), and `expand=document` (`X-Expand:
   document`) returns the whole thread — or a plain document — in reading order, default
-  budget 50 000 characters.
+  budget 50 000 characters. Every hit (and `get_document` / `get_summaries`) names its
+  `document_group`; a grouped hit merged from several messages carries `group_members` and
+  heads each message with `[Nachricht: <ref>]`. MCP `get_thread` reads a thread
+  chronologically, each message with its own reference.
+- **Document attributes.** `/ingest-file` passes `X-Title`, `X-Tags`, `X-Metadata`,
+  `X-Link`, `X-Source` (and `X-Version`, `X-Source-Modified`, `X-Dedup`) to Extract's job;
+  the batch worker writes title, tags, link, source and the metadata onto every unit, so tag
+  and metadata filters treat a v2 document like a v1 one.
+
+### Whole-document reads of v2 documents
+
+`get_document`, `get_documents`, `get_summary` and `get_summaries` read a v2 document from its
+body units only (`chunk`, `table`, `figure`; never Extract's `section`/`page`/`document` summary
+units) in reading order — page, block position on the page, ordinal. A table contributes its
+grid once (`metadata.display_len`; the "Spalte: Wert" lines are search-only), a figure its
+transcription headed `[Abbildung <figure_id> · <kind> · asset_id=…]`, and a chunk ending in a
+paragraph that runs over the page break is read without the carried continuation. The summary
+is the `document` unit's (or a backfilled one), the title the first non-empty one.
+`get_section` and `get_pages` (Markdown format) follow the same body rules and return the
+summary units of the range apart, in `summaries`; `units` counts the body units.
 
 ### Background workers
 
@@ -201,13 +220,17 @@ could not retrieve through search:
 | `get_section` | One section as Markdown (`section_id` or `section_path`, `max_chars`) |
 | `get_pages` | A page range as Markdown or summary (`from`, `to`, `format`, `max_chars`) |
 | `get_context` | Reading-order neighbours of a unit (`unit_id`, `before`, `after`) |
-| `list_figures` | Figures of a document or page range (`from_page`, `to_page`, `kind`), paginated |
+| `list_figures` | Figures of a document or page range (`from_page`, `to_page`, `kind`), paginated. `kind` is a stored kind (`bpmn`, `flowchart`, `ui_mask`, `technical_drawing`, `chart`, `table_image`, `photo`, `diagram`, `other`) or an alias (`process`, `drawing`, `data`, `mask`, `table`); an unknown value is an error |
 | `get_asset` | An image as MCP image content (`variant`, optional `region` zoom with `target_pixels`); fails closed when `expected_document_reference` / `expected_figure_id` do not match |
 | `get_table` | A logical table reassembled across pages (`table_id`, `rows`) |
-| `find_identifier` | Exact occurrences of an identifier across the collection, paginated |
+| `find_identifier` | Exact occurrences of an identifier across the collection or beneath `path_prefix`, paginated |
 | `follow_ref` | Resolve the figures a unit references |
+| `get_thread` | A whole e-mail thread chronologically (`reference` = a message's ref or `document_group.id`; `max_chars`, `offset`/`next_offset`, `path_prefix`) |
 
-Every tool also accepts `collection`.
+Every tool also accepts `collection`. The read tools (`get_outline`, `get_section`, `get_pages`,
+`list_figures`, `get_table`, `find_identifier`, and `get_document`, `get_documents`,
+`get_summary`, `get_summaries`) accept `valid_at` (RFC 3339 with offset) and read the version
+valid at that instant, as search's `valid_at` selects it.
 
 ## Temporal document versions
 

@@ -47,6 +47,7 @@
  * instead of the next hits: a silent, premature end of results.
  */
 
+import { resolveFigureKinds } from "./figure-kinds.js";
 import type { AccessScope } from "./access-scope.js";
 import type { SearchFilter, SearchCursor } from "./postgres-client.js";
 import {
@@ -72,8 +73,27 @@ function temporalRoot(alias: string): string {
   return `COALESCE(${alias}.chunk->>'root_document_id', ${alias}.base_ref)`;
 }
 
+/**
+ * The key all rows of one version share. A v2 unit has no `version` or
+ * `valid_from` of its own, and its `created` differs per unit, so without the
+ * revision id every unit would be its own "version" and a `valid_at` read
+ * would keep exactly one unit per document.
+ */
 function temporalVersionKey(alias: string): string {
-  return `COALESCE(${alias}.metadata->>'_atf_version_group', ${alias}.metadata->>'version', ${alias}.valid_from::text, ${alias}.created::text, regexp_replace(${alias}.reference, '_chunk_[0-9]+$', ''))`;
+  return `COALESCE(${alias}.metadata->>'_atf_version_group', ${alias}.revision_id, ${alias}.metadata->>'version', ${alias}.valid_from::text, ${alias}.created::text, regexp_replace(${alias}.reference, '_chunk_[0-9]+$', ''))`;
+}
+
+/**
+ * A v2 row belongs to a revision that was committed (current or since
+ * superseded) — never to one still being ingested or aborted, whose units a
+ * `valid_at` read must not see. Legacy rows carry no revision.
+ */
+function committedRevisionSql(alias: string): string {
+  return (
+    `(${alias}.revision_id IS NULL OR EXISTS (SELECT 1 FROM vs_revisions vr` +
+    ` WHERE vr.tenant_id = ${alias}.tenant_id AND vr.revision_id = ${alias}.revision_id` +
+    ` AND vr.status IN ('committed', 'superseded')))`
+  );
 }
 
 /**
@@ -117,15 +137,19 @@ export function buildTemporalFilterSql(
   }
   const validAtPh = p.add(validAt);
   const effective = `COALESCE(${row}.valid_from, ${row}.created)`;
-  if (includeAllVersions) return ` AND ${effective} <= ${validAtPh}::timestamptz`;
+  if (includeAllVersions) {
+    return ` AND ${effective} <= ${validAtPh}::timestamptz AND ${committedRevisionSql(row)}`;
+  }
 
   return ` AND ${effective} <= ${validAtPh}::timestamptz
+    AND ${committedRevisionSql(row)}
     AND ${temporalVersionKey(row)} = (
       SELECT ${temporalVersionKey("tv")}
       FROM "${table}" tv
       WHERE tv.tenant_id = ${row}.tenant_id
         AND ${temporalRoot("tv")} = ${temporalRoot(row)}
         AND COALESCE(tv.valid_from, tv.created) <= ${validAtPh}::timestamptz
+        AND ${committedRevisionSql("tv")}
       ORDER BY COALESCE(tv.valid_from, tv.created) DESC, tv.created DESC, tv.id DESC
       LIMIT 1
     )`;
@@ -173,7 +197,7 @@ function buildFilterSql(
  * predicates on the REAL unit columns (task 1.8) rather than the metadata JSON:
  *
  *   unit_type    — exact match
- *   figure_kind  — exact match
+ *   figure_kind  — the stored kinds the value names (figure-kinds.ts)
  *   pageStart/End— page-range OVERLAP: a unit whose [page_start, page_end]
  *                  intersects the requested [pageStart, pageEnd]. A one-sided
  *                  bound (only start, or only end) is treated as an open range.
@@ -198,7 +222,10 @@ function buildUnitFilterSql(
     sql += ` AND unit_type = ${p.add(unit.unitType)}`;
   }
   if (unit.figureKind !== undefined) {
-    sql += ` AND figure_kind = ${p.add(unit.figureKind)}`;
+    // An alias (`process`, `drawing`, …) covers the stored kinds it names; the
+    // raw value stays in the set so an exact stored kind always matches.
+    const kinds = [...new Set([unit.figureKind, ...(resolveFigureKinds(unit.figureKind) ?? [])])];
+    sql += ` AND figure_kind = ANY(${p.add(kinds)}::text[])`;
   }
   // Page-range overlap. Only units that actually carry a page range participate;
   // a unit with NULL pages never matches a page filter (it has no page to be on).

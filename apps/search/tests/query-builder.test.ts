@@ -716,8 +716,13 @@ describe("v2 unit-column filter (UNIT_FILTER_V2)", () => {
 
   it("filters figure_kind on the real column", () => {
     const { sql, params } = denseWith({ figureKind: "ui_mask" });
-    expect(sql).toContain("figure_kind = $");
-    expect(params).toContain("ui_mask");
+    expect(sql).toMatch(/figure_kind = ANY\(\$\d+::text\[\]\)/);
+    expect(params).toContainEqual(["ui_mask"]);
+  });
+
+  it("resolves a figure_kind alias to the stored kinds it names", () => {
+    const { params } = denseWith({ figureKind: "process" });
+    expect(params).toContainEqual(["process", "bpmn", "flowchart"]);
   });
 
   it("filters a page range as an overlap on page_start/page_end", () => {

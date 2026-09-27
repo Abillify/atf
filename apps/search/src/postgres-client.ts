@@ -9,6 +9,7 @@
  * and the stats write-buffer in stats-buffer.ts.
  */
 
+import { resolveFigureKinds } from "./figure-kinds.js";
 import {
   forgetDocument,
   groupMemberReferences,
@@ -567,6 +568,12 @@ export interface SearchResult {
    * resolved when results are grouped by document or expanded to the document.
    */
   document_group?: DocumentGroup;
+  /**
+   * Set on a result merged from several documents of one group (an e-mail
+   * thread): their references in reading order. `reference`/`base_ref` name
+   * only the best-scoring one; read the others (or `get_thread`) for the rest.
+   */
+  group_members?: string[];
 }
 
 /**
@@ -974,6 +981,9 @@ export interface DocumentContent {
     window_end: number;
     original_start: number;
     original_end: number;
+    /** v2: the unit the span comes from, for get_context / follow_ref. */
+    unit_id?: string;
+    unit_type?: string;
     page_start?: number;
     page_end?: number;
     section_path?: string[];
@@ -1112,6 +1122,17 @@ export interface PostgresClient {
   ): Promise<PostgresResponse<Map<string, DocumentGroup>>>;
 
   /**
+   * The e-mails of a thread in chronological order (their references). The
+   * caller reads each with {@link getDocument}, which applies the row ACL, so a
+   * member the caller may not see is simply not returned.
+   */
+  listThreadMembers?(
+    collection: string,
+    scope: AccessScope,
+    threadId: string,
+  ): Promise<PostgresResponse<string[]>>;
+
+  /**
    * Resolve figure-unit metadata by `figure_id` within one document (task 3.7,
    * Requirement 13.5), for the `/v2/search` asset-attach step. Scoped to
    * `baseRef` and run under the SAME temporal/revision-visibility + tenant/ACL
@@ -1236,7 +1257,7 @@ export interface PostgresClient {
     collection: string,
     scope: AccessScope,
     valueNorm: string,
-    options?: NavReadOptions & { limit?: number; offset?: number },
+    options?: NavReadOptions & { limit?: number; offset?: number; pathPrefix?: string },
   ): Promise<PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>>;
 
   delete(
@@ -1400,7 +1421,7 @@ export interface PostgresClient {
     collection: string,
     scope: AccessScope,
     reference: string,
-    options?: { maxChars?: number; offset?: number },
+    options?: { maxChars?: number; offset?: number; validAt?: string },
   ): Promise<PostgresResponse<DocumentContent | null>>;
 
   /**
@@ -1413,7 +1434,7 @@ export interface PostgresClient {
   getDocumentsByPrefix(
     collection: string,
     scope: AccessScope,
-    options?: { pathPrefix?: string; limit?: number; maxChars?: number },
+    options?: { pathPrefix?: string; limit?: number; maxChars?: number; validAt?: string },
   ): Promise<
     PostgresResponse<{
       documents: DocumentContent[];
@@ -1431,6 +1452,7 @@ export interface PostgresClient {
     collection: string,
     scope: AccessScope,
     reference: string,
+    options?: { validAt?: string },
   ): Promise<PostgresResponse<SummaryEntry | null>>;
 
   /**
@@ -1442,7 +1464,7 @@ export interface PostgresClient {
   getSummaries(
     collection: string,
     scope: AccessScope,
-    options?: { pathPrefix?: string; limit?: number; offset?: number },
+    options?: { pathPrefix?: string; limit?: number; offset?: number; validAt?: string },
   ): Promise<
     PostgresResponse<{ summaries: SummaryEntry[]; total: number }>
   >;
@@ -1860,6 +1882,60 @@ export function mergeOrderedChunkContents(
   return merged;
 }
 
+/**
+ * The rows that form a document's text. A v1 row has no `unit_type`; of the v2
+ * units only `chunk`/`table`/`figure` carry the document's own content — the
+ * `section`/`page`/`document` units are Extract's summaries, which must never be
+ * read back as the original.
+ */
+export const DOCUMENT_BODY_SQL = `(unit_type IS NULL OR unit_type IN ('chunk', 'table', 'figure'))`;
+
+/**
+ * Reading order of a document's rows. A v1 row orders by its chunk index; v2
+ * units carry no chunk JSON, so they order by page, then by the position of
+ * their first source block on the page (`p{page}-b{n}`), then by their ordinal
+ * within that block group (the row-groups of a table, the pieces of a long
+ * text group). `id` only breaks ties — it is insertion order, which follows
+ * batch processing, not the document.
+ */
+export const DOCUMENT_ORDER_SQL =
+  `COALESCE((chunk->>'chunk_index')::int, 0) ASC, page_start ASC NULLS FIRST, ` +
+  `NULLIF(substring(block_ids[1] from '-b([0-9]+)$'), '')::int ASC NULLS FIRST, ` +
+  `CASE WHEN unit_type IS NOT NULL AND metadata->>'ordinal' ~ '^[0-9]+$' ` +
+  `THEN (metadata->>'ordinal')::int END ASC NULLS FIRST, id ASC`;
+
+/**
+ * The text a row contributes to its document. A v1 row is its content. A v2
+ * `table` unit's content also holds the row-wise "Spalte: Wert" lines for
+ * full-text search; only the grid part (`display_len`) is document text. A v2
+ * `figure` unit is marked as a figure with its ids, so a reader knows the text
+ * is a transcription and can fetch the image.
+ */
+export function documentBodyText(row: {
+  content: string;
+  unit_type?: string | null;
+  metadata?: Metadata | null;
+}): string {
+  const meta = (row.metadata ?? {}) as Record<string, unknown>;
+  // A table's row-wise lines, and a chunk's carried continuation from the
+  // next page (contract 2.3), are indexed but are not this unit's text.
+  if (row.unit_type === "table" || row.unit_type === "chunk") {
+    const len = meta.display_len;
+    return typeof len === "number" && len > 0 && len < row.content.length
+      ? row.content.slice(0, len)
+      : row.content;
+  }
+  if (row.unit_type === "figure") {
+    const label = [
+      typeof meta.figure_id === "string" ? meta.figure_id : undefined,
+      typeof meta.figure_kind === "string" ? meta.figure_kind : undefined,
+      typeof meta.asset_id === "string" ? `asset_id=${meta.asset_id}` : undefined,
+    ].filter((p): p is string => p !== undefined);
+    return `[Abbildung${label.length > 0 ? ` ${label.join(" · ")}` : ""}]\n${row.content}`;
+  }
+  return row.content;
+}
+
 interface MergedChunkCoordinate<T> {
   item: T;
   returnedStart: number;
@@ -1874,12 +1950,30 @@ function mergeChunksWithCoordinates<T extends {
   overlap_start: number | null;
   overlap_end: number | null;
   chunk: ChunkInfo | null;
+  unit_type?: string | null;
 }>(chunks: T[]): { content: string; coordinates: Array<MergedChunkCoordinate<T>> } {
   if (chunks.length === 0) return { content: "", coordinates: [] };
   let merged = "";
   const coordinates: Array<MergedChunkCoordinate<T>> = [];
   for (let index = 0; index < chunks.length; index++) {
     const item = chunks[index]!;
+    // A v2 unit is a whole block group with no overlap: it is joined as its
+    // own paragraph, never suffix-trimmed (a table row-group repeats its
+    // header, which the probe would otherwise eat), and the reassembled text
+    // is its own coordinate system.
+    if (item.unit_type != null) {
+      if (index > 0) merged += "\n\n";
+      const returnedStart = merged.length;
+      merged += item.content;
+      coordinates.push({
+        item,
+        returnedStart,
+        returnedEnd: merged.length,
+        originalStart: returnedStart,
+        originalEnd: merged.length,
+      });
+      continue;
+    }
     let trim = 0;
     if (index > 0) {
       const previous = chunks[index - 1]!;
@@ -1923,6 +2017,24 @@ export function createPostgresClient(
     const p = new SqlParams();
     p.values.push(...params);
     return { sql: buildAccessSql(p, scope, alias), params: p.values };
+  };
+  /**
+   * The version gate plus the access predicate for a whole-document read: the
+   * current revision (the v2 pointer, not only `is_latest`), or with `validAt`
+   * the version valid at that instant — the same rule the search applies, so a
+   * `valid_at` hit can be read in full.
+   */
+  const versionedWhere = (
+    table: string,
+    collection: string,
+    scope: AccessScope,
+    params: unknown[],
+    validAt?: string,
+  ): { sql: string; params: unknown[] } => {
+    const p = new SqlParams();
+    p.values.push(...params);
+    const temporal = buildTemporalFilterSql(p, table, false, validAt, "", collection);
+    return { sql: temporal + buildAccessSql(p, scope), params: p.values };
   };
   const {
     connectionString,
@@ -2914,7 +3026,7 @@ export function createPostgresClient(
         FROM "${table}"
         WHERE base_ref = ${baseRefPh}
           AND (${targetSql})${temporalFilter}${accessSql}
-        ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+        ORDER BY ${DOCUMENT_ORDER_SQL}
       `;
 
       return withClient(async (client) => {
@@ -2945,6 +3057,18 @@ export function createPostgresClient(
       return withClient((client) =>
         resolveDocumentGroups(client, { tenantId, collection, references }),
       );
+    },
+
+    async listThreadMembers(
+      collection: string,
+      scope: AccessScope,
+      threadId: string,
+    ): Promise<PostgresResponse<string[]>> {
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const tenantId = scope.tenantId;
+      return withClient((client) => groupMemberReferences(client, { tenantId, collection, groupId: threadId }));
     },
 
     async lookupFigureUnits(
@@ -3136,7 +3260,7 @@ export function createPostgresClient(
           `${NAV_ROW_SELECT}
              FROM "${table}"
             WHERE base_ref = ${refPh} AND (${targetSql})${temporalFilter}${accessSql}
-            ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+            ORDER BY ${DOCUMENT_ORDER_SQL}
             LIMIT ${NAV_MAX_UNITS}`,
           p.values,
         );
@@ -3177,7 +3301,7 @@ export function createPostgresClient(
               AND page_start IS NOT NULL AND page_end IS NOT NULL
               AND page_start > 0 AND page_end > 0
               AND page_start <= ${endPh} AND page_end >= ${startPh}${temporalFilter}${accessSql}
-            ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+            ORDER BY ${DOCUMENT_ORDER_SQL}
             LIMIT ${NAV_MAX_UNITS}`,
           p.values,
         );
@@ -3272,9 +3396,11 @@ export function createPostgresClient(
           const to = Math.max(options.fromPage, options.toPage);
           rangeSql = ` AND page_start IS NOT NULL AND page_start >= ${p.add(from)} AND page_start <= ${p.add(to)}`;
         }
+        // An alias (`process`, `drawing`, …) covers the stored kinds it names.
+        const kindValue = options?.kind?.trim() ?? "";
         const kindSql =
-          options?.kind && options.kind.trim() !== ""
-            ? ` AND figure_kind = ${p.add(options.kind.trim())}`
+          kindValue !== ""
+            ? ` AND figure_kind = ANY(${p.add([...new Set([kindValue, ...(resolveFigureKinds(kindValue) ?? [])])])}::text[])`
             : "";
         const where = `base_ref = ${refPh} AND unit_type = 'figure'${rangeSql}${kindSql}${temporalFilter}${accessSql}`;
         const countRes = await client.query<{ n: string }>(
@@ -3353,7 +3479,7 @@ export function createPostgresClient(
           `${NAV_ROW_SELECT}
              FROM "${table}"
             WHERE ${where}
-            ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+            ORDER BY ${DOCUMENT_ORDER_SQL}
             LIMIT ${limitPh}`,
           p.values,
         );
@@ -3439,7 +3565,7 @@ export function createPostgresClient(
       collection: string,
       scope: AccessScope,
       valueNorm: string,
-      options?: NavReadOptions & { limit?: number; offset?: number },
+      options?: NavReadOptions & { limit?: number; offset?: number; pathPrefix?: string },
     ): Promise<PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
@@ -3461,9 +3587,12 @@ export function createPostgresClient(
         const tenantPh = p.add(scope.tenantId);
         const collPh = p.add(collection);
         const normPh = p.add(norm);
+        // A folder scope (a project) keeps occurrences from other folders out.
+        const prefix = normalizePathPrefix(options?.pathPrefix);
+        const prefixSql = prefix === "" ? "" : ` AND d.base_ref LIKE ${p.add(escapeLikeLiteral(prefix) + "/%")} ESCAPE '\\'`;
         const where =
           `i.tenant_id = ${tenantPh} AND i.collection = ${collPh} AND i.value_norm = ${normPh}` +
-          ` AND d.tenant_id = i.tenant_id AND d.unit_id = i.unit_id${temporalFilter}${access}`;
+          ` AND d.tenant_id = i.tenant_id AND d.unit_id = i.unit_id${prefixSql}${temporalFilter}${access}`;
         const countRes = await client.query<{ n: string }>(
           `SELECT COUNT(*)::text AS n
              FROM vs_identifiers i JOIN "${table}" d ON d.unit_id = i.unit_id
@@ -4750,7 +4879,7 @@ export function createPostgresClient(
       collection: string,
       scope: AccessScope,
       reference: string,
-      options?: { maxChars?: number; offset?: number },
+      options?: { maxChars?: number; offset?: number; validAt?: string },
     ): Promise<PostgresResponse<DocumentContent | null>> {
       // Canonicalize so an NFC (precomposed-umlaut) reference matches an
       // NFC-stored key even when the caller copied it from NFD-origin text.
@@ -4788,16 +4917,16 @@ export function createPostgresClient(
           );
         }
         // Resolve base_ref: accept either the document ref or any chunk ref.
-        const resolveAccess = scopedWhere(scope, [reference]);
+        const resolveAccess = versionedWhere(table, collection, scope, [reference], options?.validAt);
         const resolve = await client.query<{ base_ref: string }>(
           `SELECT base_ref FROM "${table}"
-            WHERE (base_ref = $1 OR reference = $1) AND is_latest${resolveAccess.sql}
+            WHERE (base_ref = $1 OR reference = $1)${resolveAccess.sql}
             LIMIT 1`,
           resolveAccess.params,
         );
         if (resolve.rows.length === 0) return null;
         const baseRef = resolve.rows[0]!.base_ref;
-        const chunkAccess = scopedWhere(scope, [baseRef]);
+        const chunkAccess = versionedWhere(table, collection, scope, [baseRef], options?.validAt);
 
         const { rows } = await client.query<{
           content: string;
@@ -4811,18 +4940,26 @@ export function createPostgresClient(
           chunk: ChunkInfo | null;
           overlap_start: number | null;
           overlap_end: number | null;
+          unit_id: string | null;
+          unit_type: string | null;
+          page_start: number | null;
+          page_end: number | null;
+          section_path: string[] | null;
         }>(
           `SELECT content, title, link, source, metadata, tags, modified, reference, chunk,
                   (chunk->>'chunk_overlap_start')::int AS overlap_start,
-                  (chunk->>'chunk_overlap_end')::int   AS overlap_end
+                  (chunk->>'chunk_overlap_end')::int   AS overlap_end,
+                  unit_id, unit_type, page_start, page_end, section_path
              FROM "${table}"
-            WHERE base_ref = $1 AND is_latest${chunkAccess.sql}
-            ORDER BY COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC`,
+            WHERE base_ref = $1 AND ${DOCUMENT_BODY_SQL}${chunkAccess.sql}
+            ORDER BY ${DOCUMENT_ORDER_SQL}`,
           chunkAccess.params,
         );
         if (rows.length === 0) return null;
 
-        const mergedDocument = mergeChunksWithCoordinates(rows);
+        const mergedDocument = mergeChunksWithCoordinates(
+          rows.map((r) => (r.unit_type != null ? { ...r, content: documentBodyText(r) } : r)),
+        );
         const fullContent = mergedDocument.content;
         const totalChars = fullContent.length;
         const content = fullContent.slice(offset, offset + maxChars);
@@ -4833,6 +4970,7 @@ export function createPostgresClient(
         const windowEnd = offset + content.length;
         const evidenceSpans = mergedDocument.coordinates.flatMap((coordinate) => {
           const chunk = coordinate.item.chunk;
+          const unit = coordinate.item;
           if (coordinate.originalStart === undefined || coordinate.originalEnd === undefined) return [];
           const start = Math.max(coordinate.returnedStart, offset);
           const end = Math.min(coordinate.returnedEnd, windowEnd);
@@ -4846,9 +4984,17 @@ export function createPostgresClient(
             window_end: end - offset,
             original_start: coordinate.originalStart + deltaStart,
             original_end: coordinate.originalEnd - deltaEnd,
-            ...(chunk?.page_start !== undefined ? { page_start: chunk.page_start } : {}),
-            ...(chunk?.page_end !== undefined ? { page_end: chunk.page_end } : {}),
-            ...(chunk?.section_path ? { section_path: chunk.section_path } : {}),
+            ...(unit.unit_id ? { unit_id: unit.unit_id } : {}),
+            ...(unit.unit_type ? { unit_type: unit.unit_type } : {}),
+            ...(chunk?.page_start !== undefined
+              ? { page_start: chunk.page_start }
+              : unit.page_start != null ? { page_start: unit.page_start } : {}),
+            ...(chunk?.page_end !== undefined
+              ? { page_end: chunk.page_end }
+              : unit.page_end != null ? { page_end: unit.page_end } : {}),
+            ...(chunk?.section_path
+              ? { section_path: chunk.section_path }
+              : unit.section_path && unit.section_path.length > 0 ? { section_path: unit.section_path } : {}),
           }];
         });
 
@@ -4873,7 +5019,7 @@ export function createPostgresClient(
     async getDocumentsByPrefix(
       collection: string,
       scope: AccessScope,
-      options?: { pathPrefix?: string; limit?: number; maxChars?: number },
+      options?: { pathPrefix?: string; limit?: number; maxChars?: number; validAt?: string },
     ): Promise<
       PostgresResponse<{
         documents: DocumentContent[];
@@ -4916,10 +5062,10 @@ export function createPostgresClient(
         const prefixParams = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
 
         // Total distinct documents beneath the prefix (for the truncated flag).
-        const access = scopedWhere(scope, prefixParams);
+        const access = versionedWhere(table, collection, scope, prefixParams, options?.validAt);
         const totalRes = await client.query<{ total: string }>(
           `SELECT COUNT(DISTINCT base_ref) AS total
-             FROM "${table}" WHERE is_latest${prefixClause}${access.sql}`,
+             FROM "${table}" WHERE TRUE${prefixClause}${access.sql}`,
           access.params,
         );
         const total = parseInt(totalRes.rows[0]!.total, 10);
@@ -4927,7 +5073,7 @@ export function createPostgresClient(
         // The base_refs to reassemble, ordered deterministically, capped by limit.
         const refsRes = await client.query<{ base_ref: string }>(
           `SELECT base_ref
-             FROM "${table}" WHERE is_latest${prefixClause}${access.sql}
+             FROM "${table}" WHERE TRUE${prefixClause}${access.sql}
             GROUP BY base_ref
             ORDER BY base_ref ASC
             LIMIT ${limit}`,
@@ -4939,7 +5085,7 @@ export function createPostgresClient(
         }
 
         // Fetch all visible chunks for the selected documents in ONE query, then group.
-        const chunkAccess = scopedWhere(scope, [baseRefs]);
+        const chunkAccess = versionedWhere(table, collection, scope, [baseRefs], options?.validAt);
         const { rows } = await client.query<{
           base_ref: string;
           content: string;
@@ -4951,14 +5097,15 @@ export function createPostgresClient(
           modified: Date;
           overlap_start: number | null;
           overlap_end: number | null;
+          unit_type: string | null;
         }>(
           `SELECT base_ref, content, title, link, source, metadata, tags, modified,
                   (chunk->>'chunk_overlap_start')::int AS overlap_start,
-                  (chunk->>'chunk_overlap_end')::int   AS overlap_end
+                  (chunk->>'chunk_overlap_end')::int   AS overlap_end,
+                  unit_type
              FROM "${table}"
-            WHERE is_latest AND base_ref = ANY($1)${chunkAccess.sql}
-            ORDER BY base_ref ASC,
-                     COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC`,
+            WHERE base_ref = ANY($1) AND ${DOCUMENT_BODY_SQL}${chunkAccess.sql}
+            ORDER BY base_ref ASC, ${DOCUMENT_ORDER_SQL}`,
           chunkAccess.params,
         );
 
@@ -4977,13 +5124,17 @@ export function createPostgresClient(
         for (const baseRef of baseRefs) {
           const chunkRows = grouped.get(baseRef);
           if (chunkRows === undefined || chunkRows.length === 0) continue;
-          let content = mergeOrderedChunkContents(
-            chunkRows.map((r) => ({
-              content: r.content,
-              overlapStart: r.overlap_start,
-              overlapEnd: r.overlap_end,
-            })),
-          );
+          // v2 units are whole block groups without overlap: one paragraph each.
+          let content =
+            chunkRows[0]?.unit_type != null
+              ? chunkRows.map((r) => documentBodyText(r)).join("\n\n")
+              : mergeOrderedChunkContents(
+                  chunkRows.map((r) => ({
+                    content: r.content,
+                    overlapStart: r.overlap_start,
+                    overlapEnd: r.overlap_end,
+                  })),
+                );
           // Combined-size guard: stop before exceeding maxChars. Always emit at
           // least the first document (truncated if it alone is too large).
           if (documents.length > 0 && used + content.length > maxChars) {
@@ -5020,6 +5171,7 @@ export function createPostgresClient(
       collection: string,
       scope: AccessScope,
       reference: string,
+      options?: { validAt?: string },
     ): Promise<PostgresResponse<SummaryEntry | null>> {
       // Canonicalize to NFC (see getDocument / normalizeReference).
       reference = normalizeReference(reference);
@@ -5047,16 +5199,16 @@ export function createPostgresClient(
             `Collection "${collection}" not found`,
           );
         }
-        const resolveAccess = scopedWhere(scope, [reference]);
+        const resolveAccess = versionedWhere(table, collection, scope, [reference], options?.validAt);
         const resolve = await client.query<{ base_ref: string }>(
           `SELECT base_ref FROM "${table}"
-            WHERE (base_ref = $1 OR reference = $1) AND is_latest${resolveAccess.sql}
+            WHERE (base_ref = $1 OR reference = $1)${resolveAccess.sql}
             LIMIT 1`,
           resolveAccess.params,
         );
         if (resolve.rows.length === 0) return null;
         const baseRef = resolve.rows[0]!.base_ref;
-        const summaryAccess = scopedWhere(scope, [baseRef]);
+        const summaryAccess = versionedWhere(table, collection, scope, [baseRef], options?.validAt);
 
         // The summary/prefix lives on chunk 0 only.
         const { rows } = await client.query<{
@@ -5066,13 +5218,21 @@ export function createPostgresClient(
           is_summary: boolean | null;
           modified: Date;
         }>(
-          `SELECT prefix, title, link,
-                  (chunk->>'summary') = 'true' AS is_summary,
-                  modified
+          // Same resolution as getSummaries: first body row's prefix, else the
+          // v2 `document` unit.
+          `SELECT COALESCE(
+                    NULLIF((ARRAY_AGG(prefix ORDER BY ${DOCUMENT_ORDER_SQL})
+                             FILTER (WHERE ${DOCUMENT_BODY_SQL}))[1], ''),
+                    (ARRAY_AGG(content ORDER BY id ASC) FILTER (WHERE unit_type = 'document'))[1]
+                  ) AS prefix,
+                  (ARRAY_AGG(title ORDER BY ${DOCUMENT_ORDER_SQL}) FILTER (WHERE title IS NOT NULL AND title <> ''))[1] AS title,
+                  (ARRAY_AGG(link  ORDER BY ${DOCUMENT_ORDER_SQL}) FILTER (WHERE link IS NOT NULL AND link <> ''))[1] AS link,
+                  COALESCE(bool_or((chunk->>'summary') = 'true'), FALSE)
+                    OR COALESCE(bool_or(unit_type = 'document'), FALSE) AS is_summary,
+                  MAX(modified) AS modified
              FROM "${table}"
-            WHERE base_ref = $1 AND is_latest${summaryAccess.sql}
-            ORDER BY COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC
-            LIMIT 1`,
+            WHERE base_ref = $1${summaryAccess.sql}
+           HAVING COUNT(*) > 0`,
           summaryAccess.params,
         );
         if (rows.length === 0) return null;
@@ -5091,7 +5251,7 @@ export function createPostgresClient(
     async getSummaries(
       collection: string,
       scope: AccessScope,
-      options?: { pathPrefix?: string; limit?: number; offset?: number },
+      options?: { pathPrefix?: string; limit?: number; offset?: number; validAt?: string },
     ): Promise<PostgresResponse<{ summaries: SummaryEntry[]; total: number }>> {
       let table: string;
       try {
@@ -5124,10 +5284,10 @@ export function createPostgresClient(
           norm === "" ? "" : " AND base_ref LIKE $1 ESCAPE '\\'";
         const prefixParams = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
 
-        const access = scopedWhere(scope, prefixParams);
+        const access = versionedWhere(table, collection, scope, prefixParams, options?.validAt);
         const totalRes = await client.query<{ total: string }>(
           `SELECT COUNT(DISTINCT base_ref) AS total
-             FROM "${table}" WHERE is_latest${prefixClause}${access.sql}`,
+             FROM "${table}" WHERE TRUE${prefixClause}${access.sql}`,
           access.params,
         );
         const total = parseInt(totalRes.rows[0]!.total, 10);
@@ -5143,14 +5303,23 @@ export function createPostgresClient(
           is_summary: boolean | null;
           modified: Date;
         }>(
+          // The summary is the first body row's prefix (v1, or a v2 document
+          // the summary backfill wrote), else the v2 `document` unit — Extract's
+          // document summary plus the top of the outline. Title and link are
+          // the first non-empty value in reading order.
           `SELECT base_ref AS reference,
-                  (ARRAY_AGG(prefix ORDER BY COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC))[1] AS summary,
-                  (ARRAY_AGG(title  ORDER BY COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC))[1] AS title,
-                  (ARRAY_AGG(link   ORDER BY COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC))[1] AS link,
-                  bool_or((chunk->>'summary') = 'true') AS is_summary,
+                  COALESCE(
+                    NULLIF((ARRAY_AGG(prefix ORDER BY ${DOCUMENT_ORDER_SQL})
+                             FILTER (WHERE ${DOCUMENT_BODY_SQL}))[1], ''),
+                    (ARRAY_AGG(content ORDER BY id ASC) FILTER (WHERE unit_type = 'document'))[1]
+                  ) AS summary,
+                  (ARRAY_AGG(title ORDER BY ${DOCUMENT_ORDER_SQL}) FILTER (WHERE title IS NOT NULL AND title <> ''))[1] AS title,
+                  (ARRAY_AGG(link  ORDER BY ${DOCUMENT_ORDER_SQL}) FILTER (WHERE link IS NOT NULL AND link <> ''))[1] AS link,
+                  COALESCE(bool_or((chunk->>'summary') = 'true'), FALSE)
+                    OR COALESCE(bool_or(unit_type = 'document'), FALSE) AS is_summary,
                   MAX(modified) AS modified
              FROM "${table}"
-            WHERE is_latest${prefixClause}${access.sql}
+            WHERE TRUE${prefixClause}${access.sql}
             GROUP BY base_ref
             ORDER BY base_ref ASC
             LIMIT ${limit} OFFSET ${offset}`,
@@ -5202,11 +5371,15 @@ export function createPostgresClient(
         // document/chapter never received a summary.
         const access = scopedWhere(scope, []);
         const { rows } = await client.query<{ base_ref: string }>(
+          // One row per document. A v2 document whose Extract document pass
+          // produced a summary (its `document` unit) is not missing one.
           `SELECT base_ref
              FROM "${table}"
-            WHERE is_latest
-              AND COALESCE((chunk->>'chunk_index')::int, 0) = 0
-              AND (prefix IS NULL OR prefix = '')${access.sql}
+            WHERE is_latest${access.sql}
+            GROUP BY base_ref
+           HAVING NOT COALESCE(bool_or(unit_type = 'document'), FALSE)
+              AND COALESCE((ARRAY_AGG(prefix ORDER BY ${DOCUMENT_ORDER_SQL})
+                             FILTER (WHERE ${DOCUMENT_BODY_SQL}))[1], '') = ''
             ORDER BY base_ref ASC`,
           access.params,
         );
@@ -5237,10 +5410,9 @@ export function createPostgresClient(
         // Reassemble the document/chapter text from its chunks in chunk order.
         const access = scopedWhere(scope, [ref]);
         const { rows } = await client.query<{ content: string | null }>(
-          `SELECT string_agg(content, E'\n'
-                    ORDER BY COALESCE((chunk->>'chunk_index')::int, 0) ASC, id ASC) AS content
+          `SELECT string_agg(content, E'\n' ORDER BY ${DOCUMENT_ORDER_SQL}) AS content
              FROM "${table}"
-            WHERE is_latest AND base_ref = $1${access.sql}`,
+            WHERE is_latest AND base_ref = $1 AND ${DOCUMENT_BODY_SQL}${access.sql}`,
           access.params,
         );
         return { content: rows[0]?.content ?? "" };
@@ -5283,8 +5455,11 @@ export function createPostgresClient(
                   chunk     = jsonb_set(COALESCE(chunk, '{}'::jsonb), '{summary}', 'true'::jsonb, true),
                   ts_search = COALESCE(ts_search, ''::tsvector) || to_tsvector('${lang}', $2),
                   modified  = NOW()
-            WHERE is_latest AND base_ref = $1
-              AND COALESCE((chunk->>'chunk_index')::int, 0) = 0${access.sql}`,
+            WHERE id = (
+                    SELECT id FROM "${table}"
+                     WHERE is_latest AND base_ref = $1 AND ${DOCUMENT_BODY_SQL}${access.sql}
+                     ORDER BY ${DOCUMENT_ORDER_SQL}
+                     LIMIT 1)`,
           access.params,
         );
         return { updated: res.rowCount ?? 0 };

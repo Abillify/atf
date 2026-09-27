@@ -219,14 +219,16 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
     req: Request,
     reference: string,
     sourceSha256: string,
+    attributes: Record<string, unknown>,
     signal: AbortSignal,
     aborted: () => boolean,
   ): Promise<{ jobId: string; status: string; collection?: string }> {
     const collection = readHeader(req, "x-collection")?.trim();
-    const jobBody: { reference: string; sourceSha256: string; collection?: string } = {
+    const jobBody: Record<string, unknown> = {
       reference,
       sourceSha256,
       ...(collection !== undefined && collection !== "" ? { collection } : {}),
+      ...attributes,
     };
 
     const res = await callExtract(
@@ -283,6 +285,9 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
         return;
       }
 
+      // Parsed before any upload, so a malformed header costs no transfer.
+      const attributes = documentAttributeHeaders(req);
+
       const controller = new AbortController();
       const timeout =
         converter.timeoutMs > 0 ? setTimeout(() => controller.abort(), converter.timeoutMs) : null;
@@ -298,7 +303,7 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
 
       try {
         const sourceSha256 = await uploadSource(body, reference, controller.signal, isAborted);
-        const job = await createJob(req, reference, sourceSha256, controller.signal, isAborted);
+        const job = await createJob(req, reference, sourceSha256, attributes, controller.signal, isAborted);
 
         log.info(
           { jobId: job.jobId, reference, sourceSha256, durationMs: Date.now() - startedAt },
@@ -340,5 +345,54 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
         ...(detail !== undefined && detail !== "" ? { extract_detail: detail } : {}),
       });
     });
+  };
+}
+
+/**
+ * The document attributes and identity inputs of a file ingest, read from the
+ * same headers Search's `/ingest` takes and mapped onto the Extract job
+ * (contract 2.2): X-Title, X-Tags, X-Metadata, X-Link, X-Source, X-Version,
+ * X-Source-Modified and X-Dedup. Without them a file ingested through the v2
+ * path would lose the tags and metadata the tag and metadata filters rely on.
+ * An invalid X-Metadata is a 400, not a silently dropped header.
+ */
+export function documentAttributeHeaders(req: Request): Record<string, unknown> {
+  const text = (name: string): string | undefined => {
+    const value = readHeader(req, name)?.trim();
+    return value !== undefined && value !== "" ? value : undefined;
+  };
+  const tags = (text("x-tags") ?? "")
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t !== "");
+  let metadata: Record<string, unknown> | undefined;
+  const metadataRaw = text("x-metadata");
+  if (metadataRaw !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(metadataRaw);
+    } catch {
+      parsed = undefined;
+    }
+    if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+      throw httpError("X-Metadata must be a JSON object", 400);
+    }
+    metadata = parsed as Record<string, unknown>;
+  }
+  const dedup = text("x-dedup")?.toLowerCase();
+  const title = text("x-title");
+  const link = text("x-link");
+  const sourceLabel = text("x-source");
+  const version = text("x-version");
+  const sourceModifiedAt = text("x-source-modified");
+  return {
+    ...(title !== undefined ? { title } : {}),
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(metadata !== undefined ? { metadata } : {}),
+    ...(link !== undefined ? { link } : {}),
+    ...(sourceLabel !== undefined ? { sourceLabel } : {}),
+    ...(version !== undefined ? { version } : {}),
+    ...(sourceModifiedAt !== undefined ? { sourceModifiedAt } : {}),
+    ...(dedup === "auto" || dedup === "exact" || dedup === "off" ? { dedup } : {}),
   };
 }

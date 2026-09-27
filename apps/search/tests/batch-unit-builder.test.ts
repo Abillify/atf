@@ -550,3 +550,47 @@ describe("unit metadata · Extract provenance (Req 18.2)", () => {
     expect(partial).not.toHaveProperty("extract_prompt_hash");
   });
 });
+
+// ─── paragraph over a page break (contract 2.3) ─────────────────────────────
+
+describe("buildUnitsFromRecords · paragraph over a page break", () => {
+  it("the last chunk carries the continuation for search, displayLen keeps it out of reads", async () => {
+    const units = await buildUnitsFromRecords(
+      input([
+        page(1, [
+          {
+            id: "p1-b1",
+            page: 1,
+            type: "paragraph",
+            text: "Die Anforderung WE-07 verlangt, dass der Lieferant",
+            continues: true,
+            continuationText: "bei jeder Buchung erfasst wird.",
+          },
+        ]),
+        page(2, [
+          { id: "p2-b1", page: 2, type: "paragraph", text: "bei jeder Buchung erfasst wird. Mehr.", continuationOf: "p1-b1" },
+        ]),
+      ]),
+    );
+    const [first, second] = byType(units, "chunk");
+    if (first === undefined || second === undefined) throw new Error("expected two chunks");
+    expect(first.content).toBe("Die Anforderung WE-07 verlangt, dass der Lieferant bei jeder Buchung erfasst wird.");
+    expect(first.embedInput).toBe(first.content);
+    expect(first.content.slice(0, first.displayLen)).toBe("Die Anforderung WE-07 verlangt, dass der Lieferant");
+    expect(first.pageStart).toBe(1);
+    expect(first.pageEnd).toBe(1);
+    expect(second.displayLen).toBeUndefined();
+    // Chunks of one section link across the pages of the batch.
+    expect(first.nextUnitId).toBe(second.unitId);
+    expect(second.prevUnitId).toBe(first.unitId);
+  });
+
+  it("joins a word hyphenated at the break without a space", async () => {
+    const units = await buildUnitsFromRecords(
+      input([
+        page(3, [{ id: "p3-b1", page: 3, type: "paragraph", text: "Pflichtfeld Liefe-", continues: true, continuationText: "rantennummer." }]),
+      ]),
+    );
+    expect(byType(units, "chunk")[0]?.content).toBe("Pflichtfeld Liefe-rantennummer.");
+  });
+});

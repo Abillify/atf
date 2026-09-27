@@ -109,7 +109,9 @@ describe("grouping by document group", () => {
     const grouped = groupResultsByDocument(results);
     expect(grouped).toHaveLength(2);
     expect(grouped[0]?.score).toBe(0.9);
-    expect(grouped[0]?.content).toBe("Frage A\n\nAntwort B");
+    // Each message is headed by its reference, so a quote stays attributable.
+    expect(grouped[0]?.content).toBe("[Nachricht: mail/a.eml]\nFrage A\n\n[Nachricht: mail/b.eml]\nAntwort B");
+    expect(grouped[0]?.group_members).toEqual(["mail/a.eml", "mail/b.eml"]);
     expect(grouped[0]?.document_group?.id).toBe("thread:1");
   });
 

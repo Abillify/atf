@@ -79,6 +79,7 @@ import {
   DEFAULT_CONTEXT_HEADER_MAX_FRACTION,
 } from "./contextual-header.js";
 import type { SummaryClient } from "./summary-client.js";
+import { parseDocumentInfo, type DocumentInfo } from "./document-identity.js";
 import {
   extractProvenanceOf,
   finalizePendingCommits,
@@ -389,8 +390,12 @@ export function createBatchWorker(
     // header goes on embedInput only, never `content`/FTS. When CONTEXTUAL_CHUNK_LLM
     // is on and a summary client is present, a per-chunk placement sentence is
     // folded in; a text-LLM failure degrades to the header without it.
+    // The revision's ACL and document attributes; its persisted title also
+    // heads the batches that carry no document.begin of their own.
+    const acl = await loadRevisionAcl(client, batch);
+
     await applyContextualHeaders(units, {
-      documentTitle: documentTitle ?? batch.reference,
+      documentTitle: documentTitle ?? acl.info.title ?? acl.info.email?.subject ?? batch.reference,
       budgetTokens: maxChunkTokens,
       maxFraction: contextHeaderMaxFraction,
       tokenCounter,
@@ -428,7 +433,6 @@ export function createBatchWorker(
     // Later batches carry no document.begin: use the provenance the revision
     // store persisted when the batch holding it was staged.
     provenance ??= await loadExtractProvenance(client, batch);
-    const acl = await loadRevisionAcl(client, batch);
 
     const lang = await loadFtsLanguage(client, table);
     for (const [unit, vector] of zip(units, vectors)) {
@@ -780,17 +784,31 @@ async function loadExtractProvenance(
  * store (which checks readability through the unit rows) enforce it. A revision
  * created without one is readable by every reader of the collection.
  */
+/**
+ * The revision's row ACL and the document attributes its `document.begin`
+ * carried (title, tags, metadata, link, source label — persisted in
+ * `document_info` when the batch holding it was staged). Every unit row gets
+ * them, so a v2 document answers title/tag/metadata filters like a v1 one.
+ */
 async function loadRevisionAcl(
   client: PoolClient,
   batch: ClaimedBatchRow,
-): Promise<{ allowedUsers: string[]; allowedGroups: string[] }> {
-  const res = await client.query<{ allowed_users: string[] | null; allowed_groups: string[] | null }>(
-    `SELECT allowed_users, allowed_groups FROM vs_revisions
+): Promise<{ allowedUsers: string[]; allowedGroups: string[]; info: DocumentInfo }> {
+  const res = await client.query<{
+    allowed_users: string[] | null;
+    allowed_groups: string[] | null;
+    document_info: unknown;
+  }>(
+    `SELECT allowed_users, allowed_groups, document_info FROM vs_revisions
       WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
     [batch.tenant_id, batch.collection, batch.revision_id],
   );
   const row = res.rows[0];
-  return { allowedUsers: row?.allowed_users ?? [], allowedGroups: row?.allowed_groups ?? [] };
+  return {
+    allowedUsers: row?.allowed_users ?? [],
+    allowedGroups: row?.allowed_groups ?? [],
+    info: parseDocumentInfo(row?.document_info),
+  };
 }
 
 /** Read the collection's FTS language for `to_tsvector`; default 'simple'. */
@@ -823,9 +841,10 @@ async function upsertUnit(
   unit: IndexUnit,
   vector: number[],
   ctx: UnitVisibilityContext,
-  acl: { allowedUsers: string[]; allowedGroups: string[] },
+  acl: { allowedUsers: string[]; allowedGroups: string[]; info?: DocumentInfo },
   provenance?: ExtractProvenance,
 ): Promise<void> {
+  const info = acl.info ?? {};
   const reference = `${batch.reference}#unit:${unit.unitId}`;
   // is_latest is decided NOW from the revision's state read under FOR SHARE
   // (see the module header): TRUE only when the document pointer names this
@@ -850,10 +869,10 @@ async function upsertUnit(
         metadata, unit_id, unit_type, revision_id, section_id, section_path,
         page_start, page_end, figure_kind, document_id,
         parent_unit_id, prev_unit_id, next_unit_id, block_ids, figure_refs, table_id,
-        allowed_users, allowed_groups)
+        allowed_users, allowed_groups, title, tags, link, source)
      VALUES ($1, $2, $3, $23, $4, $5::${vecType}, to_tsvector('${lang}', $4), to_tsvector('simple', $22),
              $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-             $16, $17, $18, $19, $20, $21, $24, $25)
+             $16, $17, $18, $19, $20, $21, $24, $25, $26, $27::text[], $28, $29)
      ON CONFLICT (tenant_id, unit_id) WHERE unit_id IS NOT NULL DO UPDATE SET
        reference      = EXCLUDED.reference,
        base_ref       = EXCLUDED.base_ref,
@@ -879,6 +898,10 @@ async function upsertUnit(
        table_id       = EXCLUDED.table_id,
        allowed_users  = EXCLUDED.allowed_users,
        allowed_groups = EXCLUDED.allowed_groups,
+       title          = EXCLUDED.title,
+       tags           = EXCLUDED.tags,
+       link           = EXCLUDED.link,
+       source         = EXCLUDED.source,
        modified       = NOW()`,
     [
       batch.tenant_id,
@@ -886,7 +909,7 @@ async function upsertUnit(
       batch.reference,
       unit.content,
       JSON.stringify(vector),
-      JSON.stringify(buildMetadata(unit, provenance)),
+      JSON.stringify({ ...(info.metadata ?? {}), ...buildMetadata(unit, provenance) }),
       unit.unitId,
       unit.unitType,
       batch.revision_id,
@@ -906,6 +929,10 @@ async function upsertUnit(
       isLatest,
       acl.allowedUsers,
       acl.allowedGroups,
+      info.title ?? info.email?.subject ?? null,
+      info.tags ?? [],
+      info.link ?? null,
+      info.sourceLabel ?? null,
     ],
   );
 }
@@ -926,7 +953,10 @@ export function buildMetadata(
     unit_type: unit.unitType,
     page_start: unit.pageStart,
     page_end: unit.pageEnd,
+    // Reading order within a block group (DOCUMENT_ORDER_SQL).
+    ordinal: unit.ordinal,
   };
+  if (unit.displayLen !== undefined) meta.display_len = unit.displayLen;
   if (provenance) {
     meta.extract_contract = provenance.contract;
     if (provenance.pipelineVersion) meta.extract_pipeline_version = provenance.pipelineVersion;

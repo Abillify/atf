@@ -1000,15 +1000,22 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
     // Representative chunk: the one with the highest score.
     const rep = chunks.reduce((best, c) => (c.score > best.score ? c : best));
 
+    // The documents merged into this result, in reading order (a thread's
+    // messages chronologically). With more than one, each message's text is
+    // headed by its reference, so a quote stays attributable to its message.
+    const members = [...new Set(sorted.map((c) => c.base_ref || c.reference))];
+    const multi = members.length > 1;
+    const marker = (r: SearchResult): string => `[Nachricht: ${r.base_ref || r.reference}]\n`;
+
     // Merge content, trimming overlapping regions between adjacent chunks.
-    let merged = sorted[0]?.content ?? "";
+    let merged = sorted[0] ? `${multi ? marker(sorted[0]) : ""}${sorted[0].content}` : "";
     for (let i = 1; i < sorted.length; i++) {
       const prev = sorted[i - 1]!;
       const curr = sorted[i]!;
       const nextContent = curr.content;
       if ((prev.base_ref || prev.reference) !== (curr.base_ref || curr.reference)) {
         // Next message of a thread: never overlap-merged with the previous one.
-        merged += `\n\n${nextContent}`;
+        merged += `\n\n${marker(curr)}${nextContent}`;
         continue;
       }
 
@@ -1029,6 +1036,7 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
       ...rep,
       score: bestScore,
       content: merged,
+      ...(multi ? { group_members: members } : {}),
     });
   }
 

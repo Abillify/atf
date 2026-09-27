@@ -50,6 +50,7 @@
  *   }
  */
 
+import { resolveFigureKinds, unknownFigureKindMessage } from "../figure-kinds.js";
 import type { RequestHandler } from "express";
 import type { Logger } from "pino";
 import { accessScopeForRequest } from "../access-scope.js";
@@ -216,6 +217,9 @@ export function parseFilters(raw: unknown): {
 	if (f.figure_kind !== undefined && f.figure_kind !== null) {
 		if (typeof f.figure_kind !== "string" || f.figure_kind.trim() === "") {
 			throw new BadRequest("filters.figure_kind must be a non-empty string");
+		}
+		if (resolveFigureKinds(f.figure_kind) === null) {
+			throw new BadRequest(`filters.figure_kind: ${unknownFigureKindMessage(f.figure_kind)}`);
 		}
 		unit.figureKind = f.figure_kind;
 	}

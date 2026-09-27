@@ -118,6 +118,14 @@ export interface IndexUnit {
   nextUnitId?: string;
   /** 0-based ordinal within its scope, used to keep ids stable and order units. */
   ordinal: number;
+  /**
+   * The length of the part of `content` that is this unit's own document
+   * text. For a `table` the rest is the row-wise "Spalte: Wert" text; for a
+   * `chunk` ending in a paragraph that runs over the page break it is the
+   * carried continuation from the next page (contract 2.3). Either is there
+   * for full-text search and embedding and is not read back as document text.
+   */
+  displayLen?: number;
 }
 
 /**
@@ -220,6 +228,23 @@ function renderTextBlock(block: Block): string {
     default:
       return "";
   }
+}
+
+/** The next page's leading fragment a block that runs over the page break carries (contract 2.3). */
+function carriedContinuation(block: Block | undefined): string | undefined {
+  if (block === undefined || (block.type !== "paragraph" && block.type !== "list")) return undefined;
+  if (block.continues !== true) return undefined;
+  const text = block.continuationText?.trim();
+  return text !== undefined && text !== "" ? text : undefined;
+}
+
+/**
+ * Join a chunk and the continuation fragment. The chunk stays a verbatim
+ * prefix (its length is the unit's `displayLen`): a word hyphenated at the
+ * break ("Liefe-" + "rant") is joined directly, anything else with a space.
+ */
+function joinContinuation(piece: string, fragment: string): string {
+  return /[A-Za-zÄÖÜäöüß]-$/.test(piece) && /^[a-zäöüß]/.test(fragment) ? `${piece}${fragment}` : `${piece} ${fragment}`;
 }
 
 /** The figure ids referenced by a block's resolved cross-references. */
@@ -528,8 +553,17 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
       const sectionId = sectionIdFromPath(group.sectionPath);
 
       const pieces = await chunkSectionText(text, minTokens, maxTokens, tokenCounter);
-      for (const piece of pieces) {
-        if (piece.trim() === "") continue;
+      // A paragraph running over the page break (contract 2.3): the group's
+      // last chunk also carries the leading fragment of its continuation, so
+      // the sentence is searchable and embedded whole. The fragment is not
+      // this page's text: `displayLen` keeps it out of document reads.
+      const lastBlock = group.blocks[group.blocks.length - 1];
+      const carried = carriedContinuation(lastBlock);
+      const lastPieceIndex = pieces.map((p) => p.trim() !== "").lastIndexOf(true);
+      for (const [pieceIndex, rawPiece] of pieces.entries()) {
+        if (rawPiece.trim() === "") continue;
+        const withCarry = pieceIndex === lastPieceIndex && carried !== undefined;
+        const piece = withCarry ? joinContinuation(rawPiece, carried) : rawPiece;
         const ordinal = chunkOrdinalBySection.get(sectionKey) ?? 0;
         chunkOrdinalBySection.set(sectionKey, ordinal + 1);
         const unitId = computeUnitId({
@@ -555,6 +589,7 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
           ...(figureRefs.length > 0 ? { figureRefs } : {}),
           blockIds,
           ordinal,
+          ...(withCarry ? { displayLen: rawPiece.length } : {}),
         });
       }
     }
@@ -634,6 +669,7 @@ async function buildTableUnits(
       tableId: table.tableId,
       blockIds: [table.id],
       ordinal,
+      displayLen: embedInput.length,
     });
   });
 
@@ -748,17 +784,22 @@ function linkContentSiblings(
     unit.parentUnitId = sectionUnitId(revisionId, documentId, unit.sectionPath);
   }
 
-  // prev/next among chunks sharing (page, section).
+  // prev/next among the chunks of one section, in reading order across the
+  // pages of the batch — so get_context walks from the end of page N into
+  // page N+1 (a paragraph over the page break). Units are built page by page,
+  // so the stable sort on (page, ordinal) keeps that order. Batch boundaries
+  // (every EMIT_BATCH_PAGES pages) stay unlinked: the next batch's ids are not
+  // known here.
   const chunkGroups = new Map<string, IndexUnit[]>();
   for (const unit of units) {
     if (unit.unitType !== "chunk") continue;
-    const key = `${unit.pageStart}::${unit.sectionPath.join("/")}`;
+    const key = unit.sectionPath.join("/");
     const list = chunkGroups.get(key) ?? [];
     list.push(unit);
     chunkGroups.set(key, list);
   }
   for (const list of chunkGroups.values()) {
-    list.sort((a, b) => a.ordinal - b.ordinal);
+    list.sort((a, b) => a.pageStart - b.pageStart || a.ordinal - b.ordinal);
     linkSiblings(list);
   }
 }

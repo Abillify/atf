@@ -33,6 +33,8 @@
  * retrieved directly, nor one from a non-current revision (15 constraints).
  */
 
+import { documentBodyText } from "../postgres-client.js";
+import { FIGURE_KINDS, resolveFigureKinds, unknownFigureKindMessage } from "../figure-kinds.js";
 import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Logger } from "pino";
@@ -139,6 +141,38 @@ function joinMarkdown(
   return { markdown: parts.join("\n\n"), truncated, total_chars: total };
 }
 
+/**
+ * Split navigation units into the document's own text and Extract's summaries.
+ * A section/page read is the original: its `section`/`page`/`document` summary
+ * units are returned apart, labelled, never merged into the Markdown; a table
+ * unit contributes its grid once, a figure its marked transcription
+ * (documentBodyText).
+ */
+function splitBody(units: NavUnitRow[]): {
+  body: NavUnitRow[];
+  summaries: Array<{ unit_type: string; page_start: number | null; page_end: number | null; section_path: string[]; summary: string }>;
+} {
+  const body: NavUnitRow[] = [];
+  const summaries: Array<{ unit_type: string; page_start: number | null; page_end: number | null; section_path: string[]; summary: string }> = [];
+  for (const u of units) {
+    if (u.unit_type === "section" || u.unit_type === "page" || u.unit_type === "document") {
+      summaries.push({ unit_type: u.unit_type, page_start: u.page_start, page_end: u.page_end, section_path: u.section_path, summary: u.content });
+    } else {
+      body.push({ ...u, content: documentBodyText(u) });
+    }
+  }
+  return { body, summaries };
+}
+
+/** `valid_at` for the navigation reads: the version valid at that instant. */
+const validAtSchema = z
+  .string()
+  .datetime({ offset: true })
+  .optional()
+  .describe(
+    "RFC 3339 instant with timezone: read the document version valid at that time (as search's valid_at). Default: the current version.",
+  );
+
 export function registerNavigationTools(ctx: NavigationToolContext): void {
   const {
     server,
@@ -185,12 +219,14 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         .min(0)
         .optional()
         .describe("Number of outline entries to skip (pagination, default: 0)"),
+      valid_at: validAtSchema,
     },
-    async ({ reference, collection, depth, limit, offset }) => {
+    async ({ reference, collection, depth, limit, offset, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       const result = await postgresClient.getOutline(col, accessScopeForMcp(), reference, {
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(depth !== undefined ? { depth } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(offset !== undefined ? { offset } : {}),
@@ -226,8 +262,9 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         .max(500_000)
         .optional()
         .describe("Maximum Markdown length to return (default: 40000). Guards the context; sets 'truncated' when exceeded."),
+      valid_at: validAtSchema,
     },
-    async ({ reference, collection, section_id, section_path, max_chars }) => {
+    async ({ reference, collection, section_id, section_path, max_chars, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       if (!section_id && (!section_path || section_path.length === 0)) {
@@ -239,15 +276,17 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         accessScopeForMcp(),
         reference,
         { ...(section_id ? { sectionId: section_id } : {}), ...(section_path ? { sectionPath: section_path } : {}) },
+        valid_at !== undefined ? { validAt: valid_at } : undefined,
       );
       if (!result.ok) {
         emitQueryActivity({ tool: "get_section", summary: `${reference} in ${col} — failed`, status: "error", startTime, detail: { collection: col, reference, error: result.error.message } });
         return { content: [{ type: "text", text: `Section read failed: ${result.error.message}` }], isError: true };
       }
       const cap = max_chars ?? 40_000;
-      const { markdown, truncated, total_chars } = joinMarkdown(result.result, cap);
+      const { body, summaries } = splitBody(result.result);
+      const { markdown, truncated, total_chars } = joinMarkdown(body, cap);
       emitQueryActivity({ tool: "get_section", summary: `${result.result.length} unit${result.result.length === 1 ? "" : "s"} of ${section_id ?? section_path?.join(" › ")} in ${reference}${truncated ? " (truncated)" : ""}`, status: "ok", startTime, detail: { collection: col, reference, section_id, units: result.result.length, truncated } });
-      return json({ reference, section_id: section_id ?? null, section_path: section_path ?? null, markdown, units: result.result.length, truncated, total_chars });
+      return json({ reference, section_id: section_id ?? null, section_path: section_path ?? null, markdown, units: body.length, truncated, total_chars, ...(summaries.length > 0 ? { summaries } : {}) });
     },
   );
 
@@ -271,12 +310,20 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         .max(500_000)
         .optional()
         .describe("Maximum length to return (default: 40000). Sets 'truncated' when exceeded."),
+      valid_at: validAtSchema,
     },
-    async ({ reference, collection, from, to, format, max_chars }) => {
+    async ({ reference, collection, from, to, format, max_chars, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
-      const result = await postgresClient.getPageUnits(col, accessScopeForMcp(), reference, from, to);
+      const result = await postgresClient.getPageUnits(
+        col,
+        accessScopeForMcp(),
+        reference,
+        from,
+        to,
+        valid_at !== undefined ? { validAt: valid_at } : undefined,
+      );
       if (!result.ok) {
         emitQueryActivity({ tool: "get_pages", summary: `${reference} ${from}-${to} in ${col} — failed`, status: "error", startTime, detail: { collection: col, reference, from, to, error: result.error.message } });
         return { content: [{ type: "text", text: `Pages read failed: ${result.error.message}` }], isError: true };
@@ -293,9 +340,10 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         emitQueryActivity({ tool: "get_pages", summary: `${units.length} unit summary of ${reference} ${from}-${to}`, status: "ok", startTime, detail: { collection: col, reference, from, to, units: units.length, format: "summary" } });
         return json({ reference, from, to, format: "summary", summary: joined.markdown, units: units.length, truncated: joined.truncated });
       }
-      const { markdown, truncated, total_chars } = joinMarkdown(units, cap);
-      emitQueryActivity({ tool: "get_pages", summary: `${units.length} unit${units.length === 1 ? "" : "s"} of ${reference} ${from}-${to}${truncated ? " (truncated)" : ""}`, status: "ok", startTime, detail: { collection: col, reference, from, to, units: units.length, truncated } });
-      return json({ reference, from, to, format: "markdown", markdown, units: units.length, truncated, total_chars });
+      const { body, summaries } = splitBody(units);
+      const { markdown, truncated, total_chars } = joinMarkdown(body, cap);
+      emitQueryActivity({ tool: "get_pages", summary: `${body.length} unit${body.length === 1 ? "" : "s"} of ${reference} ${from}-${to}${truncated ? " (truncated)" : ""}`, status: "ok", startTime, detail: { collection: col, reference, from, to, units: body.length, truncated } });
+      return json({ reference, from, to, format: "markdown", markdown, units: body.length, truncated, total_chars, ...(summaries.length > 0 ? { summaries } : {}) });
     },
   );
 
@@ -331,21 +379,30 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
   // ── list_figures ─────────────────────────────────────────────────────────────
   server.tool(
     "list_figures",
-    "List the figures of a document, optionally restricted to a page range and/or a figure kind (e.g. process, ui_mask, drawing, data). Paginated (limit/offset) — check 'truncated'/'total'. Each figure carries its asset_id (fetch the image with get_asset), kind, caption, page and bbox.",
+    `List the figures of a document, optionally restricted to a page range and/or a figure kind (${FIGURE_KINDS.join(", ")}; aliases such as process = bpmn + flowchart, drawing = technical_drawing, data = chart, mask = ui_mask). Paginated (limit/offset) — check 'truncated'/'total'. Each figure carries its asset_id (fetch the image with get_asset), kind, caption, page and bbox.`,
     {
       reference: z.string().min(1).describe("Document reference/path (base_ref)"),
       collection: z.string().optional().describe(`Collection to read from (default: "${defaultCollection}")`),
       from_page: z.number().int().min(1).optional().describe("First page of the range (inclusive). Requires to_page."),
       to_page: z.number().int().min(1).optional().describe("Last page of the range (inclusive). Requires from_page."),
-      kind: z.string().min(1).optional().describe("Restrict to a figure kind, e.g. process | ui_mask | drawing | data | table_image"),
+      kind: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(`Restrict to a figure kind: ${FIGURE_KINDS.join(" | ")}. Aliases: process (bpmn + flowchart), drawing (technical_drawing), data (chart), mask (ui_mask), table (table_image).`),
       limit: z.number().int().min(1).max(500).optional().describe("Maximum figures to return (default: 50)"),
       offset: z.number().int().min(0).optional().describe("Number of figures to skip (pagination, default: 0)"),
+      valid_at: validAtSchema,
     },
-    async ({ reference, collection, from_page, to_page, kind, limit, offset }) => {
+    async ({ reference, collection, from_page, to_page, kind, limit, offset, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
+      if (kind !== undefined && resolveFigureKinds(kind) === null) {
+        return { content: [{ type: "text", text: unknownFigureKindMessage(kind) }], isError: true };
+      }
       const result = await postgresClient.listFigureUnits(col, accessScopeForMcp(), reference, {
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(from_page !== undefined && to_page !== undefined ? { fromPage: from_page, toPage: to_page } : {}),
         ...(kind !== undefined ? { kind } : {}),
         ...(limit !== undefined ? { limit } : {}),
@@ -370,12 +427,14 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
       table_id: z.string().min(1).describe("Table id (from a table search hit's evidence)"),
       collection: z.string().optional().describe(`Collection to read from (default: "${defaultCollection}")`),
       rows: z.number().int().min(1).max(2000).optional().describe("Maximum row-group units to return (default: 200)"),
+      valid_at: validAtSchema,
     },
-    async ({ table_id, collection, rows }) => {
+    async ({ table_id, collection, rows, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       const result = await postgresClient.getTableUnits(col, accessScopeForMcp(), table_id, {
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(rows !== undefined ? { limit: rows } : {}),
       });
       if (!result.ok) {
@@ -406,8 +465,13 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
       collection: z.string().optional().describe(`Collection to search (default: "${defaultCollection}")`),
       limit: z.number().int().min(1).max(500).optional().describe("Maximum occurrences to return (default: 50)"),
       offset: z.number().int().min(0).optional().describe("Number of occurrences to skip (pagination, default: 0)"),
+      path_prefix: z
+        .string()
+        .optional()
+        .describe('Only occurrences in documents beneath this folder path (e.g. a project folder from find_folders), e.g. "/Kunde A".'),
+      valid_at: validAtSchema,
     },
-    async ({ value, collection, limit, offset }) => {
+    async ({ value, collection, limit, offset, path_prefix, valid_at }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
@@ -416,6 +480,8 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         return { content: [{ type: "text", text: "The identifier normalized to an empty value." }], isError: true };
       }
       const result = await postgresClient.findIdentifierOccurrences(col, accessScopeForMcp(), valueNorm, {
+        ...(path_prefix !== undefined && path_prefix.trim() !== "" ? { pathPrefix: path_prefix } : {}),
+        ...(valid_at !== undefined ? { validAt: valid_at } : {}),
         ...(limit !== undefined ? { limit } : {}),
         ...(offset !== undefined ? { offset } : {}),
       });

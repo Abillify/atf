@@ -254,6 +254,65 @@ describeIfPg("batch worker · real postgres", () => {
     }
   });
 
+  it("stores document.begin's title, tags, metadata, link and source label on every unit (contract 2.2)", async () => {
+    const reference = "attributes.pdf";
+    const created = await store.createRevision({ tenantId: TENANT, collection, reference, ttlMs: 60_000 });
+    if (!created.ok) throw new Error("create failed");
+    const revisionId = created.result.revision.revisionId;
+    const begin = {
+      type: "document.begin",
+      contract: "atf-extract/2.2.0",
+      reference,
+      title: "Pflichtenheft WE",
+      tags: ["kunde-a", "wms"],
+      // A caller key never overrides the unit's technical metadata.
+      metadata: { projekt: "WMS", unit_type: "spoofed" },
+      link: "https://dms.example/42",
+      sourceLabel: "DMS",
+      source: { filename: reference, mimeType: "application/pdf", bytes: 1, sha256: "b".repeat(64) },
+      pipeline: { extractor: "test" },
+    };
+    const first = Buffer.concat([Buffer.from(`${JSON.stringify(begin)}\n`), pageBatch(1).body]);
+    const second = pageBatch(2).body;
+    for (const [seq, body] of [[0, first], [1, second]] as const) {
+      const staged = await store.stageBatch({
+        tenantId: TENANT,
+        collection,
+        revisionId,
+        seq,
+        body,
+        contentDigest: createHash("sha256").update(body).digest("hex"),
+        ttlMs: 60_000,
+      });
+      expect(staged.ok).toBe(true);
+    }
+    const worker = createBatchWorker(pool, fakeEmbeddingClient(), { intervalMs: 0, onlyTenantId: TENANT });
+    await worker.drain(5);
+    worker.stop();
+
+    const rows = await pool.query<{
+      title: string | null;
+      tags: string[];
+      link: string | null;
+      source: string | null;
+      unit_type: string;
+      metadata: Record<string, unknown>;
+    }>(
+      `SELECT title, tags, link, source, unit_type, metadata FROM "${table}" WHERE tenant_id = $1 AND revision_id = $2`,
+      [TENANT, revisionId],
+    );
+    expect(rows.rows.length).toBeGreaterThanOrEqual(4);
+    for (const row of rows.rows) {
+      // Page 2's batch carries no document.begin: it reads the revision row.
+      expect(row.title).toBe("Pflichtenheft WE");
+      expect(row.tags).toEqual(["kunde-a", "wms"]);
+      expect(row.link).toBe("https://dms.example/42");
+      expect(row.source).toBe("DMS");
+      expect(row.metadata.projekt).toBe("WMS");
+      expect(row.metadata.unit_type).toBe(row.unit_type);
+    }
+  });
+
   it("reprocessing the same batch upserts on unit_id (no duplicate rows) — Req 5.5", async () => {
     const revisionId = await stage("upsert.pdf", 1);
     const worker = createBatchWorker(pool, fakeEmbeddingClient(), { intervalMs: 0, onlyTenantId: TENANT });
