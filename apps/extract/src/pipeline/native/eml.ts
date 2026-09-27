@@ -586,13 +586,30 @@ export interface StrippedReply {
 	text: string;
 	/** True when quoted history or a signature was removed. */
 	stripped: boolean;
+	/**
+	 * The quoted history that was removed (reply header and everything below
+	 * it, plus `>`-quoted lines that answer nothing), `""` when there was none.
+	 * The caller keeps it when the quoted messages are not in the corpus.
+	 */
+	quoted: string;
 }
+
+/**
+ * `>`-quoted lines kept directly above an inline answer, so "Ja, passt." still
+ * says what it agrees to. More than this is history, not context.
+ */
+const INLINE_QUOTE_CONTEXT_LINES = 3;
 
 /**
  * Remove the quoted history below a reply and the signature. Forwarded content
  * is kept: a forward's point is the forwarded message, which the corpus may not
  * hold otherwise. When removing the quote would leave nothing (a bare forward
  * or a top-quoted message), the full text is kept.
+ *
+ * An inline reply — own text interleaved with `>`-quoted lines — keeps the
+ * last {@link INLINE_QUOTE_CONTEXT_LINES} quoted lines above each answer; a
+ * quote block that no own text follows is history and removed. Everything
+ * removed is returned as `quoted`.
  */
 export function stripQuotedReply(text: string, options: { isForward?: boolean } = {}): StrippedReply {
 	const lines = text.replace(/\r\n/g, "\n").split("\n");
@@ -619,14 +636,80 @@ export function stripQuotedReply(text: string, options: { isForward?: boolean } 
 		}
 	}
 	let own = lines.slice(0, cut);
+	const history = lines.slice(cut);
 	// Standard signature delimiter "-- ".
 	const sig = own.findIndex((l) => l === "-- " || l === "--");
 	if (sig >= 0) own = own.slice(0, sig);
-	// Remaining ">"-quoted lines (inline or bottom quotes).
-	own = own.filter((l) => !/^\s*>/.test(l));
-	const result = own.join("\n").replace(/\n{3,}/g, "\n\n").trim();
-	if (result === "") return { text: text.trim(), stripped: false };
-	return { text: result, stripped: result !== text.trim() };
+	// Remaining ">"-quoted lines: context above an inline answer is kept, a
+	// quote block no own text follows (a bottom quote) is history.
+	const isQuote = (l: string): boolean => /^\s*>/.test(l);
+	const kept: string[] = [];
+	const droppedQuotes: string[] = [];
+	for (let i = 0; i < own.length; ) {
+		const line = own[i] ?? "";
+		if (!isQuote(line)) {
+			kept.push(line);
+			i++;
+			continue;
+		}
+		let end = i;
+		while (end < own.length && isQuote(own[end] ?? "")) end++;
+		let next = end;
+		while (next < own.length && (own[next] ?? "").trim() === "") next++;
+		const block = own.slice(i, end);
+		const answered = next < own.length && !isQuote(own[next] ?? "");
+		if (answered) {
+			const context = block.slice(-INLINE_QUOTE_CONTEXT_LINES);
+			droppedQuotes.push(...block.slice(0, block.length - context.length));
+			kept.push(...context);
+		} else {
+			droppedQuotes.push(...block);
+		}
+		i = end;
+	}
+	const result = kept.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+	if (result === "") return { text: text.trim(), stripped: false, quoted: "" };
+	const quoted = [...droppedQuotes, ...history].join("\n").replace(/\n{3,}/g, "\n\n").trim();
+	return { text: result, stripped: result !== text.trim(), quoted };
+}
+
+// ─── mbox ─────────────────────────────────────────────────────────────────
+
+/** An mbox "From " envelope line: `From <sender> <asctime date>`. */
+const MBOX_SEPARATOR = /^From \S+.*$/;
+
+/**
+ * Split an mbox file into its messages. A message starts at a `From ` line
+ * at the top of the file or after an empty line; the envelope line itself is
+ * dropped and mboxrd-escaped body lines (`>From `, `>>From `) lose one `>`.
+ * Returns the single buffer unchanged when the file is one message (a plain
+ * `.eml`, or an mbox holding one message).
+ */
+export function splitMbox(buffer: Uint8Array): Uint8Array[] {
+	let raw = toBinaryString(buffer);
+	if (raw.startsWith("\xEF\xBB\xBF")) raw = raw.slice(3);
+	if (!raw.startsWith("From ")) return [buffer];
+	const lines = raw.split(/(?<=\n)/);
+	const messages: string[][] = [];
+	let current: string[] | null = null;
+	let previousBlank = true;
+	for (const line of lines) {
+		const bare = line.replace(/\r?\n$/, "");
+		if (previousBlank && MBOX_SEPARATOR.test(bare)) {
+			current = [];
+			messages.push(current);
+			previousBlank = false;
+			continue;
+		}
+		previousBlank = bare === "";
+		if (current === null) continue;
+		current.push(/^>+From /.test(bare) ? line.slice(1) : line);
+	}
+	const parts = messages
+		.map((m) => m.join("").replace(/(?:\r?\n)+$/, "\n"))
+		.filter((m) => m.trim() !== "");
+	if (parts.length <= 1) return [buffer];
+	return parts.map(fromBinaryString);
 }
 
 // ─── Entry point ──────────────────────────────────────────────────────────

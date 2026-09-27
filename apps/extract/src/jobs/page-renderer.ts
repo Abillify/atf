@@ -41,6 +41,11 @@ import {
   buildBpmnRecords,
   buildDocxHeadingHints,
   buildEmailRecords,
+  buildMboxRecords,
+  extractDocxEmbeddings,
+  type EmbeddedSource,
+  parseMsg,
+  splitMbox,
   type EmailAttachment,
   buildXlsxRecords,
   parseVsdx,
@@ -171,6 +176,10 @@ export interface NativeSource {
   title?: string;
   /** E-mail only: attachments, each ingested as a document of its own. */
   attachments?: EmailAttachment[];
+  /** E-mail only: the quoted history removed from the text (kept when the parent is unknown). */
+  quotedHistory?: string;
+  /** Extra config every child job (attachment, mbox message) is created with. */
+  childConfig?: Record<string, unknown>;
   /** The source's text for fingerprinting and version detection, when not the records'. */
   text?: string;
 }
@@ -205,6 +214,11 @@ export interface PreparedSource {
    * a graph we already read from the XML.
    */
   readonly vsdxStructure: ParsedVsdx | null;
+  /**
+   * Files a DOCX embeds (Visio, Excel, BPMN, PDF …), each ingested as a child
+   * document with its native parser. Absent when there are none.
+   */
+  readonly embeddedSources?: readonly EmbeddedSource[];
   /**
    * The prepared PDF path, when the source is (or was converted to) a PDF.
    * `null` for a single-image source, which has no text layer. Exposed so the
@@ -330,7 +344,26 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
 
     // ── E-mail: parse natively, no render, no model ───────────────────────
     if (format.kind === "email") {
-      const built = buildEmailRecords(buffer);
+      // An mbox export with several messages: an index page, and every
+      // message a child document of its own.
+      const isMsg = format.mimeType === "application/vnd.ms-outlook";
+      const messages = isMsg ? [buffer] : splitMbox(buffer);
+      if (messages.length > 1) {
+        const mbox = buildMboxRecords(messages);
+        return nativeOnlyPrepared(
+          format,
+          {
+            records: mbox.records,
+            nativeAssets: [],
+            warnings: mbox.warnings,
+            attachments: mbox.attachments,
+            text: mbox.text,
+            childConfig: { mboxMessageIds: mbox.messageIds },
+          },
+          null,
+        );
+      }
+      const built = isMsg ? buildEmailRecords(buffer, parseMsg(buffer)) : buildEmailRecords(buffer);
       return nativeOnlyPrepared(
         format,
         {
@@ -341,6 +374,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
           title: built.title,
           attachments: built.attachments,
           text: built.text,
+          ...(built.quotedHistory !== undefined ? { quotedHistory: built.quotedHistory } : {}),
         },
         null,
       );
@@ -379,6 +413,13 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         ? buildDocxHeadingHints(buffer)
         : null;
+    // Embedded objects (Visio, Excel, BPMN …) become child documents with
+    // their native parsers; the render only sees their preview picture.
+    const embedded =
+      docxHeadingHints !== null ? extractDocxEmbeddings(buffer) : { sources: [], warnings: [] };
+    if (embedded.warnings.length > 0) {
+      logger.info({ reference, warnings: embedded.warnings }, "DOCX embedded objects read with warnings");
+    }
 
     // ── VSDX: read shape texts and the connector graph natively, but STILL
     //    render via LibreOffice below for the page image (design §10.4,
@@ -473,6 +514,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       native: null,
       docxHeadingHints,
       vsdxStructure,
+      ...(embedded.sources.length > 0 ? { embeddedSources: embedded.sources } : {}),
       pdfPath: pageSource.kind === "pdf" ? pageSource.pdfPath : null,
       home: workDir,
 

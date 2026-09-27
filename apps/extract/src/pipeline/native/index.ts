@@ -41,7 +41,7 @@ import type {
 	TableBlock,
 } from "@atf/extract-contract/v2";
 import { parseBpmn } from "./bpmn.js";
-import { type EmailAttachment, type EmailMailbox, parseEmail, stripQuotedReply } from "./eml.js";
+import { type EmailAttachment, type EmailMailbox, type ParsedEmail, parseEmail, stripQuotedReply } from "./eml.js";
 import {
 	type DocxHeading,
 	type ParsedDocxHeadings,
@@ -385,7 +385,70 @@ export function buildDocxHeadingHints(buffer: Uint8Array): DocxHeadingHints {
 // ─── E-mail (EML) ─────────────────────────────────────────────────────────
 
 export type { EmailAttachment, EmailMailbox, ParsedEmail } from "./eml.js";
-export { htmlToText, parseEmail, stripQuotedReply } from "./eml.js";
+export { htmlToText, parseEmail, splitMbox, stripQuotedReply } from "./eml.js";
+export { looksLikeMsg, parseMsg } from "./msg.js";
+export { extractDocxEmbeddings, type EmbeddedSource } from "./docx-embeddings.js";
+export { readCfb, type CfbEntry } from "./cfb.js";
+
+/** The records of an mbox with several messages: an index page plus the messages as child documents. */
+export interface MboxRecords extends NativeRecords {
+	/** Each message as an `.eml`, ingested as a document (and thread member) of its own. */
+	attachments: EmailAttachment[];
+	/** The index text, for the fingerprint. */
+	text: string;
+	/** Every message's Message-ID: a reply quoting a sibling counts its parent as known. */
+	messageIds: string[];
+}
+
+/**
+ * An mbox export holding several messages. Each message becomes its own
+ * `.eml` child document — an e-mail with its own headers, threaded by Search
+ * like any other — and the mbox itself is indexed as a short index page that
+ * lists the messages (date, sender, subject), so the export stays findable.
+ */
+export function buildMboxRecords(messages: Uint8Array[]): MboxRecords {
+	const warnings: string[] = [];
+	const attachments: EmailAttachment[] = [];
+	const items: string[] = [];
+	const messageIds: string[] = [];
+	const width = String(messages.length).length;
+	messages.forEach((bytes, index) => {
+		const parsed = parseEmail(bytes);
+		const subject = parsed.subject ?? "(ohne Betreff)";
+		const date = parsed.date?.slice(0, 10);
+		const from = parsed.from !== undefined ? formatMailbox(parsed.from) : undefined;
+		items.push([date, from, subject].filter((p) => p !== undefined && p !== "").join(" – "));
+		messageIds.push(parsed.messageId ?? `sha256-${sha256Hex(bytes)}@atf-extract.invalid`);
+		const safeSubject = [...subject].map((ch) => (/[\\/:*?"<>|]/.test(ch) || ch.charCodeAt(0) < 0x20 ? "_" : ch)).join("").slice(0, 80).trim();
+		attachments.push({
+			filename: `${String(index + 1).padStart(width, "0")} ${safeSubject || "Nachricht"}.eml`,
+			mimeType: "message/rfc822",
+			content: bytes,
+			inline: false,
+		});
+	});
+	const heading = `Postfach-Export (${messages.length} Nachrichten)`;
+	const record: PageRecord = {
+		type: "page",
+		page: 1,
+		size: { wPt: 595, hPt: 842 },
+		class: "text",
+		blocks: [
+			{ id: "p1-b1", page: 1, type: "heading", level: 1, text: heading, source: "native" },
+			{ id: "p1-b2", page: 1, type: "list", items, source: "native" },
+		],
+		assets: [],
+		warnings,
+	};
+	return {
+		records: [record],
+		nativeAssets: [],
+		warnings,
+		attachments,
+		text: `${heading}\n\n${items.join("\n")}`,
+		messageIds,
+	};
+}
 
 /** The native records of one e-mail plus what the job needs beyond them. */
 export interface EmailRecords extends NativeRecords {
@@ -397,6 +460,52 @@ export interface EmailRecords extends NativeRecords {
 	attachments: EmailAttachment[];
 	/** Subject and own text: the input for the fingerprint and version detection. */
 	text: string;
+	/**
+	 * The quoted history removed from the message's text. The job keeps it
+	 * (see {@link withQuotedHistory}) when the message it replies to is not in
+	 * the corpus — a lone exported reply would otherwise lose the conversation.
+	 */
+	quotedHistory?: string;
+}
+
+/** The section heading the kept quoted history is filed under. */
+export const QUOTED_HISTORY_HEADING = "Zitierter Verlauf";
+
+/**
+ * The e-mail's page record with its quoted history appended as its own
+ * section ("Zitierter Verlauf"), so it is searchable and readable but marked
+ * as quoted by its section path. Each quoted paragraph is one block.
+ */
+export function withQuotedHistory(record: PageRecord, quoted: string): PageRecord {
+	const text = quoted.trim();
+	if (text === "") return record;
+	const blocks: Block[] = [
+		{ id: "p1-q0", page: 1, type: "heading", level: 2, text: QUOTED_HISTORY_HEADING, source: "native" },
+	];
+	let n = 0;
+	for (const paragraph of text.split(/\n\s*\n/)) {
+		const body = paragraph
+			.split("\n")
+			.map((l) => l.replace(/^\s*(?:>\s?)+/, ""))
+			.join("\n")
+			.trim();
+		if (body !== "") blocks.push({ id: `p1-q${++n}`, page: 1, type: "paragraph", text: body, source: "native" });
+	}
+	if (n === 0) return record;
+	// The attachment list stays last: the history goes before it.
+	const attachmentsAt = record.blocks.findIndex(
+		(b) => b.type === "heading" && b.level === 2 && b.text === "Attachments",
+	);
+	const at = attachmentsAt >= 0 ? attachmentsAt : record.blocks.length;
+	return { ...record, blocks: [...record.blocks.slice(0, at), ...blocks, ...record.blocks.slice(at)] };
+}
+
+/**
+ * The Message-ID a reply quotes: its direct parent (`In-Reply-To`, else the
+ * last `References` entry). Undefined for a message that replies to nothing.
+ */
+export function quotedParentOf(email: EmailHeaders): string | undefined {
+	return email.inReplyTo[0] ?? email.references[email.references.length - 1];
 }
 
 const FORWARD_SUBJECT = /^\s*(?:fw|fwd|wg|tr|vs|rv|enc|doorst)\s*:/i;
@@ -414,8 +523,7 @@ function formatMailbox(m: EmailMailbox): string {
  * A message without a Message-ID gets a stable synthetic one derived from its
  * bytes, so re-ingesting the same file threads and deduplicates the same way.
  */
-export function buildEmailRecords(buffer: Uint8Array): EmailRecords {
-	const parsed = parseEmail(buffer);
+export function buildEmailRecords(buffer: Uint8Array, parsed: ParsedEmail = parseEmail(buffer)): EmailRecords {
 	const warnings = [...parsed.warnings];
 	const subject = parsed.subject ?? "";
 	const title = subject !== "" ? subject : "(ohne Betreff)";
@@ -479,5 +587,6 @@ export function buildEmailRecords(buffer: Uint8Array): EmailRecords {
 		title,
 		attachments: parsed.attachments,
 		text: `${title}\n\n${own.text}`,
+		...(own.quoted !== "" ? { quotedHistory: own.quoted } : {}),
 	};
 }

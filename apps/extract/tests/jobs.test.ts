@@ -112,6 +112,27 @@ describe("POST /v2/jobs · create", () => {
     expect(fakeStore.peek(res.body.jobId)?.config.acl).toEqual({ allowedUsers: ["anna"], allowedGroups: ["team"] });
   });
 
+  it("stores the document attributes Search puts on every unit (contract 2.2)", async () => {
+    const app = buildApp();
+    const res = await request(app).post("/v2/jobs").send({
+      reference: "tests/attrs.pdf",
+      sourceSha256: seededSha,
+      title: "Pflichtenheft",
+      tags: ["kunde-a"],
+      metadata: { projekt: "WMS" },
+      link: "https://dms.example/1",
+      sourceLabel: "DMS",
+    });
+    expect(res.status).toBe(201);
+    expect(fakeStore.peek(res.body.jobId)?.config).toMatchObject({
+      title: "Pflichtenheft",
+      tags: ["kunde-a"],
+      metadata: { projekt: "WMS" },
+      link: "https://dms.example/1",
+      sourceLabel: "DMS",
+    });
+  });
+
   it("rejects a job whose source is not stored", async () => {
     const app = buildApp();
     const res = await request(app)

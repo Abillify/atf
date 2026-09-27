@@ -122,8 +122,18 @@ export const SUPPORTED_FORMATS: readonly SupportedFormat[] = [
     label: "BPMN 2.0 (XML)",
   },
   {
+    // Outlook's own format: a CFB (OLE) container of MAPI properties, parsed
+    // natively like an .eml (pipeline/native/msg.ts).
+    mimeType: "application/vnd.ms-outlook",
+    extensions: [".msg"],
+    kind: "email",
+    family: "ole",
+    label: "Outlook (MSG)",
+  },
+  {
     mimeType: "message/rfc822",
-    extensions: [".eml"],
+    // An mbox export is sniffed as e-mail too and split into its messages.
+    extensions: [".eml", ".mbox"],
     kind: "email",
     family: "email",
     label: "E-Mail (EML)",
@@ -371,7 +381,13 @@ function oleMatchesFormat(buffer: Uint8Array, format: SupportedFormat): boolean 
   if (format.mimeType === "application/vnd.ms-excel") {
     return streams.has("Workbook") || streams.has("Book");
   }
+  if (format.mimeType === "application/vnd.ms-outlook") return isMsgStreams(streams);
   return false;
+}
+
+/** An Outlook message: the MAPI property stream plus `__substg1.0_` property streams. */
+function isMsgStreams(streams: Set<string>): boolean {
+  return streams.has("__properties_version1.0") && [...streams].some((s) => s.startsWith("__substg1.0_"));
 }
 
 /** Format matching a sniffed family, when the family maps to exactly one. */
@@ -449,7 +465,13 @@ export function resolveFormat(input: ResolveFormatInput): ResolveFormatResult {
       }
       return { ok: true, format: candidate, sniffed };
     }
-    const names = sniffed === "zip" ? "DOCX or XLSX" : "DOC or XLS";
+    // An Outlook message is recognisable by its streams alone, so a .msg
+    // sent without a name or type still resolves.
+    if (sniffed === "ole" && candidate === undefined && isMsgStreams(oleDirectoryStreams(input.buffer))) {
+      const msg = BY_MIME.get("application/vnd.ms-outlook");
+      if (msg !== undefined) return { ok: true, format: msg, sniffed };
+    }
+    const names = sniffed === "zip" ? "DOCX or XLSX" : "DOC, XLS or MSG";
     return {
       ok: false,
       reason:

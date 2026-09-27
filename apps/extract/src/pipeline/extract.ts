@@ -228,7 +228,7 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     const format = resolved.format;
     if (format.kind === "email") {
       throw unsupportedMediaType(
-        "E-mail (EML) is ingested through the job pipeline (POST /v2/jobs, or /v1/ingest with a database)",
+        "E-mail (EML, MSG, mbox) is ingested through the job pipeline (POST /v2/jobs, or /v1/ingest with a database)",
         { filename: input.filename },
       );
     }

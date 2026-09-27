@@ -108,6 +108,12 @@ export interface ExtractStore {
    * list stays cheap regardless of the page count of each job.
    */
   listJobs(limit: number, offset: number): Promise<JobRow[]>;
+  /**
+   * Which of `messageIds` a (non-failed) job of the collection has recorded as
+   * its e-mail's Message-ID — i.e. which messages the corpus already holds.
+   * Decides whether a reply's quoted history may be dropped.
+   */
+  knownEmailMessageIds(collection: string | null, messageIds: string[]): Promise<Set<string>>;
   /** Set status (+ pause reason). With a fence, a lost lease throws. */
   setJobStatus(
     id: string,
@@ -492,6 +498,11 @@ export function createExtractStore(
     },
     getJob: (id) => one<JobRow>(q.getJobQuery(id)),
     listJobs: (limit, offset) => run<JobRow>(q.listJobsQuery(limit, offset)),
+    async knownEmailMessageIds(collection, messageIds) {
+      if (messageIds.length === 0) return new Set();
+      const rows = await run<{ message_id: string }>(q.knownEmailMessageIdsQuery(collection, messageIds));
+      return new Set(rows.map((r) => r.message_id));
+    },
     setJobStatus: (id, status, pauseReason = null, fence) =>
       oneFenced<JobRow>(q.updateJobStatusQuery(id, status, pauseReason, fence), fence),
     pauseJob: (id, reason, autoResumeAt, configPatch = {}, fence) =>

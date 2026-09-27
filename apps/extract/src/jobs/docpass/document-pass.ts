@@ -41,6 +41,12 @@
  * carried state. That is what makes the resume exact.
  */
 
+import {
+  applyTextContinuation,
+  emptyTextContinuationState,
+  parseTextContinuationState,
+  type TextContinuationState,
+} from "./text-continuation.js";
 import type {
   Block,
   Furniture,
@@ -124,6 +130,12 @@ export interface DocpassState {
    * than re-calling the text-LLM. Ends up on `document.end.summaries`.
    */
   summaries: SummaryNode[];
+  /**
+   * A paragraph/list of the last folded page that continues on the next one
+   * (contract 2.3, text-continuation.ts), so the next page's first block can
+   * name it as `continuationOf`.
+   */
+  textContinuation: TextContinuationState;
   /** The last page folded in, so the runner knows where to resume. */
   lastPage: number;
 }
@@ -139,6 +151,7 @@ export function emptyDocpassState(): DocpassState {
     refs: emptyRefRegistry(),
     sectionContent: emptySectionContentState(),
     summaries: [],
+    textContinuation: emptyTextContinuationState(),
     lastPage: 0,
   };
 }
@@ -156,6 +169,7 @@ export function parseDocpassState(value: unknown): DocpassState {
     refs: parseRefRegistry(v.refs),
     sectionContent: parseSectionContentState(v.sectionContent),
     summaries: parseSummaries(v.summaries),
+    textContinuation: parseTextContinuationState(v.textContinuation),
     lastPage: typeof v.lastPage === "number" ? v.lastPage : 0,
   };
 }
@@ -229,8 +243,10 @@ export interface DocumentPass {
    * furniture is recognised and placed on `record.furniture`. Pages MUST be fed
    * in strict ascending order. `analysis` is this page's S2 geometry, used for
    * heading line-heights and furniture bands; it may be null when unavailable.
+   * `next` is page N+1's BASE record (read-only), for the paragraph that runs
+   * over the page break; null/omitted on the last page or when unavailable.
    */
-  applyPage(record: PageRecord, analysis?: PageAnalysis | null): AppliedPage;
+  applyPage(record: PageRecord, analysis?: PageAnalysis | null, next?: PageRecord | null): AppliedPage;
   /** The serialisable running state to persist after the applied page. */
   snapshot(): DocpassState;
   /**
@@ -302,6 +318,7 @@ export function createDocumentPass(
   const summaryList: SummaryNode[] = state.summaries.map((s) => ({ ...s }));
   const refRegistry: RefRegistry = state.refs;
   let lastPage = state.lastPage;
+  let textContinuation: TextContinuationState = state.textContinuation;
   // Accumulated document-level refs (a flat list mirroring the per-block refs)
   // so `document.end` carries the whole lightweight document graph.
   const docRefs: Ref[] = [];
@@ -315,7 +332,7 @@ export function createDocumentPass(
     return line?.height;
   }
 
-  function applyPage(record: PageRecord, analysis?: PageAnalysis | null): AppliedPage {
+  function applyPage(record: PageRecord, analysis?: PageAnalysis | null, next?: PageRecord | null): AppliedPage {
     // ── Furniture (task 2.2) ──────────────────────────────────────────────
     // Feed the page's geometry to the rolling-window detector; the recognised
     // header/footer/pageLabel is placed on the record. When no analysis is
@@ -329,7 +346,7 @@ export function createDocumentPass(
       (b): b is TableBlock => b.type === "table",
     );
     const tableDecisions = tableMerger.observePage(
-      tableBlocks.map((t) => ({ headerRows: t.headerRows, rows: t.rows })),
+      tableBlocks.map((t) => ({ headerRows: t.headerRows, rows: t.rows, caption: t.caption })),
       tableBlocks.map((t) => ({ continues: t.continues === true, continuationOf: t.continuationOf !== undefined })),
       record.page,
     );
@@ -343,6 +360,14 @@ export function createDocumentPass(
       if (decision.continuationOf !== undefined) table.continuationOf = decision.continuationOf;
       else delete table.continuationOf;
       table.continues = decision.continues;
+      // A continuation that omits the header gets it back, so its rows are
+      // indexed and read with their column names (and the caption, marked).
+      if (decision.inheritedHeaderRows !== undefined && table.headerRows.length === 0) {
+        table.headerRows = decision.inheritedHeaderRows.map((row) => [...row]);
+      }
+      if (decision.inheritedCaption !== undefined && (table.caption === undefined || table.caption.trim() === "")) {
+        table.caption = `${decision.inheritedCaption} (Fortsetzung)`;
+      }
       // Register the table's author ordinal (from a "Tabelle n" caption) so a
       // later "Tabelle n" cross-reference resolves.
       const ord = tableCaptionOrdinal(table.caption);
@@ -416,6 +441,9 @@ export function createDocumentPass(
     }
 
     if (detected !== null) record.furniture = detected;
+    // A paragraph running over the page break (after furniture, so running
+    // headers/footers are not taken for its continuation).
+    textContinuation = applyTextContinuation(record, next, textContinuation);
     lastPage = Math.max(lastPage, record.page);
     return { record, furniture: detected, closedSections };
   }
@@ -434,6 +462,7 @@ export function createDocumentPass(
       },
       sectionContent: sectionContent.snapshot(),
       summaries: summaryList.map((s) => ({ ...s })),
+      textContinuation: { ...textContinuation },
       lastPage,
     };
   }

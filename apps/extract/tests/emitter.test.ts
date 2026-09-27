@@ -536,6 +536,10 @@ describe("emitter · document identity on document.begin (contract 2.1)", () => 
       email: { messageId: "m1@x", inReplyTo: [], references: ["m0@x"], to: [], cc: [], attachments: [] },
       parent: { reference: "mail/root.eml", jobId: "j0" },
       acl: { allowedUsers: ["anna"], allowedGroups: [] },
+      tags: ["kunde-a"],
+      metadata: { projekt: "WMS" },
+      link: "https://dms.example/1",
+      sourceLabel: "DMS",
     });
     const job = await store.getJob(seeded.id);
     if (job === null) throw new Error("job vanished");
@@ -564,6 +568,11 @@ describe("emitter · document identity on document.begin (contract 2.1)", () => 
       version: { label: "2.1", source: "page_label" },
       email: { messageId: "m1@x", references: ["m0@x"] },
       parentReference: "mail/root.eml",
+      // Contract 2.2 document attributes.
+      tags: ["kunde-a"],
+      metadata: { projekt: "WMS" },
+      link: "https://dms.example/1",
+      sourceLabel: "DMS",
     });
   });
 

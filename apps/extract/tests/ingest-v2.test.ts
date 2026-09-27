@@ -240,6 +240,40 @@ describe("POST /v1/ingest · identity headers and duplicates", () => {
     expect(job?.config).toMatchObject({ version: "3.1", sourceModifiedAt: "2025-01-02T03:04:05+01:00", dedup: "exact" });
   });
 
+  it("stores X-Title, X-Tags, X-Metadata, X-Link and X-Source on the job (contract 2.2)", async () => {
+    const app = buildApp(fakeWorker());
+    const res = await request(app)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "tests/attrs.pdf")
+      .set("X-Title", "Pflichtenheft")
+      .set("X-Tags", "kunde-a, wms")
+      .set("X-Metadata", JSON.stringify({ projekt: "WMS" }))
+      .set("X-Link", "https://dms.example/1")
+      .set("X-Source", "DMS")
+      .send(PDF);
+    expect(res.status).toBe(200);
+    const job = fakeStore.peek(res.body.job_id);
+    expect(job?.config).toMatchObject({
+      title: "Pflichtenheft",
+      tags: ["kunde-a", "wms"],
+      metadata: { projekt: "WMS" },
+      link: "https://dms.example/1",
+      sourceLabel: "DMS",
+    });
+  });
+
+  it("rejects an X-Metadata that is not a JSON object", async () => {
+    const app = buildApp(fakeWorker());
+    const res = await request(app)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "tests/attrs.pdf")
+      .set("X-Metadata", "[1,2]")
+      .send(PDF);
+    expect(res.status).toBe(400);
+  });
+
   it("rejects a malformed X-Source-Modified or X-Dedup", async () => {
     const app = buildApp(fakeWorker());
     const bad = await request(app)

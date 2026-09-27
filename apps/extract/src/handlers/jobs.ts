@@ -132,6 +132,12 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
         ...(body.version !== undefined ? { version: body.version } : {}),
         ...(body.sourceModifiedAt !== undefined ? { sourceModifiedAt: body.sourceModifiedAt } : {}),
         ...(body.dedup !== undefined ? { dedup: body.dedup } : {}),
+        // Document attributes (contract 2.2), stored on every unit by Search.
+        ...(body.title !== undefined ? { title: body.title } : {}),
+        ...(body.tags !== undefined && body.tags.length > 0 ? { tags: body.tags } : {}),
+        ...(body.metadata !== undefined ? { metadata: body.metadata } : {}),
+        ...(body.link !== undefined ? { link: body.link } : {}),
+        ...(body.sourceLabel !== undefined ? { sourceLabel: body.sourceLabel } : {}),
         // The document's readers, narrowed to the caller exactly like
         // /v1/ingest; the emitter opens the Search revision with it.
         acl: resolveAcl(getPrincipal(req), {

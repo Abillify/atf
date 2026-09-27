@@ -119,19 +119,7 @@ function parseIngestOptions(req: Request, defaultCollection: string): IngestHead
     throw validationError("X-Semantic-Chunking must be one of: 1/0, true/false, yes/no, on/off");
   }
 
-  let metadata: Record<string, unknown> | undefined;
-  const metadataRaw = readHeader(req, "x-metadata");
-  if (metadataRaw !== undefined && metadataRaw.trim() !== "") {
-    try {
-      const parsed: unknown = JSON.parse(metadataRaw);
-      if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
-        throw new Error("not an object");
-      }
-      metadata = parsed as Record<string, unknown>;
-    } catch {
-      throw validationError("X-Metadata must be a JSON object");
-    }
-  }
+  const metadata = readMetadataHeader(req);
 
   const chunkSize = readHeader(req, "x-chunk-size");
   const chunkOverlap = readHeader(req, "x-chunk-overlap");
@@ -360,4 +348,19 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
 /** Correlation id for a log line when no request id is available. */
 export function newIngestId(): string {
   return randomUUID();
+}
+
+/** Parse the `X-Metadata` header: a JSON object, or absent. */
+export function readMetadataHeader(req: Request): Record<string, unknown> | undefined {
+  const metadataRaw = readHeader(req, "x-metadata");
+  if (metadataRaw === undefined || metadataRaw.trim() === "") return undefined;
+  try {
+    const parsed: unknown = JSON.parse(metadataRaw);
+    if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+      throw new Error("not an object");
+    }
+    return parsed as Record<string, unknown>;
+  } catch {
+    throw validationError("X-Metadata must be a JSON object");
+  }
 }

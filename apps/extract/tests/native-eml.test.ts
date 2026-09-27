@@ -7,7 +7,11 @@ import {
   buildEmailRecords,
   htmlToText,
   parseEmail,
+  QUOTED_HISTORY_HEADING,
+  buildMboxRecords,
+  splitMbox,
   stripQuotedReply,
+  withQuotedHistory,
 } from "../src/pipeline/native/index.js";
 import {
   decodeHeaderValue,
@@ -185,6 +189,110 @@ describe("stripQuotedReply", () => {
 
   it("keeps the full text when nothing of its own would remain", () => {
     expect(stripQuotedReply("> nur Zitat").text).toBe("> nur Zitat");
+  });
+
+  it("returns the removed history as `quoted`", () => {
+    const { quoted } = stripQuotedReply(parseEmail(crlf(GMAIL_REPLY)).text);
+    expect(quoted).toContain("schrieb");
+    expect(quoted).toContain("Kannst du");
+  });
+
+  it("keeps the quoted lines directly above an inline answer", () => {
+    const inline = [
+      "Hallo Anna,",
+      "",
+      "> Punkt 1: Lieferant ist Pflichtfeld",
+      "> Punkt 2: Anforderung WE-07 Menge > 0",
+      "Ja, passt.",
+      "",
+      "> Einleitung",
+      "> Zeile 2",
+      "> Zeile 3",
+      "> Punkt 3: Datum optional",
+      "Nein, Pflicht.",
+      "",
+      "> Alter Verlauf ohne Antwort",
+    ].join("\n");
+    const { text, quoted } = stripQuotedReply(inline);
+    expect(text).toContain("> Punkt 2: Anforderung WE-07 Menge > 0\nJa, passt.");
+    expect(text).toContain("> Punkt 3: Datum optional\nNein, Pflicht.");
+    // Only the last three quote lines above an answer stay; the rest and the
+    // unanswered bottom quote go to `quoted`.
+    expect(text).not.toContain("Einleitung");
+    expect(text).not.toContain("Alter Verlauf");
+    expect(quoted).toContain("> Einleitung");
+    expect(quoted).toContain("> Alter Verlauf ohne Antwort");
+  });
+});
+
+describe("mbox", () => {
+  const MBOX = [
+    "From anna@example.com Tue Mar  4 10:00:00 2025",
+    "From: Anna <anna@example.com>",
+    "Subject: Angebot",
+    "Date: Tue, 4 Mar 2025 10:00:00 +0000",
+    "Message-ID: <m1@example.com>",
+    "",
+    "Anbei das Angebot.",
+    ">From the archive: escaped line",
+    "",
+    "From j@example.com Wed Mar  5 10:00:00 2025",
+    "From: Jürgen <j@example.com>",
+    "Subject: AW: Angebot",
+    "Date: Wed, 5 Mar 2025 10:00:00 +0000",
+    "Message-ID: <m2@example.com>",
+    "In-Reply-To: <m1@example.com>",
+    "",
+    "Passt.",
+    "",
+  ].join("\n");
+
+  it("splits an mbox into its messages and unescapes >From lines", () => {
+    const parts = splitMbox(new TextEncoder().encode(MBOX));
+    expect(parts).toHaveLength(2);
+    const [one, two] = parts;
+    if (one === undefined || two === undefined) throw new Error("expected two messages");
+    const first = parseEmail(one);
+    expect(first.messageId).toBe("m1@example.com");
+    expect(first.text).toContain("From the archive: escaped line");
+    expect(parseEmail(two).inReplyTo).toEqual(["m1@example.com"]);
+  });
+
+  it("leaves a single message untouched", () => {
+    const one = new TextEncoder().encode("From a@b Tue Mar  4 10:00:00 2025\nSubject: x\nFrom: a@b.c\n\nText\n");
+    expect(splitMbox(one)).toEqual([one]);
+    const eml = crlf(GMAIL_REPLY);
+    expect(splitMbox(eml)).toEqual([eml]);
+  });
+
+  it("builds an index page and one .eml child per message", () => {
+    const built = buildMboxRecords(splitMbox(new TextEncoder().encode(MBOX)));
+    const page = pageRecordSchema.parse(built.records[0]);
+    expect(page.blocks[0]).toMatchObject({ type: "heading", text: "Postfach-Export (2 Nachrichten)" });
+    expect(built.attachments.map((a) => a.filename)).toEqual(["1 Angebot.eml", "2 AW_ Angebot.eml"]);
+    expect(built.attachments.every((a) => a.mimeType === "message/rfc822")).toBe(true);
+    expect(built.messageIds).toEqual(["m1@example.com", "m2@example.com"]);
+    const resolved = resolveFormat({ buffer: new TextEncoder().encode(MBOX), filename: "export.mbox" });
+    expect(resolved.ok && resolved.format.kind).toBe("email");
+  });
+});
+
+describe("withQuotedHistory", () => {
+  it("files the quoted history under its own section before the attachment list", () => {
+    const built = buildEmailRecords(crlf(GMAIL_REPLY));
+    expect(built.quotedHistory).toContain("Kannst du");
+    const record = built.records[0];
+    if (record === undefined) throw new Error("no record");
+    const page = pageRecordSchema.parse(withQuotedHistory(record, built.quotedHistory ?? ""));
+    const headings = page.blocks.filter((b) => b.type === "heading").map((b) => ("text" in b ? b.text : ""));
+    expect(headings).toEqual(["AW: Angebot Übersicht Q3", QUOTED_HISTORY_HEADING, "Attachments"]);
+    const quotedText = page.blocks
+      .filter((b) => b.id.startsWith("p1-q") && b.type === "paragraph")
+      .map((b) => ("text" in b ? b.text : ""))
+      .join("\n");
+    expect(quotedText).toContain("Kannst du");
+    expect(quotedText).not.toMatch(/^>/m);
+    expect(new Set(page.blocks.map((b) => b.id)).size).toBe(page.blocks.length);
   });
 });
 

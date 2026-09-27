@@ -83,6 +83,7 @@ describe("supported set", () => {
 			"application/vnd.openxmlformats-officedocument.presentationml.presentation",
 			"application/vnd.ms-visio.drawing",
 			"application/bpmn+xml",
+			"application/vnd.ms-outlook",
 			"message/rfc822",
 			"image/png",
 			"image/jpeg",
@@ -301,7 +302,7 @@ describe("resolveFormat", () => {
 		it("refuses a bare OLE container", () => {
 			const result = resolveFormat({ buffer: DOC_OLE, filename: "legacy.bin" });
 			expect(result.ok).toBe(false);
-			if (!result.ok) expect(result.reason).toMatch(/whether it is DOC or XLS/);
+			if (!result.ok) expect(result.reason).toMatch(/whether it is DOC, XLS or MSG/);
 		});
 	});
 

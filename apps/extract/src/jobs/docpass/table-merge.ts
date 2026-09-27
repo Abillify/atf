@@ -52,7 +52,17 @@ export interface OpenTable {
   headerSignature: string | null;
   /** The page the open table's tail sat on. */
   page: number;
+  /**
+   * The header rows (own or inherited) and caption, handed to a continuation
+   * that omits them — otherwise its rows are indexed without column names, and
+   * a value on page 38 loses the headings that only appeared on page 37.
+   */
+  headerRows?: Cell[][];
+  caption?: string;
 }
+
+/** Header rows carried across a page at most — a header, not a table. */
+const MAX_CARRIED_HEADER_ROWS = 5;
 
 /** The persisted, JSON-serialisable table-merge state (design §9a.2). */
 export interface TableMergeState {
@@ -86,6 +96,12 @@ export function parseTableMergeState(value: unknown): TableMergeState {
                 ? (v.open as OpenTable).headerSignature
                 : null,
             page: Number((v.open as OpenTable).page ?? 1),
+            ...(Array.isArray((v.open as OpenTable).headerRows)
+              ? { headerRows: (v.open as OpenTable).headerRows as Cell[][] }
+              : {}),
+            ...(typeof (v.open as OpenTable).caption === "string"
+              ? { caption: (v.open as OpenTable).caption as string }
+              : {}),
           }
         : null;
     return { version: 1, open, seq: typeof v.seq === "number" ? v.seq : 0 };
@@ -153,6 +169,17 @@ export function tablesMerge(
   return candidateHeader === open.headerSignature;
 }
 
+/** The decision for one table of a page. */
+export interface TableDecision {
+  tableId: string;
+  continuationOf?: string;
+  continues: boolean;
+  /** A headerless continuation's inherited header rows. */
+  inheritedHeaderRows?: Cell[][];
+  /** A captionless continuation's inherited caption. */
+  inheritedCaption?: string;
+}
+
 /** The table builder's per-page surface. */
 export interface TableMerger {
   /**
@@ -162,13 +189,15 @@ export interface TableMerger {
    * are the model's per-table flags (parallel to `tables`, by index).
    *
    * Returns, per input table, the `tableId`, the `continuationOf` (set only on a
-   * merged continuation), and whether it stays `continues` (open at page end).
+   * merged continuation), whether it stays `continues` (open at page end), and
+   * — for a merged continuation that omits them — the header rows and caption
+   * it inherits from the table it continues.
    */
   observePage(
-    tables: Array<Pick<TableBlock, "headerRows" | "rows">>,
+    tables: Array<Pick<TableBlock, "headerRows" | "rows"> & { caption?: string | undefined }>,
     flags: Array<{ continues: boolean; continuationOf: boolean }>,
     page: number,
-  ): Array<{ tableId: string; continuationOf?: string; continues: boolean }>;
+  ): TableDecision[];
   /** The current serialisable state, to persist on `docpass_state`. */
   snapshot(): TableMergeState;
 }
@@ -188,11 +217,11 @@ export function createTableMerger(initial: TableMergeState = emptyTableMergeStat
   }
 
   function observePage(
-    tables: Array<Pick<TableBlock, "headerRows" | "rows">>,
+    tables: Array<Pick<TableBlock, "headerRows" | "rows"> & { caption?: string | undefined }>,
     flags: Array<{ continues: boolean; continuationOf: boolean }>,
     page: number,
-  ): Array<{ tableId: string; continuationOf?: string; continues: boolean }> {
-    const out: Array<{ tableId: string; continuationOf?: string; continues: boolean }> = [];
+  ): TableDecision[] {
+    const out: TableDecision[] = [];
 
     for (let i = 0; i < tables.length; i++) {
       const table = tables[i];
@@ -202,12 +231,20 @@ export function createTableMerger(initial: TableMergeState = emptyTableMergeStat
 
       let tableId: string;
       let continuationOf: string | undefined;
+      let inheritedHeaderRows: Cell[][] | undefined;
+      let inheritedCaption: string | undefined;
 
       // Only the FIRST table on a page can continue the previous page's open
       // table, and only when the structures match.
       if (isFirst && open !== null && tablesMerge(open, table)) {
         tableId = open.tableId;
         continuationOf = open.tableId;
+        if (table.headerRows.length === 0 && open.headerRows && open.headerRows.length > 0) {
+          inheritedHeaderRows = open.headerRows;
+        }
+        if ((table.caption === undefined || table.caption.trim() === "") && open.caption) {
+          inheritedCaption = open.caption;
+        }
         open = null; // consumed
       } else {
         tableId = mintId(page);
@@ -218,18 +255,31 @@ export function createTableMerger(initial: TableMergeState = emptyTableMergeStat
       }
 
       // Does THIS table stay open past this page?
+      const inherited = {
+        ...(inheritedHeaderRows !== undefined ? { inheritedHeaderRows } : {}),
+        ...(inheritedCaption !== undefined ? { inheritedCaption } : {}),
+      };
       if (flag.continues) {
+        // The header a further continuation inherits: this table's own, else
+        // the one it inherited itself.
+        const effectiveHeader = table.headerRows.length > 0 ? table.headerRows : inheritedHeaderRows;
+        const effectiveCaption =
+          table.caption !== undefined && table.caption.trim() !== "" ? table.caption : inheritedCaption;
         open = {
           tableId,
           columnCount: tableColumnCount(table),
-          headerSignature: headerSignature(table.headerRows),
+          headerSignature: headerSignature(effectiveHeader ?? []),
           page,
+          ...(effectiveHeader !== undefined && effectiveHeader.length > 0
+            ? { headerRows: effectiveHeader.slice(0, MAX_CARRIED_HEADER_ROWS) }
+            : {}),
+          ...(effectiveCaption !== undefined ? { caption: effectiveCaption } : {}),
         };
-        out.push({ tableId, ...(continuationOf !== undefined ? { continuationOf } : {}), continues: true });
+        out.push({ tableId, ...(continuationOf !== undefined ? { continuationOf } : {}), continues: true, ...inherited });
       } else {
         // If this was the open table's continuation and it does NOT itself
         // continue, the logical table is complete.
-        out.push({ tableId, ...(continuationOf !== undefined ? { continuationOf } : {}), continues: false });
+        out.push({ tableId, ...(continuationOf !== undefined ? { continuationOf } : {}), continues: false, ...inherited });
       }
     }
 

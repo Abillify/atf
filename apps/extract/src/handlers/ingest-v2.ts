@@ -51,7 +51,7 @@ import { validationError } from "../errors.js";
 import { readHeader, readListHeader } from "../header-utils.js";
 import { getPrincipal } from "../request-principal.js";
 import { readUpload, sanitizeFilename } from "../upload.js";
-import { resolveAcl } from "./ingest.js";
+import { readMetadataHeader, resolveAcl } from "./ingest.js";
 import type { ExtractStore } from "../persistence/index.js";
 import type { SourceStore } from "../source-store.js";
 import type { PipelineSnapshot } from "../jobs/snapshot.js";
@@ -149,6 +149,24 @@ export function readIdentityHeaders(req: Request): Record<string, string> {
   return out;
 }
 
+/**
+ * The document attributes a `/v1/ingest` caller passes as headers, mapped onto
+ * the job config (contract 2.2) so the v2 wrapper keeps what Search's v1
+ * `/ingest` stored: X-Tags, X-Metadata, X-Link and X-Source.
+ */
+export function readAttributeHeaders(req: Request): Record<string, unknown> {
+  const tags = readListHeader(req, "x-tags");
+  const metadata = readMetadataHeader(req);
+  const link = readHeader(req, "x-link")?.trim();
+  const sourceLabel = readHeader(req, "x-source")?.trim();
+  return {
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(metadata !== undefined ? { metadata } : {}),
+    ...(link !== undefined && link !== "" ? { link } : {}),
+    ...(sourceLabel !== undefined && sourceLabel !== "" ? { sourceLabel } : {}),
+  };
+}
+
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler {
@@ -179,6 +197,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       const collection = readHeader(req, "x-collection")?.trim() || defaultCollection;
       const acl = resolveRequestAcl(req);
       const identityInputs = readIdentityHeaders(req);
+      const attributes = readAttributeHeaders(req);
 
       // ── 1. store the source in the content-addressed store ────────────────
       // Idempotent by sha256, so a re-uploaded document dedupes for free and a
@@ -210,6 +229,7 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
             ? { title: sanitizeFilename(titleRaw) }
             : {}),
           ...identityInputs,
+          ...attributes,
         },
         pipeline_hash: snapshot.pipelineHash,
         prompt_hash: snapshot.promptHash,

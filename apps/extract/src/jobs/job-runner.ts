@@ -70,11 +70,13 @@ import { Readable } from "node:stream";
 import { RevisionTransientError } from "../revision-client.js";
 import type { SourceStore } from "../source-store.js";
 import { resolveFormat } from "../formats.js";
+import { quotedParentOf, withQuotedHistory } from "../pipeline/native/index.js";
 import { textFingerprint } from "./fingerprint.js";
 import {
   EMAIL_KEY,
   FINGERPRINT_MAX_PAGES,
   IDENTITY_KEY,
+  INHERITED_ATTRIBUTE_KEYS,
   attachmentReference,
   childJobId,
   identityOf,
@@ -871,6 +873,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       });
       if (outcome.status !== "completed") return outcome;
 
+      // ── embedded objects (a DOCX's Visio, Excel, BPMN …): each a child
+      //    document with its native parser, grouped under this document by
+      //    Search. Ids are stable, so a resume creates none twice.
+      if (prepared.embeddedSources !== undefined && prepared.embeddedSources.length > 0) {
+        await spawnAttachmentJobs(job, cfg, prepared.embeddedSources, undefined);
+      }
+
       // ── version from the transcribed first page: a scan has no text layer,
       //    so the content phase could not read its version; the vision
       //    transcription of page 1 can.
@@ -1219,7 +1228,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
     const nativeBytes = new Map(native.nativeAssets.map((a) => [a.assetId, a]));
 
-    for (const record of native.records) {
+    const records = await withUnknownQuotedHistory(job, native);
+    for (const record of records) {
       assertLive();
       const page = record.page;
       const emitted = await store.getStage("page", { job_id: job.id, page, stage: EMITTED_STAGE });
@@ -1268,7 +1278,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // An e-mail's attachments become jobs of their own (before the e-mail is
     // emitted, so a crash in between re-creates none twice: ids are stable).
     if (native.attachments !== undefined && native.attachments.length > 0) {
-      await spawnAttachmentJobs(job, cfg, native.attachments, native.email?.date);
+      await spawnAttachmentJobs(job, cfg, native.attachments, native.email?.date, native.childConfig);
     }
 
     await store.setJobStatus(job.id, "emitting", null, fence);
@@ -1278,6 +1288,35 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     }
     events.publish({ type: "done", jobId: job.id, status: "completed" });
     return { status: "completed" };
+  }
+
+  /**
+   * An e-mail's records with its quoted history kept when the corpus does not
+   * hold the message it replies to. The history was removed so a thread
+   * indexes every message's words once; that is only right when the quoted
+   * message is indexed itself. A lone exported reply, or a reply whose parent
+   * was never ingested, keeps the history as a "Zitierter Verlauf" section.
+   * A page already emitted on an earlier run is skipped by the caller, so a
+   * parent arriving between two runs cannot change emitted content.
+   */
+  async function withUnknownQuotedHistory(
+    job: JobRow,
+    native: NonNullable<PreparedSource["native"]>,
+  ): Promise<PageRecord[]> {
+    const quoted = native.quotedHistory;
+    if (native.email === undefined || quoted === undefined || quoted.trim() === "") return native.records;
+    const parent = quotedParentOf(native.email);
+    // A message of an mbox export: its siblings are ingested with it, so a
+    // parent in the same export counts as known whichever child runs first.
+    const siblings = (job.config as { mboxMessageIds?: unknown }).mboxMessageIds;
+    if (parent !== undefined && Array.isArray(siblings) && siblings.includes(parent)) return native.records;
+    const known = parent !== undefined ? await store.knownEmailMessageIds(job.collection, [parent]) : new Set<string>();
+    if (parent !== undefined && known.has(parent)) return native.records;
+    logger.info(
+      { jobId: job.id, parent: parent ?? null },
+      "Quoted history kept: the message it quotes is not in the corpus",
+    );
+    return native.records.map((r, i) => (i === 0 ? withQuotedHistory(r, quoted) : r));
   }
 
   /**
@@ -1292,8 +1331,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   async function spawnAttachmentJobs(
     job: JobRow,
     cfg: Record<string, unknown>,
-    attachments: NonNullable<NonNullable<PreparedSource["native"]>["attachments"]>,
+    attachments: ReadonlyArray<{ filename: string; mimeType: string; content: Uint8Array }>,
     emailDate: string | undefined,
+    childConfig: Record<string, unknown> = {},
   ): Promise<void> {
     if (sourceStore === null) {
       logger.info({ jobId: job.id, count: attachments.length }, "No source store; e-mail attachments are not ingested");
@@ -1318,7 +1358,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       const stored = await sourceStore.putStream(Readable.from(Buffer.from(attachment.content)), {
         maxBytes: attachment.content.length,
       });
-      const inherited = ["collection", "snapshot", "acl", "dedup", "pages"] as const;
+      // An attachment carries its e-mail's tags, metadata and source label, so
+      // a tag filter finds the attachment where it finds the e-mail.
+      const inherited = ["collection", "snapshot", "acl", "dedup", "pages", ...INHERITED_ATTRIBUTE_KEYS] as const;
       await store.createJob({
         id: childId,
         reference,
@@ -1330,6 +1372,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           source: { filename: attachment.filename, mimeType: resolved.format.mimeType, bytes: stored.size },
           parent: { reference: job.reference, jobId: job.id },
           ...(emailDate !== undefined ? { sourceModifiedAt: emailDate } : {}),
+          ...childConfig,
         },
         pipeline_hash: job.pipeline_hash,
         prompt_hash: job.prompt_hash,
@@ -1338,7 +1381,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         ...(job.token_budget !== null ? { token_budget: job.token_budget } : {}),
         ...(job.callback_url !== null ? { callback_url: job.callback_url } : {}),
       });
-      logger.info({ jobId: job.id, childJobId: childId, reference }, "E-mail attachment queued as its own job");
+      logger.info({ jobId: job.id, childJobId: childId, reference }, "Attachment / embedded file queued as its own job");
     }
   }
 
@@ -1715,7 +1758,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // This page's deterministic S2 geometry (heading heights, furniture
       // bands). Best-effort and never throws; null when unavailable.
       const analysis = await runPageAnalysis(preparedAnalyzer, page);
-      const applied = pass.applyPage(record, analysis);
+      // Page N+1's BASE record (staged, untouched until N+1 commits), read
+      // only to see whether this page's last paragraph runs over the break.
+      const nextRecord =
+        page < pageCount
+          ? ((await store.getEmitBatch(job.id, page + 1))?.payload as { record?: PageRecord } | null | undefined)?.record ?? null
+          : null;
+      const applied = pass.applyPage(record, analysis, nextRecord);
 
       // ── Summary hierarchy (task 2.7, requirement 9.5) ─────────────────
       // A section that closed on this page gets its summary now. A text-LLM

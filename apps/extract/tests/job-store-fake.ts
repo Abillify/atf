@@ -247,6 +247,17 @@ export function createFakeJobStore(): FakeJobStore {
       return row ? copy(row) : null;
     },
 
+    async knownEmailMessageIds(collection, messageIds) {
+      const wanted = new Set(messageIds);
+      const known = new Set<string>();
+      for (const row of jobs.values()) {
+        if (row.collection !== collection || row.status === "failed") continue;
+        const email = (row.config as { email?: { messageId?: unknown } }).email;
+        if (typeof email?.messageId === "string" && wanted.has(email.messageId)) known.add(email.messageId);
+      }
+      return known;
+    },
+
     async listJobs(limit, offset) {
       return [...jobs.values()]
         .sort(

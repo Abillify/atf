@@ -360,6 +360,27 @@ describe("table merge", () => {
     expect((p2.blocks[0] as TableBlock).continuationOf).toBe((p1.blocks[0] as TableBlock).tableId);
   });
 
+  it("a headerless continuation inherits the header — across several pages and a resume", () => {
+    const pass = createDocumentPass();
+    pass.applyPage(pageRecord(1, [table(1, header, [["A", "1", "x"]], { continues: true })]));
+    const p2 = pass.applyPage(pageRecord(2, [table(2, [], [["B", "2", "y"]], { continues: true })])).record;
+    expect((p2.blocks[0] as TableBlock).headerRows).toEqual(header);
+
+    // Resume from the persisted state: page 3 still gets the page-1 header.
+    const resumed = createDocumentPass(parseDocpassState(JSON.parse(JSON.stringify(pass.snapshot()))));
+    const p3 = resumed.applyPage(pageRecord(3, [table(3, [], [["C", "3", "z"]])])).record;
+    const t3 = p3.blocks[0] as TableBlock;
+    expect(t3.continuationOf).toBe((p2.blocks[0] as TableBlock).tableId);
+    expect(t3.headerRows).toEqual(header);
+  });
+
+  it("a continuation with its own header keeps it", () => {
+    const pass = createDocumentPass();
+    pass.applyPage(pageRecord(1, [table(1, header, [["A", "1", "x"]], { continues: true })]));
+    const p2 = pass.applyPage(pageRecord(2, [table(2, [["LIEFERANT", "Menge", "Datum"]], [["B", "2", "y"]])])).record;
+    expect((p2.blocks[0] as TableBlock).headerRows).toEqual([["LIEFERANT", "Menge", "Datum"]]);
+  });
+
   it("does NOT merge on a column-count mismatch", () => {
     const pass = createDocumentPass();
     const p1 = pass.applyPage(
@@ -589,5 +610,39 @@ describe("docpass_state persistence and resume (requirement 4.7)", () => {
     const t3 = p3.blocks[0] as TableBlock;
     // It merged with the page-2 table despite the crash at the boundary.
     expect(t3.continuationOf).toBeDefined();
+  });
+});
+
+describe("paragraph over a page break (contract 2.3)", () => {
+  it("marks the last paragraph as continuing and the next page's first as its continuation", () => {
+    const pass = createDocumentPass();
+    const p1 = pageRecord(1, [paragraph(1, "Die Anforderung WE-07 verlangt, dass der Lieferant")]);
+    const p2 = pageRecord(2, [paragraph(2, "bei jeder Buchung erfasst wird. Danach folgt der Rest."), paragraph(2, "Neu.")]);
+    const a1 = pass.applyPage(p1, null, p2).record.blocks[0] as Block & { continues?: boolean; continuationText?: string };
+    expect(a1.continues).toBe(true);
+    expect(a1.continuationText).toBe("bei jeder Buchung erfasst wird.");
+    // Resume from the persisted state between the two pages.
+    const resumed = createDocumentPass(parseDocpassState(JSON.parse(JSON.stringify(pass.snapshot()))));
+    const a2 = resumed.applyPage(p2, null, null).record.blocks;
+    expect((a2[0] as { continuationOf?: string }).continuationOf).toBe(a1.id);
+    expect((a2[1] as { continuationOf?: string }).continuationOf).toBeUndefined();
+  });
+
+  it("does not continue a finished sentence, a heading, or across a running footer", () => {
+    const pass = createDocumentPass();
+    const done = pageRecord(1, [paragraph(1, "Der Satz ist fertig.")]);
+    const next = pageRecord(2, [paragraph(2, "und klein weiter")]);
+    expect((pass.applyPage(done, null, next).record.blocks[0] as { continues?: boolean }).continues).toBeUndefined();
+
+    const p3 = pageRecord(3, [paragraph(3, "Offen ohne Punkt")]);
+    const p4 = pageRecord(4, [heading(4, "5 Neues Kapitel", 1, "5")]);
+    expect((pass.applyPage(p3, null, p4).record.blocks[0] as { continues?: boolean }).continues).toBeUndefined();
+
+    // A page label kept as the last paragraph is skipped: the real last text continues.
+    const p5 = pageRecord(5, [paragraph(5, "Die Menge wird,"), paragraph(5, "Seite 5 von 9")]);
+    const p6 = pageRecord(6, [paragraph(6, "sofern vorhanden, übernommen.")]);
+    const blocks = pass.applyPage(p5, null, p6).record.blocks as Array<{ continues?: boolean; continuationText?: string }>;
+    expect(blocks[0]?.continues).toBe(true);
+    expect(blocks[0]?.continuationText).toBe("sofern vorhanden, übernommen.");
   });
 });

@@ -80,7 +80,7 @@ import type { LeaseGuard } from "./lease.js";
 import type { RevisionClient, AssetBody } from "../revision-client.js";
 import { RevisionPermanentError } from "../revision-client.js";
 import { mapOrdered } from "../queue.js";
-import { emailOf, identityOf, ingestOptionsOf, jobAcl } from "./identity.js";
+import { documentAttributesOf, emailOf, identityOf, ingestOptionsOf, jobAcl } from "./identity.js";
 
 /** Tunables for the emitter, from `config.emitter` plus pipeline identity. */
 export interface EmitterConfig {
@@ -591,6 +591,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     const identity = identityOf(cfg);
     const email = emailOf(cfg);
     const parentReference = ingestOptionsOf(cfg).parentReference;
+    const attributes = documentAttributesOf(cfg);
     const title = typeof cfg.title === "string" && cfg.title.trim() !== "" ? cfg.title.trim() : undefined;
     return {
       type: "document.begin",
@@ -602,6 +603,8 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       ...(identity?.version !== undefined ? { version: identity.version } : {}),
       ...(email !== undefined ? { email } : {}),
       ...(parentReference !== undefined ? { parentReference } : {}),
+      // Contract 2.2: the caller's tags, metadata, link and source label.
+      ...attributes,
       source: {
         filename: source.filename ?? job.reference,
         mimeType: source.mimeType ?? "application/octet-stream",

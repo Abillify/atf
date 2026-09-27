@@ -18,6 +18,9 @@
  *                             came with                        (input)
  *   config.identity           {@link JobIdentity}              (result)
  *   config.email / title      the e-mail's headers and subject (result)
+ *   config.title / tags / metadata / link / sourceLabel
+ *                             the caller's document attributes, carried onto
+ *                             `document.begin` (input, contract 2.2)
  */
 
 import { createHash } from "node:crypto";
@@ -87,6 +90,35 @@ export function ingestOptionsOf(config: Record<string, unknown>): JobIngestOptio
     ...(sourceModifiedAt !== undefined ? { sourceModifiedAt } : {}),
     ...(parentReference !== undefined ? { parentReference } : {}),
     ...(parentJobId !== undefined ? { parentJobId } : {}),
+  };
+}
+
+/** The caller's document attributes (contract 2.2), read from the job config. */
+export interface DocumentAttributes {
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  link?: string;
+  sourceLabel?: string;
+}
+
+/** Config keys an e-mail attachment inherits from its e-mail's job. */
+export const INHERITED_ATTRIBUTE_KEYS = ["tags", "metadata", "sourceLabel"] as const;
+
+export function documentAttributesOf(config: Record<string, unknown>): DocumentAttributes {
+  const tags = Array.isArray(config.tags)
+    ? config.tags.filter((t): t is string => typeof t === "string" && t.trim() !== "").map((t) => t.trim())
+    : [];
+  const metadata =
+    config.metadata !== null && typeof config.metadata === "object" && !Array.isArray(config.metadata)
+      ? (config.metadata as Record<string, unknown>)
+      : undefined;
+  const link = str(config.link);
+  const sourceLabel = str(config.sourceLabel);
+  return {
+    ...(tags.length > 0 ? { tags } : {}),
+    ...(metadata !== undefined && Object.keys(metadata).length > 0 ? { metadata } : {}),
+    ...(link !== undefined ? { link } : {}),
+    ...(sourceLabel !== undefined ? { sourceLabel } : {}),
   };
 }
 

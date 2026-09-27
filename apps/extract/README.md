@@ -27,7 +27,7 @@ GET  /openapi.json
 | PPTX | LibreOffice → PDF |
 | VSDX | LibreOffice → PDF for the page image; on the v2 job path the shape text and connector graph are also read natively from the package |
 | BPMN 2.0 XML | parsed natively into a `process` transcription, no render and no model call; the original XML is kept as a `native:` asset. Only the v2 job path handles it |
-| E-mail (EML) | parsed natively (MIME, RFC 2047/2231, any WHATWG charset) into one page per message: subject, sender/recipients/date and the message's own text — quoted history and signature removed. Attachments are ingested as documents of their own. No render, no model call. Only the v2 job path handles it |
+| E-mail (EML, MSG, mbox) | parsed natively (MIME, RFC 2047/2231, any WHATWG charset; Outlook `.msg` via its CFB/MAPI properties) into one page per message: subject, sender/recipients/date and the message's own text — signature removed, quoted history removed only when the quoted message is already in the collection (else kept under "Zitierter Verlauf"), inline replies keep the quoted lines they answer. Attachments (and a `.msg`'s embedded messages) are ingested as documents of their own; an mbox with several messages is split into one child e-mail per message. No render, no model call. Only the v2 job path handles it |
 | PNG, JPEG, GIF, TIFF, BMP, WebP | normalised to a one-page document by sharp |
 
 Types are sniffed from magic bytes, extension and declared `Content-Type` together
@@ -325,6 +325,17 @@ format is stored and queued as a job of its own under `<e-mail reference>/<file 
 with the e-mail as `parentReference` and its date as version fallback; the same PDF
 forwarded five times is indexed once. `/v1/ingest` takes the same inputs as `X-Version`,
 `X-Source-Modified` and `X-Dedup`, and answers a duplicate with `status: skipped`.
+
+**Embedded objects.** A DOCX's `word/embeddings/` — OOXML packages (Excel, Visio, Word,
+PowerPoint), OLE package objects (`\x01Ole10Native`, e.g. a `.bpmn` or `.pdf`), OOXML inside OLE
+(`Package`) and legacy DOC/XLS storages — are queued as child jobs under
+`<document reference>/<file name>` with the document as `parentReference`, so each is read by
+its native parser instead of only as the preview picture on the page.
+
+**Paragraphs over a page break.** The document pass reads page N+1's staged base record while
+folding page N; a paragraph or list that continues gets `continues` and `continuationText` (the
+continuation's first sentence) and the next page's first block `continuationOf`. The decision is
+deterministic, so a resume makes the same one.
 
 ### On-demand render: `/v2/render`
 

@@ -144,6 +144,23 @@ export function getJobQuery(id: string): Query {
  * the order total (and therefore the pagination stable) when two rows share a
  * `created_at`.
  */
+/**
+ * The e-mail Message-IDs among `messageIds` that a job of the collection has
+ * already recorded (`config.email.messageId`, written when the job identified
+ * its source). A failed job does not count: its message never reached Search.
+ */
+export function knownEmailMessageIdsQuery(collection: string | null, messageIds: string[]): Query {
+  return {
+    text: `
+      SELECT DISTINCT config->'email'->>'messageId' AS message_id
+        FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE collection IS NOT DISTINCT FROM $1
+         AND config->'email'->>'messageId' = ANY($2::text[])
+         AND status <> 'failed'`,
+    values: [collection, messageIds],
+  };
+}
+
 export function listJobsQuery(limit: number, offset: number): Query {
   return {
     text: `

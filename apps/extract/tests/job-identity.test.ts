@@ -22,7 +22,7 @@ import { randomUUID } from "node:crypto";
 import type { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import type { IdentifyRequest, IdentifyResponse } from "@atf/extract-contract/v2";
-import { buildEmailRecords } from "../src/pipeline/native/index.js";
+import { buildEmailRecords, buildMboxRecords } from "../src/pipeline/native/index.js";
 import { createFakeJobStore, type FakeJobStore } from "./job-store-fake.js";
 import { testLogger, TINY_PNG } from "./helpers.js";
 import { createLeaseGuard } from "../src/jobs/lease.js";
@@ -321,6 +321,37 @@ describe("job identity · content phase", () => {
   });
 });
 
+describe("embedded objects of a rendered document", () => {
+  it("queues each embedded file as a child job with the document as its parent", async () => {
+    const bpmn = new TextEncoder().encode('<?xml version="1.0"?><definitions/>');
+    const prepared: PreparedSource = {
+      ...pdfPrepared(),
+      embeddedSources: [{ filename: "Prozess.bpmn", mimeType: "application/bpmn+xml", content: bpmn, inline: false }],
+    };
+    const store = createFakeJobStore();
+    const job = await seedJob(store, "specs/Pflichtenheft.docx", { collection: "docs", tags: ["kunde-a"] });
+    const identifier = scriptedIdentifier((r) => ({ decision: "new", canonicalReference: r.reference }));
+    const outcome = await runner(store, recordingRenderer(prepared), fakeVision(), {
+      identifier,
+      sourceStore: {
+        async putStream() {
+          return { sha256: "b".repeat(64), size: bpmn.length, existed: false };
+        },
+      } as unknown as SourceStore,
+    }).run(ctx(store, job));
+    expect(outcome).toEqual({ status: "completed" });
+    expect(store.peek(childJobId(job.id, 0))).toMatchObject({
+      reference: "specs/Pflichtenheft.docx/Prozess.bpmn",
+      status: "queued",
+      config: {
+        parent: { reference: "specs/Pflichtenheft.docx", jobId: job.id },
+        tags: ["kunde-a"],
+        source: { filename: "Prozess.bpmn", mimeType: "application/bpmn+xml" },
+      },
+    });
+  });
+});
+
 describe("job identity · e-mail", () => {
   const PDF = Buffer.from(`%PDF-1.4\n${"y".repeat(6000)}\n%%EOF`);
   const EML = [
@@ -429,5 +460,114 @@ describe("job identity · e-mail", () => {
     expect(store.peek(childJobId(job.id, 1))).toBeUndefined();
     expect(row.warnings.join()).toContain('Attachment "data.bin" not ingested');
     expect(sourceStore.stored[0]?.equals(PDF)).toBe(true);
+  });
+
+  const REPLY = [
+    "From: Jürgen <j@example.com>",
+    "To: anna@example.com",
+    "Subject: AW: Angebot",
+    "Date: Wed, 5 Mar 2025 10:00:00 +0000",
+    "Message-ID: <m2@example.com>",
+    "In-Reply-To: <m1@example.com>",
+    "References: <m1@example.com>",
+    "Content-Type: text/plain; charset=utf-8",
+    "",
+    "Passt so.",
+    "",
+    "Am 04.03.2025 um 10:00 schrieb Anna <anna@example.com>:",
+    "> Anbei das Angebot mit Position WE-07.",
+    "",
+  ].join("\r\n");
+
+  function replyPrepared(): PreparedSource {
+    const built = buildEmailRecords(new TextEncoder().encode(REPLY));
+    const base = emailPrepared();
+    return {
+      ...base,
+      native: {
+        records: built.records,
+        nativeAssets: [],
+        warnings: built.warnings,
+        email: built.email,
+        title: built.title,
+        attachments: [],
+        text: built.text,
+        ...(built.quotedHistory !== undefined ? { quotedHistory: built.quotedHistory } : {}),
+      },
+      async readText() {
+        return [built.text];
+      },
+    };
+  }
+
+  async function stagedText(store: ReturnType<typeof createFakeJobStore>, jobId: string): Promise<string> {
+    const row = await store.getEmitBatch(jobId, 1);
+    const record = (row?.payload as { record?: { blocks: Array<{ text?: string }> } } | null)?.record;
+    return (record?.blocks ?? []).map((b) => b.text ?? "").join("\n");
+  }
+
+  it("keeps the quoted history of a reply whose parent is not in the corpus", async () => {
+    const store = createFakeJobStore();
+    const job = await seedJob(store, "mail/reply.eml", { collection: "docs" });
+    const identifier = scriptedIdentifier((r) => ({ decision: "new", canonicalReference: r.reference }));
+    const outcome = await runner(store, recordingRenderer(replyPrepared()), fakeVision(), { identifier }).run(ctx(store, job));
+    expect(outcome).toEqual({ status: "completed" });
+    const text = await stagedText(store, job.id);
+    expect(text).toContain("Passt so.");
+    expect(text).toContain("Zitierter Verlauf");
+    expect(text).toContain("Anbei das Angebot mit Position WE-07.");
+  });
+
+  it("queues every message of an mbox as a child e-mail that knows its siblings", async () => {
+    const mbox = buildMboxRecords([new TextEncoder().encode(EML), new TextEncoder().encode(REPLY)]);
+    const base = emailPrepared();
+    const prepared: PreparedSource = {
+      ...base,
+      native: {
+        records: mbox.records,
+        nativeAssets: [],
+        warnings: mbox.warnings,
+        attachments: mbox.attachments,
+        text: mbox.text,
+        childConfig: { mboxMessageIds: mbox.messageIds },
+      },
+      async readText() {
+        return [mbox.text];
+      },
+    };
+    const store = createFakeJobStore();
+    const job = await seedJob(store, "mail/export.mbox", { collection: "docs" });
+    const identifier = scriptedIdentifier((r) => ({ decision: "new", canonicalReference: r.reference }));
+    const outcome = await runner(store, recordingRenderer(prepared), fakeVision(), { identifier, sourceStore: memorySourceStore() }).run(ctx(store, job));
+    expect(outcome).toEqual({ status: "completed" });
+    expect(store.peek(childJobId(job.id, 0))).toMatchObject({
+      reference: "mail/export.mbox/1 Angebot.eml",
+      config: { mboxMessageIds: ["m1@example.com", "m2@example.com"], source: { mimeType: "message/rfc822" } },
+    });
+    expect(store.peek(childJobId(job.id, 1))?.reference).toBe("mail/export.mbox/2 AW_ Angebot.eml");
+  });
+
+  it("counts a parent in the same mbox as known", async () => {
+    const store = createFakeJobStore();
+    const job = await seedJob(store, "mail/export.mbox/2 AW_ Angebot.eml", {
+      collection: "docs",
+      mboxMessageIds: ["m1@example.com", "m2@example.com"],
+    });
+    const identifier = scriptedIdentifier((r) => ({ decision: "new", canonicalReference: r.reference }));
+    await runner(store, recordingRenderer(replyPrepared()), fakeVision(), { identifier }).run(ctx(store, job));
+    expect(await stagedText(store, job.id)).not.toContain("Zitierter Verlauf");
+  });
+
+  it("drops the quoted history when the parent message is already ingested", async () => {
+    const store = createFakeJobStore();
+    await seedJob(store, "mail/angebot.eml", { collection: "docs", email: { messageId: "m1@example.com" } });
+    const job = await seedJob(store, "mail/reply.eml", { collection: "docs" });
+    const identifier = scriptedIdentifier((r) => ({ decision: "new", canonicalReference: r.reference }));
+    const outcome = await runner(store, recordingRenderer(replyPrepared()), fakeVision(), { identifier }).run(ctx(store, job));
+    expect(outcome).toEqual({ status: "completed" });
+    const text = await stagedText(store, job.id);
+    expect(text).toContain("Passt so.");
+    expect(text).not.toContain("Zitierter Verlauf");
+    expect(text).not.toContain("WE-07");
   });
 });

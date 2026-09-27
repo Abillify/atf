@@ -402,6 +402,19 @@ describeIfPg("extract-store · real PostgreSQL", () => {
     expect(next[0]?.id).toBe(ids[0]);
   });
 
+  it("knownEmailMessageIds finds recorded Message-IDs of the collection, not of failed jobs", async () => {
+    const collection = `mail-${crypto.randomUUID()}`;
+    const ok = crypto.randomUUID();
+    const failed = crypto.randomUUID();
+    await store.createJob({ id: ok, reference: "mail/1.eml", source_sha256: "d".repeat(64), collection, config: { email: { messageId: "m1@x" } } });
+    await store.createJob({ id: failed, reference: "mail/2.eml", source_sha256: "d".repeat(64), collection, config: { email: { messageId: "m2@x" } } });
+    await store.setJobStatus(failed, "failed");
+    await store.createJob({ id: crypto.randomUUID(), reference: "mail/3.eml", source_sha256: "d".repeat(64), collection: "other", config: { email: { messageId: "m3@x" } } });
+    const known = await store.knownEmailMessageIds(collection, ["m1@x", "m2@x", "m3@x", "nope@x"]);
+    expect([...known]).toEqual(["m1@x"]);
+    expect((await store.knownEmailMessageIds(collection, [])).size).toBe(0);
+  });
+
   it("reuses a stage checkpoint by input_hash and increments attempts on retry", async () => {
     const first = await store.upsertStage("page", {
       job_id: jobId,
