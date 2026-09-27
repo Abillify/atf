@@ -27,6 +27,7 @@ GET  /openapi.json
 | PPTX | LibreOffice → PDF |
 | VSDX | LibreOffice → PDF for the page image; on the v2 job path the shape text and connector graph are also read natively from the package |
 | BPMN 2.0 XML | parsed natively into a `process` transcription, no render and no model call; the original XML is kept as a `native:` asset. Only the v2 job path handles it |
+| E-mail (EML) | parsed natively (MIME, RFC 2047/2231, any WHATWG charset) into one page per message: subject, sender/recipients/date and the message's own text — quoted history and signature removed. Attachments are ingested as documents of their own. No render, no model call. Only the v2 job path handles it |
 | PNG, JPEG, GIF, TIFF, BMP, WebP | normalised to a one-page document by sharp |
 
 Types are sniffed from magic bytes, extension and declared `Content-Type` together
@@ -245,7 +246,7 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `collection`, `pages`, `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`. 201 with the queued job |
+| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `collection`, `pages`, `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`, `version`, `sourceModifiedAt`, `dedup`, `allowedUsers`, `allowedGroups`. 201 with the queued job |
 | `GET /v2/jobs` | List jobs newest first (`limit` 1–100, default 25; `offset`) |
 | `GET /v2/jobs/{id}` | Status, per-stage progress, warnings, tokens, cost and ETA |
 | `POST /v2/jobs/{id}/pause` | Hold a queued or running job |
@@ -275,11 +276,55 @@ config and the pipeline/prompt hash onto the job; when they differ on resume,
 `LARGE_JOB_MAX_CONCURRENCY` across the fleet, so small uploads do not wait days behind a
 large plan.
 
+**Readers.** A job's ACL (`X-Allowed-Users/-Groups` on `/v1/ingest`, `allowedUsers/-Groups`
+on `/v2/jobs`) is narrowed to the caller's own identity — a caller can restrict, never widen —
+and sent with the revision, so Search writes it onto every unit; assets are readable only
+through those units. E-mail attachments inherit their e-mail's ACL.
+
 The emitter streams staged pages to Search's revision API in batches of
 `EMIT_BATCH_PAGES`, commits a segment every `SEGMENT_PAGES` pages, uploads assets with
 `ASSET_UPLOAD_CONCURRENCY` and reconciles against the revision state on resume, so nothing
 is sent twice or lost. It needs `SEARCH_URL`; without it a job is processed but nothing is
 emitted.
+
+### Duplicates, versions and e-mail threads
+
+Before any work a job asks Search which document its source is
+(`POST /v2/sources/identify`), in two cheap phases:
+
+1. **Source phase** (file hash only, before the source is prepared). A document is
+   identified by its reference **without file extension**: `handbuch.docx` resolves to an
+   indexed `handbuch.pdf`, the job is re-pointed at that reference and becomes a new
+   revision of it. The same file bytes anywhere in the collection end the job at once.
+2. **Content phase** (after preparing, before any model call). The text layer is read in
+   one `pdftotext` call and fingerprinted: a sha256 of the normalised text (whitespace,
+   hyphenation, soft hyphens, ligatures, case, punctuation and page numbers folded away) and
+   a 64-slot MinHash over 4-word shingles. The same text anywhere in the collection is a
+   duplicate; a near-identical text (`DEDUP_NEAR_THRESHOLD` in Search) of the same document
+   is a duplicate when the versions match — or are unknown and the texts nearly identical —
+   and a new version otherwise.
+
+A duplicate job completes without extracting anything; the job carries `duplicateOf`, the
+warning names the indexed source, and Search keeps it as an additional source of that
+document (`GET /v2/documents/{ref}/sources`). `dedup: exact` skips only identical
+files/texts, `off` never skips. Without Search, or when Search rejects the request, the job
+ingests as before.
+
+**Version.** Without an explicit `version` it is read from the first page: a label
+("Version 2.1", "Rev. C", "Fassung 3", "v1.4.2"), else a labelled date ("Stand:
+12.03.2024", "Revision date: March 4, 2025"), else an unambiguous date near the top; when
+the patterns find nothing and a text LLM is configured (`SUMMARY_URL`) it reads the page;
+last comes `sourceModifiedAt`. A scan's version is read from its transcribed first page.
+The version travels on `document.begin` (contract 2.1); Search only makes a newer version
+the latest.
+
+**E-mail.** An `.eml` becomes one page per message. `document.begin.email` carries
+Message-ID, In-Reply-To, References and Outlook's Thread-Index root, so Search threads
+messages ingested in any order, by independent calls. Each attachment in a supported
+format is stored and queued as a job of its own under `<e-mail reference>/<file name>`,
+with the e-mail as `parentReference` and its date as version fallback; the same PDF
+forwarded five times is indexed once. `/v1/ingest` takes the same inputs as `X-Version`,
+`X-Source-Modified` and `X-Dedup`, and answers a duplicate with `status: skipped`.
 
 ### On-demand render: `/v2/render`
 

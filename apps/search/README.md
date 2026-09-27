@@ -95,13 +95,15 @@ Extract's emitter writes documents through these routes (the OpenAPI document ha
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v2/documents/{ref}/revisions` | Create a revision (`Idempotency-Key`) |
+| `POST /v2/documents/{ref}/revisions` | Create a revision (`Idempotency-Key`, optional `X-Source-Id` claim) |
 | `PUT /v2/documents/{ref}/revisions/{rev}/batches/{seq}` | Stage one NDJSON page batch (`Content-Digest`), up to `REVISION_BATCH_BODY_LIMIT` |
 | `GET /v2/documents/{ref}/revisions/{rev}` | Revision state: `acceptedBatches`, `processedPages`, `missingAssets`, `committedSegments`, `commitPending` |
 | `POST /v2/documents/{ref}/revisions/{rev}/segments/{n}/commit` | Segment commit; a `progressive` revision becomes searchable up to it |
 | `POST /v2/documents/{ref}/revisions/{rev}/commit` | Final commit and atomic switch of the latest revision |
 | `POST /v2/documents/{ref}/revisions/{rev}/heartbeat` | Extend the TTL of an uncommitted revision |
 | `DELETE /v2/documents/{ref}/revisions/{rev}` | Abort and clean up |
+| `POST /v2/sources/identify` | Register an ingest's source; answers `new`, `new_version` or `duplicate` and the canonical reference |
+| `GET /v2/documents/{ref}/sources` | Every source of a document, indexed ones and skipped duplicates |
 
 Behaviour worth knowing:
 
@@ -119,6 +121,41 @@ Behaviour worth knowing:
   `X-Revision-Id` and/or `?revision=` must exist in the tenant and collection, belong to
   `X-Document-Reference` and not be aborted. An asset already bound to a live revision keeps that
   binding.
+
+### Duplicates, version order and e-mail threads
+
+- **Row ACL.** A revision is opened with the document's readers (`X-Allowed-Users/-Groups`,
+  resolved by `rowAclForRevision`: a service caller's values as given, else the collection ACL;
+  an end user only narrows to itself). It is stored on the revision and written onto every unit
+  by the batch worker, so search, expansion, navigation and assets enforce it.
+- **Sources.** `vs_document_sources` holds one row per ingest: the canonical reference, the
+  document key (reference without file extension), file sha256, normalised-text hash,
+  MinHash, Message-ID, version and status (`pending` claim, `indexed`, `duplicate`). Exact
+  matches (sha256, text hash, Message-ID) are duplicates collection-wide; MinHash
+  near-duplicates (`DEDUP_NEAR_THRESHOLD`, default 0.9) only within one document key, and
+  only when the versions match or — without comparable content versions — the similarity
+  reaches `DEDUP_DUPLICATE_SIMILARITY` (0.97). A pending claim expires after
+  `SOURCE_CLAIM_TTL`; a deleted document no longer counts. Identification is serialised per
+  collection, so two concurrent ingests of one file cannot both be new. Sources only match sources
+  of the same row ACL: another audience's copy is neither a duplicate nor a version target, and
+  `GET …/sources` lists only sources the caller may read.
+  Documents indexed before this registry existed have no source row: another format still
+  resolves to their reference (by document key, via the revision pointer), but they are not a
+  duplicate target until re-ingested.
+- **Version order.** `document.begin.version` is stored on the revision. The final switch
+  moves the document pointer only when the new version is not older than the current one
+  (labels compared numerically, `1.10 > 1.9`, then dates); an older version is committed and
+  addressable but never the latest. Without comparable versions the last commit wins, as
+  before.
+- **Threads.** A committed e-mail (`document.begin.email`) is threaded by Message-ID,
+  In-Reply-To, References and the Outlook Thread-Index root, with a subject + participant
+  fallback, into `vs_mail_messages`; referenced ids are kept as placeholders so a reply
+  ingested before its parent still joins. A message linking two threads merges them. An
+  attachment (`parentReference`) joins its e-mail's thread. `X-Group-By-Document` /
+  `group_by: document` / MCP `group_by_document` merge a thread into one result
+  (chronological content, `document_group` on the hit), and `expand=document` (`X-Expand:
+  document`) returns the whole thread — or a plain document — in reading order, default
+  budget 50 000 characters.
 
 ### Background workers
 

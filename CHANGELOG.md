@@ -35,6 +35,8 @@ navigation tools live in the private deployment repository and carry their own
   columns (12), unit relationship columns `parent_unit_id`, `prev_unit_id`, `next_unit_id`,
   `block_ids`, `figure_refs`, and `table_id` (13), and the identifier FTS vector `ts_ident` with its GIN index (14). All added
   columns are nullable, so legacy rows migrate forward untouched and are searched as before.
+  Global version 8 adds the document-identity tables `vs_document_sources`, `vs_mail_messages`,
+  and `vs_document_groups` and the nullable `vs_revisions.source_id` / `document_info` columns.
 - **Extract schema.** With `EXTRACT_DATABASE_URL` set, Extract creates its own `extract` schema
   (tracked in `extract.schema_migrations`, target version 2): `jobs`, `page_stages`,
   `figure_stages`, `tile_stages`, `docpass_state`, `emit_outbox`, `asset_outbox`, and `uploads`.
@@ -44,7 +46,10 @@ navigation tools live in the private deployment repository and carry their own
 - **Contract.** `@atf/extract-contract` advances from 1.1.0 to 2.0.0. This is breaking for
   importers: the package root now exports the v2 NDJSON record stream, and the v1 marker grammar
   is available only under the `@atf/extract-contract/v1` subpath (`./v2` is also exported
-  explicitly). Code importing v1 symbols from the root must switch to `/v1`.
+  explicitly). Code importing v1 symbols from the root must switch to `/v1`. The wire contract
+  is `atf-extract/2.1.0`: `document.begin` gains the optional `version`, `email`, and
+  `parentReference`, and the package adds the identify API types and the shared
+  `documentKeyOf` / `compareDocumentVersions` rules — additive, so a 2.0 consumer is unaffected.
 
 ### Added
 
@@ -116,6 +121,31 @@ navigation tools live in the private deployment repository and carry their own
   `TOKENIZE_URL`. [docs/CONFIGURATION.md](docs/CONFIGURATION.md) lists every variable with its
   default; [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md)
   says which ones an upgrade needs.
+- **Duplicate detection on ingest.** Every v2 job identifies its source with Search
+  (`POST /v2/sources/identify`) before any work: the same file, the same normalised text, or the
+  same e-mail Message-ID anywhere in the collection, and a near-identical text (MinHash) of the
+  same document in the same version, are skipped. Whitespace, hyphenation, ligatures, case,
+  punctuation, and page numbers do not make two exports differ, so a PDF and the DOCX it was made
+  from are recognised as one. A skipped upload completes without extraction or model calls, reports
+  `duplicateOf` (`status: skipped` on `/v1/ingest`), and is kept as an additional source of the
+  indexed document (`GET /v2/documents/{ref}/sources`). `dedup` / `X-Dedup` (`auto`, `exact`,
+  `off`) controls it; `SOURCE_CLAIM_TTL`, `DEDUP_NEAR_THRESHOLD`, and `DEDUP_DUPLICATE_SIMILARITY`
+  tune it in Search.
+- **Document versions.** A document is identified by its reference without file extension, so
+  `handbuch.docx` is ingested as a new revision of an indexed `handbuch.pdf`. Without an explicit
+  `version` / `X-Version`, Extract reads the version from the first page (label, then a labelled or
+  unambiguous date; the text LLM when configured; a scan's transcribed first page), else takes
+  `sourceModifiedAt` / `X-Source-Modified`. Search makes a revision the latest only when its
+  version is not older than the current one; an older version arriving late is indexed but stays
+  in the history.
+- **E-mail ingestion (`.eml`).** Parsed natively (MIME, transfer and header encodings, any WHATWG
+  charset, HTML bodies) into one page per message with quoted history and signature removed.
+  Messages are threaded in Search by Message-ID, In-Reply-To, References, and the Outlook
+  Thread-Index — across independent ingests, in any order, merging threads a message links — with
+  a subject and participant fallback. Attachments are ingested as documents of their own, grouped
+  with their e-mail's thread. `groupByDocument` / `group_by: document` merge a thread into one
+  result, and the new expansion mode `document` (`X-Expand`, `expand`, MCP `expand`) returns a
+  whole thread or document in reading order.
 - Extract `/metrics` exposes the text-fidelity gate as `extract_text_fidelity_checks_total`,
   `extract_text_fidelity_divergences_total`, and `extract_text_fidelity_missing_tokens_total`.
 - Extract `/health` probes `pdftotext -bbox-layout` once per process (again on `?deep=1`) and
@@ -124,6 +154,10 @@ navigation tools live in the private deployment repository and carry their own
 
 ### Changed
 
+- The final revision switch supersedes only committed revisions of a document; a revision still
+  staging finishes and is ordered by its version when it commits, so two formats of one document
+  ingested concurrently no longer abort each other. Deleting a document by reference also removes
+  its revision pointer, source records, and thread membership.
 - New runtime dependencies: `fast-xml-parser` 5.11.1, `fflate` 0.8.3, and `pg` 8.23.0 in
   Extract (native OOXML/BPMN parsing and the `extract` schema), and `sharp` 0.35.4 in Search
   (asset variants). Third-party notices and the supply-chain inventory are regenerated.
@@ -136,6 +170,14 @@ navigation tools live in the private deployment repository and carry their own
   then disabled.
 
 ### Security
+
+- **Row ACL on the v2 ingest path.** Documents ingested through Extract's v2 jobs were written
+  without row ACL, so every reader of the collection could find them. The job's ACL (narrowed to
+  the uploading caller) now travels with the revision (`X-Allowed-Users/-Groups`) and is written
+  onto every unit; a service write without one falls back to the collection ACL. Duplicate
+  detection and version chains only match sources of the same ACL, and the source listing only
+  shows readable sources. Documents ingested through v2 before this change keep their empty row
+  ACL until re-ingested.
 
 - **Conversion callbacks without `CALLBACK_ALLOWED_HOSTS` reach public addresses only.** The
   callback host is resolved at delivery, the connection is pinned to the validated address, and
