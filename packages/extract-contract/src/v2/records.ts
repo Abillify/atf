@@ -395,6 +395,73 @@ export const summaryNodeSchema = z.object({
 
 export type SummaryNode = z.infer<typeof summaryNodeSchema>;
 
+// --- Document version / e-mail / parent (document.begin) --------------------
+
+/**
+ * Where a document version came from, strongest first. `explicit` is the
+ * caller's own value; the rest are Extract's detection fallbacks.
+ */
+export const versionSourceSchema = z.enum([
+  "explicit",
+  "page_label",
+  "page_date",
+  "llm",
+  "source_modified",
+]);
+
+export type VersionSource = z.infer<typeof versionSourceSchema>;
+
+/**
+ * The document's version. Two versions are ordered by `label` when both carry a
+ * comparable one, else by `date` (see `compareDocumentVersions`). Search uses
+ * the order to decide which revision of a document is the latest.
+ */
+export const documentVersionSchema = z
+  .object({
+    /** The version as written, e.g. `2.1`, `Rev. C`, `v3.0.1`. */
+    label: z.string().min(1).max(200).optional(),
+    /** The version date, `YYYY-MM-DD` or RFC 3339. */
+    date: z.string().min(1).max(64).optional(),
+    source: versionSourceSchema,
+  })
+  .refine((v) => v.label !== undefined || v.date !== undefined, {
+    message: "a version needs a label or a date",
+  });
+
+export type DocumentVersion = z.infer<typeof documentVersionSchema>;
+
+/** A mailbox as written in a header: display name and address. */
+export const mailboxSchema = z.object({
+  name: z.string().optional(),
+  address: z.string(),
+});
+
+export type Mailbox = z.infer<typeof mailboxSchema>;
+
+/**
+ * The threading headers of an e-mail (RFC 5322 §3.6.4) plus the Outlook
+ * conversation root. Search threads messages ingested independently of each
+ * other with these.
+ */
+export const emailHeadersSchema = z.object({
+  /** `Message-ID` without angle brackets. */
+  messageId: z.string().min(1),
+  inReplyTo: z.array(z.string()).default([]),
+  references: z.array(z.string()).default([]),
+  /** Base64 conversation root (the first 22 bytes) of Outlook's `Thread-Index`. */
+  threadIndexRoot: z.string().optional(),
+  subject: z.string().optional(),
+  from: mailboxSchema.optional(),
+  to: z.array(mailboxSchema).default([]),
+  cc: z.array(mailboxSchema).default([]),
+  /** `Date` header as RFC 3339. */
+  date: z.string().optional(),
+  /** File names of the message's attachments, in order. */
+  attachments: z.array(z.string()).default([]),
+});
+
+export type EmailHeaders = z.infer<typeof emailHeadersSchema>;
+
 // --- Records ---------------------------------------------------------------
 
 /** First record: document identity, source and pipeline. */
@@ -410,6 +477,15 @@ export const documentBeginRecordSchema = z.object({
   pipeline: pipelineDescriptorSchema,
   /** Total page count when known up front; omit for a streaming producer. */
   pageCount: z.int().min(0).optional(),
+  /** The document's version, explicit or detected (contract 2.1). */
+  version: documentVersionSchema.optional(),
+  /** Threading headers when the document is an e-mail (contract 2.1). */
+  email: emailHeadersSchema.optional(),
+  /**
+   * The document this one was extracted from, e.g. the e-mail an attachment
+   * came with (contract 2.1). Search groups the two.
+   */
+  parentReference: z.string().min(1).optional(),
 });
 
 export type DocumentBeginRecord = z.infer<typeof documentBeginRecordSchema>;

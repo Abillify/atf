@@ -15,6 +15,7 @@
  */
 
 import { z } from "zod";
+import { documentVersionSchema } from "./records.js";
 
 // --- Revision (Search staging) ---------------------------------------------
 
@@ -157,6 +158,18 @@ export const stageProgressSchema = z.record(
 
 export type StageProgress = z.infer<typeof stageProgressSchema>;
 
+/**
+ * Duplicate handling for a new ingest:
+ *   auto   skip exact duplicates anywhere in the collection and near-duplicates
+ *          of the same document (same reference without file extension) that
+ *          carry the same version (default)
+ *   exact  skip only byte- or text-identical duplicates
+ *   off    never skip
+ */
+export const dedupModeSchema = z.enum(["auto", "exact", "off"]);
+
+export type DedupMode = z.infer<typeof dedupModeSchema>;
+
 /** Request body of `POST /v2/jobs`. */
 export const jobRequestSchema = z.object({
   reference: z.string().min(1),
@@ -169,7 +182,113 @@ export const jobRequestSchema = z.object({
   visibility: visibilitySchema.optional(),
   resumePolicy: resumePolicySchema.optional(),
   callbackUrl: z.string().optional(),
+  /** Explicit document version; skips version detection. */
+  version: z.string().min(1).max(200).optional(),
+  /** The source file's modification time (RFC 3339), the last version fallback. */
+  sourceModifiedAt: z.iso.datetime({ offset: true }).optional(),
+  dedup: dedupModeSchema.optional(),
+  /**
+   * Who may read the document. Narrowed to the caller's own identity (a caller
+   * cannot grant access it does not have); omitted = the caller's own identity,
+   * or — for a service caller — the Search collection ACL.
+   */
+  allowedUsers: z.array(z.string().min(1)).max(1000).optional(),
+  allowedGroups: z.array(z.string().min(1)).max(1000).optional(),
 });
+
+// --- Source identification (Search, dedup + version chains) -----------------
+
+/** Lifecycle of a registered source. */
+export const sourceStatusSchema = z.enum(["pending", "indexed", "duplicate", "released"]);
+
+export type SourceStatus = z.infer<typeof sourceStatusSchema>;
+
+/**
+ * Request body of `POST /v2/sources/identify`.
+ *
+ * Extract calls it twice per job: once with the source hash only (phase
+ * `source`, before any work) and once with the text fingerprint and the
+ * detected version (phase `content`, after the source is prepared but before
+ * any model call). Each call registers or updates the job's source claim.
+ */
+export const identifyRequestSchema = z.object({
+  /** Stable id of the ingest (the Extract job id); the claim key. */
+  sourceId: z.string().min(1).max(200),
+  phase: z.enum(["source", "content"]),
+  /** The reference the caller asked for. */
+  reference: z.string().min(1),
+  /** `documentKeyOf(reference)`. */
+  documentKey: z.string().min(1),
+  filename: z.string().optional(),
+  mimeType: z.string().optional(),
+  sourceSha256: z.string().regex(/^[0-9a-f]{64}$/),
+  /** sha256 of the normalised text; absent for a source without text. */
+  textHash: z.string().regex(/^[0-9a-f]{64}$/).optional(),
+  /** MinHash signature of the normalised text's word shingles. */
+  minhash: z.array(z.int()).max(512).optional(),
+  /** Message-ID of an e-mail source: the same message exported twice is a duplicate. */
+  messageId: z.string().min(1).max(998).optional(),
+  /**
+   * The row ACL the document is ingested under (the same values the revision is
+   * opened with). Sources only match sources of the same ACL.
+   */
+  allowedUsers: z.array(z.string()).max(1000).optional(),
+  allowedGroups: z.array(z.string()).max(1000).optional(),
+  version: documentVersionSchema.optional(),
+  dedup: dedupModeSchema.default("auto"),
+});
+
+export type IdentifyRequest = z.input<typeof identifyRequestSchema>;
+
+/** A registered source another ingest duplicated. */
+export const duplicateOfSchema = z.object({
+  reference: z.string(),
+  sourceId: z.string(),
+  filename: z.string().optional(),
+  revisionId: z.string().optional(),
+  /** `sha256`, `text` or `similar`. */
+  match: z.enum(["sha256", "text", "similar"]),
+  /** Estimated text similarity in `[0,1]` for a `similar` match. */
+  similarity: z.number().min(0).max(1).optional(),
+});
+
+export type DuplicateOf = z.infer<typeof duplicateOfSchema>;
+
+/** Response of `POST /v2/sources/identify`. */
+export const identifyResponseSchema = z.object({
+  /**
+   *   new           nothing like it is indexed
+   *   new_version   another version of an indexed document (same document key)
+   *   duplicate     already indexed; the caller should skip it
+   */
+  decision: z.enum(["new", "new_version", "duplicate"]),
+  /**
+   * The reference to ingest under. The first reference a document key was
+   * indexed with, so `handbuch.docx` becomes a new revision of an indexed
+   * `handbuch.pdf`; the requested reference for a new document.
+   */
+  canonicalReference: z.string(),
+  duplicateOf: duplicateOfSchema.optional(),
+});
+
+export type IdentifyResponse = z.infer<typeof identifyResponseSchema>;
+
+/** One source of a document, as listed by `GET /v2/documents/{ref}/sources`. */
+export const documentSourceSchema = z.object({
+  sourceId: z.string(),
+  reference: z.string(),
+  requestedReference: z.string(),
+  filename: z.string().optional(),
+  mimeType: z.string().optional(),
+  sourceSha256: z.string(),
+  status: sourceStatusSchema,
+  revisionId: z.string().optional(),
+  version: documentVersionSchema.optional(),
+  duplicateOf: duplicateOfSchema.optional(),
+  createdAt: z.string(),
+});
+
+export type DocumentSource = z.infer<typeof documentSourceSchema>;
 
 export type JobRequest = z.infer<typeof jobRequestSchema>;
 
@@ -189,6 +308,15 @@ export const jobSchema = z.object({
   revisionId: z.string().optional(),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
+  /**
+   * The reference the document was ingested under when it differs from the
+   * requested one (a new version of a document indexed under another format).
+   */
+  resolvedReference: z.string().optional(),
+  /** The version the document was ingested with, explicit or detected. */
+  version: documentVersionSchema.optional(),
+  /** Set when the job was skipped as a duplicate of an indexed source. */
+  duplicateOf: duplicateOfSchema.optional(),
 });
 
 export type Job = z.infer<typeof jobSchema>;
