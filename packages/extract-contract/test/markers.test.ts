@@ -23,7 +23,7 @@ import {
   parseFigureIdAttribute,
   parsePageAttribute,
   type BoundingBox,
-} from "../src/index.js";
+} from "../src/v1/index.js";
 
 describe("contract version", () => {
   test("parses and gates on the major", () => {

@@ -28,7 +28,7 @@ import {
   buildDocumentAssetId,
   collectFigures,
   serializeDocument,
-} from "../src/index.js";
+} from "../src/v1/index.js";
 import { REFERENCE, document, figure, page } from "./fixtures.js";
 
 function structuredDocument() {
@@ -113,14 +113,16 @@ describe("Search parses the canonical form", () => {
     ]);
   });
 
-  test("collects every page summary into the embedded summary", () => {
-    expect(parsed.embeddedSummary).toBe(
-      [
-        "Seite 1 beschreibt die Einleitung.",
-        "Seite 2 beschreibt den Aufbau.",
-        "Seite 3 zeigt zwei Diagramme.",
-      ].join("\n"),
-    );
+  test("attributes each page summary to its own page (defect D1)", () => {
+    // Search no longer concatenates every <summary> into one document-wide
+    // chain and prepends it to every chunk (defect D1). Each summary is bound
+    // to the page whose marker precedes it, so a chunk carries only the context
+    // of the pages it covers. The document-level `embeddedSummary` fallback is
+    // therefore empty here — no summary sat before the first page marker.
+    expect(parsed.embeddedSummary).toBeUndefined();
+    expect(parsed.pageSummaries.get(1)).toBe("Seite 1 beschreibt die Einleitung.");
+    expect(parsed.pageSummaries.get(2)).toBe("Seite 2 beschreibt den Aufbau.");
+    expect(parsed.pageSummaries.get(3)).toBe("Seite 3 zeigt zwei Diagramme.");
   });
 
   test("leaves no structural markup in the indexed body", () => {
@@ -130,10 +132,15 @@ describe("Search parses the canonical form", () => {
     expect(parsed.content).not.toContain("![figure_");
   });
 
-  test("keeps the body text", () => {
+  test("keeps the body text but strips the page markers (Requirement 2.3)", () => {
+    // The body text of every page survives into the indexed content…
     expect(parsed.content).toContain("Gerät auspacken.");
     expect(parsed.content).toContain("Text ohne Abbildung.");
-    expect(parsed.content).toContain("## Seite 2");
+    // …but the `## Seite N` markers and `---` separators are removed from the
+    // embedding/full-text body (Requirement 2.3). The page numbers they carried
+    // live on in the page spans instead, which the span test above pins.
+    expect(parsed.content).not.toMatch(/##\s+Seite\s+\d+/);
+    expect(parsed.content).not.toMatch(/^\s*-{3,}\s*$/m);
   });
 });
 

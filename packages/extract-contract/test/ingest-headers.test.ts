@@ -8,7 +8,7 @@ import {
   buildAssetHeaders,
   buildIngestHeaders,
   encodeHeaderValue,
-} from "../src/index.js";
+} from "../src/v1/index.js";
 import { REFERENCE, document, figure, page } from "./fixtures.js";
 import { parseMetadataHeader } from "../../../apps/search/src/metadata.js";
 
@@ -102,6 +102,52 @@ describe("buildIngestHeaders", () => {
     expect(headers["x-allowed-users"]).toBeUndefined();
     expect(headers["x-allowed-groups"]).toBeUndefined();
     expect(headers["x-tags"]).toBeUndefined();
+  });
+
+  test("carries the chunking and structure overrides", () => {
+    const headers = buildIngestHeaders(document(), {
+      lateChunkingAlpha: 0.5,
+      quantization: "binary",
+      breakpointPercentile: 80,
+      contextPrefixSize: 256,
+      summarize: true,
+      chapterSplitMaxChunks: 25,
+      documentStructure: "off",
+      summaryMode: "generate",
+    });
+    expect(headers["x-late-chunking-alpha"]).toBe("0.5");
+    expect(headers["x-quantization"]).toBe("binary");
+    expect(headers["x-breakpoint-percentile"]).toBe("80");
+    expect(headers["x-context-prefix-size"]).toBe("256");
+    expect(headers["x-summarize"]).toBe("true");
+    expect(headers["x-chapter-split-max-chunks"]).toBe("25");
+    expect(headers["x-document-structure"]).toBe("off");
+    expect(headers["x-summary-mode"]).toBe("generate");
+  });
+
+  test("passes through explicit-disable zeros for prefix and chapter split", () => {
+    // Search reads 0 as an explicit off switch, so it must survive as "0" and
+    // not be dropped as falsy.
+    const headers = buildIngestHeaders(document(), {
+      contextPrefixSize: 0,
+      chapterSplitMaxChunks: 0,
+      lateChunkingAlpha: 0,
+    });
+    expect(headers["x-context-prefix-size"]).toBe("0");
+    expect(headers["x-chapter-split-max-chunks"]).toBe("0");
+    expect(headers["x-late-chunking-alpha"]).toBe("0");
+  });
+
+  test("omits the new overrides when unset, so Search keeps its defaults", () => {
+    const headers = buildIngestHeaders(document());
+    expect(headers["x-late-chunking-alpha"]).toBeUndefined();
+    expect(headers["x-quantization"]).toBeUndefined();
+    expect(headers["x-breakpoint-percentile"]).toBeUndefined();
+    expect(headers["x-context-prefix-size"]).toBeUndefined();
+    expect(headers["x-summarize"]).toBeUndefined();
+    expect(headers["x-chapter-split-max-chunks"]).toBeUndefined();
+    // Document structure has a contract default rather than being omitted.
+    expect(headers["x-document-structure"]).toBe("auto");
   });
 
   test("base64-encodes a non-ASCII title", () => {

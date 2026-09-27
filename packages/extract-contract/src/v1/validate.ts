@@ -33,7 +33,7 @@ import {
   globalize,
   isValidBoundingBox,
 } from "./markers.js";
-import { buildDocumentAssetId } from "./asset-id.js";
+import { buildDocumentAssetId } from "../asset-id.js";
 import { isCompatibleContract } from "./version.js";
 import type { ExtractedDocument } from "./document.js";
 

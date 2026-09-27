@@ -2,12 +2,50 @@
 
 The document-extraction output contract. One normative definition of what a
 converted document looks like, shared by the producer (`@atf/extract`) and every
-consumer (`@atf/search`, runtime flows, operators re-ingesting stored Markdown).
+consumer (`@atf/search`, runtime flows).
 
-Contract id: `atf-extract/1.1.0`. Gate on the **major** version only; minor
-versions are additive by construction.
+The package ships **two majors**:
 
-Version 1.1 adds optional document timing fields (`timeToFirstPageMs`,
+- **v2** (`atf-extract/2.0.0`) — the default export. An NDJSON stream of
+  zod-validated records (`document.begin`, `page`, `document.end`) with a typed
+  block model, structured figure transcriptions, multi-kind asset references,
+  the ingest/job API types, an NDJSON codec, `validateRecord`, and a
+  `renderMarkdown` view. Import from `@atf/extract-contract`.
+- **v1** (`atf-extract/1.1.0`) — the legacy Markdown marker grammar, kept for
+  existing corpora. Import from `@atf/extract-contract/v1`. Everything below the
+  "The grammar" heading documents v1.
+
+Gate on the **major** version only; minor versions are additive by construction.
+
+## v2 — the record stream
+
+Where v1 shipped a Markdown body with in-band markers, v2 ships records:
+
+```
+document.begin   identity, source, pipeline
+page             one per page (sent batched): typed blocks, furniture, assets,
+                 fidelity — see the block model in design.md §4.2
+document.end     outline, identifier index, summary hierarchy, refs, usage
+```
+
+Markdown is no longer the transport; `renderMarkdown(records, options)` derives
+a reading view in which each figure renders **inline at its reading position**
+as a `<figure>` element carrying its kind/page/asset, caption, summary and its
+transcription rendered as a table or list.
+
+Asset identity is unchanged from v1 for figures — `assetId = sha256(NFC(reference)
++ "\n" + NFC(localId))` with `localId = figureId` — so re-extracting an existing
+corpus keeps every uploaded crop valid. v2 additionally addresses page images
+(`page:p37`), tiles (`tile:p37-f1-r2c3`) and native source files (`native:…`).
+
+```ts
+import {
+  encodeRecords, decodeRecordStream, validateRecord, renderMarkdown,
+  buildAssetId, pageLocalId, type ExtractRecord,
+} from "@atf/extract-contract";
+```
+
+Version 1.1 (v1) adds optional document timing fields (`timeToFirstPageMs`,
 `avgVisionMsPerPage`, `perPageVisionMs`) and optional progress telemetry
 (`total`, cumulative token counts, ETA, elapsed time and page timing). A 1.0
 consumer remains compatible because all additions are optional and the

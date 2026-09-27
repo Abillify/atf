@@ -61,8 +61,42 @@ export interface IngestHeaderOptions {
   chunkSize?: number;
   chunkOverlap?: number;
   semanticChunking?: boolean;
+  /**
+   * Late-chunking blend factor in `[0, 1]`. `0` explicitly disables late
+   * chunking for this request; omit to use Search's default.
+   */
+  lateChunkingAlpha?: number;
+  /**
+   * Vector quantization for a *new* collection. Ignored once a collection
+   * exists, so it only bites on first ingest. Omit for Search's default.
+   */
+  quantization?: "none" | "binary";
+  /** Semantic-chunking breakpoint percentile, integer `1..99`. */
+  breakpointPercentile?: number;
+  /**
+   * Characters of document context prepended to each chunk's embedding input.
+   * `0` explicitly disables the context prefix; omit for Search's default.
+   */
+  contextPrefixSize?: number;
+  /**
+   * Generate an LLM summary as the context prefix. Requires a summary model on
+   * the Search side and only takes effect when set to `true`.
+   */
+  summarize?: boolean;
+  /**
+   * Split a document exceeding this many chunks into chapter sub-documents.
+   * `0` explicitly disables chapter splitting; omit for Search's default.
+   */
+  chapterSplitMaxChunks?: number;
   /** Merged into the provenance metadata; caller keys win on collision. */
   metadata?: Record<string, unknown>;
+  /**
+   * Whether Search parses the marker structure at all. Defaults to `auto`.
+   * `off` makes Search treat the body as flat text, discarding page markers and
+   * figure entries — rarely wanted, since it throws away what the contract
+   * carries, but exposed for completeness.
+   */
+  documentStructure?: "auto" | "off";
   /** Reflects the serialize options actually used. Defaults to true. */
   pageMarkers?: boolean;
   /** Reflects the serialize options actually used. Defaults to true. */
@@ -138,7 +172,7 @@ export function buildIngestHeaders(
   const headers: Record<string, string> = {
     "content-type": "text/markdown; charset=utf-8",
     "x-reference": encodeHeaderValue(document.reference),
-    "x-document-structure": "auto",
+    "x-document-structure": options.documentStructure ?? "auto",
     "x-page-markers": boolHeader(pageMarkers),
     "x-figure-chunks": boolHeader(figureChunks),
     "x-normalize-tables": boolHeader(normalizeTables),
@@ -160,6 +194,20 @@ export function buildIngestHeaders(
   }
   if (options.semanticChunking !== undefined) {
     headers["x-semantic-chunking"] = boolHeader(options.semanticChunking);
+  }
+  if (options.lateChunkingAlpha !== undefined) {
+    headers["x-late-chunking-alpha"] = String(options.lateChunkingAlpha);
+  }
+  if (options.quantization !== undefined) headers["x-quantization"] = options.quantization;
+  if (options.breakpointPercentile !== undefined) {
+    headers["x-breakpoint-percentile"] = String(options.breakpointPercentile);
+  }
+  if (options.contextPrefixSize !== undefined) {
+    headers["x-context-prefix-size"] = String(options.contextPrefixSize);
+  }
+  if (options.summarize !== undefined) headers["x-summarize"] = boolHeader(options.summarize);
+  if (options.chapterSplitMaxChunks !== undefined) {
+    headers["x-chapter-split-max-chunks"] = String(options.chapterSplitMaxChunks);
   }
 
   const tags = (options.tags ?? []).filter((tag) => tag.trim() !== "");

@@ -10,7 +10,7 @@ import {
   parseDocument,
   serializeDocument,
   serializePage,
-} from "../src/index.js";
+} from "../src/v1/index.js";
 import { REFERENCE, document, figure, page } from "./fixtures.js";
 
 describe("serializePage", () => {

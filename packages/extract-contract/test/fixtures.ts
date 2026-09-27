@@ -9,7 +9,7 @@ import {
   type ExtractedDocument,
   type ExtractedFigure,
   type ExtractedPage,
-} from "../src/index.js";
+} from "../src/v1/index.js";
 
 /**
  * Fixtures are deliberately generic.

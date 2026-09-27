@@ -7,7 +7,7 @@ import {
   assertValidDocument,
   isValidDocument,
   validateDocument,
-} from "../src/index.js";
+} from "../src/v1/index.js";
 import { document, figure, page } from "./fixtures.js";
 
 function errorsFor(doc: Parameters<typeof validateDocument>[0]): string[] {

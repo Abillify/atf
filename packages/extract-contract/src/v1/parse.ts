@@ -38,7 +38,7 @@ import {
   type BoundingBox,
   type PageLabel,
 } from "./markers.js";
-import { buildDocumentAssetId } from "./asset-id.js";
+import { buildDocumentAssetId } from "../asset-id.js";
 
 /** A figure recovered from Markdown. */
 export interface ParsedFigure {

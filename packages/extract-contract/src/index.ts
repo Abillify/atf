@@ -6,12 +6,21 @@
  *
  * The document-extraction output contract: one normative definition of what a
  * converted document looks like, shared by the producer (`@atf/extract`) and
- * every consumer (`@atf/search`, runtime flows, operators re-ingesting stored
- * Markdown).
+ * every consumer (`@atf/search`, runtime flows).
  *
- * See `README.md` for the grammar and `src/markers.ts` for its normative form.
+ * The package default export is **v2** (`atf-extract/2.0.0`): the NDJSON record
+ * stream with a typed block model, structured figure transcriptions, asset
+ * references and the ingest/job API types. See `./v2/index.ts` for the record
+ * model and `README.md` for the format.
+ *
+ * The legacy **v1** marker grammar (`## Seite N` markers, `<figure>` entries,
+ * Markdown transport) remains available under the subpath
+ * `@atf/extract-contract/v1` so existing corpora stay readable. It is not
+ * re-exported from the root to keep the two majors from colliding on names like
+ * `EXTRACT_CONTRACT_ID`.
  */
 
+// Shared version machinery — the current (v2) constants and the generic gate.
 export {
   EXTRACT_CONTRACT_HEADER,
   EXTRACT_CONTRACT_ID,
@@ -23,99 +32,18 @@ export {
   type ContractId,
 } from "./version.js";
 
-export { buildDocumentAssetId, isAssetId, sha256Hex } from "./asset-id.js";
-
+// Shared asset identity — v1-compatible for figures, prefixed for v2 kinds.
 export {
-  BBOX_PRECISION,
-  DEFAULT_PAGE_LABEL,
-  FIGURES_BLOCK_PATTERN,
-  FIGURE_ID_PATTERN,
-  FIGURE_MIME_TYPES,
-  FIGURE_PATTERN,
-  FIGURE_PLACEHOLDER_PATTERN,
-  PAGE_LABELS,
-  PAGE_MARKER_PATTERN,
-  PAGE_SEPARATOR,
-  RESERVED_FIGURE_ID_PREFIX,
-  SUMMARY_PATTERN,
-  boundingBoxFromPixels,
-  boundingBoxToPixels,
-  buildFigureId,
-  buildFigurePlaceholder,
-  buildFigureTag,
-  buildFiguresBlock,
-  buildPageMarker,
-  buildSummaryTag,
-  escapeAttribute,
-  escapeFigureDescription,
-  formatBoundingBox,
-  globalize,
-  isValidBoundingBox,
-  normalizeBoundingBox,
-  parseBoundingBoxAttribute,
-  parseFigureIdAttribute,
-  parsePageAttribute,
-  type BoundingBox,
-  type FigureMimeType,
-  type FigureTagInput,
-  type PageLabel,
-} from "./markers.js";
+  buildAssetId,
+  buildDocumentAssetId,
+  figureLocalId,
+  isAssetId,
+  nativeLocalId,
+  pageLocalId,
+  sha256Hex,
+  tileLocalId,
+  type AssetKind,
+} from "./asset-id.js";
 
-export {
-  boundingBoxSchema,
-  collectFigures,
-  convertProgressEventSchema,
-  convertResponseSchema,
-  extractedDocumentSchema,
-  extractedFigureSchema,
-  extractedPageSchema,
-  parseConvertResponse,
-  parseExtractedDocument,
-  pipelineDescriptorSchema,
-  sourceDescriptorSchema,
-  timingsSchema,
-  usageSchema,
-  type ConvertProgressEvent,
-  type ConvertResponse,
-  type ExtractTimings,
-  type ExtractUsage,
-  type ExtractedDocument,
-  type ExtractedFigure,
-  type ExtractedPage,
-  type PipelineDescriptor,
-  type SourceDescriptor,
-} from "./document.js";
-
-export {
-  serializeDocument,
-  serializePage,
-  type SerializeOptions,
-} from "./serialize.js";
-
-export {
-  parseDocument,
-  parsePageBlock,
-  type ParsedDocument,
-  type ParsedFigure,
-  type ParsedPage,
-} from "./parse.js";
-
-export {
-  assetPath,
-  buildAssetHeaders,
-  buildIngestHeaders,
-  buildProvenanceMetadata,
-  encodeHeaderValue,
-  type IngestHeaderOptions,
-  type SummaryMode,
-  type VersionMode,
-} from "./ingest-headers.js";
-
-export {
-  ExtractContractError,
-  assertValidDocument,
-  isValidDocument,
-  validateDocument,
-  type ValidationIssue,
-  type ValidationSeverity,
-} from "./validate.js";
+// The v2 record model, codec, validator and Markdown view.
+export * from "./v2/index.js";
