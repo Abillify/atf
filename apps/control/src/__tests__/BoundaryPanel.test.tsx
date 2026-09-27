@@ -65,3 +65,46 @@ describe("BoundaryPanel", () => {
     expect(screen.getByText(/Pin a recorded request/)).toBeInTheDocument();
   });
 });
+
+describe("BoundaryPanel Start — run input", () => {
+  test("shows the traced run's request messages, input values and metadata", async () => {
+    const trace = {
+      execution_id: "run-7",
+      flow_id: "support",
+      flow_version: "1.2.3",
+      status: "completed",
+      started_at: "2026-09-25T10:00:00.000Z",
+      finished_at: "2026-09-25T10:00:02.000Z",
+      context: { chat_id: "chat-1", session_id: "sess-9", jwt_claims: { tier: "gold" } },
+      input_messages: [
+        { role: "system", content: "Be brief." },
+        { role: "user", content: [{ type: "text", text: "Where is my order?" }] },
+      ],
+    };
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve({
+        ok: true,
+        json: () =>
+          Promise.resolve(
+            url.endsWith("/sample")
+              ? { ...pinned, executionId: "run-7", sample: { query: "Where is my order?", messageCount: 2, context: { chatId: "chat-1" } } }
+              : trace,
+          ),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    try {
+      render(<BoundaryPanel kind="start" boundaries={boundaries} runs={runs(null)} runExecutionId="run-7" />);
+      expect(await screen.findByText("Request — 2 message(s)")).toBeInTheDocument();
+      expect(screen.getByLabelText("Message 2 (user)")).toHaveTextContent("Where is my order?");
+      expect(await screen.findByLabelText("Current query")).toHaveTextContent("Where is my order?");
+      expect(screen.getByText("sess-9")).toBeInTheDocument();
+      expect(screen.getByText("1.2.3")).toBeInTheDocument();
+      expect(fetchMock.mock.calls.map((c) => String(c[0]))).toEqual(
+        expect.arrayContaining([expect.stringContaining("/monitoring/debug/run-7")]),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});

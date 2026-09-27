@@ -80,6 +80,8 @@ export interface FlowRunDrawerProps {
   attachExecutionId?: string;
   /** The attached execution was replaced by a new run or cleared. */
   onDetach?: () => void;
+  /** Execution of the current run, once known (null: no run / cleared). */
+  onExecutionChange?: (executionId: string | null) => void;
 }
 
 function sumStates(states: Map<string, NodeState> | undefined) {
@@ -108,6 +110,7 @@ export function FlowRunDrawer({
   onPinRun,
   attachExecutionId,
   onDetach,
+  onExecutionChange,
 }: FlowRunDrawerProps): React.JSX.Element {
   const { token, isAuthenticated, renewNow } = useAuth();
 
@@ -132,6 +135,11 @@ export function FlowRunDrawer({
   const [pinState, setPinState] = useState<
     { state: "idle" | "pinning" | "pinned" } | { state: "error"; message: string }
   >({ state: "idle" });
+  const onExecutionChangeRef = useRef(onExecutionChange);
+  onExecutionChangeRef.current = onExecutionChange;
+  useEffect(() => {
+    onExecutionChangeRef.current?.(runExecutionId);
+  }, [runExecutionId]);
 
   const runStartedAtRef = useRef<number>(0);
   const activeExecutionIdRef = useRef<string | null>(null);

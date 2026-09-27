@@ -32,7 +32,17 @@ import {
   useUpdateNodeInternals,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
-import { Map as MapIcon, Maximize2, Network, Waypoints, ZoomIn, ZoomOut } from "lucide-react";
+import { Map as MapIcon, Maximize2, Network, Pin, Waypoints, Wrench, ZoomIn, ZoomOut } from "lucide-react";
+import {
+  type ToolChip,
+  TOOL_CHIP_GAP,
+  TOOL_CHIP_H,
+  TOOL_RAIL_GAP,
+  TOOL_RAIL_INSET,
+  toolCallsByParent,
+  toolChipsFor,
+  toolRailSize,
+} from "../lib/tool-chips";
 import type { RFNode, RFEdge, ReferenceEdge, ReferenceKind } from "../lib/flow-graph";
 import { connectionProblem, type EdgeLike, type NodeLike } from "../lib/edge-rules";
 import { useColorSchemeOrDefault } from "../lib/theme/ThemeProvider";
@@ -43,6 +53,7 @@ import { NodeCard } from "./graph/NodeRenderer";
 import { labeledEdgeTypes } from "./graph/LabeledEdge";
 import {
   END_ID,
+  RESPONSE_EVENT_ID,
   START_ID,
   entryProblem,
   flowBoundaries,
@@ -88,6 +99,10 @@ type EditableNodeData = {
   ghost?: "removed" | "added";
   /** Relative sub-flow file this node will be saved into (Phase 4, `$includeOrigins`). */
   origin?: string;
+  /** Offers tools to its model: the handle its tool row docks to (right side). */
+  toolsRail?: boolean;
+  /** Run emphasis of the card (see NodeCard `emphasis`). */
+  emphasis?: "idle" | "used" | "unused";
 };
 
 type EditableFlowNode = Node<EditableNodeData, "flowNode">;
@@ -103,15 +118,15 @@ function EditableNode({
   data,
   selected,
 }: NodeProps<EditableFlowNode>): React.JSX.Element {
-  const { flowNode, liveState, validation, diff, ghost, toolOut, toolIn } = data;
+  const { flowNode, liveState, validation, diff, ghost, toolOut, toolIn, toolsRail, emphasis } = data;
   // React Flow measures handles only when a node's size changes. The tool
   // handles come and go (delegation links show while their harness is
   // selected), so re-measure — or the links to a new handle are dropped.
   const updateNodeInternals = useUpdateNodeInternals();
-  // biome-ignore lint/correctness/useExhaustiveDependencies: toolIn/toolOut are the trigger, not inputs
+  // biome-ignore lint/correctness/useExhaustiveDependencies: toolIn/toolOut/toolsRail are the trigger, not inputs
   useEffect(() => {
     updateNodeInternals(id);
-  }, [id, toolIn, toolOut, updateNodeInternals]);
+  }, [id, toolIn, toolOut, toolsRail, updateNodeInternals]);
   const state = mergeLiveState(flowNodeToNodeState(flowNode), liveState);
   const hasError = (validation?.errors.length ?? 0) > 0;
   const hasWarning = !hasError && (validation?.warnings.length ?? 0) > 0;
@@ -154,7 +169,13 @@ function EditableNode({
         }`}
         title={validationTitle || diffTitle || undefined}
       >
-        <NodeCard state={state} selected={selected} isTimeline={false} compact />
+        <NodeCard
+          state={state}
+          selected={selected}
+          isTimeline={false}
+          compact
+          {...(ghost ? {} : { emphasis: emphasis ?? "idle" })}
+        />
         {(hasError || hasWarning) && (
           <div
             aria-hidden
@@ -205,6 +226,126 @@ function EditableNode({
           className="!h-2.5 !w-2.5 !rounded-[2px] !border !border-violet-700 !bg-violet-400"
         />
       )}
+      {toolsRail && (
+        <Handle
+          id={TOOLS_RAIL_OUT}
+          type="source"
+          position={Position.Right}
+          isConnectable={false}
+          title="Tools this node offers its model"
+          style={{ top: `${toolRailAnchor(toolOut ?? false) * 100}%` }}
+          className="!h-2 !w-2 !rounded-full !border !border-teal-700 !bg-teal-400"
+        />
+      )}
+    </>
+  );
+}
+
+/** Height (fraction) on the node's right side where its tool row docks —
+ * above the middle when the middle holds the handle of the node's tool links. */
+const toolRailAnchor = (hasToolLinks: boolean): number => (hasToolLinks ? 0.28 : 0.5);
+
+type ToolRailData = {
+  chips: ToolChip[];
+  /** A run is traced: chips the run didn't call are dimmed. */
+  runActive: boolean;
+  /** Column size (lib/tool-chips `toolRailSize`) — chips share the width. */
+  width: number;
+  height: number;
+  /** More chips than fit: the column scrolls (running/used ones are on top). */
+  scrolls: boolean;
+  /** A chip was clicked: open the node's tool settings. */
+  onToolClick?: (tool: string) => void;
+};
+
+const CHIP_STATUS_CLASS: Record<ToolChip["status"], string> = {
+  idle: "border-teal-500/50 bg-card text-foreground",
+  running: "border-sky-400 bg-sky-50 text-sky-950 dark:bg-sky-950 dark:text-sky-100",
+  completed:
+    "border-emerald-500 bg-emerald-500 text-white shadow-md shadow-emerald-500/40 ring-2 ring-emerald-300/70 dark:ring-emerald-400/50",
+  error: "border-red-600 bg-red-500 text-white ring-2 ring-red-300/70",
+};
+
+function chipTitle(c: ToolChip): string {
+  const parts = [c.name];
+  if (!c.declared) parts.push("called in this run, not listed in the node's tools");
+  if (c.status === "running") parts.push("running…");
+  if (c.calls > 0) {
+    parts.push(`${c.calls} call${c.calls === 1 ? "" : "s"}${c.errors > 0 ? `, ${c.errors} failed` : ""}`);
+  }
+  if (c.lastLatencyMs !== undefined) parts.push(`last ${c.lastLatencyMs} ms`);
+  if (c.staticArgs.length > 0) parts.push(`static arguments: ${c.staticArgs.join(", ")}`);
+  return parts.join(" — ");
+}
+
+/** The tools a node offers its model, stacked on its right. A click on one
+ * opens the node's tool settings. */
+function ToolRailNode({ data }: NodeProps<Node<ToolRailData, "toolRail">>): React.JSX.Element {
+  // A tool starts running: it moved to the top — scroll there so it is in view.
+  const listRef = useRef<HTMLUListElement>(null);
+  const running = data.chips
+    .filter((c) => c.status === "running")
+    .map((c) => c.key)
+    .join("\u0000");
+  useEffect(() => {
+    if (running !== "" && listRef.current) listRef.current.scrollTop = 0;
+  }, [running]);
+  return (
+    <>
+      <Handle type="target" position={Position.Left} isConnectable={false} className="!h-1.5 !w-1.5 !border-0 !bg-teal-500" />
+      <ul
+        ref={listRef}
+        aria-label={`Tools (${data.chips.length})`}
+        // nowheel: the wheel scrolls the list instead of zooming the canvas.
+        className={`flex flex-col rounded-lg border border-dashed border-teal-500/50 bg-background/80 backdrop-blur-sm ${
+          data.scrolls ? "nowheel overflow-y-auto overscroll-contain [scrollbar-width:thin]" : "overflow-hidden"
+        }`}
+        style={{ width: data.width, height: data.height, padding: TOOL_RAIL_INSET - 1, gap: TOOL_CHIP_GAP }}
+      >
+        {data.chips.map((c) => (
+          // The running border is drawn inside the chip (inset 0): a scrolling list would clip it outside.
+          <li key={c.key} className="relative shrink-0" style={{ height: TOOL_CHIP_H }}>
+            <button
+              type="button"
+              title={`${chipTitle(c)}${data.onToolClick ? " — click to open the node's tool settings" : ""}`}
+              data-testid={`tool-chip-${c.name}`}
+              data-status={c.status}
+              disabled={!data.onToolClick}
+              onClick={(e) => {
+                e.stopPropagation();
+                data.onToolClick?.(c.name);
+              }}
+              className={`nodrag nopan pointer-events-auto flex h-full w-full items-center gap-1 rounded-md border px-1.5 text-left text-[10px] font-medium leading-none transition-all enabled:cursor-pointer enabled:hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-500 ${
+                CHIP_STATUS_CLASS[c.status]
+              } ${!c.declared ? "border-dashed" : ""} ${data.runActive && c.status === "idle" ? "opacity-40" : ""}`}
+            >
+              <Wrench size={12} aria-hidden className="shrink-0" />
+              <span className="min-w-0 flex-1 truncate font-mono">{c.name}</span>
+              {c.staticArgs.length > 0 && (
+                <span className="flex shrink-0 items-center gap-0.5 opacity-80" data-testid="tool-chip-static-args">
+                  <Pin size={10} aria-hidden />
+                  <span className="text-[9px]">{c.staticArgs.length}</span>
+                  <span className="sr-only"> static arguments</span>
+                </span>
+              )}
+              {c.calls > 1 && (
+                <span className="shrink-0 rounded bg-black/20 px-1 text-[9px]">
+                  <span aria-hidden>×</span>
+                  {c.calls}
+                  <span className="sr-only"> calls</span>
+                </span>
+              )}
+            </button>
+            {c.status === "running" && (
+              <div
+                aria-hidden
+                className="node-running-border"
+                style={{ "--node-spin-radius": "0.25rem", inset: 0, padding: 2 } as React.CSSProperties}
+              />
+            )}
+          </li>
+        ))}
+      </ul>
     </>
   );
 }
@@ -342,7 +483,22 @@ const BOUNDARY_EDGE_PREFIX = "boundary:";
 /** Handle ids of tool connections (reference edges). Flow edges use the unnamed top/bottom handles. */
 const TOOL_OUT = "tool-out";
 const TOOL_IN = "tool-in";
-const nodeTypes = { flowNode: EditableNode, subflowBox: SubflowBoxNode, boundary: BoundaryNode };
+/** Handle a node's tool row docks to, and the ids of the row and its link. */
+const TOOLS_RAIL_OUT = "tools-rail-out";
+const TOOL_RAIL_PREFIX = "tool-rail:";
+const TOOL_RAIL_EDGE_PREFIX = "tool-rail-edge:";
+const isToolRailId = (id: string): boolean => id.startsWith(TOOL_RAIL_PREFIX);
+/** Display-only edges: not flow edges, never reported or changed. */
+const isOverlayEdgeId = (id: string): boolean =>
+  id.startsWith(BOUNDARY_EDGE_PREFIX) || id.startsWith(TOOL_RAIL_EDGE_PREFIX);
+/** Stroke of an edge the traced run went along. */
+const USED_EDGE_STROKE = "#10b981";
+const nodeTypes = {
+  flowNode: EditableNode,
+  subflowBox: SubflowBoxNode,
+  boundary: BoundaryNode,
+  toolRail: ToolRailNode,
+};
 /** Labels are drawn along the edge path, framed in the edge colour. */
 const edgeTypes = labeledEdgeTypes;
 
@@ -451,6 +607,8 @@ export interface FlowCanvasProps {
   onSelectBoundary?: (kind: "start" | "end" | null) => void;
   /** A connection was drawn from Start to `nodeId`: make it the entry. */
   onSetEntry?: (nodeId: string) => void;
+  /** A tool chip of `nodeId` was clicked (`tool`: the ref or called name). */
+  onToolClick?: (nodeId: string, tool: string) => void;
 }
 
 function FlowCanvasInner({
@@ -481,6 +639,7 @@ function FlowCanvasInner({
   boundaries,
   onSelectBoundary,
   onSetEntry,
+  onToolClick,
 }: FlowCanvasProps): React.JSX.Element {
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const colorScheme = useColorSchemeOrDefault();
@@ -516,14 +675,32 @@ function FlowCanvasInner({
     Map<string, { width: number; height: number }>
   >(new Map());
 
+  // Start/End are not in `nodes` either, so their selection is kept here — a
+  // select change dropped on the floor left a click on Start without effect
+  // (React Flow reports only nodes it sees as selected).
+  const [selectedBoundaryId, setSelectedBoundaryId] = useState<string | null>(null);
+
   const handleNodesChange = useCallback(
     (changes: NodeChange[]) => {
       const overlayDims = changes.filter(
         (c): c is Extract<NodeChange, { type: "dimensions" }> =>
           c.type === "dimensions" &&
-          (ghostIds.has(c.id) || isBoundaryId(c.id)) &&
+          (ghostIds.has(c.id) || isBoundaryId(c.id) || isToolRailId(c.id)) &&
           c.dimensions !== undefined,
       );
+      const boundarySelects = changes.filter(
+        (c): c is Extract<NodeChange, { type: "select" }> => c.type === "select" && isBoundaryId(c.id),
+      );
+      if (boundarySelects.length > 0) {
+        setSelectedBoundaryId((prev) => {
+          let next = prev;
+          for (const c of boundarySelects) {
+            if (c.selected) next = c.id;
+            else if (next === c.id) next = null;
+          }
+          return next;
+        });
+      }
       if (overlayDims.length > 0) {
         setOverlaySizes((prev) => {
           const next = new Map(prev);
@@ -537,7 +714,10 @@ function FlowCanvasInner({
       const own = changes.filter(
         (c) =>
           !("id" in c) ||
-          (!ghostIds.has(c.id) && !c.id.startsWith(SUBFLOW_BOX_PREFIX) && !isBoundaryId(c.id)),
+          (!ghostIds.has(c.id) &&
+            !c.id.startsWith(SUBFLOW_BOX_PREFIX) &&
+            !isBoundaryId(c.id) &&
+            !isToolRailId(c.id)),
       );
       if (own.length === 0) return;
       onNodesChange(
@@ -550,7 +730,7 @@ function FlowCanvasInner({
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
       if (!editable || !onEdgesChange) return;
-      const own = changes.filter((c) => !("id" in c) || !c.id.startsWith(BOUNDARY_EDGE_PREFIX));
+      const own = changes.filter((c) => !("id" in c) || !isOverlayEdgeId(c.id));
       if (own.length === 0) return;
       onEdgesChange(
         applyEdgeChanges(
@@ -672,7 +852,7 @@ function FlowCanvasInner({
       onSelectBoundaryRef.current?.(boundary === null ? null : boundary === START_ID ? "start" : "end");
       onSelectionChangeRef.current?.(
         sel.nodes.filter((n) => !isBoundaryId(n.id)).map((n) => n.id),
-        sel.edges.filter((e) => !e.id.startsWith(BOUNDARY_EDGE_PREFIX)).map((e) => e.id),
+        sel.edges.filter((e) => !isOverlayEdgeId(e.id)).map((e) => e.id),
       );
     },
     [],
@@ -707,6 +887,24 @@ function FlowCanvasInner({
     };
   }, [referenceEdges, showReferences]);
 
+  // A traced run (Run & Trace, or an attached execution): the nodes it passed
+  // through are highlighted, the others dimmed.
+  const runActive = (liveStates?.size ?? 0) > 0;
+  const toolCalls = useMemo(() => toolCallsByParent(liveStates), [liveStates]);
+
+  // Every node that offers tools gets a row of tool chips on its right.
+  const toolRails = useMemo(
+    () =>
+      nodes
+        .filter((n) => (n.data.flowNode.tools?.length ?? 0) > 0 || toolCalls.has(n.id))
+        .map((n) => {
+          const { tools, config: { toolArgs } = {} } = n.data.flowNode;
+          return { node: n, chips: toolChipsFor(tools, toolCalls.get(n.id) ?? [], toolArgs) };
+        }),
+    [nodes, toolCalls],
+  );
+  const railNodeIds = useMemo(() => new Set(toolRails.map((r) => r.node.id)), [toolRails]);
+
   const renderNodes = useMemo(() => {
     const real = nodes.map((n) => ({
       ...n,
@@ -718,8 +916,42 @@ function FlowCanvasInner({
         origin: nodeOrigins?.[n.id],
         toolOut: toolCallers.has(n.id),
         toolIn: toolCallees.has(n.id),
+        toolsRail: railNodeIds.has(n.id),
+        emphasis: !runActive ? "idle" : liveStates?.has(n.id) ? "used" : "unused",
       },
     }));
+    const rails = toolRails.map(({ node: n, chips }) => {
+      const id = `${TOOL_RAIL_PREFIX}${n.id}`;
+      const measured = (n as { measured?: { width?: number; height?: number } }).measured;
+      const w = measured?.width ?? EDITOR_NODE_W;
+      const h = measured?.height ?? EDITOR_NODE_H;
+      // Fixed size (the layout reserves exactly this), centred beside the node.
+      const size = toolRailSize(chips.map((c) => c.name));
+      return {
+        id,
+        type: "toolRail",
+        position: {
+          x: n.position.x + w + TOOL_RAIL_GAP,
+          y: n.position.y + h / 2 - size.height / 2,
+        },
+        width: size.width,
+        height: size.height,
+        ...(overlaySizes.has(id) ? { measured: overlaySizes.get(id) } : {}),
+        draggable: false,
+        selectable: false,
+        connectable: false,
+        focusable: false,
+        deletable: false,
+        data: {
+          chips,
+          runActive,
+          width: size.width,
+          height: size.height,
+          scrolls: size.scrolls,
+          ...(onToolClick ? { onToolClick: (tool: string) => onToolClick(n.id, tool) } : {}),
+        },
+      };
+    });
     // Sub-flow boxes behind their nodes, sized from the rendered nodes.
     const boxes = nodeOrigins
       ? subflowBoxes(nodes as never, nodeOrigins, { width: EDITOR_NODE_W, height: EDITOR_NODE_H })
@@ -763,11 +995,12 @@ function FlowCanvasInner({
               draggable: false,
               deletable: false,
               connectable: editable,
+              selected: selectedBoundaryId === id,
               data: { kind, info: boundaries[kind], connectable: editable },
             };
           })
         : [];
-    if (!ghostNodes || ghostNodes.length === 0) return [...boxNodes, ...real, ...boundaryNodes];
+    if (!ghostNodes || ghostNodes.length === 0) return [...boxNodes, ...real, ...rails, ...boundaryNodes];
     const ghosts = ghostNodes.map((n) => ({
       ...n,
       // Visible (and edge-connectable) before React Flow has measured it.
@@ -776,8 +1009,8 @@ function FlowCanvasInner({
       ...(overlaySizes.has(n.id) ? { measured: overlaySizes.get(n.id) } : {}),
       data: { flowNode: n.data.flowNode, ghost: n.ghostKind ?? "removed" },
     }));
-    return [...boxNodes, ...real, ...ghosts, ...boundaryNodes];
-  }, [boundaries, boundaryLayout, editable, nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, overlaySizes, toolCallers, toolCallees, onSelectSubflow, selectedSubflowPath]);
+    return [...boxNodes, ...real, ...rails, ...ghosts, ...boundaryNodes];
+  }, [boundaries, boundaryLayout, editable, nodes, liveStates, nodeValidation, nodeDiff, nodeOrigins, ghostNodes, overlaySizes, toolCallers, toolCallees, onSelectSubflow, selectedSubflowPath, selectedBoundaryId, toolRails, railNodeIds, runActive, onToolClick]);
 
   const renderEdges = useMemo(() => {
     // Edges between the same two nodes share one curve: number their labels
@@ -788,6 +1021,14 @@ function FlowCanvasInner({
       if (edge.label) pairCount.set(pairKey(edge), (pairCount.get(pairKey(edge)) ?? 0) + 1);
     }
     const pairSeen = new Map<string, number>();
+    // The run went along an edge when it ran both ends, the target after the
+    // source (when both carry a sequence number).
+    const usedEdge = (source: string, target: string): boolean => {
+      const s = liveStates?.get(source);
+      const t = liveStates?.get(target);
+      if (!s || !t) return false;
+      return s.sequence == null || t.sequence == null || t.sequence > s.sequence;
+    };
     const real = edges.map((edge) => {
       const count = pairCount.get(pairKey(edge)) ?? 0;
       const index = edge.label ? (pairSeen.get(pairKey(edge)) ?? 0) : 0;
@@ -818,7 +1059,12 @@ function FlowCanvasInner({
               : diffState?.status === "removed"
                 ? "#f87171"
                 : undefined;
-      if (color === undefined) return e;
+      if (color === undefined) {
+        if (!runActive) return e;
+        return usedEdge(edge.source, edge.target)
+          ? { ...e, animated: true, style: { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 } }
+          : { ...e, style: { opacity: 0.35 } };
+      }
       return {
         ...e,
         style: {
@@ -868,35 +1114,84 @@ function FlowCanvasInner({
             // branch off the shared stretch can't run across the label.
             .sort((a, b) => Number("label" in a) - Number("label" in b))
         : [];
-    // Implicit entry/exit links: dashed, display only.
+    // Implicit entry/exit links: dashed, display only. The run's own entry and
+    // exit (the exit that ran last, once the answer went out) are drawn solid.
+    const ranExit = (() => {
+      if (!boundaryLayout || !liveStates?.has(RESPONSE_EVENT_ID)) return null;
+      let best: { id: string; seq: number } | null = null;
+      for (const x of boundaryLayout.b.exits) {
+        const st = liveStates.get(x.nodeId);
+        if (!st) continue;
+        const seq = st.sequence ?? 0;
+        if (best === null || seq > best.seq) best = { id: x.nodeId, seq };
+      }
+      return best?.id ?? null;
+    })();
+    const boundaryStyle = (used: boolean, idleStroke: string) =>
+      used
+        ? { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 }
+        : { stroke: idleStroke, strokeDasharray: "5 4", strokeWidth: 1.5, ...(runActive ? { opacity: 0.35 } : {}) };
     const implicit = boundaryLayout
       ? [
-          ...(boundaryLayout.b.entryId !== null ? [boundaryLayout.b.entryId] : []).map((id) => ({
-            id: `${BOUNDARY_EDGE_PREFIX}start-${id}`,
-            source: START_ID,
-            target: id,
-            type: "labeled",
-            selectable: false,
-            deletable: false,
-            focusable: false,
-            style: { stroke: "#10b981", strokeDasharray: "5 4", strokeWidth: 1.5 },
-            data: {},
-          })),
-          ...boundaryLayout.b.exits.map((x) => ({
-            id: `${BOUNDARY_EDGE_PREFIX}end-${x.nodeId}`,
-            source: x.nodeId,
-            target: END_ID,
-            type: "labeled",
-            ...(x.kind === "nomatch" ? { label: "no match" } : {}),
-            selectable: false,
-            deletable: false,
-            focusable: false,
-            style: { stroke: "#94a3b8", strokeDasharray: "5 4", strokeWidth: 1.5 },
-            data: {},
-          })),
+          ...(boundaryLayout.b.entryId !== null ? [boundaryLayout.b.entryId] : []).map((id) => {
+            const used = runActive && (liveStates?.has(id) ?? false);
+            return {
+              id: `${BOUNDARY_EDGE_PREFIX}start-${id}`,
+              source: START_ID,
+              target: id,
+              type: "labeled",
+              selectable: false,
+              deletable: false,
+              focusable: false,
+              animated: used,
+              style: boundaryStyle(used, "#10b981"),
+              data: {},
+            };
+          }),
+          ...boundaryLayout.b.exits.map((x) => {
+            const used = ranExit === x.nodeId;
+            return {
+              id: `${BOUNDARY_EDGE_PREFIX}end-${x.nodeId}`,
+              source: x.nodeId,
+              target: END_ID,
+              type: "labeled",
+              ...(x.kind === "nomatch" ? { label: "no match" } : {}),
+              selectable: false,
+              deletable: false,
+              focusable: false,
+              animated: used,
+              style: boundaryStyle(used, "#94a3b8"),
+              data: {},
+            };
+          }),
         ]
       : [];
-    if (!ghostEdges || ghostEdges.length === 0) return [...real, ...refs, ...implicit];
+    // Node → its tool row.
+    const railEdges = toolRails.map(({ node: n, chips }) => {
+      const used = chips.some((c) => c.calls > 0);
+      const running = chips.some((c) => c.status === "running");
+      return {
+        id: `${TOOL_RAIL_EDGE_PREFIX}${n.id}`,
+        source: n.id,
+        sourceHandle: TOOLS_RAIL_OUT,
+        target: `${TOOL_RAIL_PREFIX}${n.id}`,
+        type: "labeled",
+        selectable: false,
+        deletable: false,
+        focusable: false,
+        animated: running,
+        style: used
+          ? { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 }
+          : {
+              stroke: "#14b8a6",
+              strokeDasharray: "3 3",
+              strokeWidth: 1.5,
+              ...(runActive ? { opacity: 0.35 } : {}),
+            },
+        data: {},
+      };
+    });
+    if (!ghostEdges || ghostEdges.length === 0) return [...real, ...refs, ...railEdges, ...implicit];
     const ghosts = ghostEdges.map((e) => {
       const added = e.data?.ghostKind === "added";
       return {
@@ -911,8 +1206,8 @@ function FlowCanvasInner({
         selectable: false,
       };
     });
-    return [...real, ...refs, ...ghosts, ...implicit];
-  }, [edges, nodes, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout]);
+    return [...real, ...refs, ...railEdges, ...ghosts, ...implicit];
+  }, [edges, nodes, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout, liveStates, runActive, toolRails]);
 
   return (
     <div

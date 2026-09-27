@@ -481,6 +481,8 @@ export function StudioBuilder({
   const [liveStates, setLiveStates] = useState<
     Map<string, NodeState> | undefined
   >(undefined);
+  /** Execution of the run traced in Run & Trace (the Start panel shows its input). */
+  const [runExecutionId, setRunExecutionId] = useState<string | null>(null);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [diffOverlay, setDiffOverlay] = useState<DiffOverlay | undefined>(
     undefined,
@@ -1798,6 +1800,17 @@ export function StudioBuilder({
     setSelBoundary(null);
   }, []);
 
+  // A tool chip on the canvas: select its node and open the node's tool settings.
+  const [toolFocus, setToolFocus] = useState<{ nodeId: string; tool: string; nonce: number } | null>(null);
+  const handleToolClick = useCallback(
+    (nodeId: string, tool: string) => {
+      selectNodeById(nodeId);
+      setSelectedSubflowPath(null);
+      setToolFocus((prev) => ({ nodeId, tool, nonce: (prev?.nonce ?? 0) + 1 }));
+    },
+    [selectNodeById],
+  );
+
   const selectedFlowNode = useMemo(
     () => nodes.find((n) => n.id === selNode)?.data.flowNode ?? null,
     [nodes, selNode],
@@ -2169,6 +2182,7 @@ export function StudioBuilder({
           {...(pinFlowId ? { onPinRun: pinRun } : {})}
           {...(attachExecutionId ? { attachExecutionId } : {})}
           {...(onDetachExecution ? { onDetach: onDetachExecution } : {})}
+          onExecutionChange={setRunExecutionId}
         />
       </div>
 
@@ -2225,6 +2239,7 @@ export function StudioBuilder({
             boundaries={boundaryCards}
             onSelectBoundary={setSelBoundary}
             onSetEntry={setEntry}
+            onToolClick={handleToolClick}
             {...(viewport !== undefined ? { defaultViewport: viewport } : {})}
             height="100%"
           />
@@ -2320,6 +2335,8 @@ export function StudioBuilder({
               {...(liveStates?.get(selBoundary === "start" ? REQUEST_EVENT_ID : RESPONSE_EVENT_ID)
                 ? { current: liveStates.get(selBoundary === "start" ? REQUEST_EVENT_ID : RESPONSE_EVENT_ID)! }
                 : {})}
+              runExecutionId={liveStates && liveStates.size > 0 ? runExecutionId : null}
+              token={token ?? undefined}
               onSelectNode={selectNodeById}
             />
           ) : (
@@ -2332,6 +2349,9 @@ export function StudioBuilder({
                   }
                 : {})}
               node={selectedFlowNode}
+              {...(toolFocus && toolFocus.nodeId === selectedFlowNode?.id
+                ? { focusTool: { tool: toolFocus.tool, nonce: toolFocus.nonce } }
+                : {})}
               edge={selectedEdge}
               onNodeChange={updateNode}
               onDeleteNode={deleteNode}

@@ -44,13 +44,20 @@ export function Section({
   title,
   defaultOpen = true,
   children,
+  sectionId,
 }: {
   title: string;
   defaultOpen?: boolean;
   children: React.ReactNode;
+  /** Marks the section (`data-section`) so the panel can jump to it. */
+  sectionId?: string;
 }): React.JSX.Element {
   return (
-    <details open={defaultOpen} className="group border-t border-border pt-2">
+    <details
+      open={defaultOpen}
+      className="group scroll-mt-2 rounded-sm border-t border-border pt-2 transition-shadow"
+      {...(sectionId ? { "data-section": sectionId } : {})}
+    >
       <summary className="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-wide text-foreground">
         {title}
       </summary>

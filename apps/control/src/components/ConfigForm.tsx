@@ -81,12 +81,15 @@ export function ListInput({
   suggestions,
   placeholder,
   listId,
+  highlight,
 }: {
   value: unknown;
   onChange: (v: string[] | undefined) => void;
   suggestions?: string[];
   placeholder?: string;
   listId: string;
+  /** Entry to emphasise (e.g. the tool clicked on the canvas). */
+  highlight?: string | undefined;
 }): React.JSX.Element {
   const items = Array.isArray(value) ? value.map(String) : [];
   const add = (raw: string): void => {
@@ -101,7 +104,11 @@ export function ListInput({
           {items.map((it) => (
             <span
               key={it}
-              className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 font-mono text-[11px]"
+              data-list-item={it}
+              {...(highlight === it ? { "data-highlighted": "true" } : {})}
+              className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px] ${
+                highlight === it ? "bg-sky-500/20 ring-2 ring-sky-500" : "bg-muted"
+              }`}
             >
               {it}
               <button

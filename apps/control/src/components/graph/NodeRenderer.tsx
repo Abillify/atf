@@ -29,6 +29,8 @@ import {
   formatCost,
   type NodeState,
 } from "./graphUtils";
+import { Wrench } from "lucide-react";
+import { nodeTypeIcon } from "./nodeIcons";
 
 // Defined as a `type` (not `interface`) so it satisfies React Flow v12's
 // `Node<Data extends Record<string, unknown>>` constraint via TS's implicit
@@ -61,7 +63,18 @@ export interface NodeCardProps {
    * monitor's 96px minimum was mostly empty space there.
    */
   compact?: boolean;
+  /**
+   * Run emphasis (Studio editor): `idle` — no run traced, the node is drawn
+   * at full strength instead of as "pending"; `used` — the traced run passed
+   * through it (highlighted); `unused` — it did not (dimmed). Omitted (the
+   * monitor): pending nodes are dimmed as before.
+   */
+  emphasis?: "idle" | "used" | "unused";
 }
+
+/** Ring of a node the traced run passed through. */
+const USED_RING =
+  "ring-[3px] ring-offset-2 ring-offset-background ring-emerald-400 dark:ring-emerald-300";
 
 /**
  * The presentational node card — everything about how a node LOOKS (colour,
@@ -78,6 +91,7 @@ export function NodeCard({
   barWidth,
   isTimeline,
   compact = false,
+  emphasis,
 }: NodeCardProps): React.JSX.Element {
   const colorClass = nodeTypeColor(state.nodeType);
   const isPending = state.status === "pending";
@@ -91,8 +105,22 @@ export function NodeCard({
   // ring-carrying cards. Unselected nodes keep their status/approval ring.
   const ringClass = selected
     ? "ring-4 ring-offset-2 ring-offset-background ring-sky-500 dark:ring-sky-400"
-    : statusRing;
+    : statusRing || (emphasis === "used" ? USED_RING : "");
   const badge = state.approval ? approvalBadge(state.approval) : null;
+  const Icon = isTool ? Wrench : nodeTypeIcon(state.nodeType);
+  const dimClass =
+    emphasis === "unused"
+      ? selected
+        ? ""
+        : "opacity-40 saturate-50"
+      : emphasis === undefined && isPending && !selected
+        ? "opacity-50"
+        : "";
+  const liftClass = selected
+    ? "z-10 scale-[1.03] shadow-xl shadow-sky-500/30 brightness-110"
+    : emphasis === "used"
+      ? "shadow-lg shadow-emerald-500/40"
+      : "shadow-md";
 
   return (
     <div
@@ -106,9 +134,10 @@ export function NodeCard({
         hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-white
         transition-all duration-150 select-none
         ${isTool ? "border-dashed" : ""}
-        ${selected ? "z-10 scale-[1.03] shadow-xl shadow-sky-500/30 brightness-110" : "shadow-md"}
-        ${colorClass} ${ringClass} ${isPending && !selected ? "opacity-50" : ""}
+        ${liftClass}
+        ${colorClass} ${ringClass} ${dimClass}
       `}
+      data-emphasis={emphasis}
       style={
         compact
           ? { width: EDITOR_NODE_W }
@@ -124,6 +153,18 @@ export function NodeCard({
         />
       )}
 
+      <div className={`flex items-start ${compact ? "gap-2" : "gap-2.5"}`}>
+      {/* Type icon — tells the node types apart at a glance. */}
+      <div
+        aria-hidden
+        data-testid="node-type-icon"
+        className={`flex shrink-0 items-center justify-center rounded-lg bg-black/20 ring-1 ring-inset ring-white/20 ${
+          compact ? "h-9 w-9" : "h-10 w-10"
+        }`}
+      >
+        <Icon size={compact ? 22 : 24} strokeWidth={2} />
+      </div>
+      <div className="min-w-0 flex-1">
       {/* Top row: label + type badge */}
       <div className={`flex items-start justify-between gap-1 ${compact ? "mb-0.5" : "mb-1"}`}>
         <div
@@ -138,7 +179,7 @@ export function NodeCard({
           }}
           title={state.label}
         >
-          {isTool ? `🔧 ${state.label}` : state.label}
+          {state.label}
         </div>
         <span className="shrink-0 text-[9px] uppercase tracking-wide bg-black/20 rounded px-1 py-0.5 leading-none mt-0.5">
           {nodeTypeLabel(state.nodeType)}
@@ -206,6 +247,8 @@ export function NodeCard({
           {state.error_message}
         </div>
       )}
+      </div>
+      </div>
 
       {/* Sequence badge (top-left) */}
       {state.sequence != null && (

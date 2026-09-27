@@ -24,6 +24,7 @@ import {
   EDITOR_NODE_H,
 } from "../components/graph/GraphLayoutEngine";
 import { parallelChildId } from "../types/flow";
+import { TOOL_RAIL_GAP, toolRailSize } from "./tool-chips";
 
 export interface RFNodeData {
   flowNode: FlowNode;
@@ -185,13 +186,22 @@ export function layoutEditorGraph(
   // neighbours clear of that whole footprint, so tools never overlap other
   // nodes — the bug of placing them blindly after the fact.
   const laidOutIds = nodes.map((n) => n.id).filter((id) => !toolNodes.has(id));
+  // The row of tool chips a node with `tools:` gets on its right (FlowCanvas)
+  // takes room beside it as well; tool nodes stack after that row.
+  const toolsOf = new Map(nodes.map((n) => [n.id, [...new Set(n.tools ?? [])]]));
+  const railOf = (id: string): { width: number; height: number } => toolRailSize(toolsOf.get(id) ?? []);
+  const railWidth = (id: string): number => {
+    const w = railOf(id).width;
+    return w > 0 ? TOOL_RAIL_GAP + w : 0;
+  };
   const dagreSizes = new Map<string, { width: number; height: number }>();
   for (const id of laidOutIds) {
     const base = sizeOf(id);
     const stack = toolStack(id);
     dagreSizes.set(id, {
-      width: stack.width > 0 ? base.width + TOOL_GAP + stack.width : base.width,
-      height: Math.max(base.height, stack.height),
+      width: base.width + railWidth(id) + (stack.width > 0 ? TOOL_GAP + stack.width : 0),
+      // The tool column is centred on the node, so it may reach above and below it.
+      height: Math.max(base.height, stack.height, railOf(id).height),
     });
   }
 
@@ -217,12 +227,12 @@ export function layoutEditorGraph(
   for (const [id, box] of positions) {
     const base = sizeOf(id);
     const stack = toolStack(id);
-    const footprintH = Math.max(base.height, stack.height);
+    const footprintH = Math.max(base.height, stack.height, railOf(id).height);
     layout[id] = { x: box.x, y: box.y + (footprintH - base.height) / 2 };
 
     const tools = toolByCaller.get(id) ?? [];
     if (tools.length === 0) continue;
-    const x = box.x + base.width + TOOL_GAP;
+    const x = box.x + base.width + railWidth(id) + TOOL_GAP;
     let y = box.y + (footprintH - stack.height) / 2;
     for (const t of tools) {
       layout[t] = { x, y };

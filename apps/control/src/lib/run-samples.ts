@@ -57,6 +57,41 @@ export async function fetchRunSample(executionId: string, token: string | undefi
   return (await resp.json()) as PinnedRun;
 }
 
+/** One message of the request as the trace recorded it (text bounded). */
+export interface RunTraceMessage {
+  role: string;
+  content: string | unknown[];
+  name?: string;
+  tool_call_id?: string;
+  tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
+}
+
+/** The input side of a recorded execution (`GET /monitoring/debug/:id`). */
+export interface RunTrace {
+  execution_id: string;
+  flow_id: string | null;
+  flow_version?: string | null;
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  /** Session identity and request metadata (chat_id, user_*, jwt_claims, …). */
+  context: Record<string, unknown>;
+  /** The conversation as received, all roles. */
+  input_messages: RunTraceMessage[];
+}
+
+/** The full debug trace of one run — what the Start panel shows as the run's input. */
+export async function fetchRunTrace(executionId: string, token: string | undefined): Promise<RunTrace> {
+  const resp = await fetch(backendUrl(`/monitoring/debug/${encodeURIComponent(executionId)}`), {
+    headers: authHeaders(token),
+  });
+  if (!resp.ok) {
+    const body = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new Error(body?.error?.message ?? `HTTP ${resp.status}`);
+  }
+  return (await resp.json()) as RunTrace;
+}
+
 /** Whether a run came from the Studio's test runner. */
 export const isStudioRun = (flowId: string | null): boolean => flowId?.includes("@studio-") ?? false;
 

@@ -17,6 +17,8 @@ import type React from "react";
 import { useMemo, useState } from "react";
 import type { NodeType } from "../types/flow";
 import { type SubflowActions, SubflowPalette } from "./SubflowPalette";
+import { nodeTypeColor } from "./graph/graphUtils";
+import { nodeTypeIcon } from "./graph/nodeIcons";
 
 export interface FlowNodePaletteProps {
   onAddNode: (type: NodeType) => void;
@@ -30,77 +32,78 @@ interface PaletteEntry {
   type: NodeType;
   label: string;
   description: string;
-  icon: string;
 }
 
 const NODE_CATALOG: PaletteEntry[] = [
   {
     type: "llm",
     label: "LLM",
-    icon: "🧠",
     description: "Streaming model call with an optional tool loop",
   },
   {
     type: "tool",
     label: "Tool",
-    icon: "🔧",
     description: "Deterministic MCP tool invocation",
   },
   {
     type: "router",
     label: "Router",
-    icon: "🔀",
     description: "Routing-only — evaluates outgoing edge conditions",
   },
   {
     type: "classifier",
     label: "Classifier",
-    icon: "🏷️",
     description: "Structured output; writes state.classification",
   },
   {
     type: "parallel",
     label: "Parallel",
-    icon: "🪢",
     description: "Fan-out to concurrently executed child nodes",
   },
   {
     type: "retrieval",
     label: "Retrieval",
-    icon: "📚",
     description: "RAG — embeds the query and fetches grounding context",
   },
   {
     type: "memory",
     label: "Memory",
-    icon: "🧵",
     description: "Recalls long-term memories for personalisation",
   },
   {
     type: "agent-harness",
     label: "Agent harness",
-    icon: "🤖",
     description: "Planner/worker loop with budgets, verification and delegation",
   },
   {
     type: "transform",
     label: "Transform",
-    icon: "🔣",
     description: "Deterministic derive/extract rules on the flow state",
   },
   {
     type: "assistant-context",
     label: "Assistant context",
-    icon: "🪪",
     description: "Loads a per-user assistant's context into the run",
   },
   {
     type: "assistant-learn",
     label: "Assistant learn",
-    icon: "📝",
     description: "Writes learnings back to the per-user assistant",
   },
 ];
+
+/** The node type's icon on its canvas colour, as the card on the canvas shows it. */
+function PaletteIcon({ type }: { type: NodeType }): React.JSX.Element {
+  const Icon = nodeTypeIcon(type);
+  return (
+    <span
+      aria-hidden
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-white ${nodeTypeColor(type)}`}
+    >
+      <Icon size={13} strokeWidth={2.25} />
+    </span>
+  );
+}
 
 export const PALETTE_DND_TYPE = "application/x-aiperator-node-type";
 
@@ -144,7 +147,7 @@ export function FlowNodePalette({
             aria-label={`Add ${n.label} node`}
             className="flex h-8 w-8 cursor-grab select-none items-center justify-center rounded-md border border-border bg-card text-sm hover:bg-accent/10 active:cursor-grabbing"
           >
-            <span aria-hidden>{n.icon}</span>
+            <PaletteIcon type={n.type} />
           </div>
         ))}
       </div>
@@ -181,7 +184,7 @@ export function FlowNodePalette({
             className="cursor-grab select-none rounded-md border border-border bg-card px-2 py-1.5 text-xs transition-colors hover:border-accent/40 hover:bg-accent/10 active:cursor-grabbing"
           >
             <div className="flex items-center gap-1.5 font-medium text-foreground">
-              <span aria-hidden>{n.icon}</span>
+              <PaletteIcon type={n.type} />
               {n.label}
             </div>
             <div className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
