@@ -139,7 +139,7 @@ async function recordMigration(
  * Current version of the global (system-table) schema.
  * Increment when adding a step to GLOBAL_MIGRATIONS.
  */
-export const GLOBAL_SCHEMA_VERSION = 7;
+export const GLOBAL_SCHEMA_VERSION = 8;
 
 interface MigrationStep {
   toVersion: number;

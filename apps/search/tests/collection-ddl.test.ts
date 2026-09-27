@@ -114,8 +114,25 @@ describe("collection DDL", () => {
     expect(step).toBeDefined();
   });
 
-  it("bumps the global schema version to 7 and eagerly reconciles the v2 system tables", async () => {
-    expect(GLOBAL_SCHEMA_VERSION).toBe(7);
+  it("targets the highest global migration step, so a database at 7 still records 8", () => {
+    expect(GLOBAL_SCHEMA_VERSION).toBe(8);
+    expect(Math.max(...GLOBAL_MIGRATIONS.map((s) => s.toVersion))).toBe(GLOBAL_SCHEMA_VERSION);
+  });
+
+  it("keeps the schema-8 document identity step", async () => {
+    const step = GLOBAL_MIGRATIONS.find((s) => s.toVersion === 8);
+    expect(step).toBeDefined();
+    if (!step) throw new Error("global schema 8 migration missing");
+    const queries: string[] = [];
+    await step.up({
+      query: async (sql: string) => { queries.push(sql); return { rows: [] }; },
+      getTransactionStatus: () => "T",
+    } as never);
+    const all = queries.join("\n");
+    expect(all).toContain("CREATE TABLE IF NOT EXISTS vs_document_sources");
+  });
+
+  it("keeps the schema-7 step that eagerly reconciles the v2 system tables", async () => {
     const step = GLOBAL_MIGRATIONS.find((s) => s.toVersion === 7);
     expect(step).toBeDefined();
     if (!step) throw new Error("global schema 7 migration missing");
