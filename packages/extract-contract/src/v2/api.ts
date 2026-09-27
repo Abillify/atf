@@ -194,6 +194,17 @@ export const jobRequestSchema = z.object({
    */
   allowedUsers: z.array(z.string().min(1)).max(1000).optional(),
   allowedGroups: z.array(z.string().min(1)).max(1000).optional(),
+  /**
+   * Document attributes Search stores on every unit (contract 2.2): the title,
+   * tags for tag filters, free metadata for metadata filters, the document's
+   * link and a source label. The v1 `/ingest` headers X-Title, X-Tags,
+   * X-Metadata, X-Link and X-Source map onto these.
+   */
+  title: z.string().min(1).max(500).optional(),
+  tags: z.array(z.string().min(1).max(200)).max(100).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  link: z.string().min(1).max(2000).optional(),
+  sourceLabel: z.string().min(1).max(500).optional(),
 });
 
 // --- Source identification (Search, dedup + version chains) -----------------

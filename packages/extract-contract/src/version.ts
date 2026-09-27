@@ -35,7 +35,7 @@
 export const EXTRACT_CONTRACT_NAME = "atf-extract";
 
 /** Current contract version (v2 — the NDJSON record stream). */
-export const EXTRACT_CONTRACT_VERSION = "2.1.0";
+export const EXTRACT_CONTRACT_VERSION = "2.3.0";
 
 /** Current major version — the only part a consumer must gate on. */
 export const EXTRACT_CONTRACT_MAJOR = 2;

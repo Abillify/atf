@@ -214,15 +214,31 @@ export const headingBlockSchema = blockBaseSchema.extend({
   text: z.string(),
 });
 
+/**
+ * A paragraph or list that runs over a page break (contract 2.3), set by the
+ * document pass with the same names tables use: the last text block of page N
+ * `continues`, and carries the leading fragment of its continuation
+ * (`continuationText`, up to the first sentence end) so a consumer can index
+ * the sentence whole without seeing page N+1; the first block of page N+1
+ * names it as `continuationOf`.
+ */
+const textContinuationFields = {
+  continues: z.boolean().optional(),
+  continuationOf: z.string().optional(),
+  continuationText: z.string().max(2000).optional(),
+};
+
 export const textBlockSchema = blockBaseSchema.extend({
   type: z.enum(["paragraph", "footnote", "code"]),
   text: z.string(),
+  ...textContinuationFields,
 });
 
 export const listBlockSchema = blockBaseSchema.extend({
   type: z.literal("list"),
   ordered: z.boolean().optional(),
   items: z.array(z.string()),
+  ...textContinuationFields,
 });
 
 export const tableBlockSchema = blockBaseSchema.extend({
@@ -486,6 +502,16 @@ export const documentBeginRecordSchema = z.object({
    * came with (contract 2.1). Search groups the two.
    */
   parentReference: z.string().min(1).optional(),
+  /**
+   * The caller's document attributes (contract 2.2), carried through a job
+   * unchanged so Search stores them on every unit exactly as a v1 `/ingest`
+   * does: tags for tag filters, free metadata for `filter`/`filter_v2`, the
+   * document's link and a source label.
+   */
+  tags: z.array(z.string().min(1).max(200)).max(100).optional(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+  link: z.string().min(1).max(2000).optional(),
+  sourceLabel: z.string().min(1).max(500).optional(),
 });
 
 export type DocumentBeginRecord = z.infer<typeof documentBeginRecordSchema>;
