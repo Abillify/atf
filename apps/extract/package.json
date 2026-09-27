@@ -20,11 +20,14 @@
     "node": ">=26 <27"
   },
   "dependencies": {
-    "@atf/extract-contract": "workspace:1.1.0",
+    "@atf/extract-contract": "workspace:2.0.0",
     "bmp-js": "0.1.0",
     "express": "5.2.1",
+    "fast-xml-parser": "5.11.1",
+    "fflate": "0.8.3",
     "jose": "6.2.12",
     "multer": "2.3.0",
+    "pg": "8.23.0",
     "pino": "10.3.1",
     "pino-http": "11.0.0",
     "sharp": "0.35.4",
@@ -37,6 +40,7 @@
     "@types/express": "5.0.6",
     "@types/multer": "2.1.0",
     "@types/node": "26.6.2",
+    "@types/pg": "8.23.1",
     "@types/supertest": "7.2.1",
     "fast-check": "4.10.2",
     "supertest": "7.2.2",

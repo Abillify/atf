@@ -149,6 +149,14 @@ const SUPPLEMENTAL_RULES: SupplementalRule[] = [
 		reason: "The published package omits its upstream project license file.",
 	},
 	{
+		packagePattern: /^@nodable\/entities$/,
+		expectedLicense: "MIT",
+		files: ["licenses/nodable-entities-MIT.txt"],
+		attribution: "nodable/val-parsers upstream LICENSE",
+		reason:
+			"The published package is built from the nodable/val-parsers repository and omits its repository-wide license file.",
+	},
+	{
 		packagePattern: /^onnxruntime-(?:common|node|web)$/,
 		expectedLicense: "MIT",
 		files: ["licenses/onnxruntime-MIT.txt"],

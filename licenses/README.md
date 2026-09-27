@@ -54,6 +54,7 @@ Each file below is sourced from the linked authoritative upstream text. `Applies
 | `react-MIT.txt` | `^client-only$` | `MIT` | [React `LICENSE`](https://github.com/facebook/react/blob/0209ef8a77bcf423cb31029e050a0722a71ebd03/LICENSE) |
 | `js-tiktoken-MIT.txt` | `^js-tiktoken$` | `MIT` | [tiktoken `LICENSE`](https://github.com/dqbd/tiktoken/blob/4c8b748e07992c00386f3180af5c574b27b65139/LICENSE) |
 | `langsmith-MIT.txt` | `^langsmith$` | `MIT` | [LangSmith SDK `LICENSE`](https://github.com/langchain-ai/langsmith-sdk/blob/4a6e78e5c6d697c338636b1efae1e19537a0dfd1/LICENSE) |
+| `nodable-entities-MIT.txt` | `^@nodable/entities$` | `MIT` | [nodable/val-parsers `LICENSE`](https://github.com/nodable/val-parsers/blob/d2070d76a8ba07e6c7fa142caeb51ffd756e47eb/LICENSE) |
 | `onnxruntime-MIT.txt` | `^onnxruntime-(?:common\|node\|web)$` | `MIT` | [ONNX Runtime `LICENSE`](https://github.com/microsoft/onnxruntime/blob/ac94fed93ae6d3310fef4920995e8d6a68a3df8a/LICENSE) |
 | `saxes-ISC.txt` | `^saxes$` | `ISC` | [saxes `LICENSE`](https://github.com/lddubeau/saxes/blob/4968bd09b5fd0270a989c69913614b0e640dae1b/LICENSE) |
 | `victory-MIT.txt` | `^victory-vendor$` | `MIT AND ISC` | [Victory `LICENSE.txt`](https://github.com/FormidableLabs/victory/blob/75549cf8c67e3ea220f862eb7f530c36d540d41c/LICENSE.txt) |
