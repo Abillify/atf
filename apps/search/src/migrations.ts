@@ -26,6 +26,9 @@
  *   concurrent migration attempts across multiple app instances.
  *   Only one instance runs migrations at a time; the others skip silently
  *   once they acquire the lock and find the versions are already current.
+ *   Each step (and the bootstrap) additionally takes the shared schema-DDL
+ *   transaction lock (collection-ddl.ts `lockSchemaDdl`), which every lazy
+ *   ensure path also takes, so migrations never race lazy DDL.
  * - Every migration step runs inside its own transaction.  A failed step
  *   rolls back cleanly and throws, aborting startup so the problem is
  *   visible immediately rather than leaving the schema in a partial state.
@@ -64,10 +67,15 @@ import type { CollectionMeta, CollectionDDLConfig } from "./collection-ddl.js";
 import {
   CURRENT_SCHEMA_VERSION,
   ensureCollectionConfigTable,
+  ensureIdentifiersTable,
   ensureStatsTables,
+  ensureUnitColumns,
   loadCollectionMeta,
+  lockSchemaDdl,
   saveCollectionMeta,
+  withSchemaDdlLock,
 } from "./collection-ddl.js";
+import { ensureAssetsTable, ensureRevisionSchema } from "./revision-schema.js";
 
 // ─── Advisory lock key ────────────────────────────────────────────────────────
 
@@ -131,7 +139,7 @@ async function recordMigration(
  * Current version of the global (system-table) schema.
  * Increment when adding a step to GLOBAL_MIGRATIONS.
  */
-export const GLOBAL_SCHEMA_VERSION = 4;
+export const GLOBAL_SCHEMA_VERSION = 7;
 
 interface MigrationStep {
   toVersion: number;
@@ -146,7 +154,7 @@ interface MigrationStep {
  *
  * ── Add new global steps here ──────────────────────────────────────────────
  */
-const GLOBAL_MIGRATIONS: MigrationStep[] = [
+export const GLOBAL_MIGRATIONS: MigrationStep[] = [
   {
     toVersion: 1,
     description: "Baseline: create vs_migrations tracking table",
@@ -201,6 +209,47 @@ const GLOBAL_MIGRATIONS: MigrationStep[] = [
       `);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_vs_document_assets_document ON vs_document_assets(tenant_id, collection, document_reference)`);
       await client.query(`CREATE INDEX IF NOT EXISTS idx_vs_document_assets_figure ON vs_document_assets(tenant_id, collection, document_reference, figure_id)`);
+    },
+  },
+  {
+    toVersion: 5,
+    description:
+      "Add v2 ingest staging (vs_revisions, vs_ingest_batches, vs_segments, vs_document_revisions) and vs_assets with a vs_document_assets backfill",
+    up: async (client) => {
+      // Creates the revision/staging/pointer tables and vs_assets, then copies
+      // existing vs_document_assets rows over (kind='figure', null revision_id)
+      // so figure assets keep resolving after the cutover. All additive and
+      // idempotent; the backfill is a no-op on fresh deployments.
+      await ensureRevisionSchema(client);
+    },
+  },
+  {
+    toVersion: 6,
+    description:
+      "Add shared identifier occurrence index (vs_identifiers) for the third RRF list",
+    up: async (client) => {
+      // A GLOBAL system table like vs_document_assets: one table holds every
+      // collection's identifiers, keyed by (tenant_id, collection, value_norm,
+      // unit_id, page). Additive and idempotent; a no-op on redeploy.
+      await ensureIdentifiersTable(client);
+    },
+  },
+  {
+    toVersion: 7,
+    description:
+      "Reconcile v2 system tables (vs_revisions, vs_ingest_batches, vs_segments, vs_document_revisions, vs_assets, vs_identifiers) eagerly at startup",
+    up: async (client) => {
+      // The search read path (buildTemporalFilterSql's current-revision
+      // pointer) references vs_document_revisions for every collection query,
+      // so the v2 system tables must exist before the first request — not only
+      // after the revision store lazily created them. Deployments that ran v5
+      // before later columns/indexes were added are brought current here too.
+      // Runs inside the step transaction that already holds the schema-DDL
+      // lock (the ensure helpers join it re-entrantly); every statement is
+      // idempotent, so this is a no-op on redeploy.
+      await ensureRevisionSchema(client);
+      await ensureAssetsTable(client);
+      await ensureIdentifiersTable(client);
     },
   },
 
@@ -376,6 +425,47 @@ export const COLLECTION_MIGRATIONS: CollectionMigrationStep[] = [
       await client.query(`CREATE INDEX IF NOT EXISTS "${table}_temporal_version_idx" ON "${table}"(tenant_id, base_ref, (COALESCE(valid_from, created)) DESC, created DESC, id DESC)`);
     },
   },
+  {
+    toVersion: 12,
+    description: "Add v2 index-unit columns as real indexed columns",
+    up: async (client, table) => {
+      // Filter-relevant unit fields become real, indexed columns (design §6.2,
+      // Requirement 11.5). All columns are nullable/additive: legacy v1 rows —
+      // which carry no revision and no unit shape — migrate forward untouched
+      // and keep matching existing queries. Shared with ensureCollectionDDL so
+      // new and migrated tables stay identical.
+      await ensureUnitColumns(client, table);
+    },
+  },
+  {
+    toVersion: 13,
+    description:
+      "Add multi-level unit relationship columns (parent/prev/next, block_ids, figure_refs, table_id)",
+    up: async (client, table) => {
+      // The full multi-level unit builder (task 3.2) links units into a graph:
+      // parent_unit_id / prev_unit_id / next_unit_id let small-to-big expansion
+      // walk parents and reading-order siblings; block_ids records provenance;
+      // figure_refs attaches figures to a text hit; table_id groups a table's
+      // row-group units. ensureUnitColumns adds these idempotently (and re-adds
+      // the schema-12 columns as no-ops), so new and migrated tables stay
+      // identical. All nullable/additive — legacy and schema-12 rows migrate
+      // forward untouched.
+      await ensureUnitColumns(client, table);
+    },
+  },
+  {
+    toVersion: 14,
+    description: "Add identifier FTS vector (ts_ident) and its GIN index",
+    up: async (client, table) => {
+      // task 3.4 "Lexik und Bezeichner": ts_ident is a second FTS vector built
+      // with the `simple` config so codes (WE-01/A, DIN EN 1090-2) tokenise
+      // verbatim rather than German-stemmed (Requirement 12.1). ensureUnitColumns
+      // adds it and its GIN index idempotently (and re-adds the earlier columns
+      // as no-ops), so new and migrated tables stay identical. Nullable/additive:
+      // legacy and schema-13 rows migrate forward untouched and search unchanged.
+      await ensureUnitColumns(client, table);
+    },
+  },
 ];
 
 // ─── Runner ───────────────────────────────────────────────────────────────────
@@ -416,9 +506,13 @@ export async function runMigrations(
 
     try {
       // Bootstrap: ensure the migration log table and collection config table
-      // exist before we do anything else.
-      await ensureMigrationsTable(client);
-      await ensureCollectionConfigTable(client);
+      // exist before we do anything else. Runs under the shared schema-DDL
+      // advisory lock (one transaction) so it cannot race a lazy ensure path
+      // of another replica creating the same tables.
+      await withSchemaDdlLock(client, async () => {
+        await ensureMigrationsTable(client);
+        await ensureCollectionConfigTable(client);
+      });
 
       await runGlobalMigrations(client, logger);
       await runCollectionMigrations(client, logger, config.ddlConfig);
@@ -467,6 +561,10 @@ async function runGlobalMigrations(
 
     await client.query("BEGIN");
     try {
+      // Serialize against every lazy DDL path (collection-ddl.ts,
+      // revision-schema.ts). Taken first in the step so the lock order is
+      // always "schema-DDL lock, then table locks" and cannot deadlock.
+      await lockSchemaDdl(client);
       await step.up(client);
       await recordMigration(
         client,
@@ -565,6 +663,7 @@ async function runCollectionMigrations(
 
       await client.query("BEGIN");
       try {
+        await lockSchemaDdl(client);
         await step.up(client, table, meta, ddlConfig);
         await saveCollectionMeta(client, table, meta, step.toVersion);
         await recordMigration(

@@ -19,7 +19,14 @@ describe("Feature: document-chunking, Property 10: Heading-Parsing Round-Trip", 
         fc.integer({ min: 1, max: 6 }),
         fc
           .string({ minLength: 1 })
-          .filter((s) => !s.includes("\n") && !s.includes("\r")),
+          .filter(
+            (s) =>
+              !s.includes("\n") &&
+              !s.includes("\r") &&
+              // Page markers (`## Seite N` / `## Page N`) are intentionally not
+              // headings (defect D6), so exclude that text from the round-trip.
+              !/^(?:Seite|Page)\s+\d+\s*$/i.test(s.trim()),
+          ),
         (level, text) => {
           // Construct a valid heading line
           const headingLine = "#".repeat(level) + " " + text;

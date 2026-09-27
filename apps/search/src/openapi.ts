@@ -134,6 +134,79 @@ const errorSchema = {
   properties: { error: { type: "string" } },
 };
 
+/**
+ * Machine-readable error codes of the v2 revision API (revision-store.ts).
+ * Clients branch on `code`, never on the human-readable `error` text.
+ */
+const REVISION_ERROR_CODES = [
+  "INVALID_EXTRACT_CONTRACT",
+  "INCOMPATIBLE_EXTRACT_CONTRACT",
+  "INVALID_CONTENT_DIGEST",
+  "CONTENT_DIGEST_MISMATCH",
+  "REVISION_NOT_FOUND",
+  "REVISION_NOT_EXTENDABLE",
+  "REVISION_REFERENCE_MISMATCH",
+  "IDEMPOTENCY_KEY_REUSED",
+  "REVISION_CLOSED",
+  "REVISION_COMMITTED",
+  "REVISION_COMMIT_PENDING",
+  "BATCH_CONFLICT",
+  "BATCH_DIGEST_CONFLICT",
+  "BATCH_VALIDATION_FAILED",
+  "SEGMENT_NO_PAGES",
+  "SEGMENT_MISSING_BATCHES",
+  "COMMIT_MISSING_BATCHES",
+  "COMMIT_DOCUMENT_END_MISSING",
+  "COMMIT_NO_BATCHES",
+  "SEGMENT_FLIP_INCOMPLETE",
+  "COMMIT_FINALIZE_INCOMPLETE",
+  "POSTGRES_UNREACHABLE",
+  "POSTGRES_SQL_ERROR",
+  "REVISION_CREATE_FAILED",
+] as const;
+
+type RevisionErrorCode = (typeof REVISION_ERROR_CODES)[number];
+
+const revisionErrorSchema = {
+  type: "object",
+  required: ["error", "code"],
+  properties: {
+    error: { type: "string", description: "Human-readable message." },
+    code: { type: "string", enum: [...REVISION_ERROR_CODES] },
+    missingRanges: {
+      type: "array",
+      description: "Page ranges still missing (commit / segment completeness errors).",
+      items: {
+        type: "object",
+        required: ["from", "to"],
+        properties: { from: { type: "integer" }, to: { type: "integer" } },
+      },
+    },
+    issues: {
+      type: "array",
+      description: "Contract validation issues (BATCH_VALIDATION_FAILED).",
+      items: { type: "object", additionalProperties: true },
+    },
+  },
+};
+
+/**
+ * A documented revision error response: the description names the possible
+ * `code` values and `x-error-codes` lists them for tooling.
+ */
+function revisionError(description: string, codes: readonly RevisionErrorCode[]) {
+  return {
+    description: `${description} Codes: ${codes.map((c) => `\`${c}\``).join(", ")}.`,
+    "x-error-codes": [...codes],
+    content: {
+      "application/json": { schema: { $ref: "#/components/schemas/RevisionError" } },
+    },
+  };
+}
+
+/** 503 codes shared by every revision operation (database unreachable). */
+const REVISION_503: readonly RevisionErrorCode[] = ["POSTGRES_UNREACHABLE"];
+
 // ─── Spec factory ─────────────────────────────────────────────────────────────
 
 export function buildOpenApiSpec(serverUrl: string) {
@@ -181,6 +254,7 @@ export function buildOpenApiSpec(serverUrl: string) {
       schemas: {
         SearchResult: searchResultSchema,
         Error: errorSchema,
+        RevisionError: revisionErrorSchema,
       },
     },
     security: [{ BearerToken: [] }],
@@ -644,6 +718,12 @@ export function buildOpenApiSpec(serverUrl: string) {
             booleanHeader("X-Figure-Chunks", "Create independent image-description chunks (default true in auto mode)."),
             booleanHeader("X-Normalize-Tables", "Convert HTML tables, including row/column spans, to Markdown (default true in auto mode)."),
             {
+              name: "X-Extract-Contract",
+              in: "header",
+              description: "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; when present it must be a v1 marker-grammar id — an incompatible major is rejected with HTTP 400.",
+              schema: { type: "string" },
+            },
+            {
               name: "X-Allowed-Users",
               in: "header",
               description:
@@ -712,18 +792,17 @@ export function buildOpenApiSpec(serverUrl: string) {
         post: {
           tags: ["Ingest"],
           operationId: "ingestFile",
-          summary: "Ingest a binary document via the document converter",
+          summary: "Ingest a binary document by starting a v2 extraction job",
           description:
             "Accepts a raw PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP or WebP, " +
-            "has `@atf/extract` convert it to " +
-            "canonical Markdown, and indexes the result through the same path as " +
-            "`POST /ingest`. Every `X-…` header understood there applies here unchanged.\n\n" +
-            "Mounted only when `CONVERTER_URL` is configured; otherwise this route returns 404.\n\n" +
-            "**Figure images are not stored on this path.** The converter renders crops, but " +
-            "forwarding Markdown does not carry bytes. Figure *descriptions* are indexed and " +
-            "retrievable, so a search for what a diagram shows still finds it — there is just no " +
-            "image to open. Responses carry `X-Figure-Assets: not-stored` to say so. Use the " +
-            "converter's own `POST /v1/ingest` when stored crops are required.",
+            "uploads it to `@atf/extract`'s content-addressed source store and starts a v2 " +
+            "extraction job. Returns **202** with the job id; poll " +
+            "`GET {converter}/v2/jobs/{id}` for progress.\n\n" +
+            "The job's emitter streams the extracted revision **and figure assets** back into " +
+            "this service's revision API, so figure images are now stored and openable in " +
+            "search results — the earlier `X-Figure-Assets: not-stored` limitation no longer " +
+            "applies.\n\n" +
+            "Mounted only when `CONVERTER_URL` is configured; otherwise this route returns 404.",
           parameters: [
             {
               name: "X-Reference",
@@ -736,32 +815,8 @@ export function buildOpenApiSpec(serverUrl: string) {
               name: "X-Collection",
               in: "header",
               required: false,
+              description: "Target collection for the job's revision.",
               schema: { type: "string" },
-            },
-            {
-              name: "X-Title",
-              in: "header",
-              required: false,
-              description: "Forwarded to the converter and used as the document title.",
-              schema: { type: "string" },
-            },
-            {
-              name: "X-Filename",
-              in: "header",
-              required: false,
-              description:
-                "Helps the converter distinguish Word from Excel for ZIP-shaped OOXML and " +
-                "OLE-shaped legacy Office files.",
-              schema: { type: "string" },
-            },
-            {
-              name: "X-Summary-Mode",
-              in: "header",
-              required: false,
-              description:
-                "Defaults to `embedded` when the converted document carries `<summary>` blocks, " +
-                "because regenerating them would pay twice for a worse summary.",
-              schema: { type: "string", enum: ["auto", "generate", "embedded", "off"] },
             },
           ],
           requestBody: {
@@ -786,16 +841,14 @@ export function buildOpenApiSpec(serverUrl: string) {
             },
           },
           responses: {
-            "200": {
-              description: "Converted and indexed; the body is the normal ingest response",
+            "202": {
+              description:
+                "Accepted; a v2 extraction job was started. The body carries the job id and " +
+                "a poll path, and the Location header points at the job on Extract.",
               headers: {
-                "X-Extract-Contract": {
+                Location: {
                   schema: { type: "string" },
-                  description: "Contract version the converter produced.",
-                },
-                "X-Figure-Assets": {
-                  schema: { type: "string", enum: ["not-stored"] },
-                  description: "Figure images are not stored on this path.",
+                  description: "Absolute URL of the created job on Extract.",
                 },
               },
             },
@@ -803,11 +856,11 @@ export function buildOpenApiSpec(serverUrl: string) {
             "401": { description: "Unauthorized" },
             "404": { description: "CONVERTER_URL is not configured" },
             "413": { description: "Upload exceeds CONVERTER_UPLOAD_LIMIT" },
-            "415": { description: "The converter refused the file type" },
-            "422": { description: "The document exceeds the converter's page limit" },
+            "415": { description: "Extract refused the file type" },
+            "422": { description: "The document exceeds Extract's page limit" },
             "429": { description: "Rate limit exceeded" },
-            "502": { description: "The converter, embedding server or database failed" },
-            "504": { description: "The converter did not respond within CONVERTER_TIMEOUT_MS" },
+            "502": { description: "Extract or the upload/job call failed" },
+            "504": { description: "Extract did not respond within CONVERTER_TIMEOUT_MS" },
           },
         },
       },
@@ -881,6 +934,12 @@ export function buildOpenApiSpec(serverUrl: string) {
             booleanHeader("X-Page-Markers", "Extract Markdown page markers."),
             booleanHeader("X-Figure-Chunks", "Create independent figure-description chunks."),
             booleanHeader("X-Normalize-Tables", "Convert HTML tables to Markdown."),
+            {
+              name: "X-Extract-Contract",
+              in: "header",
+              description: "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; an incompatible major is rejected with HTTP 400.",
+              schema: { type: "string" },
+            },
           ],
           responses: {
             "200": {
@@ -938,6 +997,12 @@ export function buildOpenApiSpec(serverUrl: string) {
             booleanHeader("X-Page-Markers", "Extract Markdown page markers."),
             booleanHeader("X-Figure-Chunks", "Create independent figure-description chunks."),
             booleanHeader("X-Normalize-Tables", "Convert HTML tables to Markdown."),
+            {
+              name: "X-Extract-Contract",
+              in: "header",
+              description: "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; an incompatible major is rejected with HTTP 400.",
+              schema: { type: "string" },
+            },
           ],
           responses: {
             "200": {
@@ -1622,6 +1687,489 @@ export function buildOpenApiSpec(serverUrl: string) {
         },
         get: { tags: ["MCP"], operationId: "mcp2026Get", summary: "Not supported by stateless MCP", responses: { "405": { description: "Method not allowed" } } },
         delete: { tags: ["MCP"], operationId: "mcp2026Delete", summary: "Not supported by stateless MCP", responses: { "405": { description: "Method not allowed" } } },
+      },
+
+      // ── v2 revisions (resumable, idempotent handover; Requirements 5.1–5.11) ──
+      "/v2/documents/{ref}/revisions": {
+        post: {
+          tags: ["Revisions v2"],
+          operationId: "createRevision",
+          summary: "Open (or re-open) a revision for a document",
+          description:
+            "Accepts an `Idempotency-Key`; a repeat with the same key returns the same revision " +
+            "rather than a second one. `visibility` (`progressive|on_commit`) defaults per new " +
+            "document versus replace. The revision is authorized against the caller's tenant, " +
+            "collection ACL and row ACL, like /ingest.",
+          parameters: [
+            { name: "ref", in: "path", required: true, description: "URL-encoded document reference.", schema: { type: "string" } },
+            { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } },
+          ],
+          requestBody: { required: false, content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          responses: {
+            "201": { description: "Revision created", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "200": { description: "Existing revision returned for a repeated Idempotency-Key", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "401": { description: "Unauthenticated" },
+            "403": { description: "Not authorized for the tenant/collection" },
+            "409": revisionError(
+              "The Idempotency-Key was already used for a revision of a different document.",
+              ["IDEMPOTENCY_KEY_REUSED"],
+            ),
+            "500": revisionError("The revision could not be created.", ["REVISION_CREATE_FAILED"]),
+            "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
+            "503": revisionError("Database unreachable; retry with the same Idempotency-Key.", REVISION_503),
+          },
+        },
+      },
+      // Status and abort are addressed by revision id; the collection-level
+      // path above only opens revisions (POST).
+      "/v2/documents/{ref}/revisions/{rev}": {
+        get: {
+          tags: ["Revisions v2"],
+          operationId: "getRevisionByRev",
+          summary: "Revision status by revision id",
+          description:
+            "Accepted batch ranges, processed page ranges, missing assets, committed segments, " +
+            "the revision status and the commit state (a commit answered with 202 shows as " +
+            "pending until its staged batches are processed) (Requirement 5.6).",
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": { description: "Revision status", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
+            "409": revisionError("The revision belongs to a different document reference.", ["REVISION_REFERENCE_MISMATCH"]),
+            "503": revisionError("Database unreachable; retry.", REVISION_503),
+          },
+        },
+        delete: {
+          tags: ["Revisions v2"],
+          operationId: "deleteRevisionByRev",
+          summary: "Abort an uncommitted revision by id",
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": {
+              description: "Aborted; the revision's staged data is cleaned up with it.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      status: { type: "string", const: "aborted" },
+                      revisionId: { type: "string" },
+                    },
+                  },
+                },
+              },
+            },
+            "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
+            "409": revisionError(
+              "The revision is already committed, or belongs to a different document reference.",
+              ["REVISION_COMMITTED", "REVISION_REFERENCE_MISMATCH"],
+            ),
+            "503": revisionError("Database unreachable; retry.", REVISION_503),
+          },
+        },
+      },
+      "/v2/documents/{ref}/revisions/{rev}/batches/{seq}": {
+        put: {
+          tags: ["Revisions v2"],
+          operationId: "putRevisionBatch",
+          summary: "Stage one batch of records",
+          description:
+            "Requires a `Content-Digest`. The same `seq` with the same digest is a **200** no-op; " +
+            "a different digest is a **409**. Records are validated through the contract, then " +
+            "staged durably before being acknowledged (Requirements 5.2, 5.3).",
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+            { name: "seq", in: "path", required: true, schema: { type: "integer", minimum: 0 } },
+            { name: "Content-Digest", in: "header", required: true, schema: { type: "string" } },
+          ],
+          requestBody: {
+            required: true,
+            description: "The batch as NDJSON contract records; bounded by REVISION_BATCH_BODY_LIMIT.",
+            content: { "application/x-ndjson": { schema: { type: "string" } } },
+          },
+          responses: {
+            "200": { description: "Batch staged, or a no-op repeat", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "400": revisionError(
+              "Missing/invalid Content-Digest, digest does not match the body, or an invalid X-Extract-Contract header.",
+              ["INVALID_CONTENT_DIGEST", "CONTENT_DIGEST_MISMATCH", "INVALID_EXTRACT_CONTRACT"],
+            ),
+            "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
+            "409": revisionError(
+              "Same seq with a different digest; the revision is closed or its final commit was " +
+                "already accepted (no further batches); the revision belongs to a different " +
+                "document reference; or a concurrent PUT of the same seq could not be resolved (retry).",
+              [
+                "BATCH_DIGEST_CONFLICT",
+                "REVISION_CLOSED",
+                "REVISION_COMMIT_PENDING",
+                "REVISION_REFERENCE_MISMATCH",
+                "BATCH_CONFLICT",
+              ],
+            ),
+            "422": revisionError(
+              "A record failed contract validation (the body lists the `issues`), or the " +
+                "X-Extract-Contract major is incompatible.",
+              ["BATCH_VALIDATION_FAILED", "INCOMPATIBLE_EXTRACT_CONTRACT"],
+            ),
+            "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
+            "503": revisionError("Database unreachable; retry the same seq and digest.", REVISION_503),
+          },
+        },
+      },
+      "/v2/documents/{ref}/revisions/{rev}/segments/{n}/commit": {
+        post: {
+          tags: ["Revisions v2"],
+          operationId: "commitSegment",
+          summary: "Commit a segment",
+          description: "Idempotent. Under progressive visibility the segment's pages become searchable at commit.",
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+            { name: "n", in: "path", required: true, schema: { type: "integer" } },
+          ],
+          responses: {
+            "200": { description: "Committed", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
+            "409": revisionError(
+              "Missing batches (the body lists `missingRanges`), a segment without pages, a closed " +
+                "revision, or a revision of a different document reference.",
+              ["SEGMENT_MISSING_BATCHES", "SEGMENT_NO_PAGES", "REVISION_CLOSED", "REVISION_REFERENCE_MISMATCH"],
+            ),
+            "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
+            "503": revisionError(
+              "The segment is committed but its visibility flip did not complete, or the database " +
+                "is unreachable; retry (idempotent).",
+              ["SEGMENT_FLIP_INCOMPLETE", ...REVISION_503],
+            ),
+          },
+        },
+      },
+      "/v2/documents/{ref}/revisions/{rev}/commit": {
+        post: {
+          tags: ["Revisions v2"],
+          operationId: "commitRevision",
+          summary: "Final commit — atomically switch the visible revision",
+          description:
+            "Idempotent. Rejected with **409** and the list of missing ranges when batches are " +
+            "outstanding. On success the document's revision pointer is switched so search never " +
+            "sees two revisions at once (Requirements 5.9, 5.11, 6.5). When staged batches are " +
+            "still being processed the commit is accepted durably and answered with **202** " +
+            "(`pending: true`, `isLatest: false`); the previous revision stays visible until the " +
+            "worker finishes the switch. Repeat the call or poll the revision status to observe it.",
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": { description: "Committed and visible", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "202": {
+              description:
+                "Commit accepted and durable, switch pending: staged batches are still being " +
+                "processed (`pending: true`, `isLatest: false`). The previous revision stays visible.",
+              content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+            },
+            "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
+            "409": revisionError(
+              "Incomplete revision (the body lists `missingRanges`): pages missing for the declared " +
+                "page count, page count unknown and no `document.end` staged, or no batches at all; " +
+                "or the revision is closed / belongs to a different document reference.",
+              [
+                "COMMIT_MISSING_BATCHES",
+                "COMMIT_DOCUMENT_END_MISSING",
+                "COMMIT_NO_BATCHES",
+                "REVISION_CLOSED",
+                "REVISION_REFERENCE_MISMATCH",
+              ],
+            ),
+            "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
+            "503": revisionError(
+              "The commit was accepted but the final switch could not complete yet (it is resumed " +
+                "automatically), or the database is unreachable; retry (idempotent).",
+              ["COMMIT_FINALIZE_INCOMPLETE", ...REVISION_503],
+            ),
+          },
+        },
+      },
+      "/v2/documents/{ref}/revisions/{rev}/heartbeat": {
+        post: {
+          tags: ["Revisions v2"],
+          operationId: "heartbeatRevision",
+          summary: "Extend the revision TTL",
+          description: "A paused job heartbeats to keep an uncommitted revision from being TTL-swept (Requirement 5.10).",
+          parameters: [
+            { name: "ref", in: "path", required: true, schema: { type: "string" } },
+            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+          ],
+          responses: {
+            "200": {
+              description: "TTL extended",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      status: { type: "string", const: "ok" },
+                      ttlExpiresAt: { type: "string", format: "date-time" },
+                    },
+                  },
+                },
+              },
+            },
+            "404": revisionError(
+              "No such revision, or it can no longer be extended (committed / aborted / superseded).",
+              ["REVISION_NOT_EXTENDABLE"],
+            ),
+            "409": revisionError(
+              "The final commit was already accepted (no TTL to extend), or the revision belongs " +
+                "to a different document reference.",
+              ["REVISION_COMMIT_PENDING", "REVISION_REFERENCE_MISMATCH"],
+            ),
+            "503": revisionError("Database unreachable; retry.", REVISION_503),
+          },
+        },
+      },
+
+      // ── v2 assets (Requirements 5.8, 14.1–14.5) ──────────────────────────────
+      "/v2/assets/{assetId}": {
+        put: {
+          tags: ["Assets v2"],
+          operationId: "putV2Asset",
+          summary: "Upload an asset, idempotent by checksum, bound to a revision",
+          description:
+            "Idempotent by the asset checksum. The asset is bound to the `revision` and is " +
+            "cleaned up with it. Stored through the configured AssetStore backend (postgres BYTEA " +
+            "or filesystem); `thumb`/`preview` variants are derived server-side.",
+          parameters: [
+            { name: "assetId", in: "path", required: true, schema: { type: "string" } },
+            { name: "revision", in: "query", required: true, schema: { type: "string" } },
+          ],
+          requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+          responses: {
+            "201": { description: "Stored", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "200": { description: "Already present with the same checksum" },
+            "403": { description: "Not authorized for the revision" },
+          },
+        },
+        head: {
+          tags: ["Assets v2"],
+          operationId: "headV2Asset",
+          summary: "Check asset existence",
+          parameters: [{ name: "assetId", in: "path", required: true, schema: { type: "string" } }],
+          responses: { "200": { description: "Present" }, "404": { description: "Absent" } },
+        },
+        get: {
+          tags: ["Assets v2"],
+          operationId: "getV2Asset",
+          summary: "Fetch an asset (optionally a variant)",
+          description: "ACL-checked against the asset's revision (Requirement 14.5).",
+          parameters: [
+            { name: "assetId", in: "path", required: true, schema: { type: "string" } },
+            { name: "variant", in: "query", required: false, schema: { type: "string", enum: ["thumb", "preview", "full"] } },
+          ],
+          responses: {
+            "200": { description: "The asset bytes", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+            "403": { description: "Not authorized" },
+            "404": { description: "No such asset or variant" },
+          },
+        },
+      },
+      // ── v2 search (task 3.7, Requirements 13.3/13.5/13.7) ────────────────────
+      "/v2/search": {
+        post: {
+          tags: ["Search"],
+          operationId: "searchV2",
+          summary: "Semantic search v2 (structured hits, assets, navigation)",
+          description:
+            "Runs the v2 retrieval pipeline (identifier RRF → hybrid candidates → " +
+            "rerank-with-context → diversify → small-to-big expansion → asset " +
+            "attach) and returns structured hits with `section_path`, `pages`, " +
+            "`expanded`, `assets[]`, `navigation` and `evidence`. The v1 `/search` " +
+            "endpoint is unchanged.",
+          parameters: [
+            {
+              name: "X-Collection",
+              in: "header",
+              description: "Target collection name. Default: `documents`.",
+              schema: { type: "string", default: "documents" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["query"],
+                  properties: {
+                    query: { type: "string", example: "Maske WE01 Anmeldung" },
+                    limit: { type: "integer", minimum: 1, maximum: 100, default: 10 },
+                    granularity: {
+                      type: "string",
+                      enum: ["chunk", "section", "page", "document"],
+                    },
+                    expand: {
+                      type: "string",
+                      enum: ["none", "neighbors", "section", "page"],
+                    },
+                    budget_chars: { type: "integer", minimum: 1, default: 4000 },
+                    include_assets: {
+                      type: "string",
+                      enum: ["none", "refs", "thumbnails"],
+                      default: "refs",
+                    },
+                    rerank: { type: "boolean", default: false },
+                    hybrid: { type: "boolean", default: true },
+                    group_by: {
+                      type: "string",
+                      enum: ["none", "document", "section"],
+                      default: "none",
+                      description:
+                        "Merge hits of the same document / section into one result with the " +
+                        "best score and the merged content; the result carries `group` " +
+                        "(Requirement 13.6). Lifts the per-section diversity cap.",
+                    },
+                    identifier_search: {
+                      type: "boolean",
+                      default: true,
+                      description:
+                        "Fuse the identifier list (exact `vs_identifiers` hits + `ts_ident` " +
+                        "lexical matches for codes such as `WE-01/A`) as an additional RRF list " +
+                        "(Requirement 12.3). Hybrid mode only; `false` opts out.",
+                    },
+                    filters: {
+                      type: "object",
+                      properties: {
+                        pages: {
+                          description: "[page], [start, end], or { start, end }",
+                          oneOf: [
+                            { type: "array", items: { type: "integer" } },
+                            {
+                              type: "object",
+                              properties: {
+                                start: { type: "integer" },
+                                end: { type: "integer" },
+                              },
+                            },
+                          ],
+                        },
+                        unit_type: {
+                          type: "string",
+                          enum: ["chunk", "table", "figure", "section", "page", "document"],
+                        },
+                        figure_kind: { type: "string" },
+                        section_prefix: { type: "array", items: { type: "string" } },
+                        identifier: { type: "string" },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "v2 search hits",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      results: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            score: { type: "number" },
+                            unit_id: { type: "string" },
+                            unit_type: { type: "string" },
+                            reference: { type: "string" },
+                            base_ref: { type: "string" },
+                            title: { type: "string" },
+                            section_path: { type: "array", items: { type: "string" } },
+                            pages: {
+                              type: "object",
+                              nullable: true,
+                              properties: {
+                                start: { type: "integer" },
+                                end: { type: "integer" },
+                              },
+                            },
+                            content: { type: "string" },
+                            expanded: {
+                              type: "object",
+                              properties: {
+                                mode: { type: "string" },
+                                content: { type: "string" },
+                                truncated: { type: "boolean" },
+                              },
+                            },
+                            assets: {
+                              type: "array",
+                              items: {
+                                type: "object",
+                                properties: {
+                                  asset_id: { type: "string" },
+                                  relation: { type: "string", enum: ["hit", "referenced"] },
+                                  figure_id: { type: "string" },
+                                  kind: { type: "string" },
+                                  figure_kind: { type: "string" },
+                                  caption: { type: "string" },
+                                  page: { type: "integer" },
+                                  bbox: { type: "array", items: { type: "number" } },
+                                  thumb_url: { type: "string" },
+                                  url: { type: "string" },
+                                },
+                              },
+                            },
+                            navigation: {
+                              type: "object",
+                              properties: {
+                                prev_unit_id: { type: "string" },
+                                next_unit_id: { type: "string" },
+                                parent_unit_id: { type: "string" },
+                                section_id: { type: "string" },
+                              },
+                            },
+                            evidence: { type: "object" },
+                            revision_state: {
+                              type: "string",
+                              enum: ["partial"],
+                              description: "Present when the hit comes from a still-growing progressive revision.",
+                            },
+                            pages_available: {
+                              type: "string",
+                              description: "Committed page ranges of a partial revision, e.g. `1–2750`.",
+                            },
+                            group: {
+                              type: "object",
+                              description: "Present when `group_by` merged several hits into this one.",
+                              properties: {
+                                by: { type: "string", enum: ["document", "section"] },
+                                key: { type: "string" },
+                                count: { type: "integer" },
+                                unit_ids: { type: "array", items: { type: "string" } },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Invalid parameters or filters" },
+            "401": { description: "Unauthorized" },
+            "502": { description: "Embedding or search backend failure" },
+          },
+        },
       },
     }, // end paths
   };

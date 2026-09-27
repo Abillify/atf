@@ -14,7 +14,7 @@
  */
 
 import { createHash } from "node:crypto";
-import type { DocumentPoint, ChunkInfo } from "./postgres-client.js";
+import type { DocumentPoint, ChunkInfo, FigureRef } from "./postgres-client.js";
 import { normalizeMetadata, type Metadata } from "./metadata.js";
 import { chunkDocument, isMeaningfulChunk, type Chunk } from "./chunker.js";
 import { semanticChunkBatch, type EmbedFn } from "./semantic-chunker.js";
@@ -23,8 +23,10 @@ import type { SparseVector } from "./sparse-embedding-client.js";
 import type { SummaryClient } from "./summary-client.js";
 import { splitDocumentIntoChapters } from "./chapter-splitter.js";
 import {
+  buildPageContextPrefix,
   normalizeDocumentStructure,
   pagesForRange,
+  type FigureReference,
   type FigureStructure,
   type NormalizedDocumentStructure,
   type PageSpan,
@@ -146,6 +148,14 @@ interface IngestUnit {
   pageStart?: number;
   pageEnd?: number;
   pageSpans: PageSpan[];
+  /** Per-page embedded summaries; used to build a chunk's page-scoped context. */
+  pageSummaries: Map<number, string>;
+  /**
+   * Figure placeholders substituted into the document body, with char spans in
+   * the normalized-content coordinate space. A text chunk covering one of these
+   * carries the figure in its `figure_refs` (Requirement 2.4).
+   */
+  figureReferences: FigureReference[];
   providedSummary?: string;
   summarySource?: "embedded" | "generated";
   isFigure: boolean;
@@ -167,7 +177,7 @@ function normalizeIngestDocument(
         figureChunks: chunking.figureChunks ?? true,
         normalizeTables: chunking.normalizeTables ?? true,
       })
-    : { content: doc.content, pageSpans: [], figures: [] };
+    : { content: doc.content, pageSummaries: new Map(), pageSpans: [], figures: [], figureReferences: [] };
   return { ...doc, content: structure.content, structure };
 }
 
@@ -192,10 +202,13 @@ function expandDocumentToUnits(
   );
   const metadataPage = typeof docMetadata.page === "number" ? docMetadata.page : undefined;
   const summaryMode = chunking.summaryMode ?? "auto";
-  const providedSummary =
-    (summaryMode === "auto" || summaryMode === "embedded")
-      ? doc.structure.embeddedSummary
-      : undefined;
+  const useEmbedded = summaryMode === "auto" || summaryMode === "embedded";
+  const pageSummaries = useEmbedded ? doc.structure.pageSummaries : new Map<number, string>();
+  // Document-level fallback summary only exists for <summary> blocks that had no
+  // preceding page marker. Per-page summaries are resolved per chunk instead of
+  // being concatenated and prepended to every chunk (defect D1).
+  const providedSummary = useEmbedded ? doc.structure.embeddedSummary : undefined;
+  const hasEmbeddedSummary = pageSummaries.size > 0 || providedSummary !== undefined;
   const base = {
     docIndex,
     metadata: docMetadata,
@@ -212,8 +225,10 @@ function expandDocumentToUnits(
     pageStart: metadataPage,
     pageEnd: metadataPage,
     pageSpans: doc.structure.pageSpans,
+    pageSummaries,
+    figureReferences: doc.structure.figureReferences ?? [],
     providedSummary,
-    summarySource: providedSummary ? "embedded" as const : undefined,
+    summarySource: hasEmbeddedSummary ? "embedded" as const : undefined,
     isFigure: false,
   };
 
@@ -255,6 +270,11 @@ function expandDocumentToUnits(
     pageStart: figure.page ?? metadataPage,
     pageEnd: figure.page ?? metadataPage,
     pageSpans: [],
+    // A figure chunk *is* a figure; it does not reference others.
+    figureReferences: [],
+    // A figure chunk carries the summary of its own page (Requirement 2.5); the
+    // per-chunk builder resolves it from this map via the figure's pageStart.
+    pageSummaries,
     providedSummary: undefined,
     summarySource: undefined,
     isFigure: true,
@@ -303,6 +323,19 @@ function buildChunkInfo(
   const chunkId = createHash("sha256")
     .update(`${unit.rootDocumentId}\n${unit.reference}\n${charStart}\n${charEnd}\n${chunk.content}`)
     .digest("hex");
+  // Figures whose `[Abbildung …]` reference falls within this chunk's char
+  // range (Requirement 2.4). Text chunks only — a figure chunk is a figure, it
+  // does not reference others. De-duplicated by figure id, in document order.
+  const figureRefs: FigureRef[] = [];
+  if (!unit.isFigure) {
+    const seen = new Set<string>();
+    for (const ref of unit.figureReferences) {
+      if (ref.charStart < charEnd && ref.charEnd > charStart && !seen.has(ref.id)) {
+        seen.add(ref.id);
+        figureRefs.push({ figure_id: ref.id, asset_id: ref.assetId });
+      }
+    }
+  }
   const base: ChunkInfo = {
     chunk_index: chunk.index,
     chunk_total: totalChunks,
@@ -320,6 +353,7 @@ function buildChunkInfo(
       asset_id: unit.figure.assetId,
       ...(unit.figure.bbox ? { bbox: unit.figure.bbox } : {}),
     } : {}),
+    ...(figureRefs.length ? { figure_refs: figureRefs } : {}),
     // Omit overlap fields for semantic chunking (always 0, no information value).
     ...(!chunking.useSemanticChunking && {
       chunk_overlap: chunking.overlapSize,
@@ -378,10 +412,14 @@ function buildEmbedInput(
   title: string | undefined,
   resolvedPrefix: string | undefined,
   isSummaryPrefix: boolean,
+  nextHeading?: string,
 ): string {
   const headerLines: string[] = [];
   if (title) headerLines.push(`title: ${title}`);
   headerLines.push(`ref: ${baseRef}`);
+  // A figure chunk's embed input carries the heading it sits under so it is
+  // retrievable by that section, not just by its terse caption (Requirement 2.5).
+  if (nextHeading) headerLines.push(`heading: ${nextHeading}`);
 
   const header = headerLines.join("\n");
   const includePrefix = resolvedPrefix && (isSummaryPrefix || chunkIndex > 0);
@@ -505,6 +543,12 @@ async function buildJobsFromUnits(
     source?: "embedded" | "generated";
   }> = await Promise.all(
     units.map(async (unit) => {
+      // Per-page embedded summaries are resolved per chunk in the emission loop
+      // below, so a unit that carries them needs no unit-level prefix and no
+      // LLM summary — the embedded page summaries are the summary source.
+      if (unit.pageSummaries.size > 0) {
+        return { text: undefined, isSummary: true, source: "embedded" as const };
+      }
       if (unit.providedSummary) {
         return { text: unit.providedSummary, isSummary: true, source: "embedded" as const };
       }
@@ -547,18 +591,48 @@ async function buildJobsFromUnits(
   for (let ui = 0; ui < units.length; ui++) {
     const unit = units[ui]!;
     const chunks = unitChunks[ui]!;
-    const { text: resolvedPrefix, isSummary: isSummaryPrefix, source: summarySource } =
+    const { text: unitPrefix, isSummary: isSummaryPrefix, source: summarySource } =
       resolvedPrefixes[ui]!;
     unit.summarySource = summarySource;
+    // A unit uses per-page summaries when the structure attributed any summary
+    // to a page. Then each chunk's prefix is the summary of the pages it covers
+    // (defect D1); otherwise the unit-level prefix (LLM/fallback/text-slice) is
+    // reused for every chunk as before.
+    const usePageSummaries = unit.pageSummaries.size > 0;
 
     for (const chunk of chunks) {
+      let resolvedPrefix = unitPrefix;
+      if (usePageSummaries) {
+        if (unit.isFigure) {
+          // A figure chunk carries the summary of its own page (Requirement 2.5).
+          resolvedPrefix = buildPageContextPrefix(
+            unit.pageSummaries,
+            unit.pageStart,
+            unit.pageEnd,
+          );
+        } else {
+          const charStart = unit.sourceCharStart + chunk.charStart;
+          const charEnd = unit.sourceCharStart + chunk.charEnd;
+          const pages = pagesForRange(unit.pageSpans, charStart, charEnd);
+          resolvedPrefix = buildPageContextPrefix(
+            unit.pageSummaries,
+            pages.pageStart ?? unit.pageStart,
+            pages.pageEnd ?? unit.pageEnd,
+          );
+        }
+      }
+
       const embedInput = buildEmbedInput(
         chunk.content,
         chunk.index,
         unit.reference,
         unit.title,
         resolvedPrefix,
+        // Page-scoped summaries are additive context that differs from the
+        // chunk text, so they behave like a summary prefix: included on chunk 0.
         isSummaryPrefix,
+        // Figure chunks add the next heading (Requirement 2.5); text chunks do not.
+        unit.isFigure ? unit.figure?.nextHeading : undefined,
       );
 
       jobs.push({

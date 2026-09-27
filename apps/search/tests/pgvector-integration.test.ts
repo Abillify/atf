@@ -472,4 +472,93 @@ describeIfPg("postgres-client · real pgvector", () => {
       if (!res.ok) expect(res.error.code).toBe("INVALID_COLLECTION_NAME");
     });
   });
+
+  // -------------------------------------------------------------------------
+  // FTS language per collection + recompute migration (Requirement 2.6)
+  // -------------------------------------------------------------------------
+
+  describe("FTS language recompute", () => {
+    const ftsCollection = `vstest_fts_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+
+    beforeAll(async () => {
+      // Start on 'simple' (language-agnostic, no stemming).
+      const ensured = await client.ensureCollection(ftsCollection, VECTOR_SIZE, {
+        language: "simple",
+      });
+      expect(ensured.ok).toBe(true);
+      const up = await client.upsert(
+        {
+          reference: `${ftsCollection}/doc-de`,
+          vector: vec(0),
+          // "Verträge" (plural) — a German stemmer folds it to the same lexeme
+          // as the query "Vertrag" (singular); 'simple' does not.
+          content: "Die Verträge regeln die Wohnungen der Mieter.",
+          tenantId: TEST_TENANT_ID,
+          metadata: {},
+          title: "Verträge",
+        },
+        ftsCollection,
+      );
+      expect(up.ok).toBe(true);
+    }, 60_000);
+
+    it("stores the per-collection language and defaults new collections from FTS_LANGUAGE", async () => {
+      const list = await client.listCollections(serviceScope);
+      expect(list.ok).toBe(true);
+      if (list.ok) {
+        const info = list.result.find((c) => c.collection === ftsCollection);
+        expect(info?.ftsLanguage).toBe("simple");
+      }
+    });
+
+    it("recomputes ts_search so German stemming matches after switching to 'german'", async () => {
+      // Before: 'simple' has no stemming, so singular "Vertrag" misses the
+      // stored plural "Verträge" on the FTS (text) side. Prove the migration
+      // changes stored vectors by asserting the config flips and rows update.
+      const changed = await client.recomputeFtsLanguage(ftsCollection, "german");
+      expect(changed.ok).toBe(true);
+      if (changed.ok) {
+        expect(changed.result.unchanged).toBe(false);
+        expect(changed.result.updated).toBeGreaterThan(0);
+      }
+
+      const list = await client.listCollections(serviceScope);
+      if (list.ok) {
+        const info = list.result.find((c) => c.collection === ftsCollection);
+        expect(info?.ftsLanguage).toBe("german");
+      }
+
+      // A German-stemmed FTS query for the singular now hits the stored plural.
+      const found = await client.search(
+        "Vertrag", vec(0), 10, ftsCollection, serviceScope, undefined, true,
+      );
+      expect(found.ok).toBe(true);
+      if (found.ok) {
+        expect(found.result.map((r) => r.reference)).toContain(
+          `${ftsCollection}/doc-de`,
+        );
+      }
+    });
+
+    it("is a no-op when the language is unchanged", async () => {
+      const again = await client.recomputeFtsLanguage(ftsCollection, "german");
+      expect(again.ok).toBe(true);
+      if (again.ok) {
+        expect(again.result.unchanged).toBe(true);
+        expect(again.result.updated).toBe(0);
+      }
+    });
+
+    it("returns COLLECTION_NOT_FOUND for an unknown collection", async () => {
+      const res = await client.recomputeFtsLanguage("vstest_absent_xyz", "german");
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error.code).toBe("COLLECTION_NOT_FOUND");
+    });
+
+    it("rejects an unsupported language", async () => {
+      const res = await client.recomputeFtsLanguage(ftsCollection, "klingon");
+      expect(res.ok).toBe(false);
+      if (!res.ok) expect(res.error.message).toContain("Unsupported FTS language");
+    });
+  });
 });

@@ -2,18 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Tests for the binary-document proxy.
+ * Tests for the binary-document route (task 1.14).
  *
- * The interesting behaviour is not the happy path but the hand-off: that the
- * converter's Markdown is written back onto the request in the exact shape the
- * unmodified ingest handler accepts, that provenance survives, and that a
- * converter failure is attributed to the right side of the boundary — a 415 from
- * the converter is the caller's problem and must not be reported as a Search
- * outage.
+ * The route no longer proxies Markdown into the local ingest path. It uploads
+ * the source to Extract's content-addressed store (open → patch → complete) and
+ * starts a v2 job, returning the job id. What matters here is the hand-off: the
+ * upload dance is driven correctly, the credential travels, a job is created for
+ * the stored source, the caller gets a 202 with the job id — and, crucially, the
+ * response no longer advertises `X-Figure-Assets: not-stored`, because the job's
+ * emitter now stores figure assets. Failures on the boundary are attributed to
+ * the right side (a 415 is the caller's file, a 500 is Extract's problem).
  */
 
+import { createHash } from "node:crypto";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import express, { type Request, type RequestHandler } from "express";
+import express, { type Request } from "express";
 import request from "supertest";
 import pino from "pino";
 import {
@@ -32,54 +35,68 @@ const CONVERTER: ConverterConfig = {
 };
 
 const PDF = Buffer.from("%PDF-1.7\ncontent\n");
+const PDF_SHA = createHash("sha256").update(PDF).digest("hex");
 
-/** A fictional appliance manual; the fixtures deliberately name no real domain. */
-const MARKDOWN = [
-  "## Seite 1",
-  "",
-  "<summary>Die Seite beschreibt die Inbetriebnahme.</summary>",
-  "",
-  "<figures>",
-  '<figure id="p1-f1" bbox="[0.1000, 0.2000, 0.6000, 0.7500]" page="1">Ablaufdiagramm.</figure>',
-  "</figures>",
-  "",
-  "# Einleitung",
-  "",
-  "![figure_p1-f1]",
-].join("\n");
-
-/** What the downstream ingest handler saw. */
-interface Captured {
+/** A record of every call Extract received, for assertions. */
+interface ExtractCall {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
   body: unknown;
-  contentType: string | undefined;
-  summaryMode: string | undefined;
-  metadata: string | undefined;
-  collection: string | undefined;
-  reference: string | undefined;
 }
 
 /**
- * Build an app whose "ingest handler" only records the request.
- *
- * Substituting it is the point: everything after conversion is the real ingest
- * path in production, so what this test needs to prove is the shape handed to it.
+ * Build an app around the handler, with a fetch fake that plays the three-step
+ * upload protocol and the job creation. `overrides.on` lets a test replace the
+ * response for a given step to exercise failures.
  */
-function buildApp(overrides: Partial<ConverterConfig> = {}): {
-  app: express.Express;
-  captured: Captured[];
-} {
-  const captured: Captured[] = [];
-  const spyIngest: RequestHandler = (req, res) => {
-    captured.push({
-      body: req.body,
-      contentType: req.headers["content-type"],
-      summaryMode: req.headers["x-summary-mode"] as string | undefined,
-      metadata: req.headers["x-metadata"] as string | undefined,
-      collection: req.headers["x-collection"] as string | undefined,
-      reference: req.headers["x-reference"] as string | undefined,
-    });
-    res.status(200).json({ status: "ok" });
-  };
+function buildApp(
+  overrides: Partial<ConverterConfig> = {},
+  on: Partial<{
+    open: () => Response;
+    patch: () => Response;
+    complete: () => Response;
+    job: () => Response;
+  }> = {},
+): { app: express.Express; calls: ExtractCall[]; fetchMock: ReturnType<typeof vi.fn> } {
+  const calls: ExtractCall[] = [];
+  const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+    const method = (init.method ?? "GET").toUpperCase();
+    const headers = (init.headers as Record<string, string>) ?? {};
+    let body: unknown = init.body;
+    if (typeof init.body === "string") {
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = init.body;
+      }
+    }
+    calls.push({ url, method, headers, body });
+
+    if (url.endsWith("/v2/uploads") && method === "POST") {
+      return on.open?.() ?? new Response(
+        JSON.stringify({ status: "open", upload_id: "u-1", reference: "a", offset: 0 }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (/\/v2\/uploads\/[^/]+$/.test(url) && method === "PATCH") {
+      return on.patch?.() ?? new Response(null, { status: 204, headers: { "upload-offset": String(PDF.length) } });
+    }
+    if (/\/v2\/uploads\/[^/]+\/complete$/.test(url) && method === "POST") {
+      return on.complete?.() ?? new Response(
+        JSON.stringify({ status: "completed", upload_id: "u-1", sha256: PDF_SHA, size: PDF.length }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }
+    if (url.endsWith("/v2/jobs") && method === "POST") {
+      return on.job?.() ?? new Response(
+        JSON.stringify({ jobId: "job-123", status: "queued", reference: "a" }),
+        { status: 201, headers: { "content-type": "application/json" } },
+      );
+    }
+    return new Response("unexpected call", { status: 500 });
+  });
+  vi.stubGlobal("fetch", fetchMock);
 
   const app = express();
   app.use((req, _res, next) => {
@@ -89,26 +106,9 @@ function buildApp(overrides: Partial<ConverterConfig> = {}): {
   app.post(
     "/ingest-file",
     express.raw({ type: [...CONVERTIBLE_MIME_TYPES], limit: "10mb" }),
-    createIngestFileHandler({
-      converter: { ...CONVERTER, ...overrides },
-      logger,
-      ingestHandler: spyIngest,
-    }),
+    createIngestFileHandler({ converter: { ...CONVERTER, ...overrides }, logger }),
   );
-  return { app, captured };
-}
-
-function markdownResponse(body = MARKDOWN, headers: Record<string, string> = {}) {
-  return new Response(body, {
-    status: 200,
-    headers: {
-      "content-type": "text/markdown; charset=utf-8",
-      "x-extract-contract": "atf-extract/1.1.0",
-      "x-page-count": "1",
-      "x-figure-count": "1",
-      ...headers,
-    },
-  });
+  return { app, calls, fetchMock };
 }
 
 afterEach(() => {
@@ -128,30 +128,8 @@ describe("POST /ingest-file", () => {
     );
   });
 
-  it("asks the converter for Markdown and forwards the credential", async () => {
-    const fetchMock = vi.fn(async () => markdownResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const { app } = buildApp();
-
-    await request(app)
-      .post("/ingest-file")
-      .set("Content-Type", "application/pdf")
-      .set("X-Reference", "specs/a.pdf")
-      .send(PDF);
-
-    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
-    expect(url).toBe("http://converter.test/v1/convert");
-    const headers = init.headers as Record<string, string>;
-    // Markdown, not the JSON envelope: that string is what gets forwarded.
-    expect(headers["accept"]).toBe("text/markdown");
-    expect(headers["content-type"]).toBe("application/pdf");
-    expect(headers["authorization"]).toBe("Bearer converter-token");
-    expect(headers["x-reference"]).toBe("specs/a.pdf");
-  });
-
-  it("hands the ingest path a text/markdown body", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-    const { app, captured } = buildApp();
+  it("uploads the source (open → patch → complete) then starts a job", async () => {
+    const { app, calls } = buildApp();
 
     const response = await request(app)
       .post("/ingest-file")
@@ -159,163 +137,68 @@ describe("POST /ingest-file", () => {
       .set("X-Reference", "specs/a.pdf")
       .send(PDF);
 
-    expect(response.status).toBe(200);
-    expect(captured).toHaveLength(1);
-    expect(captured[0]?.body).toBe(MARKDOWN);
-    expect(captured[0]?.contentType).toBe("text/markdown; charset=utf-8");
-    // The caller's routing headers pass through untouched.
-    expect(captured[0]?.reference).toBe("specs/a.pdf");
+    expect(response.status).toBe(202);
+    expect(response.body.job_id).toBe("job-123");
+    expect(response.body.poll).toBe("/v2/jobs/job-123");
+
+    // The four Extract calls, in order.
+    expect(calls.map((c) => `${c.method} ${c.url.replace(CONVERTER.url, "")}`)).toEqual([
+      "POST /v2/uploads",
+      "PATCH /v2/uploads/u-1",
+      "POST /v2/uploads/u-1/complete",
+      "POST /v2/jobs",
+    ]);
+
+    // The open declares the reference, whole-file digest and size.
+    expect(calls[0]?.body).toMatchObject({ reference: "specs/a.pdf", sha256: PDF_SHA, size: PDF.length });
+    // The chunk goes to offset 0.
+    expect(calls[1]?.headers["upload-offset"]).toBe("0");
+    // The job is created for the stored source.
+    expect(calls[3]?.body).toMatchObject({ reference: "specs/a.pdf", sourceSha256: PDF_SHA });
   });
 
-  it("preserves the caller's collection", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-    const { app, captured } = buildApp();
+  it("forwards the converter credential on every call", async () => {
+    const { app, calls } = buildApp();
+    await request(app)
+      .post("/ingest-file")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a")
+      .send(PDF);
+    for (const call of calls) {
+      expect(call.headers.authorization).toBe("Bearer converter-token");
+    }
+  });
+
+  it("passes the caller's collection to the job", async () => {
+    const { app, calls } = buildApp();
     await request(app)
       .post("/ingest-file")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
       .set("X-Collection", "specs")
       .send(PDF);
-    expect(captured[0]?.collection).toBe("specs");
+    expect(calls[3]?.body).toMatchObject({ collection: "specs" });
   });
 
-  it("selects embedded summaries, since the converter already produced them", async () => {
-    // Regenerating them would pay twice for a worse summary: the converter saw the
-    // rendered page, Search only sees text.
-    vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-    const { app, captured } = buildApp();
-    await request(app)
-      .post("/ingest-file")
-      .set("Content-Type", "application/pdf")
-      .set("X-Reference", "a")
-      .send(PDF);
-    expect(captured[0]?.summaryMode).toBe("embedded");
-  });
-
-  it("does not override an explicit summary mode", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-    const { app, captured } = buildApp();
-    await request(app)
-      .post("/ingest-file")
-      .set("Content-Type", "application/pdf")
-      .set("X-Reference", "a")
-      .set("X-Summary-Mode", "generate")
-      .send(PDF);
-    expect(captured[0]?.summaryMode).toBe("generate");
-  });
-
-  it("leaves the summary mode alone when the output carries no summary", async () => {
-    vi.stubGlobal("fetch", vi.fn(async () => markdownResponse("## Seite 1\n\nNur Text.")));
-    const { app, captured } = buildApp();
-    await request(app)
-      .post("/ingest-file")
-      .set("Content-Type", "application/pdf")
-      .set("X-Reference", "a")
-      .send(PDF);
-    expect(captured[0]?.summaryMode).toBeUndefined();
-  });
-
-  describe("provenance", () => {
-    it("records the converter contract in the metadata", async () => {
-      vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-      const { app, captured } = buildApp();
-      await request(app)
-        .post("/ingest-file")
-        .set("Content-Type", "application/pdf")
-        .set("X-Reference", "a")
-        .send(PDF);
-
-      const metadata = JSON.parse(captured[0]?.metadata ?? "{}");
-      expect(metadata.extract_contract).toBe("atf-extract/1.1.0");
-      expect(metadata.extract_via).toBe("search/ingest-file");
-    });
-
-    it("merges into the caller's metadata without losing it", async () => {
-      vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-      const { app, captured } = buildApp();
-      await request(app)
-        .post("/ingest-file")
-        .set("Content-Type", "application/pdf")
-        .set("X-Reference", "a")
-        .set("X-Metadata", JSON.stringify({ project_id: "wms" }))
-        .send(PDF);
-
-      const metadata = JSON.parse(captured[0]?.metadata ?? "{}");
-      expect(metadata.project_id).toBe("wms");
-      expect(metadata.extract_contract).toBe("atf-extract/1.1.0");
-    });
-
-    it("lets the caller's value win on a conflict", async () => {
-      vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-      const { app, captured } = buildApp();
-      await request(app)
-        .post("/ingest-file")
-        .set("Content-Type", "application/pdf")
-        .set("X-Reference", "a")
-        .set("X-Metadata", JSON.stringify({ extract_via: "manual" }))
-        .send(PDF);
-      expect(JSON.parse(captured[0]?.metadata ?? "{}").extract_via).toBe("manual");
-    });
-
-    it("base64-encodes the result when a value is not header-safe", async () => {
-      vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-      const { app, captured } = buildApp();
-      await request(app)
-        .post("/ingest-file")
-        .set("Content-Type", "application/pdf")
-        .set("X-Reference", "a")
-        .set(
-          "X-Metadata",
-          `base64:${Buffer.from(JSON.stringify({ author: "Prüfautor" })).toString("base64")}`,
-        )
-        .send(PDF);
-
-      const raw = captured[0]?.metadata ?? "";
-      expect(raw).toMatch(/^base64:/);
-      const decoded = JSON.parse(Buffer.from(raw.slice(7), "base64").toString("utf-8"));
-      expect(decoded.author).toBe("Prüfautor");
-      expect(decoded.extract_contract).toBe("atf-extract/1.1.0");
-    });
-
-    it("passes invalid caller metadata through untouched", async () => {
-      // The ingest handler rejects it with a message about X-Metadata, which is
-      // more useful than an error about this route.
-      vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
-      const { app, captured } = buildApp();
-      await request(app)
-        .post("/ingest-file")
-        .set("Content-Type", "application/pdf")
-        .set("X-Reference", "a")
-        .set("X-Metadata", "{not json")
-        .send(PDF);
-      expect(captured[0]?.metadata).toBe("{not json");
-    });
-  });
-
-  it("states that figure images are not stored on this path", async () => {
-    // Otherwise the limitation is discovered when someone clicks a figure.
-    vi.stubGlobal("fetch", vi.fn(async () => markdownResponse()));
+  it("no longer advertises that figure assets are not stored", async () => {
+    // The v2 job's emitter stores figure assets, so the old limitation header
+    // must be gone.
     const { app } = buildApp();
     const response = await request(app)
       .post("/ingest-file")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
       .send(PDF);
-    expect(response.headers["x-figure-assets"]).toBe("not-stored");
-    expect(response.headers["x-extract-contract"]).toBe("atf-extract/1.1.0");
+    expect(response.headers["x-figure-assets"]).toBeUndefined();
   });
 
   describe("validation before any work is done", () => {
-    it("requires a reference, so a conversion is not paid for in vain", async () => {
-      const fetchMock = vi.fn(async () => markdownResponse());
-      vi.stubGlobal("fetch", fetchMock);
-      const { app } = buildApp();
-
+    it("requires a reference, so no upload is started in vain", async () => {
+      const { app, fetchMock } = buildApp();
       const response = await request(app)
         .post("/ingest-file")
         .set("Content-Type", "application/pdf")
         .send(PDF);
-
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/X-Reference header is required/);
       expect(fetchMock).not.toHaveBeenCalled();
@@ -328,49 +211,28 @@ describe("POST /ingest-file", () => {
         .set("Content-Type", "application/pdf")
         .set("X-Reference", "a")
         .send(Buffer.alloc(0));
-
       expect(response.status).toBe(400);
       expect(response.body.error).toMatch(/application\/pdf/);
     });
   });
 
-  describe("converter failures are attributed to the right side", () => {
-    it("passes a 415 through, because the caller's file is the problem", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => new Response('{"error":"Unsupported file type"}', { status: 415 })),
-      );
-      const { app, captured } = buildApp();
-
+  describe("failures are attributed to the right side", () => {
+    it("passes a 415 upload rejection through, because the caller's file is the problem", async () => {
+      const { app, calls } = buildApp({}, {
+        open: () => new Response('{"error":"Unsupported file type"}', { status: 415 }),
+      });
       const response = await request(app)
         .post("/ingest-file")
         .set("Content-Type", "application/pdf")
         .set("X-Reference", "a")
         .send(PDF);
-
       expect(response.status).toBe(415);
-      expect(response.body.converter_detail).toContain("Unsupported file type");
-      // Nothing was indexed.
-      expect(captured).toHaveLength(0);
+      // No job was created.
+      expect(calls.some((c) => c.url.endsWith("/v2/jobs"))).toBe(false);
     });
 
-    it("passes a 422 page-limit rejection through", async () => {
-      vi.stubGlobal(
-        "fetch",
-        vi.fn(async () => new Response('{"error":"too many pages"}', { status: 422 })),
-      );
-      const { app } = buildApp();
-      const response = await request(app)
-        .post("/ingest-file")
-        .set("Content-Type", "application/pdf")
-        .set("X-Reference", "a")
-        .send(PDF);
-      expect(response.status).toBe(422);
-    });
-
-    it("reports a converter 500 as a 502, because it is not the caller's fault", async () => {
-      vi.stubGlobal("fetch", vi.fn(async () => new Response("boom", { status: 500 })));
-      const { app } = buildApp();
+    it("reports an Extract 500 on the job call as a 502", async () => {
+      const { app } = buildApp({}, { job: () => new Response("boom", { status: 500 }) });
       const response = await request(app)
         .post("/ingest-file")
         .set("Content-Type", "application/pdf")
@@ -379,11 +241,12 @@ describe("POST /ingest-file", () => {
       expect(response.status).toBe(502);
     });
 
-    it("reports an unreachable converter as a 502", async () => {
+    it("reports an unreachable Extract as a 502", async () => {
+      const { app } = buildApp();
+      // Replace fetch entirely so even the open call throws.
       vi.stubGlobal("fetch", vi.fn(async () => {
         throw new Error("ECONNREFUSED");
       }));
-      const { app } = buildApp();
       const response = await request(app)
         .post("/ingest-file")
         .set("Content-Type", "application/pdf")
@@ -394,6 +257,7 @@ describe("POST /ingest-file", () => {
     });
 
     it("reports a timeout as a 504 and names the budget", async () => {
+      const { app } = buildApp({ timeoutMs: 20 });
       vi.stubGlobal(
         "fetch",
         vi.fn(
@@ -405,31 +269,25 @@ describe("POST /ingest-file", () => {
             }),
         ),
       );
-      const { app } = buildApp({ timeoutMs: 20 });
       const response = await request(app)
         .post("/ingest-file")
         .set("Content-Type", "application/pdf")
         .set("X-Reference", "a")
         .send(PDF);
-
       expect(response.status).toBe(504);
       expect(response.body.error).toMatch(/did not respond within 20 ms/);
     });
   });
 
   it("omits the Authorization header when no converter token is set", async () => {
-    const fetchMock = vi.fn(async () => markdownResponse());
-    vi.stubGlobal("fetch", fetchMock);
-    const { app } = buildApp({ token: null });
+    const { app, calls } = buildApp({ token: null });
     await request(app)
       .post("/ingest-file")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
       .send(PDF);
-    const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1].headers as Record<
-      string,
-      string
-    >;
-    expect(headers["authorization"]).toBeUndefined();
+    for (const call of calls) {
+      expect(call.headers.authorization).toBeUndefined();
+    }
   });
 });

@@ -37,6 +37,7 @@ import type { RerankerClient } from "../reranker-client.js";
 import type { SearchResult } from "../postgres-client.js";
 import type { Response } from "express";
 import { getUsageContext } from "../usage-context.js";
+import { buildRerankDocument } from "../rerank-context.js";
 
 /** Serialise one SSE frame. */
 function sseFrame(event: string, data: unknown, id?: string): string {
@@ -100,7 +101,9 @@ export async function runAsyncRerankStream(
 
   // Event 2: rerank scores (async).
   try {
-    const documents = candidates.map((r) => r.content);
+    // Context-enriched rerank input (title, section path, unit type + content,
+    // capped at 1024 tokens) — same as the synchronous path (Req 13.1/13.2).
+    const documents = candidates.map((r) => buildRerankDocument(r));
     const rerankResponse = await rerankerClient.rerank(query, documents);
 
     if (!rerankResponse.ok) {

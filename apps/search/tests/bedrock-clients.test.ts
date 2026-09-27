@@ -122,6 +122,34 @@ describe("Bedrock Integration Clients", () => {
       }
       expect(mockSend).toHaveBeenCalled();
     });
+
+    it("placeInContext returns a single placement sentence (Req 11.6)", async () => {
+      mockSend.mockResolvedValueOnce({
+        output: {
+          message: {
+            content: [{ text: "Dieser Abschnitt beschreibt die Inbetriebnahme." }],
+          },
+        },
+      });
+
+      const client = createSummaryClient({
+        url: "bedrock",
+        model: "anthropic.claude-3-5-sonnet-20240620-v1:0",
+        logger,
+      });
+
+      const result = await client.placeInContext(
+        "Ein Chunk-Auszug.",
+        "Titel: Betriebsanleitung\nAbschnitt: 4 Inbetriebnahme",
+      );
+      expect(result.ok).toBe(true);
+      if (result.ok) {
+        expect(result.result).toBe(
+          "Dieser Abschnitt beschreibt die Inbetriebnahme.",
+        );
+      }
+      expect(mockSend).toHaveBeenCalled();
+    });
   });
 
   describe("Reranker Client with Bedrock", () => {

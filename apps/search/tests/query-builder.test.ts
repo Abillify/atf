@@ -31,8 +31,9 @@ import {
   CursorNotSupportedError,
   buildAccessSql,
 } from "../src/query-builder.js";
-import type { SearchCursor } from "../src/postgres-client.js";
+import type { SearchCursor, SearchFilter } from "../src/postgres-client.js";
 import type { AccessScope } from "../src/access-scope.js";
+import { UNIT_FILTER_V2, type UnitFilterV2 } from "../src/metadata.js";
 
 const aclScope = (userId: string | undefined, userGroups: string[]): AccessScope => ({
   principal: { userId, userGroups, tenantId: "tenant-a", source: "jwt" },
@@ -479,6 +480,108 @@ describe("buildHybridQuery", () => {
     expect(sql).toContain("sparse_vector");
     expect(flat(sql)).toContain("1.0 / (60 + COALESCE(spr.sprrank, 1000))");
   });
+
+  // ── Identifier RRF list (task 3.4, Requirement 12.3) ──────────────────────
+
+  const buildWithOpts = (opts: Parameters<typeof buildHybridQuery>[24]) =>
+    buildHybridQuery(
+      TABLE, VEC_TYPE, 60, "german", 10, undefined, false, 4, 0,
+      false, null, VECTOR_JSON, "mietvertrag",
+      undefined, undefined, null,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      opts,
+    );
+
+  it("emits identical SQL to the pre-3.4 fusion when no identifier and default weights", () => {
+    // Regression guard: a no-identifier, default-weight call must rank exactly
+    // as before. The bare unweighted reciprocal-rank terms are unchanged and no
+    // identifier CTE/join/term is added.
+    const f = flat(build(10, 0).sql);
+    expect(f).toContain("1.0 / (60 + COALESCE(v.vrank, 1000))");
+    expect(f).toContain("1.0 / (60 + COALESCE(t.trank, 1000))");
+    expect(f).not.toContain("ident_ranked");
+    expect(f).not.toContain("COALESCE(v.id, t.id, i.id)");
+    // No multiplier is rendered for a weight of 1.0.
+    expect(f).not.toMatch(/\d \* \(1\.0 \/ \(60 \+ COALESCE\(v\.vrank/);
+  });
+
+  it("includes the identifier RRF branch when the query resolved to unit ids", () => {
+    const f = flat(
+      buildWithOpts({ identifierUnitIds: ["unit-a", "unit-b"] }).sql,
+    );
+    expect(f).toContain("ident AS (");
+    expect(f).toContain("ident_ranked");
+    expect(f).toContain("WITH ORDINALITY");
+    // Third list fused via FULL OUTER JOIN and its reciprocal-rank term.
+    expect(f).toContain("FULL OUTER JOIN ident_ranked i");
+    expect(f).toContain("1.0 / (60 + COALESCE(i.identrank, 1000))");
+    // Fused key now coalesces all three list ids.
+    expect(f).toContain("COALESCE(v.id, t.id, i.id) AS id");
+  });
+
+  it("binds the identifier unit ids as a text[] parameter", () => {
+    const { params } = buildWithOpts({ identifierUnitIds: ["unit-a", "unit-b"] });
+    expect(params).toContainEqual(["unit-a", "unit-b"]);
+  });
+
+  it("omits the identifier branch when the unit id list is empty", () => {
+    const f = flat(buildWithOpts({ identifierUnitIds: [] }).sql);
+    expect(f).not.toContain("ident_ranked");
+    expect(f).toContain("COALESCE(v.id, t.id) AS id");
+  });
+
+  it("applies the configured per-list weights to the reciprocal-rank terms", () => {
+    const f = flat(
+      buildWithOpts({
+        weightDense: 2,
+        weightFts: 0.5,
+        weightIdentifier: 3,
+        identifierUnitIds: ["unit-a"],
+      }).sql,
+    );
+    expect(f).toContain("2 * (1.0 / (60 + COALESCE(v.vrank, 1000)))");
+    expect(f).toContain("0.5 * (1.0 / (60 + COALESCE(t.trank, 1000)))");
+    expect(f).toContain("3 * (1.0 / (60 + COALESCE(i.identrank, 1000)))");
+  });
+
+  it("adds the lexical ts_ident branch when an identifier tsquery is given (Req 12.1)", () => {
+    const { sql, params } = buildWithOpts({ identifierTsQuery: "'WE01A' | 'DINEN10902'" });
+    const f = flat(sql);
+    expect(f).toContain("ts_ident @@ to_tsquery('simple', $");
+    expect(f).toContain("ts_rank(ts_ident, to_tsquery('simple', $");
+    expect(f).toContain("ident_ranked");
+    expect(f).toContain("COALESCE(v.id, t.id, i.id) AS id");
+    // Lexical-only: no exact unnest branch.
+    expect(f).not.toContain("WITH ORDINALITY");
+    // The tsquery is a bound parameter, never interpolated.
+    expect(params).toContain("'WE01A' | 'DINEN10902'");
+    expect(sql).not.toContain("WE01A");
+  });
+  it("unions exact vs_identifiers hits and ts_ident matches, keeping the best rank", () => {
+    const f = flat(
+      buildWithOpts({ identifierUnitIds: ["unit-a"], identifierTsQuery: "'WE01A'" }).sql,
+    );
+    expect(f).toContain("WITH ORDINALITY");
+    expect(f).toContain("ts_ident @@ to_tsquery('simple', $");
+    expect(f).toContain("UNION ALL");
+    expect(f).toContain("MIN(identrank)");
+    // One identifier term only, however many sources matched.
+    expect(f.match(/COALESCE\(i\.identrank, 1000\)/g)).toHaveLength(1);
+  });
+  it("omits the lexical branch for an empty/blank tsquery", () => {
+    for (const q of [null, "", "   "]) {
+      const f = flat(buildWithOpts({ identifierTsQuery: q }).sql);
+      expect(f).not.toContain("ts_ident");
+      expect(f).not.toContain("ident_ranked");
+    }
+  });
+  it("drops the weight multiplier when a weight is exactly 1.0 (unchanged ranking)", () => {
+    const f = flat(
+      buildWithOpts({ weightDense: 1, weightFts: 1, identifierUnitIds: [] }).sql,
+    );
+    expect(f).toContain("1.0 / (60 + COALESCE(v.vrank, 1000))");
+    expect(f).not.toContain("1 * (1.0 / (60 + COALESCE(v.vrank");
+  });
 });
 
 
@@ -526,5 +629,142 @@ describe("temporal version scope", () => {
       expect(built.sql).toContain("valid_from");
       expect(built.params).toContain(validAt);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// buildTemporalFilterSql — v2 revision visibility gate (task 1.13)
+// ---------------------------------------------------------------------------
+
+describe("buildTemporalFilterSql — revision visibility (task 1.13)", () => {
+  it("keeps the plain is_latest gate when no collection is given (legacy call sites)", async () => {
+    const { buildTemporalFilterSql } = await import("../src/query-builder.js");
+    const p = new SqlParams();
+    const sql = buildTemporalFilterSql(p, TABLE, false, undefined);
+    expect(flat(sql)).toBe(`AND "${TABLE}".is_latest = TRUE`);
+    // No pointer subquery, no extra params.
+    expect(sql).not.toContain("vs_document_revisions");
+    expect(p.values).toHaveLength(0);
+  });
+
+  it("emits the pointer-based predicate when a collection is given", async () => {
+    const { buildTemporalFilterSql } = await import("../src/query-builder.js");
+    const p = new SqlParams();
+    const sql = buildTemporalFilterSql(p, TABLE, false, undefined, "", "my_collection");
+    const f = flat(sql);
+    // Legacy rows gate on is_latest alone; v2 rows must also match the pointer.
+    expect(f).toContain("is_latest = TRUE");
+    expect(f).toContain("revision_id IS NULL OR");
+    expect(f).toContain("SELECT dr.current_revision_id FROM vs_document_revisions dr");
+    expect(f).toContain("dr.reference = ");
+    // The collection is bound as a parameter, not interpolated.
+    expect(p.values).toContain("my_collection");
+  });
+
+  it("does not add a version gate at all when includeAllVersions is set", async () => {
+    const { buildTemporalFilterSql } = await import("../src/query-builder.js");
+    const p = new SqlParams();
+    const sql = buildTemporalFilterSql(p, TABLE, true, undefined, "", "my_collection");
+    expect(sql).toBe("");
+    expect(p.values).toHaveLength(0);
+  });
+
+  it("threads the collection into buildDenseQuery so the pointer filter is applied", () => {
+    const { sql, params } = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      undefined,
+      aclScope("u1", ["g1"]),
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "my_collection",
+    );
+    expect(flat(sql)).toContain("vs_document_revisions dr");
+    expect(sql).toContain("revision_id"); // present in the SELECT list too
+    expect(params).toContain("my_collection");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// v2 unit-column filter (task 3.7, Requirement 13.3)
+// ---------------------------------------------------------------------------
+
+describe("v2 unit-column filter (UNIT_FILTER_V2)", () => {
+  const withUnit = (unit: UnitFilterV2): SearchFilter => {
+    const filter: SearchFilter = {};
+    (filter as SearchFilter & { [UNIT_FILTER_V2]?: UnitFilterV2 })[UNIT_FILTER_V2] = unit;
+    return filter;
+  };
+
+  const denseWith = (unit: UnitFilterV2) =>
+    buildDenseQuery(TABLE, VEC_TYPE, 10, withUnit(unit), false, 0, VECTOR_JSON);
+
+  it("filters unit_type as a parameterised equality on the real column", () => {
+    const { sql, params } = denseWith({ unitType: "figure" });
+    expect(sql).toContain("unit_type = $");
+    expect(params).toContain("figure");
+    // The value is never interpolated inline.
+    expect(sql).not.toContain("'figure'");
+  });
+
+  it("filters figure_kind on the real column", () => {
+    const { sql, params } = denseWith({ figureKind: "ui_mask" });
+    expect(sql).toContain("figure_kind = $");
+    expect(params).toContain("ui_mask");
+  });
+
+  it("filters a page range as an overlap on page_start/page_end", () => {
+    const { sql, params } = denseWith({ pageStart: 37, pageEnd: 38 });
+    const f = flat(sql);
+    expect(f).toContain("page_start IS NOT NULL AND page_end IS NOT NULL");
+    expect(f).toContain("page_start <= $");
+    expect(f).toContain("page_end >= $");
+    expect(params).toContain(37);
+    expect(params).toContain(38);
+  });
+
+  it("filters a section_path prefix with an array slice-equality", () => {
+    const { sql, params } = denseWith({ sectionPrefix: ["4 Wareneingang", "4.2 Anmeldung"] });
+    const f = flat(sql);
+    expect(f).toContain("section_path IS NOT NULL");
+    expect(f).toContain("array_length(section_path, 1) >= 2");
+    expect(f).toContain("section_path[1:2] = $");
+    expect(params).toContainEqual(["4 Wareneingang", "4.2 Anmeldung"]);
+  });
+
+  it("adds no unit predicate for an empty unit filter", () => {
+    const { sql } = denseWith({});
+    expect(sql).not.toContain("unit_type = $");
+    expect(sql).not.toContain("figure_kind = $");
+    expect(sql).not.toContain("section_path[");
+  });
+
+  it("applies the unit filter in every hybrid CTE (vec + txt)", () => {
+    const { sql } = buildHybridQuery(
+      TABLE, VEC_TYPE, 60, "german", 10, withUnit({ unitType: "table" }),
+      false, 4, 0, false, null, VECTOR_JSON, "kosten", undefined, undefined, null,
+    );
+    // The predicate must appear in both the dense and the fts candidate CTEs so
+    // neither list can smuggle in a filtered-out unit type.
+    const occurrences = (flat(sql).match(/unit_type = \$/g) ?? []).length;
+    expect(occurrences).toBeGreaterThanOrEqual(2);
+  });
+
+  it("composes with a metadata filter (both predicates present)", () => {
+    const filter: SearchFilter = { document_type: "spec" };
+    (filter as SearchFilter & { [UNIT_FILTER_V2]?: UnitFilterV2 })[UNIT_FILTER_V2] = {
+      unitType: "figure",
+    };
+    const { sql, params } = buildDenseQuery(TABLE, VEC_TYPE, 10, filter, false, 0, VECTOR_JSON);
+    expect(sql).toContain("metadata @>");
+    expect(sql).toContain("unit_type = $");
+    expect(params).toContain("figure");
   });
 });

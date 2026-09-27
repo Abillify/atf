@@ -80,6 +80,15 @@ export interface SummaryClient {
    * to the embedding input of all subsequent chunks.
    */
   summarize(text: string): Promise<SummaryResponse>;
+  /**
+   * Generate ONE short sentence placing `excerpt` within its document, given
+   * the surrounding `context` (title / section path / page summary). Used by
+   * the batch worker's CONTEXTUAL_CHUNK_LLM stage (Requirement 11.6) to enrich
+   * a chunk's contextual embedding header. Reuses the SUMMARY_* text-LLM — no
+   * separate endpoint. Same failure surface as {@link summarize}: on error the
+   * caller degrades to the header without the sentence.
+   */
+  placeInContext(excerpt: string, context: string): Promise<SummaryResponse>;
 }
 
 const DEFAULT_SYSTEM_PROMPT =
@@ -90,6 +99,20 @@ const DEFAULT_SYSTEM_PROMPT =
   "(e.g. a German document gets a German summary, an English document an " +
   "English summary). Detect the language from the document text itself, " +
   "not from these instructions.";
+
+/**
+ * System prompt for the CONTEXTUAL_CHUNK_LLM placement sentence (Req 11.6).
+ * Asks for exactly ONE short sentence situating the excerpt in the document,
+ * given the header context the user message carries. Language-following mirrors
+ * DEFAULT_SYSTEM_PROMPT so a German document gets a German sentence.
+ */
+const PLACEMENT_SYSTEM_PROMPT =
+  "You situate a short excerpt within its larger document for retrieval. " +
+  "Given the excerpt and its context (title, section, page summary), write " +
+  "EXACTLY ONE short sentence stating what this excerpt is about and where it " +
+  "sits in the document. Do not summarise the whole document, do not add " +
+  "meta-commentary, output only the sentence. Write it in the same language as " +
+  "the excerpt (a German excerpt gets a German sentence).";
 
 export function createSummaryClient(
   config: SummaryClientConfig,
@@ -143,7 +166,11 @@ export function createSummaryClient(
     }
   }
 
-  async function doSummarize(text: string): Promise<SummaryResponse> {
+  async function doSummarize(
+    text: string,
+    promptOverride?: string,
+  ): Promise<SummaryResponse> {
+    const activePrompt = promptOverride ?? systemPrompt;
     if (bedrockClient) {
       const controller = new AbortController();
       const timer =
@@ -154,7 +181,7 @@ export function createSummaryClient(
         const command = new ConverseCommand({
           modelId: model,
           messages: [{ role: "user", content: [{ text: text }] }],
-          system: systemPrompt ? [{ text: systemPrompt }] : undefined,
+          system: activePrompt ? [{ text: activePrompt }] : undefined,
           inferenceConfig: {
             maxTokens: maxTokens,
             temperature: 0.0,
@@ -173,7 +200,7 @@ export function createSummaryClient(
             },
           };
         }
-        const inputTokens = res.usage?.inputTokens ?? Math.ceil(text.length / 4) + Math.ceil(systemPrompt.length / 4);
+        const inputTokens = res.usage?.inputTokens ?? Math.ceil(text.length / 4) + Math.ceil(activePrompt.length / 4);
         const outputTokens = res.usage?.outputTokens ?? Math.ceil(text_result.length / 4);
         const cost = (inputTokens * inputTokenCost + outputTokens * outputTokenCost) / 1_000_000;
         recordUsage(inputTokens, outputTokens, cost, model);
@@ -220,7 +247,7 @@ export function createSummaryClient(
         body: JSON.stringify({
           model,
           messages: [
-            { role: "system", content: systemPrompt },
+            { role: "system", content: activePrompt },
             { role: "user", content: text },
           ],
           max_tokens: maxTokens,
@@ -292,7 +319,7 @@ export function createSummaryClient(
 
     let inputTokens = 0;
     let outputTokens = 0;
-    const estimatedInputTokens = Math.ceil(text.length / 4) + Math.ceil(systemPrompt.length / 4);
+    const estimatedInputTokens = Math.ceil(text.length / 4) + Math.ceil(activePrompt.length / 4);
     const estimatedOutputTokens = Math.ceil(text_result.length / 4);
     if (typeof data === "object" && data !== null && "usage" in data) {
       const usageObj = (data as { usage?: { prompt_tokens?: number; completion_tokens?: number } }).usage;
@@ -312,23 +339,37 @@ export function createSummaryClient(
     return { ok: true, result: text_result.trim(), usage: { inputTokens, outputTokens, cost } };
   }
 
+  async function run(
+    text: string,
+    promptOverride?: string,
+  ): Promise<SummaryResponse> {
+    await acquire();
+    try {
+      return await retryWithBackoff(
+        () => doSummarize(text, promptOverride),
+        (res) =>
+          !res.ok &&
+          (res.error.code === "SUMMARY_UNREACHABLE" ||
+            res.error.code === "SUMMARY_TIMEOUT"),
+        3,
+        100,
+        circuitBreaker,
+      );
+    } finally {
+      release();
+    }
+  }
+
   return {
-    async summarize(text: string): Promise<SummaryResponse> {
-      await acquire();
-      try {
-        return await retryWithBackoff(
-          () => doSummarize(text),
-          (res) =>
-            !res.ok &&
-            (res.error.code === "SUMMARY_UNREACHABLE" ||
-              res.error.code === "SUMMARY_TIMEOUT"),
-          3,
-          100,
-          circuitBreaker,
-        );
-      } finally {
-        release();
-      }
+    summarize(text: string): Promise<SummaryResponse> {
+      return run(text);
+    },
+    placeInContext(excerpt: string, context: string): Promise<SummaryResponse> {
+      // The context and the excerpt travel together in the user message so the
+      // model has the header context (title/section/summary) alongside the text.
+      const userMessage =
+        `Context:\n${context}\n\nExcerpt:\n${excerpt}`.trim();
+      return run(userMessage, PLACEMENT_SYSTEM_PROMPT);
     },
   };
 }

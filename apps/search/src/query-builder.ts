@@ -49,7 +49,12 @@
 
 import type { AccessScope } from "./access-scope.js";
 import type { SearchFilter, SearchCursor } from "./postgres-client.js";
-import { FILTER_V2, type FilterV2 } from "./metadata.js";
+import {
+  FILTER_V2,
+  type FilterV2,
+  UNIT_FILTER_V2,
+  type UnitFilterV2,
+} from "./metadata.js";
 
 // ─── SQL param accumulator ────────────────────────────────────────────────────
 // Assigns sequential $N placeholders so query builders never need to track
@@ -71,16 +76,45 @@ function temporalVersionKey(alias: string): string {
   return `COALESCE(${alias}.metadata->>'_atf_version_group', ${alias}.metadata->>'version', ${alias}.valid_from::text, ${alias}.created::text, regexp_replace(${alias}.reference, '_chunk_[0-9]+$', ''))`;
 }
 
-/** Build the same parameterized temporal scope for every retrieval branch. */
+/**
+ * Build the same parameterized temporal scope for every retrieval branch.
+ *
+ * The "latest only" predicate (no `validAt`) is the v2 revision-visibility gate
+ * (task 1.13): a row is visible iff
+ *   - it is a LEGACY row (revision_id IS NULL) that is is_latest = TRUE — v1
+ *     ingest and non-revision data keep working unchanged; OR
+ *   - it belongs to the revision the per-document pointer
+ *     (`vs_document_revisions`) currently names AND is is_latest = TRUE.
+ * The pointer is authoritative, so search never sees two revisions of one
+ * document at once (Requirement 6.5). The extra `is_latest = TRUE` gate on the
+ * pointer branch is what keeps a `progressive` partial revision visible only for
+ * its committed segments (Requirement 6.4): the revision store flips only those
+ * rows' is_latest to TRUE. `collection` is required to scope the pointer lookup;
+ * when omitted the plain is_latest predicate is used (legacy call sites / tests).
+ */
 export function buildTemporalFilterSql(
   p: SqlParams,
   table: string,
   includeAllVersions: boolean,
   validAt?: string,
   alias = "",
+  collection?: string,
 ): string {
   const row = alias ? alias : `"${table}"`;
-  if (!validAt) return includeAllVersions ? "" : ` AND ${row}.is_latest = TRUE`;
+  if (!validAt) {
+    if (includeAllVersions) return "";
+    if (!collection) return ` AND ${row}.is_latest = TRUE`;
+    const collPh = p.add(collection);
+    // Legacy rows gate on is_latest alone; v2 rows must additionally match the
+    // document's current-revision pointer so two revisions are never both visible.
+    return (
+      ` AND ${row}.is_latest = TRUE` +
+      ` AND (${row}.revision_id IS NULL OR ${row}.revision_id = (` +
+      `SELECT dr.current_revision_id FROM vs_document_revisions dr` +
+      ` WHERE dr.tenant_id = ${row}.tenant_id AND dr.collection = ${collPh}` +
+      ` AND dr.reference = ${row}.document_id))`
+    );
+  }
   const validAtPh = p.add(validAt);
   const effective = `COALESCE(${row}.valid_from, ${row}.created)`;
   if (includeAllVersions) return ` AND ${effective} <= ${validAtPh}::timestamptz`;
@@ -106,11 +140,13 @@ function buildFilterSql(
   if (!filter) return "";
   const legacy = Object.fromEntries(Object.entries(filter));
   const filterV2 = (filter as SearchFilter & { [FILTER_V2]?: FilterV2 })[FILTER_V2];
-  if (Object.keys(legacy).length === 0 && !filterV2) return "";
+  const unitFilter = (filter as SearchFilter & { [UNIT_FILTER_V2]?: UnitFilterV2 })[UNIT_FILTER_V2];
+  const unitSql = buildUnitFilterSql(p, unitFilter);
+  if (Object.keys(legacy).length === 0 && !filterV2) return unitSql;
   let sql = Object.keys(legacy).length > 0
     ? ` AND metadata @> ${p.add(JSON.stringify(legacy))}`
     : "";
-  if (!filterV2) return sql;
+  if (!filterV2) return sql + unitSql;
   const path = (field: string): string => `{${field}}`;
   for (const [field, value] of Object.entries(filterV2.eq ?? {})) {
     sql += ` AND metadata #> ${p.add(path(field))} = ${p.add(JSON.stringify(value))}::jsonb`;
@@ -128,6 +164,64 @@ function buildFilterSql(
         ? ` AND CASE WHEN (${textExpr}) ~ '^-?[0-9]+(?:\\.[0-9]+)?$' THEN (${textExpr})::numeric ${sqlOperator} ${p.add(value)}::numeric ELSE FALSE END`
         : ` AND (${textExpr}) ${sqlOperator} ${p.add(value)}`;
     }
+  }
+  return sql + unitSql;
+}
+
+/**
+ * v2 unit-column filter (task 3.7, Requirement 13.3). Emits index-backed
+ * predicates on the REAL unit columns (task 1.8) rather than the metadata JSON:
+ *
+ *   unit_type    — exact match
+ *   figure_kind  — exact match
+ *   pageStart/End— page-range OVERLAP: a unit whose [page_start, page_end]
+ *                  intersects the requested [pageStart, pageEnd]. A one-sided
+ *                  bound (only start, or only end) is treated as an open range.
+ *   sectionPrefix— `section_path` array-prefix match: the unit's section_path
+ *                  begins with the given path (so "4 / 4.2" matches
+ *                  "4 / 4.2 / 4.2.1" and "4 / 4.2"). Uses the slice-equality
+ *                  `section_path[1:n] = prefix`, which the GIN/array indexes and
+ *                  the planner handle; the length guard avoids matching a
+ *                  shorter path.
+ *
+ * Column names are unqualified because every caller (dense/fts/hybrid CTEs and
+ * the base-ref branch) evaluates this against the base table with no alias.
+ * Inputs are parameterised; nothing here is interpolated.
+ */
+function buildUnitFilterSql(
+  p: SqlParams,
+  unit: UnitFilterV2 | undefined,
+): string {
+  if (!unit) return "";
+  let sql = "";
+  if (unit.unitType !== undefined) {
+    sql += ` AND unit_type = ${p.add(unit.unitType)}`;
+  }
+  if (unit.figureKind !== undefined) {
+    sql += ` AND figure_kind = ${p.add(unit.figureKind)}`;
+  }
+  // Page-range overlap. Only units that actually carry a page range participate;
+  // a unit with NULL pages never matches a page filter (it has no page to be on).
+  if (unit.pageStart !== undefined || unit.pageEnd !== undefined) {
+    sql += ` AND page_start IS NOT NULL AND page_end IS NOT NULL`;
+    if (unit.pageEnd !== undefined) {
+      sql += ` AND page_start <= ${p.add(unit.pageEnd)}`;
+    }
+    if (unit.pageStart !== undefined) {
+      sql += ` AND page_end >= ${p.add(unit.pageStart)}`;
+    }
+  }
+  if (Array.isArray(unit.sectionPrefix) && unit.sectionPrefix.length > 0) {
+    // `n` is section_path.length — a trusted small integer computed here, never
+    // user text — so it is safe to interpolate as the array-slice upper bound
+    // (PostgreSQL does not accept a bind parameter for a slice bound).
+    const n = Math.max(1, Math.floor(unit.sectionPrefix.length));
+    // section_path is a 1-based TEXT[]; compare its first n elements to the
+    // prefix, requiring the path to be at least that long.
+    sql +=
+      ` AND section_path IS NOT NULL` +
+      ` AND array_length(section_path, 1) >= ${n}` +
+      ` AND section_path[1:${n}] = ${p.add(unit.sectionPrefix)}::text[]`;
   }
   return sql;
 }
@@ -330,10 +424,11 @@ export function buildDenseQuery(
   cursor?: SearchCursor,
   pathLike?: string,
   validAt?: string,
+  collection?: string,
 ): { sql: string; params: unknown[] } {
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
@@ -362,6 +457,7 @@ export function buildDenseQuery(
         created,
         modified,
         valid_from,
+        revision_id,
         COALESCE(valid_from, created) AS effective_valid_from,
         1 - (vector <=> ${vecPh}::${vecType}) AS vector_similarity,
         NULL::float8                           AS text_score,
@@ -398,6 +494,7 @@ export function buildBinaryDenseQuery(
   cursor?: SearchCursor,
   pathLike?: string,
   validAt?: string,
+  collection?: string,
 ): { sql: string; params: unknown[] } {
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
@@ -410,7 +507,7 @@ export function buildBinaryDenseQuery(
     4000,
   );
   const candPh = p.add(candidateLimit);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
@@ -452,6 +549,7 @@ export function buildBinaryDenseQuery(
         d.created,
         d.modified,
         d.valid_from,
+        d.revision_id,
         COALESCE(d.valid_from, d.created) AS effective_valid_from,
         1 - (d.vector <=> ${vecPh}::${vecType}) AS vector_similarity,
         NULL::float8                             AS text_score,
@@ -486,12 +584,13 @@ export function buildFtsQuery(
   baseRef?: string,
   pathLike?: string,
   validAt?: string,
+  collection?: string,
 ): { sql: string; params: unknown[] } {
   // ── baseRef-only branch: skip FTS entirely, filter by base_ref column directly ──
   // Uses a fresh SqlParams so $1 is never an untyped query-text parameter.
   if (baseRef) {
     const p2 = new SqlParams();
-    const temporalFilter2 = buildTemporalFilterSql(p2, table, includeAllVersions, validAt);
+    const temporalFilter2 = buildTemporalFilterSql(p2, table, includeAllVersions, validAt, "", collection);
     const filterSql2 = buildFilterSql(p2, filter);
     const pathSql2 = buildPathPrefixSql(p2, pathLike);
     const tagsSql2 = buildTagsSql(p2, tags);
@@ -526,6 +625,7 @@ export function buildFtsQuery(
           created,
           modified,
           valid_from,
+          revision_id,
           COALESCE(valid_from, created) AS effective_valid_from,
           NULL::float8 AS vector_similarity,
           1.0::float8  AS text_score,
@@ -542,7 +642,7 @@ export function buildFtsQuery(
 
   const p = new SqlParams();
   const queryPh = p.add(queryText);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
@@ -570,6 +670,7 @@ export function buildFtsQuery(
         created,
         modified,
         valid_from,
+        revision_id,
         COALESCE(valid_from, created) AS effective_valid_from,
         NULL::float8                                                          AS vector_similarity,
         ts_rank(ts_search, websearch_to_tsquery('${language}', ${queryPh}))  AS text_score,
@@ -584,7 +685,36 @@ export function buildFtsQuery(
   };
 }
 
-/** Hybrid search: RRF over dense + full-text + optional SPLADE sparse. */
+/**
+ * Configurable per-list RRF weights and the optional identifier list (task 3.4,
+ * Requirement 12.3).
+ *
+ * `weightDense`/`weightFts`/`weightIdentifier` scale each list's
+ * `1/(rrfK + rank)` reciprocal-rank contribution; all default to 1.0 so an
+ * unweighted call ranks EXACTLY as before. `identifierUnitIds` are the unit ids
+ * the query's recognised identifier(s) resolved to (an exact lookup against
+ * `vs_identifiers`); when non-empty they form a THIRD ranked list fused into the
+ * RRF. When empty/omitted the identifier branch is not emitted at all, so a
+ * query with no identifier produces the same SQL as before.
+ */
+export interface HybridRrfOptions {
+  weightDense?: number;
+  weightFts?: number;
+  weightIdentifier?: number;
+  /** Unit ids matched by the query's identifiers, in exact-match (best-first) order. */
+  identifierUnitIds?: string[];
+  /**
+   * Lexical identifier match (Requirement 12.1): a `to_tsquery('simple', …)`
+   * text (see `buildIdentifierTsQuery` in identifier.ts) matched against the
+   * unit's `ts_ident` vector. When set, rows whose `ts_ident @@ tsquery` join
+   * the identifier list alongside the `vs_identifiers` exact hits; a row found
+   * by both keeps its BEST (lowest) rank — i.e. the union with max reciprocal
+   * rank. Omitted/empty → no lexical branch.
+   */
+  identifierTsQuery?: string | null;
+}
+
+/** Hybrid search: RRF over dense + full-text + optional SPLADE sparse + optional identifier list. */
 export function buildHybridQuery(
   table: string,
   vecType: string,
@@ -608,6 +738,8 @@ export function buildHybridQuery(
   cursor?: SearchCursor,
   pathLike?: string,
   validAt?: string,
+  collection?: string,
+  rrfOptions?: HybridRrfOptions,
 ): { sql: string; params: unknown[] } {
   // RRF ranks are POOL-RELATIVE: a document's rrf_score depends on which other
   // documents are in the candidate set. Filtering the pool by a cursor changes
@@ -654,7 +786,43 @@ export function buildHybridQuery(
 
   const limitPh = p.add(limit);
   const offsetPh = p.add(offset);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt);
+  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
+
+  // Per-list RRF weights (task 3.4, Req 12.3). Defaults are 1.0, which makes the
+  // weighted terms identical to the previous unweighted ones — a no-identifier,
+  // default-weight call is byte-for-byte the same ranking as before. The weights
+  // are numeric config (not user input); sanitise to a finite positive float and
+  // render as a literal because they multiply an interpolated arithmetic term.
+  const weightLit = (w: number | undefined, fallback = 1.0): string => {
+    const v = typeof w === "number" && Number.isFinite(w) && w > 0 ? w : fallback;
+    // A plain decimal literal; no exponent/NaN/Infinity can reach the SQL.
+    return v.toString();
+  };
+  const wDense = weightLit(rrfOptions?.weightDense);
+  const wFts = weightLit(rrfOptions?.weightFts);
+  const wIdent = weightLit(rrfOptions?.weightIdentifier);
+
+  // Render a weighted reciprocal-rank term. When the weight is exactly 1.0 the
+  // multiplier is omitted so a default-weight call emits the identical SQL text
+  // it did before this change (regression guard) — `1 * x` and `x` rank the same
+  // but only the bare form is byte-for-byte unchanged.
+  const rrfTerm = (weight: string, rankExpr: string): string =>
+    weight === "1" ? `(1.0 / (${rankExpr}))` : `(${weight} * (1.0 / (${rankExpr})))`;
+
+  // Identifier list (Req 12.3): only when the query resolved to at least one
+  // unit id. Empty/omitted → no ident CTE, no join, no term, so the emitted SQL
+  // is exactly the previous dense+fts(+sparse) query. The unit ids arrive in
+  // best-first order; we carry that order as the exact-match rank.
+  const identUnitIds = rrfOptions?.identifierUnitIds ?? [];
+  const identTsQuery =
+    typeof rrfOptions?.identifierTsQuery === "string" && rrfOptions.identifierTsQuery.trim() !== ""
+      ? rrfOptions.identifierTsQuery
+      : null;
+  const hasExactIdent = identUnitIds.length > 0;
+  const hasLexIdent = identTsQuery !== null;
+  const hasIdent = hasExactIdent || hasLexIdent;
+  const identPh = hasExactIdent ? p.add(identUnitIds) : null;
+  const identTsPh = hasLexIdent ? p.add(identTsQuery) : null;
 
   // language is validated via ALLOWED_FTS_LANGUAGES; PostgreSQL does not support
   // regconfig as a bind parameter, so string interpolation is intentional here.
@@ -675,8 +843,12 @@ export function buildHybridQuery(
     ),`
       : "";
 
+  // The fused key is the coalesce of every participating list's id. Sparse and
+  // identifier both LEFT JOIN onto it, so their key must include the ident id
+  // when the ident branch is present.
+  const fusedId = hasIdent ? `COALESCE(v.id, t.id, i.id)` : `COALESCE(v.id, t.id)`;
   const sprJoin = sparsePh
-    ? `\n        LEFT JOIN spr_ranked spr ON spr.id = COALESCE(v.id, t.id)`
+    ? `\n        LEFT JOIN spr_ranked spr ON spr.id = ${fusedId}`
     : "";
   const sprRrf = sparsePh
     ? `+ (1.0 / (${rrfK} + COALESCE(spr.sprrank, 1000)))`
@@ -684,6 +856,64 @@ export function buildHybridQuery(
   const sprScore = sparsePh
     ? `COALESCE(spr.sprscore, 0) AS sparse_score,`
     : `NULL::float8 AS sparse_score,`;
+
+  // ── Identifier list (Req 12.3) ──────────────────────────────────────────────
+  // Resolve the matched unit ids to row ids through the SAME visibility/ACL/
+  // filter predicates the other lists use, so an identifier hit can never leak a
+  // row a dense/fts hit would be denied. The exact-match rank is the position in
+  // the caller-supplied ordered array (WITH ORDINALITY), so the best exact match
+  // gets rank 1 and the strongest reciprocal-rank contribution.
+  //
+  // The lexical branch (Req 12.1) matches `ts_ident` (the `simple`-config
+  // identifier vector written at ingest) against the normalized query
+  // identifiers, ranked by ts_rank and bounded by the same candidate pool size
+  // as the other lists. It is UNION-ed with the exact branch and each row keeps
+  // its best (MIN) rank, so an identifier found by either source contributes
+  // one reciprocal-rank term — never two.
+  //
+  // The exact branch joins the collection table WITHOUT an alias: the shared
+  // temporal/visibility filter qualifies columns with the table name, which an
+  // alias would hide ("invalid reference to FROM-clause entry"). The unnest
+  // column is named `ident_unit_id` so an unqualified `unit_id` in the shared
+  // filters stays unambiguous.
+  const identExactSelect = hasExactIdent
+    ? `
+      SELECT "${table}".id, u.ord AS identrank
+      FROM unnest(${identPh}::text[]) WITH ORDINALITY AS u(ident_unit_id, ord)
+      JOIN "${table}" ON "${table}".unit_id = u.ident_unit_id
+      WHERE TRUE${temporalFilter}${filterSql}${extraSql}`
+    : "";
+  const identLexSelect = hasLexIdent
+    ? `
+      SELECT id, ROW_NUMBER() OVER (ORDER BY lscore DESC, id ASC) AS identrank
+      FROM (
+        SELECT id, ts_rank(ts_ident, to_tsquery('simple', ${identTsPh})) AS lscore
+        FROM "${table}"
+        WHERE TRUE${temporalFilter}${filterSql}${extraSql}
+          AND ts_ident @@ to_tsquery('simple', ${identTsPh})
+        ORDER BY lscore DESC, id ASC
+        LIMIT ${candPh}
+      ) ident_lex`
+    : "";
+  const identUnion = [identExactSelect, identLexSelect]
+    .filter((s) => s !== "")
+    .join("\n      UNION ALL");
+  const identCTE = hasIdent
+    ? `
+    ident AS (${identUnion}
+    ),
+    ident_ranked AS (
+      SELECT id, MIN(identrank) AS identrank
+      FROM ident
+      GROUP BY id
+    ),`
+    : "";
+  const identJoin = hasIdent
+    ? `\n        FULL OUTER JOIN ident_ranked i ON i.id = COALESCE(v.id, t.id)`
+    : "";
+  const identRrf = hasIdent
+    ? `+ ${rrfTerm(wIdent, `${rrfK} + COALESCE(i.identrank, 1000)`)}`
+    : "";
 
   const binCTE =
     binPh && binaryDim
@@ -718,6 +948,7 @@ export function buildHybridQuery(
         LIMIT ${candPh}
       ),
       ${sparseCTE}
+      ${identCTE}
       vec_ranked AS (
         SELECT id, vscore, ROW_NUMBER() OVER (ORDER BY vscore DESC) AS vrank
         FROM vec
@@ -728,15 +959,17 @@ export function buildHybridQuery(
       ),
       rrf AS (
         SELECT
-          COALESCE(v.id, t.id) AS id,
+          ${fusedId} AS id,
           COALESCE(v.vscore, 0) AS vector_similarity,
           COALESCE(t.tscore, 0) AS text_score,
           ${sprScore}
-          (1.0 / (${rrfK} + COALESCE(v.vrank, 1000))) +
-          (1.0 / (${rrfK} + COALESCE(t.trank, 1000)))
-          ${sprRrf} AS rrf_score
+          ${rrfTerm(wDense, `${rrfK} + COALESCE(v.vrank, 1000)`)} +
+          ${rrfTerm(wFts, `${rrfK} + COALESCE(t.trank, 1000)`)}
+          ${sprRrf}
+          ${identRrf} AS rrf_score
         FROM vec_ranked v
         FULL OUTER JOIN txt_ranked t ON v.id = t.id
+        ${identJoin}
         ${sprJoin}
       )
       SELECT
@@ -754,6 +987,7 @@ export function buildHybridQuery(
         d.created,
         d.modified,
         d.valid_from,
+        d.revision_id,
         COALESCE(d.valid_from, d.created) AS effective_valid_from,
         r.vector_similarity,
         r.text_score,

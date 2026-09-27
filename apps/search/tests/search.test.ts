@@ -57,6 +57,7 @@ function createMockPostgresClient(responses: {
       .fn()
       .mockReturnValue({ ingestTotal: 0, searchTotal: 0, flushErrors: 0 }),
     recordSearchStat: vi.fn(),
+    expandUnit: vi.fn().mockResolvedValue({ ok: true, result: [] }),
   } as unknown as PostgresClient;
 }
 
@@ -753,5 +754,155 @@ describe("Property: X-Max-Results clamping", () => {
       postgresClient.search as ReturnType<typeof vi.fn>
     ).mock.calls[0];
     expect(actualLimit).toBe(10);
+  });
+});
+
+// ─── Small-to-big expansion wiring (task 3.6, Requirement 13.4) ────────────────
+
+describe("search handler — X-Expand / X-Budget-Chars", () => {
+  const hitResult: SearchResult = {
+    id: "1",
+    score: 0.9,
+    content: "the hit chunk",
+    metadata: {
+      unit_id: "u-hit",
+      section_id: "sec-1",
+      prev_unit_id: "u-prev",
+      next_unit_id: "u-next",
+      page_start: 3,
+      page_end: 3,
+    },
+    reference: "doc-1_chunk_1",
+    base_ref: "doc-1",
+    created: new Date(),
+    modified: new Date(),
+  } as unknown as SearchResult;
+
+  it("returns HTTP 400 for an invalid X-Expand value", async () => {
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      createMockPostgresClient({ search: { ok: true, result: [hitResult] } }),
+      logger,
+    );
+    const res = mockRes();
+    await handler(
+      mockReq("q", { "x-expand": "document" }) as never,
+      res as never,
+      vi.fn(),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({ error: expect.stringContaining("X-Expand") });
+  });
+
+  it("returns HTTP 400 for a malformed X-Budget-Chars value", async () => {
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      createMockPostgresClient({ search: { ok: true, result: [hitResult] } }),
+      logger,
+    );
+    const res = mockRes();
+    await handler(
+      mockReq("q", { "x-expand": "section", "x-budget-chars": "-5" }) as never,
+      res as never,
+      vi.fn(),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toMatchObject({
+      error: expect.stringContaining("X-Budget-Chars"),
+    });
+  });
+
+  it("does not call expandUnit and attaches no `expanded` when X-Expand is absent (v1 unchanged)", async () => {
+    const postgresClient = createMockPostgresClient({
+      search: { ok: true, result: [hitResult] },
+    });
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      postgresClient,
+      logger,
+    );
+    const res = mockRes();
+    await handler(mockReq("q") as never, res as never, vi.fn());
+    expect(res.statusCode).toBe(200);
+    expect((postgresClient.expandUnit as ReturnType<typeof vi.fn>)).not.toHaveBeenCalled();
+    const body = res.body as { results: Array<Record<string, unknown>> };
+    expect(body.results[0]).not.toHaveProperty("expanded");
+  });
+
+  it("attaches an `expanded` field with truncated flag when X-Expand=section", async () => {
+    const postgresClient = createMockPostgresClient({
+      search: { ok: true, result: [hitResult] },
+    });
+    // Section returns the hit plus two siblings; the hit is deduped.
+    (postgresClient.expandUnit as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      result: [
+        { unit_id: "u-a", content: "para A", page_start: 3, page_end: 3 },
+        { unit_id: "u-hit", content: "the hit chunk", page_start: 3, page_end: 3 },
+        { unit_id: "u-b", content: "para B", page_start: 3, page_end: 3 },
+      ],
+    });
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      postgresClient,
+      logger,
+    );
+    const res = mockRes();
+    await handler(
+      mockReq("q", { "x-expand": "section", "x-budget-chars": "1000" }) as never,
+      res as never,
+      vi.fn(),
+    );
+    expect(res.statusCode).toBe(200);
+
+    const expandCall = (postgresClient.expandUnit as ReturnType<typeof vi.fn>).mock
+      .calls[0];
+    // (collection, scope, mode, coords, options)
+    expect(expandCall[2]).toBe("section");
+    expect(expandCall[3]).toMatchObject({
+      baseRef: "doc-1",
+      unitId: "u-hit",
+      sectionId: "sec-1",
+    });
+
+    const body = res.body as {
+      results: Array<{ expanded?: { content: string; truncated: boolean; mode: string } }>;
+    };
+    const expanded = body.results[0].expanded;
+    expect(expanded).toBeDefined();
+    expect(expanded?.mode).toBe("section");
+    expect(expanded?.content).toBe("para A\n\npara B");
+    expect(expanded?.truncated).toBe(false);
+  });
+
+  it("reports truncated=true when the budget drops units", async () => {
+    const postgresClient = createMockPostgresClient({
+      search: { ok: true, result: [hitResult] },
+    });
+    (postgresClient.expandUnit as ReturnType<typeof vi.fn>).mockResolvedValue({
+      ok: true,
+      result: [
+        { unit_id: "u-a", content: "AAAA", page_start: 3, page_end: 3 },
+        { unit_id: "u-b", content: "BBBB", page_start: 3, page_end: 3 },
+      ],
+    });
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      postgresClient,
+      logger,
+    );
+    const res = mockRes();
+    await handler(
+      mockReq("q", { "x-expand": "neighbors", "x-budget-chars": "4" }) as never,
+      res as never,
+      vi.fn(),
+    );
+    expect(res.statusCode).toBe(200);
+    const body = res.body as {
+      results: Array<{ expanded?: { content: string; truncated: boolean } }>;
+    };
+    const expanded = body.results[0].expanded;
+    expect(expanded?.content).toBe("AAAA");
+    expect(expanded?.truncated).toBe(true);
   });
 });

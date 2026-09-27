@@ -51,12 +51,19 @@ import { runMigrations } from "./migrations.js";
 import { createCircuitBreaker } from "./retry.js";
 import { createIngestHandler } from "./handlers/ingest.js";
 import { createIngestBatchHandler } from "./handlers/ingest-batch.js";
+import { createRevisionHandlers } from "./handlers/revisions.js";
+import { createRevisionStore } from "./revision-store.js";
+import { createRevisionTtlCleaner } from "./revision-ttl-cleaner.js";
+import { createBatchWorker } from "./batch-worker.js";
+import { createTokenCounter } from "./token-counter.js";
+import { Pool as PgPool } from "pg";
 import { createIngestStreamHandler } from "./handlers/ingest-stream.js";
 import {
   CONVERTIBLE_MIME_TYPES,
   createIngestFileHandler,
 } from "./handlers/ingest-file.js";
 import { createSearchHandler } from "./handlers/search.js";
+import { createSearchV2Handler } from "./handlers/search-v2.js";
 import { createDeleteHandler } from "./handlers/delete.js";
 import {
   createAdminStatsHandler,
@@ -69,6 +76,13 @@ import { createRetrievalEvaluationHandler } from "./handlers/evaluation.js";
 import { HttpMetrics } from "./http-metrics.js";
 import { createMcpHandlers, createMcp2026Handlers } from "./handlers/mcp.js";
 import { createQueryHandlers } from "./handlers/query.js";
+import {
+  createV2AssetHandlers,
+  V2_ASSET_MIME_TYPES,
+  MAX_V2_ASSET_BYTES,
+} from "./handlers/v2-assets.js";
+import { createAssetStore } from "./asset-store.js";
+import { createRenderCache } from "./render-cache.js";
 import {
   createGetDocumentAssetHandler,
   createPutDocumentAssetHandler,
@@ -544,6 +558,31 @@ export function createApp(
       queryCache,
     },
   );
+  // Token counter (task 3.1) used by the full multi-level unit builder to size
+  // text chunks to 350–500 tokens and split oversize tables (Req 11.2 / 11.3),
+  // and by /v2/search to fit rerank inputs into the reranker's token budget.
+  // Degrades to a character heuristic when TEI /tokenize is unavailable.
+  // Created before the v2 search handler so both share one instance/cache.
+  const unitTokenCounter = createTokenCounter({
+    tokenizeUrl: config.tokenizeUrl ?? "",
+    enabled: config.tokenizeEnabled,
+    logger,
+    timeoutMs: config.tokenizeTimeoutMs,
+    cacheSize: config.tokenizeCacheSize,
+  });
+  const searchV2Handler = createSearchV2Handler(
+    embeddingClient,
+    postgresClient,
+    logger,
+    {
+      rerankerClient,
+      candidateMultiplier: config.rerankCandidateMultiplier,
+      hybridSearch: config.hybridSearch,
+      sparseClient,
+      queryCache,
+      tokenCounter: unitTokenCounter,
+    },
+  );
   const deleteHandler = createDeleteHandler(postgresClient, logger);
   const adminStatsHandler = createAdminStatsHandler(postgresClient, logger);
   const healthHandler = createHealthHandler(
@@ -579,6 +618,107 @@ export function createApp(
   });
   const putDocumentAssetHandler = createPutDocumentAssetHandler(postgresClient, logger);
   const getDocumentAssetHandler = createGetDocumentAssetHandler(postgresClient, logger);
+
+  // ── v2 revision API (design §6.1, task 1.9) ───────────────────────────────
+  // A dedicated pool for the revision staging tables keeps the revision store
+  // self-contained (it owns its queries) while sharing the same database. The
+  // TTL cleaner reaps uncommitted, expired revisions in the background.
+  const revisionPool = new PgPool({
+    connectionString: config.postgresUrl,
+    max: 4,
+    idleTimeoutMillis: 30_000,
+    connectionTimeoutMillis: 2_000,
+  });
+  revisionPool.on("error", (err) => {
+    logger.error({ err }, "Unexpected idle revision pool client error");
+  });
+  const revisionStore = createRevisionStore(revisionPool);
+  const revisionHandlers = createRevisionHandlers(revisionStore, {
+    revisionTtlMs: config.revisionTtlMs,
+    logger,
+  });
+
+  // ── v2 asset API + AssetStore (design §6.5, task 1.11) ────────────────────
+  // Reuses the revision pool (vs_assets lives with the staging tables). The
+  // backend is postgres (BYTEA) by default or a filesystem volume; derived
+  // thumb/preview variants are generated on PUT so a GET is a pure read.
+  const assetStore = createAssetStore(revisionPool, {
+    backend: config.assetStoreBackend,
+    dir: config.assetStoreDir,
+  });
+  const v2AssetHandlers = createV2AssetHandlers(assetStore, logger);
+
+  // ── Zoom / full-resolution render-and-cache (task 3.8) ────────────────────
+  // The Search-side capability that, given an asset + region/full + target
+  // pixels, returns the cached-or-rendered bytes: it reads the derived asset
+  // (ACL-enforced) and, on a miss, has Extract render it via POST /v2/render and
+  // caches the PNG as a `tile`/`page` asset variant (design §9a.1, Req 6.8,
+  // 14.4). Only available when CONVERTER_URL is configured — Search carries no
+  // poppler and must reach Extract to render. Task 3.9's MCP `get_asset(region)`
+  // tool calls `renderCache.getOrRender`.
+  const renderCache =
+    config.converter !== null
+      ? createRenderCache({ converter: config.converter, assetStore, logger })
+      : null;
+  const revisionTtlCleaner = createRevisionTtlCleaner(revisionStore, {
+    intervalMs: config.revisionTtlSweepMs,
+    logger,
+  });
+
+  // ── v2 batch-processing worker (design §9b.3, task 1.10) ──────────────────
+  // Turns staged NDJSON batches into embedded, upserted index units. Shares the
+  // revision pool (same staging tables). The loop is opt-in (BATCH_WORKER); the
+  // worker is always constructed so tests can drive it via tick(). intervalMs=0
+  // when disabled leaves the loop off but keeps tick() available.
+  // Batch metrics (Requirement 18.1): every tick feeds
+  // vectorsearch_batch_ticks_total / _duration_seconds / _units_total; the
+  // backlog gauge (staged batches in 'received' / 'processing') is refreshed
+  // from the tick observer, throttled so an idle 2 s poll does not add a count
+  // query per tick. A failed backlog read keeps the previous gauge value.
+  const BATCH_BACKLOG_REFRESH_MS = 15_000;
+  let batchBacklogRefreshedAt = 0;
+  let batchBacklogInFlight = false;
+  async function refreshBatchBacklog(): Promise<void> {
+    const now = Date.now();
+    if (batchBacklogInFlight || now - batchBacklogRefreshedAt < BATCH_BACKLOG_REFRESH_MS) return;
+    batchBacklogInFlight = true;
+    batchBacklogRefreshedAt = now;
+    try {
+      const res = await revisionPool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM vs_ingest_batches
+          WHERE status IN ('received', 'processing')`,
+      );
+      httpMetrics.setBatchBacklog(Number(res.rows[0]?.n ?? 0));
+    } catch (err) {
+      logger.debug({ err }, "Batch backlog gauge refresh failed");
+    } finally {
+      batchBacklogInFlight = false;
+    }
+  }
+  const batchWorker = createBatchWorker(revisionPool, embeddingClient, {
+    onTick: (outcome, durationMs) => {
+      httpMetrics.recordBatchTick({
+        outcome: outcome.kind,
+        durationMs,
+        ...(outcome.kind === "processed" ? { units: outcome.units } : {}),
+      });
+      // Not awaited: the gauge refresh must never delay the worker loop.
+      void refreshBatchBacklog();
+    },
+    intervalMs: config.batchWorkerEnabled ? config.batchWorkerIntervalMs : 0,
+    backoffMs: config.batchWorkerBackoffMs,
+    tokenCounter: unitTokenCounter,
+    vecType: config.halfPrecision ? "halfvec" : "vector",
+    // Contextual embedding header (task 3.3, Req 11.4/11.6): prepend a small
+    // per-unit context (title/section/pages/type/page-summary) to each
+    // chunk/table/figure embed input, capped at a fraction of the chunk budget.
+    // The optional per-chunk placement sentence reuses the SUMMARY_* text-LLM;
+    // it is OFF by default and only active when a summary client is configured.
+    contextHeaderMaxFraction: config.contextHeaderMaxFraction,
+    ...(summaryClient ? { summaryClient } : {}),
+    contextualChunkLlm: config.contextualChunkLlm,
+    logger,
+  });
 
   // MCP (Model Context Protocol) — Streamable HTTP transport.
   // Three routes on the same path, distinguished by HTTP method.
@@ -619,6 +759,11 @@ export function createApp(
     serviceVersion: config.mcpServiceVersion,
     embeddingModel: config.embedModel,
     embeddingModelRevision: config.embedModelRevision,
+    // Navigation tools (task 3.9): get_asset variant reads via the AssetStore
+    // and its optional region zoom via the render-cache (null when Extract is
+    // not configured, disabling the zoom path only).
+    assetStore,
+    renderCache,
     transactionConfig: {
       enforcement: config.transactionEnforcement,
       secret: config.transactionSecret,
@@ -834,6 +979,106 @@ export function createApp(
     getDocumentAssetHandler,
   );
 
+  // ── v2 revision routes ────────────────────────────────────────────────────
+  // Mounted behind the SAME auth / scope / tenant / collection-ACL chain as
+  // /ingest: authMiddleware → authorize(read|write) → collectionAccessHeader
+  // (resolves the collection from X-Collection and loads its ACL into
+  // res.locals). The document reference is the URL-encoded :ref path param.
+  app.post(
+    "/v2/documents/:ref/revisions",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessHeader,
+    revisionHandlers.create,
+  );
+  app.put(
+    "/v2/documents/:ref/revisions/:rev/batches/:seq",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessHeader,
+    express.raw({
+      type: () => true,
+      limit: config.revisionBatchBodyLimit,
+    }),
+    revisionHandlers.putBatch,
+  );
+  app.get(
+    "/v2/documents/:ref/revisions/:rev",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessHeader,
+    revisionHandlers.getState,
+  );
+  app.post(
+    "/v2/documents/:ref/revisions/:rev/segments/:n/commit",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessHeader,
+    revisionHandlers.commitSegment,
+  );
+  app.post(
+    "/v2/documents/:ref/revisions/:rev/commit",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessHeader,
+    revisionHandlers.commit,
+  );
+  app.post(
+    "/v2/documents/:ref/revisions/:rev/heartbeat",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessHeader,
+    revisionHandlers.heartbeat,
+  );
+  app.delete(
+    "/v2/documents/:ref/revisions/:rev",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeDelete,
+    collectionAccessHeader,
+    revisionHandlers.abort,
+  );
+
+  // ── v2 asset routes (design §6.5, task 1.11) ──────────────────────────────
+  // PUT gated on write scope; GET/HEAD on read scope. The collection is resolved
+  // from ?collection= or X-Collection (collectionAccessAsset), its ACL is loaded
+  // into res.locals, and the AssetStore enforces the asset's revision row ACL on
+  // read (Requirement 14.5).
+  app.put(
+    "/v2/assets/:assetId",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessAsset,
+    express.raw({
+      type: [...V2_ASSET_MIME_TYPES],
+      limit: MAX_V2_ASSET_BYTES,
+    }),
+    v2AssetHandlers.put,
+  );
+  app.get(
+    "/v2/assets/:assetId",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessAsset,
+    v2AssetHandlers.get,
+  );
+  app.head(
+    "/v2/assets/:assetId",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessAsset,
+    v2AssetHandlers.head,
+  );
+
   app.post(
     "/ingest",
     rateLimiter.middleware,
@@ -852,15 +1097,11 @@ export function createApp(
   // header must be parsed after that — the composed handler below runs it in the
   // right order instead.
   if (config.converter !== null) {
-    const ingestAfterMetadata: RequestHandler = (req, res, next) => {
-      metadataMiddleware(req, res, (err?: unknown) => {
-        if (err !== undefined) {
-          next(err);
-          return;
-        }
-        ingestHandler(req, res, next);
-      });
-    };
+    // The route now starts a v2 job at Extract rather than proxying Markdown
+    // into the local ingest path, so `metadataMiddleware` and the local
+    // `ingestHandler` are no longer in the chain — the job's emitter writes
+    // revisions (and figure assets) back through the revision API. The auth →
+    // scope → collection-ACL chain is unchanged.
     app.post(
       "/ingest-file",
       rateLimiter.middleware,
@@ -874,7 +1115,6 @@ export function createApp(
       createIngestFileHandler({
         converter: config.converter,
         logger,
-        ingestHandler: ingestAfterMetadata,
       }),
     );
   }
@@ -908,6 +1148,18 @@ export function createApp(
     metadataMiddleware,
     collectionAccessHeader,
     searchHandler,
+  );
+  // v2 search (task 3.7): a NEW endpoint with the v2 result shape, behind the
+  // SAME auth / tenant / collection-ACL chain as /search. v1 /search above is
+  // untouched (Requirement 13.7).
+  app.post(
+    "/v2/search",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    metadataMiddleware,
+    collectionAccessHeader,
+    searchV2Handler,
   );
   app.post(
     "/evaluations/retrieval",
@@ -1016,6 +1268,11 @@ export function createApp(
   function cleanup(): void {
     mcpHandlers.close();
     rateLimiter.close();
+    revisionTtlCleaner.stop();
+    batchWorker.stop();
+    void revisionPool.end().catch((err) => {
+      logger.error({ err }, "Error closing revision pool");
+    });
   }
 
   return { app, cleanup };
@@ -1109,6 +1366,9 @@ async function main(): Promise<void> {
     defaultFtsLanguage: config.defaultFtsLanguage,
     statsRetentionDays: config.statsRetentionDays,
     rrfK: config.rrfK,
+    rrfWeightDense: config.rrfWeightDense,
+    rrfWeightFts: config.rrfWeightFts,
+    rrfWeightIdentifier: config.rrfWeightIdentifier,
     statsFlushIntervalMs: config.statsFlushIntervalMs,
     quantization: config.quantization,
     embeddingModel: config.embedModel,

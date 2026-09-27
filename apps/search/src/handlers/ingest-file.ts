@@ -4,8 +4,8 @@
 /**
  * ingest-file.ts
  *
- * `POST /ingest-file` — accept a binary document, have `@atf/extract` convert it,
- * and index the result through the existing ingest path.
+ * `POST /ingest-file` — accept a binary document and hand it to `@atf/extract`
+ * as a v2 job (task 1.14, requirement 17.2).
  *
  * ## Why Search does not convert documents itself
  *
@@ -16,38 +16,43 @@
  * also minutes-long and CPU-heavy, while Search scales on query latency; sharing
  * one process means they compete for the same pool and the same request timeout.
  *
- * So this route is a proxy, and a deliberately thin one.
+ * So this route is a client of Extract, and a deliberately thin one.
  *
- * ## How thin
+ * ## What changed from the v1 proxy
  *
- * The converter returns canonical Markdown. That Markdown is written back onto
- * the request as a `text/markdown` body, and the *existing* ingest handler runs
- * unchanged. Header parsing, collection resolution, ACLs, versioning, chunking,
- * embedding and upsert are all reused rather than reimplemented — the only thing
- * this file adds is one outbound HTTP call and the body swap.
+ * The old route proxied the binary to Extract's `/v1/convert`, took the returned
+ * Markdown, and fed it to the existing `/ingest` path. That forwarded figure
+ * *descriptions* but dropped figure *bytes* — the response said so with
+ * `X-Figure-Assets: not-stored`.
  *
- * ## What this route does not do
+ * This route now starts a v2 job at Extract instead:
  *
- * Figure *images* are not stored. The converter renders crops, but forwarding
- * Markdown does not carry bytes, and fetching each crop back would make this an
- * orchestrator rather than a proxy. Figure *descriptions* are in the Markdown as
- * `<figure>` entries, so they are chunked and retrievable — a search for what a
- * diagram shows still finds it, there is just no thumbnail to open.
+ *   1. Upload the source bytes to Extract's content-addressed store via the
+ *      resumable upload protocol (`POST /v2/uploads` → `PATCH` → `complete`).
+ *      Search holds the whole body already, so it sends it as one chunk.
+ *   2. Create a job (`POST /v2/jobs`) for the stored source and return the job
+ *      id. The caller polls `GET {converter}/v2/jobs/{id}` for progress.
  *
- * Callers that need stored crops use `POST /v1/ingest` on the converter itself,
- * which has the bytes in memory already and uploads them via
- * `PUT /document-assets/:assetId`. That difference is the whole reason both
- * routes exist.
+ * The Extract job drives render → vision → parse → emit, and its emitter streams
+ * revisions *and figure assets* into Search's own revision API. So figure images
+ * are now stored — the gap the `X-Figure-Assets: not-stored` note documented is
+ * closed, and the header is gone.
+ *
+ * ## Auth / ACL
+ *
+ * The route keeps the same auth → scope → collection-ACL middleware chain in
+ * `index.ts`. This handler adds only the outbound calls to Extract; it does not
+ * re-implement any authorization.
  */
 
+import { createHash } from "node:crypto";
 import type { Request, RequestHandler } from "express";
 import type { Logger } from "pino";
 import type { ConverterConfig } from "../config.js";
 import { readHeader } from "../header-utils.js";
-import { encodeBase64 } from "../metadata.js";
 import { injectTraceHeaders } from "../trace-context.js";
 
-/** Document types the converter accepts, and therefore this route's body types. */
+/** Document types Extract accepts, and therefore this route's body types. */
 export const CONVERTIBLE_MIME_TYPES = [
   "application/pdf",
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -62,142 +67,203 @@ export const CONVERTIBLE_MIME_TYPES = [
   "image/webp",
 ] as const;
 
-/** Response header the converter uses to declare its output contract. */
-const CONTRACT_HEADER = "x-extract-contract";
-
 export interface IngestFileHandlerDeps {
   converter: ConverterConfig;
   logger: Logger;
-  /**
-   * The unmodified `POST /ingest` handler.
-   *
-   * Injected rather than imported so this file cannot accumulate a second copy
-   * of the ingest contract: everything after conversion is literally the same
-   * code path a Markdown caller takes.
-   */
-  ingestHandler: RequestHandler;
 }
 
-interface ConversionResult {
-  markdown: string;
-  contract: string | undefined;
-  pageCount: string | undefined;
-  figureCount: string | undefined;
-}
-
-/**
- * Merge converter provenance into the caller's `X-Metadata`.
- *
- * Provenance is what lets an operator answer "which converter version produced
- * the chunks in this collection" months later, and it is the reason the contract
- * keeps it out of the document body. Doing it here gives this route the same
- * provenance the converter's own ingest path records.
- *
- * The caller's keys win: a conflict means they set the field deliberately.
- */
-function mergeProvenance(
-  existing: string | undefined,
-  provenance: Record<string, unknown>,
-): string {
-  let base: Record<string, unknown> = {};
-  if (existing !== undefined && existing.trim() !== "") {
-    const raw = existing.toLowerCase().startsWith("base64:")
-      ? Buffer.from(existing.slice("base64:".length), "base64").toString("utf-8")
-      : existing;
-    try {
-      const parsed: unknown = JSON.parse(raw);
-      if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-        base = parsed as Record<string, unknown>;
-      }
-    } catch {
-      // Leave the caller's value alone. It is invalid, and the ingest handler
-      // will reject it with a message about X-Metadata rather than about this
-      // route — which is the more useful error.
-      return existing;
-    }
-  }
-  const merged = JSON.stringify({ ...provenance, ...base });
-  // Non-ASCII in a caller's metadata would make the header illegal.
-  return /^[\x20-\x7E]*$/.test(merged) ? merged : `base64:${encodeBase64(merged)}`;
+/** An HTTP error carrying the status this handler should surface. */
+function httpError(message: string, status: number, detail?: string): Error {
+  return Object.assign(new Error(message), {
+    status,
+    ...(detail !== undefined ? { detail: detail.slice(0, 1000) } : {}),
+  });
 }
 
 export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHandler {
-  const { converter, logger, ingestHandler } = deps;
+  const { converter, logger } = deps;
 
-  async function convert(req: Request, body: Buffer): Promise<ConversionResult> {
+  /** Common headers for a call to Extract: auth + trace propagation. */
+  function extractHeaders(extra: Record<string, string> = {}): Record<string, string> {
     const headers: Record<string, string> = {
-      // Raw upload rather than multipart: no boundary to build here and none to
-      // parse there.
-      "content-type": req.headers["content-type"] ?? "application/octet-stream",
-      // Markdown, not the JSON envelope: that string is exactly what gets
-      // forwarded to the ingest path.
-      accept: "text/markdown",
+      ...extra,
+      ...(converter.token !== null ? { authorization: `Bearer ${converter.token}` } : {}),
     };
-    if (converter.token !== null) headers["authorization"] = `Bearer ${converter.token}`;
-
-    const reference = readHeader(req, "x-reference");
-    if (reference !== undefined) headers["x-reference"] = req.headers["x-reference"] as string;
-    const title = req.headers["x-title"];
-    if (typeof title === "string") headers["x-title"] = title;
-    const filename = req.headers["x-filename"];
-    if (typeof filename === "string") headers["x-filename"] = filename;
-    const disposition = req.headers["content-disposition"];
-    if (typeof disposition === "string") headers["content-disposition"] = disposition;
     injectTraceHeaders(headers);
+    return headers;
+  }
 
-    const controller = new AbortController();
-    const timeout =
-      converter.timeoutMs > 0 ? setTimeout(() => controller.abort(), converter.timeoutMs) : null;
-    // A client that gave up should not keep a conversion running on their behalf.
-    const onClose = (): void => controller.abort();
-    req.on("aborted", onClose);
-
+  /** One fetch to Extract, translating transport failures into HTTP statuses. */
+  async function callExtract(
+    path: string,
+    init: RequestInit,
+    signal: AbortSignal,
+    aborted: () => boolean,
+    label: string,
+  ): Promise<Response> {
     try {
-      const response = await fetch(`${converter.url}/v1/convert`, {
-        method: "POST",
-        headers,
-        body: new Uint8Array(body),
-        signal: controller.signal,
-      });
-
-      if (!response.ok) {
-        const detail = await response.text().catch(() => "");
-        // A converter 4xx is the caller's fault (unsupported type, too many
-        // pages) and is passed through so they see why; a 5xx is ours and
-        // becomes a 502.
-        const status = response.status >= 400 && response.status < 500 ? response.status : 502;
-        throw Object.assign(
-          new Error(`The document converter returned HTTP ${response.status}`),
-          { status, detail: detail.slice(0, 1000), converterStatus: response.status },
-        );
-      }
-
-      return {
-        markdown: await response.text(),
-        contract: response.headers.get(CONTRACT_HEADER) ?? undefined,
-        pageCount: response.headers.get("x-page-count") ?? undefined,
-        figureCount: response.headers.get("x-figure-count") ?? undefined,
-      };
+      return await fetch(`${converter.url}${path}`, { ...init, signal });
     } catch (error) {
-      if (error instanceof Error && "status" in error) throw error;
-      const aborted = controller.signal.aborted;
-      throw Object.assign(
-        new Error(
-          aborted
-            ? `The document converter did not respond within ${converter.timeoutMs} ms`
-            : `The document converter could not be reached: ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-        ),
-        { status: aborted ? 504 : 502 },
+      throw httpError(
+        aborted()
+          ? `Extract did not respond within ${converter.timeoutMs} ms (${label})`
+          : `Extract could not be reached (${label}): ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+        aborted() ? 504 : 502,
       );
-    } finally {
-      if (timeout !== null) clearTimeout(timeout);
-      req.off("aborted", onClose);
     }
   }
 
-  return (req, res, next) => {
+  /**
+   * Store the body in Extract's content-addressed source store via the
+   * resumable protocol, sending the whole buffer as a single chunk. Returns the
+   * whole-file sha256 the job is then created against.
+   */
+  async function uploadSource(
+    body: Buffer,
+    reference: string,
+    signal: AbortSignal,
+    aborted: () => boolean,
+  ): Promise<string> {
+    const sha256 = createHash("sha256").update(body).digest("hex");
+
+    // 1. Open a session, declaring the reference, whole-file digest and size.
+    const open = await callExtract(
+      "/v2/uploads",
+      {
+        method: "POST",
+        headers: extractHeaders({
+          "content-type": "application/json",
+          "x-reference": reference,
+        }),
+        body: JSON.stringify({ reference, sha256, size: body.length }),
+      },
+      signal,
+      aborted,
+      "open upload",
+    );
+    if (!open.ok) {
+      const detail = await open.text().catch(() => "");
+      throw httpError(
+        `Extract rejected the upload session (HTTP ${open.status})`,
+        open.status >= 400 && open.status < 500 ? open.status : 502,
+        detail,
+      );
+    }
+    const opened = (await open.json().catch(() => ({}))) as {
+      upload_id?: string;
+      status?: string;
+      sha256?: string;
+    };
+    // A `source_url` open would complete inline, but this path always opens a
+    // chunk session, so an upload_id is expected.
+    if (typeof opened.upload_id !== "string") {
+      throw httpError("Extract did not return an upload id", 502);
+    }
+    const uploadId = opened.upload_id;
+
+    // 2. Append the whole body at offset 0.
+    const patch = await callExtract(
+      `/v2/uploads/${uploadId}`,
+      {
+        method: "PATCH",
+        headers: extractHeaders({
+          "content-type": "application/offset+octet-stream",
+          "upload-offset": "0",
+        }),
+        body: new Uint8Array(body),
+      },
+      signal,
+      aborted,
+      "append chunk",
+    );
+    if (!patch.ok && patch.status !== 204) {
+      const detail = await patch.text().catch(() => "");
+      throw httpError(
+        `Extract rejected the upload chunk (HTTP ${patch.status})`,
+        patch.status >= 400 && patch.status < 500 ? patch.status : 502,
+        detail,
+      );
+    }
+
+    // 3. Complete: verify the whole-file digest and move it into the store.
+    const complete = await callExtract(
+      `/v2/uploads/${uploadId}/complete`,
+      {
+        method: "POST",
+        headers: extractHeaders({
+          "content-type": "application/json",
+          "x-checksum-sha256": sha256,
+        }),
+        body: JSON.stringify({ sha256 }),
+      },
+      signal,
+      aborted,
+      "complete upload",
+    );
+    if (!complete.ok) {
+      const detail = await complete.text().catch(() => "");
+      throw httpError(
+        `Extract could not finalise the upload (HTTP ${complete.status})`,
+        complete.status >= 400 && complete.status < 500 ? complete.status : 502,
+        detail,
+      );
+    }
+    const finished = (await complete.json().catch(() => ({}))) as { sha256?: string };
+    return typeof finished.sha256 === "string" ? finished.sha256 : sha256;
+  }
+
+  /** Create a v2 job for the stored source and return the wire Job. */
+  async function createJob(
+    req: Request,
+    reference: string,
+    sourceSha256: string,
+    signal: AbortSignal,
+    aborted: () => boolean,
+  ): Promise<{ jobId: string; status: string; collection?: string }> {
+    const collection = readHeader(req, "x-collection")?.trim();
+    const jobBody: { reference: string; sourceSha256: string; collection?: string } = {
+      reference,
+      sourceSha256,
+      ...(collection !== undefined && collection !== "" ? { collection } : {}),
+    };
+
+    const res = await callExtract(
+      "/v2/jobs",
+      {
+        method: "POST",
+        headers: extractHeaders({ "content-type": "application/json" }),
+        body: JSON.stringify(jobBody),
+      },
+      signal,
+      aborted,
+      "create job",
+    );
+    if (!res.ok) {
+      const detail = await res.text().catch(() => "");
+      throw httpError(
+        `Extract rejected the job (HTTP ${res.status})`,
+        res.status >= 400 && res.status < 500 ? res.status : 502,
+        detail,
+      );
+    }
+    const job = (await res.json().catch(() => ({}))) as {
+      jobId?: string;
+      status?: string;
+      collection?: string;
+    };
+    if (typeof job.jobId !== "string") {
+      throw httpError("Extract did not return a job id", 502);
+    }
+    return {
+      jobId: job.jobId,
+      status: job.status ?? "queued",
+      ...(typeof job.collection === "string" ? { collection: job.collection } : {}),
+    };
+  }
+
+  return (req, res, _next) => {
     void (async () => {
       const log: Logger = (req as Request & { log?: Logger }).log ?? logger;
 
@@ -211,60 +277,47 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
         return;
       }
 
-      // Checked here so a 40-page conversion is not paid for before discovering
-      // the request could never have been indexed.
-      if (!readHeader(req, "x-reference")) {
+      const reference = readHeader(req, "x-reference")?.trim();
+      if (reference === undefined || reference === "") {
         res.status(400).json({ error: "X-Reference header is required" });
         return;
       }
 
+      const controller = new AbortController();
+      const timeout =
+        converter.timeoutMs > 0 ? setTimeout(() => controller.abort(), converter.timeoutMs) : null;
+      const onClose = (): void => controller.abort();
+      req.on("aborted", onClose);
+      const isAborted = (): boolean => controller.signal.aborted;
+
       const startedAt = Date.now();
       log.info(
-        { bytes: body.length, contentType: req.headers["content-type"] },
-        "Converting an uploaded document before ingest",
+        { bytes: body.length, contentType: req.headers["content-type"], reference },
+        "Starting a v2 extraction job for an uploaded document",
       );
 
-      const converted = await convert(req, body);
+      try {
+        const sourceSha256 = await uploadSource(body, reference, controller.signal, isAborted);
+        const job = await createJob(req, reference, sourceSha256, controller.signal, isAborted);
 
-      log.info(
-        {
-          contract: converted.contract,
-          pageCount: converted.pageCount,
-          figureCount: converted.figureCount,
-          markdownLength: converted.markdown.length,
-          durationMs: Date.now() - startedAt,
-        },
-        "Document converted; handing off to the ingest path",
-      );
+        log.info(
+          { jobId: job.jobId, reference, sourceSha256, durationMs: Date.now() - startedAt },
+          "v2 extraction job started; assets are stored by the job's emitter",
+        );
 
-      // Rewrite the request into the shape the ingest handler already accepts.
-      // Everything downstream — header parsing, ACLs, chunking, embedding — is
-      // the unmodified Markdown path.
-      req.body = converted.markdown;
-      req.headers["content-type"] = "text/markdown; charset=utf-8";
-      req.headers["content-length"] = String(Buffer.byteLength(converted.markdown, "utf-8"));
-
-      // The converter emits per-page <summary> blocks, so asking Search to
-      // regenerate them would pay twice for worse summaries: the converter saw
-      // the rendered page, Search only sees text.
-      if (req.headers["x-summary-mode"] === undefined && /<summary\b/i.test(converted.markdown)) {
-        req.headers["x-summary-mode"] = "embedded";
+        res.setHeader("Location", `${converter.url}/v2/jobs/${job.jobId}`);
+        res.status(202).json({
+          status: "accepted",
+          job_id: job.jobId,
+          job_status: job.status,
+          reference,
+          ...(job.collection !== undefined ? { collection: job.collection } : {}),
+          poll: `/v2/jobs/${job.jobId}`,
+        });
+      } finally {
+        if (timeout !== null) clearTimeout(timeout);
+        req.off("aborted", onClose);
       }
-
-      req.headers["x-metadata"] = mergeProvenance(readHeader(req, "x-metadata"), {
-        ...(converted.contract !== undefined ? { extract_contract: converted.contract } : {}),
-        extract_via: "search/ingest-file",
-      });
-
-      if (converted.contract !== undefined) {
-        res.setHeader("X-Extract-Contract", converted.contract);
-      }
-      // Stated on every response, because "the figure descriptions are indexed
-      // but the images are not" is the kind of limitation that is otherwise only
-      // discovered when someone clicks a figure in a result.
-      res.setHeader("X-Figure-Assets", "not-stored");
-
-      ingestHandler(req, res, next);
     })().catch((error: unknown) => {
       const status =
         error instanceof Error && "status" in error && typeof error.status === "number"
@@ -276,15 +329,15 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
           : undefined;
       (req as Request & { log?: Logger }).log?.warn(
         { err: error, status, detail },
-        "Document conversion failed",
+        "Starting the extraction job failed",
       );
       if (res.headersSent) {
         if (!res.writableEnded) res.end();
         return;
       }
       res.status(status).json({
-        error: error instanceof Error ? error.message : "Document conversion failed",
-        ...(detail !== undefined && detail !== "" ? { converter_detail: detail } : {}),
+        error: error instanceof Error ? error.message : "Starting the extraction job failed",
+        ...(detail !== undefined && detail !== "" ? { extract_detail: detail } : {}),
       });
     });
   };

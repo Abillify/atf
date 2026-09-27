@@ -14,15 +14,31 @@ export interface HeadingMatch {
 }
 
 /**
+ * Matches a page marker line (`## Seite N` / `## Page N`) on its own line.
+ *
+ * Page markers look like level-2 Markdown headings but are pagination
+ * furniture, not document structure. They must not act as chunk boundaries or
+ * compete with real headings (defect D6). Ingest strips them from the body
+ * before chunking; this guard keeps the chunker correct even if a marker slips
+ * through (e.g. a caller that chunks a raw body directly).
+ */
+const PAGE_MARKER_LINE = /^#{1,6}\s+(?:Seite|Page)\s+\d+\s*$/i;
+
+/**
  * Determines the heading level of a line (0 if not a heading).
  *
  * A Markdown heading is a line that starts with 1–6 `#` characters
- * followed by at least one space.
+ * followed by at least one space. Page markers (`## Seite N` / `## Page N`)
+ * are explicitly not headings: they are pagination furniture and must not
+ * serve as a heading boundary (defect D6).
  *
  * @param line - The line to check.
  * @returns Heading level (1–6) or 0.
  */
 export function getHeadingLevel(line: string): number {
+  if (PAGE_MARKER_LINE.test(line)) {
+    return 0;
+  }
   const match = line.match(/^(#{1,6}) /);
   if (!match) {
     return 0;

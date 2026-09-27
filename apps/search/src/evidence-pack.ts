@@ -112,6 +112,10 @@ export interface VerifiedEvidence {
     figureId?: string;
     assetId?: string;
     bbox?: [number, number, number, number];
+    /** Figures this chunk's text references (Requirement 2.4). */
+    figureRefs?: Array<{ figureId: string; assetId: string }>;
+    /** Asset ids of the referenced figures, for direct retrieval. */
+    assetIds?: string[];
     chunk: {
       index: number;
       total?: number;
@@ -312,6 +316,17 @@ export function buildVerifiedEvidencePack(
         ...(result.evidence?.figure_id ? { figureId: result.evidence.figure_id } : {}),
         ...(result.evidence?.asset_id ? { assetId: result.evidence.asset_id } : {}),
         ...(result.evidence?.bbox ? { bbox: result.evidence.bbox } : {}),
+        ...(result.evidence?.figure_refs?.length
+          ? {
+              figureRefs: result.evidence.figure_refs.map((ref) => ({
+                figureId: ref.figure_id,
+                assetId: ref.asset_id,
+              })),
+              assetIds:
+                result.evidence.asset_ids ??
+                result.evidence.figure_refs.map((ref) => ref.asset_id),
+            }
+          : {}),
         chunk: {
           index: chunkIndex,
           ...(chunkTotal !== undefined ? { total: chunkTotal } : {}),

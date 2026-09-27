@@ -22,7 +22,20 @@ import {
 import { FILTER_V2, normalizeFilterV2, type Metadata } from "../metadata.js";
 import type { QueryEmbeddingCache } from "../query-cache.js";
 import { runAsyncRerankStream } from "./search-async-rerank.js";
+import {
+  buildRerankDocument,
+  diversifyResults,
+  groupResultsBySection,
+  type SectionGroup,
+} from "../rerank-context.js";
 import { readHeader, parseBooleanHeader } from "../header-utils.js";
+import {
+  parseExpandMode,
+  parseBudgetChars,
+  DEFAULT_EXPAND_BUDGET_CHARS,
+  type ExpandMode,
+} from "../expansion.js";
+import { attachExpansions } from "./expand-results.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import { getUsageContext } from "../usage-context.js";
@@ -54,6 +67,17 @@ export function parseHybridFlag(
 }
 
 export function parseGroupByDocumentFlag(
+  header: string | undefined,
+): boolean | null | undefined {
+  return parseBooleanHeader(header);
+}
+
+/**
+ * Parse the X-Group-By-Section header (Requirement 13.6, v2 search path).
+ * When true, the (diversified) results are grouped by section path for a single
+ * large document. Accepts the same truthy/falsy vocabulary as the other flags.
+ */
+export function parseGroupBySectionFlag(
   header: string | undefined,
 ): boolean | null | undefined {
   return parseBooleanHeader(header);
@@ -250,6 +274,53 @@ export function createSearchHandler(
       }
       const groupByDocument = groupByDocumentFlag ?? false;
 
+      // 8b. X-Group-By-Section (v2, task 3.5): diversify results (per-section
+      //     cap + collapse same table/figure) and, when set, group the hits by
+      //     section path for a single large document (Requirement 13.6). This is
+      //     opt-in and additive — v1 /search behaviour is unchanged when the
+      //     header is absent. When both grouping flags are set, document grouping
+      //     wins (they are mutually exclusive views; section grouping is the
+      //     single-document view per design §6).
+      const groupBySectionFlag = parseGroupBySectionFlag(
+        readHeader(req, "x-group-by-section"),
+      );
+      if (groupBySectionFlag === null) {
+        res.status(400).json({
+          error:
+            "X-Group-By-Section must be one of: 1/0, true/false, yes/no, on/off",
+        });
+        return;
+      }
+      const groupBySection = groupBySectionFlag ?? false;
+
+      // 8c. X-Expand / X-Budget-Chars (v2, task 3.6, Requirement 13.4):
+      //     small-to-big expansion. When X-Expand is one of neighbors|section|
+      //     page, each final (diversified) hit is augmented with an `expanded`
+      //     field carrying the neighbouring chunks / whole section / whole page
+      //     within X-Budget-Chars, plus a `truncated` flag. This is opt-in and
+      //     additive — absent header ⇒ no expansion, no `expanded` field, v1
+      //     /search unchanged. Expansion runs AFTER diversification and honours
+      //     the same visibility/ACL/revision predicates as the search itself
+      //     (see PostgresClient.expandUnit). An invalid X-Expand is a 400; an
+      //     invalid X-Budget-Chars is a 400.
+      const expandMode: ExpandMode | null | undefined = parseExpandMode(
+        readHeader(req, "x-expand"),
+      );
+      if (expandMode === null) {
+        res.status(400).json({
+          error: "X-Expand must be one of: neighbors, section, page (or none)",
+        });
+        return;
+      }
+      const budgetCharsParsed = parseBudgetChars(readHeader(req, "x-budget-chars"));
+      if (budgetCharsParsed === null) {
+        res.status(400).json({
+          error: "X-Budget-Chars must be a positive integer",
+        });
+        return;
+      }
+      const expandBudgetChars = budgetCharsParsed ?? DEFAULT_EXPAND_BUDGET_CHARS;
+
       // 9. X-Hyde: use HyDE query expansion if a hydeClient is configured
       const hydeHeader = parseBooleanHeader(readHeader(req, "x-hyde"));
       if (hydeHeader === null) {
@@ -265,7 +336,7 @@ export function createSearchHandler(
       // so we can fill `limit` distinct documents even if many chunks belong
       // to the same document.  Use the same candidateMultiplier heuristic.
       const fetchLimit =
-        rerankActive || groupByDocument
+        rerankActive || groupByDocument || groupBySection
           ? Math.min(limit * Math.max(1, candidateMultiplier), 500)
           : limit;
 
@@ -530,12 +601,47 @@ export function createSearchHandler(
         results = groupResultsByDocument(results);
       }
 
-      results = results.slice(0, limit);
+      // Diversify (task 3.5, design §7.1 step 4): collapse same table/figure to
+      // one representative and cap hits per section. Runs after rerank/document
+      // grouping so it diversifies the final ranking. Opt-in with the section
+      // view; document grouping already collapses to one hit per document, so
+      // diversification only applies to the (ungrouped or section-grouped) v2
+      // path.
+      let sectionGroups: SectionGroup[] | undefined;
+      if (groupBySection && !groupByDocument) {
+        results = diversifyResults(results);
+        results = results.slice(0, limit);
+        sectionGroups = groupResultsBySection(results);
+      } else {
+        results = results.slice(0, limit);
+      }
+
+      // Small-to-big expansion (task 3.6, design §7.1 step 5, Requirement 13.4):
+      // runs AFTER diversification/limit and BEFORE the response is built, per
+      // the pipeline order in Requirement 13.1 (… → diversify → EXPANSION →
+      // asset attach). Opt-in via X-Expand; when off, `results` is untouched and
+      // no `expanded` field appears, so v1 /search is unchanged. Each hit's
+      // expansion honours the same visibility/ACL/revision predicates as the
+      // search query.
+      let expandedResults: SearchResult[] = results;
+      if (expandMode !== undefined) {
+        expandedResults = await attachExpansions({
+          postgresClient,
+          collection: collectionRaw,
+          scope,
+          mode: expandMode,
+          budgetChars: expandBudgetChars,
+          includeAllVersions,
+          validAt,
+          results,
+          logger: log,
+        });
+      }
 
       // Build next-page cursor from the last result (only when not reranking,
       // since reranking changes the order and makes keyset pagination unreliable).
       let nextCursor: string | undefined;
-      if (!rerankActive && results.length === limit) {
+      if (!rerankActive && !groupBySection && results.length === limit) {
         const last = results[results.length - 1];
         if (last) {
           // `score` is the value the query ordered by, so it completes the
@@ -549,7 +655,20 @@ export function createSearchHandler(
         }
       }
 
-      const response: Record<string, unknown> = { results };
+      const response: Record<string, unknown> = { results: expandedResults };
+      if (sectionGroups) {
+        // When expansion ran, regroup the EXPANDED results so the nested section
+        // view carries the same `expanded` fields as the flat `results`.
+        const groupSource =
+          expandMode !== undefined
+            ? groupResultsBySection(expandedResults)
+            : sectionGroups;
+        response.sections = groupSource.map((g) => ({
+          section_path: g.section_path,
+          score: g.score,
+          results: g.results,
+        }));
+      }
       if (nextCursor) response["next_cursor"] = nextCursor;
       if (hydeExpanded) response["hyde_query"] = hydeExpanded;
       if (includeQueryVector) response["query_vector"] = vector;
@@ -635,7 +754,13 @@ export async function rerankResultsWithStatus(
   results: SearchResult[],
   logger: Logger,
 ): Promise<RerankOutcome> {
-  const documents = results.map((r) => r.content);
+  // Feed the reranker CONTEXT-enriched documents (title, section path, unit
+  // type + content, capped at 1024 tokens) rather than raw content, so the
+  // cross-encoder scores against the same context a reader would see
+  // (Requirements 13.1/13.2, design §7.1 step 3). Legacy v1 rows with no
+  // title/section/type degrade to just their content — identical to the
+  // previous behaviour, so the fallback/async paths are unaffected.
+  const documents = results.map((r) => buildRerankDocument(r));
   const rerankResponse = await rerankerClient.rerank(query, documents);
 
   if (!rerankResponse.ok) {

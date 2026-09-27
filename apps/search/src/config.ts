@@ -158,6 +158,26 @@ export interface Config {
   /** Vocabulary size of the SPLADE model. Default: 30522. */
   sparseVocabSize: number; // SPARSE_VOCAB_SIZE (default: 30522)
 
+  // ── Token counting (TEI /tokenize, bge-m3) ───────────────────────────────
+  /**
+   * URL of the TEI `/tokenize` endpoint used to measure chunk token counts
+   * (Requirement 11.2). Defaults to a URL derived from EMBED_URL by reusing its
+   * origin and replacing the path with `/tokenize`. When EMBED_URL is a
+   * `bedrock…` pseudo-URL there is no TEI tokenizer, so this stays null and the
+   * counter uses the character heuristic.
+   */
+  tokenizeUrl: string | null; // TOKENIZE_URL (default: derived from EMBED_URL)
+  /**
+   * Enable TEI `/tokenize` token counting. Off automatically for Bedrock (no
+   * `/tokenize`). When disabled the token counter uses the character heuristic
+   * directly without any HTTP call. Default: true (unless the backend is Bedrock).
+   */
+  tokenizeEnabled: boolean; // TOKENIZE_ENABLED (default: true, false for bedrock)
+  /** Abort tokenize calls after this many ms. 0 disables the timeout. Default: 5 000. */
+  tokenizeTimeoutMs: number; // TOKENIZE_TIMEOUT_MS (default: 5000, 0 = disabled)
+  /** Bounded LRU cache size for token counts. 0 disables caching. Default: 2 048. */
+  tokenizeCacheSize: number; // TOKENIZE_CACHE_SIZE (default: 2048, 0 = disabled)
+
   /**
    * Late chunking alpha (0–1). When set, blend each chunk's embedding with
    * the full-document embedding: final = alpha * chunk + (1-alpha) * doc.
@@ -168,6 +188,18 @@ export interface Config {
   /** RRF k parameter for hybrid search. Default: 60. */
   rrfK: number; // RRF_K (default: 60)
 
+  /**
+   * Per-list weights applied to the reciprocal-rank contributions in hybrid
+   * (RRF) search (task 3.4, Requirement 12.3). The dense and full-text lists
+   * always participate; the identifier list is added only when the query
+   * carries a recognised identifier. Each weight scales its list's
+   * `1/(rrfK + rank)` term, so the defaults of 1.0 reproduce the previous,
+   * unweighted ranking exactly. Must be > 0.
+   */
+  rrfWeightDense: number; // RRF_WEIGHT_DENSE (default: 1.0)
+  rrfWeightFts: number; // RRF_WEIGHT_FTS (default: 1.0)
+  rrfWeightIdentifier: number; // RRF_WEIGHT_IDENTIFIER (default: 1.0)
+
   /** Interval in ms for flushing buffered stats to DB. Default: 30 000. */
   statsFlushIntervalMs: number; // STATS_FLUSH_INTERVAL_MS (default: 30000)
 
@@ -176,6 +208,81 @@ export interface Config {
    * Default: "50mb". Use standard Express size strings (e.g. "100mb").
    */
   streamBodyLimit: string; // STREAM_BODY_LIMIT (default: "50mb")
+
+  /**
+   * TTL in milliseconds for an uncommitted v2 revision (design §9b.3,
+   * Requirement 5.10). A staged revision that is neither committed nor
+   * heartbeated within this window is reaped by the TTL cleaner. Default:
+   * 14 days. Set REVISION_TTL in seconds.
+   */
+  revisionTtlMs: number; // REVISION_TTL seconds (default: 14 days)
+
+  /**
+   * How often the revision TTL cleaner sweeps for expired revisions, in
+   * milliseconds. 0 disables the background sweep. Default: 1 hour.
+   */
+  revisionTtlSweepMs: number; // REVISION_TTL_SWEEP_MS (default: 3600000)
+
+  /**
+   * The v2 batch-processing worker (design §9b.3, task 1.10). When enabled, the
+   * worker claims staged NDJSON batches (SKIP LOCKED), builds transitional index
+   * units, embeds them and upserts them, marking each batch processed. Disabled
+   * by default so a deployment opts in explicitly. Set BATCH_WORKER=true.
+   */
+  batchWorkerEnabled: boolean; // BATCH_WORKER (default: false)
+
+  /**
+   * How often the batch worker polls for staged batches, in milliseconds. 0
+   * disables the background loop (the worker can still be driven via tick() in
+   * tests). Default: 2000.
+   */
+  batchWorkerIntervalMs: number; // BATCH_WORKER_INTERVAL_MS (default: 2000)
+
+  /**
+   * Backoff applied to a batch's next_attempt_at after an embedding-service
+   * failure, in milliseconds (Requirement 5.4). Default: 30000.
+   */
+  batchWorkerBackoffMs: number; // BATCH_WORKER_BACKOFF_MS (default: 30000)
+
+  /**
+   * Per-chunk contextual placement sentence via the SUMMARY_* text-LLM
+   * (Requirement 11.6, design §6.3). When true, the batch worker asks the
+   * summary model for ONE short sentence placing each `chunk` in the document
+   * and appends it to the contextual embedding header. This is one model call
+   * per chunk, so it is expensive and OFF by default — worthwhile offline with
+   * a local vLLM. A text-LLM failure degrades to the header without the
+   * sentence and never fails the batch. Requires SUMMARY_MODEL to be set.
+   */
+  contextualChunkLlm: boolean; // CONTEXTUAL_CHUNK_LLM (default: false)
+
+  /**
+   * Fraction of the chunk token budget the contextual embedding header may
+   * occupy (Requirement 11.4). The header (title, section path, pages, type,
+   * page summary) is measured with the token counter and truncated
+   * summary-first to stay at or below this fraction of the max chunk tokens.
+   * Must be in (0, 1). Default: 0.15 (15 %).
+   */
+  contextHeaderMaxFraction: number; // CONTEXT_HEADER_MAX_FRACTION (default: 0.15)
+
+  /**
+   * Body size limit for a single v2 revision NDJSON page batch
+   * (PUT …/revisions/{rev}/batches/{seq}). Default: "50mb".
+   */
+  revisionBatchBodyLimit: string; // REVISION_BATCH_BODY_LIMIT (default: "50mb")
+
+  /**
+   * Backend for the v2 AssetStore (design §6.5, Requirement 14.2). `postgres`
+   * stores asset bytes as BYTEA in vs_assets (the default). `filesystem` keeps
+   * the bytes in a volume under {@link assetStoreDir} while metadata still lives
+   * in vs_assets. Set ASSET_STORE_BACKEND=postgres|filesystem.
+   */
+  assetStoreBackend: "postgres" | "filesystem"; // ASSET_STORE_BACKEND (default: "postgres")
+
+  /**
+   * Filesystem root for asset bytes when {@link assetStoreBackend} is
+   * `filesystem`. Ignored for the `postgres` backend. Set ASSET_STORE_DIR.
+   */
+  assetStoreDir: string | null; // ASSET_STORE_DIR (default: null)
 
   /**
    * Document converter backing POST /ingest-file.
@@ -685,6 +792,21 @@ export function loadConfig(): Config {
   const bodyLimit = process.env["BODY_LIMIT"] || "10mb";
   const streamBodyLimit =
     (process.env["STREAM_BODY_LIMIT"] ?? "50mb").trim() || "50mb";
+  const revisionBatchBodyLimit =
+    (process.env.REVISION_BATCH_BODY_LIMIT ?? "50mb").trim() || "50mb";
+
+  // ── v2 AssetStore (design §6.5, Requirement 14.2) ──────────────────────────
+  const assetStoreBackendRaw = (process.env.ASSET_STORE_BACKEND ?? "postgres")
+    .trim()
+    .toLowerCase();
+  if (assetStoreBackendRaw !== "postgres" && assetStoreBackendRaw !== "filesystem") {
+    throw new Error('ASSET_STORE_BACKEND must be "postgres" or "filesystem"');
+  }
+  const assetStoreBackend = assetStoreBackendRaw as "postgres" | "filesystem";
+  const assetStoreDir = optionalString("ASSET_STORE_DIR");
+  if (assetStoreBackend === "filesystem" && assetStoreDir === null) {
+    throw new Error("ASSET_STORE_DIR is required when ASSET_STORE_BACKEND=filesystem");
+  }
   const defaultFtsLanguage = (process.env["FTS_LANGUAGE"] ?? "simple")
     .trim()
     .toLowerCase();
@@ -721,6 +843,20 @@ export function loadConfig(): Config {
   const summaryMaxConcurrency = parseIntEnv("SUMMARY_MAX_CONCURRENCY", 4);
   const sparseVocabSize = parseIntEnv("SPARSE_VOCAB_SIZE", 30522);
   const rrfK = parseIntEnv("RRF_K", 60);
+  // Per-list RRF weights (task 3.4, Requirement 12.3). Positive floats; default
+  // 1.0 preserves the previous unweighted ranking exactly.
+  const parsePosFloatEnv = (name: string, defaultVal: number): number => {
+    const raw = process.env[name];
+    if (raw === undefined || raw.trim() === "") return defaultVal;
+    const parsed = parseFloat(raw);
+    if (Number.isNaN(parsed) || parsed <= 0) {
+      throw new Error(`${name} must be a float > 0`);
+    }
+    return parsed;
+  };
+  const rrfWeightDense = parsePosFloatEnv("RRF_WEIGHT_DENSE", 1.0);
+  const rrfWeightFts = parsePosFloatEnv("RRF_WEIGHT_FTS", 1.0);
+  const rrfWeightIdentifier = parsePosFloatEnv("RRF_WEIGHT_IDENTIFIER", 1.0);
   const breakpointPercentile = parseIntEnv("BREAKPOINT_PERCENTILE", 75, {
     min: 1,
     max: 99,
@@ -732,6 +868,16 @@ export function loadConfig(): Config {
     30_000,
   );
   const statsRetentionDays = parseNonNegIntEnv("STATS_RETENTION_DAYS", 90);
+  // REVISION_TTL is expressed in seconds; default 14 days.
+  const revisionTtlMs =
+    parseIntEnv("REVISION_TTL", 14 * 24 * 60 * 60, { min: 1 }) * 1000;
+  const revisionTtlSweepMs = parseNonNegIntEnv("REVISION_TTL_SWEEP_MS", 3_600_000);
+  const batchWorkerEnabled = parseBoolEnv("BATCH_WORKER", false);
+  const batchWorkerIntervalMs = parseNonNegIntEnv("BATCH_WORKER_INTERVAL_MS", 2_000);
+  const batchWorkerBackoffMs = parseNonNegIntEnv("BATCH_WORKER_BACKOFF_MS", 30_000);
+  const contextualChunkLlm = parseBoolEnv("CONTEXTUAL_CHUNK_LLM", false);
+  const contextHeaderMaxFraction =
+    parseFloatEnv("CONTEXT_HEADER_MAX_FRACTION", 0.15, { gt: 0, lt: 1 }) ?? 0.15;
   const rateLimit = parseNonNegIntEnv("RATE_LIMIT", 120);
   const contextPrefixSizeRaw = parseIntEnv("CHUNK_CONTEXT_PREFIX_SIZE", 0);
   const contextPrefixSize =
@@ -884,6 +1030,35 @@ export function loadConfig(): Config {
   const sparseUrl = resolveUrl("SPARSE_URL", embedUrl);
   const sparseModel = optionalString("SPARSE_MODEL");
 
+  // ── Token counting (TEI /tokenize) ──────────────────────────────────────
+  // Derive the tokenize URL from EMBED_URL by reusing the origin and replacing
+  // the path with /tokenize (mirrors how the embedding/rerank clients derive
+  // their endpoints from the same origin). Bedrock has no /tokenize endpoint,
+  // so on a bedrock… EMBED_URL the derivation yields null and the counter
+  // degrades to the character heuristic.
+  const embedIsBedrock = embedUrl.startsWith("bedrock");
+  function deriveTokenizeUrlFromEmbed(base: string): string | null {
+    if (!base || base.startsWith("bedrock")) return null;
+    try {
+      const parsed = new URL(base);
+      parsed.pathname = "/tokenize";
+      parsed.search = "";
+      parsed.hash = "";
+      return parsed.toString();
+    } catch {
+      return null;
+    }
+  }
+  const tokenizeUrl =
+    optionalString("TOKENIZE_URL") ?? deriveTokenizeUrlFromEmbed(embedUrl);
+  // Enabled by default, but never for Bedrock and never without a usable URL.
+  const tokenizeEnabled =
+    !embedIsBedrock &&
+    tokenizeUrl !== null &&
+    parseBoolEnv("TOKENIZE_ENABLED", true);
+  const tokenizeTimeoutMs = parseNonNegIntEnv("TOKENIZE_TIMEOUT_MS", 5_000);
+  const tokenizeCacheSize = parseNonNegIntEnv("TOKENIZE_CACHE_SIZE", 2_048);
+
   // ── OIDC login (opt-in — enabled when OIDC_ISSUER is set) ───────────────────
   const oidc = parseOidcConfig();
 
@@ -1025,10 +1200,27 @@ export function loadConfig(): Config {
     sparseUrl,
     sparseModel,
     sparseVocabSize,
+    tokenizeUrl,
+    tokenizeEnabled,
+    tokenizeTimeoutMs,
+    tokenizeCacheSize,
     lateChunkingAlpha,
     rrfK,
+    rrfWeightDense,
+    rrfWeightFts,
+    rrfWeightIdentifier,
     statsFlushIntervalMs,
     streamBodyLimit,
+    revisionBatchBodyLimit,
+    assetStoreBackend,
+    assetStoreDir,
+    revisionTtlMs,
+    revisionTtlSweepMs,
+    batchWorkerEnabled,
+    batchWorkerIntervalMs,
+    batchWorkerBackoffMs,
+    contextualChunkLlm,
+    contextHeaderMaxFraction,
     converter,
     semanticChunking,
     breakpointPercentile,

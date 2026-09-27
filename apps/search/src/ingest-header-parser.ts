@@ -14,6 +14,12 @@
  */
 
 import type { IncomingMessage } from "node:http";
+import {
+  EXTRACT_CONTRACT_HEADER,
+  EXTRACT_CONTRACT_MAJOR,
+  isCompatibleContract,
+  parseContractId,
+} from "@atf/extract-contract/v1";
 import { parseRfc3339DateTime } from "./rfc3339.js";
 import { readHeader, parseBooleanHeader } from "./header-utils.js";
 import { validateFtsLanguage } from "./collection-ddl.js";
@@ -118,6 +124,42 @@ export function parseSummarizeHeader(
   header: string | undefined,
 ): boolean | null | undefined {
   return parseBooleanHeader(header);
+}
+
+/**
+ * Validate the `X-Extract-Contract` header against the v1 marker grammar this
+ * ingest path understands (Requirement 3.7).
+ *
+ * The three ingest endpoints (/ingest, /ingest-batch, /ingest-stream) consume
+ * the v1 marker grammar, so the compatible major is v1
+ * ({@link EXTRACT_CONTRACT_MAJOR}). A producer that advertises a different
+ * major (e.g. the v2 NDJSON record stream) would be mis-indexed if parsed as v1
+ * markdown, so it is refused here rather than accepted and silently degraded.
+ *
+ *   undefined — header absent/empty → accept (legacy producers send none)
+ *   true      — a v1-compatible `atf-extract/1.x` id
+ *   { error } — a well-formed but incompatible id, or an unparsable value
+ */
+export function checkExtractContractHeader(
+  header: string | undefined,
+): true | { error: string } {
+  if (header === undefined || header.trim() === "") return true;
+  const value = header.trim();
+  const parsed = parseContractId(value);
+  if (parsed === null) {
+    return {
+      error: `${EXTRACT_CONTRACT_HEADER} is not a valid contract identifier: "${value}"`,
+    };
+  }
+  if (!isCompatibleContract(value)) {
+    return {
+      error:
+        `${EXTRACT_CONTRACT_HEADER} "${value}" is incompatible: ` +
+        `this endpoint accepts the v${EXTRACT_CONTRACT_MAJOR} marker grammar ` +
+        `(atf-extract/${EXTRACT_CONTRACT_MAJOR}.x)`,
+    };
+  }
+  return true;
 }
 
 export function parseDocumentStructureHeader(
@@ -345,6 +387,14 @@ export function parseIngestHeaders(
   });
 
   if (validFromError) return errReturn(validFromError);
+
+  // Reject an incompatible extract contract before doing any parsing work
+  // (Requirement 3.7). v1 markdown carries `atf-extract/1.x`; anything else is
+  // refused rather than mis-indexed as v1.
+  const contractCheck = checkExtractContractHeader(
+    readHeader(req, EXTRACT_CONTRACT_HEADER.toLowerCase()),
+  );
+  if (contractCheck !== true) return errReturn(contractCheck.error);
 
   // FTS language
   const ftsLanguageRaw = readHeader(req, "x-fts-language");

@@ -4,7 +4,10 @@
 // vectorsearch/tests/ingest.test.ts
 import { describe, it, expect, vi } from "vitest";
 import { createIngestHandler } from "../src/handlers/ingest.js";
-import { parseIngestHeaders } from "../src/ingest-header-parser.js";
+import {
+  parseIngestHeaders,
+  checkExtractContractHeader,
+} from "../src/ingest-header-parser.js";
 import type {
   EmbeddingClient,
   EmbeddingResponse,
@@ -136,6 +139,49 @@ describe("ingest handler", () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body).toMatchObject({ status: "ok", id: "7" });
+  });
+
+  it("ingests v1 markdown carrying a compatible X-Extract-Contract header", async () => {
+    const handler = createIngestHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1, 0.2, 0.3] } }),
+      createMockPostgresClient({
+        ensureCollection: { ok: true, result: undefined },
+        upsert: { ok: true, result: { id: "9" } },
+      }),
+      logger,
+    );
+    const res = mockRes();
+    await handler(
+      mockReq(
+        "## Seite 1\n\nInhalt der ersten Seite.",
+        {},
+        { "x-reference": "doc-1", "x-extract-contract": "atf-extract/1.1.0" },
+      ) as never,
+      res as never,
+      vi.fn(),
+    );
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toMatchObject({ status: "ok", id: "9" });
+  });
+
+  it("returns HTTP 400 for an incompatible X-Extract-Contract major (Requirement 3.7)", async () => {
+    const handler = createIngestHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1, 0.2, 0.3] } }),
+      createMockPostgresClient({}),
+      logger,
+    );
+    const res = mockRes();
+    await handler(
+      mockReq(
+        "## Seite 1\n\nInhalt der ersten Seite.",
+        {},
+        { "x-reference": "doc-1", "x-extract-contract": "atf-extract/2.0.0" },
+      ) as never,
+      res as never,
+      vi.fn(),
+    );
+    expect(res.statusCode).toBe(400);
+    expect(res.body).toHaveProperty("error");
   });
 
   it("returns HTTP 400 when body is empty string", async () => {
@@ -580,5 +626,52 @@ describe("X-Valid-From", () => {
       const parsed = parseIngestHeaders({ headers: { "x-valid-from": value } }, defaults);
       expect(parsed.validationError).toContain("valid RFC 3339");
     }
+  });
+});
+
+describe("X-Extract-Contract", () => {
+  const defaults = { defaultChunkSize: null, defaultChunkOverlap: null };
+
+  it("accepts a v1 marker-grammar contract id (atf-extract/1.x)", () => {
+    for (const value of ["atf-extract/1.0.0", "atf-extract/1.1.0", "atf-extract/1.9.3"]) {
+      const parsed = parseIngestHeaders(
+        { headers: { "x-extract-contract": value } },
+        defaults,
+      );
+      expect(parsed.validationError).toBeUndefined();
+    }
+  });
+
+  it("accepts a request with no contract header (legacy producer)", () => {
+    const parsed = parseIngestHeaders({ headers: {} }, defaults);
+    expect(parsed.validationError).toBeUndefined();
+  });
+
+  it("rejects an incompatible major version (the v2 record stream)", () => {
+    for (const value of ["atf-extract/2.0.0", "atf-extract/3.1.4"]) {
+      const parsed = parseIngestHeaders(
+        { headers: { "x-extract-contract": value } },
+        defaults,
+      );
+      expect(parsed.validationError).toContain("incompatible");
+      expect(parsed.validationError).toContain(value);
+    }
+  });
+
+  it("rejects a malformed contract identifier", () => {
+    const parsed = parseIngestHeaders(
+      { headers: { "x-extract-contract": "not-a-contract" } },
+      defaults,
+    );
+    expect(parsed.validationError).toContain("not a valid contract identifier");
+  });
+
+  it("checkExtractContractHeader accepts v1 and refuses other majors", () => {
+    expect(checkExtractContractHeader(undefined)).toBe(true);
+    expect(checkExtractContractHeader("")).toBe(true);
+    expect(checkExtractContractHeader("atf-extract/1.1.0")).toBe(true);
+    const incompatible = checkExtractContractHeader("atf-extract/2.0.0");
+    expect(incompatible).not.toBe(true);
+    if (incompatible !== true) expect(incompatible.error).toContain("incompatible");
   });
 });

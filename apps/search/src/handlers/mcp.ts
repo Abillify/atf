@@ -89,7 +89,14 @@ import {
 import type { EmbedFn } from "../semantic-chunker.js";
 import type { SummaryClient } from "../summary-client.js";
 import { DOCUMENT_ASSET_MIME_TYPES } from "./document-assets.js";
-import { FILTER_V2, normalizeFilterV2, normalizeMetadata } from "../metadata.js";
+import {
+  FILTER_V2,
+  UNIT_FILTER_V2,
+  normalizeFilterV2,
+  normalizeMetadata,
+  unitFilterV2HasPredicates,
+  type UnitFilterV2,
+} from "../metadata.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import {
@@ -98,6 +105,25 @@ import {
   rerankResultsWithStatus,
   groupResultsByDocument,
 } from "./search.js";
+import {
+  diversifyResults,
+  groupResultsBySection,
+  groupResultsV2,
+  type GroupByMode,
+} from "../rerank-context.js";
+import { attachExpansions } from "./expand-results.js";
+import {
+  DEFAULT_EXPAND_BUDGET_CHARS,
+  MAX_EXPAND_BUDGET_CHARS,
+  type ExpandMode,
+} from "../expansion.js";
+import {
+  BadRequest,
+  parseFilters,
+  resolveReferencedFigures,
+} from "./search-v2.js";
+import { shapeHitV2, type IncludeAssets } from "../search-v2-response.js";
+import type { FigureUnitInfo } from "../postgres-client.js";
 import { getUsageContext } from "../usage-context.js";
 import {
   enforceRetrievalBudget,
@@ -118,6 +144,7 @@ import {
   MemoryInvocationLedger,
   type InvocationLedger,
 } from "../invocation-ledger.js";
+import { registerNavigationTools } from "./mcp-nav.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -159,6 +186,16 @@ export interface McpHandlerOptions {
   /** Embedding provenance persisted on first collection creation. */
   embeddingModel?: string;
   embeddingModelRevision?: string;
+  /**
+   * The v2 AssetStore (task 1.11), for the navigation `get_asset` tool's
+   * variant reads + metadata (fail-closed). Null/omitted disables `get_asset`.
+   */
+  assetStore?: import("../asset-store.js").AssetStore | null;
+  /**
+   * The render-cache (task 3.8), for `get_asset`'s optional `region` zoom.
+   * Null/omitted (Extract not configured) disables the region zoom path only.
+   */
+  renderCache?: import("../render-cache.js").RenderCache | null;
 }
 
 // ─── Per-session transport store ──────────────────────────────────────────────
@@ -314,7 +351,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       },
       budgets: ["maxDurationMs","maxRetrievalDocuments"],
       scopeMatrix: {
-        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_document_asset","get_documents","get_summary","get_summaries"], anyOf: ["retrieve","search","read","tool:<name>"] },
+        read: { tools: ["transaction_capabilities","retrieve_evidence","verified_evidence_pack","search","list_collections","collection_stats","collection_overview","list_documents","list_folders","find_folders","get_document","get_document_asset","get_documents","get_summary","get_summaries","get_outline","get_section","get_pages","get_context","list_figures","get_asset","get_table","find_identifier","follow_ref"], anyOf: ["retrieve","search","read","tool:<name>"] },
         ingest: { tools: ["ingest"], anyOf: ["write","ingest","tool:ingest"] },
         delete: { tools: ["delete_document"], anyOf: ["write","delete","tool:delete_document"] },
         legacyOptionalCalls: "unchanged",
@@ -699,6 +736,84 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .describe(
           "Collapse multi-chunk results into one merged result per document. Default: false",
         ),
+      expand: z
+        .enum(["none", "neighbors", "section", "page"])
+        .optional()
+        .describe(
+          "Small-to-big expansion: augment each hit with an `expanded` field " +
+            "carrying the neighbouring chunks (`neighbors`), the whole section " +
+            "(`section`), or the whole page (`page`), bounded by budget_chars. " +
+            "Honours the same visibility/ACL/revision rules as the search. " +
+            "Default / `none`: no expansion.",
+        ),
+      budget_chars: z
+        .number()
+        .int()
+        .min(1)
+        .optional()
+        .describe(
+          `Character budget for expand. When expand is set but this is omitted, defaults to ${DEFAULT_EXPAND_BUDGET_CHARS}; values above ${MAX_EXPAND_BUDGET_CHARS} are clamped. The expansion reports truncated=true when it had to drop units to fit.`,
+        ),
+      granularity: z
+        .enum(["chunk", "section", "page", "document"])
+        .optional()
+        .describe(
+          "v2: restrict hits to one unit level (applied as a unit_type filter unless unit_type is given).",
+        ),
+      include_assets: z
+        .enum(["none", "refs", "thumbnails"])
+        .optional()
+        .describe(
+          "v2: attach figure assets (the hit figure + referenced figures) to each hit. refs = ids/metadata only; thumbnails = plus ACL-checked thumb_url/url. Default: refs when any v2 parameter is used, else none.",
+        ),
+      group_by: z
+        .enum(["none", "document", "section"])
+        .optional()
+        .describe(
+          "v2: merge hits per document (base_ref) or per section (section_id within its document): best score, content merged in document order, `group` provenance on each result. Overrides group_by_document / group_by_section.",
+        ),
+      pages: z
+        .union([
+          z.array(z.number().int().min(1)).min(1).max(2),
+          z.object({ start: z.number().int().min(1), end: z.number().int().min(1) }),
+        ])
+        .optional()
+        .describe("v2 filter: page [p], range [start, end] or { start, end } (inclusive)."),
+      unit_type: z
+        .enum(["chunk", "table", "figure", "section", "page", "document"])
+        .optional()
+        .describe("v2 filter: only units of this type."),
+      figure_kind: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("v2 filter: only figures of this kind, e.g. ui_mask | process | drawing."),
+      section_prefix: z
+        .array(z.string().min(1))
+        .min(1)
+        .optional()
+        .describe('v2 filter: section path prefix, e.g. ["4 Wareneingang", "4.2 Anmeldung"].'),
+      identifier: z
+        .string()
+        .min(1)
+        .optional()
+        .describe(
+          'v2: an identifier the answer must be anchored on (e.g. "WE-01/A"); its exact occurrences join the ranking as a third fused list.',
+        ),
+      identifier_search: z
+        .boolean()
+        .optional()
+        .describe(
+          "Fuse exact identifier occurrences (vs_identifiers + ts_ident) as a third ranked list in hybrid search. Default: on when any v2 parameter is used, else off (legacy ranking).",
+        ),
+      group_by_section: z
+        .boolean()
+        .optional()
+        .describe(
+          "For a single large document: diversify hits (cap per section, collapse " +
+            "same table/figure) and group the results by section path. Returns a " +
+            "`sections` array alongside the flat `results`. Default: false",
+        ),
       cursor: z
         .string()
         .optional()
@@ -733,6 +848,18 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       valid_at,
       rerank,
       group_by_document,
+      group_by_section,
+      expand,
+      budget_chars,
+      granularity,
+      include_assets,
+      group_by,
+      pages,
+      unit_type,
+      figure_kind,
+      section_prefix,
+      identifier,
+      identifier_search,
       cursor: cursorStr,
       offset = 0,
     }) => {
@@ -747,9 +874,32 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       const useHyde = hydeRequested && hydeClient !== null;
       const rerankRequested = rerank === true;
       const rerankActive = rerankRequested && rerankerClient !== null;
-      const groupByDocument = group_by_document === true;
+      // v2 mode (Req 15.2): any Requirement-13.3 parameter switches on the v2
+      // extras (identifier list, v2 hit fields, assets). A legacy call with none
+      // of them keeps its exact previous request/response (Req 13.7).
+      const v2Requested =
+        granularity !== undefined ||
+        include_assets !== undefined ||
+        group_by !== undefined ||
+        pages !== undefined ||
+        unit_type !== undefined ||
+        figure_kind !== undefined ||
+        section_prefix !== undefined ||
+        identifier !== undefined ||
+        (expand !== undefined && expand !== "none") ||
+        budget_chars !== undefined;
+      const identifierList = identifier_search ?? v2Requested;
+      const includeAssets: IncludeAssets =
+        include_assets ?? (v2Requested ? "refs" : "none");
+      // An explicit group_by wins over the legacy boolean flags.
+      const groupByV2: GroupByMode | undefined =
+        group_by !== undefined && group_by !== "none" ? group_by : undefined;
+      const groupByDocument =
+        group_by === undefined ? group_by_document === true : false;
+      const groupBySection =
+        group_by === undefined ? group_by_section === true && !groupByDocument : false;
       const fetchLimit =
-        rerankActive || groupByDocument || minScore !== undefined
+        rerankActive || groupByDocument || groupBySection || groupByV2 !== undefined || minScore !== undefined
           ? Math.min(limit * Math.max(1, candidateMultiplier), 500)
           : limit;
       let effectiveFilter = filter as Record<string, unknown> | undefined;
@@ -761,6 +911,31 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         } catch (error) {
           return { content: [{ type: "text", text: error instanceof Error ? error.message : "Invalid filter_v2" }], isError: true };
         }
+      }
+
+      // v2 unit filters (pages / unit_type / figure_kind / section_prefix /
+      // identifier), validated with the same parser as /v2/search.
+      let explicitIdentifier: string | undefined;
+      try {
+        const parsed = parseFilters({
+          ...(pages !== undefined ? { pages } : {}),
+          ...(unit_type !== undefined ? { unit_type } : {}),
+          ...(figure_kind !== undefined ? { figure_kind } : {}),
+          ...(section_prefix !== undefined ? { section_prefix } : {}),
+          ...(identifier !== undefined ? { identifier } : {}),
+        });
+        const unit: UnitFilterV2 = parsed.unit;
+        explicitIdentifier = parsed.identifier;
+        if (granularity !== undefined && unit.unitType === undefined) unit.unitType = granularity;
+        if (unitFilterV2HasPredicates(unit)) {
+          effectiveFilter = { ...(effectiveFilter ?? {}) };
+          (effectiveFilter as Record<string, unknown> & { [UNIT_FILTER_V2]?: UnitFilterV2 })[UNIT_FILTER_V2] = unit;
+        }
+      } catch (error) {
+        if (error instanceof BadRequest) {
+          return { content: [{ type: "text", text: error.message }], isError: true };
+        }
+        throw error;
       }
 
       // Decode cursor if provided
@@ -869,6 +1044,13 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         undefined,
         undefined,
         parseRfc3339DateTime(valid_at),
+        // Identifier RRF list only in v2 mode / on explicit request (Req 13.7).
+        identifierList
+          ? {
+              identifierList: true,
+              ...(explicitIdentifier ? { identifiers: [explicitIdentifier] } : {}),
+            }
+          : undefined,
       );
 
       if (!result.ok) {
@@ -924,6 +1106,19 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       if (groupByDocument) {
         rankedResults = groupResultsByDocument(rankedResults);
       }
+      // Diversify for the single-document section view (task 3.5): collapse
+      // same table/figure and cap hits per section before grouping by section.
+      if (groupBySection) {
+        rankedResults = diversifyResults(rankedResults);
+      }
+      // v2 group_by (Req 13.6): diversify without the per-section cap, then
+      // merge per document / section (best score, document-order content).
+      if (groupByV2 !== undefined) {
+        rankedResults = groupResultsV2(
+          diversifyResults(rankedResults, { perSectionCap: 0 }),
+          groupByV2,
+        );
+      }
       const countBeforeMinScore = rankedResults.length;
       if (minScore !== undefined) {
         rankedResults = rankedResults.filter((result) => result.score >= minScore);
@@ -944,7 +1139,48 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           : [];
       rankedResults = rankedResults.slice(0, limit);
 
-      const hits = rankedResults.map((r) => ({
+      // Small-to-big expansion (task 3.6, Requirement 13.4): runs AFTER
+      // diversification/limit, mirroring the pipeline order in Requirement 13.1
+      // (… → diversify → EXPANSION → asset attach). Opt-in via `expand`; when
+      // omitted no `expanded` field is attached and the flat results are
+      // unchanged. Each hit's expansion honours the same visibility/ACL/revision
+      // predicates as the search itself.
+      const expandMode =
+        expand === undefined || expand === "none" ? undefined : (expand as ExpandMode);
+      const expandedResults =
+        expandMode !== undefined
+          ? await attachExpansions({
+              postgresClient,
+              collection: col,
+              scope: accessScopeForMcp(),
+              mode: expandMode,
+              budgetChars: budget_chars ?? DEFAULT_EXPAND_BUDGET_CHARS,
+              includeAllVersions: include_all_versions ?? false,
+              validAt: parseRfc3339DateTime(valid_at),
+              results: rankedResults,
+              logger,
+            })
+          : rankedResults;
+
+      // v2 asset attach (Req 13.5): resolve the referenced figures once per
+      // document so each hit's assets carry figure_kind/caption/page/bbox.
+      const figureInfo = new Map<string, FigureUnitInfo>();
+      if (v2Requested && includeAssets !== "none") {
+        await resolveReferencedFigures(
+          postgresClient,
+          col,
+          accessScopeForMcp(),
+          expandedResults,
+          figureInfo,
+          logger,
+        );
+      }
+
+      const hits = expandedResults.map((r) => {
+        const v2 = v2Requested
+          ? shapeHitV2(r, { collection: col, includeAssets, figureInfo })
+          : null;
+        return {
         id: r.id,
         score: r.score,
         vector_score: r.vector_score ?? undefined,
@@ -962,12 +1198,41 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         modified: r.modified,
         valid_from: r.valid_from?.toISOString() ?? null,
         effective_valid_from: r.effective_valid_from.toISOString(),
-      }));
+        ...("expanded" in r && r.expanded ? { expanded: r.expanded } : {}),
+        // v2 hit fields (design §7.2), only in v2 mode so legacy output is unchanged.
+        ...(v2
+          ? {
+              ...(v2.unit_id ? { unit_id: v2.unit_id } : {}),
+              ...(v2.unit_type ? { unit_type: v2.unit_type } : {}),
+              section_path: v2.section_path,
+              pages: v2.pages,
+              navigation: v2.navigation,
+              evidence: v2.evidence ?? null,
+              ...(v2.assets ? { assets: v2.assets } : {}),
+              ...(v2.group ? { group: v2.group } : {}),
+              ...(v2.revision_state ? { revision_state: v2.revision_state } : {}),
+              ...(v2.pages_available ? { pages_available: v2.pages_available } : {}),
+            }
+          : {}),
+        };
+      });
+
+      // Section grouping (task 3.5, Requirement 13.6): group the final
+      // (diversified, limited) results by section path for a single large
+      // document. Emitted as a parallel `sections` array; the flat `results`
+      // stay unchanged so existing consumers are unaffected.
+      const sections = groupBySection
+        ? groupResultsBySection(rankedResults).map((g) => ({
+            section_path: g.section_path,
+            score: g.score,
+            references: g.results.map((r) => r.reference),
+          }))
+        : undefined;
 
       // Build next_cursor when the full page was returned (and no reranking —
       // rerank reorders results, so keyset pagination would be unreliable).
       let nextCursor: string | undefined;
-      if (!rerankActive && hits.length === limit) {
+      if (!rerankActive && !groupBySection && groupByV2 === undefined && hits.length === limit) {
         const last = rankedResults[rankedResults.length - 1];
         if (last) {
           // Include `score` — it is the value the query ordered by and thus part
@@ -1045,6 +1310,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
                   after: countAfterMinScore,
                   removed: countBeforeMinScore - countAfterMinScore,
                 },
+                ...(sections ? { sections } : {}),
                 ...(nextCursor ? { next_cursor: nextCursor } : {}),
                 ...(usage !== undefined &&
                 (usage.inputTokens > 0 ||
@@ -2251,6 +2517,22 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       };
     },
   );
+
+  // ── v2 document-navigation tools (task 3.9) ────────────────────────────────
+  // Registered onto the SAME server so they inherit the one registration
+  // boundary above (auth/scope/idempotency). Additive: the tools above are
+  // untouched. `get_asset` uses the AssetStore + render-cache when configured.
+  registerNavigationTools({
+    server,
+    postgresClient,
+    logger,
+    defaultCollection,
+    authorize,
+    accessScopeForMcp,
+    emitQueryActivity,
+    assetStore: opts.assetStore ?? null,
+    renderCache: opts.renderCache ?? null,
+  });
 
   return server;
 }

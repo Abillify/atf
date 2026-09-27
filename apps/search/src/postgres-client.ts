@@ -30,6 +30,7 @@ import {
   buildUpsertSqlParts,
   pushExtraParams,
   CURRENT_SCHEMA_VERSION,
+  ftsSearchRecomputeSql,
   AppError,
 } from "./collection-ddl.js";
 import {
@@ -38,13 +39,222 @@ import {
   buildHybridQuery,
   buildFtsQuery,
   buildAccessSql,
+  buildTemporalFilterSql,
   SqlParams,
 } from "./query-builder.js";
+import type { ExpandMode, ExpansionUnit } from "./expansion.js";
+import { buildIdentifierTsQuery, queryIdentifierValueNorms } from "./identifier.js";
 import type { AccessScope } from "./access-scope.js";
 import { createStatsBuffer } from "./stats-buffer.js";
 import type { CollectionAcl } from "./collection-access.js";
 
 export { validateFtsLanguage, collectionTableName };
+
+/**
+ * Derive a figure caption from a figure unit's stored content (task 3.7). A
+ * figure unit's content is `caption\ndescription\ntranscription…` (see
+ * batch-unit-builder `renderFigureText`), so the first non-empty line is the
+ * caption. Trimmed and length-bounded so a runaway description cannot bloat the
+ * response asset object. Returns null for empty content.
+ */
+function figureCaption(content: string | null | undefined): string | null {
+  if (!content) return null;
+  const firstLine = content.split(/\r?\n/, 1)[0]?.trim() ?? "";
+  if (firstLine === "") return null;
+  return firstLine.length > 300 ? firstLine.slice(0, 300) : firstLine;
+}
+
+// ─── v2 navigation query helpers (task 3.9) ─────────────────────────────────
+
+/** Clamp an optional integer to `[min, max]`, falling back to `fallback`. */
+function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
+  if (value == null || !Number.isFinite(value)) return fallback;
+  return Math.max(min, Math.min(max, Math.trunc(value)));
+}
+
+/** A short, single-line excerpt of a unit's content (for identifier hits). */
+function navExcerpt(content: string | null | undefined): string {
+  if (!content) return "";
+  const flat = content.replace(/\s+/g, " ").trim();
+  return flat.length > 300 ? `${flat.slice(0, 300)}…` : flat;
+}
+
+/** The shared column set every navigation unit row selects. */
+const NAV_ROW_SELECT =
+  `SELECT unit_id, unit_type, content, section_id, section_path,
+          page_start, page_end, figure_kind, table_id, metadata`;
+
+/** The raw row shape {@link NAV_ROW_SELECT} returns. */
+interface NavRowShape {
+  unit_id: string | null;
+  unit_type: string | null;
+  content: string | null;
+  section_id: string | null;
+  section_path: string[] | null;
+  page_start: number | null;
+  page_end: number | null;
+  figure_kind: string | null;
+  table_id: string | null;
+  metadata: Metadata | null;
+}
+
+/** Normalize a raw navigation row into a {@link NavUnitRow}. */
+function navRow(row: NavRowShape): NavUnitRow {
+  return {
+    unit_id: row.unit_id,
+    unit_type: row.unit_type,
+    content: row.content ?? "",
+    section_id: row.section_id,
+    section_path: Array.isArray(row.section_path) ? row.section_path : [],
+    // Section units carry a page sentinel of 0; expose null for a clean range.
+    page_start: row.page_start && row.page_start > 0 ? row.page_start : null,
+    page_end: row.page_end && row.page_end > 0 ? row.page_end : null,
+    figure_kind: row.figure_kind,
+    table_id: row.table_id,
+    metadata: row.metadata ?? {},
+  };
+}
+
+/** Drop the internal prev/next link fields from a loaded context row. */
+function stripLinks(row: NavUnitRow & { prev_unit_id?: string | null; next_unit_id?: string | null }): NavUnitRow {
+  return {
+    unit_id: row.unit_id,
+    unit_type: row.unit_type,
+    content: row.content,
+    section_id: row.section_id,
+    section_path: row.section_path,
+    page_start: row.page_start,
+    page_end: row.page_end,
+    figure_kind: row.figure_kind,
+    table_id: row.table_id,
+    metadata: row.metadata,
+  };
+}
+
+/**
+ * Look up the unit ids a query's identifiers resolve to (task 3.4, Req 12.3).
+ *
+ * Recognise identifier-shaped tokens in the query text (article numbers, mask/
+ * transaction codes, drawing numbers, standards, requirement ids), normalise
+ * each to its `value_norm`, and select the matching unit ids from the shared
+ * `vs_identifiers` index scoped by tenant + collection. Returns them ordered by
+ * how many distinct query identifiers a unit matched (best first) so the caller
+ * can use array order as the exact-match rank of the third RRF list.
+ *
+ * Returns `[]` when the query carries no identifier, the tenant is unknown, or
+ * the identifier index is empty — in which case the identifier RRF list simply
+ * does not participate and hybrid search is exactly the dense+fts(+sparse) fusion
+ * it was before. Guards against a missing `vs_identifiers` table (a deployment
+ * mid-migration) by treating a lookup error as "no identifier hits" — but the
+ * failure is LOGGED (warn) so a broken identifier index is visible, and the
+ * lookup runs under a SAVEPOINT so the error does not abort the surrounding
+ * search transaction (the caller runs this after `BEGIN`).
+ */
+export async function lookupIdentifierUnitIds(
+  client: PoolClient,
+  valueNorms: readonly string[],
+  tenantId: string | undefined,
+  collection: string,
+  logger: pino.Logger,
+): Promise<string[]> {
+  const tenant = tenantId?.trim();
+  if (!tenant) return [];
+  if (valueNorms.length === 0) return [];
+  await client.query("SAVEPOINT identifier_lookup");
+  try {
+    const res = await client.query<{ unit_id: string }>(
+      `SELECT unit_id
+         FROM vs_identifiers
+        WHERE tenant_id = $1 AND collection = $2 AND value_norm = ANY($3::text[])
+        GROUP BY unit_id
+        ORDER BY COUNT(DISTINCT value_norm) DESC, unit_id ASC
+        LIMIT ${IDENTIFIER_LOOKUP_MAX_UNITS}`,
+      [tenant, collection, [...valueNorms]],
+    );
+    await client.query("RELEASE SAVEPOINT identifier_lookup");
+    return res.rows.map((r) => r.unit_id);
+  } catch (err) {
+    // A missing table or transient error must never fail an otherwise-valid
+    // search; degrade to no exact identifier list, but make it visible.
+    await client.query("ROLLBACK TO SAVEPOINT identifier_lookup").catch(() => {});
+    logger.warn(
+      { err, collection, identifiers: valueNorms.length },
+      "Identifier lookup (vs_identifiers) failed; searching without the exact identifier list",
+    );
+    return [];
+  }
+}
+
+/**
+ * Hard row cap for the section/page navigation reads (get_section, get_pages,
+ * Requirement 15.3). Their OUTPUT is already bounded by `max_chars`; this bounds
+ * the DB fetch too, so a whole-document page range cannot pull every unit.
+ */
+const NAV_MAX_UNITS = 5000;
+
+/** Upper bound on exact identifier hits fed into the identifier RRF list. */
+const IDENTIFIER_LOOKUP_MAX_UNITS = 1000;
+
+/** Bytes of each staged batch payload scanned for `document.begin` (it is the first record). */
+const SOURCE_HEAD_BYTES = 64 * 1024;
+/** Staged batches (in seq order) scanned for `document.begin` before giving up. */
+const SOURCE_HEAD_MAX_BATCHES = 4;
+/** Records per payload head inspected before giving up (document.begin comes first). */
+const SOURCE_HEAD_MAX_RECORDS = 8;
+const SHA256_HEX = /^[0-9a-f]{64}$/;
+
+/**
+ * Extract `document.begin.source.sha256` from the head of a staged NDJSON batch
+ * payload (contract v2). Tolerates a truncated trailing line (the head is a
+ * byte prefix) and non-JSON noise; returns null unless a `document.begin`
+ * record with a lowercase hex sha256 is found in the first few records.
+ */
+export function sourceSha256FromPayloadHead(head: Buffer | string | null | undefined): string | null {
+  if (head === null || head === undefined) return null;
+  const text = typeof head === "string" ? head : head.toString("utf-8");
+  const lines = text.split("\n");
+  let inspected = 0;
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (line === "") continue;
+    if (++inspected > SOURCE_HEAD_MAX_RECORDS) break;
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      continue;
+    }
+    if (typeof record !== "object" || record === null) continue;
+    const r = record as { type?: unknown; source?: { sha256?: unknown } };
+    if (r.type !== "document.begin") continue;
+    const sha = r.source?.sha256;
+    return typeof sha === "string" && SHA256_HEX.test(sha) ? sha : null;
+  }
+  return null;
+}
+
+/**
+ * Per-call search options that are NOT part of the v1 positional contract
+ * (task 3.4 follow-up, Requirement 13.7). Everything defaults OFF so the v1
+ * `/search` handler and the legacy MCP `search` call — which never pass this —
+ * keep exactly their previous SQL and ranking.
+ */
+export interface SearchOptions {
+  /**
+   * Fuse the identifier list (Requirement 12.3: `vs_identifiers` exact hits ∪
+   * `ts_ident` lexical hits) as a third RRF list. Only honoured by the HYBRID
+   * path: the dense-only and FTS-only builders do not fuse lists, so a dense or
+   * FTS-only search never carries the identifier list (documented behaviour).
+   * Default: false.
+   */
+  identifierList?: boolean;
+  /**
+   * Identifiers the caller named explicitly (e.g. `/v2/search`
+   * `filters.identifier`). Normalized and added to those recognized in the
+   * query text; they do not need to match a recognizer class.
+   */
+  identifiers?: string[];
+}
 
 // ─── FTS content preprocessing ────────────────────────────────────────────────
 
@@ -137,6 +347,10 @@ export interface PostgresClientConfig {
   statsRetentionDays?: number;
   /** RRF k parameter for hybrid search scoring. Default: 60. */
   rrfK?: number;
+  /** Per-list RRF weights (task 3.4, Req 12.3). All default to 1.0 (unchanged ranking). */
+  rrfWeightDense?: number;
+  rrfWeightFts?: number;
+  rrfWeightIdentifier?: number;
   /** Interval in ms for flushing buffered stats to the database. Default: 30 000. */
   statsFlushIntervalMs?: number;
   /**
@@ -254,6 +468,21 @@ export interface ChunkInfo {
   figure_id?: string;
   asset_id?: string;
   bbox?: [number, number, number, number];
+  /**
+   * Figures this chunk's text references via a `[Abbildung <id>: …]` marker
+   * (Requirement 2.4). Distinct from `figure_id`/`asset_id`, which identify the
+   * figure a figure-chunk *is*; these are the figures a text chunk points at.
+   */
+  figure_refs?: FigureRef[];
+}
+
+/**
+ * A figure referenced from within a chunk's text. `asset_id` lets a consumer
+ * fetch the referenced figure without a second lookup.
+ */
+export interface FigureRef {
+  figure_id: string;
+  asset_id: string;
 }
 
 export interface SearchFilter {
@@ -273,6 +502,22 @@ export interface SearchEvidence {
   figure_id?: string;
   asset_id?: string;
   bbox?: [number, number, number, number];
+  /** Figures this chunk's text references (Requirement 2.4). */
+  figure_refs?: FigureRef[];
+  /** Asset ids of the referenced figures, for direct retrieval in the answer. */
+  asset_ids?: string[];
+  /**
+   * Set to `partial` when the hit comes from a v2 revision that is only
+   * partially visible — a `progressive` revision whose committed segments are
+   * searchable while the rest is still ingesting (Requirement 6.4). Absent for
+   * fully-committed and legacy rows.
+   */
+  revision_state?: "partial";
+  /**
+   * The committed page range available so far for a partial revision, e.g.
+   * "1–2750" (Requirement 6.4). Present only alongside `revision_state=partial`.
+   */
+  pages_available?: string;
 }
 
 export interface SearchResult {
@@ -304,6 +549,125 @@ export interface SearchResult {
   valid_from: Date | null;
   /** COALESCE(valid_from, created), always present. */
   effective_valid_from: Date;
+  /**
+   * `partial` when the hit comes from a partially-visible `progressive` revision
+   * (Requirement 6.4). Mirrors `evidence.revision_state`. Absent otherwise.
+   */
+  revision_state?: "partial";
+  /** Committed page range of a partial revision, e.g. "1–2750" (Requirement 6.4). */
+  pages_available?: string;
+}
+
+/**
+ * Coordinates of a search hit needed to expand it (task 3.6, Requirement 13.4).
+ *
+ * These are read off a {@link SearchResult}'s metadata/base_ref by the caller:
+ *  - `neighbors` walks `prev_unit_id` / `next_unit_id` from the hit;
+ *  - `section` collects every unit sharing `section_id` in the same document;
+ *  - `page` collects every unit overlapping the hit's page range in the same
+ *    document.
+ *
+ * The expansion is scoped to the hit's document via `base_ref` (present on every
+ * result) so it never crosses into another document, and runs under the SAME
+ * temporal/revision-visibility + tenant/ACL predicates the search query used —
+ * expansion can never surface a unit the searcher could not have retrieved
+ * directly, nor a unit from a non-current revision.
+ */
+export interface ExpandUnitCoords {
+  /** The hit's own unit id, when known (used to dedupe it from its expansion). */
+  unitId?: string | null;
+  /** Base document reference of the hit; scopes the expansion to one document. */
+  baseRef: string;
+  /** neighbors: the hit's previous reading-order sibling. */
+  prevUnitId?: string | null;
+  /** neighbors: the hit's next reading-order sibling. */
+  nextUnitId?: string | null;
+  /** section: the section the hit belongs to. */
+  sectionId?: string | null;
+  /** page: first page the hit overlaps. */
+  pageStart?: number | null;
+  /** page: last page the hit overlaps. */
+  pageEnd?: number | null;
+}
+
+/** One expansion unit row plus its coordinates, in reading order. */
+export interface ExpandUnitRow extends ExpansionUnit {
+  page_start: number | null;
+  page_end: number | null;
+}
+
+/**
+ * Resolved metadata for a figure unit, keyed by `figure_id` (task 3.7,
+ * Requirement 13.5). Used by the `/v2/search` asset-attach step to enrich the
+ * figures a hit REFERENCES (its `figure_refs`, which carry only ids) with the
+ * `figure_kind`, `caption`, `page` and `bbox` needed for the response asset
+ * object. Resolved through the same tenant/ACL/visibility predicates as a
+ * search so it can never surface a figure the searcher could not retrieve.
+ */
+export interface FigureUnitInfo {
+  figure_id: string;
+  asset_id: string | null;
+  figure_kind: string | null;
+  /** First line/sentence of the figure unit content, used as the caption. */
+  caption: string | null;
+  page: number | null;
+  bbox: [number, number, number, number] | null;
+}
+
+// ─── v2 navigation tool support (task 3.9) ──────────────────────────────────
+// The read-only query surface behind the MCP navigation tools (get_outline,
+// get_section, get_pages, get_context, list_figures, get_table, find_identifier,
+// follow_ref). Every method runs under the SAME tenant/ACL + temporal/
+// revision-visibility predicates as {@link PostgresClient.search}
+// (buildAccessSql / buildTemporalFilterSql), scoped to one document via
+// `document_id` or `base_ref`, so a navigation call can never surface a unit or
+// asset the caller could not retrieve directly, nor one from a non-current
+// revision.
+
+/** A section entry of a document outline (a `section` unit's heading + coords). */
+export interface OutlineEntry {
+  unit_id: string;
+  section_id: string | null;
+  section_path: string[];
+  /** Nesting depth (1-based), derived from the section path length. */
+  depth: number;
+  /** Heading text (the section path's leaf), for a readable table of contents. */
+  heading: string;
+  page_start: number | null;
+  page_end: number | null;
+}
+
+/** One navigation unit row (section/page/table/figure/chunk), reading-ordered. */
+export interface NavUnitRow {
+  unit_id: string | null;
+  unit_type: string | null;
+  content: string;
+  section_id: string | null;
+  section_path: string[];
+  page_start: number | null;
+  page_end: number | null;
+  figure_kind: string | null;
+  table_id: string | null;
+  metadata: Metadata;
+}
+
+/** One exact identifier occurrence (a `vs_identifiers` row joined to its unit). */
+export interface IdentifierOccurrence {
+  value_norm: string;
+  unit_id: string;
+  page: number | null;
+  kind: string | null;
+  reference: string;
+  base_ref: string;
+  section_path: string[];
+  /** A short excerpt of the unit's content around the identifier. */
+  excerpt: string;
+}
+
+/** Common options shared by the navigation reads. */
+export interface NavReadOptions {
+  includeAllVersions?: boolean;
+  validAt?: string;
 }
 
 /**
@@ -678,7 +1042,178 @@ export interface PostgresClient {
     signal?: AbortSignal,
     onPlan?: (plan: SearchExecutionPlan) => void,
     validAt?: string,
+    /** v2-only options (identifier list); omitted by v1 callers → unchanged v1 behaviour. */
+    searchOptions?: SearchOptions,
   ): Promise<PostgresResponse<SearchResult[]>>;
+  /**
+   * Resolve the source sha256 of a stored revision SERVER-SIDE (Requirement
+   * 14.4/14.5): the `document.begin.source.sha256` the producer staged with the
+   * revision's batches. Used by the MCP `get_asset(region)` zoom so the render
+   * source is bound to the ACL-checked asset's revision rather than supplied by
+   * the caller. Read-only. Returns null when the revision has no staged
+   * `document.begin` (e.g. a legacy v1 document) or its digest is not a
+   * lowercase hex sha256.
+   */
+  lookupRevisionSourceSha256(
+    collection: string,
+    tenantId: string,
+    revisionId: string,
+  ): Promise<PostgresResponse<string | null>>;
+
+  /**
+   * Small-to-big expansion (task 3.6, Requirement 13.4): fetch the expansion set
+   * for a single search hit in reading order, honouring the SAME
+   * temporal/revision-visibility + tenant/ACL predicates as {@link search}.
+   *
+   * `mode`:
+   *  - `neighbors` — the hit plus its prev/next reading-order siblings;
+   *  - `section`   — every unit sharing the hit's `section_id` in the document;
+   *  - `page`      — every unit overlapping the hit's page range in the document.
+   *
+   * Returns the units ordered for reading (by page then id); the pure assembler
+   * (`assembleExpansion`) then bounds them by `budget_chars` and reports
+   * `truncated`. Returns `[]` (never an error) when the hit carries no usable
+   * coordinates for the requested mode, so a caller can always attempt expansion
+   * without pre-checking.
+   */
+  expandUnit(
+    collection: string,
+    scope: AccessScope,
+    mode: ExpandMode,
+    coords: ExpandUnitCoords,
+    options?: {
+      includeAllVersions?: boolean;
+      validAt?: string;
+    },
+  ): Promise<PostgresResponse<ExpandUnitRow[]>>;
+
+  /**
+   * Resolve figure-unit metadata by `figure_id` within one document (task 3.7,
+   * Requirement 13.5), for the `/v2/search` asset-attach step. Scoped to
+   * `baseRef` and run under the SAME temporal/revision-visibility + tenant/ACL
+   * predicates as {@link search}, so it never surfaces a figure the searcher
+   * could not retrieve. Returns one {@link FigureUnitInfo} per resolvable
+   * figure id; unknown ids are simply absent. `[]` (never an error) when there
+   * are no ids or no base ref.
+   */
+  lookupFigureUnits(
+    collection: string,
+    scope: AccessScope,
+    baseRef: string,
+    figureIds: string[],
+    options?: {
+      includeAllVersions?: boolean;
+      validAt?: string;
+    },
+  ): Promise<PostgresResponse<FigureUnitInfo[]>>;
+
+  /**
+   * The table of contents of one document (task 3.9, Requirement 15.1): its
+   * `section` units' heading path + page range + section id, depth-limited and
+   * paginated (design §6.6 — a single huge document's outline). `reference` is
+   * the document base_ref. Ordered by page then section path.
+   */
+  getOutline(
+    collection: string,
+    scope: AccessScope,
+    reference: string,
+    options?: NavReadOptions & { depth?: number; limit?: number; offset?: number },
+  ): Promise<PostgresResponse<{ entries: OutlineEntry[]; total: number }>>;
+
+  /**
+   * The units of one section (task 3.9, Requirement 15.1), selected by
+   * `section_id` or by `section_path` prefix, in reading order. Used to render a
+   * section as Markdown v2. Bounded by `maxChars`, reporting `truncated`.
+   */
+  getSectionUnits(
+    collection: string,
+    scope: AccessScope,
+    reference: string,
+    selector: { sectionId?: string; sectionPath?: string[] },
+    options?: NavReadOptions,
+  ): Promise<PostgresResponse<NavUnitRow[]>>;
+
+  /**
+   * The units overlapping a page range of one document (task 3.9), in reading
+   * order — used to render pages as Markdown v2 or a summary.
+   */
+  getPageUnits(
+    collection: string,
+    scope: AccessScope,
+    reference: string,
+    from: number,
+    to: number,
+    options?: NavReadOptions,
+  ): Promise<PostgresResponse<NavUnitRow[]>>;
+
+  /**
+   * The reading-order neighbours of a unit (task 3.9): the unit itself plus up
+   * to `before`/`after` units walked through the `prev_unit_id`/`next_unit_id`
+   * graph within the same document.
+   */
+  getContextUnits(
+    collection: string,
+    scope: AccessScope,
+    unitId: string,
+    before: number,
+    after: number,
+    options?: NavReadOptions,
+  ): Promise<PostgresResponse<{ before: NavUnitRow[]; unit: NavUnitRow | null; after: NavUnitRow[] }>>;
+
+  /**
+   * The figure units of a document, optionally restricted to a page range
+   * and/or a figure kind (task 3.9, Requirement 15.1), paginated.
+   */
+  listFigureUnits(
+    collection: string,
+    scope: AccessScope,
+    reference: string,
+    options?: NavReadOptions & {
+      fromPage?: number;
+      toPage?: number;
+      kind?: string;
+      limit?: number;
+      offset?: number;
+    },
+  ): Promise<PostgresResponse<{ figures: FigureUnitInfo[]; total: number }>>;
+
+  /**
+   * The row-group units of a logical table, reassembled across page boundaries
+   * by `table_id` (task 3.9), in reading order. Bounded by `rows` (row-group
+   * count) and reporting `truncated`.
+   */
+  getTableUnits(
+    collection: string,
+    scope: AccessScope,
+    tableId: string,
+    options?: NavReadOptions & { limit?: number },
+  ): Promise<PostgresResponse<{ units: NavUnitRow[]; total: number }>>;
+
+  /**
+   * Resolve a unit and the figure units it references (task 3.9,
+   * `follow_ref`): the unit's `figure_refs` (figure ids referenced within its
+   * span) resolved to their figure units, in the same document, under the same
+   * gates as search. Returns null when the unit is not visible.
+   */
+  getUnitById(
+    collection: string,
+    scope: AccessScope,
+    unitId: string,
+    options?: NavReadOptions,
+  ): Promise<PostgresResponse<NavUnitRow | null>>;
+
+  /**
+   * Exact identifier occurrences across the whole collection (task 3.9,
+   * Requirement 15.1): every `vs_identifiers` row whose `value_norm` matches the
+   * normalized query value, joined to its visible unit, paginated. ACL/temporal
+   * gated per unit so an occurrence is only returned when its unit is visible.
+   */
+  findIdentifierOccurrences(
+    collection: string,
+    scope: AccessScope,
+    valueNorm: string,
+    options?: NavReadOptions & { limit?: number; offset?: number },
+  ): Promise<PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>>;
 
   delete(
     filter: SearchFilter,
@@ -938,6 +1473,24 @@ export interface PostgresClient {
   ): Promise<PostgresResponse<void>>;
 
   /**
+   * Change a collection's full-text-search language and recompute its
+   * `ts_search` vectors in place (Requirement 2.6).
+   *
+   * When the language changes, existing vectors were stemmed under the old
+   * language and would no longer match queries stemmed under the new one, so
+   * every row is re-tokenized from its stored content in a single set-based
+   * UPDATE. The config row is updated atomically in the same transaction.
+   *
+   * No-op (updated = 0, unchanged = true) when the collection already uses the
+   * requested language. Returns COLLECTION_NOT_FOUND when the collection does
+   * not exist, UNSUPPORTED_FTS_LANGUAGE when the language is not whitelisted.
+   */
+  recomputeFtsLanguage(
+    collection: string,
+    language: string,
+  ): Promise<PostgresResponse<{ updated: number; unchanged: boolean }>>;
+
+  /**
    * Record a completed search operation in the stats buffer.
    * Called by the search handler after reranking (if any) completes so that
    * the `reranked` flag in vs_search_stats is accurate.
@@ -1014,6 +1567,53 @@ export function normalizeReference(reference: string): string {
  */
 export function stripNullBytes(text: string): string {
   return text.indexOf("\u0000") === -1 ? text : text.replace(/\u0000/g, "");
+}
+
+/**
+ * For a set of revision ids appearing in a search result, return the ones whose
+ * revision is only partially visible (`status='partial'`, a `progressive`
+ * revision still ingesting) together with the human-readable committed page span
+ * so a hit can carry `revision_state=partial` + `pages_available` (Req 6.4).
+ *
+ * A committed revision (status='committed') is fully visible and is NOT tagged.
+ * The page span is the merged min–max of the revision's committed segments,
+ * formatted like "1–2750" (en dash), matching design §9a.3.
+ */
+async function annotatePartialRevisions(
+  client: PoolClient,
+  revisionIds: string[],
+): Promise<Map<string, { pagesAvailable: string }>> {
+  const out = new Map<string, { pagesAvailable: string }>();
+  const partial = await client.query<{ revision_id: string }>(
+    `SELECT revision_id FROM vs_revisions
+      WHERE revision_id = ANY($1) AND status = 'partial'`,
+    [revisionIds],
+  );
+  if (partial.rows.length === 0) return out;
+  const partialIds = partial.rows.map((r) => r.revision_id);
+  const segments = await client.query<{ revision_id: string; page_start: number; page_end: number }>(
+    `SELECT revision_id, page_start, page_end FROM vs_segments
+      WHERE revision_id = ANY($1)
+      ORDER BY revision_id, page_start`,
+    [partialIds],
+  );
+  const spanByRevision = new Map<string, { from: number; to: number }>();
+  for (const seg of segments.rows) {
+    const span = spanByRevision.get(seg.revision_id);
+    if (!span) {
+      spanByRevision.set(seg.revision_id, { from: seg.page_start, to: seg.page_end });
+    } else {
+      span.from = Math.min(span.from, seg.page_start);
+      span.to = Math.max(span.to, seg.page_end);
+    }
+  }
+  for (const revId of partialIds) {
+    const span = spanByRevision.get(revId);
+    // A partial revision with no committed segment yet exposes no pages; still
+    // tag it partial so a caller knows the revision is incomplete.
+    out.set(revId, { pagesAvailable: span ? `${span.from}\u2013${span.to}` : "" });
+  }
+  return out;
 }
 
 /**
@@ -1310,6 +1910,9 @@ export function createPostgresClient(
     defaultFtsLanguage = "simple",
     statsRetentionDays = 90,
     rrfK = 60,
+    rrfWeightDense = 1.0,
+    rrfWeightFts = 1.0,
+    rrfWeightIdentifier = 1.0,
     statsFlushIntervalMs = 30_000,
     quantization: quantizationConfig = "none",
     embeddingModel: expectedEmbeddingModel,
@@ -1911,6 +2514,7 @@ export function createPostgresClient(
       signal?: AbortSignal,
       onPlan?: (plan: SearchExecutionPlan) => void,
       validAt?: string,
+      searchOptions?: SearchOptions,
     ): Promise<PostgresResponse<SearchResult[]>> {
       const table = collectionTableName(collection);
       // Normalise a folder path prefix into a wildcard-escaped LIKE pattern
@@ -1965,6 +2569,24 @@ export function createPostgresClient(
               ? toBinaryString(vector)
               : undefined;
 
+          // Identifier RRF list (task 3.4, Req 12.1/12.3): OPT-IN per call
+          // (searchOptions.identifierList) so v1 /search and the legacy MCP
+          // search keep their exact previous ranking (Req 13.7). Only for the
+          // hybrid path and only when the query carries (or the caller names)
+          // an identifier. Two sources feed the one list: exact vs_identifiers
+          // hits (tenant + collection scoped) and lexical ts_ident matches;
+          // buildHybridQuery unions them (best rank wins) as the third list.
+          // No identifier → no lookup, no third list, unchanged SQL.
+          const identifierNorms =
+            searchOptions?.identifierList === true && hybridSearch && !ftsOnly
+              ? queryIdentifierValueNorms(query, searchOptions.identifiers ?? [])
+              : [];
+          const identifierUnitIds =
+            identifierNorms.length > 0
+              ? await lookupIdentifierUnitIds(client, identifierNorms, scope.tenantId, collection, logger)
+              : [];
+          const identifierTsQuery = buildIdentifierTsQuery(identifierNorms);
+
           const { sql, params } = ftsOnly
             ? buildFtsQuery(
                 table,
@@ -1981,6 +2603,7 @@ export function createPostgresClient(
                 baseRef,
                 pathLike,
                 validAt,
+                collection,
               )
             : hybridSearch
               ? buildHybridQuery(
@@ -2006,6 +2629,14 @@ export function createPostgresClient(
                   cursor,
                   pathLike,
                   validAt,
+                  collection,
+                  {
+                    weightDense: rrfWeightDense,
+                    weightFts: rrfWeightFts,
+                    weightIdentifier: rrfWeightIdentifier,
+                    identifierUnitIds,
+                    identifierTsQuery,
+                  },
                 )
               : binaryStr && meta.vectorSize
                 ? buildBinaryDenseQuery(
@@ -2025,6 +2656,7 @@ export function createPostgresClient(
                     cursor,
                     pathLike,
                     validAt,
+                    collection,
                   )
                 : buildDenseQuery(
                     table,
@@ -2040,6 +2672,7 @@ export function createPostgresClient(
                     cursor,
                     pathLike,
                     validAt,
+                    collection,
                   );
 
           const result = await client.query(sql, params);
@@ -2085,6 +2718,12 @@ export function createPostgresClient(
                 ...(chunk?.figure_id ? { figure_id: chunk.figure_id } : {}),
                 ...(chunk?.asset_id ? { asset_id: chunk.asset_id } : {}),
                 ...(chunk?.bbox ? { bbox: chunk.bbox } : {}),
+                ...(chunk?.figure_refs?.length
+                  ? {
+                      figure_refs: chunk.figure_refs,
+                      asset_ids: chunk.figure_refs.map((ref) => ref.asset_id),
+                    }
+                  : {}),
               };
             })(),
             reference: row.reference as string,
@@ -2102,6 +2741,37 @@ export function createPostgresClient(
             effective_valid_from: row.effective_valid_from as Date,
           }));
 
+          // Tag hits that come from a partially-visible `progressive` revision
+          // with revision_state=partial + pages_available (Requirement 6.4). The
+          // pointer filter already ensured every hit is the document's current
+          // revision, so a hit is "partial" iff its revision's status is 'partial'
+          // (still ingesting) rather than 'committed'. We resolve status + the
+          // committed page span once per distinct revision, not per row.
+          const revisionIds = [
+            ...new Set(
+              result.rows
+                .map((r) => (r as { revision_id?: string | null }).revision_id)
+                .filter((id): id is string => typeof id === "string" && id.length > 0),
+            ),
+          ];
+          if (revisionIds.length > 0) {
+            const partial = await annotatePartialRevisions(client, revisionIds);
+            if (partial.size > 0) {
+              for (let i = 0; i < searchResults.length; i++) {
+                const revId = (result.rows[i] as { revision_id?: string | null }).revision_id;
+                const info = revId ? partial.get(revId) : undefined;
+                const sr = searchResults[i];
+                if (!info || !sr) continue;
+                sr.revision_state = "partial";
+                sr.pages_available = info.pagesAvailable;
+                if (sr.evidence) {
+                  sr.evidence.revision_state = "partial";
+                  sr.evidence.pages_available = info.pagesAvailable;
+                }
+              }
+            }
+          }
+
           return searchResults;
         } catch (err) {
           await client.query("ROLLBACK").catch(() => {});
@@ -2111,6 +2781,648 @@ export function createPostgresClient(
             signal.removeEventListener("abort", abortListener);
           }
         }
+      });
+    },
+
+    async expandUnit(
+      collection: string,
+      scope: AccessScope,
+      mode: ExpandMode,
+      coords: ExpandUnitCoords,
+      options?: { includeAllVersions?: boolean; validAt?: string },
+    ): Promise<PostgresResponse<ExpandUnitRow[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const baseRef = coords.baseRef?.trim();
+      if (!baseRef) return { ok: true, result: [] };
+
+      // Build the mode-specific target predicate. Every mode is additionally
+      // scoped to the hit's document (base_ref) so expansion never crosses into
+      // another document, and runs under the SAME temporal/revision-visibility
+      // (buildTemporalFilterSql, with the collection so the current-revision
+      // pointer is honoured) and tenant/ACL (buildAccessSql) predicates as the
+      // search query. That is what keeps expansion from surfacing a unit the
+      // searcher could not retrieve directly, or one from a non-current revision.
+      const p = new SqlParams();
+      const temporalFilter = buildTemporalFilterSql(
+        p,
+        table,
+        options?.includeAllVersions ?? false,
+        options?.validAt,
+        "",
+        collection,
+      );
+      const accessSql = buildAccessSql(p, scope);
+      const baseRefPh = p.add(baseRef);
+
+      let targetSql: string;
+      if (mode === "neighbors") {
+        // The hit plus whichever of its prev/next reading-order siblings exist.
+        // With no sibling ids there is nothing to expand to; return the hit's
+        // own row set (which dedupes to empty in the assembler), i.e. [].
+        const ids = [coords.unitId, coords.prevUnitId, coords.nextUnitId].filter(
+          (id): id is string => typeof id === "string" && id.length > 0,
+        );
+        if (ids.length === 0) return { ok: true, result: [] };
+        const idsPh = p.add(ids);
+        targetSql = `unit_id = ANY(${idsPh}::text[])`;
+      } else if (mode === "section") {
+        const sectionId = coords.sectionId?.trim();
+        if (!sectionId) return { ok: true, result: [] };
+        const secPh = p.add(sectionId);
+        targetSql = `section_id = ${secPh}`;
+      } else {
+        // page: every unit overlapping the hit's page range in this document.
+        const start = coords.pageStart;
+        const end = coords.pageEnd ?? coords.pageStart;
+        if (start == null || end == null) return { ok: true, result: [] };
+        const startPh = p.add(start);
+        const endPh = p.add(end);
+        // Overlap test: unit.page_start <= hit.page_end AND unit.page_end >= hit.page_start.
+        targetSql = `page_start IS NOT NULL AND page_end IS NOT NULL AND page_start <= ${endPh} AND page_end >= ${startPh}`;
+      }
+
+      const sql = `
+        SELECT unit_id, content, page_start, page_end
+        FROM "${table}"
+        WHERE base_ref = ${baseRefPh}
+          AND (${targetSql})${temporalFilter}${accessSql}
+        ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+      `;
+
+      return withClient(async (client) => {
+        const res = await client.query<{
+          unit_id: string | null;
+          content: string | null;
+          page_start: number | null;
+          page_end: number | null;
+        }>(sql, p.values);
+        return res.rows.map((row) => ({
+          unit_id: row.unit_id,
+          content: row.content ?? "",
+          page_start: row.page_start,
+          page_end: row.page_end,
+        }));
+      });
+    },
+
+    async lookupFigureUnits(
+      collection: string,
+      scope: AccessScope,
+      baseRef: string,
+      figureIds: string[],
+      options?: { includeAllVersions?: boolean; validAt?: string },
+    ): Promise<PostgresResponse<FigureUnitInfo[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const ref = baseRef?.trim();
+      const ids = [...new Set(figureIds.filter((id) => typeof id === "string" && id.length > 0))];
+      if (!ref || ids.length === 0) return { ok: true, result: [] };
+
+      // Same document + tenant/ACL + temporal/revision-visibility gates as a
+      // search, so a referenced figure can never leak a figure the searcher
+      // could not have retrieved directly. Match on the `figure_id` mirrored
+      // into metadata (the batch worker writes it there for figure units); the
+      // metadata GIN index and the base_ref index back the lookup.
+      const p = new SqlParams();
+      const temporalFilter = buildTemporalFilterSql(
+        p,
+        table,
+        options?.includeAllVersions ?? false,
+        options?.validAt,
+        "",
+        collection,
+      );
+      const accessSql = buildAccessSql(p, scope);
+      const baseRefPh = p.add(ref);
+      const idsPh = p.add(ids);
+      const sql = `
+        SELECT
+          content,
+          page_start,
+          figure_kind,
+          metadata->>'figure_id' AS figure_id,
+          metadata->>'asset_id'  AS asset_id,
+          metadata->'bbox'       AS bbox
+        FROM "${table}"
+        WHERE base_ref = ${baseRefPh}
+          AND metadata->>'figure_id' = ANY(${idsPh}::text[])${temporalFilter}${accessSql}
+        ORDER BY page_start ASC NULLS FIRST, id ASC
+      `;
+      return withClient(async (client) => {
+        const res = await client.query<{
+          content: string | null;
+          page_start: number | null;
+          figure_kind: string | null;
+          figure_id: string | null;
+          asset_id: string | null;
+          bbox: unknown;
+        }>(sql, p.values);
+        // One row per figure id; the ORDER BY makes the first row deterministic
+        // if a figure is somehow indexed twice.
+        const byFigure = new Map<string, FigureUnitInfo>();
+        for (const row of res.rows) {
+          if (!row.figure_id || byFigure.has(row.figure_id)) continue;
+          const bbox =
+            Array.isArray(row.bbox) && row.bbox.length === 4 && row.bbox.every((n) => typeof n === "number")
+              ? (row.bbox as [number, number, number, number])
+              : null;
+          byFigure.set(row.figure_id, {
+            figure_id: row.figure_id,
+            asset_id: row.asset_id ?? null,
+            figure_kind: row.figure_kind ?? null,
+            caption: figureCaption(row.content),
+            page: row.page_start ?? null,
+            bbox,
+          });
+        }
+        return [...byFigure.values()];
+      });
+    },
+
+    // ── v2 navigation reads (task 3.9) ──────────────────────────────────────
+    // These mirror expandUnit/lookupFigureUnits: every read is gated by the
+    // SAME buildTemporalFilterSql (current-revision pointer) + buildAccessSql
+    // (tenant/ACL) predicates as search, and scoped to one document by base_ref
+    // or document_id (or, for find_identifier, joined to a visible unit), so a
+    // navigation call can never surface a unit the caller could not retrieve.
+
+    async getOutline(
+      collection: string,
+      scope: AccessScope,
+      reference: string,
+      options?: NavReadOptions & { depth?: number; limit?: number; offset?: number },
+    ): Promise<PostgresResponse<{ entries: OutlineEntry[]; total: number }>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const ref = normalizeReference(reference);
+      const depth = options?.depth != null && options.depth > 0 ? options.depth : null;
+      const limit = clampInt(options?.limit, 200, 1, 2000);
+      const offset = clampInt(options?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refPh = p.add(ref);
+        const depthClause =
+          depth !== null
+            ? ` AND COALESCE(array_length(section_path, 1), 0) <= ${p.add(depth)}`
+            : "";
+        const where = `base_ref = ${refPh} AND unit_type = 'section'${depthClause}${temporalFilter}${accessSql}`;
+        const countRes = await client.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM "${table}" WHERE ${where}`,
+          p.values,
+        );
+        const total = Number(countRes.rows[0]?.n ?? "0");
+        const limitPh = p.add(limit);
+        const offsetPh = p.add(offset);
+        const res = await client.query<{
+          unit_id: string | null;
+          section_id: string | null;
+          section_path: string[] | null;
+          page_start: number | null;
+          page_end: number | null;
+        }>(
+          `SELECT unit_id, section_id, section_path, page_start, page_end
+             FROM "${table}"
+            WHERE ${where}
+            ORDER BY page_start ASC NULLS FIRST, section_path ASC NULLS FIRST, id ASC
+            LIMIT ${limitPh} OFFSET ${offsetPh}`,
+          p.values,
+        );
+        const entries: OutlineEntry[] = res.rows.map((row) => {
+          const path = Array.isArray(row.section_path) ? row.section_path : [];
+          return {
+            unit_id: row.unit_id ?? "",
+            section_id: row.section_id,
+            section_path: path,
+            depth: path.length,
+            heading: path.at(-1) ?? row.section_id ?? "",
+            // Section units carry a sentinel page range; expose null instead of 0.
+            page_start: row.page_start && row.page_start > 0 ? row.page_start : null,
+            page_end: row.page_end && row.page_end > 0 ? row.page_end : null,
+          };
+        });
+        return { entries, total };
+      });
+    },
+
+    async getSectionUnits(
+      collection: string,
+      scope: AccessScope,
+      reference: string,
+      selector: { sectionId?: string; sectionPath?: string[] },
+      options?: NavReadOptions,
+    ): Promise<PostgresResponse<NavUnitRow[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const ref = normalizeReference(reference);
+      const sectionId = selector.sectionId?.trim();
+      const sectionPath = selector.sectionPath?.filter((s) => typeof s === "string" && s.length > 0);
+      if (!sectionId && (!sectionPath || sectionPath.length === 0)) {
+        return { ok: true, result: [] };
+      }
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refPh = p.add(ref);
+        // Prefer the explicit section id; else match a section-path PREFIX so a
+        // caller can pass "4 Wareneingang" and get every unit under it.
+        let targetSql: string;
+        if (sectionId) {
+          targetSql = `section_id = ${p.add(sectionId)}`;
+        } else {
+          const pathPh = p.add(sectionPath as string[]);
+          targetSql = `section_path IS NOT NULL AND section_path[1:${(sectionPath as string[]).length}] = ${pathPh}::text[]`;
+        }
+        const res = await client.query<NavRowShape>(
+          `${NAV_ROW_SELECT}
+             FROM "${table}"
+            WHERE base_ref = ${refPh} AND (${targetSql})${temporalFilter}${accessSql}
+            ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+            LIMIT ${NAV_MAX_UNITS}`,
+          p.values,
+        );
+        return res.rows.map(navRow);
+      });
+    },
+
+    async getPageUnits(
+      collection: string,
+      scope: AccessScope,
+      reference: string,
+      from: number,
+      to: number,
+      options?: NavReadOptions,
+    ): Promise<PostgresResponse<NavUnitRow[]>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const start = Math.max(1, Math.min(from, to));
+      const end = Math.max(from, to);
+      const ref = normalizeReference(reference);
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refPh = p.add(ref);
+        const startPh = p.add(start);
+        const endPh = p.add(end);
+        // Overlap test, and exclude the section-unit sentinel (page 0). page/
+        // chunk/table/figure units carry real page ranges.
+        const res = await client.query<NavRowShape>(
+          `${NAV_ROW_SELECT}
+             FROM "${table}"
+            WHERE base_ref = ${refPh}
+              AND page_start IS NOT NULL AND page_end IS NOT NULL
+              AND page_start > 0 AND page_end > 0
+              AND page_start <= ${endPh} AND page_end >= ${startPh}${temporalFilter}${accessSql}
+            ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+            LIMIT ${NAV_MAX_UNITS}`,
+          p.values,
+        );
+        return res.rows.map(navRow);
+      });
+    },
+
+    async getContextUnits(
+      collection: string,
+      scope: AccessScope,
+      unitId: string,
+      before: number,
+      after: number,
+      options?: NavReadOptions,
+    ): Promise<PostgresResponse<{ before: NavUnitRow[]; unit: NavUnitRow | null; after: NavUnitRow[] }>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const target = unitId?.trim();
+      if (!target) return { ok: true, result: { before: [], unit: null, after: [] } };
+      const beforeN = clampInt(before, 1, 0, 50);
+      const afterN = clampInt(after, 1, 0, 50);
+      return withClient(async (client) => {
+        // Resolve the target under the visibility gates, and walk its prev/next
+        // graph within the same document. Each hop re-checks visibility, so a
+        // neighbour the caller cannot see terminates the walk (never leaks).
+        const load = async (id: string): Promise<(NavUnitRow & { prev_unit_id: string | null; next_unit_id: string | null }) | null> => {
+          const p = new SqlParams();
+          const temporalFilter = buildTemporalFilterSql(
+            p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+          );
+          const accessSql = buildAccessSql(p, scope);
+          const idPh = p.add(id);
+          const res = await client.query<NavRowShape & { prev_unit_id: string | null; next_unit_id: string | null }>(
+            `${NAV_ROW_SELECT}, prev_unit_id, next_unit_id
+               FROM "${table}"
+              WHERE unit_id = ${idPh}${temporalFilter}${accessSql}
+              LIMIT 1`,
+            p.values,
+          );
+          const row = res.rows[0];
+          if (!row) return null;
+          return { ...navRow(row), prev_unit_id: row.prev_unit_id, next_unit_id: row.next_unit_id };
+        };
+        const center = await load(target);
+        if (!center) return { before: [], unit: null, after: [] };
+        const beforeRows: NavUnitRow[] = [];
+        let cursor: string | null = center.prev_unit_id;
+        for (let i = 0; i < beforeN && cursor; i++) {
+          const row = await load(cursor);
+          if (!row) break;
+          beforeRows.push(stripLinks(row));
+          cursor = row.prev_unit_id;
+        }
+        beforeRows.reverse();
+        const afterRows: NavUnitRow[] = [];
+        cursor = center.next_unit_id;
+        for (let i = 0; i < afterN && cursor; i++) {
+          const row = await load(cursor);
+          if (!row) break;
+          afterRows.push(stripLinks(row));
+          cursor = row.next_unit_id;
+        }
+        return { before: beforeRows, unit: stripLinks(center), after: afterRows };
+      });
+    },
+
+    async listFigureUnits(
+      collection: string,
+      scope: AccessScope,
+      reference: string,
+      options?: NavReadOptions & { fromPage?: number; toPage?: number; kind?: string; limit?: number; offset?: number },
+    ): Promise<PostgresResponse<{ figures: FigureUnitInfo[]; total: number }>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const ref = normalizeReference(reference);
+      const limit = clampInt(options?.limit, 50, 1, 500);
+      const offset = clampInt(options?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const refPh = p.add(ref);
+        let rangeSql = "";
+        if (options?.fromPage != null && options?.toPage != null) {
+          const from = Math.max(1, Math.min(options.fromPage, options.toPage));
+          const to = Math.max(options.fromPage, options.toPage);
+          rangeSql = ` AND page_start IS NOT NULL AND page_start >= ${p.add(from)} AND page_start <= ${p.add(to)}`;
+        }
+        const kindSql =
+          options?.kind && options.kind.trim() !== ""
+            ? ` AND figure_kind = ${p.add(options.kind.trim())}`
+            : "";
+        const where = `base_ref = ${refPh} AND unit_type = 'figure'${rangeSql}${kindSql}${temporalFilter}${accessSql}`;
+        const countRes = await client.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM "${table}" WHERE ${where}`,
+          p.values,
+        );
+        const total = Number(countRes.rows[0]?.n ?? "0");
+        const limitPh = p.add(limit);
+        const offsetPh = p.add(offset);
+        const res = await client.query<{
+          content: string | null;
+          page_start: number | null;
+          figure_kind: string | null;
+          figure_id: string | null;
+          asset_id: string | null;
+          bbox: unknown;
+        }>(
+          `SELECT content, page_start, figure_kind,
+                  metadata->>'figure_id' AS figure_id,
+                  metadata->>'asset_id'  AS asset_id,
+                  metadata->'bbox'       AS bbox
+             FROM "${table}"
+            WHERE ${where}
+            ORDER BY page_start ASC NULLS FIRST, id ASC
+            LIMIT ${limitPh} OFFSET ${offsetPh}`,
+          p.values,
+        );
+        const figures: FigureUnitInfo[] = res.rows
+          .filter((row) => row.figure_id)
+          .map((row) => {
+            const bbox =
+              Array.isArray(row.bbox) && row.bbox.length === 4 && row.bbox.every((n) => typeof n === "number")
+                ? (row.bbox as [number, number, number, number])
+                : null;
+            return {
+              figure_id: row.figure_id as string,
+              asset_id: row.asset_id ?? null,
+              figure_kind: row.figure_kind ?? null,
+              caption: figureCaption(row.content),
+              page: row.page_start ?? null,
+              bbox,
+            };
+          });
+        return { figures, total };
+      });
+    },
+
+    async getTableUnits(
+      collection: string,
+      scope: AccessScope,
+      tableId: string,
+      options?: NavReadOptions & { limit?: number },
+    ): Promise<PostgresResponse<{ units: NavUnitRow[]; total: number }>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const id = tableId?.trim();
+      if (!id) return { ok: true, result: { units: [], total: 0 } };
+      const limit = clampInt(options?.limit, 200, 1, 2000);
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const idPh = p.add(id);
+        const where = `table_id = ${idPh}${temporalFilter}${accessSql}`;
+        const countRes = await client.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n FROM "${table}" WHERE ${where}`,
+          p.values,
+        );
+        const total = Number(countRes.rows[0]?.n ?? "0");
+        const limitPh = p.add(limit);
+        const res = await client.query<NavRowShape>(
+          `${NAV_ROW_SELECT}
+             FROM "${table}"
+            WHERE ${where}
+            ORDER BY page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC
+            LIMIT ${limitPh}`,
+          p.values,
+        );
+        return { units: res.rows.map(navRow), total };
+      });
+    },
+
+    async getUnitById(
+      collection: string,
+      scope: AccessScope,
+      unitId: string,
+      options?: NavReadOptions,
+    ): Promise<PostgresResponse<NavUnitRow | null>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const id = unitId?.trim();
+      if (!id) return { ok: true, result: null };
+      return withClient(async (client) => {
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+        );
+        const accessSql = buildAccessSql(p, scope);
+        const idPh = p.add(id);
+        const res = await client.query<NavRowShape & { base_ref: string; figure_refs: string[] | null }>(
+          `${NAV_ROW_SELECT}, base_ref, figure_refs
+             FROM "${table}"
+            WHERE unit_id = ${idPh}${temporalFilter}${accessSql}
+            LIMIT 1`,
+          p.values,
+        );
+        const row = res.rows[0];
+        if (!row) return null;
+        const unit = navRow(row);
+        // Surface figure_refs (figure ids the unit references) on the metadata
+        // mirror so follow_ref can resolve them via lookupFigureUnits.
+        if (Array.isArray(row.figure_refs) && row.figure_refs.length > 0) {
+          unit.metadata = { ...unit.metadata, base_ref: row.base_ref, figure_refs: row.figure_refs };
+        } else {
+          unit.metadata = { ...unit.metadata, base_ref: row.base_ref };
+        }
+        return unit;
+      });
+    },
+
+    async lookupRevisionSourceSha256(
+      collection: string,
+      tenantId: string,
+      revisionId: string,
+    ): Promise<PostgresResponse<string | null>> {
+      const tenant = tenantId.trim();
+      if (tenant === "" || revisionId.trim() === "") return { ok: true, result: null };
+      return withClient(async (client) => {
+        // Only the HEAD of each staged payload is read: `document.begin` is the
+        // first record of the NDJSON stream, so a bounded prefix is enough and a
+        // multi-MB page batch is never pulled into memory. The join to
+        // vs_revisions pins the batch to a revision that still exists for this
+        // tenant + collection.
+        const res = await client.query<{ head: Buffer | null }>(
+          `SELECT substring(b.payload FROM 1 FOR $4) AS head
+             FROM vs_ingest_batches b
+             JOIN vs_revisions r
+               ON r.tenant_id = b.tenant_id
+              AND r.collection = b.collection
+              AND r.revision_id = b.revision_id
+            WHERE b.tenant_id = $1 AND b.collection = $2 AND b.revision_id = $3
+              AND b.payload IS NOT NULL
+            ORDER BY b.seq ASC
+            LIMIT $5`,
+          [tenant, collection, revisionId, SOURCE_HEAD_BYTES, SOURCE_HEAD_MAX_BATCHES],
+        );
+        for (const row of res.rows) {
+          const sha = sourceSha256FromPayloadHead(row.head);
+          if (sha !== null) return sha;
+        }
+        return null;
+      });
+    },
+
+    async findIdentifierOccurrences(
+      collection: string,
+      scope: AccessScope,
+      valueNorm: string,
+      options?: NavReadOptions & { limit?: number; offset?: number },
+    ): Promise<PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>> {
+      const table = collectionTableName(collection);
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const norm = valueNorm?.trim();
+      if (!norm) return { ok: true, result: { occurrences: [], total: 0 } };
+      const limit = clampInt(options?.limit, 50, 1, 500);
+      const offset = clampInt(options?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
+      return withClient(async (client) => {
+        // Join vs_identifiers to the collection table on unit_id, gated by the
+        // per-unit visibility predicates so an occurrence surfaces only when its
+        // unit is visible to the caller in the current revision.
+        const p = new SqlParams();
+        const temporalFilter = buildTemporalFilterSql(
+          p, table, options?.includeAllVersions ?? false, options?.validAt, "d", collection,
+        );
+        const access = buildAccessSql(p, scope, "d");
+        const tenantPh = p.add(scope.tenantId);
+        const collPh = p.add(collection);
+        const normPh = p.add(norm);
+        const where =
+          `i.tenant_id = ${tenantPh} AND i.collection = ${collPh} AND i.value_norm = ${normPh}` +
+          ` AND d.tenant_id = i.tenant_id AND d.unit_id = i.unit_id${temporalFilter}${access}`;
+        const countRes = await client.query<{ n: string }>(
+          `SELECT COUNT(*)::text AS n
+             FROM vs_identifiers i JOIN "${table}" d ON d.unit_id = i.unit_id
+            WHERE ${where}`,
+          p.values,
+        );
+        const total = Number(countRes.rows[0]?.n ?? "0");
+        const limitPh = p.add(limit);
+        const offsetPh = p.add(offset);
+        const res = await client.query<{
+          value_norm: string;
+          unit_id: string;
+          page: number | null;
+          kind: string | null;
+          reference: string;
+          base_ref: string;
+          section_path: string[] | null;
+          content: string | null;
+        }>(
+          `SELECT i.value_norm, i.unit_id, i.page, i.kind,
+                  d.reference, d.base_ref, d.section_path, d.content
+             FROM vs_identifiers i JOIN "${table}" d ON d.unit_id = i.unit_id
+            WHERE ${where}
+            ORDER BY d.base_ref ASC, i.page ASC, d.id ASC
+            LIMIT ${limitPh} OFFSET ${offsetPh}`,
+          p.values,
+        );
+        const occurrences: IdentifierOccurrence[] = res.rows.map((row) => ({
+          value_norm: row.value_norm,
+          unit_id: row.unit_id,
+          page: row.page ?? null,
+          kind: row.kind ?? null,
+          reference: row.reference,
+          base_ref: row.base_ref,
+          section_path: Array.isArray(row.section_path) ? row.section_path : [],
+          excerpt: navExcerpt(row.content),
+        }));
+        return { occurrences, total };
       });
     },
 
@@ -4022,6 +5334,72 @@ export function createPostgresClient(
         ensuredCollections.delete(oldTable);
         ensureCollectionLocks.delete(oldTable);
         if (meta) ensuredCollections.set(newTable, meta);
+      });
+    },
+
+    async recomputeFtsLanguage(
+      collection: string,
+      language: string,
+    ): Promise<PostgresResponse<{ updated: number; unchanged: boolean }>> {
+      let table: string;
+      try {
+        table = collectionTableName(collection);
+      } catch (cause) {
+        return {
+          ok: false,
+          error: {
+            code: "INVALID_COLLECTION_NAME",
+            message: (cause as Error).message,
+            cause,
+          },
+        };
+      }
+      let lang: string;
+      try {
+        lang = validateFtsLanguage(language);
+      } catch (cause) {
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_SQL_ERROR",
+            message: (cause as Error).message,
+            cause,
+          },
+        };
+      }
+      return withClient(async (client) => {
+        await ensureCollectionConfigTable(client);
+        const existing = await loadCollectionMeta(client, table);
+        if (existing === null) {
+          throw new AppError(
+            "COLLECTION_NOT_FOUND",
+            `Collection "${collection}" does not exist`,
+          );
+        }
+        if (existing.language === lang) {
+          return { updated: 0, unchanged: true };
+        }
+        await client.query("BEGIN");
+        try {
+          // Re-tokenize every row under the new language. lang is whitelisted
+          // by validateFtsLanguage, so interpolation is safe.
+          const res = await client.query(
+            `UPDATE "${table}" SET ts_search = ${ftsSearchRecomputeSql(lang)}`,
+          );
+          await client.query(
+            `UPDATE vs_collection_config
+                SET fts_language = $1, updated_at = NOW()
+              WHERE collection_table = $2`,
+            [lang, table],
+          );
+          await client.query("COMMIT");
+          // Keep the in-memory cache consistent with the persisted change.
+          ensuredCollections.set(table, { ...existing, language: lang });
+          return { updated: res.rowCount ?? 0, unchanged: false };
+        } catch (err) {
+          await client.query("ROLLBACK").catch(() => {});
+          throw err;
+        }
       });
     },
 

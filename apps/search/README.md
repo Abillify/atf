@@ -50,6 +50,26 @@ reference. The principal routes are:
 | `/auth/login`, `/auth/callback`, `/auth/logout` | OIDC browser session for the test UI |
 | `/health`, `/metrics` | Health and Prometheus metrics |
 
+### v2 revision hand-off
+
+`/v2/documents/{ref}/revisions/…` and `/v2/assets/{assetId}` carry the resumable v2 ingest
+(the OpenAPI document has the shapes). Behaviour worth knowing:
+
+- Every revision route checks `X-Extract-Contract`: absent is accepted, malformed is 400, a
+  major other than 2 is 422. A `{ref}` that does not own the addressed revision is 409
+  `REVISION_REFERENCE_MISMATCH`; reusing an `Idempotency-Key` for another document is 409.
+- The final commit checks coverage against the page count from `document.begin`/`document.end`
+  and answers 409 with `missingRanges` (including a missing first or last page). An unknown page
+  count without a staged `document.end` is 409 `COMMIT_DOCUMENT_END_MISSING`.
+- An accepted final commit whose batches are not all processed yet answers **202**
+  `{committed: true, pending: true, isLatest: false}`; `GET …/revisions/{rev}` then reports
+  `commitPending: true`. The batch worker performs the switch once the last batch is processed,
+  and the previous revision stays visible until then. A replayed commit is idempotent.
+- `PUT /v2/assets/{assetId}` requires a lowercase sha256 asset id. The revision from
+  `X-Revision-Id` and/or `?revision=` must exist in the tenant and collection, belong to
+  `X-Document-Reference` and not be aborted. An asset already bound to a live revision keeps that
+  binding.
+
 ## Temporal document versions
 
 Every ingested document may declare `X-Valid-From` (batch/NDJSON items use `valid_from`; an item overrides the shared header). Values must be RFC 3339 date-times with an explicit `Z` or numeric offset, for example `2026-03-01T09:00:00+01:00`; offset-less timestamps are rejected with HTTP 400. The database stores the nullable value on every chunk. Legacy rows use `effective_valid_from = COALESCE(valid_from, created)`.

@@ -46,6 +46,33 @@ describe("Config", () => {
     expect(() => loadConfig()).toThrow("EMBED_URL");
   });
 
+  it("defaults the RRF list weights to 1.0 (unchanged ranking)", () => {
+    delete process.env["RRF_WEIGHT_DENSE"];
+    delete process.env["RRF_WEIGHT_FTS"];
+    delete process.env["RRF_WEIGHT_IDENTIFIER"];
+    expect(loadConfig()).toMatchObject({
+      rrfWeightDense: 1.0,
+      rrfWeightFts: 1.0,
+      rrfWeightIdentifier: 1.0,
+    });
+  });
+
+  it("parses configured RRF list weights", () => {
+    process.env["RRF_WEIGHT_DENSE"] = "2";
+    process.env["RRF_WEIGHT_FTS"] = "0.5";
+    process.env["RRF_WEIGHT_IDENTIFIER"] = "3";
+    expect(loadConfig()).toMatchObject({
+      rrfWeightDense: 2,
+      rrfWeightFts: 0.5,
+      rrfWeightIdentifier: 3,
+    });
+  });
+
+  it("rejects a non-positive RRF weight", () => {
+    process.env["RRF_WEIGHT_IDENTIFIER"] = "0";
+    expect(() => loadConfig()).toThrow("RRF_WEIGHT_IDENTIFIER");
+  });
+
   it("throws when EMBED_URL is empty", () => {
     process.env["EMBED_URL"] = "";
     expect(() => loadConfig()).toThrow("EMBED_URL");

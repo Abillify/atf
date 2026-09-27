@@ -152,5 +152,50 @@ export function parseMetadataHeader(metadataHeader: string | undefined): ParseRe
   }
 }
 
+/**
+ * Symbol key under which the v2 `/v2/search` unit-column filter is carried on a
+ * {@link SearchFilter} (task 3.7, Requirement 13.3). Unlike {@link FILTER_V2}
+ * (which filters the `metadata` JSONB), these predicates target the REAL indexed
+ * unit columns added by task 1.8 (`unit_type`, `figure_kind`, `page_start`/
+ * `page_end`, `section_path text[]`), so filtering is index-backed (design §6.2).
+ * A symbol key keeps the filter out of the plain JSON `metadata @>` path and out
+ * of any serialization, exactly like FILTER_V2.
+ */
+export const UNIT_FILTER_V2 = Symbol("search.unit_filter_v2");
+
+/**
+ * The v2 unit-level filter (Requirement 13.3). Every field is optional and
+ * additive; an empty object adds no predicate. These map onto the real unit
+ * columns rather than the metadata JSON:
+ *  - `unitType`      → `unit_type = …`
+ *  - `figureKind`    → `figure_kind = …`
+ *  - `pageStart/End` → page-range OVERLAP (`page_start <= end AND page_end >= start`)
+ *  - `sectionPrefix` → `section_path[1:n] = prefix` (array prefix match)
+ */
+export interface UnitFilterV2 {
+  /** Exact `unit_type` (chunk | table | figure | section | page | document). */
+  unitType?: string;
+  /** Exact `figure_kind`. */
+  figureKind?: string;
+  /** Inclusive first page of the requested range. */
+  pageStart?: number;
+  /** Inclusive last page of the requested range. */
+  pageEnd?: number;
+  /** Section-path prefix; matches units whose `section_path` starts with it. */
+  sectionPrefix?: string[];
+}
+
+/** True when a UnitFilterV2 carries at least one active predicate. */
+export function unitFilterV2HasPredicates(f: UnitFilterV2 | undefined): boolean {
+  if (!f) return false;
+  return (
+    f.unitType !== undefined ||
+    f.figureKind !== undefined ||
+    f.pageStart !== undefined ||
+    f.pageEnd !== undefined ||
+    (Array.isArray(f.sectionPrefix) && f.sectionPrefix.length > 0)
+  );
+}
+
 export function encodeBase64(input: string): string { return Buffer.from(input, "utf-8").toString("base64"); }
 export function decodeBase64(encoded: string): string { return Buffer.from(encoded, "base64").toString("utf-8"); }
