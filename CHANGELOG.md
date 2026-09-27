@@ -18,6 +18,48 @@ releases:
 
 ## [Unreleased]
 
+### Added
+
+- **Document Intelligence v2**, an end-to-end rework of the document ingestion, indexing, and
+  retrieval path, delivered across phases 0–5. It is additive: the v1 `/search` path and the v1
+  extract contract keep working unchanged, and the new Search schema columns are nullable so a
+  legacy row is searched exactly as before.
+  - **Resumable, contract-versioned ingestion.** A persistent Extract job (lease, epoch, token
+    budget, per-unit stage checkpoints) and a Search revision (idempotency key, staged batches,
+    TTL) are joined by an at-least-once emitter that reconciles against the receiver, so a
+    10 000-page document survives crashes, network faults, and restarts without losing model
+    tokens or producing duplicate index units. Both halves speak the single
+    `@atf/extract-contract` v2 NDJSON stream; Search refuses an incompatible major via the
+    `X-Extract-Contract` header. Resumable uploads (`/v2/uploads`) confirm bytes one chunk at a
+    time; sources are content-addressed and full-resolution page images are re-rendered on
+    demand.
+  - **Deterministic page analysis and transcribed visual content.** Per-word geometry
+    (`pdftotext -bbox-layout`), page classification, header/footer detection, and render-hash
+    dedup; a streaming document pass builds the outline, merges cross-page tables, resolves
+    references, and extracts identifiers; figures get a snapped bounding box and a structured
+    transcription per kind (BPMN, masks, drawings, charts, table images); large formats are
+    tiled with overlap and stored as `tile:` assets. Native parsers read DOCX, XLSX, BPMN, PPTX,
+    and VSDX instead of rendering and guessing.
+  - **Multi-level index and retrieval.** Units at `chunk`, `table`, `figure`, `section`, `page`,
+    and `document` level with a relationship graph and a contextual embedding header; German
+    stemming plus an identifier vector and a third RRF list for exact codes; rerank with
+    context, per-section diversification, small-to-big expansion, and `/v2/search` with
+    `section_path`, `pages`, `expanded`, `assets[]`, `navigation`, and `evidence`; on-demand
+    region/full zoom (`/v2/render`) cached as an asset variant.
+  - **Runtime and flows.** RAG node v2 (`ragProfiles` with `expand`, `granularity`,
+    `include_assets`, and `assets: { attach, maxImages, variant }`) attaching images only on
+    confirmed `visionInput`, with page/figure citations; `inspect_image` for `asset:<id>[#bbox]`
+    references, fail-closed; research flows wired with the MCP navigation tools and a research
+    routine.
+  - **Scale and finish.** A bounded large-job lane (`LARGE_JOB_PAGE_THRESHOLD`,
+    `LARGE_JOB_MAX_CONCURRENCY`), `PAGE_CONCURRENCY` throughput tuning against the vLLM batch,
+    tiling knobs (`TILE_TARGET_PIXELS`, `TILE_OVERLAP_FRACTION`, `TILE_MAX_PER_PAGE`), an
+    optional model-free outline finalize pass (`FINALIZE_PASS`) with selective re-embedding, and
+    a corpus re-ingest CLI that migrates existing corpora in `version` mode ordered by usage
+    with proven asset-id stability. No new runtime dependency was introduced. See the
+    [spec](.kiro/specs/document-intelligence-v2/) and the per-phase completion reports under
+    `docs/document-intelligence-v2-phase-*-completion.md`.
+
 ## [0.8.0] — 2026-09-25
 
 Versions 0.4.0 through 0.7.2 are documented below but were never tagged, so this entry's compare
