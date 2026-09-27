@@ -98,7 +98,8 @@ bun run --filter @atf/control test -- ApprovalsPanel           # Vitest
 Search and Control use Vitest; Runtime, Gate, and the contract packages use `bun test`.
 
 `bun run --filter @atf/search build:node` produces the optional Search Node.js 26 artifact. It is
-only needed when a deployment requires a Node runtime for Search.
+only needed when a deployment requires a Node runtime for Search. The bundle leaves `sharp`
+external; install it for the target platform alongside `dist-node`.
 
 ## Tests that need infrastructure
 

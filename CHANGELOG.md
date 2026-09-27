@@ -18,6 +18,13 @@ releases:
 
 ## [Unreleased]
 
+### Fixed
+
+- **Search Node.js artifact.** `build:node` now marks `sharp` as external, matching Extract.
+  `sharp` is a native module that `bun build --target node` cannot bundle; the Node artifact
+  therefore expects `sharp` 0.35.4 to be installed for the target platform next to `dist-node`.
+  The Bun target is unchanged.
+
 ## [0.9.0] — 2026-09-27
 
 Version 0.8.0 is documented below but was never tagged either, so this entry's compare link

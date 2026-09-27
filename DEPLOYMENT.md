@@ -13,7 +13,7 @@ Use `deploy/examples/README.md`. Its auth-off settings, deterministic mock model
 ## Application artifacts
 
 - Runtime and Gate are Bun 1.4.0 applications.
-- Search is Bun-native and additionally supports `bun run --filter @atf/search build:node` for a Node.js 26 artifact.
+- Search is Bun-native and additionally supports `bun run --filter @atf/search build:node` for a Node.js 26 artifact. That build keeps the native module `sharp` external, so the Node image must install `sharp` (the version pinned in `apps/search/package.json`) for its target platform next to the artifact.
 - Control is built with Bun and deployed on Node.js 26 from the Next.js standalone output.
 
 Production Dockerfiles and orchestration definitions are deployment-owned and are not represented by the quickstart Dockerfile.
