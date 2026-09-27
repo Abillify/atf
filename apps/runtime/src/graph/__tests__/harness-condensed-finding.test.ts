@@ -984,6 +984,20 @@ describe("plannerless coverage queue", () => {
 		).toBeUndefined();
 	});
 
+	test("every message of a thread-grouped hit becomes a candidate", () => {
+		const evidence = coverageSearchEvidenceFromToolResult(
+			JSON.stringify({ query: "Maske WE-01", hybrid: true, group_by_document: true }),
+			{
+				results: [
+					{ base_ref: "/mail/2.eml", score: 0.9, group_members: ["/mail/1.eml", "/mail/2.eml", "/mail/3.eml"] },
+					{ base_ref: "/spec.pdf", score: 0.5 },
+					{ base_ref: "/mail/3.eml", score: 0.4 },
+				],
+			},
+		);
+		expect(evidence?.resultRefs).toEqual(["/mail/2.eml", "/mail/1.eml", "/mail/3.eml", "/spec.pdf"]);
+	});
+
 	test("parses MCP root-array text parts for search evidence", () => {
 		const evidence = coverageSearchEvidenceFromToolResult(
 			JSON.stringify({

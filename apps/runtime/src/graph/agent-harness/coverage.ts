@@ -1359,6 +1359,21 @@ export function parseCoverageSearchToolResult(
 						? { score: hit.score }
 						: {}),
 				});
+				// A hit grouped from several e-mails of one thread names only its
+				// best-scoring message in base_ref; the other matched messages are in
+				// group_members. Each is a document of its own in the ledger, so each
+				// becomes a candidate (same rank and score as the grouped hit) and is
+				// read in full rather than silently riding on the representative.
+				const last = hits[hits.length - 1];
+				if (last !== undefined && Array.isArray(hit.group_members)) {
+					for (const member of hit.group_members) {
+						if (typeof member !== "string") continue;
+						const memberRef = normalizedRef(member);
+						if (memberRef === "" || seen.has(memberRef)) continue;
+						seen.add(memberRef);
+						hits.push({ ...last, ref: memberRef });
+					}
+				}
 			}
 		};
 		appendHits(record.results, false);
