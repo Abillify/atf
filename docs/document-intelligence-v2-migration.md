@@ -6,11 +6,9 @@ SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 # Document Intelligence v2 — Migration Guide
 
 This guide describes how an existing deployment moves onto the Document Intelligence v2
-ingestion path delivered in Phase 1. The move is designed to be incremental and non-breaking:
-v1 ingest keeps working the whole time, and each v2 capability is switched on by configuration
-rather than by a flag day.
-
-_Requirements: 17.1, 17.2_
+ingestion path. The move is designed to be incremental and non-breaking: v1 ingest keeps
+working the whole time, and each v2 capability is switched on by configuration rather than by a
+flag day.
 
 ## What v2 changes, and what stays
 
@@ -25,7 +23,7 @@ _Requirements: 17.1, 17.2_
 What does **not** change:
 
 - `/search` (v1) is untouched.
-- `/ingest` still accepts v1 Markdown through the legacy adapter (Requirement 17.1). Search now
+- `/ingest` still accepts v1 Markdown through the legacy adapter. Search now
   runs that Markdown through the contract's v1 parser, but the observable behaviour is the same.
 - Existing figure **asset ids stay stable**, so anything that already resolved an asset keeps
   resolving it after the cutover.
@@ -80,8 +78,7 @@ behaviour, so this step is safe to defer.
 
 With the database present, `/v1/ingest` automatically becomes a thin wrapper around a v2 job:
 the upload is stored, a job is created, and its emitter streams the revision **and figure
-assets** into Search — so figure images are now stored, not only their descriptions
-(Requirement 17.2). Search's `/ingest-file` likewise starts a v2 job at Extract and returns the
+assets** into Search — so figure images are now stored, not only their descriptions. Search's `/ingest-file` likewise starts a v2 job at Extract and returns the
 job id.
 
 ## Step 3 — Enable the Search batch worker (`BATCH_WORKER`)
@@ -121,7 +118,39 @@ was never removed. No v1 route or stored v1 data is altered by enabling or disab
 
 ## Reprocessing existing corpora
 
-Full re-ingestion of existing corpora onto the richer v2 extraction (the `version`-mode
-re-ingest tool, stable-asset-id proof) is **Phase 5** work (task 5.6, Requirement 17.3/17.4) and
-is out of scope for this Phase 1 cutover. Phase 1 makes v2 available and keeps v1 working; it
-does not re-extract anything already indexed.
+Enabling v2 does not re-extract anything already indexed. To move an existing corpus onto the
+richer v2 extraction, run the re-ingest CLI `apps/extract/scripts/corpus-migrate.ts` after
+steps 1–4:
+
+```bash
+# Print the usage-ordered plan and the expected asset ids; contacts no server
+bun run apps/extract/scripts/corpus-migrate.ts --manifest corpus.json --plan
+
+# Migrate, most-used documents first
+bun run apps/extract/scripts/corpus-migrate.ts \
+  --manifest corpus.json \
+  --base-url https://extract.example \
+  --token "$EXTRACT_TOKEN" \
+  --collection documents \
+  --out reports/corpus-migration.json
+```
+
+- **Manifest.** A JSON array, a `{ "documents": [...] }` wrapper, or NDJSON. Each entry names
+  the `reference` and either an already stored `sourceSha256` or a `path` to upload, plus an
+  optional `collection`, a usage signal (`hitCount`, `usage`, or `lastAccessed`) and the
+  pre-migration asset ids (`assets[].priorAssetId`).
+- **`version` mode (default).** Each document is posted to `/v1/ingest` with
+  `X-Version-Mode: version` and followed through `/v2/jobs/{id}`. The new revision becomes
+  visible only on its final commit, when Search switches `is_latest` atomically, so the corpus
+  keeps answering from the old revision throughout.
+- **Stable asset ids.** Asset ids derive from the reference and a local id, never from the
+  image bytes. The tool recomputes them from the manifest and reports any id that differs from
+  `priorAssetId`; a difference is a regression, not an expected change.
+- `--plan` / `--dry-run`, or omitting `--base-url`, only prints the plan. `--poll-ms` (default
+  2000) and `--timeout-ms` (default 24 h per document) bound job polling. The exit code is
+  non-zero on argument errors or when any document failed.
+
+With `EXTRACT_DATABASE_URL` set, the v2 wrapper behind `/v1/ingest` does not interpret
+`X-Version-Mode` itself: versioning on the v2 path follows the emitter's revision flow (a new
+revision, switched on commit). The header takes effect on Search's synchronous v1 `/ingest`
+path, where it selects `replace` or `version`.

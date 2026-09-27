@@ -221,8 +221,7 @@ setting that governs it.
   headers, identifier-aware RRF, rerank-with-context, small-to-big expansion, transcribed
   visual content (BPMN, masks, plans, charts) and per-figure assets, feeding a RAG node that
   can attach or `inspect_image` on demand. See the
-  [migration guide](docs/document-intelligence-v2-migration.md) and the
-  [phase completion reports](docs/document-intelligence-v2-phase-5-completion.md).
+  [migration guide](docs/document-intelligence-v2-migration.md).
 - **Tool access** — MCP tools declared in YAML over SQL, HTTP, MQTT, MCP proxy, and webhooks.
   Parameters are bound, never interpolated.
 - **Channels** — an OpenAI-compatible API, webhooks, and a Rocket.Chat integration with
@@ -275,7 +274,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |
 | [docs/adr/](docs/adr/) | Architecture decisions with their trade-offs |
-| [docs/document-intelligence-v2-phase-5-completion.md](docs/document-intelligence-v2-phase-5-completion.md) | Document Intelligence v2 final report and per-phase completion docs (phases 0–5) |
+| [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md) | Document Intelligence v2 upgrade, rollback, and corpus re-ingest |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
 
 ## License

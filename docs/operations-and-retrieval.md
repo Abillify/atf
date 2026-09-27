@@ -61,6 +61,25 @@ values produce a machine-readable `release_gate.passed`. Datasets and baselines 
 controlled, reviewed, and tenant-bound outside this service. There is deliberately no new
 persistent administrative data store, and no claim that the service signs golden sets.
 
+### v2 retrieval tuning knobs
+
+The Document Intelligence v2 index (`/v2/search`, batch worker) exposes these knobs. Change one
+at a time and measure the effect with the retrieval harness in
+[`scripts/eval`](../scripts/eval/README.md) (`--v2`) against a reviewed golden set.
+
+| Knob | Env / option | Default | Trade-off |
+| --- | --- | --- | --- |
+| Chunk lower bound | `minChunkTokens` (batch worker) | 350 | Smaller gives more precise but less self-contained units; larger gives more context per unit and coarser hits |
+| Chunk upper bound | `maxChunkTokens` (batch worker) | 500 | Caps chunks and table row groups; also the budget the contextual header fraction is measured against |
+| Dense RRF weight | `RRF_WEIGHT_DENSE` | 1.0 | Higher lets semantic similarity dominate the fusion |
+| Full-text RRF weight | `RRF_WEIGHT_FTS` | 1.0 | Higher lets lexical overlap dominate |
+| Identifier RRF weight | `RRF_WEIGHT_IDENTIFIER` | 1.0 | Higher pulls units containing an exact code such as `WE-01/A` further up; the list only joins when the query carries an identifier. All three at 1.0 is the unweighted ranking |
+| Candidate multiplier | `RERANK_CANDIDATE_MULTIPLIER` | 4 | Candidate pool is `limit × multiplier` before rerank, diversification and collapse fill the window; higher buys recall headroom for more compute |
+| Header share | `CONTEXT_HEADER_MAX_FRACTION` | 0.15 | Share of the chunk budget the contextual header may use; higher embeds more placement, leaves less room for content |
+| Contextual LLM sentence | `CONTEXTUAL_CHUNK_LLM` | `false` | Adds a model-written placement sentence per chunk; richer headers, but vectors are no longer byte-reproducible and each chunk costs a text-LLM call |
+| Per-section cap | `DEFAULT_SECTION_CAP` (`rerank-context.ts`) | 3 | Maximum hits per section path; lower spreads results across sections. `≤ 0` disables the cap, table and figure collapse still run |
+| Expansion budget | `budget_chars` (request) | 4000 | Character budget of small-to-big expansion; higher adds surrounding context and longer answers, `truncated` reports dropped units |
+
 ## Schema, provenance, and reindex or cutover
 
 Global schema version 2 adds `allowed_groups` and nullable provenance columns additively.

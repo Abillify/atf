@@ -87,8 +87,8 @@ navigation tools live in the private deployment repository and carry their own
     optional model-free outline finalize pass (`FINALIZE_PASS`) with selective re-embedding, and
     a corpus re-ingest CLI that migrates existing corpora in `version` mode ordered by usage
     with proven asset-id stability. See the
-    [migration guide](docs/document-intelligence-v2-migration.md) and the per-phase completion
-    reports under `docs/document-intelligence-v2-phase-*-completion.md`.
+    [migration guide](docs/document-intelligence-v2-migration.md) and the v2 tuning knobs in
+    [docs/operations-and-retrieval.md](docs/operations-and-retrieval.md).
 - **Extract v2 endpoints**: resumable uploads (`POST /v2/uploads`, `PATCH /v2/uploads/{id}`,
   `POST /v2/uploads/{id}/complete`, with `source_url` as an alternative to uploading bytes);
   persistent jobs (`POST`/`GET /v2/jobs`, `GET /v2/jobs/{id}`, and the actions `pause`,

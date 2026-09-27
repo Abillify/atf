@@ -351,8 +351,8 @@ the v1 contract path keep working unchanged.
 
 The upgrade path is described in
 [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md); the
-per-phase completion reports under `docs/document-intelligence-v2-phase-*-completion.md` record
-what each phase delivered and how it is verified.
+v2 retrieval tuning knobs are listed in
+[docs/operations-and-retrieval.md](docs/operations-and-retrieval.md).
 
 ## State
 
