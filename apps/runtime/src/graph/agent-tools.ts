@@ -69,6 +69,7 @@ import {
 } from "./message-mapping.js";
 import {
   IMAGE_INSPECTION_TOOL_NAME,
+  parseAssetReference,
   type ImageRefRegistry,
 } from "./image-reference.js";
 import {
@@ -1574,6 +1575,21 @@ export interface AgentImageInspectionHooks {
     diagnostic: { level: "error" | "warn" | "info"; code: string; message: string },
   ) => void;
   registry: ImageRefRegistry;
+  /**
+   * Fetches a stored document asset by id (Req 16.3), used when the model hands
+   * the tool an `asset:<id>[#bbox]` reference instead of an already-parked
+   * `img-N`. The engine wires this to the MCP `get_asset` call (task 3.9), which
+   * is ACL-checked and fail-closed; `agent-tools.ts` stays decoupled from the
+   * MCP client. `region` (a normalised `[x0,y0,x1,y1]` in `0..1`) is forwarded
+   * to `get_asset` to trigger its server-side zoom crop. Returns `undefined`
+   * when the asset is unavailable/forbidden or the fetch fails — the tool then
+   * fails closed exactly like an unknown `img-N` reference (no bytes leak). When
+   * the hook is absent, `asset:` references are simply not resolvable.
+   */
+  fetchAsset?: (
+    assetId: string,
+    opts: { region?: [number, number, number, number] },
+  ) => Promise<{ bytes: Uint8Array; mediaType: string } | undefined>;
   /** The node's `config.imageInspection` block. */
   config: ImageInspectionConfig;
   appConfig: AppConfig;
@@ -1624,10 +1640,14 @@ export function buildImageInspectionTools(
     // an unresolvable reference reports the live list from inside the tool.
     description:
       hooks.config.description ??
-      `Inspects an image from this conversation that you cannot see yourself, ` +
-      `using a vision model, and returns a factual description answering your ` +
-      `question about it. Images you cannot see appear in the conversation as ` +
-      `[image ref=img-N …] lines; pass that reference exactly as it appears.`,
+      `Inspects an image you cannot see yourself, using a vision model, and ` +
+      `returns a factual description answering your question about it. Two ` +
+      `kinds of reference are accepted: an inline image parked in this ` +
+      `conversation, which appears as an [image ref=img-N …] line — pass that ` +
+      `img-N reference exactly as shown; or a stored document asset, referenced ` +
+      `as asset:<id> (from a search hit, list_figures or follow_ref), optionally ` +
+      `with a normalised bounding box asset:<id>#x0,y0,x1,y1 (each 0..1) to zoom ` +
+      `into a region of it.`,
     inputSchema: jsonSchema<{ image: string; question: string }>({
       type: "object",
       properties: {
@@ -1635,7 +1655,9 @@ export function buildImageInspectionTools(
           type: "string",
           description:
             hooks.config.imageDescription ??
-            'The image reference to inspect, e.g. "img-1".',
+            'The image to inspect: an inline reference like "img-1", or a ' +
+            'document asset like "asset:<id>" (optionally with a region zoom, ' +
+            '"asset:<id>#x0,y0,x1,y1" where each coordinate is between 0 and 1).',
         },
         question: {
           type: "string",
@@ -1671,7 +1693,66 @@ async function runImageInspection(
   question: string,
   toolCallId?: string,
 ): Promise<unknown> {
-  const stored = hooks.registry.resolve(image);
+  // Resolution order:
+  //   1. An already-parked reference (`img-N` or a raw store id) — the inline
+  //      image path, unchanged.
+  //   2. Failing that, an `asset:<id>[#bbox]` reference (Req 16.3) — fetch the
+  //      asset bytes via the engine-wired `get_asset` hook, park them in the
+  //      registry as a fresh `img-N`, and inspect that. The `#bbox` becomes the
+  //      `region` zoom. Any resolution problem fails closed as `unknown_image`.
+  // The `asset:` scheme is checked BEFORE reporting an unknown reference so a
+  // malformed asset ref reports a distinct, actionable error.
+  let stored = hooks.registry.resolve(image);
+  if (stored === undefined) {
+    const assetParse = parseAssetReference(image);
+    if (assetParse !== undefined) {
+      if (!assetParse.ok) {
+        return {
+          status: "invalid_request",
+          message:
+            'Malformed asset reference. Use "asset:<id>" or ' +
+            '"asset:<id>#x0,y0,x1,y1" where each coordinate is a number ' +
+            "between 0 and 1 with x0<x1 and y0<y1.",
+        };
+      }
+      if (hooks.fetchAsset === undefined) {
+        return {
+          status: "unknown_image",
+          message:
+            "Document assets cannot be inspected in this run. " +
+            "Attach an image to the conversation and reference it as img-N instead.",
+        };
+      }
+      let fetched: { bytes: Uint8Array; mediaType: string } | undefined;
+      try {
+        fetched = await hooks.fetchAsset(assetParse.ref.assetId, {
+          ...(assetParse.ref.region !== undefined
+            ? { region: assetParse.ref.region }
+            : {}),
+        });
+      } catch {
+        // Fail closed: never surface the fetch error's cause to the model, and
+        // never crash the tool call. Treat it exactly like an unavailable asset.
+        fetched = undefined;
+      }
+      if (fetched === undefined) {
+        return {
+          status: "unknown_image",
+          message:
+            "The requested document asset is not available or not authorized.",
+        };
+      }
+      const parkedRef = hooks.registry.register(fetched.bytes, fetched.mediaType);
+      if (parkedRef === undefined) {
+        return {
+          status: "unknown_image",
+          message:
+            "The requested document asset could not be prepared for inspection.",
+        };
+      }
+      stored = hooks.registry.resolve(parkedRef);
+    }
+  }
   if (stored === undefined) {
     const available = hooks.registry.list().map((info) => info.ref);
     return {

@@ -21,6 +21,7 @@ import {
   inlineImageBytes,
   isImageMediaType,
   offloadInlineImages,
+  parseAssetReference,
 } from "../image-reference.js";
 import { InMemoryMediaStore } from "../media-store.js";
 
@@ -434,5 +435,55 @@ describe("inlineImageBytes", () => {
       } as unknown as ModelMessage,
     ]);
     expect(totals).toEqual({ totalBytes: 128, maxBytes: 128, count: 1 });
+  });
+});
+
+describe("parseAssetReference", () => {
+  test("returns undefined for a non-asset reference (leaves the img-N path alone)", () => {
+    expect(parseAssetReference("img-1")).toBeUndefined();
+    expect(parseAssetReference("store-abc")).toBeUndefined();
+    expect(parseAssetReference("")).toBeUndefined();
+  });
+
+  test("parses a bare asset id", () => {
+    expect(parseAssetReference("asset:abc-123")).toEqual({
+      ok: true,
+      ref: { assetId: "abc-123" },
+    });
+  });
+
+  test("is case-insensitive on the scheme and trims surrounding space", () => {
+    expect(parseAssetReference("  ASSET:xyz  ")).toEqual({
+      ok: true,
+      ref: { assetId: "xyz" },
+    });
+  });
+
+  test("parses a normalized #bbox region", () => {
+    expect(parseAssetReference("asset:fig-9#0.1,0.2,0.5,0.6")).toEqual({
+      ok: true,
+      ref: { assetId: "fig-9", region: [0.1, 0.2, 0.5, 0.6] },
+    });
+  });
+
+  test("rejects an empty asset id", () => {
+    expect(parseAssetReference("asset:")).toEqual({ ok: false });
+    expect(parseAssetReference("asset:#0.1,0.2,0.5,0.6")).toEqual({ ok: false });
+  });
+
+  test("rejects a bbox that is not four numbers", () => {
+    expect(parseAssetReference("asset:x#0.1,0.2")).toEqual({ ok: false });
+    expect(parseAssetReference("asset:x#0.1,0.2,0.3,0.4,0.5")).toEqual({
+      ok: false,
+    });
+    expect(parseAssetReference("asset:x#a,b,c,d")).toEqual({ ok: false });
+  });
+
+  test("rejects out-of-range or mis-ordered bbox coordinates", () => {
+    expect(parseAssetReference("asset:x#0,0,2,1")).toEqual({ ok: false });
+    expect(parseAssetReference("asset:x#-0.1,0,0.5,0.5")).toEqual({ ok: false });
+    // x0 >= x1 and y0 >= y1 are both invalid (a zero/negative-area box).
+    expect(parseAssetReference("asset:x#0.5,0.1,0.5,0.6")).toEqual({ ok: false });
+    expect(parseAssetReference("asset:x#0.1,0.6,0.5,0.2")).toEqual({ ok: false });
   });
 });

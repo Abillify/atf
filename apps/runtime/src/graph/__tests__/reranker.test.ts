@@ -104,6 +104,59 @@ describe("parseVectorSearchResults", () => {
     );
     expect(parseVectorSearchResults({ foo: 1 })).toEqual([]);
   });
+
+  test("parses v2 provenance: section_path, pages, figure_kind, caption, assets (Req 16.4)", () => {
+    const out = parseVectorSearchResults(
+      mcpContent([
+        {
+          id: "doc-1#4",
+          title: "Handbuch",
+          score: 0.8,
+          content: "…",
+          section_path: ["4 Wareneingang", "4.2 Anmeldung"],
+          pages: [37, 38],
+          assets: [
+            {
+              asset_id: "asset-12",
+              kind: "figure",
+              figure_kind: "ui_mask",
+              caption: "Abbildung 12",
+              page: 37,
+              bbox: [1, 2, 3, 4],
+              thumb_url: "https://a/thumb",
+              url: "https://a/preview",
+            },
+          ],
+        },
+      ]),
+    );
+    const c = at(out, 0);
+    expect(c.sectionPath).toEqual(["4 Wareneingang", "4.2 Anmeldung"]);
+    expect(c.pages).toEqual([37, 38]);
+    expect(c.assets).toHaveLength(1);
+    expect(c.assets?.[0]).toEqual({
+      assetId: "asset-12",
+      kind: "figure",
+      figureKind: "ui_mask",
+      caption: "Abbildung 12",
+      page: 37,
+      bbox: [1, 2, 3, 4],
+      thumbUrl: "https://a/thumb",
+      url: "https://a/preview",
+    });
+  });
+
+  test("carries no v2 provenance for a legacy hit (backward-compatible)", () => {
+    const out = parseVectorSearchResults(
+      mcpContent([{ id: "1", title: "A", content: "x", score: 0.5 }]),
+    );
+    const c = at(out, 0);
+    expect(c.sectionPath).toBeUndefined();
+    expect(c.pages).toBeUndefined();
+    expect(c.figureKind).toBeUndefined();
+    expect(c.caption).toBeUndefined();
+    expect(c.assets).toBeUndefined();
+  });
 });
 
 describe("selectRerankedChunks", () => {

@@ -409,6 +409,7 @@ const LLM: NodeTypeDoc = {
         { key: "description", kind: "text", label: "Tool description", description: "Description of the inspection tool shown to the hosting model (max 2000 chars)." },
         { key: "imageDescription", kind: "string", label: "Image parameter description", description: "Description of the image argument (max 1000 chars)." },
         { key: "maxAnswerChars", kind: "number", label: "Max answer (chars)", integer: true, min: 200, max: 100_000, description: "Cap on the vision answer injected into the context." },
+        { key: "assetSource", kind: "json", label: "Asset source", advanced: true, description: "Enables `asset:<id>[#bbox]` references, fetched via the MCP `get_asset` tool. Object with `server` (required, the MCP server exposing get_asset), optional `collection`, and optional `variant` (thumb|preview|full)." },
       ],
     },
     {

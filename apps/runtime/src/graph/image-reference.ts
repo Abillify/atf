@@ -213,6 +213,70 @@ export class HashedImageRefRegistry implements ImageRefRegistry {
   }
 }
 
+/**
+ * A parsed `asset:<id>[#x1,y1,x2,y2]` reference (Req 16.3).
+ *
+ * Unlike an `img-N` reference — which resolves to bytes already parked in this
+ * run's {@link ImageRefRegistry} — an `asset:` reference names a stored document
+ * asset that must be fetched on demand (via the MCP `get_asset` tool) and only
+ * then parked. The optional `#bbox` is a normalised `[x0,y0,x1,y1]` region in
+ * `0..1` that triggers `get_asset`'s server-side zoom crop.
+ */
+export interface ParsedAssetReference {
+  /** The bare asset id, with the `asset:` prefix and any `#bbox` stripped. */
+  assetId: string;
+  /** The normalised `[x0,y0,x1,y1]` region, when a valid `#bbox` was supplied. */
+  region?: [number, number, number, number];
+}
+
+/**
+ * The outcome of parsing a candidate `asset:` reference:
+ *   - `undefined`        — not an `asset:` reference at all (leave to `img-N` path);
+ *   - `{ ok: false }`    — an `asset:` reference that is malformed (empty id or a
+ *                          `#bbox` that is not four normalised, ordered numbers);
+ *   - `{ ok: true, ref }`— a well-formed asset reference ready to resolve.
+ *
+ * Distinguishing "not an asset ref" from "malformed asset ref" lets the tool
+ * fall through to the existing unknown-`img-N` handling for the former while
+ * reporting a clear, fail-closed error for the latter.
+ */
+export type AssetReferenceParse =
+  | { ok: true; ref: ParsedAssetReference }
+  | { ok: false }
+  | undefined;
+
+/**
+ * Parses an `asset:<id>[#x1,y1,x2,y2]` reference (Req 16.3).
+ *
+ * Returns `undefined` for anything that does not start with the `asset:`
+ * scheme, so an `img-N` or raw store id is left entirely to the inline path.
+ * Returns `{ ok: false }` for an `asset:` reference whose id is empty or whose
+ * `#bbox` is not four finite, ordered numbers in `0..1` — so a malformed
+ * reference fails closed with a clear error instead of silently fetching the
+ * whole asset or throwing. The bbox contract mirrors `get_asset`'s `region`
+ * (`x0<x2`, `y0<y2`, each in `0..1`).
+ */
+export function parseAssetReference(ref: string): AssetReferenceParse {
+  const trimmed = ref.trim();
+  const lower = trimmed.toLowerCase();
+  if (!lower.startsWith("asset:")) return undefined;
+  const body = trimmed.slice("asset:".length);
+  const hashIndex = body.indexOf("#");
+  const assetId = (hashIndex === -1 ? body : body.slice(0, hashIndex)).trim();
+  if (assetId === "") return { ok: false };
+  if (hashIndex === -1) return { ok: true, ref: { assetId } };
+  const bboxRaw = body.slice(hashIndex + 1).trim();
+  const parts = bboxRaw.split(",").map((p) => p.trim());
+  if (parts.length !== 4) return { ok: false };
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isFinite(n) || n < 0 || n > 1)) {
+    return { ok: false };
+  }
+  const [x0, y0, x1, y1] = nums as [number, number, number, number];
+  if (x0 >= x1 || y0 >= y1) return { ok: false };
+  return { ok: true, ref: { assetId, region: [x0, y0, x1, y1] } };
+}
+
 /** True for any MIME type the model would perceive as an image. */
 export function isImageMediaType(mediaType: unknown): boolean {
   return (

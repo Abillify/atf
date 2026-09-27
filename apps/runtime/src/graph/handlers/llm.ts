@@ -41,6 +41,9 @@ import {
   stripLeakedContextEcho,
 } from "../../assistants/context-frame.js";
 import type { NodeHandlerRegistration } from "../node-handler-registry.js";
+import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
+import type { RequestContext } from "../../types/monitoring.js";
+import { decodeBase64Bytes } from "../media-store.js";
 import { providerTransportErrorCode } from "../provider-circuit-breaker.js";
 import { filterLlmParameters } from "../llm-factory.js";
 import { buildClassificationNamespaces } from "../classification-access.js";
@@ -164,6 +167,94 @@ function readSafeAssistantRetryToolRefs(
     (ref): ref is string =>
       typeof ref === "string" && SAFE_ASSISTANT_RETRY_TOOL_REFS.has(ref),
   );
+}
+
+// ---------------------------------------------------------------------------
+// Asset fetch for `inspect_image` (Req 16.3)
+// ---------------------------------------------------------------------------
+
+/** Config block that enables `asset:<id>[#bbox]` resolution. */
+type AssetSourceConfig = NonNullable<ImageInspectionConfig["assetSource"]>;
+
+/** One MCP content part, in the shape `get_asset` returns image bytes as. */
+interface McpImagePart {
+  type: string;
+  data?: unknown;
+  mimeType?: unknown;
+}
+
+/**
+ * Extracts the first image part (base64 `data` + `mimeType`) from an MCP tool
+ * result's `content` array. Returns `undefined` when the result carries no
+ * decodable image — which is exactly what a fail-closed `get_asset` returns for
+ * an unauthorized/unknown asset (an `isError` text-only result). Never throws.
+ */
+function extractMcpImage(
+  content: unknown,
+): { bytes: Uint8Array; mediaType: string } | undefined {
+  if (!Array.isArray(content)) return undefined;
+  for (const raw of content) {
+    if (raw === null || typeof raw !== "object") continue;
+    const part = raw as McpImagePart;
+    if (part.type !== "image") continue;
+    if (typeof part.data !== "string") continue;
+    const mediaType =
+      typeof part.mimeType === "string" && part.mimeType !== ""
+        ? part.mimeType
+        : "image/png";
+    const bytes = decodeBase64Bytes(part.data);
+    if (bytes === undefined || bytes.byteLength === 0) continue;
+    return { bytes, mediaType };
+  }
+  return undefined;
+}
+
+/**
+ * Builds the `fetchAsset` hook the `inspect_image` tool uses to resolve an
+ * `asset:<id>[#bbox]` reference (Req 16.3). It calls the configured MCP server's
+ * `get_asset` tool with the caller's request context, so the read inherits
+ * `get_asset`'s tenant/collection/row ACL and fail-closed behaviour (task 3.9),
+ * and returns only the decoded image bytes — the responder model never sees the
+ * base64. A `region` triggers `get_asset`'s server-side zoom crop; a whole-asset
+ * fetch uses the configured `variant`. Any error or an image-less result yields
+ * `undefined`, which the tool reports as a fail-closed `unknown_image`.
+ */
+function buildAssetFetch(
+  mcpWrapper: McpWrapperService,
+  ctx: RequestContext,
+  assetSource: AssetSourceConfig,
+  signal?: AbortSignal,
+): (
+  assetId: string,
+  opts: { region?: [number, number, number, number] },
+) => Promise<{ bytes: Uint8Array; mediaType: string } | undefined> {
+  return async (assetId, opts) => {
+    const args: Record<string, unknown> = { asset_id: assetId };
+    if (assetSource.collection !== undefined) {
+      args.collection = assetSource.collection;
+    }
+    if (opts.region !== undefined) {
+      args.region = opts.region;
+    } else if (assetSource.variant !== undefined) {
+      args.variant = assetSource.variant;
+    }
+    let result: Awaited<ReturnType<McpWrapperService["callTool"]>>;
+    try {
+      result = await mcpWrapper.callTool(
+        assetSource.server,
+        "get_asset",
+        args,
+        ctx,
+        signal !== undefined ? { signal } : undefined,
+      );
+    } catch {
+      // Fail closed: a transport/tool error must not crash the inspection or
+      // leak its cause. The tool treats undefined as an unavailable asset.
+      return undefined;
+    }
+    if (result.isError === true) return undefined;
+    return extractMcpImage(result.content);
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -853,6 +944,23 @@ export function createLlmNodeHandler(
         (aiTools ?? {}) as Record<string, unknown>,
         IMAGE_INSPECTION_TOOL_NAME,
       );
+      // Asset resolution (Req 16.3): when the node declares `assetSource` and an
+      // MCP wrapper is available, thread a `fetchAsset` hook that fetches the
+      // asset's bytes via the configured server's `get_asset` tool. The call
+      // runs with the caller's request context, so it inherits get_asset's
+      // ACL + fail-closed behaviour (task 3.9); `agent-tools.ts` stays decoupled
+      // from the MCP client. Absent config/wrapper → the hook is omitted and
+      // `asset:` references are simply not resolvable.
+      const assetSource = imageInspection.assetSource;
+      const fetchAsset =
+        assetSource !== undefined && runtime.mcpWrapper !== undefined
+          ? buildAssetFetch(
+              runtime.mcpWrapper,
+              runtime.ctx,
+              assetSource,
+              runtime.signal,
+            )
+          : undefined;
       const inspectionTools = buildImageInspectionTools({
         existingTools: aiTools,
         nodeId: node.id,
@@ -862,6 +970,7 @@ export function createLlmNodeHandler(
         config: imageInspection,
         appConfig: runtime.appConfig,
         llmProviderFactory: runtime.llmProviderFactory,
+        ...(fetchAsset !== undefined ? { fetchAsset } : {}),
         ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
         ...(runtime.pricingOverrides !== undefined
           ? { pricingOverrides: runtime.pricingOverrides }

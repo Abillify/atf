@@ -34,6 +34,29 @@ import type { AppConfig } from "../config/index.js";
 import { getProviderInstance } from "../config/providers.js";
 import type { Logger } from "../observability/logger.js";
 
+/**
+ * One asset attached to a v2 search hit (via `include_assets`). Mirrors the
+ * `assets[]` entries of the `/v2/search` response (design §7.2): a figure with
+ * its classified `figureKind`, `caption`, `page`, `bbox`, and the variant URLs
+ * (`thumbUrl` for the thumbnail, `url` for the ACL-checked full/preview asset).
+ * All fields but `assetId` are optional so a partial ref (no thumbnail) still
+ * parses.
+ */
+export interface RagAsset {
+  assetId: string;
+  /** Coarse asset kind (e.g. "figure"). */
+  kind?: string;
+  /** Classified figure type (bpmn | flowchart | ui_mask | …). */
+  figureKind?: string;
+  caption?: string;
+  page?: number;
+  bbox?: [number, number, number, number];
+  /** Thumbnail URL (variant `thumb`). */
+  thumbUrl?: string;
+  /** Full/preview asset URL (the ACL-checked `/v2/assets/{id}?variant=…`). */
+  url?: string;
+}
+
 /** A single retrieved passage, parsed from a vectorsearch tool result. */
 export interface RagChunk {
   /** Stable chunk/document id from the vector store. */
@@ -78,6 +101,27 @@ export interface RagChunk {
   bbox?: [number, number, number, number];
   assetUrl?: string;
   section?: string;
+  /**
+   * v2 hit provenance for the evidence line / citations (Requirement 16.4).
+   * `sectionPath` is the ordered breadcrumb (e.g. ["4 Wareneingang","4.2
+   * Anmeldung"]); `pages` the covered page numbers; `figureKind` the classified
+   * figure type of the hit unit (bpmn/flowchart/ui_mask/…); `caption` its
+   * caption. All optional — a legacy (pre-v2) hit carries none of them and the
+   * evidence line falls back to the existing `Ref/S./Modalität/Abbildung`
+   * fields unchanged.
+   */
+  sectionPath?: string[];
+  pages?: number[];
+  figureKind?: string;
+  caption?: string;
+  /**
+   * v2 assets attached to the hit (from `include_assets`: refs or thumbnails).
+   * Each carries the figure metadata (`figureKind`, `caption`, `page`, `bbox`)
+   * and the variant URLs. The RAG node's `assets.attach` policy decides whether
+   * to attach any of these as image parts to the responder's message, gated on
+   * the responder model's `visionInput` capability (Requirement 16.2).
+   */
+  assets?: RagAsset[];
   charStart?: number;
   charEnd?: number;
   chunkId?: string;
@@ -424,6 +468,66 @@ function chunkDocKey(c: RagChunk): string {
 }
 
 /**
+ * Parses the `assets[]` array of a v2 search hit into {@link RagAsset}s. Each
+ * entry needs a non-empty `asset_id` (the identity used to attach/inspect the
+ * image); everything else is optional and copied through when present. Returns
+ * undefined when the field is absent or holds no valid asset, so legacy hits
+ * carry no `assets`.
+ */
+function parseRagAssets(raw: unknown): RagAsset[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: RagAsset[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object") continue;
+    const a = entry as Record<string, unknown>;
+    const assetId =
+      typeof a.asset_id === "string" && a.asset_id.trim() !== ""
+        ? a.asset_id
+        : typeof a.id === "string" && a.id.trim() !== ""
+          ? a.id
+          : undefined;
+    if (assetId === undefined) continue;
+    const kind =
+      typeof a.kind === "string" && a.kind.trim() !== "" ? a.kind : undefined;
+    const figureKind =
+      typeof a.figure_kind === "string" && a.figure_kind.trim() !== ""
+        ? a.figure_kind
+        : undefined;
+    const caption =
+      typeof a.caption === "string" && a.caption.trim() !== ""
+        ? a.caption
+        : undefined;
+    const page =
+      typeof a.page === "number" && Number.isFinite(a.page) && a.page >= 0
+        ? Math.floor(a.page)
+        : undefined;
+    const bbox =
+      Array.isArray(a.bbox) &&
+      a.bbox.length === 4 &&
+      a.bbox.every((v) => typeof v === "number" && Number.isFinite(v))
+        ? (a.bbox as [number, number, number, number])
+        : undefined;
+    const thumbUrl =
+      typeof a.thumb_url === "string" && a.thumb_url.trim() !== ""
+        ? a.thumb_url
+        : undefined;
+    const url =
+      typeof a.url === "string" && a.url.trim() !== "" ? a.url : undefined;
+    out.push({
+      assetId,
+      ...(kind !== undefined ? { kind } : {}),
+      ...(figureKind !== undefined ? { figureKind } : {}),
+      ...(caption !== undefined ? { caption } : {}),
+      ...(page !== undefined ? { page } : {}),
+      ...(bbox !== undefined ? { bbox } : {}),
+      ...(thumbUrl !== undefined ? { thumbUrl } : {}),
+      ...(url !== undefined ? { url } : {}),
+    });
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
  * Parses the chunks out of a vectorsearch tool result. Handles the MCP
  * text-content wrapper (`[{type:"text", text:"<json>"}]`), a raw JSON string,
  * or an already-parsed `{ results: [...] }` object. Returns [] for anything
@@ -586,6 +690,42 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       typeof item.asset_url === "string" && item.asset_url.trim() !== ""
         ? item.asset_url
         : undefined;
+    // v2 hit provenance (design §7.2): top-level `section_path` breadcrumb,
+    // `pages` numbers, the hit's `figure_kind`/`caption`, and the `assets[]`
+    // array from `include_assets`. Read from the item first, then evidence, so
+    // both response shapes parse. Undefined for legacy hits.
+    const rawSectionPath = item.section_path ?? evidence.section_path;
+    const sectionPath = Array.isArray(rawSectionPath)
+      ? rawSectionPath.filter(
+          (value): value is string =>
+            typeof value === "string" && value.trim() !== "",
+        )
+      : undefined;
+    const rawPages = item.pages ?? evidence.pages;
+    const pages = Array.isArray(rawPages)
+      ? rawPages
+          .filter(
+            (value): value is number =>
+              typeof value === "number" && Number.isFinite(value) && value >= 0,
+          )
+          .map((value) => Math.floor(value))
+      : undefined;
+    const figureKind =
+      (typeof item.figure_kind === "string" && item.figure_kind.trim() !== ""
+        ? item.figure_kind
+        : undefined) ??
+      (typeof evidence.figure_kind === "string" &&
+      evidence.figure_kind.trim() !== ""
+        ? evidence.figure_kind
+        : undefined);
+    const caption =
+      (typeof item.caption === "string" && item.caption.trim() !== ""
+        ? item.caption
+        : undefined) ??
+      (typeof evidence.caption === "string" && evidence.caption.trim() !== ""
+        ? evidence.caption
+        : undefined);
+    const assets = parseRagAssets(item.assets);
     const resolvedPage = page ?? pageStart;
     chunks.push({
       id: typeof item.id === "string" ? (item.id as string) : String(i),
@@ -606,6 +746,13 @@ export function parseVectorSearchResults(toolContent: unknown): RagChunk[] {
       ...(assetId !== undefined ? { assetId } : {}),
       ...(bbox !== undefined ? { bbox } : {}),
       ...(assetUrl !== undefined ? { assetUrl } : {}),
+      ...(sectionPath !== undefined && sectionPath.length > 0
+        ? { sectionPath }
+        : {}),
+      ...(pages !== undefined && pages.length > 0 ? { pages } : {}),
+      ...(figureKind !== undefined ? { figureKind } : {}),
+      ...(caption !== undefined ? { caption } : {}),
+      ...(assets !== undefined && assets.length > 0 ? { assets } : {}),
       ...(section !== undefined ? { section } : {}),
       ...(charStart !== undefined ? { charStart } : {}),
       ...(charEnd !== undefined ? { charEnd } : {}),

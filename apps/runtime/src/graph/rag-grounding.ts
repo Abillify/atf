@@ -103,6 +103,24 @@ export interface CitationEntry {
  * document and a later self-search hit of the same file). Exported so both the
  * `tool` node and the LLM self-search annotator share one definition.
  */
+/**
+ * Figure kind of a chunk for citations (Req 16.4): the chunk's own `figureKind`,
+ * else the first attached asset that carries one.
+ */
+function figureKindOf(c: RagChunk): string | undefined {
+  return (
+    c.figureKind ??
+    (c.assets ?? []).find((a) => a.figureKind !== undefined)?.figureKind
+  );
+}
+
+/** Caption of a chunk for citations: the chunk's own, else the first asset's. */
+function captionOf(c: RagChunk): string | undefined {
+  return (
+    c.caption ?? (c.assets ?? []).find((a) => a.caption !== undefined)?.caption
+  );
+}
+
 export function buildCitationEntries(
   chunks: readonly RagChunk[],
   summaries: readonly RagSummary[],
@@ -120,9 +138,13 @@ export function buildCitationEntries(
       evidence.page_end,
       evidence.modality,
       evidence.figure_id,
+      evidence.figure_kind,
+      evidence.caption,
       evidence.asset_id,
       evidence.bbox?.join(","),
       evidence.section,
+      evidence.section_path?.join(">"),
+      evidence.pages?.join(","),
       evidence.char_start,
       evidence.char_end,
       evidence.text,
@@ -141,16 +163,20 @@ export function buildCitationEntries(
       existing.snippet = cand.snippet;
     }
     if (existing.url === "" && cand.url !== "") existing.url = cand.url;
-    const topLevelFields = ["citation_id", "document_id", "version", "page", "page_start", "page_end", "modality", "figure_id", "asset_id", "bbox", "asset_url", "section", "char_start", "char_end", "chunk_id"] as const;
+    const topLevelFields = ["citation_id", "document_id", "version", "page", "page_start", "page_end", "modality", "figure_id", "figure_kind", "caption", "asset_id", "bbox", "asset_url", "section", "section_path", "pages", "char_start", "char_end", "chunk_id"] as const;
     const conflictSensitive = new Set<string>([
       "page",
       "page_start",
       "page_end",
       "modality",
       "figure_id",
+      "figure_kind",
+      "caption",
       "asset_id",
       "bbox",
       "asset_url",
+      "section_path",
+      "pages",
     ]);
     const conflicts = conflictedTopLevelFields.get(key) ?? new Set<string>();
     for (const field of topLevelFields) {
@@ -210,10 +236,16 @@ export function buildCitationEntries(
       ...(c.pageEnd !== undefined ? { page_end: c.pageEnd } : {}),
       ...(c.modality !== undefined ? { modality: c.modality } : {}),
       ...(c.figureId !== undefined ? { figure_id: c.figureId } : {}),
+      ...(figureKindOf(c) !== undefined ? { figure_kind: figureKindOf(c) } : {}),
+      ...(captionOf(c) !== undefined ? { caption: captionOf(c) } : {}),
       ...(c.assetId !== undefined ? { asset_id: c.assetId } : {}),
       ...(c.bbox !== undefined ? { bbox: c.bbox } : {}),
       ...(c.assetUrl !== undefined ? { asset_url: c.assetUrl } : {}),
       ...(c.section !== undefined ? { section: c.section } : {}),
+      ...(c.sectionPath !== undefined && c.sectionPath.length > 0
+        ? { section_path: c.sectionPath }
+        : {}),
+      ...(c.pages !== undefined && c.pages.length > 0 ? { pages: c.pages } : {}),
       ...(c.charStart !== undefined ? { char_start: c.charStart } : {}),
       ...(c.charEnd !== undefined ? { char_end: c.charEnd } : {}),
       ...(c.chunkId !== undefined ? { chunk_id: c.chunkId } : {}),
@@ -234,10 +266,16 @@ export function buildCitationEntries(
       ...(c.pageEnd !== undefined ? { page_end: c.pageEnd } : {}),
       ...(c.modality !== undefined ? { modality: c.modality } : {}),
       ...(c.figureId !== undefined ? { figure_id: c.figureId } : {}),
+      ...(figureKindOf(c) !== undefined ? { figure_kind: figureKindOf(c) } : {}),
+      ...(captionOf(c) !== undefined ? { caption: captionOf(c) } : {}),
       ...(c.assetId !== undefined ? { asset_id: c.assetId } : {}),
       ...(c.bbox !== undefined ? { bbox: c.bbox } : {}),
       ...(c.assetUrl !== undefined ? { asset_url: c.assetUrl } : {}),
       ...(c.section !== undefined ? { section: c.section } : {}),
+      ...(c.sectionPath !== undefined && c.sectionPath.length > 0
+        ? { section_path: c.sectionPath }
+        : {}),
+      ...(c.pages !== undefined && c.pages.length > 0 ? { pages: c.pages } : {}),
       ...(c.charStart !== undefined ? { char_start: c.charStart } : {}),
       ...(c.charEnd !== undefined ? { char_end: c.charEnd } : {}),
       ...(c.chunkId !== undefined ? { chunk_id: c.chunkId } : {}),

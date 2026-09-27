@@ -207,6 +207,25 @@ export interface ImageInspectionConfig {
   imageDescription?: string;
   /** Caps the answer length returned to the hosting model. Default 4000 chars. */
   maxAnswerChars?: number;
+  /**
+   * Enables `inspect_image` to resolve `asset:<id>[#bbox]` references (Req 16.3)
+   * by fetching the asset via the MCP `get_asset` tool (task 3.9). Absent → the
+   * tool only resolves inline `img-N` references (unchanged behaviour). The
+   * fetched bytes are parked as an `img-N` and inspected via the same vision
+   * sub-LLM, so the responder model never receives the base64.
+   */
+  assetSource?: {
+    /**
+     * MCP server exposing `get_asset` (e.g. `"vectorsearch"`). The engine calls
+     * `<server>/get_asset` with the caller's context, so the asset read honours
+     * the caller's ACL and fails closed on an unauthorized/unknown asset.
+     */
+    server: string;
+    /** Collection to read the asset from. Defaults to the server's default. */
+    collection?: string;
+    /** Image size for a whole-asset fetch (ignored for a region zoom). */
+    variant?: "thumb" | "preview" | "full";
+  };
 }
 
 /**

@@ -259,10 +259,18 @@ export interface CitationEvidence {
   page_end?: number;
   modality?: "image";
   figure_id?: string;
+  /** Classified figure type of the hit (bpmn | flowchart | ui_mask | …). */
+  figure_kind?: string;
+  /** Figure caption of the hit. */
+  caption?: string;
   asset_id?: string;
   bbox?: [number, number, number, number];
   asset_url?: string;
   section?: string;
+  /** v2 section-path breadcrumb (ordered), e.g. ["4 Wareneingang","4.2 …"]. */
+  section_path?: string[];
+  /** v2 covered page numbers of the hit. */
+  pages?: number[];
   char_start?: number;
   char_end?: number;
   chunk_id?: string;
@@ -296,10 +304,18 @@ export interface CitationSource {
   page_end?: number;
   modality?: "image";
   figure_id?: string;
+  /** Classified figure type of the hit (bpmn | flowchart | ui_mask | …). */
+  figure_kind?: string;
+  /** Figure caption of the hit. */
+  caption?: string;
   asset_id?: string;
   bbox?: [number, number, number, number];
   asset_url?: string;
   section?: string;
+  /** v2 section-path breadcrumb (ordered), e.g. ["4 Wareneingang","4.2 …"]. */
+  section_path?: string[];
+  /** v2 covered page numbers of the hit. */
+  pages?: number[];
   char_start?: number;
   char_end?: number;
   chunk_id?: string;
@@ -350,10 +366,18 @@ export interface Citation {
   page_end?: number;
   modality?: "image";
   figure_id?: string;
+  /** Classified figure type of the hit (bpmn | flowchart | ui_mask | …). */
+  figure_kind?: string;
+  /** Figure caption of the hit. */
+  caption?: string;
   asset_id?: string;
   bbox?: [number, number, number, number];
   asset_url?: string;
   section?: string;
+  /** v2 section-path breadcrumb (ordered), e.g. ["4 Wareneingang","4.2 …"]. */
+  section_path?: string[];
+  /** v2 covered page numbers of the hit. */
+  pages?: number[];
   char_start?: number;
   char_end?: number;
   chunk_id?: string;
