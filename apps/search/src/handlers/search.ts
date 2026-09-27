@@ -25,6 +25,8 @@ import { runAsyncRerankStream } from "./search-async-rerank.js";
 import {
   buildRerankDocument,
   diversifyResults,
+  documentGroupKey,
+  groupMemberOrder,
   groupResultsBySection,
   type SectionGroup,
 } from "../rerank-context.js";
@@ -32,10 +34,10 @@ import { readHeader, parseBooleanHeader } from "../header-utils.js";
 import {
   parseExpandMode,
   parseBudgetChars,
-  DEFAULT_EXPAND_BUDGET_CHARS,
+  defaultBudgetCharsFor,
   type ExpandMode,
 } from "../expansion.js";
-import { attachExpansions } from "./expand-results.js";
+import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import { getUsageContext } from "../usage-context.js";
@@ -308,7 +310,7 @@ export function createSearchHandler(
       );
       if (expandMode === null) {
         res.status(400).json({
-          error: "X-Expand must be one of: neighbors, section, page (or none)",
+          error: "X-Expand must be one of: neighbors, section, page, document (or none)",
         });
         return;
       }
@@ -319,7 +321,7 @@ export function createSearchHandler(
         });
         return;
       }
-      const expandBudgetChars = budgetCharsParsed ?? DEFAULT_EXPAND_BUDGET_CHARS;
+      const expandBudgetChars = budgetCharsParsed ?? defaultBudgetCharsFor(expandMode);
 
       // 9. X-Hyde: use HyDE query expansion if a hydeClient is configured
       const hydeHeader = parseBooleanHeader(readHeader(req, "x-hyde"));
@@ -594,6 +596,18 @@ export function createSearchHandler(
         results.length > 1
       ) {
         results = await rerankResults(rerankerClient, body, results, log);
+      }
+
+      // Resolve document groups (e-mail threads) so grouping merges a thread
+      // and document expansion reads the whole thread.
+      if (groupByDocument || expandMode === "document") {
+        results = await attachDocumentGroups({
+          postgresClient,
+          collection: collectionRaw,
+          scope,
+          results,
+          logger: log,
+        });
       }
 
       // Group chunks into documents (best score wins, content merged dedup'd).
@@ -955,10 +969,11 @@ export function buildPostgresFilter(
  * - The final array is sorted by document score descending.
  */
 export function groupResultsByDocument(results: SearchResult[]): SearchResult[] {
-  // Group by base_ref, preserving the order chunks were returned in.
+  // Group by document — or by the document's group, so an e-mail thread is one
+  // result — preserving the order chunks were returned in.
   const groups = new Map<string, SearchResult[]>();
   for (const r of results) {
-    const key = r.base_ref || r.reference;
+    const key = documentGroupKey(r);
     const existing = groups.get(key);
     if (existing) {
       existing.push(r);
@@ -970,8 +985,11 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
   const docs: SearchResult[] = [];
 
   for (const chunks of groups.values()) {
-    // Sort chunks by chunk_index so we assemble content in document order.
+    // Sort chunks by chunk_index so we assemble content in document order
+    // (a thread's messages chronologically first).
     const sorted = [...chunks].sort((a, b) => {
+      const byDocument = groupMemberOrder(a, b);
+      if (byDocument !== 0) return byDocument;
       const ia = a.chunk?.chunk_index ?? 0;
       const ib = b.chunk?.chunk_index ?? 0;
       return ia - ib;
@@ -988,6 +1006,11 @@ export function groupResultsByDocument(results: SearchResult[]): SearchResult[] 
       const prev = sorted[i - 1]!;
       const curr = sorted[i]!;
       const nextContent = curr.content;
+      if ((prev.base_ref || prev.reference) !== (curr.base_ref || curr.reference)) {
+        // Next message of a thread: never overlap-merged with the previous one.
+        merged += `\n\n${nextContent}`;
+        continue;
+      }
 
       // How many chars of overlap exist at the end of `prev` / start of `curr`?
       // Prefer the explicit metadata; fall back to a suffix-match heuristic.

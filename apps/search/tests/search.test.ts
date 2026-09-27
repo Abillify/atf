@@ -786,7 +786,7 @@ describe("search handler — X-Expand / X-Budget-Chars", () => {
     );
     const res = mockRes();
     await handler(
-      mockReq("q", { "x-expand": "document" }) as never,
+      mockReq("q", { "x-expand": "chapter" }) as never,
       res as never,
       vi.fn(),
     );

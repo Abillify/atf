@@ -52,6 +52,7 @@ import { createCircuitBreaker } from "./retry.js";
 import { createIngestHandler } from "./handlers/ingest.js";
 import { createIngestBatchHandler } from "./handlers/ingest-batch.js";
 import { createRevisionHandlers } from "./handlers/revisions.js";
+import { createDocumentSourceHandlers } from "./handlers/document-sources.js";
 import { createRevisionStore } from "./revision-store.js";
 import { createRevisionTtlCleaner } from "./revision-ttl-cleaner.js";
 import { createBatchWorker } from "./batch-worker.js";
@@ -633,6 +634,14 @@ export function createApp(
     logger.error({ err }, "Unexpected idle revision pool client error");
   });
   const revisionStore = createRevisionStore(revisionPool);
+  const documentSourceHandlers = createDocumentSourceHandlers(revisionPool, {
+    identity: {
+      claimTtlMs: config.sourceClaimTtlMs,
+      nearDuplicateThreshold: config.dedupNearThreshold,
+      duplicateSimilarity: config.dedupDuplicateSimilarity,
+    },
+    logger,
+  });
   const revisionHandlers = createRevisionHandlers(revisionStore, {
     revisionTtlMs: config.revisionTtlMs,
     logger,
@@ -1043,6 +1052,24 @@ export function createApp(
     authorizeDelete,
     collectionAccessHeader,
     revisionHandlers.abort,
+  );
+
+  // ── v2 source identification (dedup + version chains) ────────────────────
+  app.post(
+    "/v2/sources/identify",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeWrite,
+    collectionAccessHeader,
+    documentSourceHandlers.identify,
+  );
+  app.get(
+    "/v2/documents/:ref/sources",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeRead,
+    collectionAccessHeader,
+    documentSourceHandlers.list,
   );
 
   // ── v2 asset routes (design §6.5, task 1.11) ──────────────────────────────

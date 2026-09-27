@@ -242,7 +242,8 @@ describe("parseExpandMode", () => {
 	});
 
 	it("returns null for an unrecognized value (→ HTTP 400)", () => {
-		expect(parseExpandMode("document")).toBeNull();
+		expect(parseExpandMode("chapter")).toBeNull();
+		expect(parseExpandMode("document")).toBe("document");
 		expect(parseExpandMode("chunk")).toBeNull();
 		expect(parseExpandMode("everything")).toBeNull();
 	});

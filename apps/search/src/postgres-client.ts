@@ -9,6 +9,12 @@
  * and the stats write-buffer in stats-buffer.ts.
  */
 
+import {
+  forgetDocument,
+  groupMemberReferences,
+  resolveDocumentGroups,
+  type DocumentGroup,
+} from "./document-identity.js";
 import type pino from "pino";
 import { Pool, type PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
@@ -556,6 +562,11 @@ export interface SearchResult {
   revision_state?: "partial";
   /** Committed page range of a partial revision, e.g. "1–2750" (Requirement 6.4). */
   pages_available?: string;
+  /**
+   * The group the hit's document belongs to (e-mail thread, attachment parent),
+   * resolved when results are grouped by document or expanded to the document.
+   */
+  document_group?: DocumentGroup;
 }
 
 /**
@@ -1068,7 +1079,9 @@ export interface PostgresClient {
    * `mode`:
    *  - `neighbors` — the hit plus its prev/next reading-order siblings;
    *  - `section`   — every unit sharing the hit's `section_id` in the document;
-   *  - `page`      — every unit overlapping the hit's page range in the document.
+   *  - `page`      — every unit overlapping the hit's page range in the document;
+   *  - `document`  — every unit of the document; for an e-mail every unit of
+   *                  every message in its thread, chronologically.
    *
    * Returns the units ordered for reading (by page then id); the pure assembler
    * (`assembleExpansion`) then bounds them by `budget_chars` and reports
@@ -1086,6 +1099,17 @@ export interface PostgresClient {
       validAt?: string;
     },
   ): Promise<PostgresResponse<ExpandUnitRow[]>>;
+
+  /**
+   * The group (e-mail thread, attachment parent) of each document reference;
+   * references without a group are absent. Optional so test doubles without
+   * it keep working — callers then group by document as before.
+   */
+  resolveDocumentGroups?(
+    collection: string,
+    scope: AccessScope,
+    references: string[],
+  ): Promise<PostgresResponse<Map<string, DocumentGroup>>>;
 
   /**
    * Resolve figure-unit metadata by `figure_id` within one document (task 3.7,
@@ -2815,6 +2839,47 @@ export function createPostgresClient(
         collection,
       );
       const accessSql = buildAccessSql(p, scope);
+
+      if (mode === "document") {
+        const tenantId = scope.tenantId;
+        return withClient(async (client) => {
+          // The documents to read: the hit's thread in chronological order, or
+          // just the hit's document.
+          const groups = await resolveDocumentGroups(client, {
+            tenantId,
+            collection,
+            references: [baseRef],
+          });
+          const group = groups.get(baseRef);
+          const members =
+            group?.kind === "email_thread"
+              ? await groupMemberReferences(client, { tenantId, collection, groupId: group.id })
+              : [];
+          const refs = members.length > 0 ? members : [baseRef];
+          const refsPh = p.add(refs);
+          const res = await client.query<{
+            unit_id: string | null;
+            content: string | null;
+            page_start: number | null;
+            page_end: number | null;
+          }>(
+            `SELECT unit_id, content, page_start, page_end
+               FROM "${table}"
+              WHERE base_ref = ANY(${refsPh}::text[])
+                AND (unit_type IS NULL OR unit_type NOT IN ('section', 'page', 'document'))${temporalFilter}${accessSql}
+              ORDER BY array_position(${refsPh}::text[], base_ref),
+                       page_start ASC NULLS FIRST, page_end ASC NULLS FIRST, id ASC`,
+            p.values,
+          );
+          return res.rows.map((row) => ({
+            unit_id: row.unit_id,
+            content: row.content ?? "",
+            page_start: row.page_start,
+            page_end: row.page_end,
+          }));
+        });
+      }
+
       const baseRefPh = p.add(baseRef);
 
       let targetSql: string;
@@ -2866,6 +2931,20 @@ export function createPostgresClient(
           page_end: row.page_end,
         }));
       });
+    },
+
+    async resolveDocumentGroups(
+      collection: string,
+      scope: AccessScope,
+      references: string[],
+    ): Promise<PostgresResponse<Map<string, DocumentGroup>>> {
+      if (!scope.tenantId?.trim()) {
+        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+      }
+      const tenantId = scope.tenantId;
+      return withClient((client) =>
+        resolveDocumentGroups(client, { tenantId, collection, references }),
+      );
     },
 
     async lookupFigureUnits(
@@ -3459,6 +3538,15 @@ export function createPostgresClient(
                  AND document_reference = ANY($3)`,
               [scope.tenantId, collection, rootRefs],
             );
+          }
+          if (reference && scope.tenantId) {
+            // A deleted document must not linger as a revision pointer, a source
+            // a re-ingest would be a "duplicate" of, or a thread member.
+            await forgetDocument(client, {
+              tenantId: scope.tenantId,
+              collection,
+              reference: normalizeReference(reference),
+            });
           }
           await client.query("COMMIT");
           return { deleted: result.rowCount ?? 0 };

@@ -111,9 +111,10 @@ import {
   groupResultsV2,
   type GroupByMode,
 } from "../rerank-context.js";
-import { attachExpansions } from "./expand-results.js";
+import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
 import {
   DEFAULT_EXPAND_BUDGET_CHARS,
+  defaultBudgetCharsFor,
   MAX_EXPAND_BUDGET_CHARS,
   type ExpandMode,
 } from "../expansion.js";
@@ -734,15 +735,17 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         .boolean()
         .optional()
         .describe(
-          "Collapse multi-chunk results into one merged result per document. Default: false",
+          "Collapse multi-chunk results into one merged result per document; an e-mail thread " +
+            "counts as one document (its messages merged chronologically). Default: false",
         ),
       expand: z
-        .enum(["none", "neighbors", "section", "page"])
+        .enum(["none", "neighbors", "section", "page", "document"])
         .optional()
         .describe(
           "Small-to-big expansion: augment each hit with an `expanded` field " +
             "carrying the neighbouring chunks (`neighbors`), the whole section " +
-            "(`section`), or the whole page (`page`), bounded by budget_chars. " +
+            "(`section`), the whole page (`page`), or the whole document " +
+            "(`document`; for an e-mail the whole thread, chronologically), bounded by budget_chars. " +
             "Honours the same visibility/ACL/revision rules as the search. " +
             "Default / `none`: no expansion.",
         ),
@@ -1103,6 +1106,15 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           fallbackReason: rerankOutcome.fallbackReason,
         };
       }
+      if (groupByDocument || expand === "document") {
+        rankedResults = await attachDocumentGroups({
+          postgresClient,
+          collection: col,
+          scope: accessScopeForMcp(),
+          results: rankedResults,
+          logger,
+        });
+      }
       if (groupByDocument) {
         rankedResults = groupResultsByDocument(rankedResults);
       }
@@ -1154,7 +1166,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
               collection: col,
               scope: accessScopeForMcp(),
               mode: expandMode,
-              budgetChars: budget_chars ?? DEFAULT_EXPAND_BUDGET_CHARS,
+              budgetChars: budget_chars ?? defaultBudgetCharsFor(expandMode),
               includeAllVersions: include_all_versions ?? false,
               validAt: parseRfc3339DateTime(valid_at),
               results: rankedResults,

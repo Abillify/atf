@@ -24,11 +24,26 @@
  * live PostgreSQL.
  */
 
-/** The three expansion modes exposed by `expand` (design §7.2, Req 13.4). */
-export type ExpandMode = "neighbors" | "section" | "page";
+/**
+ * The expansion modes exposed by `expand` (design §7.2, Req 13.4). `document`
+ * returns the hit's whole document in reading order — for an e-mail, the whole
+ * thread chronologically.
+ */
+export type ExpandMode = "neighbors" | "section" | "page" | "document";
 
 /** Default character budget when `expand` is set but `budget_chars` is omitted. */
 export const DEFAULT_EXPAND_BUDGET_CHARS = 4000;
+
+/**
+ * Default budget for `expand=document`: a whole e-mail thread or a short
+ * document fits, a manual does not (and reports `truncated`).
+ */
+export const DEFAULT_DOCUMENT_EXPAND_BUDGET_CHARS = 50_000;
+
+/** The default `budget_chars` for a mode when the caller omits it. */
+export function defaultBudgetCharsFor(mode: ExpandMode | undefined): number {
+	return mode === "document" ? DEFAULT_DOCUMENT_EXPAND_BUDGET_CHARS : DEFAULT_EXPAND_BUDGET_CHARS;
+}
 
 /**
  * Hard ceiling on `budget_chars` (REST `/search`, `/v2/search`, MCP `search`).
@@ -182,7 +197,7 @@ export function parseExpandMode(
 	const v = value.trim().toLowerCase();
 	if (v === "") return undefined;
 	if (v === "none" || v === "off") return undefined;
-	if (v === "neighbors" || v === "section" || v === "page") return v;
+	if (v === "neighbors" || v === "section" || v === "page" || v === "document") return v;
 	return null;
 }
 

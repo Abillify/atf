@@ -428,10 +428,11 @@ export function createBatchWorker(
     // Later batches carry no document.begin: use the provenance the revision
     // store persisted when the batch holding it was staged.
     provenance ??= await loadExtractProvenance(client, batch);
+    const acl = await loadRevisionAcl(client, batch);
 
     const lang = await loadFtsLanguage(client, table);
     for (const [unit, vector] of zip(units, vectors)) {
-      await upsertUnit(client, table, lang, vecType, batch, unit, vector, ctx, provenance);
+      await upsertUnit(client, table, lang, vecType, batch, unit, vector, ctx, acl, provenance);
     }
 
     // Identifier occurrence index (task 3.4, Requirement 12.2). The trailing
@@ -773,6 +774,25 @@ async function loadExtractProvenance(
   return parseExtractProvenance(res.rows[0]?.extract_provenance);
 }
 
+/**
+ * The row ACL the revision was created with (vs_revisions.allowed_users /
+ * allowed_groups). Every unit carries it, so search, expansion and the asset
+ * store (which checks readability through the unit rows) enforce it. A revision
+ * created without one is readable by every reader of the collection.
+ */
+async function loadRevisionAcl(
+  client: PoolClient,
+  batch: ClaimedBatchRow,
+): Promise<{ allowedUsers: string[]; allowedGroups: string[] }> {
+  const res = await client.query<{ allowed_users: string[] | null; allowed_groups: string[] | null }>(
+    `SELECT allowed_users, allowed_groups FROM vs_revisions
+      WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
+    [batch.tenant_id, batch.collection, batch.revision_id],
+  );
+  const row = res.rows[0];
+  return { allowedUsers: row?.allowed_users ?? [], allowedGroups: row?.allowed_groups ?? [] };
+}
+
 /** Read the collection's FTS language for `to_tsvector`; default 'simple'. */
 async function loadFtsLanguage(client: PoolClient, table: string): Promise<string> {
   const res = await client.query<{ fts_language: string }>(
@@ -803,6 +823,7 @@ async function upsertUnit(
   unit: IndexUnit,
   vector: number[],
   ctx: UnitVisibilityContext,
+  acl: { allowedUsers: string[]; allowedGroups: string[] },
   provenance?: ExtractProvenance,
 ): Promise<void> {
   const reference = `${batch.reference}#unit:${unit.unitId}`;
@@ -828,10 +849,11 @@ async function upsertUnit(
        (tenant_id, reference, base_ref, is_latest, content, vector, ts_search, ts_ident,
         metadata, unit_id, unit_type, revision_id, section_id, section_path,
         page_start, page_end, figure_kind, document_id,
-        parent_unit_id, prev_unit_id, next_unit_id, block_ids, figure_refs, table_id)
+        parent_unit_id, prev_unit_id, next_unit_id, block_ids, figure_refs, table_id,
+        allowed_users, allowed_groups)
      VALUES ($1, $2, $3, $23, $4, $5::${vecType}, to_tsvector('${lang}', $4), to_tsvector('simple', $22),
              $6::jsonb, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-             $16, $17, $18, $19, $20, $21)
+             $16, $17, $18, $19, $20, $21, $24, $25)
      ON CONFLICT (tenant_id, unit_id) WHERE unit_id IS NOT NULL DO UPDATE SET
        reference      = EXCLUDED.reference,
        base_ref       = EXCLUDED.base_ref,
@@ -855,6 +877,8 @@ async function upsertUnit(
        block_ids      = EXCLUDED.block_ids,
        figure_refs    = EXCLUDED.figure_refs,
        table_id       = EXCLUDED.table_id,
+       allowed_users  = EXCLUDED.allowed_users,
+       allowed_groups = EXCLUDED.allowed_groups,
        modified       = NOW()`,
     [
       batch.tenant_id,
@@ -880,6 +904,8 @@ async function upsertUnit(
       unit.tableId ?? null,
       identifierText,
       isLatest,
+      acl.allowedUsers,
+      acl.allowedGroups,
     ],
   );
 }

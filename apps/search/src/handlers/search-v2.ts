@@ -79,10 +79,11 @@ import {
 	groupResultsV2,
 	type GroupByMode,
 } from "../rerank-context.js";
-import { attachExpansions } from "./expand-results.js";
+import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
 import {
 	parseExpandMode,
 	DEFAULT_EXPAND_BUDGET_CHARS,
+	defaultBudgetCharsFor,
 	MAX_EXPAND_BUDGET_CHARS,
 	type ExpandMode,
 } from "../expansion.js";
@@ -170,8 +171,8 @@ function parseLimit(value: unknown): number {
  * (an over-ask is bounded, not rejected — the response's `expanded.budget_chars`
  * reports the effective value).
  */
-export function parseBudget(value: unknown): number {
-	if (value === undefined || value === null) return DEFAULT_EXPAND_BUDGET_CHARS;
+export function parseBudget(value: unknown, defaultChars: number = DEFAULT_EXPAND_BUDGET_CHARS): number {
+	if (value === undefined || value === null) return defaultChars;
 	if (typeof value !== "number" || !Number.isInteger(value) || value <= 0) {
 		throw new BadRequest("budget_chars must be a positive integer");
 	}
@@ -354,7 +355,12 @@ export function createSearchV2Handler(
 				query = requireString(body.query, "query");
 				limit = parseLimit(body.limit);
 				granularity = parseGranularity(body.granularity);
-				budgetChars = parseBudget(body.budget_chars);
+				budgetChars = parseBudget(
+					body.budget_chars,
+					defaultBudgetCharsFor(
+						parseExpandMode(typeof body.expand === "string" ? body.expand : undefined) ?? undefined,
+					),
+				);
 				includeAssets = parseIncludeAssets(body.include_assets);
 				groupBy = parseGroupBy(body.group_by);
 				if (
@@ -368,7 +374,7 @@ export function createSearchV2Handler(
 				);
 				if (expandMode === null) {
 					throw new BadRequest(
-						"expand must be one of: none, neighbors, section, page",
+						"expand must be one of: none, neighbors, section, page, document",
 					);
 				}
 				const parsed = parseFilters(body.filters);
@@ -545,7 +551,17 @@ export function createSearchV2Handler(
 				groupBy === "none" ? {} : { perSectionCap: 0 },
 			);
 			// 4b. group_by (Req 13.6): merge per document / section, best score,
-			//     content in document order.
+			//     content in document order. A document's group (an e-mail
+			//     thread) is resolved first so `document` merges a thread.
+			if (groupBy === "document" || expandMode === "document") {
+				results = await attachDocumentGroups({
+					postgresClient,
+					collection,
+					scope,
+					results,
+					logger: log,
+				});
+			}
 			results = groupResultsV2(results, groupBy);
 			results = results.slice(0, limit);
 

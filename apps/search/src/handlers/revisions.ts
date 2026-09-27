@@ -11,7 +11,8 @@
  * handler therefore only needs the tenant + resolved collection and defers all
  * storage semantics to the RevisionStore.
  *
- *   POST   /v2/documents/{ref}/revisions                     create (Idempotency-Key)
+ *   POST   /v2/documents/{ref}/revisions                     create (Idempotency-Key,
+ *                                                            optional X-Source-Id claim)
  *   PUT    /v2/documents/{ref}/revisions/{rev}/batches/{seq}  stage NDJSON batch (Content-Digest)
  *   GET    /v2/documents/{ref}/revisions/{rev}                revision state
  *   POST   /v2/documents/{ref}/revisions/{rev}/segments/{n}/commit  segment commit
@@ -33,7 +34,8 @@ import {
   isCompatibleContract,
   parseContractId,
 } from "@atf/extract-contract";
-import type { AccessScope } from "../access-scope.js";
+import { rowAclForRevision, type AccessScope } from "../access-scope.js";
+import type { CollectionAcl } from "../collection-access.js";
 import type { RevisionScope, RevisionStore } from "../revision-store.js";
 import { readHeader } from "../header-utils.js";
 
@@ -122,6 +124,14 @@ function checkContract(
   return false;
 }
 
+/** A comma-separated list header. */
+function readList(req: Parameters<RequestHandler>[0], name: string): string[] {
+  return (readHeader(req, name) ?? "")
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v !== "");
+}
+
 /** Parse a non-negative integer route param, or null when malformed. */
 function parseSeq(raw: unknown): number | null {
   if (typeof raw !== "string" || !/^\d+$/.test(raw)) return null;
@@ -156,10 +166,21 @@ export function createRevisionHandlers(
           visibilityHeader === "progressive" || visibilityHeader === "on_commit"
             ? visibilityHeader
             : undefined;
+        const sourceId = readHeader(req, "x-source-id")?.trim();
+        // The row ACL of the document's units: what the writer resolved for its
+        // own caller (Extract narrows it to the uploading user), else the
+        // collection ACL — see rowAclForRevision.
+        const acl = rowAclForRevision(
+          (res.locals as { accessScope: AccessScope }).accessScope,
+          (res.locals as { collectionAcl?: CollectionAcl }).collectionAcl,
+          { users: readList(req, "x-allowed-users"), groups: readList(req, "x-allowed-groups") },
+        );
         const result = await store.createRevision({
           ...scope,
           reference,
           idempotencyKey,
+          ...(sourceId ? { sourceId } : {}),
+          acl,
           visibility,
           ttlMs: revisionTtlMs,
         });

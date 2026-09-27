@@ -173,6 +173,59 @@ export function aclForMutation(
   };
 }
 
+/** A document's row ACL, sorted and de-duplicated so two ACLs compare by value. */
+export interface RowAcl {
+  allowedUsers: string[];
+  allowedGroups: string[];
+}
+
+function normalizeAclList(values: readonly string[]): string[] {
+  return [...new Set(values.map((v) => v.trim()).filter((v) => v !== ""))].sort();
+}
+
+/**
+ * The row ACL of a document written through the v2 revision API (and the ACL
+ * its source registration is compared under).
+ *
+ *   - a service (Extract with its service token) or a bypass principal passes
+ *     the ACL it resolved for its own caller (`X-Allowed-Users/-Groups`); when
+ *     it passes none, the collection ACL applies, and without one the row is
+ *     readable by every reader of the collection — the v2 behaviour so far;
+ *   - an end-user principal writes a document readable by its own identity,
+ *     narrowed to the requested users/groups it belongs to.
+ *
+ * A row ACL only ever narrows: a reader still needs access to the collection.
+ */
+export function rowAclForRevision(
+  scope: AccessScope,
+  collectionAcl: CollectionAcl | undefined,
+  requested: { users: readonly string[]; groups: readonly string[] },
+): RowAcl {
+  const users = normalizeAclList(requested.users);
+  const groups = normalizeAclList(requested.groups);
+  if (scope.authorizationBypass || scope.service) {
+    if (users.length > 0 || groups.length > 0) return { allowedUsers: users, allowedGroups: groups };
+    return {
+      allowedUsers: normalizeAclList(collectionAcl?.allowedUsers ?? []),
+      allowedGroups: normalizeAclList(collectionAcl?.allowedGroups ?? []),
+    };
+  }
+  const ownUsers = scope.userId ? [scope.userId] : [];
+  const ownGroups = normalizeAclList(scope.userGroups);
+  return {
+    allowedUsers: users.length === 0 ? ownUsers : users.filter((u) => ownUsers.includes(u)),
+    allowedGroups: groups.length === 0 ? ownGroups : groups.filter((g) => ownGroups.includes(g)),
+  };
+}
+
+/** True when a row with this ACL is readable by the scope (the buildAccessSql rule). */
+export function rowAclAllows(scope: AccessScope, acl: RowAcl): boolean {
+  if (scope.authorizationBypass || scope.service) return true;
+  if (acl.allowedUsers.length === 0 && acl.allowedGroups.length === 0) return true;
+  if (scope.userId && acl.allowedUsers.includes(scope.userId)) return true;
+  return scope.userGroups.some((g) => acl.allowedGroups.includes(g));
+}
+
 export function deniedResponse(error: unknown): PostgresResponse<never> {
   return {
     ok: false,

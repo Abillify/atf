@@ -72,6 +72,35 @@ export function coordsForResult(result: SearchResult): ExpandUnitCoords {
 }
 
 /**
+ * Resolve each result's document group (e-mail thread, attachment parent) and
+ * set `document_group` on a shallow copy of the list, so grouping by document
+ * merges a thread into one result. One query for the whole page of results. A
+ * backend without group support, or a failed lookup, leaves the results as they
+ * are: grouping then falls back to one result per document.
+ */
+export async function attachDocumentGroups(params: {
+	postgresClient: PostgresClient;
+	collection: string;
+	scope: AccessScope;
+	results: SearchResult[];
+	logger: Logger;
+}): Promise<SearchResult[]> {
+	const { postgresClient, collection, scope, results, logger } = params;
+	if (results.length === 0 || postgresClient.resolveDocumentGroups === undefined) return results;
+	const refs = [...new Set(results.map((r) => r.base_ref || r.reference))];
+	const res = await postgresClient.resolveDocumentGroups(collection, scope, refs);
+	if (!res.ok) {
+		logger.warn({ error: res.error }, "Document group lookup failed; grouping per document");
+		return results;
+	}
+	if (res.result.size === 0) return results;
+	return results.map((r) => {
+		const group = res.result.get(r.base_ref || r.reference);
+		return group ? { ...r, document_group: group } : r;
+	});
+}
+
+/**
  * Attach a small-to-big `expanded` field to each result, in place on a shallow
  * copy of the list (inputs are never mutated). Runs one bounded expansion query
  * per result. A failed or empty expansion leaves the result untouched, so a

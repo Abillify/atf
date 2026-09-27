@@ -252,6 +252,17 @@ export const GLOBAL_MIGRATIONS: MigrationStep[] = [
       await ensureIdentifiersTable(client);
     },
   },
+  {
+    toVersion: 8,
+    description:
+      "Add document identity tables (vs_document_sources, vs_mail_messages, vs_document_groups) and vs_revisions.source_id/document_info for dedup, version order and e-mail threads",
+    up: async (client) => {
+      // All additive (CREATE … IF NOT EXISTS / ADD COLUMN IF NOT EXISTS) and a
+      // no-op on redeploy; the same DDL runs from the revision schema's lazy
+      // ensure, so a deployment that skips this step is still brought current.
+      await ensureRevisionSchema(client);
+    },
+  },
 
   // Example of a future global migration:
   //

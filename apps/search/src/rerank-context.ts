@@ -400,6 +400,10 @@ export function sectionKey(result: SearchResult): string {
 
 /** Document-order sort key: page, then chunk index, then char offset, then unit id / id. */
 function documentOrder(a: SearchResult, b: SearchResult): number {
+  // Across the documents of one group (an e-mail thread): chronological, then
+  // by document; within a document: reading order.
+  const byGroup = groupMemberOrder(a, b);
+  if (byGroup !== 0) return byGroup;
   const pa = metaNumber(a, "page_start") ?? a.evidence?.page_start ?? Number.MAX_SAFE_INTEGER;
   const pb = metaNumber(b, "page_start") ?? b.evidence?.page_start ?? Number.MAX_SAFE_INTEGER;
   if (pa !== pb) return pa - pb;
@@ -412,6 +416,29 @@ function documentOrder(a: SearchResult, b: SearchResult): number {
   const ua = metaString(a, "unit_id") ?? a.id;
   const ub = metaString(b, "unit_id") ?? b.id;
   return ua < ub ? -1 : ua > ub ? 1 : 0;
+}
+
+/**
+ * Order two hits of the same document group by their documents: the thread
+ * position (`document_group.sort_at`), then the document reference. 0 for two
+ * hits of the same document.
+ */
+export function groupMemberOrder(a: SearchResult, b: SearchResult): number {
+  const docA = a.base_ref || a.reference;
+  const docB = b.base_ref || b.reference;
+  if (docA === docB) return 0;
+  const ta = a.document_group?.sort_at ?? "";
+  const tb = b.document_group?.sort_at ?? "";
+  if (ta !== tb) return ta === "" ? 1 : tb === "" ? -1 : ta < tb ? -1 : 1;
+  return docA < docB ? -1 : 1;
+}
+
+/**
+ * The key hits are merged under by `group_by=document` / `groupByDocument`: the
+ * document's group (an e-mail thread) when it has one, else the document.
+ */
+export function documentGroupKey(r: SearchResult): string {
+  return r.document_group?.id ?? (r.base_ref || r.reference);
 }
 
 /**
@@ -444,8 +471,8 @@ export function groupResultsV2(
     let groupKey: string;
     let publicKey: string;
     if (by === "document") {
-      groupKey = doc;
-      publicKey = doc;
+      groupKey = documentGroupKey(r);
+      publicKey = groupKey;
     } else {
       const section = sectionKey(r);
       publicKey = section;

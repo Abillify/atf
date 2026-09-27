@@ -1703,6 +1703,33 @@ export function buildOpenApiSpec(serverUrl: string) {
           parameters: [
             { name: "ref", in: "path", required: true, description: "URL-encoded document reference.", schema: { type: "string" } },
             { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } },
+            {
+              name: "X-Source-Id",
+              in: "header",
+              required: false,
+              description:
+                "The source claim registered with `POST /v2/sources/identify` (Extract sends its job id). " +
+                "The final commit marks that source indexed.",
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Allowed-Users",
+              in: "header",
+              required: false,
+              description:
+                "Comma-separated users who may read the document's units (row ACL). Taken as given from a " +
+                "service caller (Extract narrows it to the uploading user); an end-user caller can only " +
+                "narrow to its own identity. Without X-Allowed-Users/-Groups a service write gets the " +
+                "collection ACL, else no row restriction.",
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Allowed-Groups",
+              in: "header",
+              required: false,
+              description: "Comma-separated groups who may read the document's units (see X-Allowed-Users).",
+              schema: { type: "string" },
+            },
           ],
           requestBody: { required: false, content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
           responses: {
@@ -1936,6 +1963,121 @@ export function buildOpenApiSpec(serverUrl: string) {
         },
       },
 
+      // ── v2 source identification (dedup, version chains) ────────────────────
+      "/v2/sources/identify": {
+        post: {
+          tags: ["Revisions v2"],
+          operationId: "identifySource",
+          summary: "Register an ingest's source and detect duplicates",
+          description:
+            "Registers (or updates) the source claim of one ingest and decides whether it is `new`, " +
+            "a `new_version` of an indexed document, or a `duplicate` to skip. A document is identified " +
+            "by its reference without file extension (`documentKey`), so another format of an indexed " +
+            "document resolves to the reference the document is indexed under (`canonicalReference`). " +
+            "Exact duplicates (same file sha256, same normalised text hash, same e-mail Message-ID) are " +
+            "detected collection-wide; near-duplicates (MinHash similarity) only among sources of the " +
+            "same document key, and only when their versions match (or are unknown and the texts are " +
+            "nearly identical). Called in two phases: `source` (hash only) and `content` (fingerprint, " +
+            "version). Idempotent per `sourceId`.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["sourceId", "phase", "reference", "documentKey", "sourceSha256"],
+                  properties: {
+                    sourceId: { type: "string" },
+                    phase: { type: "string", enum: ["source", "content"] },
+                    reference: { type: "string" },
+                    documentKey: { type: "string" },
+                    filename: { type: "string" },
+                    mimeType: { type: "string" },
+                    sourceSha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
+                    textHash: { type: "string", pattern: "^[0-9a-f]{64}$" },
+                    minhash: { type: "array", items: { type: "integer" }, maxItems: 512 },
+                    messageId: { type: "string" },
+                    allowedUsers: { type: "array", items: { type: "string" } },
+                    allowedGroups: { type: "array", items: { type: "string" } },
+                    version: {
+                      type: "object",
+                      properties: {
+                        label: { type: "string" },
+                        date: { type: "string" },
+                        source: { type: "string", enum: ["explicit", "page_label", "page_date", "llm", "source_modified"] },
+                      },
+                    },
+                    dedup: { type: "string", enum: ["auto", "exact", "off"], default: "auto" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "Decision",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: ["decision", "canonicalReference"],
+                    properties: {
+                      decision: { type: "string", enum: ["new", "new_version", "duplicate"] },
+                      canonicalReference: { type: "string" },
+                      duplicateOf: {
+                        type: "object",
+                        properties: {
+                          reference: { type: "string" },
+                          sourceId: { type: "string" },
+                          filename: { type: "string" },
+                          revisionId: { type: "string" },
+                          match: { type: "string", enum: ["sha256", "text", "similar"] },
+                          similarity: { type: "number" },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "400": { description: "Invalid request (`INVALID_IDENTIFY_REQUEST`)" },
+            "401": { description: "Unauthenticated" },
+            "403": { description: "Not authorized for the tenant/collection" },
+          },
+        },
+      },
+      "/v2/documents/{ref}/sources": {
+        get: {
+          tags: ["Revisions v2"],
+          operationId: "listDocumentSources",
+          summary: "List every source of a document",
+          description:
+            "The files a document was ingested from — indexed ones and those skipped as duplicates of it " +
+            "(e.g. the DOCX export of an indexed PDF) — oldest first, with version and match details. " +
+            "Only sources whose row ACL admits the caller are listed.",
+          parameters: [{ name: "ref", in: "path", required: true, schema: { type: "string" } }],
+          responses: {
+            "200": {
+              description: "The document's sources",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      reference: { type: "string" },
+                      sources: { type: "array", items: { type: "object", additionalProperties: true } },
+                    },
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthenticated" },
+            "403": { description: "Not authorized for the tenant/collection" },
+            "503": revisionError("Database unreachable; retry.", REVISION_503),
+          },
+        },
+      },
+
       // ── v2 assets (Requirements 5.8, 14.1–14.5) ──────────────────────────────
       "/v2/assets/{assetId}": {
         put: {
@@ -2016,7 +2158,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                     },
                     expand: {
                       type: "string",
-                      enum: ["none", "neighbors", "section", "page"],
+                      enum: ["none", "neighbors", "section", "page", "document"],
+                      description:
+                        "Small-to-big expansion. `document` returns the hit's whole document in reading " +
+                        "order — for an e-mail the whole thread chronologically (default budget 50000).",
                     },
                     budget_chars: { type: "integer", minimum: 1, default: 4000 },
                     include_assets: {
@@ -2033,7 +2178,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                       description:
                         "Merge hits of the same document / section into one result with the " +
                         "best score and the merged content; the result carries `group` " +
-                        "(Requirement 13.6). Lifts the per-section diversity cap.",
+                        "(Requirement 13.6). Lifts the per-section diversity cap. `document` " +
+                        "merges an e-mail thread (messages ingested independently, threaded by " +
+                        "Message-ID / References) into one result, chronologically; combine with " +
+                        "`expand=document` for the full thread text.",
                     },
                     identifier_search: {
                       type: "boolean",

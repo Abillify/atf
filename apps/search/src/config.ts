@@ -224,6 +224,27 @@ export interface Config {
   revisionTtlSweepMs: number; // REVISION_TTL_SWEEP_MS (default: 3600000)
 
   /**
+   * How long a pending source claim (`POST /v2/sources/identify`) blocks a
+   * duplicate of it while its ingest runs, in milliseconds. An expired claim no
+   * longer counts, so an abandoned ingest never blocks a re-ingest for good.
+   * Default: 24 hours. Set SOURCE_CLAIM_TTL in seconds.
+   */
+  sourceClaimTtlMs: number; // SOURCE_CLAIM_TTL seconds (default: 86400)
+
+  /**
+   * MinHash similarity from which two texts of the same document key count as
+   * the same text (near-duplicate candidates). Default 0.9.
+   */
+  dedupNearThreshold: number; // DEDUP_NEAR_THRESHOLD (default: 0.9)
+
+  /**
+   * Similarity from which a near-duplicate whose version is unknown (or only a
+   * file timestamp) is skipped as a duplicate rather than indexed as a new
+   * version. Default 0.97.
+   */
+  dedupDuplicateSimilarity: number; // DEDUP_DUPLICATE_SIMILARITY (default: 0.97)
+
+  /**
    * The v2 batch-processing worker (design §9b.3, task 1.10). When enabled, the
    * worker claims staged NDJSON batches (SKIP LOCKED), builds transitional index
    * units, embeds them and upserts them, marking each batch processed. Disabled
@@ -872,6 +893,11 @@ export function loadConfig(): Config {
   const revisionTtlMs =
     parseIntEnv("REVISION_TTL", 14 * 24 * 60 * 60, { min: 1 }) * 1000;
   const revisionTtlSweepMs = parseNonNegIntEnv("REVISION_TTL_SWEEP_MS", 3_600_000);
+  const sourceClaimTtlMs = parseIntEnv("SOURCE_CLAIM_TTL", 24 * 60 * 60, { min: 1 }) * 1000;
+  const dedupNearThreshold =
+    parseFloatEnv("DEDUP_NEAR_THRESHOLD", 0.9, { gt: 0, lt: 1.000001 }) ?? 0.9;
+  const dedupDuplicateSimilarity =
+    parseFloatEnv("DEDUP_DUPLICATE_SIMILARITY", 0.97, { gt: 0, lt: 1.000001 }) ?? 0.97;
   const batchWorkerEnabled = parseBoolEnv("BATCH_WORKER", false);
   const batchWorkerIntervalMs = parseNonNegIntEnv("BATCH_WORKER_INTERVAL_MS", 2_000);
   const batchWorkerBackoffMs = parseNonNegIntEnv("BATCH_WORKER_BACKOFF_MS", 30_000);
@@ -1216,6 +1242,9 @@ export function loadConfig(): Config {
     assetStoreDir,
     revisionTtlMs,
     revisionTtlSweepMs,
+    sourceClaimTtlMs,
+    dedupNearThreshold,
+    dedupDuplicateSimilarity,
     batchWorkerEnabled,
     batchWorkerIntervalMs,
     batchWorkerBackoffMs,

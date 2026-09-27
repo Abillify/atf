@@ -68,7 +68,16 @@ import {
   type RecordValidationIssue,
 } from "@atf/extract-contract";
 import { ensureRevisionSchema } from "./revision-schema.js";
+import type { RowAcl } from "./access-scope.js";
 import { collectionTableName } from "./collection-ddl.js";
+import {
+  documentInfoOf,
+  isOlderVersion,
+  markSourceIndexed,
+  parseDocumentInfo,
+  registerDocumentGroup,
+  type DocumentInfo,
+} from "./document-identity.js";
 
 // ─── Public result shape ──────────────────────────────────────────────────
 
@@ -115,6 +124,16 @@ export interface RevisionScope {
 export interface CreateRevisionInput extends RevisionScope {
   reference: string;
   idempotencyKey?: string | undefined;
+  /**
+   * The source claim (`POST /v2/sources/identify` sourceId) this revision
+   * indexes. The final switch marks that source indexed.
+   */
+  sourceId?: string | undefined;
+  /**
+   * The row ACL every unit of the revision is written with (see
+   * `rowAclForRevision`). Fixed at creation; a replay keeps the original.
+   */
+  acl?: RowAcl | undefined;
   visibility?: Visibility;
   /** TTL in milliseconds for the uncommitted revision. */
   ttlMs: number;
@@ -435,13 +454,17 @@ export function createRevisionStore(pool: Pool): RevisionStore {
         const inserted = await client.query<RevisionRowRaw>(
           `INSERT INTO ${REVISIONS}
              (tenant_id, collection, revision_id, reference, status, visibility,
-              idempotency_key, ttl_expires_at)
-           VALUES ($1, $2, $3, $4, 'staging', $5, $6, $7)
+              idempotency_key, ttl_expires_at, source_id, allowed_users, allowed_groups)
+           VALUES ($1, $2, $3, $4, 'staging', $5, $6, $7, $8, $9, $10)
            ON CONFLICT (tenant_id, collection, idempotency_key)
              WHERE idempotency_key IS NOT NULL
              DO NOTHING
            RETURNING *`,
-          [tenantId, collection, revisionId, reference, visibility, idempotencyKey ?? null, ttlExpiresAt],
+          [
+            tenantId, collection, revisionId, reference, visibility, idempotencyKey ?? null,
+            ttlExpiresAt, input.sourceId ?? null,
+            input.acl?.allowedUsers ?? [], input.acl?.allowedGroups ?? [],
+          ],
         );
         if (inserted.rows[0]) return { revision: toRevision(inserted.rows[0]), created: true };
         // Lost the race — return the row the winner created.
@@ -567,6 +590,7 @@ export function createRevisionStore(pool: Pool): RevisionStore {
                       ELSE page_count END,
                     has_document_end = has_document_end OR $7::boolean,
                     extract_provenance = COALESCE($8::jsonb, extract_provenance),
+                    document_info = COALESCE($9::jsonb, document_info),
                     modified = NOW()
               WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
             [
@@ -576,6 +600,8 @@ export function createRevisionStore(pool: Pool): RevisionStore {
               // document.begin provenance (Req 18.2) for the units of every
               // batch of this revision; a batch without it keeps the stored one.
               validation.extractProvenance ? JSON.stringify(validation.extractProvenance) : null,
+              // document.begin version / e-mail / parent, for the final switch.
+              validation.documentInfo ? JSON.stringify(validation.documentInfo) : null,
             ],
           );
           return batchAck(seq, digest, "received", validation.pages?.from ?? null, validation.pages?.to ?? null, false);
@@ -973,8 +999,13 @@ export async function finalizeRevision(
 
   const table = await resolveCollectionTable(pool, collection);
 
+  // Version order: a revision carrying an OLDER version than the document's
+  // current one is indexed but never becomes the latest. Decided here (to skip
+  // the pre-flip) and again under the pointer lock in phase B.
+  const older = await withPoolClient(pool, (c) => isOlderThanCurrent(c, revision));
+
   // Phase A — pre-flip the new revision's rows (invisible until the pointer moves).
-  if (table) {
+  if (table && !older) {
     await flipChunked(pool, {
       table,
       where: `tenant_id = $1 AND revision_id = $2 AND is_latest = FALSE`,
@@ -985,7 +1016,7 @@ export async function finalizeRevision(
 
   // Phase B — the atomic pointer switch.
   const switched = await withPoolClient(pool, (client) =>
-    inTransaction(client, async (): Promise<"switched" | "pending" | "raced"> => {
+    inTransaction(client, async (): Promise<"switched" | "older" | "pending" | "raced"> => {
       const locked = await lockRevision(client, tenantId, collection, revisionId, "UPDATE");
       if (!locked || !UNCOMMITTED.includes(locked.status) || locked.commit_state !== "requested") {
         return "raced";
@@ -999,6 +1030,30 @@ export async function finalizeRevision(
         [tenantId, collection, locked.reference],
       );
       const priorRevisionId = prior.rows[0]?.current_revision_id ?? null;
+      const info = parseDocumentInfo(locked.document_info);
+      if (priorRevisionId !== null && priorRevisionId !== revisionId) {
+        const current = await loadRevision(client, tenantId, collection, priorRevisionId);
+        if (current && isOlderVersion(info, parseDocumentInfo(current.document_info))) {
+          // An older version arrived late: keep it (addressable by revision and
+          // through includeAllVersions) but leave the pointer on the newer one.
+          if (table) {
+            await client.query(
+              `UPDATE "${table}" SET is_latest = FALSE, modified = NOW()
+                WHERE tenant_id = $1 AND revision_id = $2 AND is_latest = TRUE`,
+              [tenantId, revisionId],
+            );
+          }
+          await client.query(
+            `UPDATE ${REVISIONS}
+                SET status = 'committed', commit_state = 'done', prior_revision_id = NULL,
+                    ttl_expires_at = NULL, modified = NOW()
+              WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
+            [tenantId, collection, revisionId],
+          );
+          await registerCommittedDocument(client, locked, info);
+          return "older";
+        }
+      }
       await client.query(
         `INSERT INTO ${POINTER} (tenant_id, collection, reference, current_revision_id)
          VALUES ($1, $2, $3, $4)
@@ -1024,11 +1079,15 @@ export async function finalizeRevision(
           [tenantId, referenceVariants(locked.reference)],
         );
       }
+      // Only committed revisions are superseded. A revision still staging keeps
+      // going: when it commits, the version order decides whether it replaces
+      // this one — two formats of one document ingested concurrently must not
+      // abort each other.
       await client.query(
         `UPDATE ${REVISIONS}
             SET status = 'superseded', modified = NOW()
           WHERE tenant_id = $1 AND collection = $2 AND reference = $3
-            AND revision_id <> $4 AND status IN ('staging', 'partial', 'committed')`,
+            AND revision_id <> $4 AND status = 'committed'`,
         [tenantId, collection, locked.reference, revisionId],
       );
       await client.query(
@@ -1038,9 +1097,11 @@ export async function finalizeRevision(
           WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
         [tenantId, collection, revisionId, priorRevisionId],
       );
+      await registerCommittedDocument(client, locked, info);
       return "switched";
     }),
   );
+  if (switched === "older") return { state: "committed", isLatest: false };
   if (switched === "pending") {
     const n = await withPoolClient(pool, (c) => countUnprocessed(c, tenantId, collection, revisionId));
     return { state: "pending", pendingBatches: n };
@@ -1061,6 +1122,45 @@ export async function finalizeRevision(
   if (current?.commit_state === "cleanup") await cleanupOlderRevisions(pool, current);
   const pointer = await withPoolClient(pool, (c) => loadPointer(c, tenantId, collection, revision.reference));
   return { state: "committed", isLatest: pointer === revisionId };
+}
+
+/**
+ * True when the revision's version is strictly older than the version of the
+ * revision the document pointer currently names (see `isOlderVersion`).
+ */
+async function isOlderThanCurrent(client: PoolClient, revision: RevisionRowRaw): Promise<boolean> {
+  const pointer = await loadPointer(client, revision.tenant_id, revision.collection, revision.reference);
+  if (pointer === null || pointer === revision.revision_id) return false;
+  const current = await loadRevision(client, revision.tenant_id, revision.collection, pointer);
+  if (!current) return false;
+  return isOlderVersion(parseDocumentInfo(revision.document_info), parseDocumentInfo(current.document_info));
+}
+
+/**
+ * The document-identity side of a final switch, in the switch's transaction:
+ * mark the revision's source claim indexed and register the document's group
+ * (e-mail thread / attachment parent).
+ */
+async function registerCommittedDocument(
+  client: PoolClient,
+  revision: RevisionRowRaw,
+  info: DocumentInfo,
+): Promise<void> {
+  if (revision.source_id) {
+    await markSourceIndexed(client, {
+      tenantId: revision.tenant_id,
+      collection: revision.collection,
+      sourceId: revision.source_id,
+      reference: revision.reference,
+      revisionId: revision.revision_id,
+    });
+  }
+  await registerDocumentGroup(client, {
+    tenantId: revision.tenant_id,
+    collection: revision.collection,
+    reference: revision.reference,
+    info,
+  });
 }
 
 /**
@@ -1214,6 +1314,10 @@ interface RevisionRowRaw {
   has_document_end: boolean;
   commit_state: "requested" | "cleanup" | "done" | null;
   prior_revision_id: string | null;
+  source_id?: string | null;
+  document_info?: unknown;
+  allowed_users?: string[] | null;
+  allowed_groups?: string[] | null;
   created: Date;
   modified: Date;
 }
@@ -1722,6 +1826,8 @@ interface BatchValidation {
    * units carry the same values.
    */
   extractProvenance?: ExtractProvenance;
+  /** Version, e-mail headers and parent from `document.begin` (contract 2.1). */
+  documentInfo?: DocumentInfo;
 }
 
 /**
@@ -1784,6 +1890,7 @@ export function validateBatchBody(body: Buffer, reference: string): BatchValidat
   let endPageCount: number | undefined;
   let hasDocumentEnd = false;
   let extractProvenance: ExtractProvenance | undefined;
+  let documentInfo: DocumentInfo | undefined;
   const assetIds = new Set<string>();
 
   for (let i = 0; i < lines.length; i++) {
@@ -1819,6 +1926,7 @@ export function validateBatchBody(body: Buffer, reference: string): BatchValidat
     } else if (record.type === "document.begin") {
       if (record.pageCount !== undefined) beginPageCount = record.pageCount;
       extractProvenance = extractProvenanceOf(record);
+      documentInfo = documentInfoOf(record);
     } else if (record.type === "document.end") {
       hasDocumentEnd = true;
       endPageCount = record.pageCount;
@@ -1840,6 +1948,7 @@ export function validateBatchBody(body: Buffer, reference: string): BatchValidat
     hasDocumentEnd,
     assetIds: [...assetIds].sort(),
     ...(extractProvenance ? { extractProvenance } : {}),
+    ...(documentInfo ? { documentInfo } : {}),
   };
 }
 

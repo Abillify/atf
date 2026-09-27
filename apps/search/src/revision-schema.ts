@@ -45,6 +45,12 @@ export const VS_SEGMENTS_TABLE = "vs_segments";
 export const VS_DOCUMENT_REVISIONS_TABLE = "vs_document_revisions";
 /** Asset table that replaces vs_document_assets (design §6.5, Requirement 14). */
 export const VS_ASSETS_TABLE = "vs_assets";
+/** Every ingested source file per document: dedup fingerprints and claims. */
+export const VS_DOCUMENT_SOURCES_TABLE = "vs_document_sources";
+/** Message-ID → thread index for e-mails ingested independently. */
+export const VS_MAIL_MESSAGES_TABLE = "vs_mail_messages";
+/** Document → group (an e-mail thread, or the parent of an attachment). */
+export const VS_DOCUMENT_GROUPS_TABLE = "vs_document_groups";
 
 // ─── Typed row shapes ───────────────────────────────────────────────────────
 
@@ -233,6 +239,13 @@ const REQUIRED_REVISION_COLUMNS = [
   // document.begin provenance (contract / pipelineVersion / promptHash) that
   // the batch worker copies into every unit's metadata (Requirement 18.2).
   "extract_provenance",
+  // The source claim (vs_document_sources.source_id) the revision indexes, and
+  // the document.begin version / e-mail / parent the final switch acts on.
+  "source_id",
+  "document_info",
+  // The row ACL the batch worker writes onto every unit of the revision.
+  "allowed_users",
+  "allowed_groups",
 ];
 const REQUIRED_BATCH_COLUMNS = ["asset_ids", "lease_token", "attempts"];
 
@@ -252,6 +265,9 @@ export async function revisionSchemaIsCurrent(client: PoolClient): Promise<boole
        AND to_regclass($5) IS NOT NULL
        AND to_regclass($6) IS NOT NULL
        AND to_regclass($7) IS NOT NULL
+       AND to_regclass($8) IS NOT NULL
+       AND to_regclass($9) IS NOT NULL
+       AND to_regclass($10) IS NOT NULL
        AND to_regclass('idx_vs_revisions_commit_pending') IS NOT NULL
        AS current`,
     [
@@ -262,6 +278,9 @@ export async function revisionSchemaIsCurrent(client: PoolClient): Promise<boole
       VS_SEGMENTS_TABLE,
       VS_DOCUMENT_REVISIONS_TABLE,
       VS_ASSETS_TABLE,
+      VS_DOCUMENT_SOURCES_TABLE,
+      VS_MAIL_MESSAGES_TABLE,
+      VS_DOCUMENT_GROUPS_TABLE,
     ],
   );
   return res.rows[0]?.current === true;
@@ -326,7 +345,11 @@ async function ensureRevisionTablesLocked(client: PoolClient): Promise<void> {
       ADD COLUMN IF NOT EXISTS commit_state        TEXT,
       ADD COLUMN IF NOT EXISTS prior_revision_id   TEXT,
       ADD COLUMN IF NOT EXISTS commit_requested_at TIMESTAMPTZ,
-      ADD COLUMN IF NOT EXISTS extract_provenance  JSONB
+      ADD COLUMN IF NOT EXISTS extract_provenance  JSONB,
+      ADD COLUMN IF NOT EXISTS source_id           TEXT,
+      ADD COLUMN IF NOT EXISTS document_info       JSONB,
+      ADD COLUMN IF NOT EXISTS allowed_users       TEXT[],
+      ADD COLUMN IF NOT EXISTS allowed_groups      TEXT[]
   `);
   // The worker / finalize sweep looks up revisions with an unfinished commit.
   await client.query(`
@@ -403,6 +426,131 @@ async function ensureRevisionTablesLocked(client: PoolClient): Promise<void> {
   await client.query(`
     CREATE INDEX IF NOT EXISTS idx_vs_document_revisions_current
       ON ${VS_DOCUMENT_REVISIONS_TABLE}(tenant_id, collection, current_revision_id)
+  `);
+
+  await ensureDocumentIdentityTablesLocked(client);
+}
+
+/**
+ * Source registry, mail thread index and document groups. Global tables scoped
+ * by (tenant, collection) like the rest of the v2 system tables.
+ *
+ *   vs_document_sources  one row per ingest (the Extract job id is the
+ *                        source_id): the canonical reference it resolved to,
+ *                        the file hash, the normalised-text hash and MinHash,
+ *                        the version, the row ACL it was ingested under, and
+ *                        whether it was indexed or skipped as a duplicate. A pending row is a claim that makes a
+ *                        concurrent ingest of the same file a duplicate.
+ *   vs_mail_messages     every Message-ID seen (as a message or only as a
+ *                        reference) → its thread. Placeholders (reference IS
+ *                        NULL) let a reply that arrives first join the thread
+ *                        its parent later lands in.
+ *   vs_document_groups   document → group id. E-mails carry their thread id;
+ *                        an attachment carries its parent and inherits the
+ *                        parent's group at read time.
+ */
+async function ensureDocumentIdentityTablesLocked(client: PoolClient): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${VS_DOCUMENT_SOURCES_TABLE} (
+      tenant_id           TEXT NOT NULL,
+      collection          TEXT NOT NULL,
+      source_id           TEXT NOT NULL,
+      reference           TEXT NOT NULL,
+      requested_reference TEXT NOT NULL,
+      document_key        TEXT NOT NULL,
+      filename            TEXT,
+      mime_type           TEXT,
+      source_sha256       TEXT NOT NULL,
+      text_hash           TEXT,
+      minhash             INTEGER[],
+      message_id          TEXT,
+      version             JSONB,
+      allowed_users       TEXT[] NOT NULL DEFAULT '{}',
+      allowed_groups      TEXT[] NOT NULL DEFAULT '{}',
+      status              TEXT NOT NULL DEFAULT 'pending',
+      revision_id         TEXT,
+      duplicate_of        JSONB,
+      claim_expires_at    TIMESTAMPTZ,
+      created             TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      modified            TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tenant_id, collection, source_id)
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_sources_sha
+      ON ${VS_DOCUMENT_SOURCES_TABLE}(tenant_id, collection, source_sha256)
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_sources_text
+      ON ${VS_DOCUMENT_SOURCES_TABLE}(tenant_id, collection, text_hash)
+      WHERE text_hash IS NOT NULL
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_sources_key
+      ON ${VS_DOCUMENT_SOURCES_TABLE}(tenant_id, collection, document_key)
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_sources_reference
+      ON ${VS_DOCUMENT_SOURCES_TABLE}(tenant_id, collection, reference)
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_sources_message
+      ON ${VS_DOCUMENT_SOURCES_TABLE}(tenant_id, collection, message_id)
+      WHERE message_id IS NOT NULL
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${VS_MAIL_MESSAGES_TABLE} (
+      tenant_id    TEXT NOT NULL,
+      collection   TEXT NOT NULL,
+      message_id   TEXT NOT NULL,
+      thread_id    TEXT NOT NULL,
+      reference    TEXT,
+      subject_norm TEXT,
+      participants TEXT[],
+      sent_at      TIMESTAMPTZ,
+      created      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tenant_id, collection, message_id)
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_mail_messages_thread
+      ON ${VS_MAIL_MESSAGES_TABLE}(tenant_id, collection, thread_id)
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_mail_messages_subject
+      ON ${VS_MAIL_MESSAGES_TABLE}(tenant_id, collection, subject_norm)
+      WHERE reference IS NOT NULL
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_mail_messages_reference
+      ON ${VS_MAIL_MESSAGES_TABLE}(tenant_id, collection, reference)
+      WHERE reference IS NOT NULL
+  `);
+
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${VS_DOCUMENT_GROUPS_TABLE} (
+      tenant_id        TEXT NOT NULL,
+      collection       TEXT NOT NULL,
+      reference        TEXT NOT NULL,
+      group_id         TEXT,
+      parent_reference TEXT,
+      kind             TEXT NOT NULL,
+      sort_at          TIMESTAMPTZ,
+      title            TEXT,
+      modified         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tenant_id, collection, reference)
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_groups_group
+      ON ${VS_DOCUMENT_GROUPS_TABLE}(tenant_id, collection, group_id)
+      WHERE group_id IS NOT NULL
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS idx_vs_document_groups_parent
+      ON ${VS_DOCUMENT_GROUPS_TABLE}(tenant_id, collection, parent_reference)
+      WHERE parent_reference IS NOT NULL
   `);
 }
 
