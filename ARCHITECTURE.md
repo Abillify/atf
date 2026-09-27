@@ -46,10 +46,12 @@ flowchart TB
 
     search --> pg
     search --> models
-    search -.->|POST /ingest-file| extract
+    search -.->|POST /ingest-file → v2 job| extract
 
-    extract -->|POST /ingest + PUT /document-assets| search
+    extract -->|v1: POST /ingest + PUT /document-assets| search
+    extract -->|v2: revisions + assets emitter| search
     extract -->|vision model| models
+    extract --> pg
 
     gate --> systems
     gate -.->|approval + session state| redis
@@ -62,7 +64,11 @@ without Search, Gate, or PostgreSQL for flows that do not require those capabili
 in-memory/per-replica trade-offs described below. Without Redis, Runtime and Gate degrade to
 per-replica coordination rather than failing. Extract is optional in both directions: Search
 mounts `/ingest-file` only when `CONVERTER_URL` is set, and Extract mounts `/v1/ingest` only
-when `SEARCH_URL` is set.
+when `SEARCH_URL` is set. Extract's own PostgreSQL connection (`EXTRACT_DATABASE_URL`, schema
+`extract`) is likewise optional: it is what turns on the persistent v2 job path — resumable
+uploads, durable jobs, and the emitter — and when it is absent Extract falls back to the
+original in-process synchronous conversion. The v2 data flow is described in
+[Document Intelligence v2](#document-intelligence-v2-data-flow) below.
 
 ## Applications
 
@@ -133,16 +139,25 @@ cut from a separately rendered, higher-resolution page.
 It is the one application that needs external binaries: `poppler-utils` for PDF access and
 `libreoffice` for office formats. That is precisely why it is a separate service rather than part
 of Search — those dependencies have no business in the container that serves the query path.
+Beyond wording and rendering, poppler also supplies page *geometry*: the deterministic page
+analysis (S2) runs `pdftotext -bbox-layout` to read every word, line and block with coordinates,
+normalises each box to `[0,1]`, and derives numbered-heading candidates and a font-size proxy from
+the line heights. That geometry feeds bbox snapping, region text and the text fast-path downstream.
+`-bbox-layout` needs poppler ≥ 0.42; Extract probes the capability at startup, reports it under
+`dependencies.bbox_layout` in `/health`, and degrades S2 to a vision pass when it is absent rather
+than failing.
 
 Route groups: `/v1/convert` (sync, SSE, or async callback, selected by request header),
-`/v1/ingest` (convert and index in one call, mounted only with `SEARCH_URL`), `/ui/*` (browser
-backend-for-frontend), `/auth/*`, `/openapi.json`, `/metrics`, `/health`, and an operator upload
-UI at `/`.
+`/v1/ingest` (convert and index in one call, mounted only with `SEARCH_URL`), `/v2/uploads`
+(resumable, content-addressed source upload) and `/v2/jobs` (persistent job control), both
+mounted only when `EXTRACT_DATABASE_URL` is set, `/ui/*` (browser backend-for-frontend),
+`/auth/*`, `/openapi.json`, `/metrics`, `/health`, and an operator upload UI at `/`.
 
-Extract and Search each hold the other's address optionally, and the two paths differ in one
-observable way: Extract's `/v1/ingest` stores figure crops via `PUT /document-assets/:assetId`,
-while Search's `/ingest-file` proxy forwards Markdown only, so figure descriptions are indexed
-but the images are not.
+With the v2 path active, `/v1/ingest` becomes a thin wrapper: the upload is stored, a v2 job is
+created, and its emitter streams the revision **and figure assets** into Search — so figure
+images are now stored, not only their descriptions. Without a database Extract keeps the
+original behaviour, where `/v1/ingest` stores figure crops via `PUT /document-assets/:assetId`
+and Search's `/ingest-file` proxy forwards Markdown only (images not stored).
 
 Like Search, it has a Node build target (`build:node`) in addition to the Bun target.
 
@@ -158,7 +173,7 @@ with Zod validation and its own tests.
 | `@atf/evidence-contract` | 1.1.0 | Evidence and lineage compatibility records |
 | `@atf/schema-compatibility` | 1.0.0 | Deterministic schema-evolution classification |
 | `@atf/contract-adapter` | 1.0.0 | Explicit adapters between the contracts above |
-| `@atf/extract-contract` | 1.1.0 | Canonical extracted-document Markdown grammar, figure asset identity, usage and timing telemetry |
+| `@atf/extract-contract` | 2.0.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath |
 
 `integration/system` exercises their combined lifecycle without external infrastructure, which
 is what makes a contract break visible in CI rather than at deployment time.
@@ -219,11 +234,129 @@ invalid `compliance-policy.yaml` currently disables that policy and allows execu
 policy's `failClosed` field applies to evaluator exceptions only. Deployments that depend on the
 policy must validate and monitor that it is loaded.
 
+## Document Intelligence v2 data flow
+
+The v2 ingestion path exists so that a 10 000-page document survives crashes, network faults,
+and restarts without losing model tokens or producing duplicate index units. It splits the work
+into two independently durable halves — Extract's persistent job and Search's revision — joined
+by an at-least-once emitter that reconciles against the receiver.
+
+```mermaid
+flowchart LR
+    src["Source<br/>(upload / source_url)"]
+    subgraph extract["Extract · schema extract"]
+        store[("SourceStore<br/>content-addressed")]
+        job["Job<br/>lease · epoch · budget<br/>config/prompt hash"]
+        stages["Staged pipeline<br/>render→text→vision→parse→crops<br/>per-unit checkpoints"]
+        outbox["Emit + asset outbox<br/>pending→sent→acked"]
+    end
+    subgraph search["Search · pgvector"]
+        rev["Revision<br/>idempotency-key · TTL"]
+        staged[("Staged batches<br/>vs_ingest_batches")]
+        bworker["Batch worker<br/>SKIP LOCKED"]
+        units[("Index units + vs_assets<br/>deterministic unit_id")]
+        ptr["Revision pointer<br/>atomic is_latest switch"]
+    end
+
+    src --> store --> job --> stages --> outbox
+    outbox -->|"PUT batches (Content-Digest)"| rev
+    outbox -->|"PUT assets (idempotent)"| rev
+    rev --> staged --> bworker --> units
+    outbox -->|"segment + final commit"| ptr
+    ptr --> units
+```
+
+The invariants that make it resumable:
+
+- **Content-addressed source.** The upload streams to disk and is stored under its sha256
+  (`SOURCE_STORE_DIR`); full-resolution page images are re-rendered on demand rather than kept,
+  so memory does not grow with page count. The resumable upload protocol (`/v2/uploads`) confirms
+  bytes one chunk at a time so an aborted transfer resumes at the last confirmed offset.
+- **Durable job with per-unit checkpoints.** Each job carries a lease (`expires_at`, `epoch`), a
+  token budget, and a config/pipeline/prompt-hash snapshot. Every stage result is persisted with
+  an `input_hash`; a resume reuses any checkpoint whose hash matches instead of re-calling the
+  model, and every worker write is fenced against a stale lease epoch. A permanently failed unit
+  is marked `failed` and the job continues; `retry-failed` re-runs only those units, and
+  `reparse` re-applies the parser to persisted raw model responses with no new model calls.
+- **Idempotent handover through an outbox.** Extract records every batch and asset in an outbox
+  (`pending`) before sending, then reconciles against the revision's status on resume and sends
+  only what is missing. Search accepts a batch only after staging it durably; batches carry a
+  `Content-Digest` (a repeat is a no-op, a conflicting digest is a 409), and index units have
+  deterministic ids, so retries never duplicate.
+- **Decoupled batch worker.** Search's batch worker claims staged batches with `SKIP LOCKED`
+  under a lease (`next_attempt_at` = lease expiry, fenced by a lease token), builds units,
+  embeds, and upserts. If embedding fails the batch returns to `received` with backoff; a
+  worker that dies keeps the batch hidden only until its lease expires. The worker is enabled
+  with `BATCH_WORKER=true`.
+- **Progressive visibility and atomic switch.** Under `visibility=progressive`, committed
+  segments become searchable immediately — also for units the worker writes after the segment
+  commit — and hits carry `revision_state=partial` with `pages_available`. The final commit is
+  checked against the page count declared by `document.begin`/`document.end` (missing ranges →
+  409) and recorded as a durable intent; the per-document revision pointer is switched only once
+  every staged batch is processed (the commit answers `202 {pending: true}` until then, the old
+  revision stays visible), with the `is_latest` flip in bounded, resumable chunks. A query never
+  sees two revisions — or a replaced legacy v1 version — of the same document at once. Uncommitted
+  revisions are swept after `REVISION_TTL` together with their units, identifiers, assets and a
+  pointer that named them; a paused job's heartbeat extends it.
+
+Both halves speak the single `@atf/extract-contract` v2 NDJSON record stream, and Search checks
+the `X-Extract-Contract` header and refuses an incompatible major version.
+
+### From documents to answers
+
+The durable ingestion path above produces the raw material; the v2 extract, index, and runtime
+layers turn it into retrievable, cited answers. The stages are additive over v1 — `/search` and
+the v1 contract path keep working unchanged.
+
+- **Streaming document pass (Extract).** Pages are analysed in strict page order with per-word
+  geometry from `pdftotext -bbox-layout`, classified (`text`/`scan`/`drawing`/`mixed`), and
+  deduplicated by render hash. A streaming pass builds a consistent outline (`sectionPath` per
+  block), merges tables across page breaks, resolves cross-references, and extracts identifiers,
+  persisting its state after every page so a resume never re-reads the whole document. Visual
+  content is transcribed: a first pass yields each figure's `kind`, caption, snapped bounding
+  box and summary; a second pass produces a structured transcription per kind (BPMN/flowchart →
+  `process`, masks → `fields`, drawings, charts, table images). Large formats are split into
+  overlapping **tiles**, each transcribed and merged, kept as `tile:` assets so a zoom is served
+  from the tile rather than a downscaled page. Structured source formats (DOCX, XLSX, BPMN,
+  PPTX, VSDX) are read by **native parsers** rather than rendered and guessed. An optional
+  **finalize pass** corrects outline metadata at document end and re-embeds only the units whose
+  heading path changed.
+- **Multi-level index with contextual embedding (Search).** From the blocks Search builds the
+  units `chunk`, `table`, `figure`, `section`, `page`, and `document`, each with `section_path`,
+  page range, a relationship graph (`parent`/`prev`/`next`/`figure_refs`), and filterable
+  columns. The embedding input carries a **contextual header** (title, section path, pages,
+  type, page summary, capped at 15 % of the chunk budget), which fixes the single largest v1
+  quality defect. Lexical search keeps a German-stemmed vector and a separate identifier vector,
+  and query identifiers add a **third RRF list** so exact codes rank correctly.
+- **Retrieval pipeline (Search).** Query analysis → hybrid candidates → **rerank with context**
+  (title, path, type, content, ≤ 1024 tokens) → diversification (per-section cap, table/figure
+  collapse) → **small-to-big expansion** (`neighbors`/`section`/`page` within a char budget) →
+  asset attach. `/v2/search` returns hits with `section_path`, `pages`, `expanded`,
+  `assets[]`, `navigation`, and `evidence`; on-demand rendering (`/v2/render`) serves region
+  and full-resolution zoom, cached as an asset variant.
+- **Runtime and flows.** The **RAG node v2** (`ragProfiles` with `expand`, `granularity`,
+  `include_assets`, and `assets: { attach, maxImages, variant }`) attaches image parts only when
+  the responder confirms `visionInput`, and its evidence line and citations carry page and
+  figure. **`inspect_image`** resolves `asset:<id>[#bbox]` references through MCP `get_asset`,
+  parks the bytes as a run-scoped `img-N`, and evaluates them with the configured vision
+  sub-LLM, fail-closed. Research flows are wired with the MCP navigation tools (`get_outline`,
+  `get_section`, `get_pages`, `list_figures`, `get_asset`, `get_table`, `find_identifier`,
+  `follow_ref`, …) and a research routine.
+- **Scale and fairness.** Jobs over `LARGE_JOB_PAGE_THRESHOLD` pages run in a bounded large-job
+  lane (`LARGE_JOB_MAX_CONCURRENCY`), and `PAGE_CONCURRENCY` is tuned against the vLLM batch
+  capacity (see [DEPLOYMENT.md](DEPLOYMENT.md)).
+
+The design lives in [`.kiro/specs/document-intelligence-v2/`](.kiro/specs/document-intelligence-v2/);
+the per-phase completion reports under `docs/document-intelligence-v2-phase-*-completion.md`
+record what each phase delivered and how it is verified.
+
 ## State
 
 **PostgreSQL**, when configured, is the durable store. Runtime uses it for the cost ledger,
 audit log, jobs, approvals, tenants, and checkpoints; Search requires PostgreSQL/pgvector for
-documents, chunks, and vector indexes. Runtime's tenant isolation combines application query
+documents, chunks, revisions, staged batches, index units, and assets; Extract uses its own
+`extract` schema (`EXTRACT_DATABASE_URL`) for v2 jobs, per-unit stage checkpoints, upload
+sessions, and the emit/asset outbox. Runtime's tenant isolation combines application query
 scoping with optional database row-level security. Enforced RLS requires the guided
 `rls-setup --confirm` onboarding, `TENANT_RLS_ENABLED=true`, a least-privilege application
 connection, and a separate `DATABASE_OPERATOR_URL` for privileged cross-tenant work.

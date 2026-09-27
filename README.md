@@ -215,6 +215,14 @@ setting that governs it.
   and selectable per node.
 - **Retrieval** — hybrid dense plus full-text on pgvector, RRF-fused and reranked, with
   embedding-revision drift protection.
+- **Document intelligence** — a resumable, contract-versioned ingestion path (Document
+  Intelligence v2) that turns PDF, office and image documents up to 10 000 pages into a
+  multi-level index (chunk, table, figure, section, page, document) with contextual embedding
+  headers, identifier-aware RRF, rerank-with-context, small-to-big expansion, transcribed
+  visual content (BPMN, masks, plans, charts) and per-figure assets, feeding a RAG node that
+  can attach or `inspect_image` on demand. See the
+  [spec](.kiro/specs/document-intelligence-v2/) and the
+  [phase completion reports](docs/document-intelligence-v2-phase-5-completion.md).
 - **Tool access** — MCP tools declared in YAML over SQL, HTTP, MQTT, MCP proxy, and webhooks.
   Parameters are bound, never interpolated.
 - **Channels** — an OpenAI-compatible API, webhooks, and a Rocket.Chat integration with
@@ -267,6 +275,7 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
 | [DEVELOPMENT.md](DEVELOPMENT.md) | Toolchain and workflow |
 | [CHANGELOG.md](CHANGELOG.md) | Notable changes, and what is versioned independently of it |
 | [docs/adr/](docs/adr/) | Architecture decisions with their trade-offs |
+| [docs/document-intelligence-v2-phase-5-completion.md](docs/document-intelligence-v2-phase-5-completion.md) | Document Intelligence v2 final report and per-phase completion docs (phases 0–5) |
 | [SECURITY.md](SECURITY.md) | Reporting a vulnerability, response targets, scope |
 
 ## License

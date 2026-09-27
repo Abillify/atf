@@ -92,16 +92,180 @@ attribution link and unmodified status. These statements describe only the repos
 artifacts; they do not assert compliance for separately built production images.
 
 The Extract Quickstart image additionally installs Debian packages — `poppler-utils`,
-`libreoffice-writer-nogui`, `libreoffice-calc-nogui`, `fonts-liberation` and `fonts-dejavu-core`
+`libreoffice-writer-nogui`, `libreoffice-calc-nogui`, `libreoffice-impress-nogui`,
+`libreoffice-draw-nogui`, `fonts-liberation` and `fonts-dejavu-core`
 — because PDF and office conversion needs external binaries. Those packages come from the base
 image's distribution archive with their own licenses and are **not** covered by the generated
 inventories, which describe the JavaScript dependency tree only. A production Extract image must
 account for them in its own review.
 
+**Minimum poppler version.** The deterministic page analysis (S2) reads per-word geometry with
+`pdftotext -bbox-layout`, a flag that requires **poppler ≥ 0.42** (2016). Every currently
+supported distribution ships far newer poppler, so a stock `poppler-utils` package satisfies this;
+the requirement matters only for an image pinned to a very old base. Extract probes the capability
+at startup and reports it under `dependencies.bbox_layout` in `GET /health`. A missing capability
+is **not fatal** — a v1-only deployment that never runs the analyzed stage starts cleanly, and a
+newer deployment simply falls back to a vision pass for each page — but it disables the
+geometry-driven refinements (heading candidates, bbox snapping, the text fast-path). Check the
+`bbox_layout.supported` field in `/health` (or the boot log) to confirm S2 is available.
+
 Tag releases attach a checksummed bundle containing both native workspace inventories and all
 five Quickstart image inventories. The release workflow publishes no OCI image. Production
 images remain deployment-owned and require their own inventory, source-availability,
 replaceability, attribution, scanning, and immutable-digest review.
+
+## Throughput tuning: `PAGE_CONCURRENCY` vs. the vLLM batch
+
+`PAGE_CONCURRENCY` (Extract) is the number of pages of **one job** Extract keeps in flight
+against the vision model at once. Each in-flight page is one request to the OpenAI-compatible
+vLLM endpoint, and vLLM packs concurrent requests into a single running batch bounded by its
+`--max-num-seqs`. So `PAGE_CONCURRENCY` is effectively "how many sequences one job offers vLLM
+to batch". The default of 4 is deliberately conservative; on a real GPU the knee is usually
+higher (design guidance: 8–16).
+
+The tuning goal is to keep the vLLM running batch **saturated but not oversubscribed**:
+
+- **Too low** — `num_requests_running` sits well below `--max-num-seqs`, `num_requests_waiting`
+  is 0, the GPU idles between decode steps, and pages/minute is left on the table.
+- **Right** — `num_requests_running` ≈ `--max-num-seqs`, `waiting` stays near 0, KV-cache usage
+  is high but below thrash. Throughput is at its plateau.
+- **Too high** — `num_requests_waiting` grows, per-request latency climbs, KV-cache usage nears
+  100 % and vLLM begins pre-empting/swapping. More concurrency now buys latency, not throughput.
+
+### Procedure
+
+1. Read the vLLM server's `--max-num-seqs` (its running-batch ceiling). Divide it across the
+   number of Extract jobs you expect to hit that server at once — normally the standard lane plus
+   the large-job lane (`LARGE_JOB_MAX_CONCURRENCY`, see task 5.2). That quotient is the starting
+   per-job batch share, and the expected knee is at or just below it.
+2. Pick a fixed, representative source (a document that exercises the vision path — mostly `text`
+   pages that the fast-path skips will not stress the model). Upload it once so it has a stable
+   `sha256`.
+3. Sweep `PAGE_CONCURRENCY` across a ladder that brackets the share, e.g. `1, 2, 4, 8, 16`. For
+   each value: set `PAGE_CONCURRENCY`, restart Extract, run the fixed source to completion, and
+   record end-to-end pages/minute, mean/95p per-page latency, and — if the vLLM `/metrics`
+   endpoint is reachable — `vllm:num_requests_running`, `vllm:num_requests_waiting` and
+   `vllm:gpu_cache_usage_perc`.
+4. Pick the knee: the highest value at which throughput still climbs meaningfully while
+   `num_requests_waiting` stays near 0 and KV-cache usage stays clear of thrash. Set
+   `PAGE_CONCURRENCY` to that value (or one step below it for headroom).
+
+The repeatable tool that runs steps 3–4 for you is
+[`apps/extract/scripts/throughput-sweep.ts`](apps/extract/scripts/throughput-sweep.ts). Its
+arithmetic (the sweep ladder, the vLLM `/metrics` parser, the pages/min + knee analysis, the
+report) lives in the unit-tested pure core `apps/extract/src/jobs/throughput-tuning.ts`. Print
+the plan with no cluster:
+
+```
+bun run scripts/throughput-sweep.ts --plan --max-num-seqs 16 --concurrent-jobs 2
+```
+
+Then, for each swept value, set `PAGE_CONCURRENCY`, restart Extract, and append a measured row:
+
+```
+bun run scripts/throughput-sweep.ts \
+  --base-url http://127.0.0.1:3004 --token <bearer> \
+  --source-sha <sha256> --reference tuning/corpus.pdf \
+  --concurrency 8 \
+  --vllm-metrics-url http://vllm:8000/metrics \
+  --extract-metrics-url http://127.0.0.1:3004/metrics \
+  --out reports/page-concurrency-sweep
+```
+
+The tool writes `reports/page-concurrency-sweep.{json,csv,md}` and prints the recommendation. It
+records only what it measures: a server column reads `n/a` when no vLLM `/metrics` URL was given.
+Without `--source-sha` (or with `--plan`) it prints only the plan and exits — it never fabricates
+a throughput or latency.
+
+### Interaction with other knobs
+
+- **`CONVERT_CONCURRENCY`** governs how many documents convert (LibreOffice/poppler) at once and
+  is CPU/subprocess-bound, independent of the GPU batch. Tune it against CPU cores and
+  LibreOffice memory, not the vLLM batch. `PAGE_CONCURRENCY × active jobs` is what lands on the
+  GPU; keep that product at your target batch share.
+- **The large-job lane** (`LARGE_JOB_MAX_CONCURRENCY`, task 5.2) caps how many 1000+-page jobs
+  run at once. A single large job saturates the batch by itself, so with the lane at 1 the batch
+  share for that job is the full `--max-num-seqs`. If you raise the lane cap or run the standard
+  lane alongside it, divide the share accordingly (step 1).
+- **`SUMMARY_*` / text-LLM** calls share GPU time if the summary model is co-located with the
+  vision model. Sweep with the summary pass enabled if that is your production shape, so the
+  measured knee reflects the real contention.
+
+### Worked example (illustrative — replace with your measured numbers)
+
+> The figures below are **placeholders to show the shape of a result table**, not measurements.
+> This environment has no GPU/vLLM cluster, so no real numbers were produced. Run the sweep on
+> your own hardware to fill these in.
+
+Assume a single vLLM with `--max-num-seqs=16`, one job at a time (large-job lane = 1), so the
+expected knee is around 16. An illustrative sweep might look like:
+
+| PAGE_CONCURRENCY | pages/min | mean latency (s) | p95 latency (s) | vllm running | vllm waiting | kv-cache peak |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | _to be measured_ | _tbm_ | _tbm_ | ~1 | 0 | low |
+| 4 | _to be measured_ | _tbm_ | _tbm_ | ~4 | 0 | moderate |
+| 8 | _to be measured_ | _tbm_ | _tbm_ | ~8 | 0 | high |
+| 16 | _to be measured_ | _tbm_ | _tbm_ | ~16 | ~0 | near-full |
+| 32 | _to be measured_ | _tbm_ | _tbm_ | ~16 | **grows** | full/thrash |
+
+The pattern to look for: pages/min rises with concurrency until the running batch fills
+(`running` ≈ `--max-num-seqs`), then plateaus; pushing past it (32 here) makes `waiting` grow and
+latency climb with no throughput gain. The recommendation is the last value **before** that
+turn — 16 in this illustrative shape.
+
+## Large documents and formats: lanes, tiling, and the finalize pass
+
+Phase 5 of Document Intelligence v2 added a few operational knobs an operator running large or
+large-format corpora should know. All are additive with safe defaults; the full variable list
+lives in [docs/CONFIGURATION.md](docs/CONFIGURATION.md) rather than being duplicated here.
+
+- **Large-job lane** — `LARGE_JOB_PAGE_THRESHOLD` (default 1000) is the page count above which a
+  job runs in the bounded large-job lane, and `LARGE_JOB_MAX_CONCURRENCY` (default 1) caps how
+  many such jobs lease across the whole worker fleet at once. A single large job saturates the
+  vision batch by itself; keep the lane small and account for it when computing the
+  `PAGE_CONCURRENCY` batch share (see the throughput procedure above). The lane also drives the
+  budget warning at 80 % and the remaining-time estimate.
+- **Tiling for large formats** — `drawing` pages and pages larger than A3 are split into an N×M
+  grid of overlapping tiles, each transcribed separately and merged. `TILE_TARGET_PIXELS`
+  (default 2000) is the long edge a single tile is rendered towards, `TILE_OVERLAP_FRACTION`
+  (default 0.1) the adjacent-tile overlap so a symbol on a seam appears whole in at least one
+  tile, and `TILE_MAX_PER_PAGE` (default 16) a hard ceiling so a vast plan does not spawn
+  hundreds of vision calls. Tiles are stored as `tile:` assets and a region zoom is served from
+  the covering tile — sharper than the same region cut from a downscaled full page.
+- **Finalize pass** — `FINALIZE_PASS` (default `true`) runs a deterministic, **model-free**
+  correction of the outline metadata at document end and re-embeds only the units whose heading
+  path changed. Set it to `false` to emit the streaming outline as-is (no correction, no
+  selective re-embedding).
+
+## Corpus migration (re-ingest into v2)
+
+To migrate an existing corpus into the v2 pipeline, use the repeatable operator CLI
+[`apps/extract/scripts/corpus-migrate.ts`](apps/extract/scripts/corpus-migrate.ts) (its
+arithmetic — manifest parsing, usage ordering, and the asset-id-stability check — lives in the
+unit-tested pure core `apps/extract/src/jobs/corpus-migration.ts`). It re-ingests each document
+one at a time in **`version` mode**, so the running system keeps serving the old revision until
+the new one is fully committed (Search performs the atomic `is_latest` switch on commit), orders
+documents by usage so the most-used become searchable on the new pipeline first, and proves
+asset-id stability (asset ids are derived from reference + local id, never the image bytes, so a
+re-extraction keeps them byte-identical and previously uploaded crops stay valid).
+
+```bash
+# Print the usage-ordered plan and expected asset ids — contacts no server, fabricates nothing:
+bun run scripts/corpus-migrate.ts --manifest corpus.json --plan
+
+# Migrate for real, most-used first, in version mode:
+bun run scripts/corpus-migrate.ts \
+  --manifest corpus.json \
+  --base-url http://127.0.0.1:3004 --token <bearer> \
+  [--collection documents] [--out reports/corpus-migration.json]
+```
+
+A note on versioning per path: the migration CLI sets `X-Version-Mode: version` on `/v1/ingest`.
+On the **synchronous v1 Search path** the header is honored directly; on the **v2 path** the
+v2 ingest wrapper (`apps/extract/src/handlers/ingest-v2.ts`) does not read the header itself —
+versioning there is governed by the emitter's revision flow (Extract opens a new revision through
+the Search revision API and Search does the atomic `is_latest` switch on commit). Either way the
+old revision stays visible until the new one commits.
 
 ## Configuration
 

@@ -53,7 +53,8 @@ an earlier one. This table will gain rows if that changes.
 In scope: authentication and authorization bypass, tenant isolation escape, SQL or command
 injection, prompt injection that escalates to tool execution or data access beyond the
 caller's scope, PII vault leakage, audit log forgery, approval gate bypass, SSRF through tool,
-provider, or conversion-callback configuration, escape from the document conversion path,
+provider, conversion-callback, or `source_url` configuration, escape from the document
+conversion path,
 secret disclosure, and privilege escalation in the operator plane.
 
 Out of scope: findings that only apply to `deploy/examples`, which is documented as an
@@ -69,6 +70,40 @@ features and fail modes remain configuration-dependent. Runtime refuses to start
 unsafe settings when `APP_ENV=production`, for example open CORS, unverified JWTs, or an
 unauthenticated monitoring endpoint. Treat that gate as a safety net, not as a substitute for
 the review described in [DEPLOYMENT.md](DEPLOYMENT.md).
+
+### Extract v2 source intake (resumable upload and `source_url`)
+
+The v2 ingestion path accepts document sources two ways, and both are treated as untrusted
+input under authentication and the `extract.ingest` scope.
+
+**Resumable, content-addressed upload (`/v2/uploads`).** Bytes are never buffered whole: each
+chunk is streamed straight to a scratch file and its per-chunk sha256 (when the client supplies
+`X-Chunk-Checksum-Sha256`) is verified before the confirmed offset advances. A wrong
+`Upload-Offset` is refused with `409` carrying the true offset, so a chunk can never be written
+to the wrong place, and a failed chunk is truncated away so a re-send behaves as if it never
+happened. On `complete`, the whole-file sha256 is verified before the assembled file is moved
+into the content-addressed source store; a mismatch reopens the session rather than storing
+corrupt bytes. `MAX_UPLOAD_BYTES` bounds the total. Session state lives in the `extract` schema,
+so the checks hold across process restarts and replicas.
+
+**`source_url` pull (SSRF controls).** Pulling a caller-supplied URL is the same server-side
+request forgery primitive as the conversion callback (`X-Callback-URL`), and it reuses those
+controls rather than inventing a second set:
+
+- Link-local and cloud-metadata addresses are refused unconditionally.
+- `SOURCE_URL_ALLOWED_HOSTS`, when set, is an allowlist (with the same `.example.com`-matches-
+  subdomains rule as the callback allowlist). Left unset it permits any non-forbidden host, and
+  the production-readiness gate flags the empty list.
+- Only `http`/`https` schemes are accepted, URLs carrying credentials are rejected, and
+  redirects are followed manually up to a small bound with **every hop re-validated**, so a
+  permitted host cannot `302` the request onto a forbidden one.
+- The body streams into the source store while `SOURCE_URL_MAX_BYTES` is enforced, and
+  `SOURCE_URL_TIMEOUT_MS` bounds each request, so a hostile or oversized target cannot exhaust
+  memory or hang the pull.
+
+Escape from the document conversion path and SSRF through the conversion configuration are both
+explicitly in scope (see below); the `source_url` allowlist and the upload checksum chain are
+the controls a deployment must configure and monitor.
 
 ## Contributing securely
 
