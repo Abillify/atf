@@ -27,7 +27,7 @@ navigation tools live in the private deployment repository and carry their own
 `metadata.version` bumps. The upgrade path, rollback, and corpus re-ingest are described in
 [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md).
 
-- **Search migrations.** The global schema advances from version 4 to 7: version 5 adds the v2
+- **Search migrations.** The global schema advances from version 4 to 8: version 5 adds the v2
   ingest staging tables (`vs_revisions`, `vs_ingest_batches`, `vs_segments`,
   `vs_document_revisions`) and `vs_assets` with a backfill from `vs_document_assets`; version 6
   adds the shared identifier index `vs_identifiers`; version 7 reconciles these system tables
@@ -50,6 +50,11 @@ navigation tools live in the private deployment repository and carry their own
   is `atf-extract/2.1.0`: `document.begin` gains the optional `version`, `email`, and
   `parentReference`, and the package adds the identify API types and the shared
   `documentKeyOf` / `compareDocumentVersions` rules — additive, so a 2.0 consumer is unaffected.
+  Wire contract 2.2 adds the caller's document attributes (`title`, `tags`, `metadata`, `link`,
+  `sourceLabel`) to the job request and all but the already present `title` to
+  `document.begin`; 2.3 adds `continues`,
+  `continuationOf`, and `continuationText` to paragraph and list blocks. Both are additive; the
+  producer now reports `atf-extract/2.3.0`.
 
 ### Added
 
@@ -146,6 +151,49 @@ navigation tools live in the private deployment repository and carry their own
   with their e-mail's thread. `groupByDocument` / `group_by: document` merge a thread into one
   result, and the new expansion mode `document` (`X-Expand`, `expand`, MCP `expand`) returns a
   whole thread or document in reading order.
+- **Outlook `.msg` and mbox.** `.msg` files (CFB/MAPI) are parsed natively — transport headers
+  first, MAPI properties as fallback, embedded messages become child `.eml` documents — and are
+  recognised by their streams even without a file name. An mbox export with several messages is
+  split: every message becomes a child e-mail, the export itself an index page.
+- **Quoted history is kept when the quoted message is missing.** A reply's quoted history is only
+  dropped when its direct parent (In-Reply-To, else the last References entry) is already in the
+  collection or in the same mbox export; otherwise it is indexed under a "Zitierter Verlauf"
+  section. Inline replies keep the up to three quoted lines directly above each answer.
+- **Embedded objects in DOCX** (`word/embeddings/`: OOXML packages, OLE package objects such as
+  `.bpmn` or `.pdf`, OOXML-in-OLE, legacy DOC/XLS storages) are ingested as child documents with
+  their native parsers, grouped under the Word document.
+- **Paragraphs over a page break.** The document pass marks a paragraph or list that continues on
+  the next page; Search indexes and embeds the page's last chunk with the continuation's leading
+  sentence (kept out of document reads via `display_len`), and links the chunks of a section
+  across the pages of a batch, so `get_context` crosses the break.
+- **Headerless table continuations** inherit the header rows and the caption (marked
+  "(Fortsetzung)") of the table they continue, so their rows are indexed and read with column
+  names.
+- **Document attributes on the v2 path.** `/ingest-file` and Extract's `/v1/ingest` wrapper pass
+  `X-Title`, `X-Tags`, `X-Metadata`, `X-Link`, and `X-Source` (plus `X-Version`,
+  `X-Source-Modified`, `X-Dedup` on `/ingest-file`) through the job; Search stores them on every
+  unit, so tag and metadata filters find v2 documents. E-mail attachments inherit tags,
+  metadata, and source label.
+- **MCP.** New tool `get_thread` (a whole e-mail thread chronologically, paginated with
+  `offset`/`next_offset`, optionally restricted by `path_prefix`). Search hits, `get_document`,
+  and `get_summaries` name their `document_group`; a grouped hit merged from several e-mails
+  carries `group_members` and heads each message with `[Nachricht: <ref>]`. `find_identifier`
+  accepts `path_prefix`. The read tools (`get_document`, `get_documents`, `get_summary`,
+  `get_summaries`, `get_outline`, `get_section`, `get_pages`, `list_figures`, `get_table`,
+  `find_identifier`) accept `valid_at` and read the version valid at that instant.
+- **Runtime coverage queue.** Every message of a thread-grouped search hit (`group_members`)
+  becomes a candidate of its own instead of riding on the representative message.
+- **Studio tool chips.** Every node that offers tools (or whose traced run called tools) shows
+  them as chips beside it on the canvas, with run status (running, completed, error, dimmed when
+  unused), call counts, pinned static arguments, and tools called but not listed drawn dashed.
+  Clicking a chip opens the node's Tools settings at that tool.
+- **Static tool arguments in Studio.** The node's Tools section edits `config.toolArgs` per tool
+  (JSON or template) and warns about arguments stored for tools the node no longer lists.
+- **Studio Start panel shows the run's input.** With a traced or pinned run, Start shows the
+  request messages (all roles, tool calls), the values templates and conditions see, token
+  claims, and the trace metadata (`flow_version`, session, user, client) from
+  `GET /monitoring/debug/:id`, with a switch between the current and the pinned run. The panel
+  is only as visible as the monitoring debug trace itself, which already carries these fields.
 - Extract `/metrics` exposes the text-fidelity gate as `extract_text_fidelity_checks_total`,
   `extract_text_fidelity_divergences_total`, and `extract_text_fidelity_missing_tokens_total`.
 - Extract `/health` probes `pdftotext -bbox-layout` once per process (again on `?deep=1`) and
@@ -154,6 +202,18 @@ navigation tools live in the private deployment repository and carry their own
 
 ### Changed
 
+- The figure-kind filter (`list_figures` `kind`, `search`/`/v2/search` `figure_kind`) accepts the
+  stored kinds plus aliases (`process` = `bpmn` + `flowchart`, `drawing`, `data`, `mask`,
+  `table`, German equivalents) and rejects an unknown value with the vocabulary instead of
+  silently matching nothing.
+- Search `/ingest-file` rejects an `X-Metadata` header that is not a JSON object with 400.
+- MCP `get_section` and `get_pages` (Markdown format) return Extract's section/page/document
+  summaries in a separate `summaries` array instead of mixing them into `markdown`; `units`
+  counts the body units only.
+- **Studio run path.** While a run is traced, the nodes and edges it passed through (including
+  Start and the exit that answered) are highlighted and the rest dimmed; untraced editor nodes
+  are no longer drawn as pending. Node types show an icon on canvas cards and in the palette
+  instead of an emoji. `apps/control` pins the dev dependency `postcss` 8.5.26.
 - The final revision switch supersedes only committed revisions of a document; a revision still
   staging finishes and is ordered by its version when it commits, so two formats of one document
   ingested concurrently no longer abort each other. Deleting a document by reference also removes
@@ -168,6 +228,19 @@ navigation tools live in the private deployment repository and carry their own
   routes are mounted (fatal in production, a warning elsewhere), and warns in production when
   `EXTRACT_DATABASE_URL` is unset, since v2 jobs, resumable uploads, and `source_url` pulls are
   then disabled.
+
+### Fixed
+
+- **Whole-document reads of v2 documents.** `get_document` / `get_documents` read only the body
+  units (`chunk`, `table`, `figure`) in reading order (page, block position, ordinal), a table
+  once (its grid, not the "Spalte: Wert" lines), a figure marked with its id, kind and asset id;
+  evidence spans carry `unit_id` and pages. Extract's section/page/document summaries are no
+  longer read back as the original. `get_summary` / `get_summaries` fall back to the v2
+  `document` unit's summary and the first non-empty title; the summary backfill lists and writes
+  one row per v2 document instead of every unit.
+- `valid_at` reads of v2 documents select a whole revision (keyed by `revision_id`) and never a
+  revision that is still staging or was aborted.
+- Selecting Start or End on the Studio canvas had no effect.
 
 ### Security
 
