@@ -18,6 +18,15 @@ releases:
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-09-28
+
+Dependency maintenance plus one build fix for the optional Search Node.js artifact. Every
+dependency change is a backward-compatible upgrade of an existing dependency; there is no
+source, schema, flow, migration, or independently versioned contract-package change. Version
+0.9.0 was never tagged, so this entry's compare link spans from `v0.3.0`, the last published
+tag, and the release also carries everything documented under 0.9.0 and earlier untagged
+versions. Third-party notices and the SBOM are regenerated to match the upgraded versions.
+
 ### Changed
 
 - **Control** (`@atf/control`): `next` 16.3.5 → 16.3.6, `lucide-react` 1.45.0 → 1.48.0.
@@ -1151,7 +1160,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.1
 [0.9.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.0
 [0.8.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.8.0
 [0.7.2]: https://github.com/abillify/atf/compare/v0.7.1...v0.7.2
