@@ -20,6 +20,9 @@ An optional `sessionId` is compared only with the verified bearer's session clai
 (`sid`, `session_id`); Gate's own MCP request id is never treated as an authenticated session.
 Runtime omits `sessionId` for servers with `tokenExchange`, because the exchanged token does not
 carry the caller's IdP session.
+For the same servers, `userId` is the `sub` of the exchanged token rather than the caller's login
+`sub`: the IdP mints the exchanged subject per target provider (subject mode), and Search and Gate
+compare `userId` against the bearer they verify.
 `actionContractHash` is the preferred 64-hex claim for the input action contract supplied by the
 orchestrator. `evidenceContractHash` is accepted only as a compatible input alias. Both claims
 are canonicalised to lowercase internally and in responses. When both are present they must be

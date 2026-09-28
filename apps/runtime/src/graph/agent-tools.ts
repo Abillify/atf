@@ -471,6 +471,11 @@ export async function buildAiTools(
           // Negotiate on the same session the call will use (forwardAuthToken).
           { authToken: ctx.ssoToken },
         );
+        // Token-exchange peers authenticate the EXCHANGED subject, not the
+        // caller's login `sub`; the envelope must bind the same identity.
+        const targetUserId = transactionEnabled
+          ? await mcpWrapper.targetSubject?.(serverName, ctx.ssoToken)
+          : undefined;
         const transactionInvocation = transactionEnabled
           ? await getTransactionOrchestrator()?.begin(
               ctx,
@@ -494,6 +499,7 @@ export async function buildAiTools(
                     }
                   : {}),
                 bindSession: mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
+                ...(targetUserId !== undefined ? { userId: targetUserId } : {}),
               },
             )
           : undefined;

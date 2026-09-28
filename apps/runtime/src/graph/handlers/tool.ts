@@ -339,6 +339,11 @@ export function createToolNodeHandler(
             // Negotiate on the same session the call will use (forwardAuthToken).
             { authToken: runtime.ctx.ssoToken },
           );
+          // Token-exchange peers authenticate the EXCHANGED subject, not the
+          // caller's login `sub`; the envelope must bind the same identity.
+          const targetUserId = transactionEnabled
+            ? await runtime.mcpWrapper.targetSubject?.(serverName, runtime.ctx.ssoToken)
+            : undefined;
           const transactionInvocation = transactionEnabled
             ? await getTransactionOrchestrator()?.begin(
                 runtime.ctx,
@@ -349,6 +354,7 @@ export function createToolNodeHandler(
                   payload: callArgs,
                   bindSession:
                     runtime.mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
+                  ...(targetUserId !== undefined ? { userId: targetUserId } : {}),
                 },
               )
             : undefined;

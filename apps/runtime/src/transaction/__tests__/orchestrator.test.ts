@@ -114,6 +114,18 @@ describe("transaction orchestrator", () => {
     await invocation.complete("committed");
   });
 
+  test("binds the target-visible subject when the caller's sub differs", async () => {
+    const orchestrator = createTransactionOrchestrator({ env });
+    if (orchestrator === undefined) throw new Error("expected orchestrator");
+    const invocation = await orchestrator.begin(ctx, "records", "records/search", "inv-target-sub", {
+      bindSession: false,
+      userId: "user@example.com",
+    });
+    const claims = decodeJwt(invocation.transaction?.token ?? "");
+    expect(claims).toMatchObject({ userId: "user@example.com", tenantId: "tenant-1" });
+    await invocation.complete("committed");
+  });
+
   test("canonicalizes action-contract hash aliases and excludes response evidence from transaction metadata", async () => {
     const orchestrator = createTransactionOrchestrator({ env });
     if (orchestrator === undefined) throw new Error("expected orchestrator");

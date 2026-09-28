@@ -26,6 +26,7 @@ import {
 } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 export { StreamableHTTPError };
 import { CallToolResultSchema } from "@modelcontextprotocol/sdk/types.js";
+import { decodeJwt } from "jose";
 import type { McpServerConfig } from "../../config/index.js";
 import type { AgentExecutionContext } from "../../types/monitoring.js";
 import type {
@@ -251,6 +252,15 @@ export interface McpWrapperService {
    * not carry the caller's `sid`, so a transaction envelope must not bind it.
    */
   forwardsCallerSession?(serverName: string): boolean;
+  /**
+   * Subject (`sub`) of the bearer this server receives for the given caller
+   * token, or undefined when the server receives the caller token unchanged.
+   * For `tokenExchange` servers this is the exchanged token's subject, which
+   * follows the target provider's subject mode and can differ from the
+   * caller's own `sub`. A transaction envelope must bind THIS subject.
+   * Throws when the exchange fails (fail-closed, like the call itself).
+   */
+  targetSubject?(serverName: string, subjectToken: string | undefined): Promise<string | undefined>;
   getFilteredToolSchema(
     serverName: string,
     toolName: string,
@@ -811,6 +821,25 @@ export class McpWrapper implements McpWrapperService {
   forwardsCallerSession(serverName: string): boolean {
     const config = this.configs.get(serverName);
     return config !== undefined && config.tokenExchange === undefined;
+  }
+
+  async targetSubject(
+    serverName: string,
+    subjectToken: string | undefined,
+  ): Promise<string | undefined> {
+    if (!this.tokenExchangers.has(serverName)) return undefined;
+    if (subjectToken === undefined || subjectToken === "") return undefined;
+    // Same cached exchange the subsequent callTool uses — no extra IdP round
+    // trip. The payload is only read (not trusted) to mirror the subject the
+    // peer will verify itself; the peer still validates signature and claims.
+    const { bearer } = await this._resolveBearer(serverName, subjectToken);
+    if (bearer === undefined) return undefined;
+    try {
+      const sub = decodeJwt(bearer).sub;
+      return typeof sub === "string" && sub.trim() !== "" ? sub.trim() : undefined;
+    } catch {
+      return undefined;
+    }
   }
 
   /**

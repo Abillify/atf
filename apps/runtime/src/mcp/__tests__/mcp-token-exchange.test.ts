@@ -231,3 +231,52 @@ describe("MCP wrapper — token exchange", () => {
     ).rejects.toThrow(/[Tt]oken exchange/);
   });
 });
+
+describe("MCP wrapper — target subject for transaction envelopes", () => {
+  const b64url = (value: object): string =>
+    Buffer.from(JSON.stringify(value)).toString("base64url");
+  const jwtWithSub = (sub: string): string =>
+    `${b64url({ alg: "RS256", typ: "JWT" })}.${b64url({ sub, aud: "vectorsearch" })}.sig`;
+
+  test("returns the exchanged token's subject, not the caller's", async () => {
+    let n = 0;
+    const wrapper = createMcpWrapper({
+      clientFactory,
+      tokenExchangerFactory: exchangerFor(() => {
+        n += 1;
+        // The target provider uses e-mail subjects; the caller token had a
+        // numeric user id. The envelope must follow the target.
+        return { access_token: jwtWithSub("user@example.com"), expires_in: 300 };
+      }),
+    });
+    await wrapper.connect(exchangeConfig);
+
+    expect(await wrapper.targetSubject?.("vectorsearch", "user-subject-token")).toBe(
+      "user@example.com",
+    );
+    // The subsequent call reuses the cached exchange (no second IdP round trip).
+    await wrapper.callTool("vectorsearch", "t", {}, mkCtx());
+    expect(n).toBe(1);
+  });
+
+  test("returns undefined for servers that receive the caller token unchanged", async () => {
+    const wrapper = createMcpWrapper({
+      clientFactory,
+      tokenExchangerFactory: exchangerFor(() => ({ access_token: jwtWithSub("x"), expires_in: 300 })),
+    });
+    const { tokenExchange: _omit, ...plain } = exchangeConfig;
+    await wrapper.connect({ ...plain, name: "plain" } as McpServerConfig);
+
+    expect(await wrapper.targetSubject?.("plain", "user-subject-token")).toBeUndefined();
+  });
+
+  test("returns undefined when the exchanged token is not a JWT", async () => {
+    const wrapper = createMcpWrapper({
+      clientFactory,
+      tokenExchangerFactory: exchangerFor(() => ({ access_token: "opaque", expires_in: 300 })),
+    });
+    await wrapper.connect(exchangeConfig);
+
+    expect(await wrapper.targetSubject?.("vectorsearch", "user-subject-token")).toBeUndefined();
+  });
+});

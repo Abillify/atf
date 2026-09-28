@@ -41,6 +41,15 @@ export interface TransactionBeginOptions {
    * otherwise reject every call with "Envelope.sessionId does not match".
    */
   bindSession?: boolean;
+  /**
+   * Subject the target server authenticates for this caller. Overrides
+   * `ctx.userId` in the envelope. Required for token-exchange servers: the
+   * exchanged token's `sub` follows the TARGET provider's subject mode (e.g.
+   * e-mail), while `ctx.userId` is the `sub` of the caller's login token (e.g.
+   * a numeric user id from the Taiga provider). Binding the caller `sub` makes
+   * the peer reject every call with an identity mismatch.
+   */
+  userId?: string;
 }
 
 export interface TransactionOrchestratorOptions {
@@ -258,7 +267,9 @@ export class TransactionOrchestrator {
       const token = await issuer.issue({
         executionId: ctx.executionId,
         invocationId,
-        ...(ctx.userId !== undefined ? { userId: ctx.userId } : {}),
+        ...((options.userId ?? ctx.userId) !== undefined
+          ? { userId: options.userId ?? ctx.userId }
+          : {}),
         // NO_TENANT is an internal SQL/RLS sentinel for single-tenant
         // deployments, not an externally authenticated OIDC tenant claim.
         // Emitting it would make mcpgate correctly reject the transaction as
