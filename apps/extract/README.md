@@ -11,7 +11,8 @@ POST /v1/ingest    convert and index in Search, including figure crops
 POST /v2/uploads   resumable chunked upload or source_url pull   (needs EXTRACT_DATABASE_URL)
 POST /v2/jobs      persistent, resumable extraction job           (needs EXTRACT_DATABASE_URL)
 POST /v2/render    on-demand page or region render from a stored source
-GET  /             operator upload UI, SSO login; /ui/jobs is the job overview
+GET  /             operator console, SSO login; with EXTRACT_DATABASE_URL also new v2 jobs,
+                   the job overview and page preview (/ui/uploads, /ui/jobs, /ui/render)
 GET  /health       liveness plus converter-binary and model reachability
 GET  /metrics      Prometheus, including pages, token spend and queue depth
 GET  /openapi.json
@@ -222,7 +223,7 @@ Without it the service stays database-free and serves the v1 paths only. Migrati
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v2/uploads` | Open a resumable session (`reference` via `X-Reference` or body, optional `size` and whole-file `sha256` / `X-Checksum-Sha256`). A JSON body with `source_url` instead pulls the source in one shot |
+| `POST /v2/uploads` | Open a resumable session (`reference` via `X-Reference` or body, optional `size` and whole-file `sha256` / `X-Checksum-Sha256`). A JSON body with `source_url` instead pulls the source in one shot; its 201 also reports the response `content_type` and a derived `filename` (final URL segment, or an extension from a supported `Content-Type`) to pass on to `POST /v2/jobs` |
 | `HEAD /v2/uploads/{id}` | Report the confirmed byte offset in `Upload-Offset`, so a client resumes exactly there |
 | `PATCH /v2/uploads/{id}` | Append one chunk. `Upload-Offset` must equal the confirmed offset (otherwise 409 with the true offset); an optional `X-Chunk-Checksum-Sha256` is verified before the chunk touches the session file |
 | `POST /v2/uploads/{id}/complete` | Verify the whole-file sha256 and move the file into the content-addressed store. Idempotent on replay |
@@ -247,9 +248,10 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `collection`, `pages`, `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`, `version`, `sourceModifiedAt`, `dedup`, `allowedUsers`, `allowedGroups`. 201 with the queued job |
+| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `filename` (types the source; defaults to the reference), `collection`, `pages`, `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`, `version`, `sourceModifiedAt`, `dedup`, `allowedUsers`, `allowedGroups`, `title`, `tags`, `metadata`, `link`, `sourceLabel`. 201 with the queued job |
 | `GET /v2/jobs` | List jobs newest first (`limit` 1–100, default 25; `offset`) |
-| `GET /v2/jobs/{id}` | Status, per-stage progress, warnings, tokens, cost and ETA |
+| `GET /v2/jobs/{id}` | Status, per-stage progress, warnings (a failed job carries its cause), tokens, cost and ETA. A non-UUID id is a 404 |
+| `GET /v2/jobs/{id}/figures` | The figure blocks of the staged page records (`figureId`, `page`, `bbox`, `kind`, `caption`, `description`, `assetId`) and the `sourceSha256`; crops render on demand via `POST /v2/render` |
 | `POST /v2/jobs/{id}/pause` | Hold a queued or running job |
 | `POST /v2/jobs/{id}/resume` | Re-queue a paused job; optional body `{ resumePolicy, restartStage }` |
 | `POST /v2/jobs/{id}/cancel` | Abandon a non-terminal job |
@@ -258,7 +260,11 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 
 `GET` needs `extract.admin`; everything else `extract.ingest`. `/ui/jobs` serves the same
 router to the operator console through the session cookie; its writes additionally pass
-the CSRF guard and require `UI_OPERATOR_GROUP`.
+the CSRF guard and require `UI_OPERATOR_GROUP`. `/ui/uploads` does the same for
+`/v2/uploads` (every method CSRF-guarded, operator and `extract.ingest`), and `/ui/render`
+serves `/v2/render` for the page preview (CSRF-guarded, `extract.admin`, `RENDER_RATE_LIMIT`).
+A job read also reports `sourceSha256`, `sourceFilename`, `collection`, `visibility`,
+`resumePolicy` and `priority`.
 
 A job moves through `queued → preparing → processing → emitting → committing → completed`,
 or ends `failed` / `cancelled`. `paused` carries a reason: `budget` (the `tokenBudget`

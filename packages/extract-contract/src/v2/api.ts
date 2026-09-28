@@ -175,7 +175,16 @@ export const jobRequestSchema = z.object({
   reference: z.string().min(1),
   /** sha256 of the already-uploaded source, addressed in the source store. */
   sourceSha256: z.string().regex(/^[0-9a-f]{64}$/),
-  collection: z.string().optional(),
+  /**
+   * Original filename of the source; its extension types the source. Omitted,
+   * the reference stands in for it.
+   */
+  filename: z.string().min(1).max(500).optional(),
+  /** Search collection; Search's naming rule, checked up front so a bad name fails before any model call. */
+  collection: z
+    .string()
+    .regex(/^[a-zA-Z][a-zA-Z0-9_]*$/, "collection must start with a letter and contain only letters, digits and underscores")
+    .optional(),
   pages: z.string().optional(),
   tokenBudget: z.int().min(0).optional(),
   priority: z.int().optional(),
@@ -328,6 +337,14 @@ export const jobSchema = z.object({
   version: documentVersionSchema.optional(),
   /** Set when the job was skipped as a duplicate of an indexed source. */
   duplicateOf: duplicateOfSchema.optional(),
+  /** sha256 of the stored source, the address `POST /v2/render` takes. */
+  sourceSha256: z.string().optional(),
+  /** Original filename of the source, when the creator recorded one. */
+  sourceFilename: z.string().optional(),
+  collection: z.string().optional(),
+  visibility: visibilitySchema.optional(),
+  resumePolicy: resumePolicySchema.optional(),
+  priority: z.int().optional(),
 });
 
 export type Job = z.infer<typeof jobSchema>;

@@ -375,6 +375,42 @@ describe("reparse", () => {
   });
 });
 
+describe("GET /v2/jobs/{id}/figures", () => {
+  it("lists the figure blocks of the staged page records in page order", async () => {
+    const app = buildApp();
+    const id = (await createJob(app)).body.jobId;
+    const page = (n: number, blocks: unknown[]) => ({
+      job_id: id,
+      seq: n,
+      digest: `d${n}`,
+      page_from: n,
+      page_to: n,
+      payload: { type: "page", page: n, record: { page: n, blocks } },
+    });
+    await fakeStore.stageEmitBatch(page(2, [
+      { id: "p2-fb1", page: 2, type: "figure", figureId: "p2-f1", kind: "chart", description: "Balken", bbox: [0.1, 0.2, 0.5, 0.6] },
+    ]) as never);
+    await fakeStore.stageEmitBatch(page(1, [
+      { id: "p1-b1", page: 1, type: "paragraph", text: "x" },
+      { id: "p1-fb1", page: 1, type: "figure", figureId: "p1-f1", kind: "photo", caption: "Abb. 1", description: "Foto" },
+    ]) as never);
+
+    const res = await request(app).get(`/ui/jobs/${id}/figures`);
+    expect(res.status).toBe(200);
+    expect(res.body.sourceSha256).toBe(seededSha);
+    expect(res.body.figures).toEqual([
+      { figureId: "p1-f1", page: 1, kind: "photo", caption: "Abb. 1", description: "Foto" },
+      { figureId: "p2-f1", page: 2, bbox: [0.1, 0.2, 0.5, 0.6], kind: "chart", description: "Balken" },
+    ]);
+  });
+
+  it("is a 404 for an unknown job", async () => {
+    const app = buildApp();
+    const res = await request(app).get("/v2/jobs/00000000-0000-4000-8000-000000000000/figures");
+    expect(res.status).toBe(404);
+  });
+});
+
 describe("UI job overview proxy · /ui/jobs (requirement 18.6)", () => {
   it("lists jobs through the cookie-authenticated BFF path", async () => {
     const app = buildApp();
@@ -391,6 +427,61 @@ describe("UI job overview proxy · /ui/jobs (requirement 18.6)", () => {
     const res = await request(app).get(`/ui/jobs/${id}`);
     expect(res.status).toBe(200);
     expect(res.body.jobId).toBe(id);
+  });
+
+  it("creates a job through the BFF with a filename and returns the extended view", async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post("/ui/jobs")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({
+        reference: "ui/handbuch",
+        sourceSha256: seededSha,
+        filename: "../../etc/Handbuch.docx",
+        collection: "manuals",
+        visibility: "on_commit",
+        resumePolicy: "continue",
+        priority: 3,
+      });
+    expect(res.status).toBe(201);
+    // Only the basename is kept; it types the source for the runner.
+    expect(res.body.sourceFilename).toBe("Handbuch.docx");
+    expect(res.body.sourceSha256).toBe(seededSha);
+    expect(res.body.collection).toBe("manuals");
+    expect(res.body.visibility).toBe("on_commit");
+    expect(res.body.resumePolicy).toBe("continue");
+    expect(res.body.priority).toBe(3);
+
+    const detail = await request(app).get(`/ui/jobs/${res.body.jobId}`);
+    expect(detail.body.sourceFilename).toBe("Handbuch.docx");
+  });
+
+  it("answers 404, not 500, for an id that is not a UUID", async () => {
+    const app = buildApp();
+    expect((await request(app).get("/ui/jobs/undefined")).status).toBe(404);
+    const resume = await request(app)
+      .post("/ui/jobs/undefined/resume")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({ resumePolicy: "continue" });
+    expect(resume.status).toBe(404);
+  });
+
+  it("refuses a collection name Search would reject", async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post("/ui/jobs")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({ reference: "ui/x.pdf", sourceSha256: seededSha, collection: "atf-ui-smoketest" });
+    expect(res.status).toBe(400);
+  });
+
+  it("refuses a cross-origin job creation", async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post("/ui/jobs")
+      .set("Origin", "https://attacker.example")
+      .send({ reference: "ui/x.pdf", sourceSha256: seededSha });
+    expect(res.status).toBe(403);
   });
 
   it("drives a pause action through the BFF only for a same-origin request", async () => {

@@ -523,6 +523,9 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "`allowedUsers` / `allowedGroups` set the document's readers, narrowed to the caller's own " +
           "identity like the `/v1/ingest` headers; Search writes them onto every unit and asset " +
           "check.\n\n" +
+          "`filename` (optional) types the source by its extension; omitted, the reference stands " +
+          "in for it. `collection` must follow Search's naming rule (a letter, then letters, digits " +
+          "or underscores), otherwise the request is a 400.\n\n" +
           "Optional identity fields: `version` (explicit document version), `sourceModifiedAt` " +
           "(RFC 3339 file time, the version fallback) and `dedup` (`auto` | `exact` | `off`). A job " +
           "whose source is already indexed completes without extracting anything; its status " +
@@ -579,6 +582,21 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
       "reparse",
       "Re-apply the parser to the persisted raw model responses without any new model calls (Requirement 4.6).",
     );
+    paths["/v2/jobs/{id}/figures"] = {
+      get: {
+        summary: "Figures of a job",
+        description:
+          "The figure blocks of the job's staged page records in page order (`figureId`, `page`, " +
+          "normalised `bbox`, `kind`, `caption`, `description`, `assetId`), plus the job's " +
+          "`sourceSha256`. Crop bytes are not stored; a client renders them through " +
+          "`POST /v2/render` with the figure's bbox.",
+        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        responses: {
+          "200": { description: "Figures", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "404": { description: "No such job" },
+        },
+      },
+    };
 
     paths["/v2/render"] = {
       post: {

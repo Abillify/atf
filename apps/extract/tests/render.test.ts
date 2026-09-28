@@ -36,6 +36,7 @@ import { createApp, type AppOverrides } from "../src/index.js";
 import { createFilesystemSourceStore, type Sha256Hex } from "../src/source-store.js";
 import { renderFilename } from "../src/handlers/render.js";
 import { loadTestConfig, stubExtractor, stubVisionClient, testLogger } from "./helpers.js";
+import { createFakeJobStore } from "./job-store-fake.js";
 
 const availableBinary = vi.fn(async () => ({ available: true, version: "stub" }));
 
@@ -213,6 +214,39 @@ describe("POST /v2/render", () => {
       .expect(200);
 
     expect(Buffer.compare(first.body, second.body)).toBe(0);
+  });
+});
+
+describe("POST /ui/render · console page preview", () => {
+  it("renders through the cookie BFF for a same-origin request", async () => {
+    const app = buildApp({}, { store: createFakeJobStore() });
+    const source = await storeSource(await makePng(320, 200));
+
+    const res = await request(app)
+      .post("/ui/render")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({ source, page: 1, targetPixels: 160 })
+      .expect(200);
+
+    expect(res.headers["content-type"]).toBe("image/png");
+    expect(Number(res.headers["x-render-width"])).toBe(160);
+  });
+
+  it("refuses a cross-origin request before rendering", async () => {
+    const app = buildApp({}, { store: createFakeJobStore() });
+    const source = await storeSource(await makePng(320, 200));
+
+    const res = await request(app)
+      .post("/ui/render")
+      .set("Origin", "https://attacker.example")
+      .send({ source, page: 1 });
+    expect(res.status).toBe(403);
+  });
+
+  it("is not mounted without the v2 job store", async () => {
+    const app = buildApp();
+    const res = await request(app).post("/ui/render").set("Sec-Fetch-Site", "same-origin").send({});
+    expect(res.status).toBe(404);
   });
 });
 

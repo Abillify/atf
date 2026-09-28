@@ -331,7 +331,7 @@ describe("query builders", () => {
   it("updateUploadOffsetQuery advances the confirmed byte offset", () => {
     const query = q.updateUploadOffsetQuery("u1", 1024, "open");
     expect(query.text).toContain("received_offset = $2");
-    expect(query.values).toEqual(["u1", 1024, "open"]);
+    expect(query.values).toEqual(["u1", 1024, "open", null]);
   });
   it("lockUploadForAppendQuery row-locks the session", () => {
     const query = q.lockUploadForAppendQuery("u1");

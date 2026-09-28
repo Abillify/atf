@@ -285,7 +285,16 @@ export interface ExtractStore {
     size?: number | null;
   }): Promise<UploadRow>;
   getUpload(uploadId: string): Promise<UploadRow | null>;
-  updateUploadOffset(uploadId: string, receivedOffset: number, status?: string): Promise<UploadRow | null>;
+  /**
+   * Set the confirmed offset, and optionally the status and the source digest
+   * (recorded at completion, so a repeated complete can answer idempotently).
+   */
+  updateUploadOffset(
+    uploadId: string,
+    receivedOffset: number,
+    status?: string,
+    sha256?: string,
+  ): Promise<UploadRow | null>;
   /**
    * Append one chunk and advance the confirmed offset atomically across
    * replicas: lock the session row, re-check `open` + `expectedOffset`, run
@@ -696,8 +705,8 @@ export function createExtractStore(
       return result;
     },
     getUpload: (uploadId) => one<UploadRow>(q.getUploadQuery(uploadId)),
-    updateUploadOffset: (uploadId, receivedOffset, status) =>
-      one<UploadRow>(q.updateUploadOffsetQuery(uploadId, receivedOffset, status)),
+    updateUploadOffset: (uploadId, receivedOffset, status, sha256) =>
+      one<UploadRow>(q.updateUploadOffsetQuery(uploadId, receivedOffset, status, sha256)),
     advanceUploadOffset: (commit) => tx((client) => advanceUploadOffsetInTx(client, commit)),
 
     // ── transaction ───────────────────────────────────────────────────────

@@ -390,7 +390,15 @@ export interface FetchSourceArgs {
  * a `SOURCE_FETCH_FAILED` (502, retryable); a checksum mismatch or a rejected
  * URL/address is a client error, because those will not change on retry.
  */
-export async function fetchSourceToStore(args: FetchSourceArgs): Promise<StoredSource> {
+/** A pulled source: the stored bytes plus what the response said about them. */
+export interface PulledSource extends StoredSource {
+  /** The response's `Content-Type`, when it sent one. */
+  contentType?: string;
+  /** The URL the bytes finally came from, after redirects. */
+  finalUrl: string;
+}
+
+export async function fetchSourceToStore(args: FetchSourceArgs): Promise<PulledSource> {
   const { store, config, logger, expectedSha256 } = args;
   const doRequest = args.requestImpl ?? pinnedRequest;
 
@@ -465,7 +473,12 @@ export async function fetchSourceToStore(args: FetchSourceArgs): Promise<StoredS
         },
         "Pulled source from source_url",
       );
-      return stored;
+      const contentType = response.header("content-type");
+      return {
+        ...stored,
+        ...(typeof contentType === "string" && contentType !== "" ? { contentType } : {}),
+        finalUrl: current.toString(),
+      };
     } catch (err) {
       response.body.destroy();
       if (err instanceof SourceChecksumError) {

@@ -70,3 +70,56 @@ describe("getUiPageHtml · Jobs tab", () => {
     expect(html).toContain('data-tab="health"');
   });
 });
+
+describe("getUiPageHtml · Document Intelligence v2", () => {
+  it("renders the new-job tab and panel only with the v2 job store", () => {
+    const on = render({ jobsEnabled: true });
+    expect(on).toContain('data-tab="newjob"');
+    expect(on).toContain('id="panel-newjob"');
+    expect(on).toContain('aria-labelledby="tab-newjob"');
+    const off = render({ jobsEnabled: false });
+    expect(off).not.toContain('data-tab="newjob"');
+    expect(off).not.toContain('id="panel-newjob"');
+  });
+
+  it("exposes every source kind and the job request options", () => {
+    const html = render({ jobsEnabled: true });
+    for (const id of [
+      "newjob-dropzone",
+      "newjob-source-url",
+      "newjob-sha",
+      "newjob-pages",
+      "newjob-visibility",
+      "newjob-resume-policy",
+      "newjob-token-budget",
+      "newjob-priority",
+      "newjob-callback-url",
+      "newjob-dedup",
+      "newjob-source-modified",
+      "newjob-allowed-groups",
+    ]) {
+      expect(html).toContain(`id="${id}"`);
+    }
+    // The client drives the cookie BFF for uploads, jobs and the preview.
+    expect(html).toContain('"/ui/uploads"');
+    expect(html).toContain('"/ui/render"');
+    expect(html).toContain("x-chunk-checksum-sha256");
+  });
+
+  it("shows the v2 identity headers on the ingest tab only on the v2 path", () => {
+    const v2 = render({ jobsEnabled: true });
+    expect(v2).toContain('id="ingest-dedup"');
+    expect(v2).toContain('id="ingest-source-modified"');
+    const v1 = render({ jobsEnabled: false });
+    expect(v1).not.toContain('id="ingest-dedup"');
+    expect(v1).not.toContain('id="ingest-source-modified"');
+  });
+
+  it("offers reparse, resume-with-policy and the job filter", () => {
+    const html = render({ jobsEnabled: true });
+    expect(html).toContain('action: "reparse"');
+    expect(html).toContain("resumePolicy");
+    expect(html).toContain('id="jobs-filter-status"');
+    expect(html).toContain('id="jobs-filter-text"');
+  });
+});

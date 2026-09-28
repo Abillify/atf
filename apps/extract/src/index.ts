@@ -482,6 +482,9 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
   // the machine API (`/v2/jobs`): the job overview UI (requirement 18.6) fetches
   // and drives jobs through the session-cookie path, not a bearer token.
   let jobsRouter: Router | null = null;
+  // Hoisted for the same reason: the "Neuer Job" tab uploads sources through
+  // `/ui/uploads`, the cookie twin of `/v2/uploads`.
+  let uploadsRouter: Router | null = null;
   const ownsStore = overrides.store === undefined && config.database !== null;
   const store: ExtractStore | null =
     overrides.store !== undefined
@@ -669,7 +672,7 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
   // route. Storing a source is an ingest-class write, so it is gated on
   // `extract.ingest`. Mounted only when a store is available.
   if (store !== null) {
-    const uploadsRouter = createUploadsRouter({
+    uploadsRouter = createUploadsRouter({
       store,
       sourceStore,
       config: {
@@ -979,6 +982,31 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
     });
     uiJobs.use(rateLimiter.middleware, guardedJobsRouter);
     ui.use("/jobs", uiJobs);
+  }
+
+  // ── v2 sources and on-demand render for the console ───────────────────────
+  // The "Neuer Job" tab uploads a source (resumable chunks or a source_url pull)
+  // through the same upload router as `/v2/uploads`; every method there writes
+  // or advances a session, so all of them pass the CSRF guard and require an
+  // operator with the ingest scope. The page preview in the Jobs tab renders
+  // through the same handler as `/v2/render`: read-only, so the read scope, but
+  // a POST that spawns poppler, so it is CSRF-guarded and keeps its own limiter.
+  if (uploadsRouter !== null) {
+    ui.use(
+      "/uploads",
+      rateLimiter.middleware,
+      uiMutationGuard,
+      requireUiOperator,
+      requireIngest,
+      uploadsRouter,
+    );
+    ui.post(
+      "/render",
+      renderRateLimiter.middleware,
+      uiMutationGuard,
+      requireJobRead,
+      renderHandler,
+    );
   }
 
   app.use("/ui", ui);

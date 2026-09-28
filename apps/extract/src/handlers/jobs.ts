@@ -19,6 +19,10 @@
  *   POST /v2/jobs/{id}/retry-failed   re-queue only the failed units of a job.
  *   POST /v2/jobs/{id}/reparse        re-apply the parser to persisted model raw
  *                                     responses, with no new model calls.
+ *   GET  /v2/jobs/{id}/figures        the figures of the staged page records
+ *                                     (id, page, bbox, kind, description), for
+ *                                     the console's gallery; the crops render
+ *                                     on demand via /v2/render.
  *
  * Creation snapshots the config and the pipeline/prompt hash onto the row so a
  * later resume can compare against it (requirement 4.12). All mutations run the
@@ -42,6 +46,7 @@ import type { JobRow, OperatorTransition } from "../persistence/types.js";
 import type { SourceStore } from "../source-store.js";
 import { toJobView } from "../jobs/job-view.js";
 import { getPrincipal } from "../request-principal.js";
+import { sanitizeFilename } from "../upload.js";
 import { resolveAcl } from "./ingest.js";
 import { stageOrderIndex, type PipelineSnapshot } from "../jobs/snapshot.js";
 import {
@@ -78,6 +83,19 @@ export interface JobsHandlerDeps {
 function readParam(req: Request, name: string): string {
   const value = req.params[name];
   return typeof value === "string" ? value : "";
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Read the `{id}` route parameter as a job id. Job ids are UUIDs (the `jobs.id`
+ * column is typed `uuid`), so anything else cannot name a job: it is a 404
+ * here rather than a Postgres cast error surfacing as a 500.
+ */
+function readJobId(req: Request): string {
+  const id = readParam(req, "id");
+  if (!UUID_RE.test(id)) throw notFound(`Job ${id} does not exist`);
+  return id;
 }
 
 /**
@@ -126,6 +144,9 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
         pages: body.pages ?? null,
         collection: body.collection ?? deps.defaultCollection,
         snapshot,
+        // The filename types the source (the runner falls back to the
+        // reference); only the basename is kept.
+        ...(body.filename !== undefined ? { source: { filename: sanitizeFilename(body.filename) } } : {}),
         // Identity inputs (see jobs/identity.ts): an explicit version skips
         // detection, the file time is the last version fallback, and dedup
         // governs whether a duplicate is skipped.
@@ -195,7 +216,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   };
 
   async function getJob(req: Request, res: Response): Promise<void> {
-    const id = readParam(req, "id");
+    const id = readJobId(req);
     const row = await store.getJob(id);
     if (row === null) throw notFound(`Job ${id} does not exist`);
     // Join the page-stage checkpoints so progress/eta are populated.
@@ -204,6 +225,39 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
     const failed = await store.listStagesByStatus("page", id, "failed").catch(() => []);
     const pending = await store.listStagesByStatus("page", id, "pending").catch(() => []);
     res.status(200).json(toJobView(row, [...stages, ...running, ...failed, ...pending]));
+  }
+
+  // ── GET /v2/jobs/{id}/figures ─────────────────────────────────────────────
+  // The figure blocks of the job's staged page records, in page order. The
+  // crop bytes are not stored (they re-render from the source), so a client
+  // shows them through POST /v2/render with the figure's normalised bbox.
+  const figuresHandler: RequestHandler = (req, res, next) => {
+    void listFigures(req, res).catch(next);
+  };
+
+  async function listFigures(req: Request, res: Response): Promise<void> {
+    const id = readJobId(req);
+    const row = await store.getJob(id);
+    if (row === null) throw notFound(`Job ${id} does not exist`);
+    const batches = await store.allEmitBatches(id);
+    const figures: Array<Record<string, unknown>> = [];
+    for (const batch of [...batches].sort((a, b) => a.page_from - b.page_from || a.seq - b.seq)) {
+      const record = (batch.payload as { record?: { blocks?: unknown } } | null)?.record;
+      const blocks = Array.isArray(record?.blocks) ? (record.blocks as Array<Record<string, unknown>>) : [];
+      for (const block of blocks) {
+        if (block["type"] !== "figure") continue;
+        figures.push({
+          figureId: block["figureId"],
+          page: block["page"],
+          ...(Array.isArray(block["bbox"]) ? { bbox: block["bbox"] } : {}),
+          kind: block["kind"],
+          ...(typeof block["caption"] === "string" ? { caption: block["caption"] } : {}),
+          description: block["description"],
+          ...(typeof block["assetId"] === "string" ? { assetId: block["assetId"] } : {}),
+        });
+      }
+    }
+    res.status(200).json({ jobId: id, sourceSha256: row.source_sha256, figures });
   }
 
   // ── POST /v2/jobs/{id}/{pause|resume|cancel} ──────────────────────────────
@@ -260,7 +314,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   }
 
   async function applyAction(req: Request, res: Response, action: JobAction): Promise<void> {
-    const id = readParam(req, "id");
+    const id = readJobId(req);
     const options = action === "resume" ? readResumeOptions(req) : {};
     const updated = await transitionWithRevocation(
       id,
@@ -298,7 +352,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   };
 
   async function retryFailed(req: Request, res: Response): Promise<void> {
-    const id = readParam(req, "id");
+    const id = readJobId(req);
     for (let attempt = 0; attempt < ACTION_RETRIES; attempt++) {
       const row = await store.getJob(id);
       if (row === null) throw notFound(`Job ${id} does not exist`);
@@ -336,7 +390,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   };
 
   async function reparse(req: Request, res: Response): Promise<void> {
-    const id = readParam(req, "id");
+    const id = readJobId(req);
     // Flag the reparse and re-queue in ONE statement with a lease revocation:
     // the runner then re-applies the parsers to the persisted raw responses,
     // rebuilds crops/records/document pass/outbox, and emits a new generation —
@@ -356,6 +410,7 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
   router.post("/", createHandler);
   router.get("/", listHandler);
   router.get("/:id", getHandler);
+  router.get("/:id/figures", figuresHandler);
   router.post("/:id/pause", actionHandler("pause"));
   router.post("/:id/resume", actionHandler("resume"));
   router.post("/:id/cancel", actionHandler("cancel"));

@@ -1091,16 +1091,22 @@ export function getUploadQuery(uploadId: string): Query {
 }
 
 /** Advance the confirmed offset after a chunk is durably written. */
-export function updateUploadOffsetQuery(uploadId: string, receivedOffset: number, status?: string): Query {
+export function updateUploadOffsetQuery(
+  uploadId: string,
+  receivedOffset: number,
+  status?: string,
+  sha256?: string,
+): Query {
   return {
     text: `
       UPDATE ${EXTRACT_SCHEMA}.uploads
          SET received_offset = $2,
              status = COALESCE($3, status),
+             expected_sha256 = COALESCE($4, expected_sha256),
              updated_at = NOW()
        WHERE upload_id = $1
       RETURNING *`,
-    values: [uploadId, receivedOffset, status ?? null],
+    values: [uploadId, receivedOffset, status ?? null, sha256 ?? null],
   };
 }
 

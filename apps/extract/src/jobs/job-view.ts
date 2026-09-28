@@ -176,6 +176,16 @@ export function toJobView(
   if (row.token_budget !== null) job.tokenBudget = Number(row.token_budget);
   if (row.cost_usd !== undefined) job.costUsd = Number(row.cost_usd);
   if (row.revision_id !== null) job.revisionId = row.revision_id;
+  // Source and run settings, for the operator console's detail and page preview.
+  if (row.source_sha256) job.sourceSha256 = row.source_sha256;
+  const source = (row.config as { source?: { filename?: unknown } } | null)?.source;
+  if (source !== undefined && typeof source.filename === "string" && source.filename !== "") {
+    job.sourceFilename = source.filename;
+  }
+  if (row.collection !== null && row.collection !== undefined) job.collection = row.collection;
+  if (row.visibility !== undefined) job.visibility = row.visibility;
+  if (row.resume_policy !== undefined) job.resumePolicy = row.resume_policy;
+  if (row.priority !== undefined) job.priority = Number(row.priority);
   // Identity (dedup / version chains): the caller sees the reference it asked
   // for, plus the one the document was ingested under when Search resolved
   // another format of an indexed document.

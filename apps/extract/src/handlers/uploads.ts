@@ -54,7 +54,9 @@ import type { Request, RequestHandler, Response, Router } from "express";
 import express from "express";
 import type { Logger } from "pino";
 import { conflict, notFound, validationError } from "../errors.js";
+import { extensionOf, formatByMimeType } from "../formats.js";
 import { readHeader } from "../header-utils.js";
+import { sanitizeFilename } from "../upload.js";
 import type { ExtractStore } from "../persistence/index.js";
 import {
   assertSha256Hex,
@@ -97,6 +99,27 @@ export interface UploadsHandlerDeps {
    * to the Postgres row-lock implementation over `store.withTransaction`.
    */
   offsetCommitter?: UploadOffsetCommitter;
+}
+
+/**
+ * A filename for a pulled source, so a job created from it is typed: the last
+ * path segment of the final URL when it carries an extension, otherwise that
+ * segment (or "source") plus the extension of a supported `Content-Type`.
+ * Undefined when neither says anything useful; the content is sniffed anyway.
+ */
+export function pulledFilename(finalUrl: string, contentType: string | undefined): string | undefined {
+  let segment = "";
+  try {
+    const last = new URL(finalUrl).pathname.split("/").filter((part) => part !== "").pop() ?? "";
+    segment = sanitizeFilename(decodeURIComponent(last));
+  } catch {
+    segment = "";
+  }
+  if (segment !== "" && segment !== "document" && extensionOf(segment) !== "") return segment;
+  const format = contentType !== undefined ? formatByMimeType(contentType) : undefined;
+  const extension = format?.extensions[0];
+  if (extension === undefined) return undefined;
+  return `${segment !== "" && segment !== "document" ? segment : "source"}${extension}`;
 }
 
 /** Read a route parameter as a single string (Express 5 types it widely). */
@@ -170,6 +193,7 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
         ...(deps.resolver !== undefined ? { resolver: deps.resolver } : {}),
         ...(deps.requestImpl !== undefined ? { requestImpl: deps.requestImpl } : {}),
       });
+      const filename = pulledFilename(stored.finalUrl, stored.contentType);
       res.status(201).json({
         status: "completed",
         reference,
@@ -177,6 +201,8 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
         size: stored.size,
         deduped: stored.deduped,
         source: "source_url",
+        ...(stored.contentType !== undefined ? { content_type: stored.contentType } : {}),
+        ...(filename !== undefined ? { filename } : {}),
       });
       return;
     }
@@ -250,6 +276,7 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
       throw conflict(`Another chunk for upload session ${uploadId} is still in progress`);
     }
     const chunkPath = join(config.tmpDir, `${uploadId}.${randomUUID()}.chunk`);
+    let confirmed: { from: number; to: number; size: unknown } | null = null;
     try {
       const upload = await store.getUpload(uploadId);
       if (upload === null) throw notFound(`Upload session ${uploadId} does not exist`);
@@ -326,16 +353,17 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
         );
       }
 
-      res.setHeader("Upload-Offset", String(newOffset));
-      res.status(204).end();
-      logger.debug(
-        { uploadId, from: confirmedOffset, to: newOffset, size: result.row.size ?? null },
-        "Upload chunk confirmed",
-      );
+      confirmed = { from: confirmedOffset, to: newOffset, size: result.row.size ?? null };
     } finally {
       await rm(chunkPath, { force: true }).catch(() => {});
       release();
     }
+
+    // Answer only after the session lock is released: a client that sends its
+    // next chunk the moment it sees the 204 must not find the lock still held.
+    res.setHeader("Upload-Offset", String(confirmed.to));
+    res.status(204).end();
+    logger.debug({ uploadId, ...confirmed }, "Upload chunk confirmed");
   }
 
   // ── POST /v2/uploads/{id}/complete ────────────────────────────────────────
@@ -378,7 +406,8 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
         `Upload session ${uploadId} has ${info.size} bytes on disk but a confirmed offset of ${confirmedOffset}`,
       );
     }
-    if (upload.size !== null && confirmedOffset !== upload.size) {
+    // BIGINT arrives from node-postgres as a string, like received_offset above.
+    if (upload.size !== null && confirmedOffset !== Number(upload.size)) {
       throw conflict(
         `Upload session ${uploadId} is incomplete: ${confirmedOffset} of ${upload.size} bytes`,
       );
@@ -409,7 +438,10 @@ export function createUploadsRouter(deps: UploadsHandlerDeps): Router {
 
     try {
       const stored = await sourceStore.commitFile(path, expected);
-      await store.updateUploadOffset(uploadId, confirmedOffset, "completed");
+      // Record the address the source landed at, so a repeated complete (a
+      // client retrying after a lost response) answers idempotently even when
+      // no digest was declared.
+      await store.updateUploadOffset(uploadId, confirmedOffset, "completed", stored.sha256);
       logger.info(
         { uploadId, sha256: stored.sha256, size: stored.size, deduped: stored.deduped },
         "Upload completed and stored",

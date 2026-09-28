@@ -32,7 +32,7 @@ import request from "supertest";
 import { createApp, type AppOverrides } from "../src/index.js";
 import type { ExtractStore } from "../src/persistence/index.js";
 import type { UploadRow } from "../src/persistence/types.js";
-import { _sessionPath } from "../src/handlers/uploads.js";
+import { _sessionPath, pulledFilename } from "../src/handlers/uploads.js";
 import type { HostResolver, PinnedRequester } from "../src/handlers/source-url.js";
 import type {
   UploadChunkCommit,
@@ -99,11 +99,12 @@ function inMemoryStore(): ExtractStore {
     async getUpload(id: string) {
       return uploads.get(id) ?? null;
     },
-    async updateUploadOffset(id: string, offset: number, status?: string) {
+    async updateUploadOffset(id: string, offset: number, status?: string, sha256?: string) {
       const upload = uploads.get(id);
       if (upload === undefined) return null;
       upload.received_offset = offset;
       if (status !== undefined) upload.status = status;
+      if (sha256 !== undefined) upload.expected_sha256 = sha256;
       upload.updated_at = new Date();
       return upload;
     },
@@ -237,6 +238,106 @@ describe("SourceStore (filesystem, content-addressed)", () => {
     await expect(
       store.putStream(toStream(Buffer.alloc(1024, 1)), { maxBytes: 512 }),
     ).rejects.toThrow(/limit/);
+  });
+});
+
+// ─── Console BFF: /ui/uploads ────────────────────────────────────────────────
+
+describe("/ui/uploads · console upload path", () => {
+  it("runs open → PATCH → HEAD → complete through the cookie BFF", async () => {
+    const app = buildApp();
+    const whole = Buffer.from("console upload bytes");
+    const chunkA = whole.subarray(0, 7);
+    const chunkB = whole.subarray(7);
+
+    const open = await request(app)
+      .post("/ui/uploads")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({ reference: "ui/source.pdf", size: whole.length });
+    expect(open.status).toBe(201);
+    const id: string = open.body.upload_id;
+
+    const first = await request(app)
+      .patch(`/ui/uploads/${id}`)
+      .set("Sec-Fetch-Site", "same-origin")
+      .set("Content-Type", "application/offset+octet-stream")
+      .set("Upload-Offset", "0")
+      .set("X-Chunk-Checksum-Sha256", sha256Hex(chunkA))
+      .send(chunkA);
+    expect(first.status).toBe(204);
+
+    const head = await request(app).head(`/ui/uploads/${id}`).set("Sec-Fetch-Site", "same-origin");
+    expect(head.status).toBe(200);
+    expect(head.headers["upload-offset"]).toBe(String(chunkA.length));
+
+    const second = await request(app)
+      .patch(`/ui/uploads/${id}`)
+      .set("Sec-Fetch-Site", "same-origin")
+      .set("Content-Type", "application/offset+octet-stream")
+      .set("Upload-Offset", head.headers["upload-offset"] as string)
+      .send(chunkB);
+    expect(second.status).toBe(204);
+
+    const done = await request(app)
+      .post(`/ui/uploads/${id}/complete`)
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({});
+    expect(done.status).toBe(200);
+    expect(done.body.sha256).toBe(sha256Hex(whole));
+  });
+
+  it("completes a declared-size session when the store returns BIGINTs as strings", async () => {
+    // node-postgres hands BIGINT columns back as strings; `size` must still
+    // compare equal to the confirmed offset.
+    const base = inMemoryStore();
+    const pgShaped = {
+      ...base,
+      async getUpload(id: string) {
+        const row = await base.getUpload(id);
+        return row === null
+          ? null
+          : ({ ...row, size: row.size === null ? null : String(row.size), received_offset: String(row.received_offset) } as unknown as UploadRow);
+      },
+    } as ExtractStore;
+    const app = buildApp({}, { store: pgShaped });
+    const whole = Buffer.from("bigint shaped upload");
+
+    const open = await request(app)
+      .post("/ui/uploads")
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({ reference: "ui/bigint.pdf", size: whole.length });
+    const id: string = open.body.upload_id;
+    const patch = await request(app)
+      .patch(`/ui/uploads/${id}`)
+      .set("Sec-Fetch-Site", "same-origin")
+      .set("Content-Type", "application/offset+octet-stream")
+      .set("Upload-Offset", "0")
+      .send(whole);
+    expect(patch.status).toBe(204);
+
+    const done = await request(app)
+      .post(`/ui/uploads/${id}/complete`)
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({});
+    expect(done.status).toBe(200);
+    expect(done.body.sha256).toBe(sha256Hex(whole));
+
+    // No digest was declared; a repeated complete still answers idempotently.
+    const again = await request(app)
+      .post(`/ui/uploads/${id}/complete`)
+      .set("Sec-Fetch-Site", "same-origin")
+      .send({});
+    expect(again.status).toBe(200);
+    expect(again.body.sha256).toBe(sha256Hex(whole));
+  });
+
+  it("refuses a cross-origin session open", async () => {
+    const app = buildApp();
+    const res = await request(app)
+      .post("/ui/uploads")
+      .set("Origin", "https://attacker.example")
+      .send({ reference: "ui/source.pdf" });
+    expect(res.status).toBe(403);
   });
 });
 
@@ -679,3 +780,17 @@ function fakeRequester(
     return respond();
   };
 }
+
+describe("pulledFilename", () => {
+  it("keeps a URL filename that carries an extension", () => {
+    expect(pulledFilename("https://example.com/docs/Handbuch%20v2.pdf", "application/octet-stream")).toBe("Handbuch v2.pdf");
+  });
+  it("types an extensionless URL from a supported Content-Type", () => {
+    expect(pulledFilename("https://example.com/wiki/seite", "text/html; charset=utf-8")).toBe("seite.html");
+    expect(pulledFilename("https://example.com/", "application/pdf")).toBe("source.pdf");
+  });
+  it("gives up when neither the URL nor the type says anything", () => {
+    expect(pulledFilename("https://example.com/download", "application/octet-stream")).toBeUndefined();
+    expect(pulledFilename("https://example.com/download", undefined)).toBeUndefined();
+  });
+});
