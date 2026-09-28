@@ -102,6 +102,18 @@ describe("transaction orchestrator", () => {
     now += 1;
   });
 
+  test("omits the session binding when the target receives an exchanged token", async () => {
+    const orchestrator = createTransactionOrchestrator({ env });
+    if (orchestrator === undefined) throw new Error("expected orchestrator");
+    const invocation = await orchestrator.begin(ctx, "records", "records/search", "inv-exchanged", {
+      bindSession: false,
+    });
+    const claims = decodeJwt(invocation.transaction?.token ?? "");
+    expect(claims).not.toHaveProperty("sessionId");
+    expect(claims).toMatchObject({ userId: "user-1", invocationId: "inv-exchanged" });
+    await invocation.complete("committed");
+  });
+
   test("canonicalizes action-contract hash aliases and excludes response evidence from transaction metadata", async () => {
     const orchestrator = createTransactionOrchestrator({ env });
     if (orchestrator === undefined) throw new Error("expected orchestrator");

@@ -493,6 +493,7 @@ export async function buildAiTools(
                       evidenceContractHash: wireEvidenceContract.actionContractHash,
                     }
                   : {}),
+                bindSession: mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
               },
             )
           : undefined;

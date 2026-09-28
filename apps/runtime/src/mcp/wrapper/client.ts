@@ -244,6 +244,13 @@ export interface McpWrapperService {
    * node's prompt when that server's tools are selected.
    */
   getInstructions(serverName: string): string | undefined;
+  /**
+   * True when the bearer the server receives carries the caller's own IdP
+   * session (plain `forwardAuthToken`). False for `tokenExchange` servers:
+   * the exchanged token is minted by the IdP for another audience and does
+   * not carry the caller's `sid`, so a transaction envelope must not bind it.
+   */
+  forwardsCallerSession?(serverName: string): boolean;
   getFilteredToolSchema(
     serverName: string,
     toolName: string,
@@ -799,6 +806,11 @@ export class McpWrapper implements McpWrapperService {
     // must never contribute guidance to a caller-authenticated LLM request.
     if (this.configs.get(serverName)?.forwardAuthToken === true) return undefined;
     return this.instructions.get(serverName);
+  }
+
+  forwardsCallerSession(serverName: string): boolean {
+    const config = this.configs.get(serverName);
+    return config !== undefined && config.tokenExchange === undefined;
   }
 
   /**

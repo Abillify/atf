@@ -34,6 +34,13 @@ export interface TransactionBeginOptions {
   /** Compatibility alias for actionContractHash. */
   evidenceContractHash?: string;
   sideEffect?: InvocationSideEffectDescriptor;
+  /**
+   * Bind the envelope to the caller's authenticated IdP session (`sid`).
+   * Default true. Must be false when the target server receives an exchanged
+   * token, whose session does not match the caller's — the gate would
+   * otherwise reject every call with "Envelope.sessionId does not match".
+   */
+  bindSession?: boolean;
 }
 
 export interface TransactionOrchestratorOptions {
@@ -261,7 +268,7 @@ export class TransactionOrchestrator {
           ? { tenantId: ctx.clientId }
           : {}),
         agentId: this.env.AGENT_TRANSACTION_AGENT_ID ?? "agent-runtime",
-        ...(ctx.authenticatedSessionId !== undefined
+        ...(ctx.authenticatedSessionId !== undefined && options.bindSession !== false
           ? { sessionId: ctx.authenticatedSessionId }
           : {}),
         scopes: [

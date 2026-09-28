@@ -345,7 +345,11 @@ export function createToolNodeHandler(
                 serverName,
                 toolRef,
                 toolCallId,
-                { payload: callArgs },
+                {
+                  payload: callArgs,
+                  bindSession:
+                    runtime.mcpWrapper.forwardsCallerSession?.(serverName) ?? true,
+                },
               )
             : undefined;
           let result: Awaited<ReturnType<typeof runtime.mcpWrapper.callTool>>;
