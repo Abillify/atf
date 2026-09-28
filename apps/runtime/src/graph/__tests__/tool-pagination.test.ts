@@ -157,6 +157,33 @@ describe("deterministic tool pagination", () => {
 		expect(JSON.stringify({ calls, errors: out.errors })).not.toContain(secret);
 	});
 
+	test("classifies a thrown peer denial structurally in a diagnostic", async () => {
+		const calls = emptyCalls();
+		const handler = createToolNodeHandler(node());
+		await handler(
+			state,
+			runConfig(
+				makeRuntime(calls, async () => {
+					throw new Error(
+						"MCP 2026 tools/call failed (HTTP 403): TRANSACTION_IDENTITY_MISMATCH",
+					);
+				}),
+			),
+		);
+
+		expect(calls.errors).toEqual(["Tool execution failed."]);
+		const diagnostic = calls.diagnostics.find(
+			(entry) => entry.code === "tool_execution_failed",
+		);
+		expect(diagnostic?.details).toMatchObject({
+			tool: "vectorsearch/get_summaries",
+			error_name: "Error",
+			http_status: 403,
+			error_code: "TRANSACTION_IDENTITY_MISMATCH",
+		});
+		expect(JSON.stringify(diagnostic)).not.toContain("tools/call failed");
+	});
+
 	test("reports missing or invalid total after a successful page", async () => {
 		for (const total of [undefined, -1, 1.5, Number.NaN]) {
 			const calls = emptyCalls();

@@ -339,8 +339,10 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   trace diagnostic, never in the model stream. A step prompt rejected by AI SDK message
   validation is reported separately as `llm_prompt_schema_invalid` with message index, role,
   and schema path but no prompt content, and an MCP error result records its bounded raw cause
-  as `tool_result_error`. Warn- and error-level node diagnostics are also written to the server
-  log with execution, flow, and node ids.
+  as `tool_result_error`. A deterministic tool node whose call throws reports
+  `tool_execution_failed` with only the structural failure class (error name, HTTP status,
+  upper-case peer error code); its node result stays anonymized. Warn- and error-level node
+  diagnostics are also written to the server log with execution, flow, and node ids.
 - **Model pools per shortcut.** A model shortcut in `flows/model-shortcuts.yaml` can name a pool
   of members (engine/model pairs or other shortcuts) with a selection strategy — `fallback`,
   `round-robin`, `weighted-round-robin`, `random`, `weighted-random`, or `least-used`. The `llm`

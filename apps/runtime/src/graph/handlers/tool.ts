@@ -71,6 +71,34 @@ function mcpErrorMessage(_content: unknown): string {
   return MCP_ERROR_FALLBACK;
 }
 
+/**
+ * Structural, non-free-text classification of a thrown tool error for
+ * operator diagnostics: the error's `name`, an HTTP status and an upper-case
+ * peer error code (e.g. `TRANSACTION_IDENTITY_MISMATCH`) when the message has
+ * the `(HTTP <status>): <CODE>` shape. Nothing else from the message is kept.
+ */
+export function toolFailureClass(error: unknown): {
+  error_name?: string;
+  http_status?: number;
+  error_code?: string;
+} {
+  const record =
+    typeof error === "object" && error !== null
+      ? (error as { name?: unknown; message?: unknown })
+      : undefined;
+  const name =
+    typeof record?.name === "string" && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(record.name)
+      ? record.name
+      : undefined;
+  const message = typeof record?.message === "string" ? record.message : "";
+  const match = /\(HTTP (\d{3})\)(?::\s*([A-Z][A-Z0-9_]{2,63})\s*$)?/.exec(message);
+  return {
+    ...(name !== undefined ? { error_name: name } : {}),
+    ...(match?.[1] !== undefined ? { http_status: Number(match[1]) } : {}),
+    ...(match?.[2] !== undefined ? { error_code: match[2] } : {}),
+  };
+}
+
 export function createToolNodeHandler(
   node: FlowNode,
 ): (
@@ -445,12 +473,27 @@ export function createToolNodeHandler(
             if (pageTotal < 0) pageTotal = undefined;
           }
           pageOk = true;
-        } catch {
+        } catch (error) {
           const errMsg = "Tool execution failed.";
           errors.push({
             message: `Tool "${toolRef}" failed: ${errMsg}`,
             type: "tool_error",
             details: { node_id: node.id, tool: toolRef },
+          });
+          // The node result stays anonymized. Without any signal, however, a
+          // peer authorization denial (e.g. HTTP 403 TRANSACTION_IDENTITY_MISMATCH)
+          // is indistinguishable from a transport failure in the trace. Emit
+          // only the structural failure class — error name, HTTP status and an
+          // upper-case peer error code — never the free-text message, which
+          // may carry URLs or other transport detail.
+          const failure = toolFailureClass(error);
+          runtime.onNodeDiagnostic?.(node.id, {
+            level: "error",
+            code: "tool_execution_failed",
+            message:
+              "A tool call threw before returning a result. The node result is " +
+              "anonymized; this diagnostic carries the structural failure class.",
+            details: { tool: toolRef, tool_call_id: toolCallId, ...failure },
           });
           // Close the synthetic tool node as errored (the throw skipped
           // onToolResult, which would otherwise emit its terminal event).
