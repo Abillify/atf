@@ -147,6 +147,8 @@ describe("worker · state machine over the queue", () => {
     });
     await worker.tick();
     expect(store.peek(job.id)?.status).toBe("failed");
+    // The cause is kept on the job, so a status read can show it.
+    expect(store.peek(job.id)?.warnings).toContain("Job failed: permanent");
   });
 
   it("marks a job paused with the runner's reason", async () => {
@@ -174,6 +176,7 @@ describe("worker · state machine over the queue", () => {
     const worker = createJobWorker({ store, runner: throwing, config: workerConfig(), logger: testLogger });
     await worker.tick();
     expect(store.peek(job.id)?.status).toBe("failed");
+    expect(store.peek(job.id)?.warnings).toContain("Job failed: boom");
   });
 });
 

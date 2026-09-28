@@ -168,6 +168,15 @@ async function transition(
   return row;
 }
 
+/** Longest failure cause kept as a job warning; the full error stays in the log. */
+const FAILURE_WARNING_MAX = 500;
+
+/** The warning a failed job carries, so its status read says why. */
+function failureWarning(error: string): string {
+  const text = `Job failed: ${error}`;
+  return text.length > FAILURE_WARNING_MAX ? `${text.slice(0, FAILURE_WARNING_MAX - 1)}…` : text;
+}
+
 export function createJobWorker(deps: JobWorkerDeps): JobWorker {
   const { store, runner, config, logger } = deps;
   const workerId = deps.workerId ?? `extract-worker-${randomUUID()}`;
@@ -303,6 +312,9 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
           await pause(lease, current, outcome.reason, outcome.retryAt, true);
           break;
         case "failed":
+          // Record the cause on the job: the status read (and the console)
+          // otherwise only shows "failed", with the reason in a log line.
+          await store.appendJobWarning(job.id, failureWarning(outcome.error), lease.fence);
           await transition(store, lease, current.status, "failed");
           logger.warn({ jobId: job.id, error: outcome.error }, "Job failed");
           break;
@@ -321,6 +333,11 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
       try {
         const latest = (await store.getJob(job.id)) ?? job;
         if (!isTerminal(latest.status)) {
+          await store.appendJobWarning(
+            job.id,
+            failureWarning(err instanceof Error ? err.message : String(err)),
+            lease.fence,
+          );
           await store.setJobStatus(job.id, "failed", null, lease.fence);
         }
       } catch (markErr) {
