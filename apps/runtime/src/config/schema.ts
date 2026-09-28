@@ -33,6 +33,61 @@ import { ProviderInstancesSchema } from "./providers.js";
 // McpServerConfig
 // ---------------------------------------------------------------------------
 
+/**
+ * Actor credential for an on-behalf-of (delegation) token exchange. When present
+ * on a {@link TokenExchangeConfig}, the exchange additionally sends an
+ * `actor_token` so the IdP records aiperator as the acting party in the issued
+ * token's RFC 8693 `act` claim. Only the `client_credentials` grant is
+ * implemented; the discriminated shape leaves room for `private_key_jwt` later.
+ *
+ * `clientSecretEnv` is the NAME of the environment variable holding the secret,
+ * never the secret itself — a secret must not live in flow YAML or MCP_SERVERS.
+ * The loader resolves it to `clientSecret` at startup.
+ */
+export interface TokenExchangeActorConfig {
+  grant: "client_credentials";
+  /** Token endpoint issuing the actor token. Defaults to the exchange endpoint. */
+  tokenEndpoint?: string;
+  clientId: string;
+  /** Environment variable name holding the actor client secret. */
+  clientSecretEnv: string;
+  clientAuth?: "client_secret_post" | "client_secret_basic";
+  scope?: string;
+  audience?: string;
+  /** Resolved from `clientSecretEnv` by the loader. Never set in config files. */
+  clientSecret?: string;
+}
+
+/**
+ * OAuth 2.0 Token Exchange (RFC 8693) target for one MCP server. When set on a
+ * `forwardAuthToken` server, the wrapper exchanges the caller's verified bearer
+ * for a token minted for THIS server (bound to {@link audience}, optionally
+ * scope-reduced) instead of forwarding the raw login token. See
+ * `src/auth/token-exchange.ts` for the rationale.
+ */
+export interface TokenExchangeConfig {
+  /** Token endpoint of the exchanging provider. Required unless `issuer` is set for discovery. */
+  tokenEndpoint?: string;
+  /** OIDC issuer whose discovery document yields the token endpoint (alternative to `tokenEndpoint`). */
+  issuer?: string;
+  /** `client_id` of the confidential client performing the exchange. */
+  clientId: string;
+  /** Environment variable name holding the exchange client secret. Never the secret itself. */
+  clientSecretEnv: string;
+  clientAuth?: "client_secret_post" | "client_secret_basic";
+  /** Target provider's `client_id` — the RFC 8693 `audience`. */
+  audience: string;
+  /** Space-delimited scopes to request. Some IdPs (Authentik) mint no scope when omitted. */
+  scope?: string;
+  /** `requested_token_type`. Optional; defaults to access_token at the IdP. */
+  requestedTokenType?: string;
+  timeoutMs?: number;
+  /** Actor for a delegation (OBO) exchange. Absent → impersonation (`sub` = user, no `act`). */
+  actor?: TokenExchangeActorConfig;
+  /** Resolved from `clientSecretEnv` by the loader. Never set in config files. */
+  clientSecret?: string;
+}
+
 export interface McpServerConfig {
   name: string;
   url: string;
@@ -85,6 +140,17 @@ export interface McpServerConfig {
    * Opt-in; default false leaves the existing argument-injection behaviour.
    */
   forwardAuthToken?: boolean;
+  /**
+   * OAuth 2.0 Token Exchange (RFC 8693). When set, the wrapper exchanges the
+   * caller's verified bearer for a token minted for THIS server (bound to
+   * `tokenExchange.audience`) and forwards THAT as `Authorization: Bearer`,
+   * instead of the raw login token. Requires `forwardAuthToken: true` (the
+   * exchanged token, like a forwarded one, travels in the header, not as a tool
+   * argument). Adding an `actor` upgrades the exchange to on-behalf-of
+   * delegation with an RFC 8693 `act` claim. Opt-in; absent leaves plain
+   * passthrough forwarding.
+   */
+  tokenExchange?: TokenExchangeConfig;
 }
 
 // ---------------------------------------------------------------------------
@@ -539,6 +605,33 @@ export interface AppConfig {
 // Zod schemas
 // ---------------------------------------------------------------------------
 
+export const TokenExchangeActorConfigSchema = z.object({
+  grant: z.literal("client_credentials"),
+  tokenEndpoint: z.string().url().optional(),
+  clientId: z.string().min(1),
+  clientSecretEnv: z.string().min(1),
+  clientAuth: z.enum(["client_secret_post", "client_secret_basic"]).optional(),
+  scope: z.string().min(1).optional(),
+  audience: z.string().min(1).optional(),
+});
+
+export const TokenExchangeConfigSchema = z
+  .object({
+    tokenEndpoint: z.string().url().optional(),
+    issuer: z.string().url().optional(),
+    clientId: z.string().min(1),
+    clientSecretEnv: z.string().min(1),
+    clientAuth: z.enum(["client_secret_post", "client_secret_basic"]).optional(),
+    audience: z.string().min(1),
+    scope: z.string().min(1).optional(),
+    requestedTokenType: z.string().min(1).optional(),
+    timeoutMs: z.number().int().min(1_000).max(60_000).optional(),
+    actor: TokenExchangeActorConfigSchema.optional(),
+  })
+  .refine((cfg) => cfg.tokenEndpoint !== undefined || cfg.issuer !== undefined, {
+    message: "tokenExchange requires either tokenEndpoint or issuer",
+  });
+
 export const McpServerConfigSchema = z.object({
   name: z.string().min(1),
   url: z.string().min(1),
@@ -554,6 +647,7 @@ export const McpServerConfigSchema = z.object({
   headers: z.record(z.string(), z.string()).optional(),
   allowAnonymous: z.boolean().optional(),
   forwardAuthToken: z.boolean().optional(),
+  tokenExchange: TokenExchangeConfigSchema.optional(),
 });
 
 export const LlmParametersSchema = z

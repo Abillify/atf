@@ -12,10 +12,18 @@
  */
 
 // --- Types & schemas from schema.ts ---
-export type { AppConfig, McpServerConfig, EmbeddingConfig } from "./schema.js";
+export type {
+  AppConfig,
+  McpServerConfig,
+  EmbeddingConfig,
+  TokenExchangeConfig,
+  TokenExchangeActorConfig,
+} from "./schema.js";
 export {
   EnvSchema,
   McpServerConfigSchema,
+  TokenExchangeConfigSchema,
+  TokenExchangeActorConfigSchema,
   LlmConfigSchema,
   LlmParametersSchema,
   EmbeddingConfigSchema,

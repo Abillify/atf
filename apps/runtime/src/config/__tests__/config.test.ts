@@ -44,6 +44,8 @@ beforeEach(() => {
   delete process.env.BYOK_ENABLED;
   delete process.env.BYOK_MODE;
   delete process.env.EXECUTION_TIMEOUT_MS;
+  delete process.env.MCP_TX_SECRET;
+  delete process.env.MCP_TX_ACTOR_SECRET;
   // Keep configuration tests independent of the repository's flows/mcp.yaml.
   // The loader uses ./flows by default, which is intentionally populated in
   // production and would otherwise add real MCP servers to these env tests.
@@ -842,5 +844,94 @@ describe("Property 24: Config validation — invalid values always cause exit(1)
       }),
       { numRuns: 100 },
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token exchange (RFC 8693) loader wiring
+// ---------------------------------------------------------------------------
+
+describe("loadConfig() — token exchange", () => {
+  const server = (extra: Record<string, unknown>) =>
+    JSON.stringify([
+      {
+        name: "vectorsearch",
+        url: "http://localhost:9/mcp",
+        transport: "http",
+        ...extra,
+      },
+    ]);
+
+  const tokenExchange = {
+    tokenEndpoint: "https://idp.example/application/o/token/",
+    clientId: "atf-runtime",
+    clientSecretEnv: "MCP_TX_SECRET",
+    audience: "vectorsearch",
+  };
+
+  test("resolves clientSecretEnv to the concrete secret", () => {
+    const config = expectConfigSuccess({
+      MCP_TX_SECRET: "the-secret",
+      MCP_SERVERS: server({ forwardAuthToken: true, tokenExchange }),
+    });
+    const srv = config.mcpServers.find((s) => s.name === "vectorsearch");
+    expect(srv?.tokenExchange?.clientSecret).toBe("the-secret");
+  });
+
+  test("fails when tokenExchange is set without forwardAuthToken", () => {
+    const { stderrOutput } = expectConfigFailure({
+      MCP_TX_SECRET: "the-secret",
+      MCP_SERVERS: server({ tokenExchange }),
+    });
+    expect(stderrOutput.join("")).toContain("forwardAuthToken");
+  });
+
+  test("fails when the secret env var is unset", () => {
+    const { stderrOutput } = expectConfigFailure({
+      MCP_SERVERS: server({ forwardAuthToken: true, tokenExchange }),
+    });
+    expect(stderrOutput.join("")).toContain("MCP_TX_SECRET");
+  });
+
+  test("fails when tokenExchange is combined with allowAnonymous", () => {
+    process.env.AUTHN_MODE = "disabled";
+    const { stderrOutput } = expectConfigFailure({
+      MCP_TX_SECRET: "the-secret",
+      MCP_SERVERS: server({ forwardAuthToken: true, allowAnonymous: true, tokenExchange }),
+    });
+    // Either the anonymous/forwardAuth conflict or the anonymous/exchange
+    // conflict fires first; both are correct rejections.
+    expect(stderrOutput.length).toBeGreaterThan(0);
+  });
+
+  test("resolves the actor client secret for a delegation config", () => {
+    const config = expectConfigSuccess({
+      MCP_TX_SECRET: "the-secret",
+      MCP_TX_ACTOR_SECRET: "actor-secret",
+      MCP_SERVERS: server({
+        forwardAuthToken: true,
+        tokenExchange: {
+          ...tokenExchange,
+          actor: {
+            grant: "client_credentials",
+            clientId: "atf-actor",
+            clientSecretEnv: "MCP_TX_ACTOR_SECRET",
+          },
+        },
+      }),
+    });
+    const srv = config.mcpServers.find((s) => s.name === "vectorsearch");
+    expect(srv?.tokenExchange?.actor?.clientSecret).toBe("actor-secret");
+  });
+
+  test("rejects a tokenExchange with neither tokenEndpoint nor issuer", () => {
+    const { stderrOutput } = expectConfigFailure({
+      MCP_TX_SECRET: "the-secret",
+      MCP_SERVERS: server({
+        forwardAuthToken: true,
+        tokenExchange: { clientId: "c", clientSecretEnv: "MCP_TX_SECRET", audience: "a" },
+      }),
+    });
+    expect(stderrOutput.join("")).toContain("MCP_SERVERS");
   });
 });

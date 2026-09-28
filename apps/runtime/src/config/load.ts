@@ -138,6 +138,11 @@ export function loadConfig(): AppConfig {
     process.exit(1);
   }
 
+  // Token exchange (RFC 8693): validate wiring and resolve secrets from their
+  // env references. A misconfigured exchange must fail loudly at startup, never
+  // silently fall back to forwarding the un-exchanged (wrong-audience) token.
+  resolveTokenExchangeSecrets(mcpServers);
+
   return {
     ...(profile !== undefined ? { profile } : {}),
     port: env.PORT,
@@ -492,4 +497,65 @@ function mergeMcpServers(
   const envNames = new Set(envServers.map((s) => s.name));
   const filtered = fileServers.filter((s) => !envNames.has(s.name));
   return [...filtered, ...envServers];
+}
+
+// ---------------------------------------------------------------------------
+// Token exchange (RFC 8693)
+// ---------------------------------------------------------------------------
+
+/**
+ * Validates every `tokenExchange` block and resolves its `clientSecretEnv` (and
+ * any actor `clientSecretEnv`) to the concrete secret. Mutates the passed
+ * configs in place, so downstream consumers read a ready-to-use `clientSecret`
+ * without re-touching `process.env`.
+ *
+ * Fails closed via `process.exit(1)` on any wiring problem: a token exchange
+ * that is enabled but broken must not degrade to forwarding the caller's
+ * un-exchanged token (wrong audience) — that would reintroduce exactly the
+ * confused-deputy exposure the exchange exists to remove.
+ */
+function resolveTokenExchangeSecrets(servers: McpServerConfig[]): void {
+  const fail = (message: string): never => {
+    process.stderr.write(`[Config] ${message}\n`);
+    process.exit(1);
+  };
+
+  for (const server of servers) {
+    const exchange = server.tokenExchange;
+    if (exchange === undefined) continue;
+
+    // The exchanged token, like a forwarded one, is presented in the HTTP
+    // Authorization header — which is only wired for forwardAuthToken servers.
+    if (server.forwardAuthToken !== true) {
+      fail(
+        `MCP server ${server.name} configures tokenExchange but not forwardAuthToken=true; ` +
+          `the exchanged token is forwarded in the Authorization header, so both are required.`,
+      );
+    }
+    if (server.allowAnonymous === true) {
+      fail(
+        `MCP server ${server.name} cannot combine allowAnonymous=true with tokenExchange.`,
+      );
+    }
+
+    const secret = process.env[exchange.clientSecretEnv];
+    if (secret === undefined || secret.trim() === "") {
+      fail(
+        `MCP server ${server.name} tokenExchange.clientSecretEnv references ` +
+          `${exchange.clientSecretEnv}, which is unset or empty.`,
+      );
+    }
+    exchange.clientSecret = secret;
+
+    if (exchange.actor !== undefined) {
+      const actorSecret = process.env[exchange.actor.clientSecretEnv];
+      if (actorSecret === undefined || actorSecret.trim() === "") {
+        fail(
+          `MCP server ${server.name} tokenExchange.actor.clientSecretEnv references ` +
+            `${exchange.actor.clientSecretEnv}, which is unset or empty.`,
+        );
+      }
+      exchange.actor.clientSecret = actorSecret;
+    }
+  }
 }

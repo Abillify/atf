@@ -48,6 +48,12 @@ import { computeSchemaChecksum } from "./schema.js";
 import { withRetry, resolveInjectedParams, stripProtectedParams } from "./tool-proxy.js";
 import type { McpApprovalInputRequest, McpApprovalResolution, ToolResult } from "./tool-proxy.js";
 import { MCP_2026_PROTOCOL_VERSION, Stateless2026Client } from "./stateless-2026-client.js";
+import {
+  EXCHANGE_EXPIRY_MARGIN_MS,
+  TokenExchanger,
+  createTokenEndpointResolver,
+  type TokenExchangeConfig as ResolvedTokenExchangeConfig,
+} from "../../auth/token-exchange.js";
 import type {
   McpCacheMetadata,
   McpPromptDescriptor,
@@ -309,6 +315,18 @@ export function isSessionExpiredError(err: unknown): boolean {
 }
 
 /**
+ * Returns true when the server rejected the request's bearer (HTTP 401). For a
+ * token-exchange server this means the exchanged token was revoked or lapsed
+ * early (e.g. clock skew); the session is rebuilt with a freshly exchanged
+ * token. For other servers a 401 is not recoverable by reconnecting.
+ */
+export function isAuthRejectedError(err: unknown): boolean {
+  if (err instanceof StreamableHTTPError && err.code === 401) return true;
+  // The native 2026 client reports failures as "... failed (HTTP 401): ...".
+  return err instanceof Error && /\(HTTP 401\)/.test(err.message);
+}
+
+/**
  * Returns true when the error signals a transport-level connection failure —
  * i.e. the MCP server process restarted or its network endpoint became
  * temporarily unreachable.
@@ -349,6 +367,53 @@ export function isConnectionError(err: unknown): boolean {
 export type McpClientFactory = (info: { name: string; version: string }) => Client;
 
 const defaultClientFactory: McpClientFactory = (info) => new Client(info);
+
+/** Shared, process-wide token-endpoint discovery cache for all exchangers. */
+const sharedTokenEndpointResolver = createTokenEndpointResolver();
+
+/**
+ * Builds a {@link TokenExchanger} for a server config that declares
+ * `tokenExchange`, or returns undefined. The loader has already resolved
+ * `clientSecretEnv` → `clientSecret`, so the concrete secret is present here.
+ */
+const defaultTokenExchangerFactory = (
+  config: McpServerConfig,
+): TokenExchanger | undefined => {
+  const tx = config.tokenExchange;
+  if (tx === undefined) return undefined;
+  if (tx.clientSecret === undefined || tx.clientSecret === "") {
+    throw new Error(
+      `MCP server ${config.name} tokenExchange.clientSecret was not resolved before wrapper construction`,
+    );
+  }
+  const resolved: ResolvedTokenExchangeConfig = {
+    ...(tx.tokenEndpoint !== undefined ? { tokenEndpoint: tx.tokenEndpoint } : {}),
+    ...(tx.issuer !== undefined ? { issuer: tx.issuer } : {}),
+    clientId: tx.clientId,
+    clientSecret: tx.clientSecret,
+    ...(tx.clientAuth !== undefined ? { clientAuth: tx.clientAuth } : {}),
+    audience: tx.audience,
+    ...(tx.scope !== undefined ? { scope: tx.scope } : {}),
+    ...(tx.requestedTokenType !== undefined ? { requestedTokenType: tx.requestedTokenType } : {}),
+    ...(tx.timeoutMs !== undefined ? { timeoutMs: tx.timeoutMs } : {}),
+    ...(tx.actor !== undefined
+      ? {
+          actor: {
+            grant: tx.actor.grant,
+            ...(tx.actor.tokenEndpoint !== undefined
+              ? { tokenEndpoint: tx.actor.tokenEndpoint }
+              : {}),
+            clientId: tx.actor.clientId,
+            clientSecret: tx.actor.clientSecret ?? "",
+            ...(tx.actor.clientAuth !== undefined ? { clientAuth: tx.actor.clientAuth } : {}),
+            ...(tx.actor.scope !== undefined ? { scope: tx.actor.scope } : {}),
+            ...(tx.actor.audience !== undefined ? { audience: tx.actor.audience } : {}),
+          },
+        }
+      : {}),
+  };
+  return new TokenExchanger(resolved, { endpointResolver: sharedTokenEndpointResolver });
+};
 
 const DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS = 300_000;
 const MAX_PREPARED_EVIDENCE_CALL_TTL_MS = 2_147_483_647;
@@ -562,6 +627,26 @@ export class McpWrapper implements McpWrapperService {
   /** Builds the underlying MCP SDK client (injectable for tests). */
   private readonly clientFactory: McpClientFactory;
 
+  /**
+   * Per-server RFC 8693 exchangers, keyed by server name. Present only for
+   * servers configured with `tokenExchange`. When present, the bearer forwarded
+   * to that server is the exchanged (right-audience) token; the per-caller pool,
+   * reconnect and schema-cache keys stay bound to the caller's SUBJECT token.
+   * A session's bearer is fixed, so a session whose exchanged token lapsed (see
+   * {@link bearerExpiries}) or was rejected with 401 is rebuilt in place.
+   */
+  private readonly tokenExchangers = new Map<string, TokenExchanger>();
+
+  /** Builds a {@link TokenExchanger} for a server config (injectable for tests). */
+  private readonly tokenExchangerFactory: (config: McpServerConfig) => TokenExchanger | undefined;
+
+  /**
+   * Expiry (epoch ms) of the exchanged bearer each token-exchange session was
+   * created with. A session's bearer never changes, so a session past this
+   * point (minus the refresh margin) is rebuilt with a freshly exchanged token.
+   */
+  private readonly bearerExpiries = new WeakMap<Client, number>();
+
   constructor(
     options: {
       schemaTtlMs?: number;
@@ -575,6 +660,7 @@ export class McpWrapper implements McpWrapperService {
       maxPreparedEvidenceCallsPerCaller?: number;
       maxTokenClientsPerServer?: number;
       clientFactory?: McpClientFactory;
+      tokenExchangerFactory?: (config: McpServerConfig) => TokenExchanger | undefined;
     } = {},
   ) {
     this.schemaCache = new SchemaCache(options.schemaTtlMs ?? 60_000);
@@ -621,6 +707,7 @@ export class McpWrapper implements McpWrapperService {
       throw new Error("maxTokenClientsPerServer must be a positive safe integer");
     }
     this.clientFactory = options.clientFactory ?? defaultClientFactory;
+    this.tokenExchangerFactory = options.tokenExchangerFactory ?? defaultTokenExchangerFactory;
   }
 
   // -------------------------------------------------------------------------
@@ -635,6 +722,12 @@ export class McpWrapper implements McpWrapperService {
    * Requirements: 7.1
    */
   async connect(config: McpServerConfig): Promise<void> {
+    // Build (or drop) the per-server token exchanger before anything else, so a
+    // reconnect that changed the auth config takes effect immediately.
+    const exchanger = this.tokenExchangerFactory(config);
+    if (exchanger !== undefined) this.tokenExchangers.set(config.name, exchanger);
+    else this.tokenExchangers.delete(config.name);
+
     if (config.allowAnonymous === true && config.forwardAuthToken === true) {
       throw new Error(
         `MCP server ${config.name} cannot combine allowAnonymous=true with forwardAuthToken=true`,
@@ -712,12 +805,97 @@ export class McpWrapper implements McpWrapperService {
   }
 
   /**
+   * Resolves the bearer actually forwarded to a server from the caller's
+   * subject token. For a token-exchange server this performs the RFC 8693
+   * exchange (cached); for every other server the subject token is returned
+   * unchanged. A failed exchange throws — fail-closed — so a session is never
+   * created with the wrong-audience subject token as a silent fallback.
+   */
+  private async _resolveBearer(
+    serverName: string,
+    subjectToken: string | undefined,
+  ): Promise<{ bearer: string | undefined; expiresAt?: number }> {
+    const exchanger = this.tokenExchangers.get(serverName);
+    if (exchanger === undefined || subjectToken === undefined || subjectToken === "") {
+      return { bearer: subjectToken };
+    }
+    const result = await exchanger.exchange(subjectToken);
+    if (!result.ok) {
+      throw new Error(
+        `Token exchange for MCP server ${serverName} failed: ${result.detail}`,
+      );
+    }
+    return { bearer: result.token.token, expiresAt: result.token.expiresAt };
+  }
+
+  /**
+   * Decides whether a failed request warrants rebuilding its session: session
+   * expiry and connection loss always do; a 401 does only on a token-exchange
+   * server with a caller token, where the cached exchanged token for that
+   * caller is dropped first so the rebuilt session carries a fresh one.
+   */
+  private _shouldRecover(serverName: string, err: unknown, subjectToken?: string): boolean {
+    if (isSessionExpiredError(err) || isConnectionError(err)) return true;
+    const exchanger = this.tokenExchangers.get(serverName);
+    if (
+      exchanger !== undefined &&
+      subjectToken !== undefined &&
+      subjectToken !== "" &&
+      isAuthRejectedError(err)
+    ) {
+      exchanger.invalidate(subjectToken);
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Best-effort session rebuild after a token-exchange server rejected the
+   * exchanged bearer with 401. Recovery errors are swallowed so the caller
+   * sees the original failure; a later call retries the rebuild on its own.
+   */
+  private async _recoverAfterAuthRejection(
+    serverName: string,
+    client: Client | undefined,
+    subjectToken: string | undefined,
+    error: unknown,
+  ): Promise<void> {
+    const exchanger = this.tokenExchangers.get(serverName);
+    if (
+      exchanger === undefined ||
+      client === undefined ||
+      subjectToken === undefined ||
+      subjectToken === "" ||
+      !isAuthRejectedError(error)
+    ) {
+      return;
+    }
+    exchanger.invalidate(subjectToken);
+    try {
+      await this._recoverClient(serverName, client, subjectToken);
+    } catch {
+      // Intentionally ignored: the original 401 is the relevant failure.
+    }
+  }
+
+  /**
+   * True when `client` was created with an exchanged bearer that is expired or
+   * inside the refresh margin. The bearer is fixed for the lifetime of a
+   * session, so such a session must be rebuilt (re-exchanging) before use.
+   */
+  private _hasStaleBearer(client: Client): boolean {
+    const expiresAt = this.bearerExpiries.get(client);
+    return expiresAt !== undefined && expiresAt - EXCHANGE_EXPIRY_MARGIN_MS <= Date.now();
+  }
+
+  /**
    * Builds and connects a fresh MCP {@link Client} for the given config.
    *
    * When `authToken` is provided (forwardAuthToken servers, per-caller
    * session), it is sent as `Authorization: Bearer <authToken>`, overriding any
    * static `Authorization` from `config.headers`. Without it, the connection
-   * uses the static `config.headers` as-is.
+   * uses the static `config.headers` as-is. For a token-exchange server the
+   * subject token is first exchanged (see {@link _resolveBearer}).
    */
   private async _createClient(config: McpServerConfig, authToken?: string): Promise<Client> {
     const configuredProfile = config.profile ?? config.protocolVersion ?? "2025";
@@ -728,13 +906,27 @@ export class McpWrapper implements McpWrapperService {
     ) {
       throw new Error(`Conflicting MCP profiles for ${config.name}`);
     }
+    // Resolve the actual bearer once, here — the single chokepoint every session
+    // creation (connect, per-caller cold start, recovery) passes through. For a
+    // token-exchange server the subject token is swapped for a token minted for
+    // THIS server's audience; for every other server it is forwarded unchanged.
+    const { bearer, expiresAt: bearerExpiresAt } = await this._resolveBearer(
+      config.name,
+      authToken,
+    );
+    // Remember when an exchanged bearer lapses, so the session carrying it is
+    // rebuilt before use instead of failing every call with 401.
+    const trackBearer = (created: Client): Client => {
+      if (bearerExpiresAt !== undefined) this.bearerExpiries.set(created, bearerExpiresAt);
+      return created;
+    };
     if (configuredProfile === MCP_2026_PROTOCOL_VERSION) {
       if (config.transport !== "http") {
         throw new Error("MCP 2026-07-28 is supported only with the http transport");
       }
-      const native = new Stateless2026Client(config, authToken);
+      const native = new Stateless2026Client(config, bearer);
       await native.connect();
-      return native as unknown as Client;
+      return trackBearer(native as unknown as Client);
     }
 
     const client = this.clientFactory({ name: "aiperator", version: "1.0.0" });
@@ -745,8 +937,8 @@ export class McpWrapper implements McpWrapperService {
     // per-caller bearer overriding a static Authorization when present.
     const httpHeaders = (): Record<string, string> => {
       const headers: Record<string, string> = { ...(config.headers ?? {}) };
-      if (authToken !== undefined) {
-        headers.Authorization = `Bearer ${authToken}`;
+      if (bearer !== undefined) {
+        headers.Authorization = `Bearer ${bearer}`;
       }
       return headers;
     };
@@ -794,7 +986,7 @@ export class McpWrapper implements McpWrapperService {
 
     try {
       await client.connect(transport);
-      return client;
+      return trackBearer(client);
     } catch (error) {
       try {
         await client.close();
@@ -853,7 +1045,7 @@ export class McpWrapper implements McpWrapperService {
       const tools = await listAllTools(session.client);
       return tools.map((tool) => tool.name);
     } catch (err) {
-      if (isSessionExpiredError(err) || isConnectionError(err)) {
+      if (this._shouldRecover(serverName, err, session.authToken)) {
         await this._recoverClient(serverName, session.client, session.authToken);
       } else {
         throw err;
@@ -1216,7 +1408,7 @@ export class McpWrapper implements McpWrapperService {
     try {
       return await fetch();
     } catch (err) {
-      if (isSessionExpiredError(err) || isConnectionError(err)) {
+      if (this._shouldRecover(serverName, err, opts?.authToken)) {
         const session = await this._getDiscoverySession(serverName, opts?.authToken);
         try {
           await this._recoverClient(serverName, session.client, session.authToken);
@@ -1585,6 +1777,9 @@ export class McpWrapper implements McpWrapperService {
       arguments: enhancedArgs,
       _meta: transactionMeta,
     };
+    // withRetry wraps the final failure in a plain Error; keep the raw one so a
+    // rejected exchanged bearer can still be recognised after the last attempt.
+    let lastAttemptError: unknown;
     const result = await withRetry(
       async (attemptSignal) => {
         attemptCount += 1;
@@ -1594,6 +1789,9 @@ export class McpWrapper implements McpWrapperService {
           return await lease.client.callTool(callInput, CallToolResultSchema, {
             signal: attemptSignal,
           });
+        } catch (error) {
+          lastAttemptError = error;
+          throw error;
         } finally {
           lease.release();
         }
@@ -1605,7 +1803,10 @@ export class McpWrapper implements McpWrapperService {
         onAttemptFailure: async (error, attempt, signal) => {
           attemptFailures.push({ attempt, message: error.message });
           const timedOut = /^Attempt \d+ timed out after \d+ms$/u.test(error.message);
-          if (!timedOut && !isSessionExpiredError(error) && !isConnectionError(error)) {
+          if (
+            !timedOut &&
+            !this._shouldRecover(serverName, error, forwardAuth ? ctx.ssoToken : undefined)
+          ) {
             return;
           }
           // A timed-out request can leave the SDK transport half-closed even
@@ -1622,7 +1823,20 @@ export class McpWrapper implements McpWrapperService {
         },
         ...(opts?.signal !== undefined ? { signal: opts.signal } : {}),
       },
-    );
+    ).catch(async (error: unknown) => {
+      // Retries (and their recovery hook) do not run for the final or only
+      // attempt — non-idempotent tools get exactly one. If that attempt's
+      // exchanged bearer was rejected, rebuild the session anyway so the
+      // caller's next call carries a fresh token. The call itself still fails:
+      // it is never replayed with a different credential.
+      await this._recoverAfterAuthRejection(
+        serverName,
+        attemptClient,
+        forwardAuth ? ctx.ssoToken : undefined,
+        lastAttemptError,
+      );
+      throw error;
+    });
     const approvalRequests = parseApprovalInputRequests(
       "inputRequests" in result ? result.inputRequests : undefined,
     );
@@ -1923,7 +2137,18 @@ export class McpWrapper implements McpWrapperService {
       this.tokenClients.set(serverName, perServer);
     }
     const existing = perServer.get(tokenKey);
-    if (existing !== undefined) {
+    if (existing !== undefined && this._hasStaleBearer(existing.client)) {
+      // The session's exchanged bearer has lapsed while the caller's subject
+      // token is still valid: rebuild the session (the exchange cache misses
+      // for a lapsed token, so this mints a fresh one). One attempt only — an
+      // IdP issuing lifetimes below the margin must not cause a rebuild loop.
+      await this._recoverClient(serverName, existing.client, token);
+      const rebuilt = this.tokenClients.get(serverName)?.get(tokenKey);
+      if (rebuilt !== undefined) {
+        rebuilt.lastUsed = Date.now();
+        return rebuilt.client;
+      }
+    } else if (existing !== undefined) {
       existing.lastUsed = Date.now();
       return existing.client;
     }
@@ -2032,6 +2257,7 @@ export function createMcpWrapper(options?: {
   maxPreparedEvidenceCallsPerCaller?: number;
   maxTokenClientsPerServer?: number;
   clientFactory?: McpClientFactory;
+  tokenExchangerFactory?: (config: McpServerConfig) => TokenExchanger | undefined;
 }): McpWrapperService {
   return new McpWrapper(options);
 }

@@ -79,6 +79,12 @@ export async function buildMcp(
         ) {
           logger.info("Registered caller-authenticated MCP server", {
             server: serverConfig.name,
+            auth:
+              serverConfig.tokenExchange !== undefined
+                ? serverConfig.tokenExchange.actor !== undefined
+                  ? "token-exchange-delegation"
+                  : "token-exchange"
+                : "passthrough",
           });
         } else {
           logger.info("Connected to MCP server", { server: serverConfig.name });

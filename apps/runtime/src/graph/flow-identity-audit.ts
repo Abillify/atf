@@ -56,6 +56,17 @@ export const IDENTITY_SENSITIVE_CLASSES: readonly DataClass[] = [
 export type IdentityConveyance =
   /** Caller's verified bearer is forwarded — the server can verify it itself. */
   | "forwarded-token"
+  /**
+   * The caller's token is exchanged (RFC 8693) for one minted for this server's
+   * audience. The subject stays the user, so per-user ACLs still apply, and the
+   * token is useless anywhere else — strictly stronger than a raw forward.
+   */
+  | "exchanged-token"
+  /**
+   * An on-behalf-of (delegation) exchange: as `exchanged-token`, but the token
+   * also carries an RFC 8693 `act` claim naming aiperator as the acting party.
+   */
+  | "delegated-token"
   /** Identity travels as a tool argument aiperator fills in; asserted, not proven. */
   | "asserted-param"
   /** Nothing identifies the caller. */
@@ -88,8 +99,11 @@ function containsIdentityPlaceholder(value: unknown, depth = 0): boolean {
 
 /** Classify how a server learns the caller's identity. */
 export function classifyIdentityConveyance(
-  server: Pick<McpServerConfig, "forwardAuthToken" | "injectedParams">,
+  server: Pick<McpServerConfig, "forwardAuthToken" | "injectedParams" | "tokenExchange">,
 ): IdentityConveyance {
+  if (server.tokenExchange !== undefined) {
+    return server.tokenExchange.actor !== undefined ? "delegated-token" : "exchanged-token";
+  }
   if (server.forwardAuthToken === true) return "forwarded-token";
   if (
     server.injectedParams !== undefined &&
