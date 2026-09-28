@@ -1,7 +1,7 @@
 # @atf/extract
 
 Document-to-Markdown extraction against the [`atf-extract`](../../packages/extract-contract)
-contract. Converts PDF, DOC, DOCX, XLS, XLSX, PPTX, VSDX, BPMN, PNG, JPEG, GIF, TIFF, BMP and
+contract. Converts PDF, DOC, DOCX, HTML, XLS, XLSX, PPTX, VSDX, BPMN, PNG, JPEG, GIF, TIFF, BMP and
 WebP into Markdown (v1) or a v2 NDJSON record stream that `@atf/search` can index with page
 numbers, figure entries and per-page summaries intact.
 
@@ -23,6 +23,7 @@ GET  /openapi.json
 | --- | --- |
 | PDF | used directly |
 | DOC, DOCX | LibreOffice → PDF. On the v2 job path the DOCX styles additionally give authoritative heading levels for the outline |
+| HTML (`.html`, `.htm`, XHTML) | LibreOffice Writer → PDF, after every reference LibreOffice could follow is stripped: script, frame, object, embed, link and base elements, `<meta http-equiv>`, URL-bearing attributes (except `<a href>` and inline `data:` images) and CSS `url(…)`/`@import`. External images therefore do not appear. This closes request forgery and local file reads through the layout step (`src/pipeline/office.ts`) |
 | XLS, XLSX | LibreOffice → PDF. On the v2 job path an XLSX is read natively into one `table` block per worksheet and only rendered when it embeds a chart or image |
 | PPTX | LibreOffice → PDF |
 | VSDX | LibreOffice → PDF for the page image; on the v2 job path the shape text and connector graph are also read natively from the package |
@@ -36,7 +37,7 @@ Types are sniffed from magic bytes, extension and declared `Content-Type` togeth
 ## How a page is converted
 
 Every rendered format funnels through one PDF page loop. A PDF is used directly;
-the Office formats (DOC, DOCX, XLS, XLSX, PPTX, VSDX) become a PDF via LibreOffice
+the Office formats (DOC, DOCX, XLS, XLSX, PPTX, VSDX) and HTML become a PDF via LibreOffice
 first; a single image becomes a one-page document. That is why page numbers, page images and text offsets agree across
 formats — and why a Word document has page numbers at all, which a direct OOXML
 parser cannot provide because it never lays the document out.

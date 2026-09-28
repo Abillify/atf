@@ -33,7 +33,11 @@
 export type SourceKind =
   /** Native PDF: text layer via poppler, pages rasterised by pdftoppm. */
   | "pdf"
-  /** Word processing: converted to PDF by LibreOffice, then the PDF path. */
+  /**
+   * Word processing: converted to PDF by LibreOffice, then the PDF path. HTML
+   * belongs here too — LibreOffice Writer lays it out — after its external
+   * references are stripped (pipeline/office.ts).
+   */
   | "word"
   /** Spreadsheet: converted to PDF by LibreOffice, then the PDF path. */
   | "spreadsheet"
@@ -76,6 +80,13 @@ export const SUPPORTED_FORMATS: readonly SupportedFormat[] = [
     kind: "word",
     family: "zip",
     label: "Word (DOCX)",
+  },
+  {
+    mimeType: "text/html",
+    extensions: [".html", ".htm"],
+    kind: "word",
+    family: "html",
+    label: "HTML",
   },
   {
     mimeType: "application/msword",
@@ -174,6 +185,7 @@ export type SniffedFamily =
   | "zip"
   | "ole"
   | "xml"
+  | "html"
   | "email"
   | "png"
   | "jpeg"
@@ -204,6 +216,8 @@ export function sniffFamily(buffer: Uint8Array): SniffedFamily {
     buffer[10] === 0x42 &&
     buffer[11] === 0x50
   ) return "webp";
+  // Before the XML check: `<html` would otherwise pass as an XML root element.
+  if (looksLikeHtml(buffer)) return "html";
   if (looksLikeXml(buffer)) return "xml"; // BPMN 2.0 and other plain-XML dialects
   if (looksLikeEmail(buffer)) return "email";
   return "unknown";
@@ -248,6 +262,33 @@ function looksLikeEmail(buffer: Uint8Array): boolean {
     if (fields > 400) break;
   }
   return known >= 2 && core;
+}
+
+/**
+ * Recognise an HTML page: after a BOM, whitespace and comments the document
+ * opens with `<!DOCTYPE html` or `<html`, or it is XHTML (`<?xml …?>` followed
+ * by an `<html` root). Only the first 4 KiB are read. Checked after every
+ * binary signature, so no container format reaches it.
+ */
+function looksLikeHtml(buffer: Uint8Array): boolean {
+  let head = Buffer.from(buffer.buffer, buffer.byteOffset, Math.min(buffer.byteLength, 4096))
+    .toString("latin1")
+    .replace(/^\xEF\xBB\xBF/, "")
+    .toLowerCase();
+  // Leading whitespace and comments.
+  for (;;) {
+    const trimmed = head.replace(/^\s+/, "");
+    if (!trimmed.startsWith("<!--")) {
+      head = trimmed;
+      break;
+    }
+    const end = trimmed.indexOf("-->");
+    if (end < 0) return false;
+    head = trimmed.slice(end + 3);
+  }
+  if (head.startsWith("<!doctype html") || /^<html[\s>]/.test(head)) return true;
+  // XHTML: an XML declaration, then (possibly after a doctype) the html root.
+  return head.startsWith("<?xml") && /<html[\s>]/.test(head) && !/<(bpmn|definitions)[\s:>]/.test(head);
 }
 
 /**

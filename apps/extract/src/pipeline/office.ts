@@ -67,7 +67,8 @@ export async function convertToPdf(
   // The filename is generated, never taken from the upload: it reaches a process
   // boundary and ends up in an output path.
   const inputPath = join(inputDir, `source${source.extension}`);
-  await writeFile(inputPath, source.buffer);
+  const isHtml = source.extension === ".html" || source.extension === ".htm";
+  await writeFile(inputPath, isHtml ? neutralizeHtmlReferences(source.buffer) : source.buffer);
 
   await run(
     binary,
@@ -101,6 +102,73 @@ export async function convertToPdf(
     );
   }
   return join(outputDir, first);
+}
+
+/** Attributes whose value LibreOffice may resolve as a resource to load. */
+const URL_ATTRIBUTES = new Set([
+  "src", "srcset", "href", "background", "poster", "data", "action", "formaction",
+  "xlink:href", "lowsrc", "dynsrc", "longdesc", "codebase", "archive", "profile",
+  "manifest", "usemap", "cite", "ping",
+]);
+
+/** Elements that only exist to embed or load something else; dropped whole. */
+const EMBEDDING_ELEMENTS = /^(script|iframe|frame|frameset|object|embed|applet|link|base|portal|noscript)$/;
+
+/**
+ * Remove every reference in an HTML page that LibreOffice could follow while
+ * laying it out.
+ *
+ * LibreOffice's HTML import loads linked images, frames and stylesheets —
+ * `http(s)://` as well as `file://`. On a server that is a request forgery
+ * (the page decides which internal URL Extract calls) and a local file read
+ * (a `file:///etc/…` image or frame lands in the PDF). So before the page
+ * reaches LibreOffice:
+ *
+ *  - script/frame/object/embed/link/base elements are dropped, and so is a
+ *    `<meta http-equiv>` (a refresh is a redirect);
+ *  - every URL-bearing attribute is removed, except a link target on `<a>`
+ *    (never fetched, kept as the document's link) and a `data:` image;
+ *  - CSS `url(…)` and `@import` are neutralised, in `<style>` and `style=`.
+ *
+ * External images therefore do not appear; inline `data:` images do. The
+ * rewrite is byte-preserving outside the touched markup (latin1 round trip),
+ * so a page in any charset keeps its text.
+ */
+export function neutralizeHtmlReferences(source: Uint8Array): Uint8Array {
+  const html = Buffer.from(source.buffer, source.byteOffset, source.byteLength).toString("latin1");
+  const cssSafe = (css: string): string =>
+    css
+      .replace(/@import[^;]*;?/gi, "")
+      .replace(/url\(\s*(['"]?)(?!data:)[^)]*\)/gi, "none");
+
+  let out = html
+    // Whole embedding elements, with their content.
+    .replace(/<(script|iframe|object|applet|noscript|frameset)\b[\s\S]*?<\/\1\s*>/gi, "")
+    // Style blocks keep their rules, minus anything that loads.
+    .replace(/(<style\b[^>]*>)([\s\S]*?)(<\/style\s*>)/gi, (_m, open: string, css: string, close: string) =>
+      open + cssSafe(css) + close,
+    );
+
+  out = out.replace(/<([a-zA-Z][\w:-]*)(\s[^>]*)?>/g, (tag: string, name: string, attrs: string | undefined) => {
+    const lower = name.toLowerCase();
+    if (EMBEDDING_ELEMENTS.test(lower)) return "";
+    if (lower === "meta" && /http-equiv/i.test(attrs ?? "")) return "";
+    if (attrs === undefined) return tag;
+    const cleaned = attrs.replace(
+      /\s([\w:-]+)(\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?/g,
+      (attr: string, attrName: string, _eq: string | undefined, rawValue: string | undefined) => {
+        const key = attrName.toLowerCase();
+        const value = (rawValue ?? "").replace(/^["']|["']$/g, "").trim();
+        if (key === "style") return ` style="${cssSafe(value).replace(/"/g, "&quot;")}"`;
+        if (!URL_ATTRIBUTES.has(key)) return attr;
+        if (lower === "a" && key === "href") return attr;
+        if ((key === "src" || key === "srcset") && /^data:image\//i.test(value)) return attr;
+        return "";
+      },
+    );
+    return `<${name}${cleaned}>`;
+  });
+  return Buffer.from(out, "latin1");
 }
 
 /** The source kinds LibreOffice lays out to PDF before the normal PDF path. */

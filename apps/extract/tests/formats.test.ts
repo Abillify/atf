@@ -12,6 +12,7 @@ import {
 } from "../src/formats.js";
 import {
 	isLibreOfficeKind,
+	neutralizeHtmlReferences,
 	officeExtensionFor,
 } from "../src/pipeline/office.js";
 
@@ -77,6 +78,7 @@ describe("supported set", () => {
 		expect(supportedMimeTypes()).toEqual([
 			"application/pdf",
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+			"text/html",
 			"application/msword",
 			"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 			"application/vnd.ms-excel",
@@ -453,5 +455,52 @@ describe("BPMN and OOXML container detection (task 2.8)", () => {
 	it("still refuses a bare ZIP with no hint (precedence preserved)", () => {
 		const result = resolveFormat({ buffer: ZIP, filename: "archive.zip" });
 		expect(result.ok).toBe(false);
+	});
+});
+
+describe("HTML sources", () => {
+	const html = (text: string) => Buffer.from(text, "utf8");
+
+	it("sniffs an HTML page, before the XML check", () => {
+		expect(sniffFamily(html("<!DOCTYPE html><html><body>x</body></html>"))).toBe("html");
+		expect(sniffFamily(html("\uFEFF  <!-- generated -->\n<HTML lang=de><p>x"))).toBe("html");
+		expect(sniffFamily(html('<?xml version="1.0"?>\n<html xmlns="http://www.w3.org/1999/xhtml">'))).toBe("html");
+		// BPMN stays XML.
+		expect(sniffFamily(html('<?xml version="1.0"?><bpmn:definitions xmlns:bpmn="x"/>'))).toBe("xml");
+	});
+
+	it("resolves HTML from its content alone, whatever the name says", () => {
+		const page = html("<!doctype html><title>t</title><p>Hallo</p>");
+		const byContent = resolveFormat({ buffer: page });
+		expect(byContent.ok && byContent.format.mimeType).toBe("text/html");
+		// A render call without a real name falls back to "<sha>.pdf"; the bytes still win.
+		const misnamed = resolveFormat({ buffer: page, filename: "abc.pdf" });
+		expect(misnamed.ok && misnamed.format.mimeType).toBe("text/html");
+		const htmlFormat = formatByMimeType("text/html");
+		if (htmlFormat === undefined) throw new Error("text/html is not a supported format");
+		expect(officeExtensionFor(htmlFormat)).toBe(".html");
+	});
+
+	it("strips every reference LibreOffice could load, keeping text, links and data: images", () => {
+		const page = [
+			'<html><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=http://169.254.169.254/">',
+			'<base href="http://intern/"><link rel="stylesheet" href="http://intern/a.css">',
+			"<style>@import url(http://intern/b.css); body { background: url('file:///etc/passwd') } p { color: red }</style>",
+			'<script>fetch("http://intern")</script></head><body>',
+			'<p style="background-image:url(http://intern/c.png)">Grüße</p>',
+			'<img src="file:///etc/passwd"><img srcset="http://intern/d.png 2x"><img src="data:image/png;base64,iVBOR">',
+			'<iframe src="http://intern/"></iframe><object data="http://intern/o"></object>',
+			'<a href="https://example.com/doc">Link</a><table background="http://intern/t.png"><tr><td>Zelle</td></tr></table>',
+			"</body></html>",
+		].join("");
+		const out = Buffer.from(neutralizeHtmlReferences(Buffer.from(page, "utf8"))).toString("utf8");
+		expect(out).not.toMatch(/intern|169\.254|file:\/\//);
+		expect(out).not.toMatch(/<script|<iframe|<object|<link|<base|http-equiv/i);
+		expect(out).toContain('<meta charset="utf-8">');
+		expect(out).toContain("Grüße");
+		expect(out).toContain("Zelle");
+		expect(out).toContain('<a href="https://example.com/doc">Link</a>');
+		expect(out).toContain('src="data:image/png;base64,iVBOR"');
+		expect(out).toContain("color: red");
 	});
 });
