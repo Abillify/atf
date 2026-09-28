@@ -167,6 +167,8 @@ export function readAttributeHeaders(req: Request): Record<string, unknown> {
   };
 }
 
+const COLLECTION_NAME = /^[a-zA-Z][a-zA-Z0-9_]*$/;
+
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:\d{2})$/i;
 
 export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler {
@@ -195,6 +197,13 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
 
       const titleRaw = readHeader(req, "x-title")?.trim();
       const collection = readHeader(req, "x-collection")?.trim() || defaultCollection;
+      // Search's naming rule. Checked here so a bad name is a 400 now, not a
+      // job that fails at emit after every page went through the model.
+      if (!COLLECTION_NAME.test(collection)) {
+        throw validationError(
+          "X-Collection must start with a letter and contain only letters, digits and underscores",
+        );
+      }
       const acl = resolveRequestAcl(req);
       const identityInputs = readIdentityHeaders(req);
       const attributes = readAttributeHeaders(req);

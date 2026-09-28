@@ -175,6 +175,18 @@ describe("POST /v1/ingest · v2 wrapper", () => {
     expect(res.body.assets_failed).toBe(1);
   });
 
+  it("refuses a collection name Search would reject, before creating a job", async () => {
+    const app = buildApp(fakeWorker({ pageCount: 1 }));
+    const res = await request(app)
+      .post("/v1/ingest")
+      .set("Content-Type", "application/pdf")
+      .set("X-Reference", "a.pdf")
+      .set("X-Collection", "atf-ui-smoketest")
+      .send(PDF);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/X-Collection/);
+  });
+
   it("requires X-Reference", async () => {
     const app = buildApp(fakeWorker());
     const res = await request(app)
