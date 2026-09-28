@@ -136,7 +136,7 @@ const TOOL_ARGS_FIELD: ConfigField = {
   label: "Forced tool arguments",
   description:
     "Per tool ref, arguments fixed server-side: `{ \"server/tool\": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store.",
-  example: { "vectorsearch/search": { collection: "kanzlei", tags: ["{{classification.clientTags}}"] } },
+  example: { "vectorsearch/search": { collection: "cases", tags: ["{{classification.clientTags}}"] } },
 };
 
 const STREAM_TOOL_DETAILS_FIELD: ConfigField = {
@@ -462,8 +462,8 @@ const LLM: NodeTypeDoc = {
     requireToolUse: true
     suppressToolPreamble: true
     toolArgs:
-      vectorsearch/search: { collection: kanzlei }
-      vectorsearch/get_documents: { collection: kanzlei }`,
+      vectorsearch/search: { collection: cases }
+      vectorsearch/get_documents: { collection: cases }`,
     },
   ],
   notes: [

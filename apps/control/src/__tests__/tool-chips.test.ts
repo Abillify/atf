@@ -51,7 +51,7 @@ describe("toolChipsFor", () => {
   });
 
   test("marks the arguments pinned in config.toolArgs", () => {
-    const chips = toolChipsFor(["vs/search", "vs/get"], [], { "vs/search": { collection: "kanzlei", limit: 5 } });
+    const chips = toolChipsFor(["vs/search", "vs/get"], [], { "vs/search": { collection: "cases", limit: 5 } });
     expect(chips.map((c) => c.staticArgs)).toEqual([["collection", "limit"], []]);
   });
 });

@@ -207,7 +207,7 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `maxToolSteps` | integer ≥ 1 | runtime MAX_TOOL_STEPS | Upper bound on model↔tool round trips in one turn. Raise it for agentic nodes that read many documents; invalid values fall back to the global setting. |
-| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"kanzlei","tags":["{{classification.clientTags}}"]}}`. |
+| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"casework","tags":["{{classification.clientTags}}"]}}`. |
 | `toolSelection` | object | — | With many tools, advertise only the relevant ones. In `semantic` mode the node's full `tools` list becomes a candidate pool: all stay callable, but only `alwaysInclude` + the top-K semantic matches (+ an optional `select_tools` meta-tool the model can use to pull more in) are advertised initially. |
 | `toolSelection.mode` | one of `static`, `semantic` | `static` | `static` advertises every tool; `semantic` gates by embedding similarity to the request. |
 | `toolSelection.topK` | integer ≥ 1 | `5` | Max semantically selected tools advertised initially. |
@@ -280,8 +280,8 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
     requireToolUse: true
     suppressToolPreamble: true
     toolArgs:
-      vectorsearch/search: { collection: kanzlei }
-      vectorsearch/get_documents: { collection: kanzlei }
+      vectorsearch/search: { collection: cases }
+      vectorsearch/get_documents: { collection: cases }
 ```
 
 **Notes**
@@ -315,7 +315,7 @@ Search-style results (vectorsearch) become grounding context and citations for t
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"kanzlei","tags":["{{classification.clientTags}}"]}}`. |
+| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"casework","tags":["{{classification.clientTags}}"]}}`. |
 | `paginate` | json | — | Per tool ref: call it repeatedly with an increasing offset until the server-reported `total` is fetched or `maxPages` (default 50) is hit. `{ "server/tool": { offsetParam?: "offset", limitParam?: "limit", maxPages?: 50 } }`; page size defaults to 200. Example: `{"vectorsearch/list_documents":{"offsetParam":"offset","limitParam":"limit","maxPages":20}}`. |
 | `overviewCharBudget` | integer | — | Raise the character budget of the injected collection overview so large dossiers list all document titles, not just the leading subset. |
 | `streamToolResultDetails` | boolean | `true` | When false, tool calls stay visible in the client stream (name, status, duration) but their result payload is not streamed. The result still feeds grounding, citations, monitoring and the next model call. Use for private worker nodes. |

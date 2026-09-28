@@ -174,7 +174,7 @@ function ToolArgsList({
                   />
                   {args === undefined && (
                     <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      e.g. <code>{'{ "collection": "kanzlei" }'}</code> — empty: nothing fixed.
+                      e.g. <code>{'{ "collection": "cases" }'}</code> — empty: nothing fixed.
                     </p>
                   )}
                 </div>

@@ -12,7 +12,7 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { PromptFileEditor } from "../components/PromptFileEditor";
 import { promptFileRefs } from "../lib/prompt-files";
 
-const FILE = "prompts/kanzlei-loop-researcher.md";
+const FILE = "prompts/casework-loop-researcher.md";
 const BODY = "Du bist ein Rechercheur.\n";
 
 function mockFetch(): ReturnType<typeof vi.fn> {

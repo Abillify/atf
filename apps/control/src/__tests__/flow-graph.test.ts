@@ -47,7 +47,7 @@ describe("flowToGraph / graphToFlow", () => {
   test("keeps top-level fields the canvas does not own (variables, pricing, …)", () => {
     const rich = {
       ...def,
-      variables: { collection: "kanzlei" },
+      variables: { collection: "cases" },
       pricing: { "gpt-4o-mini": { prompt: 0.15, completion: 0.6 } },
       dataClasses: ["pii"],
       recovery: { maxRetries: 2 },
@@ -55,7 +55,7 @@ describe("flowToGraph / graphToFlow", () => {
     const { nodes, edges } = flowToGraph(rich);
     const back = graphToFlow(rich, nodes, edges) as FlowDefinition &
       Record<string, unknown>;
-    expect(back.variables).toEqual({ collection: "kanzlei" });
+    expect(back.variables).toEqual({ collection: "cases" });
     expect(back["pricing"]).toEqual(rich["pricing" as keyof FlowDefinition]);
     expect(back["dataClasses"]).toEqual(["pii"]);
     expect(back["recovery"]).toEqual({ maxRetries: 2 });

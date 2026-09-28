@@ -119,7 +119,7 @@ describe("applyFlowPatch", () => {
             type: "llm",
             tools: ["vectorsearch/search"],
             configPatch: {
-              toolArgs: { "vectorsearch/search": { collection: "kanzlei" } },
+              toolArgs: { "vectorsearch/search": { collection: "cases" } },
               maxToolSteps: 8,
               dropRagContext: null,
             },
@@ -131,7 +131,7 @@ describe("applyFlowPatch", () => {
     expect(node?.tools).toEqual(["vectorsearch/search"]);
     expect(node?.config).toEqual({
       maxToolSteps: 8,
-      toolArgs: { "vectorsearch/search": { limit: 5, collection: "kanzlei" } },
+      toolArgs: { "vectorsearch/search": { limit: 5, collection: "cases" } },
     });
   });
 

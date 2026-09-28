@@ -315,7 +315,7 @@ nodes:
     config:
       maxToolSteps: 12
       toolArgs: &args
-        search: { collection: kanzlei, hybrid: true }
+        search: { collection: cases, hybrid: true }
     tools: &tools [search, get_document]
   - id: broad
     type: llm
@@ -390,7 +390,7 @@ describe("mergeFlowIntoYaml — anchors and aliases", () => {
 
     const out = mergeFlowIntoYaml(ANCHORED, next);
 
-    // Content is what matters and must be exact: `broad` still on kanzlei,
+    // Content is what matters and must be exact: `broad` still on cases,
     // `lookup` on support.
     expect(parse(out)).toEqual(next);
     expect(out).not.toContain("toolArgs: *args");

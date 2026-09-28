@@ -85,9 +85,9 @@ vi.mock("../components/FlowVersionBar", () => ({
 }));
 
 const definition = {
-  id: "kanzlei",
-  name: "Kanzlei",
-  variables: { collection: "kanzlei" },
+  id: "casework",
+  name: "Casework",
+  variables: { collection: "cases" },
   pricing: { "gpt-4o-mini": { prompt: 0.15, completion: 0.6 } },
   nodes: [
     { id: "router", type: "router" },
@@ -97,8 +97,8 @@ const definition = {
 } as FlowDefinition;
 
 const entry: FlowListEntry = {
-  id: "kanzlei",
-  name: "Kanzlei",
+  id: "casework",
+  name: "Casework",
   source: "file",
   status: "file",
   version: 0,
@@ -115,14 +115,14 @@ function mockBackend(): ReturnType<typeof vi.fn> {
       if (url.endsWith("/flows/validate")) {
         return { valid: true, errors: [], warnings: [], meta: { nodeCount: 2, edgeCount: 1 } };
       }
-      if (url.endsWith("/flows/kanzlei/draft") && init?.method === "PUT") {
+      if (url.endsWith("/flows/casework/draft") && init?.method === "PUT") {
         return {
           record: { version: 0 },
           validation: { valid: true, errors: [], warnings: [], meta: { nodeCount: 2, edgeCount: 1 } },
         };
       }
-      if (url.endsWith("/flows/kanzlei")) {
-        return { id: "kanzlei", source: "file", editable: false, version: 0, published: definition, draft: null };
+      if (url.endsWith("/flows/casework")) {
+        return { id: "casework", source: "file", editable: false, version: 0, published: definition, draft: null };
       }
       return {};
     })();
@@ -152,14 +152,14 @@ describe("StudioBuilder", () => {
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
-    await waitFor(() => expect(onSaved).toHaveBeenCalledWith("kanzlei"));
+    await waitFor(() => expect(onSaved).toHaveBeenCalledWith("casework"));
 
     const call = fetchMock.mock.calls.find(
-      ([url, init]) => String(url).endsWith("/flows/kanzlei/draft") && init?.method === "PUT",
+      ([url, init]) => String(url).endsWith("/flows/casework/draft") && init?.method === "PUT",
     );
     expect(call).toBeDefined();
     const sent = JSON.parse(String(call![1].body)) as Record<string, unknown>;
-    expect(sent["variables"]).toEqual({ collection: "kanzlei" });
+    expect(sent["variables"]).toEqual({ collection: "cases" });
     expect(sent["pricing"]).toEqual(definition["pricing" as keyof FlowDefinition]);
     expect(screen.getByText(/Draft saved/)).toBeInTheDocument();
     expect(screen.getByText("draft")).toBeInTheDocument();
@@ -212,7 +212,7 @@ describe("StudioBuilder", () => {
         });
       }
       if (String(url).endsWith("/flows/write")) {
-        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, fileName: "kanzlei.yaml" }) });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, fileName: "casework.yaml" }) });
       }
       return base?.(url, init);
     });
@@ -226,7 +226,7 @@ describe("StudioBuilder", () => {
     expect(screen.getByText("edge:answer->recall")).toBeInTheDocument();
 
     fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
-    vi.spyOn(window, "confirm").mockReturnValue(true); // "write into kanzlei.yaml?"
+    vi.spyOn(window, "confirm").mockReturnValue(true); // "write into casework.yaml?"
     fireEvent.click(screen.getByRole("button", { name: "Write to file" }));
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/flows/write"))).toBe(true),
@@ -254,16 +254,16 @@ describe("StudioBuilder", () => {
       ],
     };
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
-      const body = url.endsWith("/flows/kanzlei")
+      const body = url.endsWith("/flows/casework")
         ? {
-            id: "kanzlei",
+            id: "casework",
             source: "file",
             published: definition,
             draft: null,
             sourceDefinition: source,
-            file: { name: "kanzlei.yaml", format: "yaml" },
+            file: { name: "casework.yaml", format: "yaml" },
           }
-        : url.endsWith("/flows/kanzlei/draft") && init?.method === "PUT"
+        : url.endsWith("/flows/casework/draft") && init?.method === "PUT"
           ? { record: { version: 0 } }
           : { valid: true, errors: [], warnings: [], meta: { nodeCount: 2, edgeCount: 1 } };
       return Promise.resolve({ ok: true, status: 200, json: async () => body });

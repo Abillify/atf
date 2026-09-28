@@ -130,9 +130,9 @@ describe("GET /flows/prompts/content", () => {
   });
 
   test("nested prompt directories are allowed", async () => {
-    fs.mkdirSync(path.join(tmpDir, "prompts", "kanzlei"), { recursive: true });
-    fs.writeFileSync(path.join(tmpDir, "prompts", "kanzlei", "loop.md"), "x\n", "utf-8");
-    const res = await get(buildApp(tmpDir), "prompts/kanzlei/loop.md", ADMIN_TOKEN);
+    fs.mkdirSync(path.join(tmpDir, "prompts", "casework"), { recursive: true });
+    fs.writeFileSync(path.join(tmpDir, "prompts", "casework", "loop.md"), "x\n", "utf-8");
+    const res = await get(buildApp(tmpDir), "prompts/casework/loop.md", ADMIN_TOKEN);
     expect(res.status).toBe(200);
   });
 });

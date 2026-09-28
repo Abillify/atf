@@ -6,22 +6,22 @@ import { describe, test, expect, vi } from "vitest";
 import { FlowMultiSelect } from "../components/FlowMultiSelect";
 
 const names = new Map([
-  ["kanzlei", "Kanzlei – Akten"],
+  ["casework", "Casework – Files"],
   ["abby", "Abby"],
 ]);
 
 describe("FlowMultiSelect", () => {
   test("lists flows by name, sorted, and searches name or id", () => {
     const onChange = vi.fn();
-    render(<FlowMultiSelect label="Flows" options={["kanzlei", "zeta", "abby"]} names={names} value={[]} onChange={onChange} />);
+    render(<FlowMultiSelect label="Flows" options={["casework", "zeta", "abby"]} names={names} value={[]} onChange={onChange} />);
     expect(screen.getAllByRole("checkbox").map((c) => c.closest("label")?.textContent)).toEqual([
       "Abbyabby",
-      "Kanzlei – Aktenkanzlei",
+      "Casework – Filescasework",
       "zeta",
     ]);
-    fireEvent.change(screen.getByLabelText("Flows: search flows"), { target: { value: "akten" } });
+    fireEvent.change(screen.getByLabelText("Flows: search flows"), { target: { value: "files" } });
     expect(screen.getAllByRole("checkbox")).toHaveLength(1);
     fireEvent.click(screen.getByRole("checkbox"));
-    expect(onChange).toHaveBeenCalledWith(["kanzlei"]);
+    expect(onChange).toHaveBeenCalledWith(["casework"]);
   });
 });
