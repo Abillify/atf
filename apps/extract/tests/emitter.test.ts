@@ -22,7 +22,7 @@
  *    duplicates or loss
  */
 
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import { buildAssetId, figureLocalId, pageLocalId, type PageRecord } from "@atf/extract-contract";
 import type {
@@ -34,7 +34,7 @@ import type {
 import { createFakeJobStore, type FakeJobStore } from "./job-store-fake.js";
 import { testLogger } from "./helpers.js";
 import { createLeaseGuard } from "../src/jobs/lease.js";
-import { createEmitter, type AssetLoader } from "../src/jobs/emitter.js";
+import { contentDigestHeader, createEmitter, type AssetLoader } from "../src/jobs/emitter.js";
 import type { RevisionClient, AssetBody } from "../src/revision-client.js";
 import { RevisionTransientError } from "../src/revision-client.js";
 import type { JobRow, AssetOutboxRow } from "../src/persistence/types.js";
@@ -588,5 +588,17 @@ describe("emitter · document identity on document.begin (contract 2.1)", () => 
     };
     await makeEmitter(store, search).emit(job, leaseFor(store, job), fakeAssetLoader());
     expect(created[0]?.sourceId).toBeUndefined();
+  });
+});
+
+describe("contentDigestHeader", () => {
+  it("is the RFC 9530 structured form with a base64 sha-256, as Search decodes it", () => {
+    const body = new TextEncoder().encode('{"type":"page","page":1}\n');
+    const header = contentDigestHeader(body);
+    const match = /^sha-256=:([A-Za-z0-9+/=]+):$/.exec(header);
+    expect(match).not.toBeNull();
+    // Search: base64-decode the structured value and compare it to the body's sha-256.
+    const decoded = Buffer.from(match?.[1] ?? "", "base64").toString("hex");
+    expect(decoded).toBe(createHash("sha256").update(body).digest("hex"));
   });
 });

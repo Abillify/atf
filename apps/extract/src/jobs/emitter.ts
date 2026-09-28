@@ -83,6 +83,17 @@ import { mapOrdered } from "../queue.js";
 import { documentAttributesOf, emailOf, identityOf, ingestOptionsOf, jobAcl } from "./identity.js";
 
 /** Tunables for the emitter, from `config.emitter` plus pipeline identity. */
+
+/**
+ * The `Content-Digest` header of a batch body, RFC 9530 structured form:
+ * `sha-256=:<base64>:`. Search decodes the part between the colons as base64,
+ * so a hex digest there is read as different bytes and every batch is refused
+ * with CONTENT_DIGEST_MISMATCH.
+ */
+export function contentDigestHeader(body: Uint8Array): string {
+  return `sha-256=:${Buffer.from(sha256Hex(body), "hex").toString("base64")}:`;
+}
+
 export interface EmitterConfig {
   /** Pages per NDJSON batch sent to Search. */
   emitBatchPages: number;
@@ -402,7 +413,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
       if (record !== null) records.push(record);
     }
     const body = new TextEncoder().encode(encodeRecords(records));
-    const contentDigest = `sha-256=:${sha256Hex(body)}:`;
+    const contentDigest = contentDigestHeader(body);
 
     // Mark the batch's pages `sent` before the PUT: a crash after the server
     // accepts but before we record the ack is repaired by reconciliation, which
@@ -514,7 +525,7 @@ export function createEmitter(deps: EmitterDeps): Emitter {
     const lastSeq = batches.reduce((max, b) => Math.max(max, b.seq), -1);
     const seq = lastSeq + 1;
     const body = new TextEncoder().encode(encodeRecords([record]));
-    const contentDigest = `sha-256=:${sha256Hex(body)}:`;
+    const contentDigest = contentDigestHeader(body);
     let ack: Awaited<ReturnType<RevisionClient["putBatch"]>>;
     try {
       ack = await revisions.putBatch({
