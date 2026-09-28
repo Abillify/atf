@@ -258,6 +258,59 @@ export function sanitizeToolResultOutput(output: unknown): unknown {
   return containsError(output, 0) ? SAFE_TOOL_ERROR_OUTPUT : output;
 }
 
+/**
+ * True when a tool output is (or sanitizes to) the error envelope. Callers
+ * must not infer errors from `sanitizeToolResultOutput(x) !== x` alone: an
+ * output that was already sanitized upstream is returned by identity, which
+ * previously recorded failed calls as `is_error: false` in the debug trace.
+ */
+export function isToolErrorOutput(output: unknown): boolean {
+  return (
+    output === SAFE_TOOL_ERROR_OUTPUT ||
+    sanitizeToolResultOutput(output) === SAFE_TOOL_ERROR_OUTPUT
+  );
+}
+
+/**
+ * Bounded, operator-only excerpt of the raw failure text inside an MCP error
+ * result (first text part, or a string `error`/`message`). Never fed to the
+ * model or the client stream; used only for server-side diagnostics so a gate
+ * rejection such as "Invalid transaction token: …" is visible in the runtime.
+ */
+export function toolErrorExcerpt(output: unknown, maxChars = 300): string | undefined {
+  const seen = new Set<object>();
+  const find = (value: unknown, depth: number): string | undefined => {
+    if (depth > 5 || value === null || value === undefined) return undefined;
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (typeof parsed === "object" && parsed !== null) return find(parsed, depth + 1);
+      } catch {
+        /* plain text */
+      }
+      return value;
+    }
+    if (typeof value !== "object" || seen.has(value)) return undefined;
+    seen.add(value);
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        const text = find(item, depth + 1);
+        if (text !== undefined) return text;
+      }
+      return undefined;
+    }
+    const record = value as Record<string, unknown>;
+    for (const key of ["text", "message", "error", "content", "value", "output", "result"]) {
+      const text = find(record[key], depth + 1);
+      if (text !== undefined) return text;
+    }
+    return undefined;
+  };
+  const text = find(output, 0)?.replace(/\s+/gu, " ").trim();
+  if (text === undefined || text === "") return undefined;
+  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
+}
+
 export function sanitizeToolCallModelMessages(
   messages: ModelMessage[],
   effectiveArgsByCallId?: ReadonlyMap<string, Record<string, unknown>>,
@@ -290,6 +343,18 @@ export function sanitizeToolCallModelMessages(
   return changed ? sanitized : messages;
 }
 
+/**
+ * Model-facing replacement for a sanitized tool-result part. `ModelMessage`
+ * tool-result parts require an AI SDK `ToolResultOutput` (`{ type, value }`);
+ * the bare {@link SAFE_TOOL_ERROR_OUTPUT} envelope fails the SDK's prompt
+ * schema (`output.type` discriminator) and aborts the whole step with
+ * `AI_InvalidPromptError` — observed as an empty answer after a failed tool.
+ */
+const SAFE_TOOL_ERROR_MODEL_OUTPUT = Object.freeze({
+  type: "error-json" as const,
+  value: SAFE_TOOL_ERROR_OUTPUT,
+});
+
 /** Sanitizes tool-result parts before any model step or prompt trace sees them. */
 export function sanitizeToolResultModelMessages(
   messages: ModelMessage[],
@@ -303,10 +368,13 @@ export function sanitizeToolResultModelMessages(
     const content = message.content.map((rawPart) => {
       const part = rawPart as { type?: string; output?: unknown };
       if (part.type !== "tool-result") return rawPart;
+      // Already-sanitized parts are idempotent: prepareStep runs on every
+      // step and must not rewrap (or re-allocate) the replacement.
+      if (part.output === SAFE_TOOL_ERROR_MODEL_OUTPUT) return rawPart;
       const output = sanitizeToolResultOutput(part.output);
       if (output === part.output) return rawPart;
       contentChanged = true;
-      return { ...part, output };
+      return { ...part, output: SAFE_TOOL_ERROR_MODEL_OUTPUT };
     });
     if (!contentChanged) return message;
     changed = true;

@@ -272,7 +272,11 @@ export function describeProviderError(error: unknown, maxChars = 400): string {
 	if (chain.length === 0) return String(error).slice(0, maxChars);
 	const parts: string[] = [];
 	for (const record of chain) {
-		const message = typeof record.message === "string" ? record.message.trim() : "";
+		// A ZodError's message is its full issue dump; the structured summary
+		// from describePromptSchemaIssues replaces it below.
+		if (Array.isArray(record.issues)) continue;
+		const message =
+			typeof record.message === "string" ? redactValidationValue(record.message.trim()) : "";
 		const name = typeof record.name === "string" ? record.name : "";
 		const text = name !== "" && message !== "" ? `${name}: ${message}` : message || name;
 		if (text !== "" && !parts.includes(text)) parts.push(text);
@@ -283,8 +287,139 @@ export function describeProviderError(error: unknown, maxChars = 400): string {
 		...(status !== undefined ? [`status=${status}`] : []),
 		...(typeof code === "string" ? [`code=${code}`] : []),
 	].join(" ");
-	const description = `${parts.join(" <- ")}${suffix !== "" ? ` (${suffix})` : ""}`;
+	const issues = describePromptSchemaIssues(error);
+	const issueText =
+		issues !== undefined && issues.length > 0
+			? ` [schema: ${issues.map(formatPromptSchemaIssue).join("; ")}]`
+			: "";
+	const description = `${parts.join(" <- ")}${suffix !== "" ? ` (${suffix})` : ""}${issueText}`;
 	return description.length > maxChars
 		? `${description.slice(0, maxChars - 1)}…`
 		: description;
+}
+
+/**
+ * The AI SDK's `TypeValidationError` message embeds the complete rejected
+ * value (`Value: [...full prompt...]`) followed by the raw Zod issue dump.
+ * Both are dropped: the prompt must never reach diagnostics, and its length
+ * pushed the actual cause past the diagnostic truncation limit.
+ */
+function redactValidationValue(message: string): string {
+	const index = message.indexOf("Value:");
+	if (index < 0 || !/type validation failed/iu.test(message)) return message;
+	return message.slice(0, index).replace(/[\s:]+$/u, "");
+}
+
+/** One structural prompt-schema violation; carries no prompt content. */
+export interface PromptSchemaIssue {
+	/** JSON path into the rejected value, e.g. `[5, "content", 0, "output", "type"]`. */
+	path: Array<string | number>;
+	code: string;
+	message: string;
+	/** Role of the offending message when the path points into a message array. */
+	role?: string;
+}
+
+const MAX_PROMPT_SCHEMA_ISSUES = 4;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null;
+}
+
+function mismatchesDiscriminator(branch: unknown): boolean {
+	return (
+		Array.isArray(branch) &&
+		branch.some(
+			(issue) =>
+				isRecord(issue) &&
+				issue.code === "invalid_value" &&
+				Array.isArray(issue.path) &&
+				issue.path.length === 1 &&
+				(issue.path[0] === "role" || issue.path[0] === "type"),
+		)
+	);
+}
+
+/**
+ * Flattens Zod union issues into leaf issues with absolute paths. Union
+ * branches for the wrong role (`expected "system"` on a tool message) are
+ * noise; the deepest leaves are the branch that almost matched.
+ */
+function leafIssues(
+	issues: unknown,
+	prefix: Array<string | number>,
+	out: PromptSchemaIssue[],
+	depth = 0,
+): void {
+	if (!Array.isArray(issues) || depth > 12 || out.length > 200) return;
+	for (const raw of issues) {
+		if (!isRecord(raw)) continue;
+		const path = [
+			...prefix,
+			...(Array.isArray(raw.path)
+				? raw.path.filter(
+						(p): p is string | number => typeof p === "string" || typeof p === "number",
+					)
+				: []),
+		];
+		const rawBranches = raw.errors ?? raw.unionErrors;
+		if (Array.isArray(rawBranches) && rawBranches.length > 0) {
+			const branches = rawBranches.map((branch) =>
+				isRecord(branch) && !Array.isArray(branch) ? branch.issues : branch,
+			);
+			// Drop branches rejected on a literal discriminator (`role`/`type`):
+			// they describe a different message/part kind, not the near miss.
+			const relevant = branches.filter((branch) => !mismatchesDiscriminator(branch));
+			for (const branch of relevant.length > 0 ? relevant : branches) {
+				leafIssues(branch, path, out, depth + 1);
+			}
+			continue;
+		}
+		out.push({
+			path,
+			code: typeof raw.code === "string" ? raw.code : "invalid",
+			message: typeof raw.message === "string" ? raw.message.slice(0, 160) : "Invalid input",
+		});
+	}
+}
+
+/**
+ * Extracts the most specific Zod issues behind an AI SDK prompt validation
+ * failure (`AI_InvalidPromptError` <- `AI_TypeValidationError` <- ZodError).
+ * Returns undefined for any other error. Only paths, codes, Zod messages and
+ * message roles are reported — never message content.
+ */
+export function describePromptSchemaIssues(error: unknown): PromptSchemaIssue[] | undefined {
+	const chain = errorChain(error);
+	const zod = chain.find((record) => Array.isArray(record.issues));
+	if (zod === undefined) return undefined;
+	const validated = chain.find((record) => "value" in record)?.value;
+	const all: PromptSchemaIssue[] = [];
+	leafIssues(zod.issues, [], all);
+	if (all.length === 0) return [];
+	const maxDepth = Math.max(...all.map((issue) => issue.path.length));
+	const seen = new Set<string>();
+	const deepest: PromptSchemaIssue[] = [];
+	for (const issue of all) {
+		if (issue.path.length !== maxDepth) continue;
+		const key = `${issue.path.join(".")}|${issue.message}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const index = issue.path[0];
+		const message =
+			Array.isArray(validated) && typeof index === "number" ? validated[index] : undefined;
+		const role = isRecord(message) && typeof message.role === "string" ? message.role : undefined;
+		deepest.push(role !== undefined ? { ...issue, role } : issue);
+		if (deepest.length >= MAX_PROMPT_SCHEMA_ISSUES) break;
+	}
+	return deepest;
+}
+
+export function formatPromptSchemaIssue(issue: PromptSchemaIssue): string {
+	const path = issue.path
+		.map((segment, i) =>
+			typeof segment === "number" ? `[${segment}]` : i === 0 ? segment : `.${segment}`,
+		)
+		.join("");
+	return `${issue.role !== undefined ? `${issue.role} ` : ""}${path || "<root>"}: ${issue.message}`;
 }

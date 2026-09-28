@@ -45,7 +45,9 @@ import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../../types/monitoring.js";
 import { decodeBase64Bytes } from "../media-store.js";
 import {
+  describePromptSchemaIssues,
   describeProviderError,
+  formatPromptSchemaIssue,
   providerTransportErrorCode,
 } from "../provider-circuit-breaker.js";
 import { filterLlmParameters } from "../llm-factory.js";
@@ -59,8 +61,10 @@ import {
   applyBedrockPromptCache,
   coreMessagesToText,
   modelMessagesContainImages,
+  isToolErrorOutput,
   sanitizeToolResultOutput,
   sanitizeToolResultModelMessages,
+  toolErrorExcerpt,
   sanitizeToolCallModelMessages,
 } from "../message-mapping.js";
 import { getModelCapabilities } from "../model-capabilities.js";
@@ -3043,9 +3047,27 @@ export function createLlmNodeHandler(
               const startedAt = toolStartTimes.get(id) ?? Date.now();
               toolStartTimes.delete(id);
               const toolRef = toolRefByCallId.get(id);
-              const output = sanitizeToolResultOutput(
-                (part as { output?: unknown }).output,
-              );
+              const rawOutput = (part as { output?: unknown }).output;
+              const output = sanitizeToolResultOutput(rawOutput);
+              if (isToolErrorOutput(rawOutput)) {
+                // Same rationale as the `tool-error` branch below: the model
+                // only sees the anonymized envelope, so without this an MCP
+                // `isError` result (e.g. a gate rejecting the transaction
+                // token) is indistinguishable from any other failure.
+                const excerpt = toolErrorExcerpt(rawOutput);
+                runtime.onNodeDiagnostic?.(node.id, {
+                  level: "error",
+                  code: "tool_result_error",
+                  message:
+                    `Tool ${toolRef ?? part.toolName ?? "unknown"} returned an error result. ` +
+                    "The model-facing result is anonymized; this diagnostic carries the raw cause for operators.",
+                  details: {
+                    tool_call_id: id,
+                    ...(toolRef !== undefined ? { tool_ref: toolRef } : {}),
+                    ...(excerpt !== undefined ? { error_excerpt: excerpt } : {}),
+                  },
+                });
+              }
               visibleTextLengthAtLastToolResult = fullText.length;
               lastToolResultForRetry = output;
               if (toolRef !== undefined && isSuccessfulToolResult(output)) {
@@ -4060,6 +4082,7 @@ export function createLlmNodeHandler(
           // raw provider cause once, server-side only, so an operator can tell a
           // dead endpoint from a rejected request (4xx) or a mid-loop failure.
           if (runtime.signal?.aborted !== true) {
+            const promptSchemaIssues = describePromptSchemaIssues(err);
             runtime.onNodeDiagnostic?.(node.id, {
               level: "warn",
               code: "llm_provider_error_detail",
@@ -4072,8 +4095,36 @@ export function createLlmNodeHandler(
                 ...(transportErrorCode !== undefined
                   ? { transport_error_code: transportErrorCode }
                   : {}),
+                // Structural prompt-schema violations (message index, role,
+                // path) — no prompt content. Present only for AI SDK
+                // InvalidPromptError/TypeValidationError.
+                ...(promptSchemaIssues !== undefined
+                  ? {
+                      prompt_schema_issues: promptSchemaIssues.map(
+                        formatPromptSchemaIssue,
+                      ),
+                    }
+                  : {}),
               },
             });
+            if (promptSchemaIssues !== undefined) {
+              // A prompt the SDK rejects is a runtime message-mapping bug,
+              // never a provider outage — give it its own error-level code so
+              // it is not lost among transient provider warnings.
+              runtime.onNodeDiagnostic?.(node.id, {
+                level: "error",
+                code: "llm_prompt_schema_invalid",
+                message:
+                  "The step prompt failed AI SDK ModelMessage validation before reaching the provider.",
+                details: {
+                  provider: candidate.provider,
+                  model: candidate.model,
+                  attempt,
+                  after_partial_output: emittedAny,
+                  issues: promptSchemaIssues.map(formatPromptSchemaIssue),
+                },
+              });
+            }
           }
           if (emittedAny) {
             if (fullText.length > 0 || reasoningText.length > 0)

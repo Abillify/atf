@@ -41,6 +41,7 @@ import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 import { createLlmProvider } from "../llm-factory.js";
 import {
   chatMessageToBaseMessage,
+  isToolErrorOutput,
   sanitizeToolResultOutput,
 } from "../message-mapping.js";
 import type { ModelQualityRegistry } from "../model-quality.js";
@@ -197,6 +198,12 @@ export function extractToolUsage(
  * feature with no type error.
  */
 export interface GraphEngineOptions {
+  /**
+   * Server logger. When set, every warn/error node diagnostic is also written
+   * as one structured log line (with execution/flow/node ids), so failures stay
+   * debuggable after the bounded in-memory debug trace has been evicted.
+   */
+  logger?: import("../../observability/logger.js").Logger;
   flowRegistry?: FlowRegistry;
   mcpWrapper?: McpWrapperService;
   llmProviderFactory?: LlmProviderFactory;
@@ -309,6 +316,8 @@ class GraphEngineServiceImpl implements GraphEngineService {
   private readonly flowRegistry: FlowRegistry | undefined;
   private readonly mcpWrapper: McpWrapperService | undefined;
   private readonly llmProviderFactory: LlmProviderFactory;
+  /** Server log sink for warn/error node diagnostics (see recordNodeDiagnostic). */
+  private readonly logger: import("../../observability/logger.js").Logger | undefined;
 
   constructor(
     private readonly appConfig: AppConfig,
@@ -341,7 +350,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
       reranker,
       toolOutputValidator,
       providerCircuitBreaker,
+      logger,
     } = options;
+    this.logger = logger;
     this.flowRegistry = flowRegistry;
     this.mcpWrapper = mcpWrapper;
     this.llmProviderFactory = llmProviderFactory;
@@ -1013,8 +1024,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
       options?: { streamDetails?: boolean },
     ): Promise<void> => {
       const visibleContent = sanitizeToolResultOutput(content);
-      const errorMessage =
-        visibleContent === content ? undefined : "Tool execution failed.";
+      const errorMessage = isToolErrorOutput(content)
+        ? "Tool execution failed."
+        : undefined;
       // Error envelopes are untrusted provider/tool output. Preserve successful
       // results, but expose only a stable error object to monitoring, debug
       // traces, and client reasoning streams.
@@ -1490,6 +1502,24 @@ class GraphEngineServiceImpl implements GraphEngineService {
       if (list.length < 200) {
         list.push({ at: new Date().toISOString(), ...diagnostic });
         nodeDiagnostics.set(nodeId, list);
+      }
+      // Diagnostics are already operator-facing and content-free by contract
+      // (no prompts, tool arguments or secrets), so they can be mirrored to
+      // the server log. Info-level entries stay trace-only to keep volume low.
+      if (
+        (diagnostic.level === "warn" || diagnostic.level === "error") &&
+        this.logger !== undefined
+      ) {
+        const fields = {
+          execution_id: executionId,
+          flow_id: flowId,
+          flow_version: flowVersion,
+          node_id: nodeId,
+          code: diagnostic.code,
+          ...(diagnostic.details !== undefined ? { details: diagnostic.details } : {}),
+        };
+        if (diagnostic.level === "error") this.logger.error(diagnostic.message, fields);
+        else this.logger.warn(diagnostic.message, fields);
       }
     };
     const nodeErrorInfo = new Map<

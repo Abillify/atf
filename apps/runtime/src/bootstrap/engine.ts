@@ -255,6 +255,7 @@ export async function buildEngine(
     reranker,
     toolOutputValidator,
     providerCircuitBreaker,
+    logger,
   });
 
   // ── Debug trace store ──────────────────────────────────────────────────────
