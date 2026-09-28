@@ -17,6 +17,28 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.10.2] — 2026-09-28
+Fixes an empty answer after a failed tool call and transaction rejections on token-exchange MCP
+servers, and makes both failure classes visible in traces and server logs. No configuration,
+schema, flow, migration, HTTP endpoint, or contract-package change.
+### Changed
+- **Diagnostics** (`@atf/runtime`). A step prompt that fails AI SDK message validation is reported
+  as `llm_prompt_schema_invalid` with message index, role, and schema path; the rejected prompt
+  value is no longer embedded in `llm_provider_error_detail`. An MCP error result records its
+  bounded raw cause (at most 300 characters, server-side only) as `tool_result_error`. Warn- and
+  error-level node diagnostics are mirrored to the server log with execution, flow, and node ids.
+### Fixed
+- **Empty answer after a failed tool** (`@atf/runtime`). The tool-result sanitizer replaced an
+  error output with a bare `{ isError, error }` object, which is not a valid `ToolResultOutput`;
+  the AI SDK rejected the next step with `AI_InvalidPromptError` and the node ended without text.
+  The anonymized error is now replayed as `error-json`, so the model can answer the failure.
+- **Tool errors shown as successful in the debug trace** (`@atf/runtime`). An error result that
+  was already sanitized upstream was recorded as `is_error: false`.
+- **Session binding of transaction envelopes** (`@atf/gate`, `@atf/runtime`). Gate compared an
+  envelope's `sessionId` with its own MCP request id as well as the token's session claims, so a
+  real OIDC `sid` never matched and every call was rejected with "Envelope.sessionId does not match
+  the authenticated session". Only `sid`/`session_id` claims count now. Runtime no longer binds
+  `sessionId` for `tokenExchange` servers, whose exchanged token carries no caller session.
 ## [0.10.1] — 2026-09-28
 Reliability and diagnostics fixes for LLM provider failover and RFC 8693 token exchange, plus
 neutral example data. No configuration, schema, flow, migration, HTTP endpoint, or contract-package
@@ -1218,7 +1240,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.10.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.10.2...HEAD
+[0.10.2]: https://github.com/abillify/atf/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/abillify/atf/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/abillify/atf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.1
