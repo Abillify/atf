@@ -34,6 +34,13 @@ export interface MonitorEvent {
   sessionId?: string;
   username?: string;
   subject?: string;
+  /**
+   * Acting party (RFC 8693 `act`) when the caller's token was minted via
+   * delegation. `subject` stays the end user; this names the service that
+   * acted for them. Recorded so the audit trail distinguishes a direct user
+   * action from an agent acting on the user's behalf.
+   */
+  actor?: string;
   authMethod?: string;
   tool?: string;
   /** Inbound HTTP headers, redacted (no Authorization value). */

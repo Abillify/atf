@@ -413,6 +413,7 @@ export class McpToolDispatcher {
       sessionId: this.requestId,
       username: this.context.username,
       subject: this.context.subject,
+      ...(this.context.actor !== undefined ? { actor: this.context.actor.subject } : {}),
       authMethod: this.context.method,
       tool: name,
       meta: { arguments: args },

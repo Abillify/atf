@@ -9,7 +9,43 @@ import type {
   StaticToken,
   TenantIsolationConfig,
 } from "../config/schema.ts";
-import { normalizeHeaders, verifiedTenantClaim, type AuthContext } from "./context.ts";
+import {
+  normalizeHeaders,
+  verifiedTenantClaim,
+  type ActorContext,
+  type AuthContext,
+} from "./context.ts";
+
+/**
+ * Extracts the acting party from a raw JWT `act` claim (RFC 8693), tolerating
+ * arbitrary shapes. Returns undefined when no usable actor subject is present.
+ * One level of nested `act` is followed into `parent`.
+ */
+function actorFromClaim(actClaim: unknown): ActorContext | undefined {
+  if (actClaim === null || typeof actClaim !== "object") return undefined;
+  const record = actClaim as Record<string, unknown>;
+  const subject = record.sub;
+  if (typeof subject !== "string" || subject.length === 0) return undefined;
+  const issuer = typeof record.iss === "string" && record.iss.length > 0 ? record.iss : undefined;
+  let parent: { subject: string; issuer?: string } | undefined;
+  const parentClaim = record.act;
+  if (parentClaim !== null && typeof parentClaim === "object") {
+    const parentRecord = parentClaim as Record<string, unknown>;
+    if (typeof parentRecord.sub === "string" && parentRecord.sub.length > 0) {
+      parent = {
+        subject: parentRecord.sub,
+        ...(typeof parentRecord.iss === "string" && parentRecord.iss.length > 0
+          ? { issuer: parentRecord.iss }
+          : {}),
+      };
+    }
+  }
+  return {
+    subject,
+    ...(issuer !== undefined ? { issuer } : {}),
+    ...(parent !== undefined ? { parent } : {}),
+  };
+}
 
 export class AuthError extends Error {
   constructor(message: string, readonly status: number = 401) {
@@ -137,6 +173,7 @@ export class Authenticator {
     claims: Record<string, unknown>,
     headers: Record<string, string>,
     rawToken: string,
+    actor?: ActorContext,
   ): AuthContext {
     return {
       method,
@@ -148,6 +185,7 @@ export class Authenticator {
       tenantClaimNames: [...this.tenantIsolation.claimNames],
       headers,
       rawToken,
+      ...(actor !== undefined ? { actor } : {}),
     };
   }
 
@@ -226,6 +264,24 @@ export class Authenticator {
     const missing = oauth.requiredScopes.filter((scope) => !scopes.includes(scope));
     if (missing.length > 0) throw new AuthError(`Missing required scope(s): ${missing.join(", ")}`, 403);
 
+    // RFC 8693 actor (`act`): parse for audit, and gate on it when an actor
+    // policy is configured. A token without delegation yields no actor.
+    const actorPolicy = oauth.actorPolicy;
+    const actorClaimName = actorPolicy?.actorClaim ?? "act";
+    const actor = actorFromClaim(payload[actorClaimName]);
+    if (actorPolicy !== undefined) {
+      if (actorPolicy.requireActor && actor === undefined) {
+        throw new AuthError("A delegated (on-behalf-of) token is required", 403);
+      }
+      if (
+        actor !== undefined &&
+        actorPolicy.allowedActorSubjects.length > 0 &&
+        !actorPolicy.allowedActorSubjects.includes(actor.subject)
+      ) {
+        throw new AuthError(`Actor '${actor.subject}' is not permitted`, 403);
+      }
+    }
+
     const username = String(payload[oauth.usernameClaim] ?? payload.sub ?? "anonymous");
     return this.context(
       "oauth",
@@ -235,6 +291,7 @@ export class Authenticator {
       payload as Record<string, unknown>,
       headers,
       token,
+      actor,
     );
   }
 }

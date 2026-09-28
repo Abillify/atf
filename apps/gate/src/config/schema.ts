@@ -273,6 +273,26 @@ const OAuthVerificationTargetSchema = z
 
 export const AdditionalIssuerSchema = OAuthVerificationTargetSchema;
 
+/**
+ * Optional policy on the RFC 8693 `act` (actor) claim carried by a delegated
+ * (on-behalf-of) token. The subject stays the end user; `act.sub` names the
+ * service that acted for them (e.g. the aiperator runtime). Absent → the actor
+ * is recorded for audit but never gates a request, so existing deployments are
+ * unaffected.
+ */
+export const ActorPolicySchema = z.object({
+  /** Claim carrying the actor. RFC 8693 uses `act`. */
+  actorClaim: z.string().default("act"),
+  /** Reject tokens that carry NO actor (i.e. only allow delegated calls). */
+  requireActor: boolish.default(false),
+  /**
+   * When non-empty, the actor's subject must be one of these values; any other
+   * actor is rejected. Empty → any actor subject is accepted (still audited).
+   */
+  allowedActorSubjects: z.array(z.string()).default([]),
+});
+export type ActorPolicy = z.infer<typeof ActorPolicySchema>;
+
 export const OAuthAuthSchema = OAuthVerificationTargetSchema.and(
   z.object({
     usernameClaim: z.string().default("preferred_username"),
@@ -282,6 +302,8 @@ export const OAuthAuthSchema = OAuthVerificationTargetSchema.and(
     requiredScopes: z.array(z.string()).default([]),
     additionalIssuers: z.array(AdditionalIssuerSchema).default([]),
     resource: z.string().url().optional(),
+    /** Optional actor (RFC 8693 `act`) policy. Absent → actor audited, never gated. */
+    actorPolicy: ActorPolicySchema.optional(),
   }),
 );
 
