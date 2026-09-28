@@ -17,6 +17,67 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.11.0] — 2026-09-28
+Brings the Extract operator console to full Document Intelligence v2 support, adds HTML as an
+input format, and fixes the v2 hand-off from Extract to Search (batch digests, new collections)
+as well as transaction envelopes for token-exchange MCP servers. `@atf/extract-contract` moves
+to 2.1.0; the `atf-extract/2.0.0` wire contract is unchanged. No configuration, migration or
+flow change.
+### Added
+- **Extract operator console: full Document Intelligence v2 support.** With
+  `EXTRACT_DATABASE_URL` set, a new "Neuer Job" tab uploads sources as resumable, per-chunk
+  checksummed sessions (or pulls a `source_url`, or takes a stored sha256) and creates jobs with
+  every `POST /v2/jobs` option. The ingest tab follows a `202` job to completion, reports
+  duplicates, versions and revisions, and sends `X-Dedup` and `X-Source-Modified`. The Jobs tab
+  adds reparse, resume with a resume policy, identity and revision details, a status/reference
+  filter and an on-demand page preview. Health shows the `-bbox-layout` probe. New cookie BFF
+  routes `/ui/uploads` and `/ui/render` mirror `/v2/uploads` and `/v2/render`.
+- **`@atf/extract-contract` 2.1.0**: `POST /v2/jobs` accepts an optional `filename` (its
+  extension types the source); the `Job` view gains optional `sourceSha256`, `sourceFilename`,
+  `collection`, `visibility`, `resumePolicy` and `priority`.
+- **Extract: HTML input** (`.html`, `.htm`, XHTML, sniffed from the content). LibreOffice Writer
+  lays the page out after every reference it could follow is stripped (embedding elements,
+  `<meta http-equiv>`, URL attributes except `<a href>` and inline `data:` images, CSS `url(…)`
+  and `@import`), so an uploaded page cannot make Extract fetch internal URLs or read local
+  files. External images are not rendered.
+- **Extract: `GET /v2/jobs/{id}/figures`** (and `/ui/jobs/{id}/figures`) lists the figure blocks
+  of a job's staged page records; crops render on demand through `POST /v2/render`.
+- **Extract: `source_url` pulls report `content_type` and a derived `filename`**, so a job
+  created from a pulled source is typed.
+
+### Changed
+- **`POST /v2/jobs` and the job-backed `POST /v1/ingest` validate the collection name up
+  front** (Search's rule: a letter, then letters, digits or underscores) and answer 400,
+  instead of a job that failed at emit after every page went through the model. The contract
+  schema enforces the same rule, so a client validating with `jobRequestSchema` rejects such
+  names too.
+- **Extract: a failed job carries its cause as a warning** (at most 500 characters) in the
+  status read and the console.
+- **Search: an invalid collection name is 400 `INVALID_COLLECTION_NAME`** before the access
+  check rather than an access denial, and `POST /v2/search` on a missing collection is 404
+  instead of an embedding provenance mismatch.
+
+### Fixed
+- **Extract → Search: every v2 batch was refused with `CONTENT_DIGEST_MISMATCH`.** The emitter
+  sent the sha-256 as hex inside the RFC 9530 `Content-Digest` structured field; it is now
+  base64.
+- **Search: the first v2 revision for a new collection failed forever** on the missing table.
+  The batch worker now creates the collection with the embedding's vector size and the v1 ingest
+  defaults.
+- **Extract uploads**: a chunk's `204` is sent only after the session lock is released, so an
+  immediately following chunk no longer hits a spurious 409; `complete` compares the declared
+  size numerically (Postgres `BIGINT` arrives as a string) and records the stored digest, so a
+  retried `complete` answers idempotently.
+- **Extract jobs: a non-UUID job id is 404** instead of a 500 from a Postgres cast error.
+- **Runtime: transaction envelopes for token-exchange MCP servers bind the exchanged subject.**
+  `userId` in the envelope was the caller's login `sub`, while the peer authenticates the
+  exchanged token, whose `sub` follows the target provider's subject mode (e.g. Taiga login
+  `user_id` vs. `user_email` on the target). Search rejected every call with
+  `403 TRANSACTION_IDENTITY_MISMATCH`, so RAG nodes failed. The envelope now uses the subject
+  of the cached exchanged token (`McpWrapperService.targetSubject`).
+- **Runtime: deterministic tool nodes emit a `tool_execution_failed` diagnostic** with only the
+  structural failure class (error name, HTTP status, upper-case peer error code) when a call
+  throws; the node result stays anonymized.
 ## [0.10.2] — 2026-09-28
 Fixes an empty answer after a failed tool call and transaction rejections on token-exchange MCP
 servers, and makes both failure classes visible in traces and server logs. No configuration,
@@ -1240,7 +1301,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.10.2...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/abillify/atf/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/abillify/atf/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/abillify/atf/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/abillify/atf/compare/v0.9.1...v0.10.0

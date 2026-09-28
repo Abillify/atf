@@ -214,7 +214,7 @@ export function buildOpenApiSpec(serverUrl: string) {
     openapi: "3.1.0",
     info: {
       title: "Aiperator Trust Fabric Search",
-      version: "0.10.2",
+      version: "0.11.0",
       description:
         "ATF semantic search service backed by PostgreSQL + pgvector. " +
         "Supports dense, hybrid (dense + PostgreSQL FTS/ts_rank + SPLADE), and FTS-only search " +
