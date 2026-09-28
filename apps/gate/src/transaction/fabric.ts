@@ -438,10 +438,7 @@ function securityContext(
   return {
     subject: auth.subject,
     tenantClaims: claimValues(config.tenantClaims ?? ["tenant", "tid", "client_id"]),
-    sessions: normalizedStrings([
-      ...(auth.sessionId ? [auth.sessionId] : []),
-      ...valuesAt(auth.claims, config.sessionClaims ?? ["sid", "session_id"]),
-    ]),
+    sessions: authenticatedSessionIds(auth, config),
     groups: normalizedStrings(valuesAt(auth.claims, config.groupClaims ?? ["groups"])),
     scopes: normalizedStrings(auth.scopes),
   };
@@ -557,6 +554,15 @@ function valuesAt(claims: Record<string, unknown>, names: string[]): string[] {
         : [];
   });
 }
+/**
+ * Session identifiers proven by the verified bearer. Only token claims count:
+ * `AuthContext.sessionId` is the gate's own MCP transport/request id (see
+ * `McpToolDispatcher`), never an IdP session, so including it made every
+ * envelope that carried a real OIDC `sid` fail the binding check.
+ */
+function authenticatedSessionIds(auth: AuthContext, config: TransactionFabricConfig): string[] {
+  return normalizedStrings(valuesAt(auth.claims, config.sessionClaims ?? ["sid", "session_id"]));
+}
 function assertIdentity(
   envelope: TransactionEnvelope,
   auth: AuthContext,
@@ -572,12 +578,12 @@ function assertIdentity(
   if (envelope.tenantId !== undefined && envelope.tenantId !== tenant)
     throw new Error("Envelope.tenantId does not match the authenticated tenant claim");
   if (envelope.sessionId !== undefined) {
-    const authenticatedSessions = new Set([
-      ...(auth.sessionId ? [auth.sessionId] : []),
-      ...valuesAt(auth.claims, config.sessionClaims ?? ["sid", "session_id"]),
-    ]);
+    const authenticatedSessions = new Set(authenticatedSessionIds(auth, config));
     if (authenticatedSessions.size > 0 && !authenticatedSessions.has(envelope.sessionId))
-      throw new Error("Envelope.sessionId does not match the authenticated session");
+      throw new Error(
+        `Envelope.sessionId does not match the authenticated session ` +
+          `(session claims: ${(config.sessionClaims ?? ["sid", "session_id"]).join(", ")})`,
+      );
   }
   const authenticatedGroups = new Set(valuesAt(auth.claims, config.groupClaims ?? ["groups"]));
   if (envelope.groups.some((group) => !authenticatedGroups.has(group)))

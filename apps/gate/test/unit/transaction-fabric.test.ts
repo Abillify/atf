@@ -356,10 +356,11 @@ describe("Agent Transaction Fabric v1", () => {
       username: "alice",
       scopes: ["tool:run"],
       rawToken: "auth",
-      claims: { sub: "alice", tenant: "acme", groups: ["ops", "users"] },
+      claims: { sub: "alice", tenant: "acme", groups: ["ops", "users"], sid: "session-1" },
       tenantId: "acme",
       headers: {},
-      sessionId: "session-1",
+      // Transport/request id set by McpToolDispatcher — never an IdP session.
+      sessionId: "mcp-request-7",
     };
     const good = await token(
       envelope({ userId: "alice", tenantId: "acme", groups: ["ops"], sessionId: "session-1" }),
@@ -379,6 +380,8 @@ describe("Agent Transaction Fabric v1", () => {
       envelope({ tenantId: "other" }),
       envelope({ groups: ["admins"] }),
       envelope({ sessionId: "other" }),
+      // The transport id must not be accepted as an authenticated session.
+      envelope({ sessionId: "mcp-request-7" }),
     ]) {
       const denied = await fabric.execute({
         token: await token(claims),
@@ -401,6 +404,33 @@ describe("Agent Transaction Fabric v1", () => {
       run: async () => ok,
     });
     expect(absentOptionalClaims.isError).toBeFalsy();
+  });
+
+  it("does not treat the MCP transport id as an authenticated session", async () => {
+    // Production shape: the runtime binds the OIDC `sid`, the
+    // exchanged bearer carries no session claim, and the dispatcher sets
+    // `sessionId` to its request id. That must not produce a mismatch.
+    const fabric = new TransactionFabric(baseConfig);
+    const auth: AuthContext = {
+      method: "oauth",
+      subject: "alice",
+      username: "alice",
+      scopes: ["tool:run"],
+      rawToken: "auth",
+      claims: { sub: "alice", tenant: "acme" },
+      tenantId: "acme",
+      headers: {},
+      sessionId: "mcp-request-42",
+    };
+    const result = await fabric.execute({
+      token: await token(envelope({ sessionId: "oidc-sid-123" })),
+      tool: "availability",
+      args: {},
+      requiredScopes: ["tool:run"],
+      authContext: auth,
+      run: async () => ok,
+    });
+    expect(result.isError).toBeFalsy();
   });
 
   it("supports configurable user claim semantics", async () => {
