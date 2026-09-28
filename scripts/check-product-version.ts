@@ -169,7 +169,9 @@ for (const [file, occurrences] of byFile) {
 			);
 			continue;
 		}
-		for (const match of matches) {
+		// Rewrite back to front: each replacement can change the text length
+		// (e.g. 0.9.2 → 0.10.0), which would shift the offsets of later matches.
+		for (const match of [...matches].reverse()) {
 			const found = match[1];
 			if (found === version) continue;
 			if (checkOnly) {
