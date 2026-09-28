@@ -17,6 +17,44 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.10.0] — 2026-09-28
+Adds OAuth 2.0 Token Exchange (RFC 8693) for caller-authenticated MCP servers and records the
+acting party of delegated tokens end to end. Every change is opt-in and additive: without the new
+`tokenExchange` (Runtime) or `oauth.actorPolicy` (Gate) settings, behaviour is unchanged. No
+executable flow, migration, or HTTP endpoint changes. One independently versioned contract package
+changes additively (see **Changed**).
+### Added
+- **Runtime token exchange** (`@atf/runtime`). A `forwardAuthToken` MCP server can declare
+  `tokenExchange`; Runtime then exchanges the caller's verified bearer for a token minted for that
+  server's `audience` (optionally scope-reduced) instead of forwarding the raw login token.
+  Exchanged tokens are cached per subject, audience, scope, and actor, and concurrent misses are
+  coalesced. The token endpoint is configured directly or discovered from `issuer`.
+- **Delegation (on-behalf-of).** An optional `tokenExchange.actor` (`client_credentials`) adds an
+  `actor_token`, so the issued token carries an RFC 8693 `act` claim that names Runtime as the
+  acting party. The flow identity audit classifies such servers as `exchanged-token` or
+  `delegated-token`.
+- **Gate actor policy** (`@atf/gate`). Gate parses the `act` claim of OAuth tokens and records
+  the actor on `tool_call` monitor events. The optional `oauth.actorPolicy` can require delegated
+  tokens (`requireActor`) and restrict accepted actor subjects (`allowedActorSubjects`).
+### Changed
+- **Identity contract** (`@atf/identity-contract`) 1.1.0 → 1.2.0: the identity-principal
+  contract version advances to 1.1.0 with an optional `actor`, and `GatePrincipalInput` accepts
+  an optional `actor`. Principals with version 1.0.0 and no actor are still accepted.
+  `@atf/contract-adapter` and `integration/system` reference the new version exactly.
+### Fixed
+- **`version:sync`** rewrote a file incorrectly when it held several occurrences and the new
+  version had a different length (e.g. `0.9.2` → `0.10.0`), because later match offsets went
+  stale. Occurrences are now rewritten back to front.
+### Security
+- Token exchange fails closed. Runtime exits at startup when `tokenExchange` lacks
+  `forwardAuthToken: true`, is combined with `allowAnonymous`, or references an unset secret
+  environment variable. At call time, a failed exchange or actor mint fails the tool call and
+  never falls back to forwarding the un-exchanged token. A caller session whose exchanged token
+  enters the refresh margin, or is rejected with HTTP 401, is rebuilt with a freshly exchanged
+  token; the rejected call itself is not replayed. Secrets are configured only by
+  environment-variable name (`clientSecretEnv`), and token material is never logged.
+- Setup and Authentik requirements are documented in
+  [docs/MCP-2026-CONTEXT-LAYER.md](docs/MCP-2026-CONTEXT-LAYER.md).
 
 ## [0.9.1] — 2026-09-28
 
@@ -1160,7 +1198,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/abillify/atf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.1
 [0.9.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.0
 [0.8.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.8.0
