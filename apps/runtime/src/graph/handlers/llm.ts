@@ -44,7 +44,10 @@ import type { NodeHandlerRegistration } from "../node-handler-registry.js";
 import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 import type { RequestContext } from "../../types/monitoring.js";
 import { decodeBase64Bytes } from "../media-store.js";
-import { providerTransportErrorCode } from "../provider-circuit-breaker.js";
+import {
+  describeProviderError,
+  providerTransportErrorCode,
+} from "../provider-circuit-breaker.js";
 import { filterLlmParameters } from "../llm-factory.js";
 import { buildClassificationNamespaces } from "../classification-access.js";
 import {
@@ -2024,6 +2027,13 @@ export function createLlmNodeHandler(
       };
       if (temperature !== undefined) streamParams.temperature = temperature;
       if (maxTokens !== undefined) streamParams.maxOutputTokens = maxTokens;
+      // While another candidate remains, disable the AI SDK's internal retries
+      // (default 2, with 2 s + 4 s backoff). This handler's own attempt loop
+      // already retries non-transport errors and fails over immediately on an
+      // unreachable provider; nested SDK retries made every attempt against a
+      // dead endpoint cost ~6 s (3 × 3 calls ≈ 18 s before the fallback). The
+      // last candidate keeps the SDK default as its final line of resilience.
+      if (c < candidates.length - 1) streamParams.maxRetries = 0;
       if (aiTools !== undefined && Object.keys(aiTools).length > 0) {
         streamParams.tools = aiTools;
         // A node may raise its tool-step budget above the global default via
@@ -4025,6 +4035,25 @@ export function createLlmNodeHandler(
           const circuitOpened = circuitState?.state === "open";
           if (!transportFailure && runtime.signal?.aborted !== true) {
             runtime.providerCircuitBreaker?.recordReachable(candidate.provider);
+          }
+          // The model-facing message above is deliberately generic. Record the
+          // raw provider cause once, server-side only, so an operator can tell a
+          // dead endpoint from a rejected request (4xx) or a mid-loop failure.
+          if (runtime.signal?.aborted !== true) {
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "warn",
+              code: "llm_provider_error_detail",
+              message: `LLM provider ${candidate.provider}/${candidate.model} attempt ${attempt} failed: ${describeProviderError(err)}`,
+              details: {
+                attempt,
+                provider: candidate.provider,
+                model: candidate.model,
+                after_partial_output: emittedAny,
+                ...(transportErrorCode !== undefined
+                  ? { transport_error_code: transportErrorCode }
+                  : {}),
+              },
+            });
           }
           if (emittedAny) {
             if (fullText.length > 0 || reasoningText.length > 0)

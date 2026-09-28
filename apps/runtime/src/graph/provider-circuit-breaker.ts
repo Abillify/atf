@@ -161,19 +161,38 @@ function errorRecord(value: unknown): Record<string, unknown> | undefined {
 		: undefined;
 }
 
-function errorStatus(error: unknown): number | undefined {
-	let current: unknown = error;
+/**
+ * The error followed by its wrapped causes, outermost first. Besides the
+ * standard `cause`, this follows the AI SDK `RetryError` shape (`lastError`,
+ * and the last entry of `errors`): after the SDK's own retries the provider's
+ * `APICallError` — and below it the fetch/socket error — sits there, not in
+ * `cause`. Bounded and cycle-safe.
+ */
+function errorChain(error: unknown): Record<string, unknown>[] {
+	const chain: Record<string, unknown>[] = [];
 	const seen = new Set<unknown>();
-	for (let depth = 0; depth < 5 && current !== undefined; depth += 1) {
+	let current: unknown = error;
+	for (let depth = 0; depth < 8 && current !== undefined; depth += 1) {
 		if (seen.has(current)) break;
 		seen.add(current);
 		const record = errorRecord(current);
 		if (record === undefined) break;
+		chain.push(record);
+		const errors = record.errors;
+		current =
+			record.cause ??
+			record.lastError ??
+			(Array.isArray(errors) ? errors[errors.length - 1] : undefined);
+	}
+	return chain;
+}
+
+function errorStatus(error: unknown): number | undefined {
+	for (const record of errorChain(error)) {
 		for (const key of ["statusCode", "status", "httpStatusCode"]) {
 			const status = record[key];
 			if (typeof status === "number" && Number.isInteger(status)) return status;
 		}
-		current = record.cause;
 	}
 	return undefined;
 }
@@ -185,22 +204,37 @@ const TRANSPORT_CODES = new Set([
 	"EAI_AGAIN",
 	"ETIMEDOUT",
 	"EPIPE",
+	// Bun's fetch reports socket-level failures with its own codes.
+	"ConnectionRefused",
+	"ConnectionClosed",
+	"ConnectionReset",
+	"FailedToOpenSocket",
 ]);
 
 function transportCode(error: unknown): string | undefined {
-	let current: unknown = error;
-	const seen = new Set<unknown>();
-	for (let depth = 0; depth < 5 && current !== undefined; depth += 1) {
-		if (seen.has(current)) break;
-		seen.add(current);
-		const record = errorRecord(current);
-		if (record === undefined) break;
+	for (const record of errorChain(error)) {
 		if (typeof record.code === "string" && TRANSPORT_CODES.has(record.code)) {
 			return record.code;
 		}
-		current = record.cause;
 	}
 	return undefined;
+}
+
+/**
+ * Socket-level failure wording across Node, Bun and the AI SDK, e.g. Bun's
+ * "The socket connection was closed unexpectedly" and the SDK's
+ * "Cannot connect to API: …".
+ */
+const TRANSPORT_MESSAGE =
+	/(?:fetch failed|network error|socket hang up|socket closed|socket connection was closed|cannot connect to api|unable to connect|failed to open socket|tls handshake|connection (?:refused|reset|closed)|timed? out)/iu;
+
+function transportMessage(error: unknown): boolean {
+	const chain = errorChain(error);
+	if (chain.length === 0) return TRANSPORT_MESSAGE.test(String(error));
+	return chain.some(
+		(record) =>
+			typeof record.message === "string" && TRANSPORT_MESSAGE.test(record.message),
+	);
 }
 
 export function providerTransportErrorCode(
@@ -217,12 +251,7 @@ export function providerTransportErrorCode(
 	const code = transportCode(error);
 	if (code !== undefined) return code;
 
-	const message = error instanceof Error ? error.message : String(error);
-	return /(?:fetch failed|network error|socket hang up|socket closed|tls handshake|connection (?:refused|reset)|timed? out)/iu.test(
-		message,
-	)
-		? "NETWORK_ERROR"
-		: undefined;
+	return transportMessage(error) ? "NETWORK_ERROR" : undefined;
 }
 
 export function isProviderTransportError(
@@ -230,4 +259,32 @@ export function isProviderTransportError(
 	options: { requestTimedOut?: boolean; flowAborted?: boolean } = {},
 ): boolean {
 	return providerTransportErrorCode(error, options) !== undefined;
+}
+
+/**
+ * Operator-facing one-line description of a provider failure: the distinct
+ * messages along the error chain (outermost first) plus any HTTP status or
+ * error code found. Bounded to `maxChars`; meant for server-side diagnostics
+ * only, never for the model stream.
+ */
+export function describeProviderError(error: unknown, maxChars = 400): string {
+	const chain = errorChain(error);
+	if (chain.length === 0) return String(error).slice(0, maxChars);
+	const parts: string[] = [];
+	for (const record of chain) {
+		const message = typeof record.message === "string" ? record.message.trim() : "";
+		const name = typeof record.name === "string" ? record.name : "";
+		const text = name !== "" && message !== "" ? `${name}: ${message}` : message || name;
+		if (text !== "" && !parts.includes(text)) parts.push(text);
+	}
+	const status = errorStatus(error);
+	const code = chain.find((record) => typeof record.code === "string")?.code;
+	const suffix = [
+		...(status !== undefined ? [`status=${status}`] : []),
+		...(typeof code === "string" ? [`code=${code}`] : []),
+	].join(" ");
+	const description = `${parts.join(" <- ")}${suffix !== "" ? ` (${suffix})` : ""}`;
+	return description.length > maxChars
+		? `${description.slice(0, maxChars - 1)}…`
+		: description;
 }

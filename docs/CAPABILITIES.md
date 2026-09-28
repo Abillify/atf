@@ -332,7 +332,11 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   objective such as lowest cost at a required quality level, using observed quality with a
   configurable half-life (`ROUTER_QUALITY_HALF_LIFE_MS`).
 - **Fallback chains and failover.** `FALLBACK_LLM` and `FALLBACK_CHAIN` switch providers when
-  one fails, with a circuit breaker per provider.
+  one fails, with a circuit breaker per provider. An unreachable provider (connection refused or
+  closed, DNS failure, 5xx/408) fails over to the next candidate at once. While another candidate
+  remains, the provider SDK's own retries are disabled so a dead endpoint costs one attempt; the
+  last candidate keeps them. The raw provider error is recorded as the `llm_provider_error_detail`
+  trace diagnostic, never in the model stream.
 - **Model pools per shortcut.** A model shortcut in `flows/model-shortcuts.yaml` can name a pool
   of members (engine/model pairs or other shortcuts) with a selection strategy — `fallback`,
   `round-robin`, `weighted-round-robin`, `random`, `weighted-random`, or `least-used`. The `llm`

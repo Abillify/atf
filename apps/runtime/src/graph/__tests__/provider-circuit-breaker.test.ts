@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	createObservedProviderCircuitBreaker,
 	createProviderCircuitBreaker,
+	describeProviderError,
 	isProviderTransportError,
 	providerTransportErrorCode,
 } from "../provider-circuit-breaker.js";
@@ -174,5 +175,56 @@ describe("provider transport error classification", () => {
 				{ flowAborted: true },
 			),
 		).toBe(false);
+	});
+	test("classifies Bun socket failures wrapped in an AI SDK RetryError", () => {
+		// Shape observed in production: RetryError("Failed after 3 attempts…")
+		// → lastError APICallError("Cannot connect to API: …") → Bun socket error.
+		const socketError = Object.assign(
+			new Error("The socket connection was closed unexpectedly."),
+			{ code: "ConnectionClosed" },
+		);
+		const apiCallError = new Error(
+			"Cannot connect to API: The socket connection was closed unexpectedly.",
+			{ cause: socketError },
+		);
+		const retryError = Object.assign(
+			new Error("Failed after 3 attempts. Last error: Cannot connect to API"),
+			{ lastError: apiCallError, errors: [apiCallError, apiCallError, apiCallError] },
+		);
+		expect(providerTransportErrorCode(retryError)).toBe("ConnectionClosed");
+		// The LLM handler wraps stream errors once more.
+		expect(
+			providerTransportErrorCode(
+				new Error("LLM provider stream failed.", { cause: retryError }),
+			),
+		).toBe("ConnectionClosed");
+		// Without a code, the Bun/SDK wording alone is recognised.
+		expect(
+			providerTransportErrorCode(
+				new Error("Cannot connect to API: The socket connection was closed unexpectedly."),
+			),
+		).toBe("NETWORK_ERROR");
+	});
+	test("keeps a wrapped 4xx non-transport", () => {
+		const badRequest = Object.assign(new Error("context length exceeded"), {
+			statusCode: 400,
+		});
+		const retryError = Object.assign(new Error("Failed after 1 attempts."), {
+			lastError: badRequest,
+		});
+		expect(providerTransportErrorCode(retryError)).toBeUndefined();
+	});
+	test("describes the provider error chain for operators", () => {
+		const cause = Object.assign(new Error("socket closed"), { code: "ConnectionClosed" });
+		const described = describeProviderError(
+			new Error("LLM provider stream failed.", {
+				cause: Object.assign(new Error("Bad Request"), { statusCode: 400, cause }),
+			}),
+		);
+		expect(described).toContain("LLM provider stream failed.");
+		expect(described).toContain("Bad Request");
+		expect(described).toContain("status=400");
+		expect(described).toContain("code=ConnectionClosed");
+		expect(describeProviderError(new Error("x".repeat(1_000))).length).toBeLessThanOrEqual(400);
 	});
 });

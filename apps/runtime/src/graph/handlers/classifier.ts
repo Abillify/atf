@@ -40,6 +40,7 @@ import {
 } from "../classification-access.js";
 import { getModelCapabilities } from "../model-capabilities.js";
 import { buildPoolCandidateChain, poolSignature } from "../model-pool.js";
+import { providerTransportErrorCode } from "../provider-circuit-breaker.js";
 import type { AgentState } from "../graph-engine.js";
 
 /**
@@ -328,6 +329,11 @@ export function createClassifierNodeHandler(
         });
       }
 
+      // With another pool candidate left, fail over immediately instead of
+      // letting the AI SDK retry a dead endpoint twice (2 s + 4 s backoff).
+      // The last candidate keeps the SDK default retries.
+      const sdkRetryOverride =
+        attemptIndex < poolChain.length - 1 ? 0 : undefined;
       try {
         let text: string;
         let genUsage:
@@ -351,6 +357,7 @@ export function createClassifierNodeHandler(
             // option instead" and every Bedrock classifier would fall back.
             allowSystemInMessages: caps.allowSystemInMessages,
             maxOutputTokens: classifierMaxTokens ?? 512,
+            ...(sdkRetryOverride !== undefined ? { maxRetries: sdkRetryOverride } : {}),
             ...(classifierTemperature !== undefined
               ? { temperature: classifierTemperature }
               : undefined),
@@ -375,6 +382,7 @@ export function createClassifierNodeHandler(
             // "system messages in messages" warning on every classifier call.
             allowSystemInMessages: caps.allowSystemInMessages,
             maxOutputTokens: classifierMaxTokens ?? 512,
+            ...(sdkRetryOverride !== undefined ? { maxRetries: sdkRetryOverride } : {}),
             ...(classifierTemperature !== undefined
               ? { temperature: classifierTemperature }
               : undefined),
@@ -530,6 +538,19 @@ export function createClassifierNodeHandler(
       } catch (err) {
         const errMsg = err instanceof Error ? err.message : String(err);
         lastAttemptError = `generateText failed — ${errMsg}`;
+        // Feed the flow's provider circuit like the LLM handler does, so a
+        // provider found dead here is skipped by the nodes that follow instead
+        // of being probed again.
+        const flowAborted = runtime.signal?.aborted === true;
+        const transportErrorCode = providerTransportErrorCode(err, { flowAborted });
+        if (transportErrorCode !== undefined) {
+          runtime.providerCircuitBreaker?.recordTransportFailure(
+            candidate.provider,
+            transportErrorCode,
+          );
+        } else if (!flowAborted) {
+          runtime.providerCircuitBreaker?.recordReachable(candidate.provider);
+        }
         runtime.metrics.recordLlmCall(
           candidate.provider,
           candidate.model,
