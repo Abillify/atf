@@ -25,6 +25,7 @@
 import type { RequestHandler } from "express";
 import type { Logger } from "pino";
 import type { PostgresClient } from "../postgres-client.js";
+import { collectionTableName } from "../collection-ddl.js";
 import { readHeader } from "../header-utils.js";
 import { getPrincipal, type RequestPrincipal } from "../request-principal.js";
 import {
@@ -69,6 +70,14 @@ export function createCollectionAccessMiddleware(
       (req as { log?: Logger }).log ?? options.logger;
     try {
       const collection = resolve(req) ?? defaultCollection;
+      // The naming rule is public, so a bad name is reported as what it is
+      // (400) rather than folded into "access denied".
+      try {
+        collectionTableName(collection);
+      } catch (cause) {
+        res.status(400).json({ error: (cause as Error).message, code: "INVALID_COLLECTION_NAME" });
+        return;
+      }
       const scope = accessScopeForRequest(req);
       const acl = await requireCollectionAccess(postgresClient, collection, scope);
       res.locals["accessScope"] = scope;

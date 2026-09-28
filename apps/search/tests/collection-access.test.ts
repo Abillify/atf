@@ -214,6 +214,18 @@ describe("createCollectionAccessMiddleware", () => {
     expect(holder.calls).toBe(1);
   });
 
+  it("answers 400 for a collection name that breaks the naming rule, before any ACL lookup", async () => {
+    const holder = mkClient({ allowedUsers: [], allowedGroups: [] });
+    const { next, res } = await run(
+      { userId: "alice", userGroups: undefined, source: "jwt" },
+      holder,
+      { "x-collection": "atf-ui-smoketest" },
+    );
+    expect(next).not.toHaveBeenCalled();
+    expect(res._status).toBe(400);
+    expect(holder.calls).toBe(0);
+  });
+
   it("allows a permitted user", async () => {
     const holder = mkClient({ allowedUsers: ["alice"], allowedGroups: [] });
     const { next, res } = await run(

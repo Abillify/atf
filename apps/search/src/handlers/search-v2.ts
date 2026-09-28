@@ -524,7 +524,11 @@ export function createSearchV2Handler(
 			);
 			if (!searchResult.ok) {
 				const status =
-					searchResult.error.code === "INVALID_COLLECTION_NAME" ? 400 : 502;
+					searchResult.error.code === "INVALID_COLLECTION_NAME"
+						? 400
+						: searchResult.error.code === "COLLECTION_NOT_FOUND"
+							? 404
+							: 502;
 				log.warn({ error: searchResult.error }, "v2 search failed");
 				res.status(status).json({ error: searchResult.error.message });
 				return;

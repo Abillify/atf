@@ -208,6 +208,39 @@ describeIfPg("batch worker · real postgres", () => {
     worker.stop();
   });
 
+  it("creates a collection that does not exist yet from the first batch's vector size", async () => {
+    const fresh = `bwnew_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    const created = await store.createRevision({ tenantId: TENANT, collection: fresh, reference: "neu.pdf", ttlMs: 60_000 });
+    if (!created.ok) throw new Error("create failed");
+    const revisionId = created.result.revision.revisionId;
+    const { body, digest } = pageBatch(1);
+    const staged = await store.stageBatch({ tenantId: TENANT, collection: fresh, revisionId, seq: 0, body, contentDigest: digest, ttlMs: 60_000 });
+    expect(staged.ok).toBe(true);
+
+    const sizes: number[] = [];
+    const worker = createBatchWorker(pool, fakeEmbeddingClient(), {
+      intervalMs: 0,
+      onlyTenantId: TENANT,
+      ensureCollection: async (collection, vectorSize) => {
+        sizes.push(vectorSize);
+        return pg.ensureCollection(collection, vectorSize);
+      },
+    });
+    try {
+      const outcome = await worker.tick();
+      expect(outcome.kind).toBe("processed");
+      expect(sizes).toEqual([VECTOR_SIZE]);
+      const rows = await pool.query<{ n: string }>(
+        `SELECT count(*)::text AS n FROM "${collectionTableName(fresh)}" WHERE tenant_id = $1 AND revision_id = $2`,
+        [TENANT, revisionId],
+      );
+      expect(Number(rows.rows[0]?.n)).toBe(2);
+    } finally {
+      worker.stop();
+      await pg.deleteCollection(fresh).catch(() => {});
+    }
+  });
+
   it("copies document.begin provenance into the unit metadata of every batch — Req 18.2", async () => {
     const reference = "provenance.pdf";
     const created = await store.createRevision({ tenantId: TENANT, collection, reference, ttlMs: 60_000 });

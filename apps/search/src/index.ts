@@ -726,6 +726,16 @@ export function createApp(
     contextHeaderMaxFraction: config.contextHeaderMaxFraction,
     ...(summaryClient ? { summaryClient } : {}),
     contextualChunkLlm: config.contextualChunkLlm,
+    // A document may arrive for a collection that does not exist yet; create
+    // it with the same defaults the v1 ingest paths use.
+    ensureCollection: (collection, vectorSize) =>
+      postgresClient.ensureCollection(collection, vectorSize, {
+        language: config.defaultFtsLanguage,
+        ...(config.sparseModel ? { sparseVocabSize: config.sparseVocabSize } : {}),
+        quantization: config.quantization,
+        embeddingModel: config.embedModel,
+        embeddingModelRevision: config.embedModelRevision,
+      }),
     logger,
   });
 

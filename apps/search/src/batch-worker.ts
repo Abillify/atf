@@ -168,6 +168,14 @@ export interface BatchWorkerOptions {
   /** pgvector column type for the vector cast: "vector" or "halfvec". Default: "vector". */
   vecType?: "vector" | "halfvec";
   /**
+   * Create a collection that does not exist yet, with the embedding's vector
+   * size and the same defaults the v1 ingest paths use
+   * (`PostgresClient.ensureCollection`). The revision API accepts a document
+   * for a new collection; without this the first batch would fail on the
+   * missing table forever. Omitted, a missing collection is an error.
+   */
+  ensureCollection?: (collection: string, vectorSize: number) => Promise<{ ok: true } | { ok: false; error: { message: string } }>;
+  /**
    * Narrow the claim to a single tenant. Undefined in production, where any
    * worker may process any staged batch. Set only by integration suites that
    * share one database: without it, the status-only claim lets a parallel
@@ -269,8 +277,12 @@ export function createBatchWorker(
     table: string,
     batch: ClaimedBatchRow,
     units: IndexUnit[],
+    tableExists = true,
   ): Promise<number[][]> {
-    const stored = await loadStoredUnitFacts(client, table, batch.tenant_id, units);
+    // A collection that does not exist yet has no stored vectors to reuse.
+    const stored = tableExists
+      ? await loadStoredUnitFacts(client, table, batch.tenant_id, units)
+      : new Map<string, never>();
 
     const reused: (number[] | null)[] = new Array(units.length).fill(null);
     const toEmbed: IndexUnit[] = [];
@@ -416,7 +428,21 @@ export function createBatchWorker(
     // one whose path or content changed, is embedded. A failure here throws and
     // the caller rolls back + defers, so no unit is ever committed for a failed
     // batch.
-    const vectors = await resolveVectors(client, table, batch, units);
+    const tableExists =
+      (await client.query<{ t: string | null }>(`SELECT to_regclass($1) AS t`, [`"${table}"`])).rows[0]?.t != null;
+    const vectors = await resolveVectors(client, table, batch, units, tableExists);
+    if (!tableExists) {
+      // First batch for a new collection: create it now that the vector size
+      // is known, before anything is written into it.
+      const vectorSize = vectors[0]?.length ?? 0;
+      const ensured = options.ensureCollection
+        ? await options.ensureCollection(batch.collection, vectorSize)
+        : { ok: false as const, error: { message: "no collection bootstrap configured" } };
+      if (!ensured.ok) {
+        throw new Error(`Collection "${batch.collection}" does not exist and could not be created: ${ensured.error.message}`);
+      }
+      logger?.info({ collection: batch.collection, vectorSize }, "Created collection for the first v2 batch");
+    }
 
     // Visibility decision under FOR SHARE on the revision row (see header). A
     // revision aborted / superseded meanwhile gets no units: roll back, the

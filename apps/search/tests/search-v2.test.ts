@@ -440,6 +440,19 @@ describe("/v2/search handler", () => {
 		expect(expanded.truncated).toBe(false);
 	});
 
+	it("returns 404, not a provenance error, for a collection that does not exist", async () => {
+		const pg = mockPg({
+			search: {
+				ok: false,
+				error: { code: "COLLECTION_NOT_FOUND", message: 'Collection "nope" not found' },
+			} as never,
+		});
+		const handler = createSearchV2Handler(mockEmbedding(), pg, logger);
+		const res = mockRes();
+		await handler(mockReq({ query: "x" }) as never, res as never, vi.fn());
+		expect(res.statusCode).toBe(404);
+	});
+
 	it("returns 502 when embedding fails", async () => {
 		const embed = {
 			embed: vi

@@ -2662,6 +2662,12 @@ export function createPostgresClient(
       return withClient(async (client) => {
         const meta = await getOrLoadCollectionMeta(client, table);
         if (expectedEmbeddingModel !== undefined && meta.embeddingModel !== expectedEmbeddingModel) {
+          // A collection that does not exist has no provenance either; say
+          // what is actually wrong instead of reporting a model mismatch.
+          const exists = await client.query<{ t: string | null }>(`SELECT to_regclass($1) AS t`, [`"${table}"`]);
+          if (!exists.rows[0]?.t) {
+            throw new AppError("COLLECTION_NOT_FOUND", `Collection "${collection}" not found`);
+          }
           throw new AppError(
             "EMBEDDING_PROVENANCE_MISMATCH",
             "EMBEDDING_PROVENANCE_MISMATCH: collection model provenance is unknown or differs; reindex and cut over explicitly",

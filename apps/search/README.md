@@ -107,6 +107,12 @@ Extract's emitter writes documents through these routes (the OpenAPI document ha
 
 Behaviour worth knowing:
 
+- A revision may name a collection that does not exist yet. The batch worker creates it on the
+  first batch, with the embedding's vector size and the defaults of the v1 ingest paths
+  (`FTS_LANGUAGE`, quantization, sparse vocabulary, embedding model provenance).
+- A collection name that breaks the naming rule (a letter, then letters, digits or underscores)
+  is 400 `INVALID_COLLECTION_NAME` before the access check; `POST /v2/search` on a collection
+  that does not exist is 404 instead of a provenance mismatch.
 - Every revision route checks `X-Extract-Contract`: absent is accepted, malformed is 400, a
   major other than 2 is 422. A `{ref}` that does not own the addressed revision is 409
   `REVISION_REFERENCE_MISMATCH`; reusing an `Idempotency-Key` for another document is 409.
