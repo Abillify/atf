@@ -253,10 +253,13 @@ export async function buildAiTools(
 ): Promise<{
   tools: ToolSet;
   unavailable: string[];
+  /** Why each unavailable tool's schema could not be fetched (keyed by tool ref). */
+  unavailableReasons: Record<string, string>;
   keyByRef: Record<string, string>;
 }> {
   const tools: ToolSet = {};
   const unavailable: string[] = [];
+  const unavailableReasons: Record<string, string> = {};
   const keyByRef: Record<string, string> = {};
 
   // Per-tool forced arguments (`config.toolArgs[toolRef]`), merged OVER the
@@ -320,10 +323,15 @@ export async function buildAiTools(
       filtered = await mcpWrapper.getFilteredToolSchema(serverName, bareName, {
         authToken: ctx.ssoToken,
       });
-    } catch {
-      // Skip tools whose schema cannot be fetched, but remember them so the
-      // caller can tell the model the tool is unavailable.
+    } catch (err) {
+      // Skip tools whose schema cannot be fetched, but remember them (and why)
+      // so the caller can tell the model the tool is unavailable and record the
+      // cause for operators. Wrapper errors carry no token material.
       unavailable.push(toolRef);
+      unavailableReasons[toolRef] = (err instanceof Error ? err.message : String(err)).slice(
+        0,
+        300,
+      );
       continue;
     }
 
@@ -763,7 +771,7 @@ export async function buildAiTools(
     }) as ToolSet[string];
   }
 
-  return { tools, unavailable, keyByRef };
+  return { tools, unavailable, unavailableReasons, keyByRef };
 }
 
 /**

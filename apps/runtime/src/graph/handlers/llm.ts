@@ -716,6 +716,26 @@ export function createLlmNodeHandler(
         aiTools = built.tools;
         unavailableTools = built.unavailable;
         toolKeyByRef = built.keyByRef;
+        // Surface WHY tools are unavailable in the trace: one diagnostic per
+        // server and cause, so e.g. a rejected token exchange is not visible
+        // only as the model saying "temporarily unavailable".
+        const byCause = new Map<string, { server: string; reason: string; tools: string[] }>();
+        for (const toolRef of built.unavailable) {
+          const server = toolRef.includes("/") ? (toolRef.split("/")[0] ?? toolRef) : toolRef;
+          const reason = built.unavailableReasons[toolRef] ?? "unknown error";
+          const causeKey = `${server}\u001f${reason}`;
+          const entry = byCause.get(causeKey) ?? { server, reason, tools: [] };
+          entry.tools.push(toolRef);
+          byCause.set(causeKey, entry);
+        }
+        for (const { server, reason, tools } of byCause.values()) {
+          runtime.onNodeDiagnostic?.(node.id, {
+            level: "warn",
+            code: "tool_schema_unavailable",
+            message: `Tool schema for MCP server ${server} could not be loaded: ${reason}`,
+            details: { server, reason, tools },
+          });
+        }
       } catch {
         aiTools = undefined;
       }

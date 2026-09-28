@@ -38,6 +38,7 @@ export async function buildMcp(
   logger: Logger,
 ): Promise<McpResult> {
   const mcpWrapper: McpWrapperService = createMcpWrapper({
+    logger,
     schemaCompatibilityMode: config.mcpSchemaCompatibilityMode ?? "report",
     onSchemaCompatibility: ({ serverName, toolName, mode, diff }) => {
       logger.warn("MCP tool schema compatibility findings", {

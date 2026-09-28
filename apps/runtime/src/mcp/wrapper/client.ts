@@ -48,6 +48,7 @@ import { computeSchemaChecksum } from "./schema.js";
 import { withRetry, resolveInjectedParams, stripProtectedParams } from "./tool-proxy.js";
 import type { McpApprovalInputRequest, McpApprovalResolution, ToolResult } from "./tool-proxy.js";
 import { MCP_2026_PROTOCOL_VERSION, Stateless2026Client } from "./stateless-2026-client.js";
+import type { Logger } from "../../observability/logger.js";
 import {
   EXCHANGE_EXPIRY_MARGIN_MS,
   TokenExchanger,
@@ -378,6 +379,7 @@ const sharedTokenEndpointResolver = createTokenEndpointResolver();
  */
 const defaultTokenExchangerFactory = (
   config: McpServerConfig,
+  logger?: Logger,
 ): TokenExchanger | undefined => {
   const tx = config.tokenExchange;
   if (tx === undefined) return undefined;
@@ -412,7 +414,12 @@ const defaultTokenExchangerFactory = (
         }
       : {}),
   };
-  return new TokenExchanger(resolved, { endpointResolver: sharedTokenEndpointResolver });
+  // The logger makes a rejected exchange visible (audience, IdP error code;
+  // never token material) instead of surfacing only as an unavailable tool.
+  return new TokenExchanger(resolved, {
+    endpointResolver: sharedTokenEndpointResolver,
+    ...(logger !== undefined ? { logger } : {}),
+  });
 };
 
 const DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS = 300_000;
@@ -661,6 +668,8 @@ export class McpWrapper implements McpWrapperService {
       maxTokenClientsPerServer?: number;
       clientFactory?: McpClientFactory;
       tokenExchangerFactory?: (config: McpServerConfig) => TokenExchanger | undefined;
+      /** Receives token-exchange outcomes from the default exchanger factory. */
+      logger?: Logger;
     } = {},
   ) {
     this.schemaCache = new SchemaCache(options.schemaTtlMs ?? 60_000);
@@ -707,7 +716,10 @@ export class McpWrapper implements McpWrapperService {
       throw new Error("maxTokenClientsPerServer must be a positive safe integer");
     }
     this.clientFactory = options.clientFactory ?? defaultClientFactory;
-    this.tokenExchangerFactory = options.tokenExchangerFactory ?? defaultTokenExchangerFactory;
+    const logger = options.logger;
+    this.tokenExchangerFactory =
+      options.tokenExchangerFactory ??
+      ((config) => defaultTokenExchangerFactory(config, logger));
   }
 
   // -------------------------------------------------------------------------
@@ -2258,6 +2270,7 @@ export function createMcpWrapper(options?: {
   maxTokenClientsPerServer?: number;
   clientFactory?: McpClientFactory;
   tokenExchangerFactory?: (config: McpServerConfig) => TokenExchanger | undefined;
+  logger?: Logger;
 }): McpWrapperService {
   return new McpWrapper(options);
 }
