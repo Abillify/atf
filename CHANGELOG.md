@@ -17,6 +17,26 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.10.1] — 2026-09-28
+Reliability and diagnostics fixes for LLM provider failover and RFC 8693 token exchange, plus
+neutral example data. No configuration, schema, flow, migration, HTTP endpoint, or contract-package
+change.
+### Changed
+- **Diagnostics.** A failed provider attempt records its raw error chain (status, code; bounded,
+  server-side only) as the `llm_provider_error_detail` trace diagnostic. Tools whose schema cannot
+  be loaded are reported once per server and cause as `tool_schema_unavailable`, and a rejected
+  token exchange is logged with its audience and IdP error code, never token material.
+- **Examples.** Documentation, the node-type catalog, the Studio hint, and tests use neutral
+  example names (`casework`, `cases`) instead of deployment-specific ones.
+### Fixed
+- **LLM failover on an unreachable provider** (`@atf/runtime`). Bun socket failures ("The socket
+  connection was closed unexpectedly", codes such as `ConnectionClosed`) wrapped in an AI SDK
+  `RetryError` were not recognised as transport failures, so a dead provider was retried three
+  times with backoff and even reset its circuit breaker. Transport detection now follows `lastError` and
+  `errors` as well as `cause` and knows Bun's socket codes and wording; a wrapped 4xx stays
+  non-transport. While another candidate remains, `llm` and `classifier` nodes disable the provider
+  SDK's internal retries, so a dead endpoint costs one fast attempt instead of about 6 s per try.
+  Classifier nodes now report transport failures to the flow's provider circuit breaker.
 ## [0.10.0] — 2026-09-28
 Adds OAuth 2.0 Token Exchange (RFC 8693) for caller-authenticated MCP servers and records the
 acting party of delegated tokens end to end. Every change is opt-in and additive: without the new
@@ -1198,7 +1218,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.10.1...HEAD
+[0.10.1]: https://github.com/abillify/atf/compare/v0.10.0...v0.10.1
 [0.10.0]: https://github.com/abillify/atf/compare/v0.9.1...v0.10.0
 [0.9.1]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.1
 [0.9.0]: https://github.com/abillify/atf/compare/v0.3.0...v0.9.0

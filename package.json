@@ -1,6 +1,6 @@
 {
 	"name": "aiperator-trust-fabric",
-	"version": "0.10.0",
+	"version": "0.10.1",
 	"private": true,
 	"description": "Self-hosted AI orchestration with policy, approvals, PII controls, audit evidence, retrieval, and governed MCP tools",
 	"author": "Abillify Technology GmbH <info@abillify.me>",
