@@ -16,16 +16,16 @@
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.11.1",
+      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.12.0",
       "group": "Abillify Technology GmbH",
       "name": "aiperator-trust-fabric",
-      "version": "0.11.1",
+      "version": "0.12.0",
       "licenses": [
         {
           "expression": "Elastic-2.0"
         }
       ],
-      "purl": "pkg:npm/aiperator-trust-fabric@0.11.1"
+      "purl": "pkg:npm/aiperator-trust-fabric@0.12.0"
     },
     "properties": [
       {
@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "e34d0cbe67edc0a6a961b417792aa71917e500f2d7af5ea5c707719223ca029d"
+        "value": "e9b419fc5eaf375419e0ef81550956debb7d05d234f33fd380d51273a817a4e7"
       }
     ]
   },
@@ -737,6 +737,177 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fcompat-data@7.29.7",
+      "group": "@babel",
+      "name": "compat-data",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fcompat-data@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fcore@7.29.7",
+      "group": "@babel",
+      "name": "core",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fcore@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fgenerator@7.29.8",
+      "group": "@babel",
+      "name": "generator",
+      "version": "7.29.8",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fgenerator@7.29.8",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-compilation-targets@7.29.7",
+      "group": "@babel",
+      "name": "helper-compilation-targets",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-compilation-targets@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-globals@7.29.7",
+      "group": "@babel",
+      "name": "helper-globals",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-globals@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-module-imports@7.29.7",
+      "group": "@babel",
+      "name": "helper-module-imports",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-module-imports@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-module-transforms@7.29.7",
+      "group": "@babel",
+      "name": "helper-module-transforms",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-module-transforms@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-plugin-utils@7.29.7",
+      "group": "@babel",
+      "name": "helper-plugin-utils",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-plugin-utils@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-string-parser@7.29.7",
+      "group": "@babel",
+      "name": "helper-string-parser",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-string-parser@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40babel%2Fhelper-validator-identifier@7.29.7",
       "group": "@babel",
       "name": "helper-validator-identifier",
@@ -756,6 +927,101 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelper-validator-option@7.29.7",
+      "group": "@babel",
+      "name": "helper-validator-option",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelper-validator-option@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fhelpers@7.29.7",
+      "group": "@babel",
+      "name": "helpers",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fhelpers@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fparser@7.29.9",
+      "group": "@babel",
+      "name": "parser",
+      "version": "7.29.9",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fparser@7.29.9",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fplugin-transform-react-jsx-self@7.29.7",
+      "group": "@babel",
+      "name": "plugin-transform-react-jsx-self",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fplugin-transform-react-jsx-self@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Fplugin-transform-react-jsx-source@7.29.7",
+      "group": "@babel",
+      "name": "plugin-transform-react-jsx-source",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Fplugin-transform-react-jsx-source@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40babel%2Fruntime@7.29.7",
       "group": "@babel",
       "name": "runtime",
@@ -766,6 +1032,63 @@
         }
       ],
       "purl": "pkg:npm/%40babel%2Fruntime@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Ftemplate@7.29.7",
+      "group": "@babel",
+      "name": "template",
+      "version": "7.29.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Ftemplate@7.29.7",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Ftraverse@7.29.8",
+      "group": "@babel",
+      "name": "traverse",
+      "version": "7.29.8",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Ftraverse@7.29.8",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40babel%2Ftypes@7.29.8",
+      "group": "@babel",
+      "name": "types",
+      "version": "7.29.8",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40babel%2Ftypes@7.29.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -956,6 +1279,25 @@
         }
       ],
       "purl": "pkg:npm/%40dagrejs%2Fgraphlib@4.0.5",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40esbuild%2Fdarwin-arm64@0.25.12",
+      "group": "@esbuild",
+      "name": "darwin-arm64",
+      "version": "0.25.12",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40esbuild%2Fdarwin-arm64@0.25.12",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1763,6 +2105,25 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40rolldown%2Fpluginutils@1.0.0-beta.47",
+      "group": "@rolldown",
+      "name": "pluginutils",
+      "version": "1.0.0-beta.47",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40rolldown%2Fpluginutils@1.0.0-beta.47",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40rolldown%2Fpluginutils@1.0.1",
       "group": "@rolldown",
       "name": "pluginutils",
@@ -1773,6 +2134,25 @@
         }
       ],
       "purl": "pkg:npm/%40rolldown%2Fpluginutils@1.0.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40rollup%2Frollup-darwin-arm64@4.63.5",
+      "group": "@rollup",
+      "name": "rollup-darwin-arm64",
+      "version": "4.63.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40rollup%2Frollup-darwin-arm64@4.63.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2200,6 +2580,63 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40tauri-apps%2Fapi@2.8.0",
+      "group": "@tauri-apps",
+      "name": "api",
+      "version": "2.8.0",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40tauri-apps%2Fapi@2.8.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40tauri-apps%2Fcli@2.8.1",
+      "group": "@tauri-apps",
+      "name": "cli",
+      "version": "2.8.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40tauri-apps%2Fcli@2.8.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40tauri-apps%2Fcli-darwin-arm64@2.8.1",
+      "group": "@tauri-apps",
+      "name": "cli-darwin-arm64",
+      "version": "2.8.1",
+      "licenses": [
+        {
+          "expression": "Apache-2.0 OR MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40tauri-apps%2Fcli-darwin-arm64@2.8.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40testing-library%2Fdom@10.4.1",
       "group": "@testing-library",
       "name": "dom",
@@ -2286,6 +2723,82 @@
         }
       ],
       "purl": "pkg:npm/%40types%2Faria-query@5.0.4",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fbabel__core@7.20.5",
+      "group": "@types",
+      "name": "babel__core",
+      "version": "7.20.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fbabel__core@7.20.5",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fbabel__generator@7.27.0",
+      "group": "@types",
+      "name": "babel__generator",
+      "version": "7.27.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fbabel__generator@7.27.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fbabel__template@7.4.4",
+      "group": "@types",
+      "name": "babel__template",
+      "version": "7.4.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fbabel__template@7.4.4",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fbabel__traverse@7.28.0",
+      "group": "@types",
+      "name": "babel__traverse",
+      "version": "7.28.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fbabel__traverse@7.28.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -2903,6 +3416,25 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/%40types%2Fpicomatch@4.0.3",
+      "group": "@types",
+      "name": "picomatch",
+      "version": "4.0.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40types%2Fpicomatch@4.0.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/%40types%2Fqs@6.15.1",
       "group": "@types",
       "name": "qs",
@@ -3141,6 +3673,25 @@
         }
       ],
       "purl": "pkg:npm/%40vercel%2Foidc@3.2.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40vitejs%2Fplugin-react@5.1.1",
+      "group": "@vitejs",
+      "name": "plugin-react",
+      "version": "5.1.1",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40vitejs%2Fplugin-react@5.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3641,6 +4192,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/baseline-browser-mapping@2.11.26",
+      "name": "baseline-browser-mapping",
+      "version": "2.11.26",
+      "licenses": [
+        {
+          "expression": "Apache-2.0"
+        }
+      ],
+      "purl": "pkg:npm/baseline-browser-mapping@2.11.26",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/bl@6.1.6",
       "name": "bl",
       "version": "6.1.6",
@@ -3740,6 +4309,24 @@
         }
       ],
       "purl": "pkg:npm/broker-factory@3.1.15",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/browserslist@4.29.3",
+      "name": "browserslist",
+      "version": "4.29.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/browserslist@4.29.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -3893,6 +4480,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/caniuse-lite@1.0.30001813",
+      "name": "caniuse-lite",
+      "version": "1.0.30001813",
+      "licenses": [
+        {
+          "expression": "CC-BY-4.0"
+        }
+      ],
+      "purl": "pkg:npm/caniuse-lite@1.0.30001813",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "CC-BY attribution"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/chai@6.2.2",
       "name": "chai",
       "version": "6.2.2",
@@ -3902,6 +4507,24 @@
         }
       ],
       "purl": "pkg:npm/chai@6.2.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/chokidar@4.0.3",
+      "name": "chokidar",
+      "version": "4.0.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/chokidar@4.0.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4055,6 +4678,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/commander@9.5.0",
+      "name": "commander",
+      "version": "9.5.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/commander@9.5.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/commist@3.2.0",
       "name": "commist",
       "version": "3.2.0",
@@ -4154,6 +4795,24 @@
         }
       ],
       "purl": "pkg:npm/content-type@2.1.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/convert-source-map@2.0.0",
+      "name": "convert-source-map",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/convert-source-map@2.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4901,6 +5560,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/electron-to-chromium@1.5.441",
+      "name": "electron-to-chromium",
+      "version": "1.5.441",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/electron-to-chromium@1.5.441",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/encodeurl@2.0.0",
       "name": "encodeurl",
       "version": "2.0.0",
@@ -5072,6 +5749,24 @@
         }
       ],
       "purl": "pkg:npm/es6-error@4.1.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/esbuild@0.25.12",
+      "name": "esbuild",
+      "version": "0.25.12",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/esbuild@0.25.12",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -5666,6 +6361,24 @@
         }
       ],
       "purl": "pkg:npm/generate-function@2.3.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/gensync@1.0.0-beta.2",
+      "name": "gensync",
+      "version": "1.0.0-beta.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/gensync@1.0.0-beta.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6467,6 +7180,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/jsesc@3.1.0",
+      "name": "jsesc",
+      "version": "3.1.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/jsesc@3.1.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/json-schema@0.4.0",
       "name": "json-schema",
       "version": "0.4.0",
@@ -6530,6 +7261,24 @@
         }
       ],
       "purl": "pkg:npm/json-stringify-safe@5.0.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/json5@2.2.3",
+      "name": "json5",
+      "version": "2.2.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/json5@2.2.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -6692,6 +7441,24 @@
         }
       ],
       "purl": "pkg:npm/lru-cache@10.4.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/lru-cache@5.1.1",
+      "name": "lru-cache",
+      "version": "5.1.1",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/lru-cache@5.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7214,6 +7981,24 @@
         }
       ],
       "purl": "pkg:npm/next@16.3.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/node-releases@2.0.57",
+      "name": "node-releases",
+      "version": "2.0.57",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/node-releases@2.0.57",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8123,6 +8908,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/postject@1.0.0-alpha.6",
+      "name": "postject",
+      "version": "1.0.0-alpha.6",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/postject@1.0.0-alpha.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/pretty-format@27.5.1",
       "name": "pretty-format",
       "version": "27.5.1",
@@ -8429,6 +9232,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/react-refresh@0.18.0",
+      "name": "react-refresh",
+      "version": "0.18.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/react-refresh@0.18.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/readable-stream@3.6.2",
       "name": "readable-stream",
       "version": "3.6.2",
@@ -8456,6 +9277,24 @@
         }
       ],
       "purl": "pkg:npm/readable-stream@4.7.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/readdirp@4.1.2",
+      "name": "readdirp",
+      "version": "4.1.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/readdirp@4.1.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8753,6 +9592,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/rollup@4.63.5",
+      "name": "rollup",
+      "version": "4.63.5",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/rollup@4.63.5",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/router@2.2.0",
       "name": "router",
       "version": "2.2.0",
@@ -8870,6 +9727,24 @@
         }
       ],
       "purl": "pkg:npm/scheduler@0.28.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/semver@6.3.1",
+      "name": "semver",
+      "version": "6.3.1",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/semver@6.3.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9833,6 +10708,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/undici@6.23.0",
+      "name": "undici",
+      "version": "6.23.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/undici@6.23.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/undici@7.29.0",
       "name": "undici",
       "version": "7.29.0",
@@ -9896,6 +10789,24 @@
         }
       ],
       "purl": "pkg:npm/unpipe@1.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/update-browserslist-db@1.3.3",
+      "name": "update-browserslist-db",
+      "version": "1.3.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/update-browserslist-db@1.3.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9986,6 +10897,24 @@
         }
       ],
       "purl": "pkg:npm/victory-vendor@37.3.6",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/vite@7.1.7",
+      "name": "vite",
+      "version": "7.1.7",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/vite@7.1.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -10328,6 +11257,24 @@
         }
       ],
       "purl": "pkg:npm/xtend@4.0.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/yallist@3.1.1",
+      "name": "yallist",
+      "version": "3.1.1",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/yallist@3.1.1",
       "properties": [
         {
           "name": "atf:compliance:classification",

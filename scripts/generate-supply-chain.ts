@@ -219,6 +219,33 @@ const REPOSITORY_LICENSE_REUSE_RULES: RepositoryLicenseReuseRule[] = [
 			"Rolldown native bindings use the repository-root MIT license; third-party notices are intentionally not reused.",
 	},
 	{
+		packagePattern: /^@esbuild\/[a-z0-9-]+$/,
+		expectedLicense: "MIT",
+		expectedRepository: "https://github.com/evanw/esbuild",
+		sourcePackagePattern: /^esbuild$/,
+		allowedSourceFiles: /^LICENSE\.md$/i,
+		reason:
+			"esbuild platform binaries are published from the esbuild repository and use its repository-root MIT license.",
+	},
+	{
+		packagePattern: /^@rollup\/rollup-[a-z0-9-]+$/,
+		expectedLicense: "MIT",
+		expectedRepository: "https://github.com/rollup/rollup",
+		sourcePackagePattern: /^rollup$/,
+		allowedSourceFiles: /^LICENSE\.md$/i,
+		reason:
+			"Rollup native bindings are published from the rollup repository and use its repository-root MIT license.",
+	},
+	{
+		packagePattern: /^@tauri-apps\/cli-[a-z0-9-]+$/,
+		expectedLicense: "Apache-2.0 OR MIT",
+		expectedRepository: "https://github.com/tauri-apps/tauri",
+		sourcePackagePattern: /^@tauri-apps\/cli$/,
+		allowedSourceFiles: /^LICENSE_(?:MIT|APACHE-2\.0)$/i,
+		reason:
+			"Tauri CLI platform binaries use the dual-license files of the Tauri repository.",
+	},
+	{
 		packagePattern: /^cookie-signature$/,
 		expectedLicense: "MIT",
 		expectedRepository: "https://github.com/visionmedia/node-cookie-signature",
@@ -386,6 +413,8 @@ const ALLOWED_LICENSE_EXPRESSIONS = new Map<string, string>([
 	["id:CC-BY-4.0", "CC-BY-4.0"],
 	["and(id:MIT,id:ISC)", "MIT AND ISC"],
 	["or(id:MIT,id:Apache-2.0)", "MIT OR Apache-2.0"],
+	// Same dual license, operand order as declared by the Tauri packages.
+	["or(id:Apache-2.0,id:MIT)", "Apache-2.0 OR MIT"],
 	["or(id:AFL-2.1,id:BSD-3-Clause)", "(AFL-2.1 OR BSD-3-Clause)"],
 	["or(id:MIT,id:CC0-1.0)", "(MIT OR CC0-1.0)"],
 ]);
