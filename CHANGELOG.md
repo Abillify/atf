@@ -17,6 +17,35 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.12.0] — 2026-09-30
+Adds the Extract Outpost, a locally operated sync agent that mirrors local folders, S3, Google
+Drive and Dropbox into Extract, plus the three Extract extensions it relies on.
+`@atf/extract-contract` moves to 2.2.0 (additive). Extract applies schema migration 3 on start.
+No flow or configuration-variable change; the new scope `extract.delete` must be granted to
+clients that delete documents.
+### Added
+- **Extract Outpost** (`@atf/outpost-core`, `apps/outpost`, `apps/outpost-desktop`). Sync core
+  with change planning, resumable uploads, job polling, retry policy, crash-safe journal state
+  and a delete planner with mirror-delete threshold and explicit confirmation. Docker runtime
+  with health endpoint, graceful shutdown, `source-login` and `confirm-deletes`; Tauri desktop
+  app with a Node SEA sidecar, loopback Control API and OS-keychain credentials. Extract
+  authentication via API token, client credentials, device code or PKCE; cloud sources
+  authorize read-only via OAuth (or a Google service account). See `apps/outpost/README.md`
+  and the Extract Outpost section in `DEPLOYMENT.md`.
+- **`GET /v1/whoami`** (`@atf/extract`). Reports principal, scopes, feature flags and
+  `limits.maxUploadBytes` for any valid token.
+- **`DELETE /v2/documents/{reference}`** (`@atf/extract`). Deletes a document by reference
+  under the new scope `extract.delete`: cancels active jobs, removes it from Search, `404` when
+  nothing was deleted. New metric `extract_documents_deleted_total`.
+- **Own-job reads** (`@atf/extract`). `GET /v2/jobs/{id}` is readable with `extract.ingest` by
+  the job's originator; foreign jobs answer like unknown ids. Listing stays `extract.admin`.
+- **`@atf/extract-contract` 2.2.0**: `whoamiResponseSchema`, `deleteDocumentResponseSchema`
+  and the `NOT_FOUND`/`FORBIDDEN` error shapes.
+- **`outpost-release` workflow** for `outpost-v*` tags (test and Docker image jobs); the
+  updater repository comes from the repository variable `OUTPOST_UPDATER_REPO`.
+### Migration
+- Extract schema version 3 adds the nullable columns `created_by_subject` and
+  `created_by_tenant` to `extract.jobs`. Existing jobs stay owner-less and admin-only.
 ## [0.11.1] — 2026-09-30
 Fixes a guaranteed `403` on Search MCP calls that pass `requesting_user` while authorization is
 disabled. No configuration, schema, flow, migration, HTTP endpoint, or contract-package change.
@@ -1311,7 +1340,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/abillify/atf/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/abillify/atf/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/abillify/atf/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/abillify/atf/compare/v0.10.1...v0.10.2
