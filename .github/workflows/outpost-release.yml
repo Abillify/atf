@@ -1,0 +1,312 @@
+# SPDX-License-Identifier: Elastic-2.0
+# SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+#
+# Release-Pipeline fuer den ATF Extract Outpost (Tasks 23.1-23.4).
+#
+# Benoenigte Repository-Secrets fuer Signierung/Notarisierung (ohne diese
+# Secrets laufen die Jobs unsigniert; unsignierte Artefakte haben Retention
+# 1 Tag und werden nicht veroeffentlicht - Anforderungen 14.6-14.8):
+#   WINDOWS_CERT_BASE64        Authenticode-PFX (Base64), enthaelt das
+#                              Code-Signing-Zertifikat
+#   WINDOWS_CERT_PASSWORD      Passwort fuer das PFX
+#   APPLE_CERTIFICATE          Developer-ID-Application-P12 (Base64)
+#   APPLE_CERTIFICATE_PASSWORD Passwort fuer das P12
+#   APPLE_SIGNING_IDENTITY     z. B. "Developer ID Application: ..."
+#   APPLE_API_KEY_ID           App-Store-Connect-API-Key-ID (Notarisierung)
+#   APPLE_API_ISSUER           Issuer UUID (Notarisierung)
+#   APPLE_API_KEY_P8           Notarisierungs-P8 (Base64)
+#   MINISIGN_PRIVATE_KEY       Minisign-Secret-Key fuer Updater-Signaturen
+#                              (tauri signer sign -f key.pem); der zugehoerige
+#                              .pub-Schluessel muss als plugins.updater.pubkey
+#                              in tauri.conf.json hinterlegt sein (22.5/23.4)
+#
+# Benoetigte Repository-Variable (deploymentspezifisch, nicht im Repository):
+#   OUTPOST_UPDATER_REPO       GitHub-Repository <owner>/<repo>, dessen Releases
+#                              den Updater-Feed latest.json hosten; Pflicht,
+#                              sobald MINISIGN_PRIVATE_KEY gesetzt ist. Der
+#                              Updater-Endpoint wird daraus beim Build in die
+#                              Tauri-Konfiguration injiziert.
+name: outpost-release
+
+on:
+  push:
+    tags:
+      - "outpost-v*"
+
+permissions:
+  contents: write
+  packages: write
+  id-token: write
+
+env:
+  OUTPOST_UPDATER_REPO: ${{ vars.OUTPOST_UPDATER_REPO }}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @atf/outpost typecheck
+      - run: bun run --filter @atf/outpost test
+      - run: bun run --filter @atf/outpost-desktop typecheck
+      - run: cargo fmt --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml -- --check
+      - run: cargo test --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - name: Build local image checks
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/outpost/Dockerfile
+          platforms: linux/amd64
+          load: true
+          tags: atf-outpost:release-check
+      - name: Verify image size and non-root user
+        run: |
+          set -euo pipefail
+          size="$(docker image inspect atf-outpost:release-check --format '{{.Size}}')"
+          test "$size" -le 157286400
+          test "$(docker image inspect atf-outpost:release-check --format '{{.Config.User}}')" = "10001:10001"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Push multi-arch image
+        id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: apps/outpost/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/abillify/atf-outpost:${{ github.ref_name }},ghcr.io/abillify/atf-outpost:latest
+          provenance: true
+          sbom: true
+      - uses: sigstore/cosign-installer@v3
+      - name: Sign image
+        env:
+          COSIGN_EXPERIMENTAL: "1"
+        run: cosign sign --yes "ghcr.io/abillify/atf-outpost@${{ steps.image.outputs.digest }}"
+
+  windows:
+    needs: test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @atf/outpost build:sea
+        env:
+          SEA_TARGET: x86_64-pc-windows-msvc
+      # Sidecar VOR dem Bundling signieren, damit der signierte Sidecar in den
+      # NSIS-Installer gelangt (Anforderung 14.2).
+      - name: Sign SEA sidecar (Authenticode)
+        if: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $pfx = Join-Path $env:RUNNER_TEMP "outpost.pfx"
+          [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_BASE64))
+          $password = ConvertTo-SecureString $env:WINDOWS_CERT_PASSWORD -AsPlainText -NoNewValue
+          Import-PfxCertificate -FilePath $pfx -CertStoreLocation Cert:\CurrentUser\My -Password $password | Out-Null
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signtool) { throw "signtool.exe nicht gefunden" }
+          $sidecar = "apps\outpost-desktop\src-tauri\binaries\atf-outpost-x86_64-pc-windows-msvc.exe"
+          & $signtool.FullName sign /fd SHA256 /sha1 (Get-ChildItem Cert:\CurrentUser\My -CodeSigning | Select-Object -First 1).Thumbprint /tr http://timestamp.digicert.com /td SHA256 $sidecar
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign fehlgeschlagen" }
+          & $signtool.FullName verify /pa $sidecar
+          if ($LASTEXITCODE -ne 0) { throw "signtool verify fehlgeschlagen" }
+          Remove-Item $pfx
+      - run: bun run --filter @atf/outpost-desktop build
+      - name: tauri build (NSIS)
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO fehlt" >&2; exit 1; }
+            endpoint="https://github.com/${OUTPOST_UPDATER_REPO}/releases/latest/download/latest.json"
+            bunx tauri build --config "{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"endpoints\":[\"${endpoint}\"]}}}"
+          else
+            bunx tauri build
+          fi
+        working-directory: apps/outpost-desktop
+      - name: Sign NSIS installer and verify (Authenticode)
+        if: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $ErrorActionPreference = "Stop"
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
+            Where-Object { $_.FullName -like "*x64*" } |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          $installer = Get-ChildItem "apps\outpost-desktop\src-tauri\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "NSIS-Installer nicht gefunden" }
+          & $signtool.FullName sign /fd SHA256 /sha1 (Get-ChildItem Cert:\CurrentUser\My -CodeSigning | Select-Object -First 1).Thumbprint /tr http://timestamp.digicert.com /td SHA256 $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw "signtool sign fehlgeschlagen" }
+          & $signtool.FullName verify /pa $installer.FullName
+          if ($LASTEXITCODE -ne 0) { throw "signtool verify fehlgeschlagen" }
+      # Unsignierte/CI-Artefakte: Retention 1 Tag (Anforderung 14.8).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: outpost-windows
+          path: apps/outpost-desktop/src-tauri/target/release/bundle/**
+          retention-days: 1
+
+  macos:
+    needs: test
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            target: aarch64-apple-darwin
+            rust_target: aarch64-apple-darwin
+          - arch: x64
+            target: x86_64-apple-darwin
+            rust_target: x86_64-apple-darwin
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          architecture: ${{ matrix.arch }}
+      - run: bun install --frozen-lockfile
+      - run: bun run --filter @atf/outpost build:sea
+        env:
+          SEA_TARGET: ${{ matrix.target }}
+      - name: Import Apple Developer ID certificate
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/app-signing.keychain-db"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/apple.p12"
+          security create-keychain -p "$RUNNER_TEMP" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$RUNNER_TEMP" "$KEYCHAIN_PATH"
+          security import "$RUNNER_TEMP/apple.p12" -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
+          rm "$RUNNER_TEMP/apple.p12"
+      # Sidecar VOR dem Bundling mit Hardened Runtime signieren (14.3).
+      - name: Codesign SEA sidecar (hardened runtime)
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          codesign --force --sign "$APPLE_SIGNING_IDENTITY" --options runtime \
+            --entitlements apps/outpost-desktop/src-tauri/entitlements.plist \
+            "apps/outpost-desktop/src-tauri/binaries/atf-outpost-${{ matrix.target }}"
+      - run: bun run --filter @atf/outpost-desktop build
+      - name: tauri build (DMG)
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO fehlt" >&2; exit 1; }
+            endpoint="https://github.com/${OUTPOST_UPDATER_REPO}/releases/latest/download/latest.json"
+            bunx tauri build --target "${{ matrix.rust_target }}" --config "{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"endpoints\":[\"${endpoint}\"]}}}"
+          else
+            bunx tauri build --target "${{ matrix.rust_target }}"
+          fi
+        working-directory: apps/outpost-desktop
+      - name: Notarize, staple and verify
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -euo pipefail
+          BUNDLE="apps/outpost-desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
+          APP="$(ls -d "$BUNDLE"/macos/*.app | head -n 1)"
+          DMG="$(ls "$BUNDLE"/dmg/*.dmg | head -n 1)"
+          echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          xcrun notarytool submit "$DMG" \
+            --key "$RUNNER_TEMP/AuthKey.p8" \
+            --key-id "$APPLE_API_KEY_ID" \
+            --issuer "$APPLE_API_ISSUER" \
+            --wait
+          xcrun stapler staple "$DMG"
+          xcrun stapler staple "$APP"
+          xcrun spctl -a -vv --type open "$APP" || true
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          rm "$RUNNER_TEMP/AuthKey.p8"
+      # Unsignierte/CI-Artefakte: Retention 1 Tag (Anforderung 14.8).
+      - uses: actions/upload-artifact@v4
+        with:
+          name: outpost-macos-${{ matrix.arch }}
+          path: |
+            apps/outpost-desktop/src-tauri/target/release/bundle/**
+            apps/outpost-desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle/**
+          retention-days: 1
+
+  publish:
+    needs: [docker, windows, macos]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - run: find artifacts -type f ! -name '*.sig' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
+      # Updater-Manifest latest.json mit den Minisign-Signaturen (.sig) der
+      # Installer je Plattform (Anforderungen 14.9, 14.10; Task 22.5 Updater).
+      - name: Generate updater manifest latest.json
+        if: ${{ secrets.MINISIGN_PRIVATE_KEY != '' }}
+        env:
+          UPDATER_REPO: ${{ env.OUTPOST_UPDATER_REPO }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          bun run scripts/generate-updater-manifest.ts --dir artifacts --out latest.json
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            SHA256SUMS
+            latest.json
+            artifacts/**
+          generate_release_notes: true
