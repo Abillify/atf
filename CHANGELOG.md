@@ -17,6 +17,16 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.11.1] — 2026-09-30
+Fixes a guaranteed `403` on Search MCP calls that pass `requesting_user` while authorization is
+disabled. No configuration, schema, flow, migration, HTTP endpoint, or contract-package change.
+### Fixed
+- **`requesting_user` with `AUTHZ_ENABLED=false`** (`@atf/search`). `requireActingUser` compared
+  the requested user with the principal's identity even under the authorization bypass, where no
+  identity exists, so `search` MCP calls with `requesting_user` always failed with
+  "The requested user does not match the authenticated principal". The bypass now skips the
+  match like every other check in the access scope; an empty `requesting_user` is still refused.
+  With authorization enabled, behaviour is unchanged.
 ## [0.11.0] — 2026-09-28
 Brings the Extract operator console to full Document Intelligence v2 support, adds HTML as an
 input format, and fixes the v2 hand-off from Extract to Search (batch digests, new collections)
@@ -1301,7 +1311,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/abillify/atf/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/abillify/atf/compare/v0.10.2...v0.11.0
 [0.10.2]: https://github.com/abillify/atf/compare/v0.10.1...v0.10.2
 [0.10.1]: https://github.com/abillify/atf/compare/v0.10.0...v0.10.1
