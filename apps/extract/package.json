@@ -20,7 +20,7 @@
     "node": ">=26 <27"
   },
   "dependencies": {
-    "@atf/extract-contract": "workspace:2.1.0",
+    "@atf/extract-contract": "workspace:2.2.0",
     "bmp-js": "0.1.0",
     "express": "5.2.1",
     "fast-xml-parser": "5.11.1",

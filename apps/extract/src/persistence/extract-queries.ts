@@ -102,8 +102,9 @@ export function insertJobQuery(job: NewJob): Query {
     text: `
       INSERT INTO ${EXTRACT_SCHEMA}.jobs
         (id, reference, status, config, pipeline_hash, prompt_hash, resume_policy,
-         visibility, priority, token_budget, source_sha256, collection, callback_url)
-      VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         visibility, priority, token_budget, source_sha256, collection, callback_url,
+         created_by_subject, created_by_tenant)
+      VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *`,
     values: [
       job.id,
@@ -119,6 +120,8 @@ export function insertJobQuery(job: NewJob): Query {
       job.source_sha256,
       job.collection ?? null,
       job.callback_url ?? null,
+      job.created_by_subject ?? null,
+      job.created_by_tenant ?? null,
     ],
   };
 }
@@ -168,6 +171,32 @@ export function listJobsQuery(limit: number, offset: number): Query {
        ORDER BY created_at DESC, id DESC
        LIMIT $1 OFFSET $2`,
     values: [limit, offset],
+  };
+}
+
+/**
+ * The non-terminal jobs of one reference in one collection (extract-outpost E2,
+ * requirement 9.3). A delete must cancel these first: a job still emitting
+ * would re-create the document in Search right after the delete removed it.
+ *
+ * "Non-terminal" is the state machine's vocabulary — `completed`, `failed` and
+ * `cancelled` are the states a job never leaves, so only the rest can still
+ * write. A job row without a `collection` belongs to the instance default; the
+ * caller passes `includeNullCollection` when the delete targets that default,
+ * so a delete from a named collection never cancels a default-collection job.
+ */
+export function listActiveJobsByReferenceQuery(
+  reference: string,
+  collection: string,
+  includeNullCollection: boolean,
+): Query {
+  return {
+    text: `
+      SELECT * FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE reference = $1
+         AND (collection = $2 OR ($3 AND collection IS NULL))
+         AND status NOT IN ('completed', 'failed', 'cancelled')`,
+    values: [reference, collection, includeNullCollection],
   };
 }
 

@@ -27,6 +27,12 @@ export interface OpenApiOptions {
    * those routes are absent (see index.ts), so the document must omit them too.
    */
   v2Enabled?: boolean;
+  /**
+   * True when `DELETE /v2/documents/{reference}` (extract-outpost E2) is
+   * mounted: a store to cancel the reference's active jobs and a Search target
+   * to delete in are both required. Mirrors `whoami.features.deleteByReference`.
+   */
+  deleteEnabled?: boolean;
 }
 
 export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknown> {
@@ -130,6 +136,75 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             description: "Prometheus text exposition",
             content: { "text/plain": { schema: { type: "string" } } },
           },
+        },
+      },
+    },
+    "/v1/whoami": {
+      get: {
+        summary: "Echo the authenticated identity and instance capabilities",
+        description:
+          "Authenticates with the same chain as every machine route but requires no scope: " +
+          "the answer is the caller's own identity. A client (the Outpost) uses it to validate " +
+          "its configuration before the first upload — a 401 means the credential is rejected, " +
+          "a missing `extract.ingest` scope is a configuration error, and " +
+          "`features.deleteByReference` plus `extract.delete` decide whether mirror-delete can " +
+          "work at all. `limits.maxUploadBytes` is the per-upload ceiling, so an oversized file " +
+          "can be rejected without transferring it.",
+        responses: {
+          "200": {
+            description: "The resolved principal and feature/limit advertisement",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["source", "scopes", "service", "features", "limits"],
+                  properties: {
+                    subject: { type: "string", description: "principal.userId, when any." },
+                    tenantId: { type: "string" },
+                    source: {
+                      type: "string",
+                      enum: ["jwt", "asserted", "service", "anonymous"],
+                    },
+                    issuer: { type: "string" },
+                    audience: {
+                      oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+                    },
+                    scopes: { type: "array", items: { type: "string" } },
+                    service: {
+                      type: "object",
+                      required: ["name", "version"],
+                      properties: {
+                        name: { type: "string", const: "atf-extract" },
+                        version: { type: "string" },
+                      },
+                    },
+                    features: {
+                      type: "object",
+                      required: [
+                        "ingest",
+                        "resumableUploads",
+                        "deleteByReference",
+                        "ownJobRead",
+                      ],
+                      properties: {
+                        ingest: { type: "boolean" },
+                        resumableUploads: { type: "boolean" },
+                        deleteByReference: { type: "boolean" },
+                        ownJobRead: { type: "boolean" },
+                      },
+                    },
+                    limits: {
+                      type: "object",
+                      required: ["maxUploadBytes"],
+                      properties: { maxUploadBytes: { type: "integer" } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+          "401": { description: "Unauthenticated" },
+          "429": { description: "Rate limit exceeded" },
         },
       },
     },
@@ -660,6 +735,62 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "403": { description: "Missing the extract.admin scope" },
           "404": { description: "No stored source for the given sha256", content: { "application/json": { schema: errorSchema } } },
           "429": { description: "Render rate limit exceeded" },
+        },
+      },
+    };
+  }
+
+  if (options.deleteEnabled === true) {
+    paths["/v2/documents/{reference}"] = {
+      delete: {
+        summary: "Delete a document by reference (E2)",
+        description:
+          "Removes the document (all versions of the base reference) from Search. " +
+          "Every non-terminal job of the same reference and collection is cancelled first, so " +
+          "an in-flight emit cannot re-create the document after the delete. The caller's " +
+          "identity is forwarded to Search, which applies the caller's ACL: a caller can only " +
+          "delete documents they could also read.\n\n" +
+          "Idempotent for a client: `200` and `404` both mean the reference is gone afterwards; " +
+          "`404` distinguishes \"this collection never held it\" (`deleted` would be 0).",
+        parameters: [
+          {
+            name: "reference",
+            in: "path",
+            required: true,
+            description: "The document reference, percent-encoded.",
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Collection",
+            in: "header",
+            required: false,
+            description: "Target collection; defaults to the instance default.",
+            schema: { type: "string", pattern: "^[a-zA-Z][a-zA-Z0-9_]*$" },
+          },
+        ],
+        responses: {
+          "200": {
+            description: "Deleted (deleted >= 1)",
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["status", "reference", "collection", "deleted"],
+                  properties: {
+                    status: { type: "string", const: "deleted" },
+                    reference: { type: "string" },
+                    collection: { type: "string" },
+                    deleted: { type: "integer", minimum: 1 },
+                  },
+                },
+              },
+            },
+          },
+          "400": { description: "Invalid collection name or empty reference", content: { "application/json": { schema: errorSchema } } },
+          "401": { description: "Unauthenticated" },
+          "403": { description: "Missing the extract.delete scope", content: { "application/json": { schema: errorSchema } } },
+          "404": { description: "The collection never held this reference", content: { "application/json": { schema: errorSchema } } },
+          "502": { description: "Search could not be reached or rejected the delete", content: { "application/json": { schema: errorSchema } } },
         },
       },
     };

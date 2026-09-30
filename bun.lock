@@ -47,7 +47,7 @@
       "name": "@atf/extract",
       "version": "0.11.1",
       "dependencies": {
-        "@atf/extract-contract": "workspace:2.1.0",
+        "@atf/extract-contract": "workspace:2.2.0",
         "bmp-js": "0.1.0",
         "express": "5.2.1",
         "fast-xml-parser": "5.11.1",
@@ -137,7 +137,7 @@
       "name": "@atf/search",
       "version": "0.11.1",
       "dependencies": {
-        "@atf/extract-contract": "workspace:2.1.0",
+        "@atf/extract-contract": "workspace:2.2.0",
         "@aws-sdk/client-bedrock-runtime": "3.1136.0",
         "@modelcontextprotocol/sdk": "1.30.0",
         "express": "5.2.1",

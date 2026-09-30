@@ -41,6 +41,7 @@ import express from "express";
 import type { Logger } from "pino";
 import { jobRequestSchema, resumePolicySchema } from "@atf/extract-contract/v2";
 import { conflict, notFound, validationError } from "../errors.js";
+import { canReadJob } from "../authorize.js";
 import type { ExtractStore } from "../persistence/index.js";
 import type { JobRow, OperatorTransition } from "../persistence/types.js";
 import type { SourceStore } from "../source-store.js";
@@ -77,6 +78,12 @@ export interface JobsHandlerDeps {
   snapshot: PipelineSnapshot;
   /** Default target collection when a request omits one. */
   defaultCollection: string;
+  /**
+   * Whether scope enforcement is on. With it off (`AUTHZ_ENABLED=false`) every
+   * read is allowed and the E3 owner check is skipped — matching the bypass
+   * every other guard here applies.
+   */
+  authzEnabled: boolean;
 }
 
 /** Read a route parameter as a single string (Express 5 types it widely). */
@@ -105,7 +112,7 @@ function readJobId(req: Request): string {
  * status read.
  */
 export function createJobsRouter(deps: JobsHandlerDeps): Router {
-  const { store, sourceStore, logger, snapshot } = deps;
+  const { store, sourceStore, logger, snapshot, authzEnabled } = deps;
   const router = express.Router();
 
   // ── POST /v2/jobs ─────────────────────────────────────────────────────────
@@ -168,6 +175,10 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
       },
       pipeline_hash: snapshot.pipelineHash,
       prompt_hash: snapshot.promptHash,
+      // E3: record who created this job, so the originator can poll it later
+      // without `extract.admin` (requirements 8.7, 8.13).
+      created_by_subject: getPrincipal(req).userId ?? null,
+      created_by_tenant: getPrincipal(req).tenantId ?? null,
       ...(body.resumePolicy !== undefined ? { resume_policy: body.resumePolicy } : {}),
       ...(body.visibility !== undefined ? { visibility: body.visibility } : {}),
       ...(body.priority !== undefined ? { priority: body.priority } : {}),
@@ -219,6 +230,38 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
     const id = readJobId(req);
     const row = await store.getJob(id);
     if (row === null) throw notFound(`Job ${id} does not exist`);
+    // E3 (requirements 8.7, 8.13, 8.14): the originator may read their own
+    // job without `extract.admin`. A foreign job answers with the *same* 404
+    // an unknown id gets — a 403 here would confirm the id exists. Only a
+    // caller with neither `extract.admin` nor `extract.ingest` gets a 403.
+    // A credential with *no* scopes configured at all keeps the documented
+    // `API_SERVICE_SCOPES` default of `createRequireScope`: it passes, because
+    // the gate flags the missing configuration rather than failing every
+    // request in a way that looks like a bug.
+    const principal = getPrincipal(req);
+    const scopes = principal.scopes ?? [];
+    if (authzEnabled && scopes.length > 0) {
+      const decision = canReadJob(
+        {
+          createdBySubject: row.created_by_subject ?? null,
+          createdByTenant: row.created_by_tenant ?? null,
+        },
+        {
+          ...(principal.userId !== undefined ? { subject: principal.userId } : {}),
+          ...(principal.tenantId !== undefined ? { tenantId: principal.tenantId } : {}),
+          scopes: new Set(scopes),
+        },
+      );
+      if (decision === "not-found") throw notFound(`Job ${id} does not exist`);
+      if (decision === "forbidden") {
+        res.status(403).json({
+          error: "Scope extract.ingest is required",
+          code: "FORBIDDEN",
+          retryable: false,
+        });
+        return;
+      }
+    }
     // Join the page-stage checkpoints so progress/eta are populated.
     const stages = await store.listStagesByStatus("page", id, "done").catch(() => []);
     const running = await store.listStagesByStatus("page", id, "running").catch(() => []);

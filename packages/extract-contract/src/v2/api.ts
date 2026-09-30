@@ -394,6 +394,76 @@ export const renderRequestSchema = z
 
 export type RenderRequest = z.infer<typeof renderRequestSchema>;
 
+// --- Whoami (Extract, E1) ---------------------------------------------------
+
+/**
+ * Response of `GET /v1/whoami` (extract-outpost E1, requirements 5.1, 5.2).
+ *
+ * The authenticated identity plus the capabilities of this Extract instance, so
+ * a client (the Outpost) can validate its configuration *before* the first
+ * upload: whether ingest is mounted, whether resumable uploads are backed by a
+ * store, whether `DELETE /v2/documents/{reference}` (E2) exists, and whether
+ * the owner-scoped job read (E3) is active. `limits.maxUploadBytes` lets a
+ * client reject an oversized file without transferring it.
+ *
+ * Only the identity the auth middleware resolved is echoed; no credential ever
+ * appears here.
+ */
+export const whoamiResponseSchema = z.object({
+  /** `principal.userId` — the end user the request acts as, when any. */
+  subject: z.string().optional(),
+  /** `principal.tenantId` — the tenant the request is scoped to, when any. */
+  tenantId: z.string().optional(),
+  /** How the identity was established (mirrors the Extract principal source). */
+  source: z.enum(["jwt", "asserted", "service", "anonymous"]),
+  /** JWT issuer, when the credential is a JWT. */
+  issuer: z.string().optional(),
+  /** JWT audience/client binding, when present. */
+  audience: z.union([z.string(), z.array(z.string())]).optional(),
+  /** The effective scope set of the caller (empty when none were configured). */
+  scopes: z.array(z.string()),
+  service: z.object({
+    name: z.literal("atf-extract"),
+    version: z.string(),
+  }),
+  features: z.object({
+    /** `/v1/ingest` is mounted (a Search target is configured). */
+    ingest: z.boolean(),
+    /** Resumable uploads are backed by a store (`/v2/uploads`). */
+    resumableUploads: z.boolean(),
+    /** `DELETE /v2/documents/{reference}` (E2) is available. */
+    deleteByReference: z.boolean(),
+    /** The owner-scoped job read (E3) is active. */
+    ownJobRead: z.boolean(),
+  }),
+  limits: z.object({
+    /** `MAX_UPLOAD_BYTES` — the ceiling for a single upload (direct or resumable). */
+    maxUploadBytes: z.int(),
+  }),
+});
+
+export type WhoamiResponse = z.infer<typeof whoamiResponseSchema>;
+
+// --- Delete by reference (Extract, E2) --------------------------------------
+
+/**
+ * Response of `DELETE /v2/documents/{reference}` (extract-outpost E2,
+ * requirements 9.1, 9.3, 9.7, 9.9).
+ *
+ * Returned on `200` when at least one document was removed. A `0`-delete result
+ * is answered `404 {code: "NOT_FOUND"}` instead, so a client treats `200` and
+ * `404` both as "the reference is gone" (idempotent delete).
+ */
+export const deleteDocumentResponseSchema = z.object({
+  status: z.literal("deleted"),
+  reference: z.string(),
+  collection: z.string(),
+  /** Number of documents (all versions of the base ref) Search removed. */
+  deleted: z.int().min(0),
+});
+
+export type DeleteDocumentResponse = z.infer<typeof deleteDocumentResponseSchema>;
+
 /**
  * Response metadata of `POST /v2/render` (the PNG bytes travel as the body;
  * this shape is returned as JSON only for a metadata-probe caller). The actual

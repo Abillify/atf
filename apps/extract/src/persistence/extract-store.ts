@@ -109,6 +109,18 @@ export interface ExtractStore {
    */
   listJobs(limit: number, offset: number): Promise<JobRow[]>;
   /**
+   * The non-terminal jobs of one reference in one collection (extract-outpost
+   * E2, requirement 9.3). `DELETE /v2/documents/{reference}` cancels these
+   * before deleting in Search, so a still-running emit cannot re-create the
+   * document right after the delete. `includeNullCollection` matches jobs whose
+   * row carries no collection (they belong to the instance default).
+   */
+  listActiveJobsByReference(
+    reference: string,
+    collection: string,
+    includeNullCollection?: boolean,
+  ): Promise<JobRow[]>;
+  /**
    * Which of `messageIds` a (non-failed) job of the collection has recorded as
    * its e-mail's Message-ID — i.e. which messages the corpus already holds.
    * Decides whether a reply's quoted history may be dropped.
@@ -507,6 +519,10 @@ export function createExtractStore(
     },
     getJob: (id) => one<JobRow>(q.getJobQuery(id)),
     listJobs: (limit, offset) => run<JobRow>(q.listJobsQuery(limit, offset)),
+    listActiveJobsByReference: (reference, collection, includeNullCollection = false) =>
+      run<JobRow>(
+        q.listActiveJobsByReferenceQuery(reference, collection, includeNullCollection),
+      ),
     async knownEmailMessageIds(collection, messageIds) {
       if (messageIds.length === 0) return new Set();
       const rows = await run<{ message_id: string }>(q.knownEmailMessageIdsQuery(collection, messageIds));

@@ -583,6 +583,7 @@ export type AuthnMode = "disabled" | "token" | "oidc" | "token_or_oidc";
 export const EXTRACT_SCOPES = [
   "extract.convert",
   "extract.ingest",
+  "extract.delete",
   "extract.metrics",
   "extract.admin",
 ] as const;

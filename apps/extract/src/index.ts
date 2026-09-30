@@ -83,7 +83,9 @@ import { createUploadsRouter } from "./handlers/uploads.js";
 import type { HostResolver, PinnedRequester } from "./handlers/source-url.js";
 import type { UploadOffsetCommitter } from "./handlers/upload-session-lock.js";
 import { createJobsRouter } from "./handlers/jobs.js";
+import { createDocumentsRouter } from "./handlers/documents.js";
 import { createRenderHandler } from "./handlers/render.js";
+import { createWhoamiHandler } from "./handlers/whoami.js";
 import { buildSnapshot } from "./jobs/snapshot.js";
 import { pass1PromptSet, pass2PromptSet } from "./vision/prompts.js";
 import { createSummaryClient, type SummaryClient } from "./summary/client.js";
@@ -428,6 +430,12 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
   const requireIngest = createRequireScope("extract.ingest", {
     authzEnabled: config.authzEnabled,
   });
+  // Deleting a document is its own destructive permission, separate from
+  // ingest — the same reasoning that keeps `convert` and `ingest` apart
+  // (extract-outpost E2, requirement 9.8).
+  const requireDelete = createRequireScope("extract.delete", {
+    authzEnabled: config.authzEnabled,
+  });
   const requireMetrics = createRequireScope("extract.metrics", {
     authzEnabled: config.authzEnabled,
   });
@@ -600,6 +608,7 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
         serverUrl: resolveBaseUrl(req),
         ingestEnabled,
         v2Enabled: store !== null,
+        deleteEnabled: store !== null && searchClient !== null,
       }),
     );
   });
@@ -614,6 +623,27 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
         .type("text/plain; version=0.0.4; charset=utf-8")
         .send(metrics.render());
     },
+  );
+
+  // ── whoami (extract-outpost E1) ───────────────────────────────────────────
+  // Authenticated, no scope: the answer is the caller's own identity plus what
+  // this instance can do, so a client (the Outpost) can validate its config
+  // before the first upload. deleteByReference mirrors the E2 mount condition
+  // (a store to cancel active jobs, a Search target to delete in); ownJobRead
+  // mirrors E3 (the owner-scoped job read needs the job store).
+  app.get(
+    "/v1/whoami",
+    rateLimiter.middleware,
+    authMiddleware,
+    createWhoamiHandler({
+      features: {
+        ingest: ingestEnabled,
+        resumableUploads: store !== null,
+        deleteByReference: store !== null && searchClient !== null,
+        ownJobRead: store !== null,
+      },
+      maxUploadBytes: config.maxUploadBytes,
+    }),
   );
 
   app.get("/", webAuth, (_req: Request, res: Response) => {
@@ -699,6 +729,29 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
       uploadsRouter,
     );
 
+    // ── v2 documents (E2: delete by reference) ────────────────────────────
+    // Needs BOTH halves: the store to cancel the reference's active jobs and a
+    // Search target to delete in. `requireDelete` runs before either happens,
+    // so a caller without `extract.delete` never cancels a job or reaches
+    // Search (requirement 9.8). The mount condition is exactly what
+    // `whoami.features.deleteByReference` reports.
+    if (searchClient !== null) {
+      const documentsRouter = createDocumentsRouter({
+        store,
+        searchClient,
+        logger,
+        metrics,
+        defaultCollection: config.search?.collection ?? "documents",
+      });
+      app.use(
+        "/v2/documents",
+        rateLimiter.middleware,
+        authMiddleware,
+        requireDelete,
+        documentsRouter,
+      );
+    }
+
     // ── v2 jobs ─────────────────────────────────────────────────────────────
     // Same auth chain. A GET is a status read (extract.admin); everything else
     // creates or mutates a job and is an ingest-class write (extract.ingest).
@@ -710,9 +763,26 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
       logger,
       snapshot,
       defaultCollection: config.search?.collection ?? "documents",
+      authzEnabled: config.authzEnabled,
     });
+    // E3 (requirements 8.7, 8.13): reading ONE job by id is no longer an
+    // operator-only read — the originator may poll their own job with
+    // `extract.ingest`. The decision needs the row, so it belongs in the
+    // handler (`canReadJob`), not here: a single-job GET is passed through and
+    // the handler answers 200/404/403. Every other GET — the list, the figure
+    // gallery — stays `extract.admin`, because listing other callers' jobs is
+    // exactly what E3 must not grant.
+    const SINGLE_JOB_GET = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const requireJobScope: RequestHandler = (req, res, next) => {
-      (req.method === "GET" ? requireJobRead : requireIngest)(req, res, next);
+      if (req.method === "GET") {
+        if (SINGLE_JOB_GET.test(req.path)) {
+          next();
+          return;
+        }
+        requireJobRead(req, res, next);
+        return;
+      }
+      requireIngest(req, res, next);
     };
     app.use(
       "/v2/jobs",

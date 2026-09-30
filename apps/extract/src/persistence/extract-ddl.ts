@@ -42,7 +42,7 @@ export const EXTRACT_SCHEMA = "extract";
  * applies every step whose `toVersion` is greater than the recorded version,
  * in ascending order.
  */
-export const EXTRACT_SCHEMA_VERSION = 2;
+export const EXTRACT_SCHEMA_VERSION = 3;
 
 /**
  * Well-known advisory-lock key for the extract migration runner. Distinct from
@@ -421,6 +421,22 @@ async function addResumeHardening(client: MigrationClient): Promise<void> {
  * The ordered list of forward-only migrations. Append new steps; never edit or
  * reorder existing ones once shipped.
  */
+/**
+ * E3 (extract-outpost, requirements 8.7, 8.13): the job's *originator*.
+ *
+ * Nullable so every pre-existing row stays owner-less — reading such a job
+ * keeps requiring `extract.admin`, and no migration has to guess who created
+ * it. Only jobs created after this step carry an owner, filled from the
+ * authenticated principal at create time (`userId`/`tenantId`).
+ */
+async function addJobOwnership(client: MigrationClient): Promise<void> {
+  await client.query(`
+    ALTER TABLE ${EXTRACT_SCHEMA}.jobs
+      ADD COLUMN IF NOT EXISTS created_by_subject TEXT,
+      ADD COLUMN IF NOT EXISTS created_by_tenant TEXT
+  `);
+}
+
 export const EXTRACT_MIGRATIONS: ExtractMigrationStep[] = [
   {
     toVersion: 1,
@@ -431,6 +447,11 @@ export const EXTRACT_MIGRATIONS: ExtractMigrationStep[] = [
     toVersion: 2,
     description: "Resume hardening: token reservations, emit generation, auto-resume, asset page",
     up: addResumeHardening,
+  },
+  {
+    toVersion: 3,
+    description: "Job ownership: created_by_subject, created_by_tenant (E3)",
+    up: addJobOwnership,
   },
 ];
 

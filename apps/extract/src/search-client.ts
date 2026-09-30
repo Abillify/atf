@@ -42,6 +42,7 @@ import {
   type ExtractedDocument,
   type IngestHeaderOptions,
 } from "@atf/extract-contract/v1";
+import { encodeHeaderValue } from "@atf/extract-contract/v1";
 import { ingestFailed } from "./errors.js";
 import { injectTraceHeaders } from "./trace-context.js";
 
@@ -79,6 +80,11 @@ export interface IngestOutcome {
   assetsFailed: number;
 }
 
+export interface DeleteByReferenceOutcome {
+  /** How many documents (all versions of the base ref) Search removed. */
+  deleted: number;
+}
+
 export interface SearchClient {
   /** Ingest the document, then store its crops. */
   ingestDocument(args: {
@@ -89,6 +95,25 @@ export interface SearchClient {
     options?: IngestHeaderOptions;
     signal?: AbortSignal | undefined;
   }): Promise<IngestOutcome>;
+  /**
+   * Remove a document by reference from Search (extract-outpost E2,
+   * requirements 9.1, 9.3, 9.7).
+   *
+   * `DELETE /delete` with `X-Reference` and `X-Collection`, authenticated with
+   * the service token. The caller's end-user identity is forwarded as
+   * `X-User`/`X-Groups` exactly like the revision client forwards it, so
+   * Search's `accessScopeForRequest` applies the caller's ACL rather than the
+   * unrestricted service scope: a caller may only delete documents they could
+   * also read. Search answers `200 {status:"ok", deleted:n}` with `n = 0` for a
+   * reference it never held; the caller maps `0` to its own `404`.
+   */
+  deleteByReference(args: {
+    collection: string;
+    reference: string;
+    /** The acting principal's identity, forwarded for Search's ACL check. */
+    identity?: { userId?: string; userGroups?: readonly string[] } | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<DeleteByReferenceOutcome>;
   /** Reachability probe for `/health`. Never throws. */
   probe(): Promise<{ available: boolean; error?: string }>;
 }
@@ -240,6 +265,54 @@ export function createSearchClient(
     }
   }
 
+  async function deleteByReference(args: {
+    collection: string;
+    reference: string;
+    identity?: { userId?: string; userGroups?: readonly string[] } | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<DeleteByReferenceOutcome> {
+    const { collection, reference, identity, signal } = args;
+    const headers: Record<string, string> = {
+      ...authHeaders(),
+      "x-collection": encodeHeaderValue(collection),
+      "x-reference": encodeHeaderValue(reference),
+    };
+    // Forward the acting end-user identity exactly like the revision client
+    // forwards its ACL headers, so Search derives the caller's access scope
+    // instead of the unrestricted service scope (E2, requirement 9.7).
+    if (identity?.userId !== undefined && identity.userId !== "") {
+      headers["x-user"] = encodeHeaderValue(identity.userId);
+    }
+    if (identity?.userGroups !== undefined && identity.userGroups.length > 0) {
+      headers["x-groups"] = encodeHeaderValue(identity.userGroups.join(","));
+    }
+
+    let response: Response;
+    try {
+      response = await request("/delete", { method: "DELETE", headers }, signal);
+    } catch (error) {
+      throw ingestFailed(
+        `Search could not be reached for the delete: ${error instanceof Error ? error.message : String(error)}`,
+        { collection, reference },
+      );
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw ingestFailed(
+        `Search rejected the delete with HTTP ${response.status}: ${body.slice(0, 500)}`,
+        { collection, reference, status: response.status },
+      );
+    }
+
+    const json = (await response.json().catch(() => ({}))) as { deleted?: unknown };
+    const deleted = typeof json.deleted === "number" && Number.isInteger(json.deleted)
+      ? json.deleted
+      : 0;
+    logger.info({ reference, collection, deleted }, "Document deleted from Search");
+    return { deleted };
+  }
+
   async function probe(): Promise<{ available: boolean; error?: string }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
@@ -254,5 +327,5 @@ export function createSearchClient(
     }
   }
 
-  return { ingestDocument, probe };
+  return { ingestDocument, deleteByReference, probe };
 }

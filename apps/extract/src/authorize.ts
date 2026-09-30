@@ -29,6 +29,7 @@ import { getPrincipal } from "./request-principal.js";
 export type ExtractScope =
   | "extract.convert"
   | "extract.ingest"
+  | "extract.delete"
   | "extract.metrics"
   | "extract.admin";
 
@@ -74,4 +75,49 @@ export function createRequireScope(
       retryable: false,
     });
   };
+}
+
+// ── E3: job ownership (extract-outpost, requirements 8.7, 8.13, 8.14) ──────
+
+/** The three-way read decision for one job and one caller. */
+export type JobReadDecision = "allow" | "not-found" | "forbidden";
+
+/**
+ * May this caller read this job?
+ *
+ * Pure, so the rule can be tested property-style without a router or a store.
+ *
+ *   extract.admin                                   → allow (operator view)
+ *   extract.ingest + job has an owner + same subject
+ *     and same tenant                               → allow (the originator)
+ *   extract.ingest, otherwise                       → not-found
+ *   neither                                         → forbidden
+ *
+ * Why `not-found` rather than `forbidden` for someone else's job: a 403 on a
+ * guessed UUID confirms the job *exists*, which leaks other tenants' job ids
+ * and activity. The router answers both `not-found` and a genuinely missing id
+ * with the byte-identical 404 (requirement 8.14).
+ *
+ * A tenant-less instance normalises both sides to the same configured default,
+ * so "both undefined" comparing equal is what makes single-tenant deployments
+ * work; a set owner *subject* is still mandatory, so owner-less legacy jobs
+ * (created before E3, or by a service without an asserted identity) stay
+ * operator-only.
+ */
+export function canReadJob(
+  job: { createdBySubject: string | null; createdByTenant: string | null },
+  caller: { subject?: string; tenantId?: string; scopes: ReadonlySet<string> },
+): JobReadDecision {
+  if (caller.scopes.has("extract.admin")) return "allow";
+  if (!caller.scopes.has("extract.ingest")) return "forbidden";
+  if (
+    job.createdBySubject !== null &&
+    job.createdBySubject !== undefined &&
+    caller.subject !== undefined &&
+    job.createdBySubject === caller.subject &&
+    (job.createdByTenant ?? undefined) === (caller.tenantId ?? undefined)
+  ) {
+    return "allow";
+  }
+  return "not-found";
 }

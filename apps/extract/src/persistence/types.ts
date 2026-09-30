@@ -150,6 +150,14 @@ export interface JobRow {
   collection: string | null;
   revision_id: string | null;
   callback_url: string | null;
+  /**
+   * The originator of this job (extract-outpost E3, requirements 8.7, 8.13):
+   * the authenticated principal's `userId`/`tenantId` at create time. Null for
+   * jobs created before E3 and for jobs created by a service without an
+   * asserted identity — such jobs stay readable only with `extract.admin`.
+   */
+  created_by_subject?: string | null;
+  created_by_tenant?: string | null;
   warnings: string[];
   lease_holder: string | null;
   lease_epoch: number;
@@ -175,6 +183,9 @@ export interface NewJob {
   token_budget?: number | null;
   collection?: string | null;
   callback_url?: string | null;
+  /** The acting principal's identity, recorded for E3 job ownership. */
+  created_by_subject?: string | null;
+  created_by_tenant?: string | null;
 }
 
 /** A row in one of the `*_stages` tables. */

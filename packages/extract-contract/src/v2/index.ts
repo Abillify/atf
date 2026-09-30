@@ -116,6 +116,8 @@ export {
   revisionStatusSchema,
   stageProgressSchema,
   visibilitySchema,
+  whoamiResponseSchema,
+  deleteDocumentResponseSchema,
   type BatchAck,
   type BatchStatus,
   type CommitResult,
@@ -138,6 +140,8 @@ export {
   type RevisionStatus,
   type StageProgress,
   type Visibility,
+  type WhoamiResponse,
+  type DeleteDocumentResponse,
 } from "./api.js";
 
 export {

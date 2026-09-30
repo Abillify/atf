@@ -258,13 +258,32 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 | `POST /v2/jobs/{id}/retry-failed` | Re-queue only the failed units |
 | `POST /v2/jobs/{id}/reparse` | Re-apply the parser to persisted raw model responses, with no new model calls |
 
-`GET` needs `extract.admin`; everything else `extract.ingest`. `/ui/jobs` serves the same
+`GET /v2/jobs` and `GET /v2/jobs/{id}/figures` need `extract.admin`. `GET /v2/jobs/{id}`
+needs `extract.admin`, or `extract.ingest` when the caller created the job: jobs record their
+originator (`created_by_subject`, `created_by_tenant`, schema migration 3), and a job of
+another subject or tenant answers with the same 404 as an unknown id. Jobs created before
+the migration carry no owner and stay admin-only. Everything else needs `extract.ingest`.
+`/ui/jobs` serves the same
 router to the operator console through the session cookie; its writes additionally pass
 the CSRF guard and require `UI_OPERATOR_GROUP`. `/ui/uploads` does the same for
 `/v2/uploads` (every method CSRF-guarded, operator and `extract.ingest`), and `/ui/render`
 serves `/v2/render` for the page preview (CSRF-guarded, `extract.admin`, `RENDER_RATE_LIMIT`).
 A job read also reports `sourceSha256`, `sourceFilename`, `collection`, `visibility`,
 `resumePolicy` and `priority`.
+
+### Identity and deletion: `/v1/whoami`, `/v2/documents/{reference}`
+
+`GET /v1/whoami` needs only a valid token and reports the authenticated principal
+(`subject`, `tenantId`, `source`, `issuer`, `audience`, `scopes`), the service version, the
+`features` flags (`ingest`, `resumableUploads`, `deleteByReference`, `ownJobRead`) and
+`limits.maxUploadBytes`. Clients such as the Extract Outpost use it to verify a connection.
+
+`DELETE /v2/documents/{reference}` (header `X-Collection`) needs the scope `extract.delete`;
+without it the call is a 403 before any job or Search call. It cancels active jobs of the
+same reference and collection, then removes the document from Search. `200
+{status: "deleted", reference, collection, deleted}` when Search removed chunks, `404
+NOT_FOUND` otherwise (also for never-existing references), `400` for an invalid collection
+and `502` when Search fails. Deletions are counted in `extract_documents_deleted_total`.
 
 A job moves through `queued → preparing → processing → emitting → committing → completed`,
 or ends `failed` / `cancelled`. `paused` carries a reason: `budget` (the `tokenBudget`

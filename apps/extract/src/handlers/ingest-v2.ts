@@ -228,6 +228,10 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
         source_sha256: stored.sha256,
         status: "queued",
         collection,
+        // E3: record who created this job, so the originator can poll it
+        // later without `extract.admin` (requirements 8.7, 8.13).
+        created_by_subject: getPrincipal(req).userId ?? null,
+        created_by_tenant: getPrincipal(req).tenantId ?? null,
         config: {
           collection,
           snapshot,

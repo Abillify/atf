@@ -214,12 +214,29 @@ export interface RecordingSearchClient extends SearchClient {
     allowedGroups: readonly string[] | undefined;
     options: import("@atf/extract-contract/v1").IngestHeaderOptions | undefined;
   }>;
+  /** Recorded `deleteByReference` calls, in order (extract-outpost E2). */
+  deleteCalls: Array<{
+    reference: string;
+    collection: string;
+    identity: { userId?: string; userGroups?: readonly string[] } | undefined;
+  }>;
 }
 
-export function stubSearchClient(options: { error?: Error; assetsFailed?: number } = {}): RecordingSearchClient {
+export function stubSearchClient(
+  options: {
+    error?: Error;
+    assetsFailed?: number;
+    /** Thrown by `deleteByReference` instead of `error` (E2 tests). */
+    deleteError?: Error;
+    /** The `deleted` count `deleteByReference` reports (default 1). */
+    deleted?: number;
+  } = {},
+): RecordingSearchClient {
   const calls: RecordingSearchClient["calls"] = [];
+  const deleteCalls: RecordingSearchClient["deleteCalls"] = [];
   return {
     calls,
+    deleteCalls,
     async ingestDocument(args) {
       if (options.error !== undefined) throw options.error;
       const collection = args.options?.collection ?? "documents";
@@ -241,6 +258,15 @@ export function stubSearchClient(options: { error?: Error; assetsFailed?: number
         assetsStored: args.crops.size - assetsFailed,
         assetsFailed,
       };
+    },
+    async deleteByReference(args) {
+      if (options.deleteError !== undefined) throw options.deleteError;
+      deleteCalls.push({
+        reference: args.reference,
+        collection: args.collection,
+        identity: args.identity,
+      });
+      return { deleted: options.deleted ?? 1 };
     },
     async probe() {
       return { available: true };

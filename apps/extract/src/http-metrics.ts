@@ -111,6 +111,8 @@ export class HttpMetrics {
   // ── Extraction counters ──────────────────────────────────────────────────
   /** Documents converted, keyed by source MIME type and outcome. */
   private readonly documents = new Map<string, number>();
+  /** Documents removed via `DELETE /v2/documents/{reference}` (extract-outpost E2). */
+  private documentsDeleted = 0;
   /** Pages converted, keyed by source MIME type. */
   private readonly pages = new Map<string, number>();
   private readonly pageDuration = emptyHistogram(pageBuckets.length);
@@ -177,6 +179,11 @@ export class HttpMetrics {
   recordDocument(mimeType: string, outcome: "ok" | "error"): void {
     const key = `${mimeType}|${outcome}`;
     this.documents.set(key, (this.documents.get(key) ?? 0) + 1);
+  }
+
+  /** Count documents Search removed for a delete-by-reference (E2, req 9.7). */
+  recordDocumentsDeleted(count: number): void {
+    this.documentsDeleted += Math.max(0, count);
   }
 
   recordPage(mimeType: string, durationMs: number): void {
@@ -311,6 +318,12 @@ export class HttpMetrics {
         `extract_documents_total{source_type="${escapeLabel(mimeType)}",outcome="${escapeLabel(outcome)}"} ${value}`,
       );
     }
+
+    lines.push(
+      "# HELP extract_documents_deleted_total Documents removed via DELETE /v2/documents/{reference}",
+      "# TYPE extract_documents_deleted_total counter",
+    );
+    lines.push(`extract_documents_deleted_total ${this.documentsDeleted}`);
     lines.push(
       "# HELP extract_pages_total Pages converted by source type",
       "# TYPE extract_pages_total counter",

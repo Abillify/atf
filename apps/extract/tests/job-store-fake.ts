@@ -229,6 +229,8 @@ export function createFakeJobStore(): FakeJobStore {
         collection: job.collection ?? null,
         revision_id: null,
         callback_url: job.callback_url ?? null,
+        created_by_subject: job.created_by_subject ?? null,
+        created_by_tenant: job.created_by_tenant ?? null,
         warnings: [],
         lease_holder: null,
         lease_epoch: 0,
@@ -265,6 +267,20 @@ export function createFakeJobStore(): FakeJobStore {
             b.created_at.getTime() - a.created_at.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
         )
         .slice(offset, offset + limit)
+        .map(copy);
+    },
+
+    async listActiveJobsByReference(reference, collection, includeNullCollection = false) {
+      return [...jobs.values()]
+        .filter(
+          (row) =>
+            row.reference === reference &&
+            (row.collection === collection ||
+              (includeNullCollection && row.collection === null)) &&
+            row.status !== "completed" &&
+            row.status !== "failed" &&
+            row.status !== "cancelled",
+        )
         .map(copy);
     },
 
