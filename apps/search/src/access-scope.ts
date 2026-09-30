@@ -128,10 +128,19 @@ export async function requireCollectionAccess(
  * Security-sensitive integrations use this in addition to metadata filters:
  * an asserted document owner is accepted only when it is the verified end-user
  * identity. Service credentials cannot impersonate a user through a tool argument.
+ *
+ * `AUTHZ_ENABLED=false` (authorizationBypass) skips the match like every other
+ * check in this module: with authorization disabled there is no principal
+ * identity to match against, and a tool-supplied `requesting_user` must not
+ * turn a disabled-authz deployment into a guaranteed 403.
  */
 export function requireActingUser(scope: AccessScope, requestedUser: string): string {
   const normalized = requestedUser.trim();
-  if (normalized === "" || scope.service || scope.userId !== normalized) {
+  if (normalized === "") {
+    throw new AccessDeniedError("The requested user does not match the authenticated principal");
+  }
+  if (scope.authorizationBypass) return normalized;
+  if (scope.service || scope.userId !== normalized) {
     throw new AccessDeniedError("The requested user does not match the authenticated principal");
   }
   return normalized;

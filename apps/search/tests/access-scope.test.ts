@@ -87,6 +87,18 @@ describe("central access scope", () => {
     expect(() => aclForMutation(service, restricted, "alice")).toThrow(AccessDeniedError);
   });
 
+  it("accepts any requesting_user under authorization bypass (AUTHZ_ENABLED=false)", () => {
+    const bypass = accessScopeFromPrincipal({
+      userId: undefined,
+      userGroups: undefined,
+      tenantId: "poc",
+      source: "anonymous",
+      authorizationBypass: true,
+    });
+    expect(requireActingUser(bypass, "alice")).toBe("alice");
+    expect(() => requireActingUser(bypass, "  ")).toThrow(AccessDeniedError);
+  });
+
   it("creates stable, identity-sensitive MCP session fingerprints", () => {
     const alice = { userId: "alice", userGroups: ["legal", "staff"], source: "jwt" as const };
     const reordered = { ...alice, userGroups: ["staff", "legal"] };
