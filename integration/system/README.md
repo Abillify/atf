@@ -27,3 +27,34 @@ bun run test:contracts
 
 These tests are boundary checks, not end-to-end deployment tests. They use in-memory stores and
 synthetic values, require no credentials or external services, and run in CI.
+
+## Outpost integration (`outpost.test.ts`)
+
+`outpost.test.ts` is the exception: it exercises the real Outpost → Extract → Search chain
+(new/version/delete cases, Keycloak audience, container SIGTERM, image non-root/size, the
+`source-login` TTY path per task 20.13). It skips with a clear message unless the environment
+provides live services:
+
+| Variable | Purpose |
+| --- | --- |
+| `OUTPOST_IT_EXTRACT_URL` | Extract base URL (token needs `extract.ingest` and `extract.delete`) |
+| `OUTPOST_IT_EXTRACT_TOKEN` | Bearer token for Extract |
+| `OUTPOST_IT_SEARCH_URL` | optional Search URL for the retrieval check |
+| `OUTPOST_IT_IMAGE` | optional image (default `ghcr.io/abillify/atf-outpost:latest`) |
+
+Run it against a local Extract/Search stack:
+
+```bash
+OUTPOST_IT_EXTRACT_URL=... OUTPOST_IT_EXTRACT_TOKEN=... bun test ./outpost.test.ts
+```
+
+Notes for a full local run:
+
+- The Search service must run with `BATCH_WORKER=true`; otherwise staged batches are never
+  processed and the retrieval check finds no hits.
+- The S3 case starts a throwaway MinIO container on `127.0.0.1:19000` and seeds the bucket
+  with the `aws` CLI; it skips when either `docker` or `aws` is unavailable.
+- With `AUTHN_MODE=disabled` on Extract, the Keycloak-audience case skips by design.
+- The interactive `source-login` flow against a fake provider is covered by the unit test
+  `stores the refresh token after a successful code exchange` in `apps/outpost/src/`
+  (live fake providers would need port 443 and fixed OAuth endpoints per requirement 15.1).

@@ -1,0 +1,35 @@
+{
+  "name": "@atf/outpost",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ATF Extract Outpost runtime: CLI (daemon/once/login/source-login/confirm-deletes/healthcheck/sidecar), Docker entrypoint, health endpoint and desktop Control-API around @atf/outpost-core.",
+  "author": "Abillify Technology GmbH <info@abillify.me>",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "engines": {
+    "bun": ">=1.4.0 <2",
+    "node": ">=26 <27"
+  },
+  "scripts": {
+    "start": "bun run src/main.ts",
+    "dev": "bun --watch run src/main.ts",
+    "test": "node node_modules/vitest/vitest.mjs run",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/main.ts --outdir ./dist --target bun",
+    "build:node": "bun build ./src/main.ts --outdir ./dist-node --target node",
+    "build:sea": "bun run scripts/build-sea.ts"
+  },
+  "dependencies": {
+    "@atf/outpost-core": "workspace:0.1.0",
+    "pino": "10.3.1",
+    "yaml": "2.9.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "26.6.2",
+    "fast-check": "4.10.2",
+    "postject": "1.0.0-alpha.6",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

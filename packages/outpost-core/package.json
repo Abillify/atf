@@ -1,0 +1,38 @@
+{
+  "name": "@atf/outpost-core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Locally-operated sync agent core: mirrors local folders, S3, Google Drive and Dropbox into ATF Extract collections. Pure logic plus I/O adapters behind interfaces, shared by the Docker runtime and the desktop sidecar.",
+  "author": "Abillify Technology GmbH <info@abillify.me>",
+  "license": "Elastic-2.0",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "engines": {
+    "bun": ">=1.4.0 <2",
+    "node": ">=26 <27"
+  },
+  "scripts": {
+    "test": "node node_modules/vitest/vitest.mjs run",
+    "typecheck": "tsc --noEmit",
+    "build": "bun build ./src/index.ts --outdir ./dist --target node"
+  },
+  "dependencies": {
+    "@atf/extract-contract": "workspace:2.2.0",
+    "chokidar": "4.0.3",
+    "picomatch": "4.0.7",
+    "pino": "10.3.1",
+    "undici": "6.23.0",
+    "yaml": "2.9.0",
+    "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.0",
+    "@types/node": "26.6.2",
+    "@types/picomatch": "4.0.3",
+    "fast-check": "4.10.2",
+    "typescript": "7.0.2",
+    "vitest": "5.0.0"
+  }
+}

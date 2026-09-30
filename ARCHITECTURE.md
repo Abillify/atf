@@ -70,6 +70,23 @@ uploads, durable jobs, and the emitter — and when it is absent Extract falls b
 original in-process synchronous conversion. The v2 data flow is described in
 [Document Intelligence v2](#document-intelligence-v2-data-flow) below.
 
+### Extract Outpost
+
+The Outpost is a locally operated sync agent around `@atf/outpost-core`. Its Docker runtime
+uses `/data` for sync state and file-backed credentials, while the Tauri desktop runtime keeps
+credentials in the OS keychain and communicates with the same Node SEA sidecar over a local
+Bearer-token-protected Control API. The sidecar binds only to loopback, reports its ephemeral
+port on stdout and keeps OAuth loopback handling and keychain operations in the native host.
+
+```mermaid
+flowchart LR
+  local[Local folder / S3 / Drive / Dropbox] --> outpost[Outpost Core]
+  outpost --> extract[ATF Extract]
+  desktop[Tauri host] -->|Control API + SSE| outpost
+  desktop -->|keychain + loopback bridge| outpost
+  outpost --> state[(Sync state)]
+```
+
 ## Applications
 
 ### Runtime (`apps/runtime`)

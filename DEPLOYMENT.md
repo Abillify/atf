@@ -10,6 +10,19 @@ Environment-specific stack definitions, operational flows, and customer configur
 
 Use `deploy/examples/README.md`. Its auth-off settings, deterministic mock model, local password, and development servers are intentionally unsafe for production.
 
+## Extract Outpost
+
+The Extract Outpost runs as the non-root `atf-outpost` container. Mount the read-only configuration at `/config/outpost.yaml`, persistent state at `/data` and local sources below `/sources/*`. Its unauthenticated health endpoint defaults to `127.0.0.1:8787`; bind it publicly only behind an authenticated network boundary.
+
+Cloud source login can be performed without restarting the daemon:
+
+```sh
+docker exec -it outpost atf-outpost source-login <sourceId>
+docker exec -it outpost atf-outpost confirm-deletes <sourceId>
+```
+
+`source-login` uses code paste for Dropbox and the complete redirected browser URL for Google Drive. A missing source authorization is shown as `needs-authorization` and keeps `/healthz` at HTTP 200; `once` returns exit code 1. Use `auth: service-account` for Google Drive service accounts and provide the key through `OUTPOST_SOURCE_<ID>_GDRIVE_SA_KEY_FILE`. Secrets are redacted and never included in health responses or logs.
+
 ## Application artifacts
 
 - Runtime and Gate are Bun 1.4.0 applications.
