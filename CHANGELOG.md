@@ -17,6 +17,107 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.13.0] — 2026-10-04
+Studio works with named drafts per flow (Runtime schema migration 41), cost displays are
+currency-labelled via `CURRENCY` / `NEXT_PUBLIC_CURRENCY` (default EUR, label only, no
+conversion), and the graph shows per-edge data channels live during a run. Tool calls stream
+the full effective argument JSON instead of key names, LLM and classifier nodes can skip
+themselves when the current turn carries no attachments, LLM nodes can work with short
+reference handles instead of long paths, and an opt-in guard stops runaway tool loops. No
+contract-package or example-flow change.
+### Added
+- **Named drafts** (`@atf/runtime`, Control Studio). Several working copies per flow:
+  `GET /flows/:id/drafts` lists them, `PUT`/`DELETE /flows/:id/drafts/:draftId` save and remove
+  one, and publish selects a draft via `?draftId=`; the implicit `PUT /flows/:id/draft` stays
+  the `default` draft. Studio switches drafts without a request per draft, shows the draft
+  count, and offers a Draft↔Live switch for online flows.
+- **Currency labelling** (`@atf/runtime` `CURRENCY`, Control `NEXT_PUBLIC_CURRENCY`).
+  All cost displays render in one configured currency (`EUR`, `USD`, `CHF` or `GBP`; default
+  `EUR`); values are never converted, only the symbol changes. This includes eval reports,
+  explain cards and the daily-budget error message. Wire and config field names (`cost_usd`,
+  `maxCostUsd`, …) are unchanged. An unknown value falls back to `EUR` (Runtime logs a
+  warning).
+- **Edge data channels in the Studio graph** (`@atf/control`, `@atf/runtime`). Each edge
+  renders one line per payload actually passed (query, images, tool results, data), refreshed
+  live while the run is in progress; clicking a channel opens the edge's property panel. The
+  Runtime records them as `edge_flows` in the execution debug trace (content clamped to 1 KB
+  per item, at most 16 items per record and 200 records per trace).
+- **`toolLoopGuard`** (LLM nodes, opt-in). Detects identical repeats, same-tool argument
+  churn, no-progress mutations and A→B cycles; the model gets one warning, then the call is
+  refused with `tool_loop_blocked` without reaching MCP. Counted in
+  `aiperator_tool_loop_guard_total`.
+- **Per-server MCP timeouts and retries** (`MCP_SERVERS` entries). `requestTimeoutMs`
+  (ms, 1 000–600 000) replaces the 5 s wrapper default for one call attempt; `retryAttempts`
+  (1–10) replaces the annotation-based default (3 for `readOnlyHint`/`idempotentHint` tools,
+  otherwise 1) for every tool of that server.
+- **`sources` on non-streaming chat completions.** `stream: false` responses carry the
+  indexed citation sources the SSE path already emitted, so `[n]` markers resolve.
+- **Studio panels** (`@atf/control`). Side panels are resizable (width remembered per
+  browser, keyboard-operable separator); the properties panel only appears while something is
+  selected, with a Flow settings button for flow-level settings; Copilot and Run & Trace are
+  toggled individually and stack vertically. The sub-flow palette lists sub-flow files inline
+  and includes one by click, double-click or drop onto the canvas. JSON editors mark the
+  documentation entry for the key under the cursor.
+- **Run & Trace** (`@atf/control`). Reasoning streams into an open Thinking block that
+  collapses when the answer starts, and images attached to a test prompt are sent as
+  `image_url` content parts.
+- **Execution history** (`@atf/control`). Only requests of one conversation form a
+  collapsible group (single requests render as plain rows), and row actions are compact icon
+  buttons with accessible names.
+- **`inputFilter: current-turn-attachments`** (LLM and classifier nodes). The node is
+  skipped without a model call when the current user turn has no attachments; the
+  classifier records `classifier_skipped_no_attachments` and continues with its
+  `fallback`. Saves a full LLM round-trip per text-only turn.
+- **`refHandles: true`** (LLM nodes). Tool results carry short deterministic reference
+  handles instead of long paths; the runtime resolves them before the MCP call and maps
+  them back in everything the user sees. A guessed handle fails loudly with the list of
+  valid handles.
+- **Sortable History columns** (`GET /monitoring/history?sortBy=&sortDir=`). Server-side
+  sorting (whitelisted columns only, `NULLS LAST` + stable tiebreaker) for started, flow,
+  user, nodes, latency, runtime and cost; the History table headers toggle direction.
+- **`metadata.hidden: true`** (`@atf/runtime`, flow files). Internal helper flows are
+  omitted from `GET /v1/models` and answer `404` on `GET /v1/models/:id`, so clients such
+  as Open WebUI do not offer them in the model picker. The flow stays loaded and
+  dispatchable; only discovery is affected.
+### Changed
+- **Full effective tool-argument JSON in the live stream.** Tool-call events carry the
+  exact arguments the tool received (post egress-DLP) instead of `{"argument_keys":[…]}`;
+  raw model arguments are still never emitted before the effective ones. `tool` and
+  `retrieval` nodes and the local tools (`select_tools`, image inspection, media tools) report
+  their effective arguments the same way.
+- **Debug trace keeps the final answer.** `final_response` has its own 64 KB budget
+  (`finalResponseBytes`) instead of the 512-byte per-node excerpt limit.
+- **Agent harness coverage.** With a complete server-side rerank, search-driven discovery
+  promotes hits by score threshold only; the rank rule remains the fallback when the rerank is
+  missing or incomplete. Coverage deduplicates documents by canonical document-unit identity
+  (chunk hits collapse onto their unit), and the debug trace reports the exact number of
+  documents still owing work.
+- **Tool-loop detection** no longer counts failed calls (transport errors, timeouts, `isError`
+  results) towards argument churn.
+- **Docs and Copilot examples** use the neutral route `RETOURE`; `docs/FLOWS.md` documents the
+  node `label` field, tool-node `args`, `toolLoopGuard`, `refHandles` and the extended
+  `overrides` matching.
+### Fixed
+- **Trace lookups by chat id.** ids of the form `chatcmpl-<uuid>` (and
+  `chatcmpl-replay-<uuid>`) resolve to the execution again in explain, debug, history and
+  optimizer endpoints instead of `404`.
+- **Classifier after a result-injecting tool node.** Non-leading system messages are folded
+  into an adjacent turn before the classifier prompt, so strict chat templates no longer
+  reject the request and silently route to `fallback`.
+- **Planning narration between tool steps** no longer leaks into the visible answer when
+  narration suppression is on; only the final answer is released.
+- **Control with operator auth disabled.** A stale session token without a `role` claim no
+  longer greys out the UI; the role is `admin` whenever auth is not required. Server-side
+  authorization is unchanged.
+- **`cli.ts validate`** skips the shared `constants.yaml`, like the flow loader.
+### Migration
+- Runtime schema version 41 adds `flow_drafts` (PK `flow_id`/`draft_id`) and backfills each
+  flow's current draft as `default`. Applied automatically on start; no manual step.
+- Cost figures and pricing (`LLM_PRICING`, built-in table) are now labelled in `CURRENCY`,
+  default `EUR`. Deployments that priced in US dollars set `CURRENCY=USD` and
+  `NEXT_PUBLIC_CURRENCY=USD` to keep the `$` label.
+- Control freezes `NEXT_PUBLIC_CURRENCY` at build time; it should match the runtime's
+  `CURRENCY` so Studio and API views label costs identically.
 ## [0.12.0] — 2026-09-30
 Adds the Extract Outpost, a locally operated sync agent that mirrors local folders, S3, Google
 Drive and Dropbox into Extract, plus the three Extract extensions it relies on.
@@ -1340,7 +1441,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/abillify/atf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/abillify/atf/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/abillify/atf/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/abillify/atf/compare/v0.10.2...v0.11.0
