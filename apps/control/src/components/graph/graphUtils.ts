@@ -13,6 +13,7 @@
  */
 
 import type { NodeType } from "../../types/flow";
+import { withCurrency } from "../../lib/currency";
 import type {
   NodeExecutionEvent,
   NodeToolCall,
@@ -226,6 +227,13 @@ export function approvalBadge(approval: ApprovalState): {
 // ---------------------------------------------------------------------------
 
 /**
+ * Synthetic node id the engine emits once per run to mark the true end of the
+ * flow (see runtime `FLOW_END_NODE_ID`). It is a rollup marker for the
+ * execution status, not a graph node — the canvas must not render it.
+ */
+export const FLOW_END_NODE_ID = "__flow_end__";
+
+/**
  * Folds a stream of `NodeExecutionEvent`s into one `NodeState` per node id.
  *
  * Pure and transport-agnostic: works identically whether events came from the
@@ -233,6 +241,9 @@ export function approvalBadge(approval: ApprovalState): {
  * scoped to a single in-editor test run (Studio builder's run drawer) — both
  * consumers get the exact same running/completed/error + latency/cost/token
  * semantics instead of two divergent implementations.
+ *
+ * The synthetic `__flow_end__` marker is dropped: it carries the execution's
+ * terminal status for the history rollup but is not a node in the graph.
  *
  * A "running" event never regresses a node that a later-processed event
  * already marked "completed" for the SAME invocation (matched by identical
@@ -247,6 +258,7 @@ export function deriveNodeStates(
 ): Map<string, NodeState> {
   const stateMap = new Map<string, NodeState>();
   for (const event of events) {
+    if (event.node_id === FLOW_END_NODE_ID) continue;
     const existing = stateMap.get(event.node_id);
     const isStaleRunningDuplicateOfCompleted =
       event.status === "running" &&
@@ -301,12 +313,16 @@ export function deriveNodeStates(
 // ---------------------------------------------------------------------------
 
 /**
- * Formats an estimated cost for display. Currency-agnostic: shows the bare
- * numeric value (no currency symbol). Uses up to 6 significant decimals for
- * small amounts and 2 decimals for larger figures.
+ * Formats an estimated cost for display with the configured display currency
+ * symbol (no conversion — the number is shown as-is). Uses up to 6
+ * significant decimals for small amounts and 2 decimals for larger figures.
  */
 export function formatCost(cost: number): string {
-  if (cost === 0) return "0";
-  if (cost < 0.01) return cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-  return cost.toFixed(cost < 1 ? 4 : 2);
+  const bare =
+    cost === 0
+      ? "0"
+      : cost < 0.01
+        ? cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+        : cost.toFixed(cost < 1 ? 4 : 2);
+  return withCurrency(bare);
 }

@@ -16,6 +16,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Button } from "../lib/ui";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
+import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
 
 interface SloTarget {
@@ -155,9 +156,9 @@ export function SloPanel(): React.JSX.Element {
                     <div className={e.meetsCost ? "text-green-700" : "text-red-700"}>
                       cost/req:{" "}
                       {e.observedCostUsd !== undefined
-                        ? "$" + e.observedCostUsd.toFixed(5)
+                        ? formatCost(e.observedCostUsd, 5)
                         : "—"}{" "}
-                      / ≤ ${e.target.maxCostUsdPerRequest.toFixed(5)}{" "}
+                      / ≤ {formatCost(e.target.maxCostUsdPerRequest, 5)}{" "}
                       <span className="text-muted-foreground">
                         ({e.costSamples} samples)
                       </span>

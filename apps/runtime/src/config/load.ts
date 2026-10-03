@@ -295,6 +295,7 @@ export function loadConfig(): AppConfig {
       env.FALLBACK_CHAIN.length > 0 ? env.FALLBACK_CHAIN : undefined,
     maxQueueDepth: env.MAX_QUEUE_DEPTH,
     budgetDailyPerTenant: env.BUDGET_DAILY_PER_TENANT,
+    currency: env.CURRENCY,
     llmPricing: env.LLM_PRICING,
     tracingEnabled: env.TRACING_ENABLED,
     otelExporterOtlpEndpoint: env.OTEL_EXPORTER_OTLP_ENDPOINT,

@@ -18,6 +18,7 @@ import { useState } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
+import { formatCost } from "../../../lib/currency";
 import { authFetch } from "../../../lib/auth-fetch";
 import {
   Badge,
@@ -448,7 +449,7 @@ export default function ProviderTestingPage() {
                   completion {promptTest.data.usage.completionTokens} tok
                 </Badge>
                 <Badge variant="secondary">
-                  ${promptTest.data.usage.cost.toFixed(6)}
+                  {formatCost(promptTest.data.usage.cost)}
                 </Badge>
               </div>
             </div>
@@ -501,7 +502,10 @@ export default function ProviderTestingPage() {
               <Metric label="Latency min" value={`${performanceTest.data.latencyMs.min} ms`} />
               <Metric label="Latency max" value={`${performanceTest.data.latencyMs.max} ms`} />
               <Metric label="Throughput" value={`${performanceTest.data.tokensPerSecond} tok/s`} />
-              <Metric label="Total cost" value={`$${performanceTest.data.totalCost.toFixed(6)}`} />
+              <Metric
+                label="Total cost"
+                value={formatCost(performanceTest.data.totalCost)}
+              />
               {performanceTest.data.firstError && (
                 <div className="sm:col-span-3 lg:col-span-4 text-xs text-amber-600">
                   First error: {performanceTest.data.firstError}

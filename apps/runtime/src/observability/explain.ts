@@ -40,6 +40,7 @@ import type { DebugTraceStore } from "../monitoring/debug-trace-store.js";
 import type { DebugGroundedness, DebugNodeDiagnostic } from "../types/debug-trace.js";
 import type { PiiVault, PiiVaultActionSummary } from "../graph/pii-vault.js";
 import type { AuditLog, AuditRecord } from "./audit-log.js";
+import { formatCostWithCurrency } from "../util/currency.js";
 
 // ---------------------------------------------------------------------------
 // Card shape
@@ -412,7 +413,7 @@ export function renderExplainCardMarkdown(card: ExplainCard): string {
     `- **Started:** ${card.startedAt}`,
     `- **Finished:** ${card.finishedAt ?? "(in progress / unknown)"}`,
     `- **Total latency:** ${card.totalLatencyMs !== null ? `${card.totalLatencyMs} ms` : "unknown"}`,
-    `- **Total cost:** ${card.totalCost !== null ? `$${card.totalCost.toFixed(6)}` : "unknown"}`,
+    `- **Total cost:** ${card.totalCost !== null ? formatCostWithCurrency(card.totalCost) : "unknown"}`,
     `- **User:** ${card.userName ?? "(anonymous)"}`,
     ...(card.userPrompt !== null ? [`- **Prompt:** ${card.userPrompt}`] : []),
     "",
@@ -425,7 +426,7 @@ export function renderExplainCardMarkdown(card: ExplainCard): string {
     if (step.latencyMs !== null) bits.push(`${step.latencyMs}ms`);
     if (step.model !== undefined) bits.push(`model=${step.model}`);
     if (step.cost !== undefined && step.cost > 0)
-      bits.push(`$${step.cost.toFixed(6)}`);
+      bits.push(formatCostWithCurrency(step.cost));
     lines.push(`- ${bits.join(" · ")}`);
     if (step.toolCalls !== undefined) {
       for (const tc of step.toolCalls) {
@@ -459,7 +460,7 @@ export function renderExplainCardMarkdown(card: ExplainCard): string {
   } else {
     for (const m of card.modelsUsed) {
       lines.push(
-        `- \`${m.model}\` — ${m.callCount} call(s), ${m.inputTokens} in / ${m.outputTokens} out tokens, $${m.cost.toFixed(6)}`,
+        `- \`${m.model}\` — ${m.callCount} call(s), ${m.inputTokens} in / ${m.outputTokens} out tokens, ${formatCostWithCurrency(m.cost)}`,
       );
     }
   }

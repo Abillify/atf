@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import React from "react";
+import { withCurrency } from "../lib/currency";
 import type {
   Severity,
   TraceAnalysis,
@@ -40,9 +41,13 @@ function severityVariant(severity: Severity): BadgeVariant {
 }
 
 function formatCost(cost: number): string {
-  if (cost === 0) return "0";
-  if (cost < 0.01) return cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-  return cost.toFixed(cost < 1 ? 4 : 2);
+  const bare =
+    cost === 0
+      ? "0"
+      : cost < 0.01
+        ? cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+        : cost.toFixed(cost < 1 ? 4 : 2);
+  return withCurrency(bare);
 }
 
 function Metric({

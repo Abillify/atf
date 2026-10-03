@@ -4,6 +4,7 @@
 
 import React from "react";
 import type { NodeExecutionEvent } from "../types/monitoring";
+import { withCurrency } from "../lib/currency";
 import {
   Badge,
   Table,
@@ -29,11 +30,15 @@ interface ExecutionSummary {
   totalCost: number;
 }
 
-/** Formats an estimated cost (currency-agnostic, no symbol) for display. */
+/** Formats an estimated cost with the configured display currency symbol. */
 function formatCost(cost: number): string {
-  if (cost === 0) return "0";
-  if (cost < 0.01) return cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-  return cost.toFixed(cost < 1 ? 4 : 2);
+  const bare =
+    cost === 0
+      ? "0"
+      : cost < 0.01
+        ? cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+        : cost.toFixed(cost < 1 ? 4 : 2);
+  return withCurrency(bare);
 }
 
 /**

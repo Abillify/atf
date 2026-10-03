@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import React, { useState } from "react";
+import { formatCost } from "../lib/currency";
 import { Badge, Button } from "../lib/ui";
 import { FlowPicker } from "./FlowPicker";
 import type {
@@ -192,7 +193,7 @@ function VariantRow({
             {Math.round(variant.avgLatencyMs)}ms
           </span>
           <span className="tabular-nums">
-            ${variant.totalCost.toFixed(4)}
+            {formatCost(variant.totalCost, 4)}
           </span>
           {canPromote && !variant.error && (
             <Button variant="primary" size="sm" onClick={onPromote}>

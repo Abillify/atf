@@ -24,6 +24,7 @@ import type {
 } from "../middleware/operator-rbac.js";
 import type { LlmConfig } from "../types/flow.js";
 import type { LlmStreamFallbackPolicy } from "../llm-stream-fallback-policy.js";
+import { parseCurrency, type Currency } from "../util/currency.js";
 import { SECURE_DEFAULTS } from "./defaults.js";
 
 import type { ProviderInstance } from "./providers.js";
@@ -96,6 +97,20 @@ export interface McpServerConfig {
   profile?: "2025" | "2026-07-28";
   /** Alias for profile, accepted for configuration compatibility. */
   protocolVersion?: "2025" | "2026-07-28";
+  /**
+   * Per-request wall-clock timeout for a single MCP tool call attempt (ms).
+   * Overrides the wrapper-wide default (5 s), which is too tight for
+   * embedding-backed searches (hybrid + HyDE + rerank) that legitimately take
+   * longer under concurrent load. Bounds one attempt; retries still follow
+   * the tool's retryability annotations (unless `retryAttempts` overrides).
+   */
+  requestTimeoutMs?: number;
+  /**
+   * Total call attempts for retryable tools on this server (default 3, from
+   * the readOnlyHint/idempotentHint gate). Set higher when a server is known
+   * to be slow-but-recoverable; set 1 to disable retries entirely.
+   */
+  retryAttempts?: number;
   /** Delay between MCP 2026 task status requests. */
   taskPollingIntervalMs?: number;
   /** Hard limit on MCP 2026 task status requests. */
@@ -386,6 +401,12 @@ export interface AppConfig {
   fallbackChain?: LlmConfig[];
   maxQueueDepth?: number;
   budgetDailyPerTenant?: number;
+  /**
+   * Display currency for every cost figure in the system (default EUR).
+   * Purely a label — cost values are never converted between currencies;
+   * the pricing table is interpreted as denominated in this currency.
+   */
+  currency?: Currency;
   llmPricing?: Record<string, { prompt: number; completion: number }>;
   tracingEnabled?: boolean;
   otelExporterOtlpEndpoint?: string;
@@ -638,6 +659,8 @@ export const McpServerConfigSchema = z.object({
   transport: z.enum(["http", "stdio", "sse"]),
   profile: z.enum(["2025", "2026-07-28"]).optional(),
   protocolVersion: z.enum(["2025", "2026-07-28"]).optional(),
+  requestTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+  retryAttempts: z.number().int().min(1).max(10).optional(),
   taskPollingIntervalMs: z.number().int().min(0).max(60_000).optional(),
   taskPollingMaxAttempts: z.number().int().min(1).max(10_000).optional(),
   taskPollingDeadlineMs: z.number().int().min(1).max(3_600_000).optional(),
@@ -1405,6 +1428,13 @@ export const EnvSchema = z.object({
     .min(0)
     .max(1_000_000)
     .default(0),
+  // Display currency for every cost figure in the system. Purely a label:
+  // values are never converted; the pricing table is interpreted as
+  // denominated in this currency. Unknown codes fall back to EUR.
+  CURRENCY: z
+    .string()
+    .optional()
+    .transform((raw): Currency => parseCurrency(raw)),
   TRACING_ENABLED: z
     .string()
     .optional()

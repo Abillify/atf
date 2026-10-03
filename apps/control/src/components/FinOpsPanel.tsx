@@ -21,6 +21,7 @@ import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
+import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
 import {
   Badge,
@@ -205,22 +206,28 @@ export function FinOpsPanel(): React.JSX.Element {
               <div>
                 <dt className="uppercase tracking-wide">Cap/day</dt>
                 <dd className="text-foreground">
-                  {forecast.capPerDay > 0 ? `$${forecast.capPerDay.toFixed(2)}` : "unlimited"}
+                  {forecast.capPerDay > 0
+                    ? formatCost(forecast.capPerDay, 2)
+                    : "unlimited"}
                 </dd>
               </div>
               <div>
                 <dt className="uppercase tracking-wide">Current spend</dt>
-                <dd className="text-foreground">${forecast.currentSpend.toFixed(4)}</dd>
+                <dd className="text-foreground">
+                  {formatCost(forecast.currentSpend, 4)}
+                </dd>
               </div>
               <div>
                 <dt className="uppercase tracking-wide">Burn rate</dt>
-                <dd className="text-foreground">${forecast.dailyBurnRate.toFixed(4)}/day</dd>
+                <dd className="text-foreground">
+                  {formatCost(forecast.dailyBurnRate, 4)}/day
+                </dd>
               </div>
               <div>
                 <dt className="uppercase tracking-wide">Trend</dt>
                 <dd className="text-foreground">
                   {forecast.dailyTrend >= 0 ? "+" : ""}
-                  ${forecast.dailyTrend.toFixed(4)}/day²
+                  {formatCost(forecast.dailyTrend, 4)}/day²
                 </dd>
               </div>
             </dl>

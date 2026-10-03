@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type { ChatMessage, TokenUsage } from "../types/openai.js";
+import { formatCostWithCurrency } from "../util/currency.js";
 
 export type EvalMessage = ChatMessage;
 
@@ -130,7 +131,9 @@ export function evaluateAssertion(
     case "maxCost":
       return ctx.cost <= assertion.value
         ? pass()
-        : fail(`cost $${ctx.cost.toFixed(6)} exceeded $${assertion.value}`);
+        : fail(
+            `cost ${formatCostWithCurrency(ctx.cost)} exceeded ${formatCostWithCurrency(assertion.value)}`,
+          );
     case "llmJudge":
       return fail("llmJudge assertion requires a judge (none configured)");
   }
@@ -310,7 +313,7 @@ export function formatReport(report: EvalReport): string {
     : `, avg score ${(report.avgScore * 100).toFixed(1)}%`;
   lines.push(
     `  ${report.passed}/${report.total} passed (${(report.passRate * 100).toFixed(1)}%) — ` +
-      `avg ${report.avgLatencyMs}ms, total cost $${report.totalCost.toFixed(6)}${score}`,
+      `avg ${report.avgLatencyMs}ms, total cost ${formatCostWithCurrency(report.totalCost)}${score}`,
   );
   for (const result of report.cases) {
     const caseScore = result.score === undefined ? "" : ` score=${(result.score * 100).toFixed(0)}%`;

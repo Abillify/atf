@@ -6,6 +6,7 @@ import React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
+import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
 import { useFlows } from "../hooks/useFlows";
 import { FlowMultiSelect } from "./FlowMultiSelect";
@@ -227,7 +228,7 @@ function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string | undef
                   <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
                     <span>Score: {cell.score === undefined ? "—" : <strong className={scoreColor(cell.score)}>{(cell.score * 100).toFixed(1)}%</strong>}</span>
                     <span>Latency: {cell.latencyMs === undefined ? "—" : `${cell.latencyMs}ms`}</span>
-                    <span>Cost: {cell.cost === undefined ? "—" : `$${cell.cost.toFixed(6)}`}</span>
+                    <span>Cost: {cell.cost === undefined ? "—" : formatCost(cell.cost)}</span>
                   </div>
                   {cell.executionId && <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">Execution: {cell.executionId}</div>}
                   {cell.error && <div className="mt-2 text-xs text-red-600">{cell.error}</div>}
@@ -320,7 +321,7 @@ function RunRow({ run, expanded, onToggle }: {
           {(report.passRate * 100).toFixed(1)}% ({report.passed}/{report.total})
         </TableCell>
         <TableCell className="text-muted-foreground">{report.avgLatencyMs.toFixed(0)}ms</TableCell>
-        <TableCell className="text-muted-foreground">${report.totalCost.toFixed(6)}</TableCell>
+        <TableCell className="text-muted-foreground">{formatCost(report.totalCost)}</TableCell>
         <TableCell className="text-muted-foreground">{report.avgScore !== undefined ? `${(report.avgScore * 100).toFixed(0)}%` : "—"}</TableCell>
         <TableCell className="text-muted-foreground">{new Date(run.recordedAt).toLocaleString()}</TableCell>
       </TableRow>

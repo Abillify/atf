@@ -36,6 +36,7 @@ import { estimateCost } from "../../observability/cost.js";
 import type { TokenLimitEnforcer } from "../../observability/token-limits.js";
 import { describeLimit } from "../../observability/token-limits.js";
 import type { Metrics } from "../../observability/metrics.js";
+import { formatCostWithCurrency } from "../../util/currency.js";
 import type { CanaryManager, Variant } from "../../graph/canary.js";
 import type { ReplayService } from "../../graph/replay.js";
 import type { Judge } from "../../eval/eval-runner.js";
@@ -294,7 +295,11 @@ export async function checkBudget(opts: {
       response: ctx.json(
         {
           error: {
-            message: `Daily budget of $${decision.cap.toFixed(2)} exceeded ($${decision.spent.toFixed(
+            message: `Daily budget of ${formatCostWithCurrency(
+              decision.cap,
+              2,
+            )} exceeded (${formatCostWithCurrency(
+              decision.spent,
               4,
             )} spent). Try again after the window resets.`,
             type: "insufficient_quota",

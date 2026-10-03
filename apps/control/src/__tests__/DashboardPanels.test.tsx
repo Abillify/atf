@@ -45,7 +45,7 @@ describe("StatsBar", () => {
     );
     expect(screen.getByText("Requests")).toBeInTheDocument();
     expect(screen.getByText("1.5k")).toBeInTheDocument();
-    expect(screen.getByText("$1.23")).toBeInTheDocument();
+    expect(screen.getByText("\u20ac1.23")).toBeInTheDocument();
   });
 
   test("computes error rate from llm calls", () => {
@@ -80,7 +80,7 @@ describe("CostPanel", () => {
       />,
     );
     expect(screen.getByText("acme")).toBeInTheDocument();
-    expect(screen.getByText("$0.5000")).toBeInTheDocument();
+    expect(screen.getByText("\u20ac0.5000")).toBeInTheDocument();
   });
 });
 

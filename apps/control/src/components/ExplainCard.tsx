@@ -19,6 +19,7 @@ import type React from "react";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../lib/backend-url";
+import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
 import { Badge, Button } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
@@ -304,7 +305,7 @@ export function ExplainCard({
         <div>
           <dt className="text-xs uppercase tracking-wide text-muted-foreground">Cost</dt>
           <dd className="text-lg font-semibold text-foreground">
-            {card.totalCost !== null ? `$${card.totalCost.toFixed(6)}` : "—"}
+            {card.totalCost !== null ? formatCost(card.totalCost) : "—"}
           </dd>
         </div>
         <div>
@@ -394,7 +395,7 @@ export function ExplainCard({
                         <li key={`${a.candidate}-${i}`}>
                           <code>{a.candidate}</code>
                           {a.estimatedCostUsd !== undefined &&
-                            ` · $${a.estimatedCostUsd.toFixed(6)}`}
+                            ` · ${formatCost(a.estimatedCostUsd)}`}
                           {a.observedQuality !== undefined &&
                             ` · quality ${(a.observedQuality * 100).toFixed(0)}% (${a.qualitySamples ?? 0} samples)`}
                           {" — "}
@@ -427,7 +428,7 @@ export function ExplainCard({
                 <span className="font-mono text-foreground">{m.model}</span>
                 <span className="text-muted-foreground">
                   {m.callCount} call(s) · {m.inputTokens}/{m.outputTokens} tok ·
-                  ${m.cost.toFixed(6)}
+                  {formatCost(m.cost)}
                 </span>
               </li>
             ))}

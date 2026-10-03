@@ -23,11 +23,12 @@
  *   - GET /api/traces/:executionId          → OTel spans (optional)
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
+import { formatCost } from "../../../lib/currency";
 import { Badge, Button, Tabs, TabsList, TabsTrigger } from "../../../lib/ui";
 import type { BadgeVariant } from "../../../lib/ui";
 import type { NodeExecutionEvent, NodeToolCall } from "../../../types/monitoring";
@@ -404,7 +405,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
           <span><span className="font-medium text-muted-foreground">out-tokens</span> {event.output_tokens}</span>
         )}
         {event.cost != null && event.cost > 0 && (
-          <span><span className="font-medium text-muted-foreground">cost</span> ${event.cost.toFixed(6)}</span>
+          <span><span className="font-medium text-muted-foreground">cost</span> {formatCost(event.cost)}</span>
         )}
         {event.sequence != null && (
           <span><span className="font-medium text-muted-foreground">seq</span> {event.sequence}</span>
@@ -691,6 +692,26 @@ export default function TracesPage() {
   const [submittedId, setSubmittedId] = useState<string | null>(null);
   const [tab, setTab] = useState<TabId>("steps");
   const [activeStep, setActiveStep] = useState(0);
+
+  // Deep link: /traces?execution=<id>[&tab=steps|waterfall|explain] — the
+  // History page's Trace button (and external tools) open one run directly,
+  // optionally on a specific tab. Applied once on mount, mirroring the Live
+  // Graph's one-shot ?execution= handling; afterwards the lookup bar is the
+  // operator's to control.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const params = new URLSearchParams(window.location.search);
+    const linkedTab = params.get("tab");
+    if (linkedTab === "steps" || linkedTab === "waterfall" || linkedTab === "explain") {
+      setTab(linkedTab);
+    }
+    const linked = params.get("execution")?.trim();
+    if (linked !== undefined && linked !== "") {
+      setExecutionId(linked);
+      setSubmittedId(linked);
+      setActiveStep(0);
+    }
+  }, []);
 
   // ── Fetch node events (Step-by-Step view) ────────────────────────────────
   const {

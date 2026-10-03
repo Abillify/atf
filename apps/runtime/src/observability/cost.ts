@@ -4,9 +4,10 @@
 /**
  * Cost estimation & per-tenant budget control (`src/observability/cost.ts`)
  *
- * - A built-in pricing table (USD per 1M tokens) for common models, overridable
- *   via AppConfig.llmPricing.
- * - `estimateCost()` turns a TokenUsage into a dollar figure.
+ * - A built-in pricing table (per 1M tokens, denominated in the configured
+ *   display currency — `CURRENCY`, default EUR; values are never converted
+ *   between currencies) for common models, overridable via AppConfig.llmPricing.
+ * - `estimateCost()` turns a TokenUsage into a cost figure in that currency.
  * - `CostTracker` accumulates spend per tenant in a rolling 24h window and
  *   enforces an optional daily cap (fail-closed on the budget decision; the
  *   tracker itself never throws).
@@ -23,16 +24,17 @@ import type { Database } from "../db/database.js";
 import type { Logger } from "./logger.js";
 
 export interface ModelPrice {
-  /** USD per 1,000,000 prompt (input) tokens. */
+  /** Price per 1,000,000 prompt (input) tokens, in the configured currency. */
   prompt: number;
-  /** USD per 1,000,000 completion (output) tokens. */
+  /** Price per 1,000,000 completion (output) tokens, in the configured currency. */
   completion: number;
 }
 
 /**
- * Built-in pricing (USD / 1M tokens) for frequently used models. These are
- * conservative published list prices and can be overridden via LLM_PRICING.
- * Ollama / local models default to 0.
+ * Built-in pricing (per 1M tokens, in the configured display currency —
+ * `CURRENCY`, default EUR; no conversion is ever applied) for frequently used
+ * models. These are conservative published list prices and can be overridden
+ * via LLM_PRICING. Ollama / local models default to 0.
  */
 const DEFAULT_PRICING: Record<string, ModelPrice> = {
   "openai/gpt-4o": { prompt: 2.5, completion: 10 },

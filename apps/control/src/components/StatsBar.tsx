@@ -5,6 +5,7 @@
 import React from "react";
 import type { MetricsSummary } from "../types/metrics";
 import { Card } from "../lib/ui";
+import { currencySymbol } from "../lib/currency";
 
 export interface StatsBarProps {
   summary: MetricsSummary;
@@ -17,9 +18,10 @@ function formatNumber(n: number): string {
 }
 
 function formatCurrency(n: number): string {
-  if (n === 0) return "$0";
-  if (n < 0.01) return `$${n.toFixed(5)}`;
-  return `$${n.toFixed(2)}`;
+  const symbol = currencySymbol();
+  if (n === 0) return `${symbol}0`;
+  if (n < 0.01) return `${symbol}${n.toFixed(5)}`;
+  return `${symbol}${n.toFixed(2)}`;
 }
 
 interface KpiProps {

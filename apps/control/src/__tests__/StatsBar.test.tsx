@@ -59,8 +59,8 @@ describe("StatsBar", () => {
     expect(screen.getByText("no backlog")).toBeInTheDocument();
   });
 
-  test("formats small costs with micro-dollar precision", () => {
+  test("formats small costs with micro precision in the configured currency", () => {
     render(<StatsBar summary={summary({ costTotal: 0.00042 })} />);
-    expect(screen.getByText("$0.00042")).toBeInTheDocument();
+    expect(screen.getByText("\u20ac0.00042")).toBeInTheDocument();
   });
 });

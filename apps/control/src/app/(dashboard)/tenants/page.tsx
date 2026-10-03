@@ -17,6 +17,7 @@ import { RequireRole } from "../../../lib/auth/RequireRole";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
+import { formatCost, withCurrency } from "../../../lib/currency";
 import { authFetch } from "../../../lib/auth-fetch";
 import {
   Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent,
@@ -265,7 +266,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
         {[
           { label: "Requests", value: String(summary.totalRequests) },
           { label: "Tokens", value: summary.totalTokens.toLocaleString() },
-          { label: "Cost", value: `$${fmt(summary.totalCost)}`, green: true },
+          { label: "Cost", value: withCurrency(fmt(summary.totalCost)), green: true },
         ].map(({ label, value, green }) => (
           <div key={label} className="rounded border border-border bg-background p-3 text-center">
             <div className={`text-xl font-bold tabular-nums ${green ? "text-emerald-700" : "text-foreground"}`}>{value}</div>
@@ -287,7 +288,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
                 <TableCell className="font-mono text-xs">{m.provider}/{m.model}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.requests}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.tokens.toLocaleString()}</TableCell>
-                <TableCell className="text-right tabular-nums text-emerald-700">${fmt(m.cost)}</TableCell>
+                <TableCell className="text-right tabular-nums text-emerald-700">{withCurrency(fmt(m.cost))}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -518,7 +519,9 @@ function TenantList() {
               <span className="text-xs text-muted-foreground font-mono hidden sm:inline">{t.id.slice(0, 10)}…</span>
               <Badge variant="secondary">{t.plan}</Badge>
               {t.dailyBudget !== undefined && (
-                <span className="text-xs text-emerald-700 tabular-nums">${t.dailyBudget.toFixed(2)}/day</span>
+                <span className="text-xs text-emerald-700 tabular-nums">
+                  {formatCost(t.dailyBudget, 2)}/day
+                </span>
               )}
               <span className="text-xs text-muted-foreground hidden md:inline">
                 {new Date(t.createdAt).toLocaleDateString()}

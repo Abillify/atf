@@ -13,6 +13,7 @@ import {
   Cell,
 } from "recharts";
 import type { MetricsSummary } from "../types/metrics";
+import { activeCurrency, formatCost } from "../lib/currency";
 import {
   Table,
   TableHead,
@@ -42,8 +43,11 @@ const BAR_COLORS = [
  */
 export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
   const costData = Object.entries(summary.costByModel)
-    .map(([model, usd]) => ({ model, usd: Math.round(usd * 1e6) / 1e6 }))
-    .sort((a, b) => b.usd - a.usd)
+    .map(([model, amount]) => ({
+      model,
+      amount: Math.round(amount * 1e6) / 1e6,
+    }))
+    .sort((a, b) => b.amount - a.amount)
     .slice(0, 6);
 
   const tokenData = Object.entries(summary.tokensByModel)
@@ -82,7 +86,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {/* Cost by model */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Estimated cost by model (USD)
+          Estimated cost by model ({activeCurrency()})
         </h3>
         {costData.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
@@ -106,9 +110,9 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                 tick={{ fontSize: 10 }}
               />
               <Tooltip
-                formatter={(v) => `$${Number(v ?? 0).toFixed(5)}`}
+                formatter={(v) => formatCost(Number(v ?? 0), 5)}
               />
-              <Bar dataKey="usd">
+              <Bar dataKey="amount">
                 {costData.map((_, i) => (
                   <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
                 ))}
@@ -277,10 +281,10 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                       {t.tenant}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      ${t.spent.toFixed(4)}
+                      {formatCost(t.spent, 4)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
-                      {t.cap > 0 ? `$${t.cap.toFixed(2)}` : "—"}
+                      {t.cap > 0 ? formatCost(t.cap, 2) : "—"}
                     </TableCell>
                     <TableCell className="pl-3">
                       {t.cap > 0 ? (
@@ -330,7 +334,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                       {u.label}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      ${u.spent.toFixed(4)}
+                      {formatCost(u.spent, 4)}
                     </TableCell>
                     <TableCell className="pl-3">
                       <div className="h-2 w-full overflow-hidden rounded bg-muted">
@@ -376,7 +380,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                       {f.flowId}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
-                      ${f.spent.toFixed(4)}
+                      {formatCost(f.spent, 4)}
                     </TableCell>
                     <TableCell className="pl-3">
                       <div className="h-2 w-full overflow-hidden rounded bg-muted">

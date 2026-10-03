@@ -45,12 +45,16 @@ bun run --filter @atf/control build
 
 ## Configuration
 
-Two optional variables are documented in [`.env.example`](.env.example):
+Three optional variables are documented in [`.env.example`](.env.example):
 
 - `NEXT_PUBLIC_BACKEND_URL` — explicit development or cross-origin Runtime base URL as reached
   from the browser. Next.js freezes `NEXT_PUBLIC_*` into the browser bundle at build time. Omit
   it in production to use relative same-origin URLs; the deployment's reverse proxy must then
   route Runtime paths because Control has no built-in API rewrite.
+- `NEXT_PUBLIC_CURRENCY` — currency label (`EUR` (default), `USD`, `CHF`, `GBP`) shown in front of
+  every cost figure. Purely a label: values are never converted. Must match the Runtime's
+  `CURRENCY`. Frozen into the browser bundle at build time, so change it via the build argument
+  or `.env` before `next build`, not at container runtime.
 - `CONTROL_CSP_MODE` — `legacy` (default) emits no CSP header. `report-only` emits
   `Content-Security-Policy-Report-Only` so operators can observe violations before deciding on
   an enforcement policy at their ingress. Control currently never emits an enforcement

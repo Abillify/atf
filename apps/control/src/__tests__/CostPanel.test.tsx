@@ -57,6 +57,6 @@ describe("CostPanel", () => {
         })}
       />,
     );
-    expect(screen.getByText("$1.2346")).toBeInTheDocument();
+    expect(screen.getByText("\u20ac1.2346")).toBeInTheDocument();
   });
 });
