@@ -12,6 +12,10 @@
 
 import type { ChatCompletionRequest, TokenUsage } from "../../types/openai.js";
 import type { RequestContext } from "../../types/monitoring.js";
+import {
+  REQUEST_NODE_ID,
+  RESPONSE_NODE_ID,
+} from "../../types/monitoring.js";
 import type { MonitoringServiceInterface } from "../../monitoring/monitoring-service.js";
 import type { FlowDefinition, LlmConfig } from "../../types/flow.js";
 import { poolLeafConfigs } from "../../graph/model-pool.js";
@@ -21,8 +25,9 @@ import crypto from "node:crypto";
 // Constants
 // ---------------------------------------------------------------------------
 
-export const REQUEST_NODE_ID = "__request__";
-export const RESPONSE_NODE_ID = "__response__";
+// Boundary node ids live in types/monitoring.ts (shared with the execution
+// rollup); re-exported here for existing import sites.
+export { REQUEST_NODE_ID, RESPONSE_NODE_ID };
 
 /** Upper bound on a boundary node's captured text to keep events bounded. */
 const BOUNDARY_CAPTURE_LIMIT = 16_000;

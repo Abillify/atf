@@ -36,6 +36,7 @@ import {
   createRedisClient,
   type RedisClientLike,
 } from "../util/redis-client.js";
+import { normalizeExecutionId } from "../util/execution-id.js";
 import {
   InMemoryExecutionStore,
   type ExecutionStore,
@@ -45,6 +46,7 @@ import {
   type HistoryQuery,
   type HistoryPage,
   type HistoryFacets,
+  parseHistorySortColumn,
 } from "./execution-store.js";
 
 // ---------------------------------------------------------------------------
@@ -709,12 +711,20 @@ export function createMonitoringRouter(
     const includeFlows = parseFlows(ctx.req.query("includeFlows"));
     const excludeFlows = parseFlows(ctx.req.query("excludeFlows"));
     const user = ctx.req.query("user");
+    // Sorting: only whitelisted columns are accepted (see historySortClause);
+    // anything else falls back to the default (started_at desc).
+    const sortColumn = parseHistorySortColumn(ctx.req.query("sortBy"));
+    const rawSortDir = ctx.req.query("sortDir");
+    const sortDir =
+      rawSortDir === "asc" || rawSortDir === "desc" ? rawSortDir : undefined;
     const query: HistoryQuery = {
       limit,
       offset,
       ...(includeFlows !== undefined ? { includeFlows } : {}),
       ...(excludeFlows !== undefined ? { excludeFlows } : {}),
       ...(user !== undefined && user !== "" ? { userName: user } : {}),
+      ...(sortColumn !== undefined ? { sortColumn } : {}),
+      ...(sortDir !== undefined ? { sortDir } : {}),
     };
     const { executions, total } = await service.getHistoryPage(query);
     return ctx.json({ executions, total, limit, offset });
@@ -772,7 +782,10 @@ export function createMonitoringRouter(
         401,
       );
     }
-    const events = await service.getExecutionEvents(ctx.req.param("id"));
+    // Accept the bare uuid or the `chatcmpl-<uuid>` id the chat endpoints report.
+    const events = await service.getExecutionEvents(
+      normalizeExecutionId(ctx.req.param("id")),
+    );
     return ctx.json({ events });
   });
 

@@ -25,6 +25,10 @@ export interface UseHistoryOptions {
   excludeFlows?: string[];
   /** When set, only executions triggered by this user (display name). */
   userName?: string;
+  /** Column to sort by server-side (e.g. "started_at", "total_cost"). */
+  sortBy?: string;
+  /** Sort direction. Default "desc". */
+  sortDir?: "asc" | "desc";
   /** Optional operator token, sent as an Authorization header when set. */
   token?: string;
 }
@@ -63,6 +67,8 @@ export function useHistory(options?: UseHistoryOptions): UseHistoryResult {
   const includeFlowsKey = includeFlows?.join(",") ?? "";
   const excludeFlowsKey = excludeFlows?.join(",") ?? "";
   const userName = options?.userName;
+  const sortBy = options?.sortBy;
+  const sortDir = options?.sortDir;
   const token = options?.token;
 
   const [executions, setExecutions] = useState<PersistedExecution[]>([]);
@@ -110,6 +116,8 @@ export function useHistory(options?: UseHistoryOptions): UseHistoryResult {
     if (includeFlowsKey) params.set("includeFlows", includeFlowsKey);
     if (excludeFlowsKey) params.set("excludeFlows", excludeFlowsKey);
     if (userName) params.set("user", userName);
+    if (sortBy) params.set("sortBy", sortBy);
+    if (sortDir) params.set("sortDir", sortDir);
     const fetchUrl = `${baseUrl}?${params.toString()}`;
 
     const tick = async (): Promise<void> => {
@@ -158,6 +166,8 @@ export function useHistory(options?: UseHistoryOptions): UseHistoryResult {
     includeFlowsKey,
     excludeFlowsKey,
     userName,
+    sortBy,
+    sortDir,
     token,
     nonce,
   ]);

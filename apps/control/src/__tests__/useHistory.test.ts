@@ -90,4 +90,41 @@ describe("useHistory", () => {
     );
     expect(fetchMock).not.toHaveBeenCalled();
   });
+
+  test("sends sortBy and sortDir as query params", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ executions: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderHook(() =>
+      useHistory({
+        url: "http://x/monitoring/history",
+        sortBy: "total_cost",
+        sortDir: "asc",
+        intervalMs: 100000,
+      }),
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const calledWith = fetchMock.mock.calls[0]?.[0] as string;
+    expect(calledWith).toContain("sortBy=total_cost");
+    expect(calledWith).toContain("sortDir=asc");
+  });
+
+  test("omits sort params when not configured", async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: true, json: async () => ({ executions: [] }) });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderHook(() =>
+      useHistory({ url: "http://x/monitoring/history", intervalMs: 100000 }),
+    );
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+    const calledWith = fetchMock.mock.calls[0]?.[0] as string;
+    expect(calledWith).not.toContain("sortBy=");
+    expect(calledWith).not.toContain("sortDir=");
+  });
 });

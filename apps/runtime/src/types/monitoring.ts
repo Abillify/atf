@@ -21,6 +21,41 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
+ * Synthetic node id marking the true end of a flow execution. Emitted by the
+ * graph engine exactly once per run — on the success path after the trace is
+ * sealed, and on the error path before the exception propagates — carrying the
+ * flow's real terminal status (`completed`/`error`).
+ *
+ * The execution rollup in `monitoring/execution-store.ts` flips an execution's
+ * status to its terminal value ONLY on this event (or the chat route's
+ * `__response__` boundary, which covers non-flow requests). Before that an
+ * execution honestly reports `running`, even when individual nodes have
+ * already completed — a multi-node flow that reports `completed` after its
+ * first node is indistinguishable from one that finished.
+ *
+ * Excluded from `node_count`/`error_count` (it is a rollup marker, not a
+ * graph node) and from dashboard rendering.
+ */
+export const FLOW_END_NODE_ID = "__flow_end__";
+
+/**
+ * Boundary node id the chat route emits when the response to a request has
+ * been fully produced (see `routes/chat/handler.ts`). Like
+ * {@link FLOW_END_NODE_ID} it is a terminal marker for the execution rollup —
+ * it is what flips a non-flow (direct LLM) request, which never runs the graph
+ * engine and so never emits {@link FLOW_END_NODE_ID}, to its real status.
+ */
+export const RESPONSE_NODE_ID = "__response__";
+
+/**
+ * Boundary node id the chat route emits at the start of a request, carrying
+ * the resolved identity/prompt. It is a terminal (`completed`) event but NOT a
+ * status-flip marker: flipping on it would mark every execution `completed`
+ * the instant it begins.
+ */
+export const REQUEST_NODE_ID = "__request__";
+
+/**
  * Event emitted by the Graph Engine for each node execution lifecycle step.
  * Sent by the Monitoring Service to all connected dashboard clients.
  */

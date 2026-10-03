@@ -20,6 +20,10 @@
  */
 
 import type { NodeExecutionEvent } from "../types/monitoring.js";
+import {
+  FLOW_END_NODE_ID,
+  RESPONSE_NODE_ID,
+} from "../types/monitoring.js";
 import type { Database } from "../db/database.js";
 import type { Logger } from "../observability/logger.js";
 
@@ -49,6 +53,121 @@ export interface ExecutionSummary {
 }
 
 /**
+ * Columns the history view may sort on. Every value maps to a fixed SQL
+ * expression (see {@link historySortClause}) — the client string is never
+ * interpolated raw, so an unknown/attacker-supplied column cannot inject SQL.
+ * `runtime` is derived (finished_at - started_at) rather than a stored column.
+ */
+export type HistorySortColumn =
+  | "started_at"
+  | "flow_id"
+  | "user_name"
+  | "node_count"
+  | "total_latency_ms"
+  | "total_cost"
+  | "runtime";
+
+/** Sort direction; defaults to `desc` (newest/largest first). */
+export type HistorySortDirection = "asc" | "desc";
+
+/** Whitelisted sort columns — used to validate a client-supplied `sort`. */
+export const HISTORY_SORT_COLUMNS: readonly HistorySortColumn[] = [
+  "started_at",
+  "flow_id",
+  "user_name",
+  "node_count",
+  "total_latency_ms",
+  "total_cost",
+  "runtime",
+];
+
+/** Narrow an arbitrary string to a whitelisted sort column. */
+export function parseHistorySortColumn(
+  value: string | undefined,
+): HistorySortColumn | undefined {
+  return HISTORY_SORT_COLUMNS.includes(value as HistorySortColumn)
+    ? (value as HistorySortColumn)
+    : undefined;
+}
+
+/** Fixed SQL expression per sort column — never built from raw input. */
+const HISTORY_SORT_SQL: Record<HistorySortColumn, string> = {
+  started_at: "started_at",
+  flow_id: "flow_id",
+  user_name: "user_name",
+  node_count: "node_count",
+  total_latency_ms: "total_latency_ms",
+  total_cost: "total_cost",
+  runtime: "(finished_at - started_at)",
+};
+
+/**
+ * Build the ORDER BY clause for a history query. Nulls sort last regardless of
+ * direction (a still-running run has no latency/cost/finish yet), with
+ * `started_at DESC` as a stable tiebreaker so pagination never skips or repeats
+ * a row when the sort key is not unique.
+ */
+export function historySortClause(
+  query: Pick<HistoryQuery, "sortColumn" | "sortDir">,
+): string {
+  const col = HISTORY_SORT_SQL[query.sortColumn ?? "started_at"];
+  const dir = (query.sortDir ?? "desc") === "asc" ? "ASC" : "DESC";
+  return `ORDER BY ${col} ${dir} NULLS LAST, started_at DESC`;
+}
+
+/** Extract the comparable value for one summary on a sort column (null = last). */
+function sortValue(
+  e: ExecutionSummary,
+  column: HistorySortColumn,
+): number | string | null {
+  switch (column) {
+    case "started_at":
+      return e.started_at;
+    case "flow_id":
+      return e.flow_id;
+    case "user_name":
+      return e.user_name;
+    case "node_count":
+      return e.node_count;
+    case "total_latency_ms":
+      return e.total_latency_ms;
+    case "total_cost":
+      return e.total_cost;
+    case "runtime": {
+      if (e.finished_at === null) return null;
+      const d =
+        new Date(e.finished_at).getTime() - new Date(e.started_at).getTime();
+      return Number.isFinite(d) ? d : null;
+    }
+  }
+}
+
+/**
+ * In-memory counterpart of {@link historySortClause}: sorts summaries by the
+ * same column/direction with nulls last and a `started_at DESC` tiebreaker, so
+ * the in-memory store and Postgres return identically ordered pages.
+ */
+export function sortSummaries(
+  rows: ExecutionSummary[],
+  query: Pick<HistoryQuery, "sortColumn" | "sortDir">,
+): ExecutionSummary[] {
+  const column = query.sortColumn ?? "started_at";
+  const dir = (query.sortDir ?? "desc") === "asc" ? 1 : -1;
+  return [...rows].sort((a, b) => {
+    const av = sortValue(a, column);
+    const bv = sortValue(b, column);
+    // Nulls always last, independent of direction.
+    if (av === null && bv === null) {
+      // fall through to tiebreaker
+    } else if (av === null) return 1;
+    else if (bv === null) return -1;
+    else if (av !== bv) return av < bv ? -dir : dir;
+    // Stable tiebreaker: newest first by started_at.
+    return new Date(b.started_at).getTime() - new Date(a.started_at).getTime();
+  });
+}
+
+/**
  * Query parameters for a paginated, filterable history listing.
  */
 export interface HistoryQuery {
@@ -62,6 +181,10 @@ export interface HistoryQuery {
   excludeFlows?: string[];
   /** When set, only executions triggered by this user (display name) are returned. */
   userName?: string;
+  /** Column to sort by. Defaults to `started_at`. */
+  sortColumn?: HistorySortColumn;
+  /** Sort direction. Defaults to `desc`. */
+  sortDir?: HistorySortDirection;
 }
 
 /** A single page of execution history plus the total matching count. */
@@ -244,12 +367,15 @@ export class InMemoryExecutionStore implements ExecutionStore {
     // Synthetic tool nodes are excluded from the rollup: their time is already
     // contained in the issuing node's latency (see PostgresExecutionStore).
     if (isTerminal(event.status) && event.kind !== "tool") {
-      exec.node_count += 1;
-      if (event.status === "error") {
-        exec.error_count += 1;
-        exec.status = "error";
-      } else if (exec.status !== "error") {
-        exec.status = "completed";
+      // The terminal markers (`__flow_end__` from the engine, `__response__`
+      // from the chat route) are rollup markers, not graph nodes: they flip
+      // the execution status but never count as a node or an error.
+      const isTerminalMarker =
+        event.node_id === FLOW_END_NODE_ID ||
+        event.node_id === RESPONSE_NODE_ID;
+      if (!isTerminalMarker) {
+        exec.node_count += 1;
+        if (event.status === "error") exec.error_count += 1;
       }
       if (event.latency_ms !== null) {
         exec.total_latency_ms = (exec.total_latency_ms ?? 0) + event.latency_ms;
@@ -264,7 +390,14 @@ export class InMemoryExecutionStore implements ExecutionStore {
         exec.completion_tokens += event.output_tokens;
       if (event.model !== undefined && event.model !== "")
         exec.model = event.model;
-      if (event.end_time !== null) exec.finished_at = event.end_time;
+      // Status/finished_at flip ONLY on the terminal marker. A completed node
+      // inside a still-running multi-node flow must NOT report the whole
+      // execution as completed — that made a flow indistinguishable from a
+      // finished one seconds after its first node returned.
+      if (isTerminalMarker) {
+        exec.status = event.status;
+        exec.finished_at = event.end_time;
+      }
     }
   }
 
@@ -308,7 +441,8 @@ export class InMemoryExecutionStore implements ExecutionStore {
         continue;
       matches.push(stripEvents(exec));
     }
-    const executions = matches.slice(offset, offset + limit);
+    const sorted = sortSummaries(matches, query);
+    const executions = sorted.slice(offset, offset + limit);
     return { executions, total: matches.length };
   }
 
@@ -598,17 +732,26 @@ export class PostgresExecutionStore implements ExecutionStore {
       // contained in the issuing node's latency, so counting them would inflate
       // node_count and double-count total_latency_ms.
       if (isTerminal(event.status) && event.kind !== "tool") {
+        // The terminal markers (`__flow_end__` from the engine, `__response__`
+        // from the chat route) flip the execution status but are not graph
+        // nodes themselves — mirrors InMemoryExecutionStore.recordEvent.
+        // Ordinary node events only roll counters forward; the status stays
+        // "running" until a marker arrives, so a multi-node flow never reports
+        // "completed" after its first node.
+        const isTerminalMarker =
+          event.node_id === FLOW_END_NODE_ID ||
+          event.node_id === RESPONSE_NODE_ID;
         await db.query(
           `UPDATE executions
-              SET node_count = node_count + 1,
-                  error_count = error_count + $2,
+              SET node_count = node_count + (CASE WHEN $6 THEN 0 ELSE 1 END),
+                  error_count = error_count + (CASE WHEN $6 THEN 0 ELSE $2 END),
                   total_latency_ms = COALESCE(total_latency_ms, 0) + $3,
                   total_cost = CASE WHEN $5::double precision IS NULL THEN total_cost
                                         ELSE COALESCE(total_cost, 0) + $5 END,
-                  status = CASE WHEN $4 = 'error' THEN 'error'
-                                WHEN status = 'error' THEN 'error'
+                  status = CASE WHEN NOT $6 THEN status
+                                WHEN $4 = 'error' OR status = 'error' THEN 'error'
                                 ELSE 'completed' END,
-                  finished_at = now()
+                  finished_at = CASE WHEN $6 THEN now() ELSE finished_at END
             WHERE execution_id = $1`,
           [
             event.execution_id,
@@ -616,6 +759,7 @@ export class PostgresExecutionStore implements ExecutionStore {
             event.latency_ms ?? 0,
             event.status,
             event.cost ?? null,
+            isTerminalMarker,
           ],
         );
 
@@ -799,7 +943,7 @@ export class PostgresExecutionStore implements ExecutionStore {
                 conversation_id, chat_id, session_id
            FROM executions
            ${where}
-          ORDER BY started_at DESC
+          ${historySortClause(query)}
           LIMIT $${filterParams.length + 1} OFFSET $${filterParams.length + 2}`,
         [...filterParams, limit, offset],
       );

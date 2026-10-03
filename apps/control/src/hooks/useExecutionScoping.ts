@@ -20,6 +20,7 @@ import type { NodeExecutionEvent } from "../types/monitoring";
 import type { ExecutionPickerItem } from "../components/ExecutionPicker";
 import type { PersistedExecution } from "../types/history";
 import { useExecutionEvents } from "./useExecutionEvents";
+import { FLOW_END_NODE_ID } from "../components/graph/graphUtils";
 
 export interface UseExecutionScopingOptions {
   /** Accumulated live SSE events from useMonitoringEvents. */
@@ -111,7 +112,12 @@ export function useExecutionScoping({
     const items: ExecutionPickerItem[] = [];
     for (const [id, evs] of byExec) {
       const latestByNode = new Map<string, (typeof evs)[number]>();
-      for (const e of evs) latestByNode.set(e.node_id, e);
+      for (const e of evs) {
+        // The engine's terminal rollup marker is not a node: counting it
+        // would double the error count of a failed run.
+        if (e.node_id === FLOW_END_NODE_ID) continue;
+        latestByNode.set(e.node_id, e);
+      }
       let errorCount = 0;
       let running = 0;
       let startedAt = Number.POSITIVE_INFINITY;

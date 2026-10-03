@@ -73,6 +73,10 @@ export default function HistoryPage() {
   const [includeFlows, setIncludeFlows] = useState<string[]>([]);
   const [excludeFlows, setExcludeFlows] = useState<string[]>([]);
   const [userFilter, setUserFilter] = useState("");
+  // Server-side sorting (the runtime paginates, so sorting must happen there
+  // too — otherwise only the visible page would be reordered).
+  const [sortBy, setSortBy] = useState("started_at");
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
 
   const {
     executions,
@@ -87,6 +91,8 @@ export default function HistoryPage() {
     ...(includeFlows.length > 0 ? { includeFlows } : {}),
     ...(excludeFlows.length > 0 ? { excludeFlows } : {}),
     ...(userFilter !== "" ? { userName: userFilter } : {}),
+    sortBy,
+    sortDir,
     ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
   });
 
@@ -106,6 +112,18 @@ export default function HistoryPage() {
   };
   const handleUserFilter = (user: string): void => {
     setUserFilter(user);
+    setOffset(0);
+  };
+
+  // Clicking a column sorts by it (new columns start descending — newest /
+  // biggest first); clicking the active column flips the direction.
+  const handleSortChange = (column: string): void => {
+    if (column === sortBy) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortBy(column);
+      setSortDir("desc");
+    }
     setOffset(0);
   };
 
@@ -168,6 +186,14 @@ export default function HistoryPage() {
     }
   };
 
+  // "Trace" — open the Trace Viewer on the Decision-Provenance (Explain) tab
+  // for this run. Deep-linking: /traces?execution=<id>&tab=explain
+  const handleOpenTrace = (id: string): void => {
+    if (typeof window !== "undefined") {
+      window.location.href = `/traces?execution=${encodeURIComponent(id)}&tab=explain`;
+    }
+  };
+
   return (
     <div className="w-full p-4 sm:p-6">
       <TraceAnalysisPanel
@@ -198,6 +224,7 @@ export default function HistoryPage() {
           downloadingId={debugDownload.downloadingId}
           onAnalyze={handleAnalyze}
           analyzingId={traceAnalysis.analyzingId}
+          onOpenTrace={handleOpenTrace}
           flowOptions={facets.flows}
           flowNames={flowNames}
           userOptions={facets.users}
@@ -211,6 +238,9 @@ export default function HistoryPage() {
           pageSize={PAGE_SIZE}
           offset={offset}
           onOffsetChange={setOffset}
+          sortBy={sortBy}
+          sortDir={sortDir}
+          onSortChange={handleSortChange}
         />
       ) : (
         <ExecutionHistory events={events} />

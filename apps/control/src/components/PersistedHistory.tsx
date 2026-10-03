@@ -3,7 +3,19 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import React, { useMemo, useState } from "react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Eye,
+  FileJson,
+  Loader2,
+  Play,
+  ScrollText,
+  Sparkles,
+} from "lucide-react";
 import type { PersistedExecution } from "../types/history";
+import { withCurrency } from "../lib/currency";
 import { FlowMultiSelect } from "./FlowMultiSelect";
 import {
   Badge,
@@ -47,6 +59,12 @@ export interface PersistedHistoryProps {
   onAnalyze?: (executionId: string) => void;
   /** Execution id currently being analysed (disables its button). */
   analyzingId?: string | null;
+  /**
+   * When provided, renders a "Trace" action per row that opens the execution
+   * in the Trace Viewer (`/traces?execution=<id>`) — step replay, OTel
+   * waterfall and the Decision-Provenance explainability card.
+   */
+  onOpenTrace?: (executionId: string) => void;
 
   // --- Filtering (optional) -------------------------------------------------
   /** Distinct flow ids to offer in the flow filter dropdown. */
@@ -74,6 +92,78 @@ export interface PersistedHistoryProps {
   offset?: number;
   /** Called with the new offset when the user pages. */
   onOffsetChange?: (offset: number) => void;
+
+  // --- Sorting (optional) ---------------------------------------------------
+  /**
+   * Column currently sorted server-side. Matches the runtime's whitelisted
+   * history sort columns (started_at, flow_id, user_name, node_count,
+   * total_latency_ms, total_cost, runtime).
+   */
+  sortBy?: string;
+  /** Current sort direction. Default "desc". */
+  sortDir?: "asc" | "desc";
+  /**
+   * When provided, sortable column headers become buttons that call this with
+   * the clicked column key (the parent owns toggling direction + refetching).
+   */
+  onSortChange?: (column: string) => void;
+}
+
+interface SortableHeaderProps {
+  label: string;
+  /** Backend sort column key, e.g. "total_cost". */
+  column: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
+  onSortChange?: (column: string) => void;
+  align?: "right" | "center";
+}
+
+/**
+ * A table header that, when sorting is wired up, is a clickable button with a
+ * direction indicator and a proper `aria-sort` state on the `<th>`; otherwise
+ * it renders as a plain header cell.
+ */
+function SortableHeader({
+  label,
+  column,
+  sortBy,
+  sortDir,
+  onSortChange,
+  align,
+}: SortableHeaderProps): React.JSX.Element {
+  const alignClass =
+    align === "right" ? "text-right" : align === "center" ? "text-center" : undefined;
+  const active = sortBy === column;
+  const dir = active ? (sortDir ?? "desc") : undefined;
+  if (onSortChange === undefined) {
+    return <TableHeaderCell className={alignClass}>{label}</TableHeaderCell>;
+  }
+  return (
+    <TableHeaderCell
+      className={alignClass}
+      aria-sort={active ? (dir === "asc" ? "ascending" : "descending") : "none"}
+    >
+      <button
+        type="button"
+        className="inline-flex cursor-pointer items-center gap-1 hover:text-foreground"
+        onClick={() => onSortChange(column)}
+        title={`Sort by ${label}`}
+        aria-label={`Sort by ${label}`}
+      >
+        {label}
+        {active ? (
+          dir === "asc" ? (
+            <ArrowUp size={12} aria-hidden="true" />
+          ) : (
+            <ArrowDown size={12} aria-hidden="true" />
+          )
+        ) : (
+          <ArrowUpDown size={12} className="opacity-40" aria-hidden="true" />
+        )}
+      </button>
+    </TableHeaderCell>
+  );
 }
 
 /** Formats a wall-clock duration in ms as a compact human string. */
@@ -105,11 +195,172 @@ function badge(status: PersistedExecution["status"]): {
   return { label: "ok", variant: "success" };
 }
 
-/** Formats an estimated cost (currency-agnostic, no symbol) for display. */
+/** Formats an estimated cost with the configured display currency symbol. */
 function formatCost(cost: number): string {
-  if (cost === 0) return "0";
-  if (cost < 0.01) return cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "");
-  return cost.toFixed(cost < 1 ? 4 : 2);
+  const bare =
+    cost === 0
+      ? "0"
+      : cost < 0.01
+        ? cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
+        : cost.toFixed(cost < 1 ? 4 : 2);
+  return withCurrency(bare);
+}
+
+interface RequestRowProps {
+  execution: PersistedExecution;
+  onViewEvents?: (executionId: string) => void;
+  onDownloadDebug?: (executionId: string) => void;
+  downloadingId?: string | null;
+  onAnalyze?: (executionId: string) => void;
+  analyzingId?: string | null;
+  onOpenTrace?: (executionId: string) => void;
+  onReplay?: (executionId: string) => void;
+  replayingId?: string | null;
+}
+
+/** Shared shape for the compact per-row action buttons in the table. */
+const ACTION_BUTTON_CLASS =
+  "h-7 w-7 text-muted-foreground hover:text-foreground";
+
+/** One execution as a table row (used for single requests and inside threads). */
+function RequestRow({
+  execution: e,
+  onViewEvents,
+  onDownloadDebug,
+  downloadingId,
+  onAnalyze,
+  analyzingId,
+  onOpenTrace,
+  onReplay,
+  replayingId,
+}: RequestRowProps): React.JSX.Element {
+  const b = badge(e.status);
+  const started = new Date(e.started_at);
+  const hasActions =
+    onViewEvents !== undefined ||
+    onDownloadDebug !== undefined ||
+    onAnalyze !== undefined ||
+    onOpenTrace !== undefined ||
+    onReplay !== undefined;
+  return (
+    <TableRow>
+      <TableCell className="font-mono text-xs text-muted-foreground">
+        {e.execution_id.slice(0, 8)}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {e.flow_id ?? "—"}
+      </TableCell>
+      <TableCell className="text-xs text-muted-foreground">
+        {e.user_name ?? "—"}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {e.node_count}
+      </TableCell>
+      <TableCell className="text-right tabular-nums">
+        {e.total_latency_ms ?? 0} ms
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-muted-foreground">
+        {(() => {
+          const r = runtimeMs(e);
+          return r === null ? "—" : formatDuration(r);
+        })()}
+      </TableCell>
+      <TableCell className="text-right tabular-nums text-emerald-700">
+        {e.total_cost != null && e.total_cost > 0
+          ? formatCost(e.total_cost)
+          : "—"}
+      </TableCell>
+      <TableCell className="text-center">
+        <Badge variant={b.variant}>{b.label}</Badge>
+      </TableCell>
+      <TableCell className="text-right text-xs text-muted-foreground">
+        {Number.isNaN(started.getTime())
+          ? "—"
+          : started.toLocaleString()}
+      </TableCell>
+      {hasActions && (
+        <TableCell className="text-right">
+          <div className="flex items-center justify-end gap-1">
+            {onViewEvents && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={ACTION_BUTTON_CLASS}
+                onClick={() => onViewEvents(e.execution_id)}
+                title="Open in Live Graph — shows system prompt, tool calls and response per node"
+                aria-label="Open in Live Graph"
+              >
+                <Eye size={15} aria-hidden="true" />
+              </Button>
+            )}
+            {onOpenTrace && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={ACTION_BUTTON_CLASS}
+                onClick={() => onOpenTrace(e.execution_id)}
+                title="Open in Trace Viewer — step replay, waterfall and the Decision-Provenance explainability card"
+                aria-label="Open in Trace Viewer"
+              >
+                <ScrollText size={15} aria-hidden="true" />
+              </Button>
+            )}
+            {onDownloadDebug && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={ACTION_BUTTON_CLASS}
+                onClick={() => onDownloadDebug(e.execution_id)}
+                disabled={downloadingId === e.execution_id}
+                title="Download the full debug trace as JSON — all prompts, LLM responses, tool calls with results, RAG chunks and tool selection"
+                aria-label="Download debug trace as JSON"
+              >
+                {downloadingId === e.execution_id ? (
+                  <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <FileJson size={15} aria-hidden="true" />
+                )}
+              </Button>
+            )}
+            {onAnalyze && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={ACTION_BUTTON_CLASS}
+                onClick={() => onAnalyze(e.execution_id)}
+                disabled={analyzingId === e.execution_id}
+                title="Run an LLM post-mortem of this run — root cause, findings and improvement suggestions from its debug trace"
+                aria-label="Analyse this run with an LLM post-mortem"
+              >
+                {analyzingId === e.execution_id ? (
+                  <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Sparkles size={15} aria-hidden="true" />
+                )}
+              </Button>
+            )}
+            {onReplay && (
+              <Button
+                variant="ghost"
+                size="sm"
+                className={ACTION_BUTTON_CLASS}
+                onClick={() => onReplay(e.execution_id)}
+                disabled={replayingId === e.execution_id}
+                title="Replay this run — time-travel the flow with its original inputs"
+                aria-label="Replay this run"
+              >
+                {replayingId === e.execution_id ? (
+                  <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                ) : (
+                  <Play size={15} aria-hidden="true" />
+                )}
+              </Button>
+            )}
+          </div>
+        </TableCell>
+      )}
+    </TableRow>
+  );
 }
 
 /**
@@ -128,6 +379,7 @@ export function PersistedHistory({
   downloadingId,
   onAnalyze,
   analyzingId,
+  onOpenTrace,
   flowOptions,
   flowNames,
   userOptions,
@@ -141,6 +393,9 @@ export function PersistedHistory({
   pageSize,
   offset,
   onOffsetChange,
+  sortBy,
+  sortDir,
+  onSortChange,
 }: PersistedHistoryProps): React.JSX.Element {
   const showFilters =
     onIncludeFlowsChange !== undefined ||
@@ -165,6 +420,13 @@ export function PersistedHistory({
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(
     () => new Set(),
   );
+  // The default view (newest first) groups a conversation's requests into a
+  // collapsible thread shown chronologically. For any *custom* sort the server
+  // already ordered the rows by the chosen column — re-sorting here would
+  // undo that, so the incoming order is preserved instead.
+  const defaultSort =
+    (sortBy === undefined || sortBy === "started_at") &&
+    (sortDir === undefined || sortDir !== "asc");
   const threads = useMemo(() => {
     const grouped = new Map<string, PersistedExecution[]>();
     for (const execution of executions) {
@@ -177,23 +439,35 @@ export function PersistedHistory({
       values.push(execution);
       grouped.set(key, values);
     }
-    return [...grouped.entries()]
-      .map(([key, requests]) => ({
-        key,
-        label: key.startsWith("thread:") ? key.slice(7) : requests[0]?.execution_id ?? key,
-        requests: requests.sort(
-          (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
-        ),
-      }))
-      .sort((a, b) => {
-        const aTime = new Date(a.requests.at(-1)?.started_at ?? 0).getTime();
-        const bTime = new Date(b.requests.at(-1)?.started_at ?? 0).getTime();
-        return bTime - aTime;
-      });
-  }, [executions]);
+    const groups = [...grouped.entries()].map(([key, requests]) => ({
+      key,
+      label: key.startsWith("thread:") ? key.slice(7) : requests[0]?.execution_id ?? key,
+      requests: defaultSort
+        ? [...requests].sort(
+            (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+          )
+        : requests,
+    }));
+    if (!defaultSort) return groups;
+    return groups.sort((a, b) => {
+      const aTime = new Date(a.requests.at(-1)?.started_at ?? 0).getTime();
+      const bTime = new Date(b.requests.at(-1)?.started_at ?? 0).getTime();
+      return bTime - aTime;
+    });
+  }, [executions, defaultSort]);
+  // All row actions live in one compact icon column, so the table gains a
+  // single extra column whenever any action is wired up.
   const columnCount =
-    9 + Number(Boolean(onViewEvents)) + Number(Boolean(onDownloadDebug)) +
-    Number(Boolean(onAnalyze)) + Number(Boolean(onReplay));
+    9 +
+    Number(
+      Boolean(
+        onViewEvents ||
+          onDownloadDebug ||
+          onAnalyze ||
+          onOpenTrace ||
+          onReplay,
+      ),
+    );
   const toggleThread = (key: string): void => {
     setCollapsedThreads((current) => {
       const next = new Set(current);
@@ -272,31 +546,96 @@ export function PersistedHistory({
           <TableHead>
             <TableRow className="uppercase tracking-wide">
               <TableHeaderCell>Execution</TableHeaderCell>
-              <TableHeaderCell>Flow</TableHeaderCell>
-              <TableHeaderCell>User</TableHeaderCell>
-              <TableHeaderCell className="text-right">Nodes</TableHeaderCell>
-              <TableHeaderCell className="text-right">Latency</TableHeaderCell>
-              <TableHeaderCell className="text-right">Runtime</TableHeaderCell>
-              <TableHeaderCell className="text-right">Cost</TableHeaderCell>
+              <SortableHeader
+                label="Flow"
+                column="flow_id"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                label="User"
+                column="user_name"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+              />
+              <SortableHeader
+                label="Nodes"
+                column="node_count"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+                align="right"
+              />
+              <SortableHeader
+                label="Latency"
+                column="total_latency_ms"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+                align="right"
+              />
+              <SortableHeader
+                label="Runtime"
+                column="runtime"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+                align="right"
+              />
+              <SortableHeader
+                label="Cost"
+                column="total_cost"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+                align="right"
+              />
               <TableHeaderCell className="text-center">Status</TableHeaderCell>
-              <TableHeaderCell className="text-right">Started</TableHeaderCell>
-              {onViewEvents && (
-                <TableHeaderCell className="text-right">Debug</TableHeaderCell>
-              )}
-              {onDownloadDebug && (
-                <TableHeaderCell className="text-right">Export</TableHeaderCell>
-              )}
-              {onAnalyze && (
-                <TableHeaderCell className="text-right">Analyze</TableHeaderCell>
-              )}
-              {onReplay && (
-                <TableHeaderCell className="text-right">Replay</TableHeaderCell>
+              <SortableHeader
+                label="Started"
+                column="started_at"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSortChange={onSortChange}
+                align="right"
+              />
+              {(onViewEvents ||
+                onDownloadDebug ||
+                onAnalyze ||
+                onOpenTrace ||
+                onReplay) && (
+                <TableHeaderCell className="text-right">
+                  Aktionen
+                </TableHeaderCell>
               )}
             </TableRow>
           </TableHead>
           <TableBody>
             {threads.map((thread) => {
               const collapsed = collapsedThreads.has(thread.key);
+              // A single request needs no disclosure row — it renders as a
+              // plain table row; only real multi-request threads get the
+              // collapsible group header.
+              if (thread.requests.length < 2) {
+                const e = thread.requests[0];
+                if (e === undefined) return null;
+                return (
+                  <RequestRow
+                    key={thread.key}
+                    execution={e}
+                    onViewEvents={onViewEvents}
+                    onDownloadDebug={onDownloadDebug}
+                    downloadingId={downloadingId}
+                    onAnalyze={onAnalyze}
+                    analyzingId={analyzingId}
+                    onOpenTrace={onOpenTrace}
+                    onReplay={onReplay}
+                    replayingId={replayingId}
+                  />
+                );
+              }
               return (
                 <React.Fragment key={thread.key}>
                   <TableRow className="bg-muted/60">
@@ -310,103 +649,25 @@ export function PersistedHistory({
                         <span aria-hidden="true">{collapsed ? "▶" : "▼"}</span>
                         <span className="font-mono">{thread.label}</span>
                         <span className="text-muted-foreground">
-                          {thread.requests.length} Request{thread.requests.length === 1 ? "" : "s"}
+                          {thread.requests.length} Requests
                         </span>
                       </button>
                     </TableCell>
                   </TableRow>
-                  {!collapsed && thread.requests.map((e) => {
-                    const b = badge(e.status);
-                    const started = new Date(e.started_at);
-                    return (
-                <TableRow key={e.execution_id}>
-                  <TableCell className="font-mono text-xs text-muted-foreground">
-                    {e.execution_id.slice(0, 8)}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {e.flow_id ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">
-                    {e.user_name ?? "—"}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {e.node_count}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums">
-                    {e.total_latency_ms ?? 0} ms
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-muted-foreground">
-                    {(() => {
-                      const r = runtimeMs(e);
-                      return r === null ? "—" : formatDuration(r);
-                    })()}
-                  </TableCell>
-                  <TableCell className="text-right tabular-nums text-emerald-700">
-                    {e.total_cost != null && e.total_cost > 0
-                      ? formatCost(e.total_cost)
-                      : "—"}
-                  </TableCell>
-                  <TableCell className="text-center">
-                    <Badge variant={b.variant}>{b.label}</Badge>
-                  </TableCell>
-                  <TableCell className="text-right text-xs text-muted-foreground">
-                    {Number.isNaN(started.getTime())
-                      ? "—"
-                      : started.toLocaleString()}
-                  </TableCell>
-                  {onViewEvents && (
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onViewEvents(e.execution_id)}
-                        title="Open in Live Graph — shows system prompt, tool calls and response per node"
-                      >
-                        View
-                      </Button>
-                    </TableCell>
-                  )}
-                  {onDownloadDebug && (
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onDownloadDebug(e.execution_id)}
-                        disabled={downloadingId === e.execution_id}
-                        title="Download the full debug trace as JSON — all prompts, LLM responses, tool calls with results, RAG chunks and tool selection"
-                      >
-                        {downloadingId === e.execution_id ? "…" : "JSON"}
-                      </Button>
-                    </TableCell>
-                  )}
-                  {onAnalyze && (
-                    <TableCell className="text-right">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => onAnalyze(e.execution_id)}
-                        disabled={analyzingId === e.execution_id}
-                        title="Run an LLM post-mortem of this run — root cause, findings and improvement suggestions from its debug trace"
-                      >
-                        {analyzingId === e.execution_id ? "…" : "Analyze"}
-                      </Button>
-                    </TableCell>
-                  )}
-                  {onReplay && (
-                    <TableCell className="text-right">
-                      <Button
-                        variant="primary"
-                        size="sm"
-                        onClick={() => onReplay(e.execution_id)}
-                        disabled={replayingId === e.execution_id}
-                      >
-                        {replayingId === e.execution_id ? "…" : "Replay"}
-                      </Button>
-                    </TableCell>
-                  )}
-                </TableRow>
-                    );
-                  })}
+                  {!collapsed && thread.requests.map((e) => (
+                    <RequestRow
+                      key={e.execution_id}
+                      execution={e}
+                      onViewEvents={onViewEvents}
+                      onDownloadDebug={onDownloadDebug}
+                      downloadingId={downloadingId}
+                      onAnalyze={onAnalyze}
+                      analyzingId={analyzingId}
+                      onOpenTrace={onOpenTrace}
+                      onReplay={onReplay}
+                      replayingId={replayingId}
+                    />
+                  ))}
                 </React.Fragment>
               );
             })}

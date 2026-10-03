@@ -36,6 +36,9 @@ describe("InMemoryExecutionStore", () => {
     store.recordEvent(ev("e1", "n1", "completed", 12));
     store.recordEvent(ev("e1", "n2", "running"));
     store.recordEvent(ev("e1", "n2", "completed", 8));
+    // The engine's terminal marker is what flips the execution status —
+    // node completions alone must not (see FLOW_END_NODE_ID).
+    store.recordEvent(ev("e1", "__flow_end__", "completed", 0));
 
     const [summary] = await store.listRecent(10);
     expect(summary?.execution_id).toBe("e1");
@@ -44,6 +47,61 @@ describe("InMemoryExecutionStore", () => {
     expect(summary?.node_count).toBe(2);
     expect(summary?.error_count).toBe(0);
     expect(summary?.total_latency_ms).toBe(20);
+    expect(summary?.status).toBe("completed");
+  });
+
+  test("stays running until the terminal marker arrives", async () => {
+    const store = new InMemoryExecutionStore();
+    store.recordEvent(ev("e1b", "n1", "running"), { flowId: "flow-x" });
+    store.recordEvent(ev("e1b", "n1", "completed", 12));
+    store.recordEvent(ev("e1b", "n2", "running"));
+
+    const [summary] = await store.listRecent(10);
+    // A finished node inside a still-running multi-node flow must NOT report
+    // the whole execution as completed — this was the "lying history" bug.
+    expect(summary?.status).toBe("running");
+    expect(summary?.finished_at).toBeNull();
+    // Counters still roll forward honestly.
+    expect(summary?.node_count).toBe(1);
+    expect(summary?.total_latency_ms).toBe(12);
+
+    store.recordEvent(ev("e1b", "n2", "completed", 8));
+    store.recordEvent(ev("e1b", "__flow_end__", "completed", 0));
+    const [done] = await store.listRecent(10);
+    expect(done?.status).toBe("completed");
+    expect(done?.finished_at).not.toBeNull();
+  });
+
+  test("the terminal marker is not counted as a node", async () => {
+    const store = new InMemoryExecutionStore();
+    store.recordEvent(ev("e1c", "n1", "completed", 5), { flowId: "f" });
+    store.recordEvent(ev("e1c", "__flow_end__", "completed", 0));
+    const [summary] = await store.listRecent(10);
+    expect(summary?.node_count).toBe(1);
+    expect(summary?.status).toBe("completed");
+  });
+
+  test("an error terminal marker flips the status to error", async () => {
+    const store = new InMemoryExecutionStore();
+    store.recordEvent(ev("e1d", "n1", "completed", 5), { flowId: "f" });
+    store.recordEvent(ev("e1d", "__flow_end__", "error", 0));
+    const [summary] = await store.listRecent(10);
+    expect(summary?.status).toBe("error");
+    // The marker itself is not a failed node.
+    expect(summary?.error_count).toBe(0);
+  });
+
+  test("the response boundary flips status for non-flow requests", async () => {
+    const store = new InMemoryExecutionStore();
+    // Direct LLM request: no graph engine, so no __flow_end__ — the chat
+    // route's __response__ boundary is the terminal marker.
+    store.recordEvent(ev("e1e", "__request__", "completed", 0), {
+      flowId: undefined,
+    });
+    let [summary] = await store.listRecent(10);
+    expect(summary?.status).toBe("running");
+    store.recordEvent(ev("e1e", "__response__", "completed", 0));
+    [summary] = await store.listRecent(10);
     expect(summary?.status).toBe("completed");
   });
 
@@ -94,11 +152,18 @@ describe("InMemoryExecutionStore", () => {
     expect(usage?.duration_ms).toBe(100);
   });
 
-  test("marks the execution as error when any node errors", async () => {
+  test("marks the execution as error when the flow ends on an error", async () => {
     const store = new InMemoryExecutionStore();
     store.recordEvent(ev("e2", "n1", "running"), { flowId: "f" });
     store.recordEvent(ev("e2", "n1", "error", 5));
-    const [summary] = await store.listRecent(10);
+    // The node failure is counted, but the execution is only terminal once
+    // the engine seals the run — a flow that recovers from a node error
+    // (errorStrategy) must not be reported as failed while it still runs.
+    let [summary] = await store.listRecent(10);
+    expect(summary?.status).toBe("running");
+    expect(summary?.error_count).toBe(1);
+    store.recordEvent(ev("e2", "__flow_end__", "error", 0));
+    [summary] = await store.listRecent(10);
     expect(summary?.status).toBe("error");
     expect(summary?.error_count).toBe(1);
   });
@@ -127,5 +192,188 @@ describe("InMemoryExecutionStore", () => {
     const events = await store.listEvents("e3");
     expect(events.length).toBe(2);
     expect(events[0]?.status).toBe("running");
+  });
+});
+
+/** Build a completed execution with explicit start/finish, latency, cost, flow and user. */
+function histExec(
+  store: InMemoryExecutionStore,
+  id: string,
+  opts: {
+    started: string;
+    finished: string;
+    latency: number;
+    cost?: number;
+    flow?: string;
+    user?: string;
+  },
+): void {
+  const base = {
+    execution_id: id,
+    node_id: "n1",
+    status: "completed" as const,
+    start_time: opts.started,
+    end_time: opts.finished,
+    latency_ms: opts.latency,
+    user_name: opts.user,
+  };
+  store.recordEvent(
+    { ...ev(id, "__request__", "completed", 0), start_time: opts.started, user_name: opts.user },
+    { flowId: opts.flow ?? "f" },
+  );
+  store.recordEvent(
+    opts.cost !== undefined ? { ...base, cost: opts.cost } : base,
+  );
+  // Terminal marker: without it the execution stays "running" and
+  // finished_at is never set (see FLOW_END_NODE_ID).
+  store.recordEvent(
+    {
+      ...ev(id, "__flow_end__", "completed", 0),
+      start_time: opts.finished,
+      end_time: opts.finished,
+    },
+    { flowId: opts.flow ?? "f" },
+  );
+}
+
+describe("InMemoryExecutionStore.listHistory sorting", () => {
+  function seeded(): InMemoryExecutionStore {
+    const store = new InMemoryExecutionStore();
+    histExec(store, "slow", {
+      started: "2026-01-03T00:00:00Z",
+      finished: "2026-01-03T00:00:09Z",
+      latency: 9000,
+      cost: 0.3,
+      flow: "zeta",
+      user: "Bob",
+    });
+    histExec(store, "fast", {
+      started: "2026-01-01T00:00:00Z",
+      finished: "2026-01-01T00:00:01Z",
+      latency: 1000,
+      cost: 0.1,
+      flow: "alpha",
+      user: "Carol",
+    });
+    histExec(store, "mid", {
+      started: "2026-01-02T00:00:00Z",
+      finished: "2026-01-02T00:00:05Z",
+      latency: 5000,
+      cost: 0.2,
+      flow: "mid",
+      user: "Alice",
+    });
+    return store;
+  }
+
+  const ids = (rows: { execution_id: string }[]) => rows.map((r) => r.execution_id);
+
+  test("defaults to started_at desc (newest first)", async () => {
+    const page = await seeded().listHistory({ limit: 10 });
+    expect(ids(page.executions)).toEqual(["slow", "mid", "fast"]);
+  });
+
+  test("sorts by total_latency_ms asc", async () => {
+    const page = await seeded().listHistory({
+      limit: 10,
+      sortColumn: "total_latency_ms",
+      sortDir: "asc",
+    });
+    expect(ids(page.executions)).toEqual(["fast", "mid", "slow"]);
+  });
+
+  test("sorts by total_cost desc", async () => {
+    const page = await seeded().listHistory({
+      limit: 10,
+      sortColumn: "total_cost",
+      sortDir: "desc",
+    });
+    expect(ids(page.executions)).toEqual(["slow", "mid", "fast"]);
+  });
+
+  test("sorts by derived runtime (finished - started)", async () => {
+    const page = await seeded().listHistory({
+      limit: 10,
+      sortColumn: "runtime",
+      sortDir: "asc",
+    });
+    expect(ids(page.executions)).toEqual(["fast", "mid", "slow"]);
+  });
+
+  test("sorts flow_id and user_name alphabetically", async () => {
+    const byFlow = await seeded().listHistory({
+      limit: 10,
+      sortColumn: "flow_id",
+      sortDir: "asc",
+    });
+    expect(ids(byFlow.executions)).toEqual(["fast", "mid", "slow"]);
+    const byUser = await seeded().listHistory({
+      limit: 10,
+      sortColumn: "user_name",
+      sortDir: "asc",
+    });
+    expect(ids(byUser.executions)).toEqual(["mid", "slow", "fast"]);
+  });
+
+  test("sorting applies before pagination", async () => {
+    const store = seeded();
+    const page = await store.listHistory({
+      limit: 2,
+      offset: 1,
+      sortColumn: "total_latency_ms",
+      sortDir: "asc",
+    });
+    // Sorted asc = [fast, mid, slow]; window (offset 1, limit 2) = [mid, slow].
+    expect(ids(page.executions)).toEqual(["mid", "slow"]);
+    expect(page.total).toBe(3);
+  });
+
+  test("null values sort last in both directions", async () => {
+    const store = seeded();
+    // A still-running execution: no finished_at, no cost.
+    store.recordEvent(
+      { ...ev("running", "__request__", "completed", 0), start_time: "2026-01-04T00:00:00Z" },
+      { flowId: "f" },
+    );
+    store.recordEvent({
+      ...ev("running", "n1", "running"),
+      start_time: "2026-01-04T00:00:00Z",
+    });
+    const asc = await store.listHistory({
+      limit: 10,
+      sortColumn: "total_cost",
+      sortDir: "asc",
+    });
+    expect(ids(asc.executions).at(-1)).toBe("running");
+    const desc = await store.listHistory({
+      limit: 10,
+      sortColumn: "total_cost",
+      sortDir: "desc",
+    });
+    expect(ids(desc.executions).at(-1)).toBe("running");
+  });
+});
+
+describe("historySortClause", () => {
+  test("whitelists columns and never interpolates raw input", async () => {
+    const { historySortClause, parseHistorySortColumn } = await import(
+      "../execution-store.js"
+    );
+    expect(historySortClause({})).toBe(
+      "ORDER BY started_at DESC NULLS LAST, started_at DESC",
+    );
+    expect(
+      historySortClause({ sortColumn: "total_cost", sortDir: "asc" }),
+    ).toBe("ORDER BY total_cost ASC NULLS LAST, started_at DESC");
+    expect(
+      historySortClause({ sortColumn: "runtime", sortDir: "desc" }),
+    ).toBe(
+      "ORDER BY (finished_at - started_at) DESC NULLS LAST, started_at DESC",
+    );
+    // Unknown / hostile column names are rejected by the parser.
+    expect(parseHistorySortColumn("1; DROP TABLE executions")).toBeUndefined();
+    expect(parseHistorySortColumn("started_at")).toBe("started_at");
+    expect(parseHistorySortColumn("runtime")).toBe("runtime");
+    expect(parseHistorySortColumn(undefined)).toBeUndefined();
   });
 });
