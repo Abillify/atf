@@ -149,6 +149,8 @@ export interface FlowListEntry {
   version: number;
   hasDraft: boolean;
   draftDirty: boolean;
+  /** How many drafts (default + named) the flow has. */
+  draftCount?: number;
   editable: boolean;
   nodeCount: number;
   edgeCount: number;
@@ -166,6 +168,15 @@ export interface FlowValidationReport {
   meta: { nodeCount: number; edgeCount: number; flowId?: string };
 }
 
+/** One named working draft (the implicit one has draftId "default"). */
+export interface FlowDraftInfo {
+  draftId: string;
+  label: string;
+  definition?: FlowDefinition;
+  updatedAt?: string;
+  updatedBy?: string | null;
+}
+
 export interface FlowDetail {
   id: string;
   source: "file" | "online";
@@ -173,6 +184,8 @@ export interface FlowDetail {
   version: number;
   published: FlowDefinition | null;
   draft: FlowDefinition | null;
+  /** All named drafts (default first), with definitions. */
+  drafts?: FlowDraftInfo[];
   /** File flows: the authoring form (shortcuts/vars/prompt includes kept). */
   sourceDefinition?: FlowDefinition;
   /** File flows: the file the flow was loaded from. */

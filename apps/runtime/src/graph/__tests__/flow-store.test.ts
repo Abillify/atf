@@ -109,3 +109,95 @@ describe("InMemoryFlowStore", () => {
     expect(b.hasPublished).toBe(true);
   });
 });
+
+describe("InMemoryFlowStore — named drafts", () => {
+  test("saveDraft with a draftId keeps drafts side by side", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f", "default copy"), "alice");
+    await s.saveDraft("f", def("f", "experiment"), "bob", {
+      draftId: "exp-1",
+      label: "Experiment 1",
+    });
+    const rec = await s.get("f");
+    if (rec === undefined) throw new Error("expected the flow");
+    expect(rec.drafts.map((d) => d.draftId)).toEqual(["default", "exp-1"]);
+    // The legacy `draft` field stays the default draft.
+    if (rec.draft === null) throw new Error("expected a default draft");
+    expect(rec.draft.name).toBe("default copy");
+    const exp = rec.drafts.find((d) => d.draftId === "exp-1");
+    if (exp === undefined) throw new Error("expected the named draft");
+    expect(exp.label).toBe("Experiment 1");
+    expect(exp.definition.name).toBe("experiment");
+  });
+
+  test("publish promotes only the selected draft", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f", "default copy"), "alice");
+    await s.saveDraft("f", def("f", "experiment"), "bob", { draftId: "exp-1" });
+    const rec = await s.publish("f", "bob", { draftId: "exp-1" });
+    if (rec.published === null) throw new Error("expected a published flow");
+    expect(rec.published.name).toBe("experiment");
+    // The default draft survives publishing its sibling.
+    const after = await s.get("f");
+    if (after === undefined || after.draft === null)
+      throw new Error("expected the default draft to survive");
+    expect(after.draft.name).toBe("default copy");
+  });
+
+  test("publish of an unknown draftId throws no_draft", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f"), "alice");
+    await expect(
+      s.publish("f", "alice", { draftId: "ghost" }),
+    ).rejects.toBeInstanceOf(FlowStoreError);
+  });
+
+  test("an invalid draftId is rejected", async () => {
+    const s = new InMemoryFlowStore();
+    await expect(
+      s.saveDraft("f", def("f"), "alice", { draftId: "Bad Id!" }),
+    ).rejects.toBeInstanceOf(FlowStoreError);
+  });
+
+  test("deleteDraft removes one draft and keeps the others", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f"), "alice");
+    await s.saveDraft("f", def("f", "x"), "bob", { draftId: "exp-1" });
+    expect(await s.deleteDraft("f", "exp-1")).toBe(true);
+    expect(await s.deleteDraft("f", "exp-1")).toBe(false);
+    const rec = await s.get("f");
+    if (rec === undefined) throw new Error("expected the flow");
+    expect(rec.drafts.map((d) => d.draftId)).toEqual(["default"]);
+    expect(rec.draft).not.toBeNull();
+  });
+
+  test("deleting the default draft nulls rec.draft", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f"), "alice");
+    await s.saveDraft("f", def("f", "x"), "bob", { draftId: "exp-1" });
+    expect(await s.deleteDraft("f", "default")).toBe(true);
+    const rec = await s.get("f");
+    if (rec === undefined) throw new Error("expected the flow");
+    expect(rec.draft).toBeNull();
+    expect(rec.drafts.map((d) => d.draftId)).toEqual(["exp-1"]);
+  });
+
+  test("listAll reports draftCount", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f"));
+    await s.saveDraft("f", def("f", "x"), undefined, { draftId: "exp-1" });
+    const summary = at(await s.listAll(), 0);
+    expect(summary.draftCount).toBe(2);
+  });
+
+  test("publish without opts keeps publishing the default draft", async () => {
+    const s = new InMemoryFlowStore();
+    await s.saveDraft("f", def("f", "default copy"));
+    await s.saveDraft("f", def("f", "experiment"), undefined, {
+      draftId: "exp-1",
+    });
+    const rec = await s.publish("f");
+    if (rec.published === null) throw new Error("expected a published flow");
+    expect(rec.published.name).toBe("default copy");
+  });
+});

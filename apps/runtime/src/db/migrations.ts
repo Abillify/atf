@@ -1382,6 +1382,32 @@ export const MIGRATIONS: readonly Migration[] = [
          ON execution_snapshots (flow_id, created_at DESC)`,
     ],
   },
+  {
+    version: 41,
+    name: "named drafts (several working copies per flow)",
+    statements: [
+      // Additional named drafts next to the implicit `flows.draft` working
+      // copy, so the Studio can hold several drafts per flow and pick which
+      // one to publish. The default draft stays mirrored in `flows.draft`
+      // (compat with everything that predates this table).
+      `CREATE TABLE IF NOT EXISTS flow_drafts (
+         flow_id    TEXT NOT NULL,
+         draft_id   TEXT NOT NULL,
+         label      TEXT NOT NULL DEFAULT '',
+         definition JSONB NOT NULL,
+         updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+         updated_by TEXT,
+         PRIMARY KEY (flow_id, draft_id)
+       )`,
+      `CREATE INDEX IF NOT EXISTS flow_drafts_flow_idx
+         ON flow_drafts (flow_id, updated_at DESC)`,
+      // Backfill: existing working copies become the 'default' named draft.
+      `INSERT INTO flow_drafts (flow_id, draft_id, label, definition, updated_at, updated_by)
+       SELECT id, 'default', 'default', draft, updated_at, updated_by
+         FROM flows WHERE draft IS NOT NULL
+       ON CONFLICT (flow_id, draft_id) DO NOTHING`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

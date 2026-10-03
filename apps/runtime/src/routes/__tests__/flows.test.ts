@@ -200,6 +200,150 @@ describe("online authoring lifecycle (Stage 3)", () => {
   });
 });
 
+describe("named drafts (several working copies per flow)", () => {
+  test("PUT /flows/:id/drafts/:draftId saves alongside the default draft", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/draft", {
+      ...json(def("m", "default copy")),
+      method: "PUT",
+    });
+    const put = await a.request("/flows/m/drafts/exp-1", {
+      ...json({ ...def("m", "experiment"), label: "Experiment 1" }),
+      method: "PUT",
+    });
+    expect(put.status).toBe(200);
+
+    const rec = await store.get("m");
+    expect(rec?.drafts.map((d) => d.draftId)).toEqual(["default", "exp-1"]);
+    expect(rec?.draft?.name).toBe("default copy");
+
+    const list = (await (await a.request("/flows/m/drafts")).json()) as {
+      drafts: Array<{ draftId: string; label: string }>;
+    };
+    expect(list.drafts.map((d) => d.draftId)).toEqual(["default", "exp-1"]);
+    expect(list.drafts[1]?.label).toBe("Experiment 1");
+  });
+
+  test("GET /flows/:id includes the drafts with definitions", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/drafts/exp-1", {
+      ...json(def("m", "experiment")),
+      method: "PUT",
+    });
+    const body = (await (await a.request("/flows/m")).json()) as {
+      drafts: Array<{ draftId: string; definition: { name: string } }>;
+    };
+    expect(body.drafts).toHaveLength(1);
+    expect(body.drafts[0]?.draftId).toBe("exp-1");
+    expect(body.drafts[0]?.definition.name).toBe("experiment");
+  });
+
+  test("publish ?draftId= promotes the named draft only", async () => {
+    const store = new InMemoryFlowStore();
+    const dbSource = createDbFlowSource(store);
+    const a = app({ fileRegistry: fileRegistry(), store, dbSource });
+    await a.request("/flows/m/draft", {
+      ...json(def("m", "default copy")),
+      method: "PUT",
+    });
+    await a.request("/flows/m/drafts/exp-1", {
+      ...json(def("m", "experiment")),
+      method: "PUT",
+    });
+    const pub = await a.request("/flows/m/publish?draftId=exp-1", json({}));
+    expect(pub.status).toBe(200);
+    expect(dbSource.get("m")?.name).toBe("experiment");
+    // The default draft is untouched and still unpublished-divergent.
+    const rec = await store.get("m");
+    expect(rec?.draft?.name).toBe("default copy");
+  });
+
+  test("publish via body {draftId} works too", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/drafts/exp-1", {
+      ...json(def("m", "experiment")),
+      method: "PUT",
+    });
+    const pub = await a.request("/flows/m/publish", json({ draftId: "exp-1" }));
+    expect(pub.status).toBe(200);
+    const body = (await pub.json()) as {
+      record: { published: { name: string } };
+    };
+    expect(body.record.published.name).toBe("experiment");
+  });
+
+  test("publish of an unknown draft → 400", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/draft", { ...json(def("m")), method: "PUT" });
+    const pub = await a.request("/flows/m/publish?draftId=ghost", json({}));
+    expect(pub.status).toBe(400);
+  });
+
+  test("an invalid draftId in the path → 400", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    const put = await a.request("/flows/m/drafts/Bad Id", {
+      ...json(def("m")),
+      method: "PUT",
+    });
+    expect(put.status).toBe(400);
+  });
+
+  test("DELETE /flows/:id/drafts/:draftId removes it", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/draft", { ...json(def("m")), method: "PUT" });
+    await a.request("/flows/m/drafts/exp-1", {
+      ...json(def("m", "x")),
+      method: "PUT",
+    });
+    expect(
+      (await a.request("/flows/m/drafts/exp-1", { method: "DELETE" })).status,
+    ).toBe(200);
+    expect(
+      (await a.request("/flows/m/drafts/exp-1", { method: "DELETE" })).status,
+    ).toBe(404);
+    const rec = await store.get("m");
+    expect(rec?.drafts.map((d) => d.draftId)).toEqual(["default"]);
+  });
+
+  test("diff ?draft=true&draftId= compares the named draft", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/draft", { ...json(def("m", "v1")), method: "PUT" });
+    await a.request("/flows/m/publish", json({}));
+    await a.request("/flows/m/drafts/exp-1", {
+      ...json(def("m", "experiment")),
+      method: "PUT",
+    });
+    const res = await a.request("/flows/m/diff?draft=true&draftId=exp-1");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      to: { kind: string; draftId: string };
+      diff: { changed: unknown[] };
+    };
+    expect(body.to).toEqual({ kind: "draft", draftId: "exp-1" });
+  });
+
+  test("list reports draftCount", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/m/draft", { ...json(def("m")), method: "PUT" });
+    await a.request("/flows/m/drafts/exp-1", {
+      ...json(def("m", "x")),
+      method: "PUT",
+    });
+    const body = (await (await a.request("/flows")).json()) as {
+      flows: Array<{ id: string; draftCount: number }>;
+    };
+    expect(body.flows.find((f) => f.id === "m")?.draftCount).toBe(2);
+  });
+});
+
 describe("auth", () => {
   test("401 when auth required and no token", async () => {
     const a = app({ fileRegistry: fileRegistry(), authRequired: true });

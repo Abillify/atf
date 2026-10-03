@@ -37,7 +37,7 @@ bun run --filter @atf/runtime build
 | `/v1/chat/completions` | OpenAI-compatible chat, streaming over SSE. Flows appear as models |
 | `/v1/responses` | Responses API surface |
 | `/v1/models`, `/v1/embeddings` | Model listing and embeddings |
-| `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, sub-flow files, test runs, node type catalog, variable and expression evaluation, Copilots |
+| `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, named drafts (`/flows/:id/drafts`), sub-flow files, test runs, node type catalog, variable and expression evaluation, Copilots |
 | `/runs/*`, `/:flowId/run` | Direct flow execution and run inspection |
 | `/triggers/*`, `/webhooks/*` | HMAC-signed webhook and scheduled starts |
 | `/integrations/rocketchat/events` | Rocket.Chat outgoing-integration receiver (off by default) |

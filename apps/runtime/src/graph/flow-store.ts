@@ -10,10 +10,16 @@
  * composite registry: published flows here overlay anything from `FLOWS_DIR`.
  *
  * Lifecycle:
- *   saveDraft  → upsert the working copy (does not affect live traffic)
+ *   saveDraft  → upsert a working copy (does not affect live traffic)
  *   publish    → validated draft becomes the live `published` definition,
  *                version is bumped and the prior state appended to history
  *   rollback   → re-publish a past version
+ *
+ * Drafts are NAMED and a flow can hold several at once: every flow always has
+ * the implicit working draft {@link DEFAULT_DRAFT_ID} (the `flows.draft`
+ * column, which predates named drafts and stays the compatibility path), plus
+ * any number of additional drafts addressed by `draftId`. `publish` takes the
+ * draft to promote, so an experiment can go live without touching the others.
  *
  * Two implementations behind one interface: {@link InMemoryFlowStore} (tests /
  * no-DB) and {@link PostgresFlowStore} (durable, cross-replica). Validation is
@@ -30,14 +36,36 @@ import type { Database } from "../db/database.js";
 // Records
 // ---------------------------------------------------------------------------
 
+/** The implicit working draft every flow has (the `flows.draft` column). */
+export const DEFAULT_DRAFT_ID = "default";
+
+/** Draft ids are URL-path-safe labels chosen by the editor. */
+export const DRAFT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,62}$/;
+
+export function isValidDraftId(draftId: string): boolean {
+  return DRAFT_ID_RE.test(draftId);
+}
+
+export interface DraftInfo {
+  draftId: string;
+  /** Display label (free-form; defaults to the draft id). */
+  label: string;
+  definition: FlowDefinition;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
 export interface FlowRecord {
   id: string;
   name: string;
+  /** The default working draft — `drafts[DEFAULT_DRAFT_ID]`, kept for compatibility. */
   draft: FlowDefinition | null;
   published: FlowDefinition | null;
   version: number;
   updatedAt: string;
   updatedBy: string | null;
+  /** All named drafts, including the default one when it exists. */
+  drafts: DraftInfo[];
 }
 
 export interface FlowSummary {
@@ -45,8 +73,10 @@ export interface FlowSummary {
   name: string;
   hasDraft: boolean;
   hasPublished: boolean;
-  /** True when the draft differs from the published definition. */
+  /** True when the default draft differs from the published definition. */
   draftDirty: boolean;
+  /** Number of drafts held (default included); 0 when none. */
+  draftCount: number;
   version: number;
   updatedAt: string;
   updatedBy: string | null;
@@ -63,7 +93,7 @@ export interface FlowVersionRecord {
 export class FlowStoreError extends Error {
   constructor(
     message: string,
-    readonly code: "not_found" | "no_draft" | "no_version",
+    readonly code: "not_found" | "no_draft" | "no_version" | "bad_draft_id",
   ) {
     super(message);
     this.name = "FlowStoreError";
@@ -73,14 +103,27 @@ export class FlowStoreError extends Error {
 export interface FlowStore {
   listAll(): Promise<FlowSummary[]>;
   get(id: string): Promise<FlowRecord | undefined>;
-  /** Upserts the working draft. `name` defaults to the definition's name. */
+  /**
+   * Upserts a named draft (default: {@link DEFAULT_DRAFT_ID}). `name` defaults
+   * to the definition's name. Does not affect live traffic.
+   */
   saveDraft(
     id: string,
     definition: FlowDefinition,
     by?: string,
+    opts?: { draftId?: string; label?: string },
   ): Promise<FlowRecord>;
-  /** Promotes the current draft to published. Throws when there is no draft. */
-  publish(id: string, by?: string): Promise<FlowRecord>;
+  /**
+   * Promotes a draft (default: {@link DEFAULT_DRAFT_ID}) to published.
+   * Throws when that draft does not exist.
+   */
+  publish(
+    id: string,
+    by?: string,
+    opts?: { draftId?: string },
+  ): Promise<FlowRecord>;
+  /** Removes one named draft. Returns false when it did not exist. */
+  deleteDraft(id: string, draftId: string): Promise<boolean>;
   /** Removes the flow entirely. Returns false when it did not exist. */
   delete(id: string): Promise<boolean>;
   /** All currently-published definitions (consumed by the composite registry). */
@@ -90,7 +133,10 @@ export interface FlowStore {
   rollback(id: string, version: number, by?: string): Promise<FlowRecord>;
 }
 
-function summarize(r: FlowRecord): FlowSummary {
+function summarize(
+  r: FlowRecord,
+  draftCountOverride?: number,
+): FlowSummary {
   return {
     id: r.id,
     name: r.name,
@@ -99,6 +145,7 @@ function summarize(r: FlowRecord): FlowSummary {
     draftDirty:
       r.draft !== null &&
       JSON.stringify(r.draft) !== JSON.stringify(r.published),
+    draftCount: draftCountOverride ?? r.drafts.length,
     version: r.version,
     updatedAt: r.updatedAt,
     updatedBy: r.updatedBy,
@@ -111,69 +158,148 @@ function summarize(r: FlowRecord): FlowSummary {
 
 export class InMemoryFlowStore implements FlowStore {
   private readonly flows = new Map<string, FlowRecord>();
+  private readonly drafts = new Map<string, Map<string, DraftInfo>>();
   private readonly versions = new Map<string, FlowVersionRecord[]>();
 
+  private draftsFor(id: string): Map<string, DraftInfo> {
+    let m = this.drafts.get(id);
+    if (m === undefined) {
+      m = new Map<string, DraftInfo>();
+      this.drafts.set(id, m);
+    }
+    return m;
+  }
+
+  /** The default draft plus all named ones, default first. */
+  private draftList(id: string): DraftInfo[] {
+    const m = this.drafts.get(id);
+    if (m === undefined) return [];
+    return [...m.values()].sort((a, b) =>
+      a.draftId === DEFAULT_DRAFT_ID
+        ? -1
+        : b.draftId === DEFAULT_DRAFT_ID
+          ? 1
+          : a.draftId.localeCompare(b.draftId),
+    );
+  }
+
   async listAll(): Promise<FlowSummary[]> {
-    return [...this.flows.values()].map(summarize);
+    return [...this.flows.values()].map((r) =>
+      summarize({ ...r, drafts: this.draftList(r.id) }),
+    );
   }
 
   async get(id: string): Promise<FlowRecord | undefined> {
     const r = this.flows.get(id);
-    return r ? { ...r } : undefined;
+    return r ? { ...r, drafts: this.draftList(id) } : undefined;
   }
 
   async saveDraft(
     id: string,
     definition: FlowDefinition,
     by?: string,
+    opts?: { draftId?: string; label?: string },
   ): Promise<FlowRecord> {
+    const draftId = opts?.draftId ?? DEFAULT_DRAFT_ID;
+    if (!isValidDraftId(draftId))
+      throw new FlowStoreError(
+        `Invalid draft id "${draftId}" (lowercase letters, digits, '-', '_').`,
+        "bad_draft_id",
+      );
     const existing = this.flows.get(id);
+    const now = new Date().toISOString();
+    const info: DraftInfo = {
+      draftId,
+      label: opts?.label?.trim() !== "" ? (opts?.label as string) : draftId,
+      definition,
+      updatedAt: now,
+      updatedBy: by ?? null,
+    };
+    this.draftsFor(id).set(draftId, info);
     const rec: FlowRecord = {
       id,
       name: definition.name,
-      draft: definition,
+      // The default draft is also mirrored on the record (`flows.draft`).
+      draft:
+        draftId === DEFAULT_DRAFT_ID
+          ? definition
+          : (existing?.draft ??
+            this.drafts.get(id)?.get(DEFAULT_DRAFT_ID)?.definition ??
+            null),
       published: existing?.published ?? null,
       version: existing?.version ?? 0,
-      updatedAt: new Date().toISOString(),
+      updatedAt: now,
       updatedBy: by ?? null,
+      drafts: this.draftList(id),
     };
     this.flows.set(id, rec);
-    return { ...rec };
+    return { ...rec, drafts: this.draftList(id) };
   }
 
-  async publish(id: string, by?: string): Promise<FlowRecord> {
+  async publish(
+    id: string,
+    by?: string,
+    opts?: { draftId?: string },
+  ): Promise<FlowRecord> {
+    const draftId = opts?.draftId ?? DEFAULT_DRAFT_ID;
     const existing = this.flows.get(id);
     if (existing === undefined)
       throw new FlowStoreError(`Flow "${id}" not found`, "not_found");
-    if (existing.draft === null)
+    const source =
+      draftId === DEFAULT_DRAFT_ID
+        ? (existing.draft ?? this.drafts.get(id)?.get(DEFAULT_DRAFT_ID)?.definition)
+        : this.drafts.get(id)?.get(draftId)?.definition;
+    if (source === null || source === undefined)
       throw new FlowStoreError(
-        `Flow "${id}" has no draft to publish`,
+        draftId === DEFAULT_DRAFT_ID
+          ? `Flow "${id}" has no draft to publish`
+          : `Flow "${id}" has no draft "${draftId}" to publish`,
         "no_draft",
       );
     const version = existing.version + 1;
     const rec: FlowRecord = {
       ...existing,
-      name: existing.draft.name,
-      published: existing.draft,
+      name: source.name,
+      published: source,
       version,
       updatedAt: new Date().toISOString(),
       updatedBy: by ?? null,
+      drafts: this.draftList(id),
     };
     this.flows.set(id, rec);
     const history = this.versions.get(id) ?? [];
     history.push({
       flowId: id,
       version,
-      definition: existing.draft,
+      definition: source,
       publishedAt: rec.updatedAt,
       publishedBy: by ?? null,
     });
     this.versions.set(id, history);
-    return { ...rec };
+    return { ...rec, drafts: this.draftList(id) };
+  }
+
+  async deleteDraft(id: string, draftId: string): Promise<boolean> {
+    const m = this.drafts.get(id);
+    if (m === undefined || !m.delete(draftId)) return false;
+    const existing = this.flows.get(id);
+    if (existing !== undefined) {
+      this.flows.set(id, {
+        ...existing,
+        draft:
+          draftId === DEFAULT_DRAFT_ID
+            ? null
+            : existing.draft,
+        drafts: this.draftList(id),
+      });
+    }
+    if (m.size === 0) this.drafts.delete(id);
+    return true;
   }
 
   async delete(id: string): Promise<boolean> {
     this.versions.delete(id);
+    this.drafts.delete(id);
     return this.flows.delete(id);
   }
 
@@ -207,14 +333,24 @@ export class InMemoryFlowStore implements FlowStore {
         "no_version",
       );
     const newVersion = existing.version + 1;
+    // A rollback also resets the default draft to the rolled-back definition.
+    const rollbackNow = new Date().toISOString();
+    this.draftsFor(id).set(DEFAULT_DRAFT_ID, {
+      draftId: DEFAULT_DRAFT_ID,
+      label: DEFAULT_DRAFT_ID,
+      definition: target.definition,
+      updatedAt: rollbackNow,
+      updatedBy: by ?? null,
+    });
     const rec: FlowRecord = {
       ...existing,
       name: target.definition.name,
       draft: target.definition,
       published: target.definition,
       version: newVersion,
-      updatedAt: new Date().toISOString(),
+      updatedAt: rollbackNow,
       updatedBy: by ?? null,
+      drafts: this.draftList(id),
     };
     this.flows.set(id, rec);
     const history = this.versions.get(id) ?? [];
@@ -226,7 +362,7 @@ export class InMemoryFlowStore implements FlowStore {
       publishedBy: by ?? null,
     });
     this.versions.set(id, history);
-    return { ...rec };
+    return { ...rec, drafts: this.draftList(id) };
   }
 }
 
@@ -252,6 +388,15 @@ interface VersionRow {
   published_by: string | null;
 }
 
+interface DraftRow {
+  flow_id: string;
+  draft_id: string;
+  label: string;
+  definition: unknown;
+  updated_at: string | Date;
+  updated_by: string | null;
+}
+
 function parseDef(v: unknown): FlowDefinition | null {
   if (v === null || v === undefined) return null;
   if (typeof v === "string") {
@@ -268,27 +413,81 @@ function toIso(v: string | Date): string {
   return v instanceof Date ? v.toISOString() : v;
 }
 
-function rowToRecord(r: FlowRow): FlowRecord {
+function rowToRecord(r: FlowRow, drafts: DraftInfo[] = []): FlowRecord {
+  const defaultDraft =
+    drafts.find((d) => d.draftId === DEFAULT_DRAFT_ID)?.definition ??
+    parseDef(r.draft);
   return {
     id: r.id,
     name: r.name,
-    draft: parseDef(r.draft),
+    draft: defaultDraft,
     published: parseDef(r.published),
     version: Number(r.version),
+    updatedAt: toIso(r.updated_at),
+    updatedBy: r.updated_by,
+    drafts,
+  };
+}
+
+function rowToDraftInfo(r: DraftRow): DraftInfo {
+  return {
+    draftId: r.draft_id,
+    label: r.label,
+    definition: parseDef(r.definition) as FlowDefinition,
     updatedAt: toIso(r.updated_at),
     updatedBy: r.updated_by,
   };
 }
 
+/** Default draft first, then named drafts alphabetically. */
+function sortDrafts(list: DraftInfo[]): DraftInfo[] {
+  return [...list].sort((a, b) =>
+    a.draftId === DEFAULT_DRAFT_ID
+      ? -1
+      : b.draftId === DEFAULT_DRAFT_ID
+        ? 1
+        : a.draftId.localeCompare(b.draftId),
+  );
+}
+
 export class PostgresFlowStore implements FlowStore {
   constructor(private readonly db: Database) {}
+
+  private async draftsFor(id: string): Promise<DraftInfo[]> {
+    const rows = await this.db.query<DraftRow>(
+      `SELECT flow_id, draft_id, label, definition, updated_at, updated_by
+         FROM flow_drafts WHERE flow_id = $1`,
+      [id],
+    );
+    return sortDrafts(rows.map(rowToDraftInfo));
+  }
 
   async listAll(): Promise<FlowSummary[]> {
     const rows = await this.db.query<FlowRow>(
       `SELECT id, name, draft, published, version, updated_at, updated_by
          FROM flows ORDER BY updated_at DESC`,
     );
-    return rows.map((r) => summarize(rowToRecord(r)));
+    // One round-trip for every flow's draft ids, so the counts include drafts
+    // stored only in `flow_drafts` (and the legacy `flows.draft` column).
+    const draftRows = await this.db.query<{ flow_id: string; draft_id: string }>(
+      `SELECT flow_id, draft_id FROM flow_drafts`,
+    );
+    const idsByFlow = new Map<string, Set<string>>();
+    for (const r of draftRows) {
+      let set = idsByFlow.get(r.flow_id);
+      if (set === undefined) {
+        set = new Set<string>();
+        idsByFlow.set(r.flow_id, set);
+      }
+      set.add(r.draft_id);
+    }
+    return rows.map((r) => {
+      const ids = idsByFlow.get(r.id) ?? new Set<string>();
+      const draftCount =
+        ids.size +
+        (parseDef(r.draft) !== null && !ids.has(DEFAULT_DRAFT_ID) ? 1 : 0);
+      return summarize(rowToRecord(r), draftCount);
+    });
   }
 
   async get(id: string): Promise<FlowRecord | undefined> {
@@ -297,21 +496,71 @@ export class PostgresFlowStore implements FlowStore {
          FROM flows WHERE id = $1`,
       [id],
     );
-    return rows[0] ? rowToRecord(rows[0]) : undefined;
+    const row = rows[0];
+    if (row === undefined) return undefined;
+    const drafts = await this.draftsFor(id);
+    // Rows written before the flow_drafts table: surface flows.draft as the
+    // default draft so the editor always sees it.
+    if (
+      !drafts.some((d) => d.draftId === DEFAULT_DRAFT_ID) &&
+      parseDef(row.draft) !== null
+    ) {
+      drafts.unshift({
+        draftId: DEFAULT_DRAFT_ID,
+        label: DEFAULT_DRAFT_ID,
+        definition: parseDef(row.draft) as FlowDefinition,
+        updatedAt: toIso(row.updated_at),
+        updatedBy: row.updated_by,
+      });
+    }
+    return rowToRecord(row, drafts);
   }
 
   async saveDraft(
     id: string,
     definition: FlowDefinition,
     by?: string,
+    opts?: { draftId?: string; label?: string },
   ): Promise<FlowRecord> {
+    const draftId = opts?.draftId ?? DEFAULT_DRAFT_ID;
+    if (!isValidDraftId(draftId))
+      throw new FlowStoreError(
+        `Invalid draft id "${draftId}" (lowercase letters, digits, '-', '_').`,
+        "bad_draft_id",
+      );
+    const label =
+      opts?.label !== undefined && opts.label.trim() !== ""
+        ? opts.label.trim()
+        : draftId;
+    if (draftId === DEFAULT_DRAFT_ID) {
+      // The default draft stays mirrored in `flows.draft` (compat path).
+      await this.db.query(
+        `INSERT INTO flows (id, name, draft, updated_by)
+           VALUES ($1, $2, $3, $4)
+         ON CONFLICT (id) DO UPDATE
+           SET name = EXCLUDED.name, draft = EXCLUDED.draft,
+               updated_by = EXCLUDED.updated_by, updated_at = now()`,
+        [id, definition.name, JSON.stringify(definition), by ?? null],
+      );
+    } else {
+      // Named drafts need the flow row to exist; create it without touching
+      // `draft`/`published` so live traffic and the default draft stay put.
+      await this.db.query(
+        `INSERT INTO flows (id, name, updated_by)
+           VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE
+           SET name = EXCLUDED.name, updated_by = EXCLUDED.updated_by,
+               updated_at = now()`,
+        [id, definition.name, by ?? null],
+      );
+    }
     await this.db.query(
-      `INSERT INTO flows (id, name, draft, updated_by)
-         VALUES ($1, $2, $3, $4)
-       ON CONFLICT (id) DO UPDATE
-         SET name = EXCLUDED.name, draft = EXCLUDED.draft,
+      `INSERT INTO flow_drafts (flow_id, draft_id, label, definition, updated_by)
+         VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (flow_id, draft_id) DO UPDATE
+         SET label = EXCLUDED.label, definition = EXCLUDED.definition,
              updated_by = EXCLUDED.updated_by, updated_at = now()`,
-      [id, definition.name, JSON.stringify(definition), by ?? null],
+      [id, draftId, label, JSON.stringify(definition), by ?? null],
     );
     const rec = await this.get(id);
     if (rec === undefined)
@@ -322,28 +571,38 @@ export class PostgresFlowStore implements FlowStore {
     return rec;
   }
 
-  async publish(id: string, by?: string): Promise<FlowRecord> {
+  async publish(
+    id: string,
+    by?: string,
+    opts?: { draftId?: string },
+  ): Promise<FlowRecord> {
+    const draftId = opts?.draftId ?? DEFAULT_DRAFT_ID;
     const existing = await this.get(id);
     if (existing === undefined)
       throw new FlowStoreError(`Flow "${id}" not found`, "not_found");
-    if (existing.draft === null)
+    const source =
+      existing.drafts.find((d) => d.draftId === draftId)?.definition ??
+      (draftId === DEFAULT_DRAFT_ID ? existing.draft : null);
+    if (source === null || source === undefined)
       throw new FlowStoreError(
-        `Flow "${id}" has no draft to publish`,
+        draftId === DEFAULT_DRAFT_ID
+          ? `Flow "${id}" has no draft to publish`
+          : `Flow "${id}" has no draft "${draftId}" to publish`,
         "no_draft",
       );
     const version = existing.version + 1;
     await this.db.query(
       `UPDATE flows
-          SET published = draft, name = $2, version = $3,
-              updated_by = $4, updated_at = now()
+          SET published = $2, name = $3, version = $4,
+              updated_by = $5, updated_at = now()
         WHERE id = $1`,
-      [id, existing.draft.name, version, by ?? null],
+      [id, JSON.stringify(source), source.name, version, by ?? null],
     );
     await this.db.query(
       `INSERT INTO flow_versions (flow_id, version, definition, published_by)
          VALUES ($1, $2, $3, $4)
        ON CONFLICT (flow_id, version) DO NOTHING`,
-      [id, version, JSON.stringify(existing.draft), by ?? null],
+      [id, version, JSON.stringify(source), by ?? null],
     );
     const rec = await this.get(id);
     if (rec === undefined) {
@@ -353,8 +612,26 @@ export class PostgresFlowStore implements FlowStore {
     return rec;
   }
 
+  async deleteDraft(id: string, draftId: string): Promise<boolean> {
+    const rows = await this.db.query<{ flow_id: string }>(
+      `DELETE FROM flow_drafts WHERE flow_id = $1 AND draft_id = $2 RETURNING flow_id`,
+      [id, draftId],
+    );
+    let removed = rows.length > 0;
+    if (draftId === DEFAULT_DRAFT_ID) {
+      const cleared = await this.db.query<{ id: string }>(
+        `UPDATE flows SET draft = NULL, updated_at = now()
+          WHERE id = $1 AND draft IS NOT NULL RETURNING id`,
+        [id],
+      );
+      removed = removed || cleared.length > 0;
+    }
+    return removed;
+  }
+
   async delete(id: string): Promise<boolean> {
     await this.db.query(`DELETE FROM flow_versions WHERE flow_id = $1`, [id]);
+    await this.db.query(`DELETE FROM flow_drafts WHERE flow_id = $1`, [id]);
     const rows = await this.db.query<{ id: string }>(
       `DELETE FROM flows WHERE id = $1 RETURNING id`,
       [id],
@@ -414,6 +691,15 @@ export class PostgresFlowStore implements FlowStore {
         newVersion,
         by ?? null,
       ],
+    );
+    // A rollback resets the default draft to the rolled-back definition too.
+    await this.db.query(
+      `INSERT INTO flow_drafts (flow_id, draft_id, label, definition, updated_by)
+         VALUES ($1, $2, $2, $3, $4)
+       ON CONFLICT (flow_id, draft_id) DO UPDATE
+         SET definition = EXCLUDED.definition,
+             updated_by = EXCLUDED.updated_by, updated_at = now()`,
+      [id, DEFAULT_DRAFT_ID, JSON.stringify(target.definition), by ?? null],
     );
     await this.db.query(
       `INSERT INTO flow_versions (flow_id, version, definition, published_by)

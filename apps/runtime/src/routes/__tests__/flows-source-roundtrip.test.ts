@@ -341,7 +341,24 @@ describe("file flow source form", () => {
     const store = {
       get: async (id: string) =>
         drafts.has(id)
-          ? { id, version: 0, published: null, draft: drafts.get(id)!, updatedAt: "", updatedBy: null }
+          ? {
+              id,
+              version: 0,
+              published: null,
+              // drafts.has(id) was just checked; the store is cast anyway.
+              draft: drafts.get(id),
+              drafts: [
+                {
+                  draftId: "default",
+                  label: "default",
+                  definition: drafts.get(id),
+                  updatedAt: "",
+                  updatedBy: null,
+                },
+              ],
+              updatedAt: "",
+              updatedBy: null,
+            }
           : undefined,
       listVersions: async () => [],
     } as unknown as FlowStore;
@@ -493,8 +510,8 @@ describe("file flow source form", () => {
         body: JSON.stringify(body),
       });
     const ok = (await (await post({
-      expression: "classification.route == 'INKASSO' && messageCount > 1",
-      sample: { classification: { route: "INKASSO" }, messageCount: 2 },
+      expression: "classification.route == 'RETOURE' && messageCount > 1",
+      sample: { classification: { route: "RETOURE" }, messageCount: 2 },
     })).json()) as { valid: boolean; result: boolean };
     expect(ok).toEqual({ valid: true, result: true });
     const regex = (await (await post({ expression: "lastMessageText =~ 'park'", sample: { lastMessageText: "Parkplatz frei?" } })).json()) as { result: boolean };

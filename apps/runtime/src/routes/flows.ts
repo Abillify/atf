@@ -14,11 +14,15 @@
  *     POST /flows/validate        — dry-run validation of a definition
  *
  *   Stage 3 (online authoring — only when a FlowStore is configured):
- *     PUT    /flows/:id/draft     — save the working draft
- *     POST   /flows/:id/publish   — validate + promote draft to live
- *     DELETE /flows/:id           — remove an online flow
- *     GET    /flows/:id/versions  — published version history
- *     POST   /flows/:id/rollback  — re-publish a past version
+ *     PUT    /flows/:id/draft            — save the (default) working draft
+ *     GET    /flows/:id/drafts           — list all named drafts
+ *     PUT    /flows/:id/drafts/:draftId  — save a named draft
+ *     DELETE /flows/:id/drafts/:draftId  — remove a named draft
+ *     POST   /flows/:id/publish          — validate + promote a draft to live
+ *                                          (?draftId= selects the draft)
+ *     DELETE /flows/:id                  — remove an online flow
+ *     GET    /flows/:id/versions         — published version history
+ *     POST   /flows/:id/rollback         — re-publish a past version
  *
  * File-based flows are read-only here (they are owned by FLOWS_DIR / the image);
  * an online flow with the same id overrides a file flow in the composite
@@ -33,8 +37,12 @@ import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 import { mergeFlowIntoYaml } from "../graph/flow-yaml-merge.js";
 import { Hono } from "hono";
 import type { FlowRegistry } from "../graph/flow-parser.js";
-import type { FlowStore } from "../graph/flow-store.js";
-import { FlowStoreError } from "../graph/flow-store.js";
+import type { DraftInfo, FlowStore } from "../graph/flow-store.js";
+import {
+  DEFAULT_DRAFT_ID,
+  FlowStoreError,
+  isValidDraftId,
+} from "../graph/flow-store.js";
 import type { DbFlowSource } from "../graph/flow-registry-composite.js";
 import { validateFlow } from "../graph/flow-validator.js";
 import {
@@ -46,6 +54,7 @@ import { materializeFlowSource } from "../graph/flow-parser.js";
 import type { StudioTestRegistry } from "../graph/flow-registry-studio.js";
 import {
   COMMON_CONFIG_FIELDS,
+  LLM_MODEL_FIELDS,
   NODE_TYPE_CATALOG,
 } from "../graph/node-type-catalog.js";
 import { describeShortcut, loadModelShortcuts } from "../graph/flow-parser/model-shortcuts.js";
@@ -566,6 +575,8 @@ interface FlowListEntry {
   version: number;
   hasDraft: boolean;
   draftDirty: boolean;
+  /** How many drafts (default + named) the flow has. */
+  draftCount: number;
   editable: boolean;
   nodeCount: number;
   edgeCount: number;
@@ -668,6 +679,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         version: 0,
         hasDraft: false,
         draftDirty: false,
+        draftCount: 0,
         editable: false,
         nodeCount: f.nodes.length,
         edgeCount: f.edges.length,
@@ -687,6 +699,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
           version: s.version,
           hasDraft: s.hasDraft,
           draftDirty: s.draftDirty,
+          draftCount: s.draftCount,
           editable: true,
           nodeCount: def?.nodes.length ?? 0,
           edgeCount: def?.edges.length ?? 0,
@@ -1191,6 +1204,9 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     return ctx.json({
       common: COMMON_CONFIG_FIELDS,
       types: NODE_TYPE_CATALOG,
+      // Inside the node's `llm` field (shortcut/provider/model/parameters/pool)
+      // — documented separately since it is not part of `config`.
+      llmFields: LLM_MODEL_FIELDS,
       tools: [...(knownToolIds ?? [])].sort(),
       shortcuts: shortcuts ? Object.keys(shortcuts.shortcuts ?? {}).sort() : [],
       // name → "provider · model" / "pool (strategy): …" for pickers.
@@ -1490,6 +1506,15 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
           version: rec.version,
           published: rec.published,
           draft: rec.draft,
+          // Every named draft (default first), with its definition, so the
+          // Studio can switch between drafts without a request per draft.
+          drafts: rec.drafts.map((d) => ({
+            draftId: d.draftId,
+            label: d.label,
+            definition: d.definition,
+            updatedAt: d.updatedAt,
+            updatedBy: d.updatedBy,
+          })),
           ...(fileBaseline !== undefined
             ? {
                 fileDefinition: fileBaseline.definition,
@@ -1680,26 +1705,200 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
   });
 
   // -------------------------------------------------------------------------
-  // POST /flows/:id/publish — validate + go live (Stage 3)
+  // Named drafts — several working copies per flow.
+  //
+  //   GET    /flows/:id/drafts           — list drafts (default first)
+  //   PUT    /flows/:id/drafts/:draftId  — save one named draft
+  //   DELETE /flows/:id/drafts/:draftId  — remove one named draft
+  //
+  // The implicit `PUT /flows/:id/draft` above is the `default` draft; these
+  // routes add siblings to it. `:draftId` is a slug (see DRAFT_ID_RE).
   // -------------------------------------------------------------------------
-  router.post("/flows/:id/publish", async (ctx) => {
+
+  // Strip the definitions from a draft list for the lightweight listing.
+  const draftMeta = (d: DraftInfo) => ({
+    draftId: d.draftId,
+    label: d.label,
+    updatedAt: d.updatedAt,
+    updatedBy: d.updatedBy,
+  });
+
+  router.get("/flows/:id/drafts", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    if (store === undefined) return requireStore(ctx);
+    const id = ctx.req.param("id");
+    const rec = await store.get(id);
+    if (rec === undefined) {
+      return ctx.json(
+        {
+          error: { message: `Flow '${id}' not found.`, type: "not_found_error" },
+        },
+        404,
+      );
+    }
+    return ctx.json({ id, drafts: rec.drafts.map(draftMeta) });
+  });
+
+  router.put("/flows/:id/drafts/:draftId", async (ctx) => {
     const actor = await guard(ctx, "flows:write");
     if (!actor) return unauthorized(ctx);
     if (store === undefined) return requireStore(ctx);
     const id = ctx.req.param("id");
-    const rec = await store.get(id);
-    if (rec === undefined || rec.draft === null) {
+    const draftId = ctx.req.param("draftId");
+    if (!isValidDraftId(draftId)) {
       return ctx.json(
         {
           error: {
-            message: `Flow '${id}' has no draft to publish.`,
+            message: `Invalid draft id '${draftId}'. Use lowercase letters, digits, '-' or '_' (max 63 chars).`,
             type: "invalid_request_error",
           },
         },
         400,
       );
     }
-    const validation = validateFlow(expandForValidation(rec.draft), knownToolIds);
+    let body: unknown;
+    try {
+      body = await ctx.req.json();
+    } catch {
+      return ctx.json(
+        {
+          error: {
+            message: "Request body must be valid JSON.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    if (body === null || typeof body !== "object") {
+      return ctx.json(
+        {
+          error: {
+            message: "Body must be a flow definition object.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const { label, ...rest } = body as Record<string, unknown>;
+    // Force the id to the path id so a draft can't be saved under the wrong key.
+    const def = { ...rest, id } as FlowDefinition;
+    if (typeof def.name !== "string" || def.name.length === 0) def.name = id;
+    const record = await store.saveDraft(id, def, actor.name, {
+      draftId,
+      ...(typeof label === "string" ? { label } : {}),
+    });
+    await dbSource?.refresh();
+    auditLog?.record({
+      actor: actor.name,
+      role: actor.role,
+      action: "flows.draft",
+      target: id,
+      details: { draftId },
+    });
+    const validation = validateFlow(expandForValidation(def), knownToolIds);
+    return ctx.json({ record, validation });
+  });
+
+  router.delete("/flows/:id/drafts/:draftId", async (ctx) => {
+    const actor = await guard(ctx, "flows:write");
+    if (!actor) return unauthorized(ctx);
+    if (store === undefined) return requireStore(ctx);
+    const id = ctx.req.param("id");
+    const draftId = ctx.req.param("draftId");
+    if (!isValidDraftId(draftId)) {
+      return ctx.json(
+        {
+          error: {
+            message: `Invalid draft id '${draftId}'.`,
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const ok = await store.deleteDraft(id, draftId);
+    await dbSource?.refresh();
+    if (!ok) {
+      return ctx.json(
+        {
+          error: {
+            message: `Draft '${draftId}' of flow '${id}' not found.`,
+            type: "not_found_error",
+          },
+        },
+        404,
+      );
+    }
+    auditLog?.record({
+      actor: actor.name,
+      role: actor.role,
+      action: "flows.draft.delete",
+      target: id,
+      details: { draftId },
+    });
+    return ctx.json({ id, draftId, deleted: true });
+  });
+
+  // -------------------------------------------------------------------------
+  // POST /flows/:id/publish — validate + go live (Stage 3)
+  //   ?draftId=<id> (or body {draftId}) publishes that named draft;
+  //   without it the default draft is published, as before.
+  // -------------------------------------------------------------------------
+  router.post("/flows/:id/publish", async (ctx) => {
+    const actor = await guard(ctx, "flows:write");
+    if (!actor) return unauthorized(ctx);
+    if (store === undefined) return requireStore(ctx);
+    const id = ctx.req.param("id");
+    // The body is optional here (older clients POST an empty body), so a bad
+    // body must not break publishing — fall back to the query parameter.
+    let bodyDraftId: string | undefined;
+    try {
+      const body = (await ctx.req.json()) as Record<string, unknown> | null;
+      if (
+        body !== null &&
+        typeof body === "object" &&
+        typeof body.draftId === "string"
+      ) {
+        bodyDraftId = body.draftId;
+      }
+    } catch {
+      /* no (or invalid) JSON body — fine, publish the default draft */
+    }
+    const draftId = ctx.req.query("draftId") ?? bodyDraftId ?? DEFAULT_DRAFT_ID;
+    if (!isValidDraftId(draftId)) {
+      return ctx.json(
+        {
+          error: {
+            message: `Invalid draft id '${draftId}'.`,
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const rec = await store.get(id);
+    const source =
+      rec === undefined
+        ? undefined
+        : rec.drafts.find((d) => d.draftId === draftId)?.definition ??
+          (draftId === DEFAULT_DRAFT_ID ? rec.draft : undefined);
+    if (rec === undefined || source === null || source === undefined) {
+      return ctx.json(
+        {
+          error: {
+            message:
+              draftId === DEFAULT_DRAFT_ID
+                ? `Flow '${id}' has no draft to publish.`
+                : `Flow '${id}' has no draft '${draftId}' to publish.`,
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const validation = validateFlow(expandForValidation(source), knownToolIds);
     if (!validation.valid) {
       return ctx.json(
         {
@@ -1712,14 +1911,14 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         400,
       );
     }
-    const record = await store.publish(id, actor.name);
+    const record = await store.publish(id, actor.name, { draftId });
     await dbSource?.refresh();
     auditLog?.record({
       actor: actor.name,
       role: actor.role,
       action: "flows.publish",
       target: id,
-      details: { version: record.version },
+      details: { version: record.version, draftId },
     });
     return ctx.json({ record, validation });
   });
@@ -1776,14 +1975,23 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
     const id = ctx.req.param("id");
     if (ctx.req.query("draft") === "true" && store !== undefined) {
+      const draftId = ctx.req.query("draftId") ?? DEFAULT_DRAFT_ID;
       const record = await store.get(id);
-      if (record?.published === null || record?.draft === null || record === undefined) {
+      const draftDef =
+        record?.drafts.find((d) => d.draftId === draftId)?.definition ??
+        (draftId === DEFAULT_DRAFT_ID ? record?.draft : null);
+      if (
+        record === undefined ||
+        record.published === null ||
+        draftDef === null ||
+        draftDef === undefined
+      ) {
         return ctx.json({ error: { message: `Flow '${id}' needs both a published version and a draft.`, type: "invalid_request_error" } }, 400);
       }
       return ctx.json({
         from: { kind: "published", version: record.version },
-        to: { kind: "draft" },
-        report: analyzeFlowCompatibility(record.published, record.draft),
+        to: { kind: "draft", draftId },
+        report: analyzeFlowCompatibility(record.published, draftDef),
       });
     }
     const versions = store === undefined ? [] : await store.listVersions(id);
@@ -1862,6 +2070,7 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
   // GET /flows/:id/diff — structural diff between two versions (or draft↔published)
   //   ?from=<version>&to=<version>   compare two published versions
   //   ?draft=true                    compare published → draft
+  //   ?draft=true&draftId=<id>       compare published → that named draft
   //   (defaults: from = latest-1, to = latest)
   // -------------------------------------------------------------------------
   router.get("/flows/:id/diff", async (ctx) => {
@@ -1870,7 +2079,11 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const id = ctx.req.param("id");
 
     if (ctx.req.query("draft") === "true") {
+      const draftId = ctx.req.query("draftId") ?? DEFAULT_DRAFT_ID;
       const rec = await store.get(id);
+      const draftDef =
+        rec?.drafts.find((d) => d.draftId === draftId)?.definition ??
+        (draftId === DEFAULT_DRAFT_ID ? rec?.draft : null);
       // A draft of a flow that is live as a FILE (never published online) is
       // compared against that file — the version it would replace — in its
       // source form, like the draft itself, so shortcuts/variables don't show
@@ -1878,21 +2091,29 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       const fileSource = fileRegistry.getSource?.(id);
       const liveFile =
         fileSource?.definition ?? fileRegistry.get(id);
-      if (rec !== undefined && rec.draft !== null && rec.published === null && liveFile !== undefined) {
+      if (rec !== undefined && draftDef !== null && draftDef !== undefined && rec.published === null && liveFile !== undefined) {
         return ctx.json({
           from: { kind: "file", ...(fileSource ? { file: fileSource.fileName } : {}) },
-          to: { kind: "draft" },
-          diff: diffFlows(liveFile as FlowDefinition, rec.draft),
+          to: { kind: "draft", draftId },
+          diff: diffFlows(liveFile as FlowDefinition, draftDef),
         });
       }
-      if (rec === undefined || rec.published === null || rec.draft === null) {
+      if (rec === undefined || draftDef === null || draftDef === undefined) {
         return ctx.json(
           {
             error: {
-              message:
-                rec === undefined || rec.draft === null
-                  ? `Flow '${id}' has no draft to compare.`
-                  : `Flow '${id}' has no published version to compare the draft with.`,
+              message: `Flow '${id}' has no draft${draftId === DEFAULT_DRAFT_ID ? "" : ` '${draftId}'`} to compare.`,
+              type: "invalid_request_error",
+            },
+          },
+          400,
+        );
+      }
+      if (rec.published === null) {
+        return ctx.json(
+          {
+            error: {
+              message: `Flow '${id}' has no published version to compare the draft with.`,
               type: "invalid_request_error",
             },
           },
@@ -1901,8 +2122,8 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       }
       return ctx.json({
         from: { kind: "published", version: rec.version },
-        to: { kind: "draft" },
-        diff: diffFlows(rec.published, rec.draft),
+        to: { kind: "draft", draftId },
+        diff: diffFlows(rec.published, draftDef),
       });
     }
 
