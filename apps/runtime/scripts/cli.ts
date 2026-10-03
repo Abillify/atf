@@ -160,6 +160,9 @@ const RESERVED_FLOW_BASES = new Set([
   "compliance-policy",
   "shadow",
   "model-shortcuts",
+  // Mirrors RESERVED_BASES in src/graph/flow-parser/loader.ts: shared config,
+  // never a flow definition.
+  "constants",
 ]);
 
 function isFlowCandidate(filePath: string): boolean {
