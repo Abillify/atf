@@ -60,23 +60,30 @@ function FieldDoc({
   field,
   focused,
   depth = 0,
+  parentKey,
+  dotted = false,
 }: {
   field: ConfigField;
   focused: string | undefined;
   depth?: number;
+  /**
+   * Prefix for this field's documentation key. Used by the `llm` section,
+   * whose panel controls report dotted paths (`llm.parameters.temperature`);
+   * the config form reports bare sub-keys, so it passes no prefix.
+   */
+  parentKey?: string;
+  /** Prefix sub-fields with their parent's key (the `llm` section only). */
+  dotted?: boolean;
 }): React.JSX.Element {
-  const ref = useRef<HTMLDivElement>(null);
-  const isFocused = depth === 0 && focused === field.key;
-  useEffect(() => {
-    if (isFocused) ref.current?.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
-  }, [isFocused]);
+  const docKey =
+    dotted && parentKey !== undefined ? `${parentKey}.${field.key}` : field.key;
+  const isFocused = focused === docKey;
   const def = formatDefault(field.default);
   return (
     <div
-      ref={ref}
-      data-doc-key={field.key}
+      data-doc-key={docKey}
       className={`rounded border px-2 py-1.5 ${
-        isFocused ? "border-primary bg-primary/5" : "border-transparent"
+        isFocused ? "border-primary bg-primary/10" : "border-transparent"
       } ${depth > 0 ? "ml-2 border-l-border" : ""}`}
     >
       <div className="flex flex-wrap items-baseline gap-x-1.5">
@@ -107,7 +114,14 @@ function FieldDoc({
       {field.fields && (
         <div className="mt-1 space-y-1">
           {field.fields.map((f) => (
-            <FieldDoc key={f.key} field={f} focused={focused} depth={depth + 1} />
+            <FieldDoc
+              key={f.key}
+              field={f}
+              focused={focused}
+              depth={depth + 1}
+              parentKey={docKey}
+              dotted={dotted}
+            />
           ))}
         </div>
       )}
@@ -125,16 +139,32 @@ const USAGE_STYLE: Record<string, string> = {
 export function NodeTypeDocs({
   doc,
   common,
+  llmFields,
   focusedField,
   nodeId,
 }: {
   doc: NodeTypeDoc;
   common: ConfigField[];
+  /** Inside the node's `llm` field (shortcut/provider/model/parameters/pool). */
+  llmFields?: ConfigField[];
   focusedField?: string;
   nodeId?: string;
 }): React.JSX.Element {
+  const articleRef = useRef<HTMLElement>(null);
+  // Bring the marked passage into view — the sidebar is the scroll container,
+  // and the passage may sit below the fold (or in the top-level list, which
+  // FieldDoc's own scroll does not cover).
+  useEffect(() => {
+    if (focusedField === undefined) return;
+    for (const el of articleRef.current?.querySelectorAll("[data-doc-key]") ?? []) {
+      if (el.getAttribute("data-doc-key") === focusedField) {
+        el.scrollIntoView?.({ block: "nearest", behavior: "smooth" });
+        break;
+      }
+    }
+  }, [focusedField]);
   return (
-    <article aria-label={`${doc.title} documentation`} className="space-y-3 text-xs">
+    <article ref={articleRef} aria-label={`${doc.title} documentation`} className="space-y-3 text-xs">
       <header>
         <div className="flex items-baseline justify-between gap-2">
           <h3 className="text-sm font-semibold text-foreground">{doc.title} node</h3>
@@ -168,7 +198,13 @@ export function NodeTypeDocs({
           <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Node fields</h4>
           <dl className="space-y-1">
             {doc.topLevel.map((t) => (
-              <div key={t.key} data-doc-key={t.key} className={`rounded px-2 py-1 ${focusedField === t.key ? "bg-primary/5" : ""}`}>
+              <div
+                key={t.key}
+                data-doc-key={t.key}
+                className={`rounded border px-2 py-1 ${
+                  focusedField === t.key ? "border-primary bg-primary/10" : "border-transparent"
+                }`}
+              >
                 <dt className="flex items-baseline gap-1.5">
                   <code className="font-mono text-[11px] font-semibold">{t.key}</code>
                   <span className={`text-[10px] ${USAGE_STYLE[t.usage] ?? ""}`}>{t.usage}</span>
@@ -177,6 +213,19 @@ export function NodeTypeDocs({
               </div>
             ))}
           </dl>
+        </section>
+      )}
+
+      {llmFields !== undefined && llmFields.length > 0 && (
+        <section>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Model selection (<code>llm</code>) — {llmFields.length}
+          </h4>
+          <div className="space-y-1">
+            {llmFields.map((f) => (
+              <FieldDoc key={f.key} field={f} focused={focusedField} dotted />
+            ))}
+          </div>
         </section>
       )}
 

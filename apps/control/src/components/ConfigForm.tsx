@@ -341,15 +341,22 @@ function FieldControl({
     case "object": {
       const obj = value && typeof value === "object" && !Array.isArray(value) ? (value as Obj) : undefined;
       return (
-        <fieldset className="m-0 min-w-0 space-y-2 rounded border border-border p-2" onFocus={focus}>
+        <fieldset className="m-0 min-w-0 space-y-2 rounded border border-border p-2">
           {(field.fields ?? []).map((sub) => (
             <Field key={sub.key} label={`${sub.label}${sub.required ? " *" : ""}`} hint={undefined}>
-              <FieldControl
-                field={sub}
-                value={obj?.[sub.key]}
-                onChange={(v) => onChange(setKey(obj, sub.key, v))}
-                ctx={ctx}
-              />
+              {/* The sub-field reports its own key — the documentation marks
+                  the nested passage, not the whole object. */}
+              <fieldset
+                className="m-0 min-w-0 border-0 p-0"
+                onFocus={() => ctx.onFocusField?.(sub.key)}
+              >
+                <FieldControl
+                  field={sub}
+                  value={obj?.[sub.key]}
+                  onChange={(v) => onChange(setKey(obj, sub.key, v))}
+                  ctx={ctx}
+                />
+              </fieldset>
               <span className="mt-0.5 block text-[10px] text-muted-foreground">
                 <Hint field={sub} />
               </span>

@@ -144,6 +144,9 @@ export interface AutopilotPanelProps {
    * it instead of offering yet another selector.
    */
   fixedFlow?: boolean;
+  /** The host renders its own heading (the Studio sidebar's accordion) —
+      skip the panel's own "Autopilot" title; the refresh button stays. */
+  hideHeading?: boolean;
 }
 
 export function AutopilotPanel({
@@ -151,6 +154,7 @@ export function AutopilotPanel({
   limit = 10,
   flows,
   fixedFlow = false,
+  hideHeading = false,
 }: AutopilotPanelProps): React.JSX.Element {
   // isAuthenticated statt !!token: bei AUTHN_MODE=disabled gibt es kein Token,
   // die Operator-Plane ist trotzdem erreichbar. Header nur mit echtem Token.
@@ -288,9 +292,11 @@ export function AutopilotPanel({
     <div className="flex flex-col gap-3 text-sm">
       {/* Header */}
       <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-foreground">
-          🔄 Autopilot
-        </h3>
+        {!hideHeading && (
+          <h3 className="text-sm font-semibold text-foreground">
+            🔄 Autopilot
+          </h3>
+        )}
         <Button
           variant="ghost"
           size="sm"

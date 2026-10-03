@@ -25,6 +25,7 @@ vi.mock("../components/FlowCanvas", () => ({
     nodeOrigins,
     onSelectionChange,
     onSelectSubflow,
+    onDropSubflow,
     nodeValidation,
   }: {
     nodes: { id: string }[];
@@ -32,6 +33,7 @@ vi.mock("../components/FlowCanvas", () => ({
     nodeOrigins?: Record<string, string>;
     onSelectionChange?: (n: string[], e: string[]) => void;
     onSelectSubflow?: (path: string) => void;
+    onDropSubflow?: (path: string, position: { x: number; y: number }) => void;
     nodeValidation?: Map<string, unknown>;
   }) => (
     <div data-testid="canvas">
@@ -49,6 +51,12 @@ vi.mock("../components/FlowCanvas", () => ({
           <li key={`${e.source}-${e.target}`}>{`edge:${e.source}->${e.target}`}</li>
         ))}
       </ul>
+      <button type="button" onClick={() => onSelectionChange?.([], [])}>
+        deselect
+      </button>
+      <button type="button" onClick={() => onDropSubflow?.("subflows/lib.yaml", { x: 10, y: 20 })}>
+        drop-subflow
+      </button>
       {/* Selecting a whole sub-flow group (mirrors clicking its box label).
           Real React Flow also fires onSelectionChange for the group's nodes
           when they get programmatically selected, so the mock does too. */}
@@ -75,10 +83,10 @@ vi.mock("../components/FlowCanvas", () => ({
   ),
 }));
 vi.mock("../components/FlowCopilotPanel", () => ({
-  FlowCopilotPanel: (): React.JSX.Element | null => null,
+  FlowCopilotPanel: () => <div data-testid="copilot-panel" />,
 }));
 vi.mock("../components/FlowRunDrawer", () => ({
-  FlowRunDrawer: (): React.JSX.Element | null => null,
+  FlowRunDrawer: () => <div data-testid="run-drawer" />,
 }));
 vi.mock("../components/FlowVersionBar", () => ({
   FlowVersionBar: (): React.JSX.Element | null => null,
@@ -145,6 +153,56 @@ describe("StudioBuilder", () => {
     expect(screen.getByText("file")).toBeInTheDocument();
   });
 
+  test("the properties panel only appears while something is selected", async () => {
+    mockBackend();
+    render(<StudioBuilder flow={entry} onlineEditing />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    // Nothing selected: no panel at all.
+    expect(
+      screen.queryByRole("complementary", { name: "Node properties" }),
+    ).not.toBeInTheDocument();
+    // Selecting a node opens it with the node's fields.
+    fireEvent.click(screen.getByText("answer"));
+    const panel = await screen.findByRole("complementary", {
+      name: "Node properties",
+    });
+    expect(within(panel).getByRole("button", { name: "rename" })).toBeInTheDocument();
+    // Deselecting hides it again.
+    fireEvent.click(screen.getByText("deselect"));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: "Node properties" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  test("the Flow settings button opens the panel without a selection", async () => {
+    mockBackend();
+    render(<StudioBuilder flow={entry} onlineEditing />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    const toggle = screen.getByRole("button", { name: "Flow settings" });
+    expect(toggle).toHaveAttribute("aria-pressed", "false");
+    fireEvent.click(toggle);
+    const panel = await screen.findByRole("complementary", {
+      name: "Node properties",
+    });
+    expect(within(panel).getByLabelText("Flow id")).toBeInTheDocument();
+    // A node selection takes the panel over; deselecting closes it again
+    // (the flow-settings pin was dropped by the selection).
+    fireEvent.click(screen.getByText("answer"));
+    expect(
+      within(screen.getByRole("complementary", { name: "Node properties" })).getByRole("button", {
+        name: "rename",
+      }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByText("deselect"));
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("complementary", { name: "Node properties" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
   test("Save draft stores the canvas via PUT /draft and keeps flow-level fields", async () => {
     const fetchMock = mockBackend();
     const onSaved = vi.fn();
@@ -190,7 +248,10 @@ describe("StudioBuilder", () => {
 
   test("includes a sub-flow from the palette; saving writes its nodes with their origin", async () => {
     const fetchMock = mockBackend();
-    const base = fetchMock.getMockImplementation();
+    const base = fetchMock.getMockImplementation() as (
+      url: string,
+      init?: RequestInit,
+    ) => Promise<Response>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       if (String(url).endsWith("/flows/subflows")) {
         return Promise.resolve({
@@ -219,13 +280,14 @@ describe("StudioBuilder", () => {
     render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Include" }));
+    // The Subflows section lists the file; its Include button places it.
+    const card = await screen.findByText("📄 lib.yaml");
+    fireEvent.click(
+      within(card.closest("li") as HTMLElement).getByRole("button", { name: "Include" }),
+    );
     await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
     expect(screen.getByText("edge:answer->recall")).toBeInTheDocument();
 
-    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
     vi.spyOn(window, "confirm").mockReturnValue(true); // "write into casework.yaml?"
     fireEvent.click(screen.getByRole("button", { name: "Write to file" }));
     await waitFor(() =>
@@ -335,7 +397,10 @@ describe("StudioBuilder", () => {
 
   test("unknown MCP tools are summarised per server instead of ringing nodes", async () => {
     const fetchMock = mockBackend();
-    const base = fetchMock.getMockImplementation()!;
+    const base = fetchMock.getMockImplementation() as (
+      url: string,
+      init?: RequestInit,
+    ) => Promise<Response>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) =>
       url.endsWith("/flows/validate")
         ? Promise.resolve({
@@ -364,7 +429,10 @@ describe("StudioBuilder", () => {
   // A backend that also serves the sub-flow include/content/write endpoints.
   function mockBackendWithSubflows(): ReturnType<typeof vi.fn> {
     const fetchMock = mockBackend();
-    const base = fetchMock.getMockImplementation()!;
+    const base = fetchMock.getMockImplementation() as (
+      url: string,
+      init?: RequestInit,
+    ) => Promise<Response>;
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {
       const u = String(url);
       if (u.endsWith("/flows/subflows")) {
@@ -394,16 +462,27 @@ describe("StudioBuilder", () => {
     return fetchMock;
   }
 
-  /** Include subflows/lib.yaml, then select its group as a whole. */
+  /** Include subflows/lib.yaml (from the Subflows section's list), then
+   *  select its group as a whole. */
   async function includeAndSelectGroup(): Promise<void> {
-    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Include" }));
+    const card = await screen.findByText("📄 lib.yaml");
+    fireEvent.click(
+      within(card.closest("li") as HTMLElement).getByRole("button", { name: "Include" }),
+    );
     await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
-    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
     fireEvent.click(screen.getByText("select-group:subflows/lib.yaml"));
     await screen.findByTestId("subflow-group-panel");
   }
+
+  test("dropping a sub-flow card onto the canvas includes it at the drop position", async () => {
+    mockBackendWithSubflows();
+    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
+    await screen.findByText("📄 lib.yaml");
+    fireEvent.click(screen.getByText("drop-subflow"));
+    await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
+    expect(screen.getByText("edge:answer->recall")).toBeInTheDocument();
+  });
 
   test("selecting a sub-flow group shows its action panel", async () => {
     mockBackendWithSubflows();
@@ -422,11 +501,11 @@ describe("StudioBuilder", () => {
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
     // Include the one-node sub-flow (its only node is "recall").
-    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
-    const dialog = await screen.findByRole("dialog");
-    fireEvent.click(await within(dialog).findByRole("button", { name: "Include" }));
+    const card = await screen.findByText("📄 lib.yaml");
+    fireEvent.click(
+      within(card.closest("li") as HTMLElement).getByRole("button", { name: "Include" }),
+    );
     await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
-    fireEvent.click(within(dialog).getByRole("button", { name: /close/i }));
 
     // Clicking the node itself must open the node's property panel, NOT the
     // sub-flow group panel — even though the node IS the whole sub-flow.
@@ -486,5 +565,247 @@ describe("StudioBuilder", () => {
     expect(canvas().getByText("answer")).toBeInTheDocument();
     expect(canvas().getByText("router")).toBeInTheDocument();
     expect(screen.getByText(/Removed sub-flow lib.yaml/)).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Draft ↔ Live switch + named drafts
+  // -------------------------------------------------------------------------
+
+  const liveDef: FlowDefinition = { ...definition };
+  const draftDefault: FlowDefinition = {
+    ...definition,
+    nodes: [...definition.nodes, { id: "wip", type: "memory" }],
+  } as FlowDefinition;
+  const draftExp: FlowDefinition = {
+    ...definition,
+    nodes: [
+      { id: "router", type: "router" },
+      { id: "exp-one", type: "llm", llm: { provider: "openai", model: "m" } },
+    ],
+  } as FlowDefinition;
+
+  const onlineEntry: FlowListEntry = {
+    id: "casework",
+    name: "Casework",
+    source: "online",
+    status: "published",
+    version: 3,
+    hasDraft: true,
+    draftDirty: true,
+    draftCount: 2,
+    editable: true,
+    nodeCount: 2,
+    edgeCount: 1,
+  };
+
+  /** Online flow with a published v3, a default draft and a named draft exp-1. */
+  function mockOnlineDraftBackend(): ReturnType<typeof vi.fn> {
+    const valid = { valid: true, errors: [], warnings: [], meta: { nodeCount: 2, edgeCount: 1 } };
+    const fetchMock = vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+      const u = String(url);
+      let body: unknown = {};
+      if (u.endsWith("/flows/validate")) body = valid;
+      else if (u.endsWith("/flows/casework") && !init?.method)
+        body = {
+          id: "casework",
+          source: "online",
+          editable: true,
+          version: 3,
+          published: liveDef,
+          draft: draftDefault,
+          drafts: [
+            { draftId: "default", label: "default", definition: draftDefault },
+            { draftId: "exp-1", label: "Experiment", definition: draftExp },
+          ],
+        };
+      else if (init?.method === "PUT" && u.includes("/drafts/"))
+        body = { record: { version: 3 }, validation: valid };
+      else if (init?.method === "PUT" && u.endsWith("/draft"))
+        body = { record: { version: 3 }, validation: valid };
+      else if (init?.method === "POST" && u.endsWith("/publish"))
+        body = { record: { version: 4 }, validation: valid };
+      else if (init?.method === "DELETE" && u.includes("/drafts/"))
+        body = { id: "casework", deleted: true };
+      return Promise.resolve({ ok: true, status: 200, json: async () => body });
+    });
+    global.fetch = fetchMock as unknown as typeof fetch;
+    return fetchMock;
+  }
+
+  const draftSelect = () =>
+    screen.getByRole("combobox", { name: "Active draft" });
+
+  test("loads the draft and offers a Draft↔Live switch for online flows", async () => {
+    mockOnlineDraftBackend();
+    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    // The draft (with its extra node) is what opens.
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+    expect(screen.getByText("draft")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "View live" }));
+    await waitFor(() =>
+      expect(screen.queryByText("wip")).not.toBeInTheDocument(),
+    );
+    expect(screen.getByText("live v3")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "← Draft" }));
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+    expect(screen.getByText("draft")).toBeInTheDocument();
+  });
+
+  test("saving from the live view stages the content into the active draft", async () => {
+    const fetchMock = mockOnlineDraftBackend();
+    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "View live" }));
+    await waitFor(() =>
+      expect(screen.queryByText("wip")).not.toBeInTheDocument(),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([u, i]) =>
+            String(u).endsWith("/flows/casework/draft") &&
+            (i as RequestInit)?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+    // Back in the draft view, badge shows the draft again.
+    expect(screen.getByText("draft")).toBeInTheDocument();
+  });
+
+  test("the draft selector switches to a named draft and saves to it", async () => {
+    const fetchMock = mockOnlineDraftBackend();
+    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+
+    fireEvent.change(draftSelect(), { target: { value: "exp-1" } });
+    await waitFor(() => expect(screen.getByText("exp-one")).toBeInTheDocument());
+    expect(screen.getByText("draft · exp-1")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([u, i]) =>
+            String(u).endsWith("/flows/casework/drafts/exp-1") &&
+            (i as RequestInit)?.method === "PUT",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  test("publish sends the active draftId", async () => {
+    const fetchMock = mockOnlineDraftBackend();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+
+    fireEvent.change(draftSelect(), { target: { value: "exp-1" } });
+    await waitFor(() => expect(screen.getByText("exp-one")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(([u, i]) => {
+          if (!String(u).endsWith("/flows/casework/publish")) return false;
+          const init = i as RequestInit;
+          return (
+            init.method === "POST" &&
+            JSON.parse(String(init.body)).draftId === "exp-1"
+          );
+        }),
+      ).toBe(true),
+    );
+    expect(screen.getByText("published v4")).toBeInTheDocument();
+  });
+
+  test("deleting the active named draft falls back to the default draft", async () => {
+    const fetchMock = mockOnlineDraftBackend();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+
+    fireEvent.change(draftSelect(), { target: { value: "exp-1" } });
+    await waitFor(() => expect(screen.getByText("exp-one")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    await waitFor(() =>
+      expect(
+        fetchMock.mock.calls.some(
+          ([u, i]) =>
+            String(u).endsWith("/flows/casework/drafts/exp-1") &&
+            (i as RequestInit)?.method === "DELETE",
+        ),
+      ).toBe(true),
+    );
+    await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
+    expect(screen.getByText("draft")).toBeInTheDocument();
+  });
+
+  test("renders Copilot and Run & Trace only when their panel is on", async () => {
+    mockBackend();
+    const off = {
+      palette: true,
+      properties: true,
+      copilot: false,
+      runTrace: false,
+    };
+    const { rerender } = render(
+      <StudioBuilder flow={entry} onlineEditing panels={off} />,
+    );
+    await waitFor(() => expect(screen.getByTestId("canvas")).toBeInTheDocument());
+    expect(screen.queryByTestId("copilot-panel")).toBeNull();
+    expect(screen.queryByTestId("run-drawer")).toBeNull();
+
+    rerender(
+      <StudioBuilder
+        flow={entry}
+        onlineEditing
+        panels={{ ...off, copilot: true, runTrace: true }}
+      />,
+    );
+    expect(screen.getByTestId("copilot-panel")).toBeInTheDocument();
+    expect(screen.getByTestId("run-drawer")).toBeInTheDocument();
+  });
+
+  test("the toolbar toggles switch Copilot and Run & Trace individually", async () => {
+    mockBackend();
+    const onTogglePanel = vi.fn();
+    render(
+      <StudioBuilder
+        flow={entry}
+        onlineEditing
+        panels={{ palette: true, properties: true, copilot: false, runTrace: false }}
+        onTogglePanel={onTogglePanel}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("canvas")).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole("button", { name: /Copilot/ }));
+    expect(onTogglePanel).toHaveBeenCalledWith("copilot");
+    fireEvent.click(screen.getByRole("button", { name: /Run & Trace/ }));
+    expect(onTogglePanel).toHaveBeenCalledWith("runTrace");
+  });
+
+  test("stacks Copilot above Run & Trace instead of side by side", async () => {
+    mockBackend();
+    render(
+      <StudioBuilder
+        flow={entry}
+        onlineEditing
+        panels={{ palette: true, properties: true, copilot: true, runTrace: true }}
+      />,
+    );
+    await waitFor(() => expect(screen.getByTestId("canvas")).toBeInTheDocument());
+
+    const copilot = screen.getByTestId("copilot-panel");
+    const runDrawer = screen.getByTestId("run-drawer");
+    // Both live in one shared column container (not a two-column grid).
+    expect(copilot.parentElement).toBe(runDrawer.parentElement);
+    expect(copilot.parentElement?.className).toContain("flex-col");
+    expect(copilot.parentElement?.className).not.toContain("grid-cols-2");
   });
 });

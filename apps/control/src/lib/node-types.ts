@@ -97,6 +97,11 @@ export interface FlowReference {
 export interface NodeTypeCatalog {
   common: ConfigField[];
   types: NodeTypeDoc[];
+  /**
+   * Inside the node's `llm` field (shortcut/provider/model/parameters/pool) —
+   * dotted keys (`llm.shortcut`), documented apart from `config`.
+   */
+  llmFields?: ConfigField[];
   /** Tool ids of the MCP servers the runtime is connected to. */
   tools: string[];
   /** Model shortcut names from flows/model-shortcuts.yaml. */
@@ -127,6 +132,7 @@ async function fetchCatalog(token: string | undefined): Promise<NodeTypeCatalog>
   return {
     types: data.types,
     common: data.common,
+    ...(Array.isArray(data.llmFields) ? { llmFields: data.llmFields } : {}),
     tools: Array.isArray(data.tools) ? data.tools : [],
     shortcuts: Array.isArray(data.shortcuts) ? data.shortcuts : [],
     ...(data.shortcutInfo && typeof data.shortcutInfo === "object"

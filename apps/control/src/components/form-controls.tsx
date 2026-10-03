@@ -8,9 +8,10 @@
  */
 
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FormulaEditorDialog, FormulaInput, FxPicker } from "./FormulaEditor";
 import type { FormulaKind } from "../lib/formula";
+import { jsonKeyPathAt } from "../lib/json-key-path";
 
 export function Field({
   label,
@@ -83,12 +84,15 @@ export function NumberOrVarInput({
   value,
   onChange,
   ariaLabel,
+  onFocus,
 }: {
   label: string;
   value: unknown;
   onChange: (next: number | string | undefined) => void;
   /** Accessible name when rendered without a visible label. */
   ariaLabel?: string;
+  /** Reports focus for the docs panel (the input sits behind the label). */
+  onFocus?: () => void;
 }): React.JSX.Element {
   const input = (
     <FormulaInput
@@ -98,6 +102,7 @@ export function NumberOrVarInput({
       inputMode="decimal"
       className={`${inputCls} ${typeof value === "string" ? "font-mono text-xs" : ""}`}
       value={value === undefined || value === null ? "" : String(value)}
+      onFocus={onFocus}
       onChange={(raw) => {
         const v = raw.trim();
         if (v === "") onChange(undefined);
@@ -131,6 +136,7 @@ export function JsonEditor({
   rows = 8,
   allowEmpty = true,
   formulaKind = "vars",
+  onCursorKey,
 }: {
   value: unknown;
   onChange: (next: unknown) => void;
@@ -141,8 +147,20 @@ export function JsonEditor({
   allowEmpty?: boolean;
   /** What the ƒx picker offers (`template` for tool arguments). */
   formulaKind?: FormulaKind;
+  /**
+   * Reports the dotted key path the cursor moved into (`llm.parameters`,
+   * `config.toolArgs`, …) so the docs panel can follow it. Works on invalid,
+   * mid-edit JSON; `undefined` at the document root.
+   */
+  onCursorKey?: (key: string | undefined) => void;
 }): React.JSX.Element {
   const areaRef = useRef<HTMLTextAreaElement>(null);
+  const reportCursor = useCallback((): void => {
+    if (onCursorKey === undefined) return;
+    const el = areaRef.current;
+    if (el === null) return;
+    onCursorKey(jsonKeyPathAt(el.value, el.selectionStart));
+  }, [onCursorKey]);
   const serialized = value === undefined ? "" : JSON.stringify(value, null, 2);
   const [text, setText] = useState(serialized);
   const [error, setError] = useState<string | null>(null);
@@ -215,6 +233,12 @@ export function JsonEditor({
         spellCheck={false}
         value={text}
         onChange={(e) => apply(e.target.value)}
+        // Caret moves report the key under it: `select` only fires on text
+        // selection, so clicks and arrow keys need their own listeners.
+        onSelect={reportCursor}
+        onClick={reportCursor}
+        onKeyUp={reportCursor}
+        onFocus={reportCursor}
       />
       <FxPicker
         kind={formulaKind}

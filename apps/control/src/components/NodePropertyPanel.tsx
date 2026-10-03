@@ -12,6 +12,7 @@ import {
 } from "../types/flow";
 import { Button } from "../lib/ui";
 import type { NodeTypeCatalog } from "../lib/node-types";
+import { nodeDocKeyForPath } from "../lib/json-key-path";
 import { ConfigForm, ListInput } from "./ConfigForm";
 import { FormulaInput, FormulaTextarea } from "./FormulaEditor";
 import { PromptFileEditor } from "./PromptFileEditor";
@@ -22,6 +23,13 @@ import {
   varRefRe,
 } from "./VariablesEditor";
 import type { TopLevelField } from "../lib/node-types";
+import type { EdgeFlowItem, EdgeFlowRecord } from "../lib/run-samples";
+import {
+  CHANNEL_COLORS,
+  CHANNEL_KIND_LABEL,
+  CHANNEL_STATUS_BADGE,
+  CHANNEL_STATUS_LABEL,
+} from "../lib/edge-channels";
 import {
   Field,
   Section,
@@ -38,6 +46,14 @@ export interface EdgeSelection {
   id: string;
   conditions: string;
   label: string;
+  /**
+   * Data flow of the traced run over this edge (newest traversal). The panel
+   * lists every payload with its type and content. Empty/undefined when the
+   * edge wasn't part of a traced run.
+   */
+  flows?: EdgeFlowRecord[];
+  /** Implicit start/end link: shown read-only (it is not part of the flow). */
+  readOnly?: boolean;
 }
 
 export interface NodePropertyPanelProps {
@@ -82,6 +98,53 @@ export interface NodePropertyPanelProps {
    * was clicked). A new `nonce` jumps again, e.g. on a second click.
    */
   focusTool?: { tool: string; nonce: number } | undefined;
+}
+
+/**
+ * One payload of the traced run's edge data flow: colored kind dot, label,
+ * status badge and the content (images: media type/size/reference instead).
+ */
+function EdgeFlowItemRow({ item }: { item: EdgeFlowItem }): React.JSX.Element {
+  const meta =
+    item.kind === "image"
+      ? [item.media_type, item.bytes !== undefined ? `${item.bytes.toLocaleString("de-DE")} Bytes` : undefined]
+          .filter((s): s is string => s !== undefined)
+          .join(" · ")
+      : item.kind === "tool" && item.tool_name !== undefined
+        ? item.tool_name
+        : "";
+  return (
+    <li className="rounded border border-border bg-muted/40 px-2 py-1.5">
+      <div className="flex items-center gap-1.5">
+        <span
+          aria-hidden
+          className="h-2 w-2 shrink-0 rounded-full"
+          style={{ backgroundColor: CHANNEL_COLORS[item.kind] }}
+        />
+        <span className="truncate text-xs font-medium text-foreground" title={item.label}>
+          {item.label}
+        </span>
+        <span
+          className={`ml-auto shrink-0 rounded border px-1 py-px text-[10px] ${CHANNEL_STATUS_BADGE[item.status]}`}
+        >
+          {CHANNEL_STATUS_LABEL[item.status]}
+        </span>
+        <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
+          {CHANNEL_KIND_LABEL[item.kind]}
+        </span>
+      </div>
+      {meta !== "" && (
+        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={meta}>
+          {meta}
+        </div>
+      )}
+      {item.content !== undefined && item.content !== "" && (
+        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-background/70 px-1.5 py-1 font-mono text-[10px] leading-relaxed text-muted-foreground">
+          {item.content}
+        </pre>
+      )}
+    </li>
+  );
 }
 
 /**
@@ -400,10 +463,13 @@ function ModelSourceFields({
   node,
   setLlm,
   shortcuts,
+  onFocusField,
 }: {
   node: FlowNode;
   setLlm: (patch: Record<string, unknown>) => void;
   shortcuts?: string[] | undefined;
+  /** Reports the focused model sub-field (`llm.shortcut`, …) for the docs. */
+  onFocusField?: (key: string) => void;
 }): React.JSX.Element {
   const llm = node.llm;
   const hasShortcut = !!llm?.shortcut;
@@ -461,6 +527,7 @@ function ModelSourceFields({
             value={llm?.shortcut ?? ""}
             placeholder="e.g. fast-pool or {{vars.model_main}}"
             list={`shortcuts-${node.id}`}
+            onFocus={() => onFocusField?.("llm.shortcut")}
             onChange={(v) => setLlm({ shortcut: v || undefined })}
           />
           {shortcuts && (
@@ -481,6 +548,7 @@ function ModelSourceFields({
               className={inputCls}
               list="studio-provider-options"
               value={llm?.provider ?? ""}
+              onFocus={() => onFocusField?.("llm.provider")}
               onChange={(v) => setLlm({ provider: v || undefined })}
             />
             <datalist id="studio-provider-options">
@@ -496,6 +564,7 @@ function ModelSourceFields({
               ariaLabel="Model"
               className={inputCls}
               value={llm?.model ?? ""}
+              onFocus={() => onFocusField?.("llm.model")}
               onChange={(v) => setLlm({ model: v || undefined })}
             />
           </Field>
@@ -652,40 +721,69 @@ export function NodePropertyPanel({
   }, [focusNonce, focusToolName]);
 
   if (edge !== null) {
+    const flow = edge.flows?.[edge.flows.length - 1];
     return (
       <div className="space-y-3">
         <h4 className="text-sm font-semibold text-foreground">Edge</h4>
-        <Field
-          label="Condition (routing expression)"
-          hint="Empty = unconditional edge."
-        >
-          <FormulaTextarea
-            kind="condition"
-            ariaLabel="Condition (routing expression)"
-            title="Edge condition"
-            className={`${inputCls} resize-y font-mono text-xs`}
-            rows={3}
-            value={edge.conditions}
-            placeholder="classification.route == 'INKASSO'"
-            onChange={(v) => onEdgeChange({ ...edge, conditions: v })}
-          />
-        </Field>
-        <Field label="Label">
-          <FormulaInput
-            kind="vars"
-            ariaLabel="Edge label"
-            className={inputCls}
-            value={edge.label}
-            onChange={(v) => onEdgeChange({ ...edge, label: v })}
-          />
-        </Field>
-        <Button
-          variant="destructive"
-          size="sm"
-          onClick={() => onDeleteEdge(edge.id)}
-        >
-          Delete edge
-        </Button>
+        {edge.readOnly ? (
+          <p className="text-xs text-muted-foreground">
+            Impliziter Start-/Ende-Übergang — gehört nicht zur Flow-Definition
+            und kann nicht bearbeitet werden.
+          </p>
+        ) : (
+          <>
+            <Field
+              label="Condition (routing expression)"
+              hint="Empty = unconditional edge."
+            >
+              <FormulaTextarea
+                kind="condition"
+                ariaLabel="Condition (routing expression)"
+                title="Edge condition"
+                className={`${inputCls} resize-y font-mono text-xs`}
+                rows={3}
+                value={edge.conditions}
+                placeholder="classification.route == 'RETOURE'"
+                onChange={(v) => onEdgeChange({ ...edge, conditions: v })}
+              />
+            </Field>
+            <Field label="Label">
+              <FormulaInput
+                kind="vars"
+                ariaLabel="Edge label"
+                className={inputCls}
+                value={edge.label}
+                onChange={(v) => onEdgeChange({ ...edge, label: v })}
+              />
+            </Field>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={() => onDeleteEdge(edge.id)}
+            >
+              Delete edge
+            </Button>
+          </>
+        )}
+        {flow !== undefined && flow.items.length > 0 && (
+          <section aria-label="Weitergegebene Daten" className="space-y-1.5">
+            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Weitergegebene Daten
+            </h5>
+            <p className="text-[11px] text-muted-foreground">
+              Beim letzten Run über diese Kante ({flow.source} → {flow.target}).
+            </p>
+            <ul className="space-y-1.5">
+              {flow.items.map((item, index) => (
+                <EdgeFlowItemRow
+                  // biome-ignore lint/suspicious/noArrayIndexKey: items have no id; the recorded order is fixed per traversal
+                  key={`${index}:${item.kind}:${item.status}:${item.label}:${item.tool_name ?? ""}`}
+                  item={item}
+                />
+              ))}
+            </ul>
+          </section>
+        )}
       </div>
     );
   }
@@ -827,6 +925,16 @@ export function NodePropertyPanel({
             if (v === null || typeof v !== "object" || Array.isArray(v)) return;
             onNodeChange({ ...(v as FlowNode), id: node.id });
           }}
+          // The docs panel follows the cursor: the key path under it maps onto
+          // a documented passage (config.* → bare key, llm.* → model field).
+          {...(onFocusField
+            ? {
+                onCursorKey: (path: string | undefined): void => {
+                  const docKey = nodeDocKeyForPath(path, catalog?.llmFields);
+                  if (docKey !== undefined) onFocusField(docKey);
+                },
+              }
+            : {})}
         />
       ) : (
         <>
@@ -836,6 +944,7 @@ export function NodePropertyPanel({
               ariaLabel="Label"
               className={inputCls}
               value={node.label ?? ""}
+              onFocus={() => onFocusField?.("label")}
               onChange={(v) => set({ label: v || undefined })}
             />
           </Field>
@@ -848,6 +957,7 @@ export function NodePropertyPanel({
                   type="number"
                   className={inputCls}
                   value={node.priority ?? ""}
+                  onFocus={() => onFocusField?.("priority")}
                   onChange={(e) =>
                     set({ priority: numberOrUndefined(e.target.value) })
                   }
@@ -871,16 +981,19 @@ export function NodePropertyPanel({
                 node={node}
                 setLlm={setLlm}
                 shortcuts={catalog?.shortcuts}
+                {...(onFocusField ? { onFocusField } : {})}
               />
               <div className="flex gap-2">
                 <NumberOrVarInput
                   label="Temperature"
                   value={params.temperature}
+                  onFocus={() => onFocusField?.("llm.parameters.temperature")}
                   onChange={(v) => setParam("temperature", v)}
                 />
                 <NumberOrVarInput
                   label="Max tokens"
                   value={params.maxTokens}
+                  onFocus={() => onFocusField?.("llm.parameters.maxTokens")}
                   onChange={(v) => setParam("maxTokens", v)}
                 />
               </div>
@@ -888,6 +1001,7 @@ export function NodePropertyPanel({
                 <Field label="Reasoning effort">
                   <select
                     className={inputCls}
+                    onFocus={() => onFocusField?.("llm.parameters.reasoningEffort")}
                     value={String(params.reasoningEffort ?? "")}
                     onChange={(e) =>
                       setParam("reasoningEffort", e.target.value || undefined)
@@ -909,6 +1023,7 @@ export function NodePropertyPanel({
                 <NumberOrVarInput
                   label="Context length"
                   value={params.contextLength}
+                  onFocus={() => onFocusField?.("llm.parameters.contextLength")}
                   onChange={(v) => setParam("contextLength", v)}
                 />
               </div>
@@ -917,6 +1032,9 @@ export function NodePropertyPanel({
                 label="Other model parameters"
                 hint="chatTemplateKwargs, extraBody, visionInput, …"
                 rows={4}
+                {...(onFocusField
+                  ? { onCursorKey: (): void => onFocusField("llm.parameters") }
+                  : {})}
                 value={Object.keys(extraParams).length > 0 ? extraParams : undefined}
                 onChange={(v) => {
                   const known = Object.fromEntries(
@@ -935,6 +1053,9 @@ export function NodePropertyPanel({
                 label="Model pool"
                 hint="{ strategy, candidates: [{ provider, model }, …] } — first candidate should match the model above."
                 rows={4}
+                {...(onFocusField
+                  ? { onCursorKey: (): void => onFocusField("llm.pool") }
+                  : {})}
                 value={node.llm?.pool}
                 onChange={(v) =>
                   setLlm(
@@ -1009,9 +1130,11 @@ export function NodePropertyPanel({
 
           {node.type === "classifier" && (
             <Section title="Classifier">
+              <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("classifierSchema")}>
               <Field label="Class key">
                 <input
                   className={inputCls}
+                  onFocus={() => onFocusField?.("classifierSchema")}
                   value={node.classifierSchema?.classKey ?? ""}
                   onChange={(e) =>
                     set({
@@ -1041,11 +1164,13 @@ export function NodePropertyPanel({
                   })
                 }
               />
+              </fieldset>
             </Section>
           )}
 
           {node.type === "parallel" && (
             <Section title="Parallel children">
+              <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("parallelNodes")}>
               {parallelHasConditions ? (
                 <JsonEditor
                   key={`${node.id}-parallel`}
@@ -1080,6 +1205,7 @@ export function NodePropertyPanel({
                   />
                 </Field>
               )}
+              </fieldset>
             </Section>
           )}
 
@@ -1125,6 +1251,7 @@ export function NodePropertyPanel({
               {isUnread("overrides") && (
                 <UnreadFieldNotice field="overrides" type={node.type} />
               )}
+              <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("overrides")}>
               <JsonEditor
                 key={`${node.id}-overrides`}
                 label="Overrides"
@@ -1134,6 +1261,7 @@ export function NodePropertyPanel({
                   set({ overrides: v as unknown[] | undefined })
                 }
               />
+              </fieldset>
             </Section>
           )}
         </>

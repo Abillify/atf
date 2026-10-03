@@ -20,7 +20,7 @@ const draft: FlowDefinition = {
       type: "llm",
       llm: { shortcut: "{{vars.model_main}}" },
       config: { routing: { strategy: "balanced", candidates: [{ shortcut: "qwen-lmstudio" }, { shortcut: "sonnet" }] } },
-    } as FlowDefinition["nodes"][number],
+    } as unknown as FlowDefinition["nodes"][number],
   ],
   edges: [],
 };

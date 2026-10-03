@@ -109,4 +109,27 @@ describe("NodeTypeDocs", () => {
     expect(screen.getByText(/Default: true/)).toBeInTheDocument();
     expect(screen.getByText("A note.")).toBeInTheDocument();
   });
+
+  test("renders llm model fields with dotted keys and marks the focused one", () => {
+    const llmFields: ConfigField[] = [
+      { key: "llm.shortcut", kind: "string", label: "Shortcut", description: "Named model pool to use." },
+      {
+        key: "llm.parameters",
+        kind: "object",
+        label: "Parameters",
+        description: "Sampling parameters for the call.",
+        fields: [{ key: "temperature", kind: "number", label: "Temperature", description: "Sampling temperature." }],
+      },
+    ];
+    const { container } = render(
+      <NodeTypeDocs doc={doc} common={common} llmFields={llmFields} focusedField="llm.parameters.temperature" />,
+    );
+    expect(screen.getByText(/Model selection/)).toBeInTheDocument();
+    // Sub-fields carry their parent's dotted prefix so panel focus matches.
+    expect(container.querySelector('[data-doc-key="llm.shortcut"]')).not.toBeNull();
+    expect(container.querySelector('[data-doc-key="llm.parameters.temperature"]')).not.toBeNull();
+    expect(container.querySelector('[data-doc-key="llm.parameters.temperature"]')?.className).toContain("border-primary");
+    // Config sub-fields stay bare — the config form reports bare keys.
+    expect(container.querySelector('[data-doc-key="perResultChars"]')).not.toBeNull();
+  });
 });

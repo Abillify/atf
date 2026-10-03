@@ -25,15 +25,39 @@ export interface PlaygroundResult {
 // Streaming fetch helper
 // ---------------------------------------------------------------------------
 
+/**
+ * One streamed delta of a run: the answer (`content`) or the model's thinking
+ * trail (`reasoning`, the OpenAI/Open-WebUI-compatible
+ * `delta.reasoning_content` channel the runtime emits for `<think>` blocks,
+ * native reasoning tokens and pre-tool narration).
+ */
+export interface StreamDelta {
+  kind: "content" | "reasoning";
+  text: string;
+}
+
+/**
+ * Streams a test run. `images` are data: URLs sent as OpenAI `image_url`
+ * content parts alongside the prompt text (multimodal input — the runtime's
+ * image handling, e.g. a multimodal transcription subflow, keys off these).
+ */
 export async function* streamChatCompletion(
   token: string | null,
   flowId: string,
   prompt: string,
   signal?: AbortSignal,
-): AsyncGenerator<string> {
+  images?: string[],
+): AsyncGenerator<StreamDelta> {
+  const content: unknown =
+    images && images.length > 0
+      ? [
+          { type: "text", text: prompt },
+          ...images.map((url) => ({ type: "image_url", image_url: { url } })),
+        ]
+      : prompt;
   const body = {
     model: flowId,
-    messages: [{ role: "user", content: prompt }],
+    messages: [{ role: "user", content }],
     stream: true,
   };
 
@@ -47,10 +71,15 @@ export async function* streamChatCompletion(
   })) {
     try {
       const parsed = JSON.parse(event.data) as {
-        choices?: Array<{ delta?: { content?: string } }>;
+        choices?: Array<{
+          delta?: { content?: string; reasoning_content?: string };
+        }>;
       };
-      const content = parsed.choices?.[0]?.delta?.content;
-      if (content) yield content;
+      const delta = parsed.choices?.[0]?.delta;
+      // Reasoning first within a chunk: it precedes the answer chronologically.
+      if (delta?.reasoning_content)
+        yield { kind: "reasoning", text: delta.reasoning_content };
+      if (delta?.content) yield { kind: "content", text: delta.content };
     } catch {
       // Ignore non-JSON application events while preserving the SSE stream.
     }

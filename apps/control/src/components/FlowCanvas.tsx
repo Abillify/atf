@@ -52,6 +52,19 @@ import type { DiffInfo, GhostRFNode } from "../lib/flow-diff-view";
 import { NodeCard } from "./graph/NodeRenderer";
 import { labeledEdgeTypes } from "./graph/LabeledEdge";
 import {
+  CHANNEL_COLORS,
+  CHANNEL_STATUS_LABEL,
+  channelEdgeId,
+  channelLogicalEdgeId,
+  isChannelEdgeId,
+  latestFlowsByPair,
+  pairKey,
+} from "../lib/edge-channels";
+import type { EdgeFlowRecord } from "../lib/run-samples";
+import {
+  BOUNDARY_EDGE_PREFIX,
+  boundaryEndEdgeId,
+  boundaryStartEdgeId,
   END_ID,
   RESPONSE_EVENT_ID,
   START_ID,
@@ -63,6 +76,7 @@ import { nodeTypeHex, type NodeState } from "./graph/graphUtils";
 import { EDITOR_NODE_W, EDITOR_NODE_H } from "./graph/GraphLayoutEngine";
 import type { NodeType, FlowNode } from "../types/flow";
 import { PALETTE_DND_TYPE } from "./FlowNodePalette";
+import { SUBFLOW_DND_TYPE } from "./SubflowPalette";
 
 // ---------------------------------------------------------------------------
 // Editable node — reuses the exact NodeCard presentation the live monitor
@@ -479,7 +493,6 @@ function BoundaryNode({ data, selected }: NodeProps<Node<BoundaryNodeData, "boun
 }
 
 const SUBFLOW_BOX_PREFIX = "subflow-box:";
-const BOUNDARY_EDGE_PREFIX = "boundary:";
 /** Handle ids of tool connections (reference edges). Flow edges use the unnamed top/bottom handles. */
 const TOOL_OUT = "tool-out";
 const TOOL_IN = "tool-in";
@@ -488,9 +501,12 @@ const TOOLS_RAIL_OUT = "tools-rail-out";
 const TOOL_RAIL_PREFIX = "tool-rail:";
 const TOOL_RAIL_EDGE_PREFIX = "tool-rail-edge:";
 const isToolRailId = (id: string): boolean => id.startsWith(TOOL_RAIL_PREFIX);
-/** Display-only edges: not flow edges, never reported or changed. */
+/** Display-only edges: not flow edges, never reported or changed. Channel
+ * lines (edge data flow) are synthetic too — only their logical edge is. */
 const isOverlayEdgeId = (id: string): boolean =>
-  id.startsWith(BOUNDARY_EDGE_PREFIX) || id.startsWith(TOOL_RAIL_EDGE_PREFIX);
+  id.startsWith(BOUNDARY_EDGE_PREFIX) ||
+  id.startsWith(TOOL_RAIL_EDGE_PREFIX) ||
+  isChannelEdgeId(id);
 /** Stroke of an edge the traced run went along. */
 const USED_EDGE_STROKE = "#10b981";
 const nodeTypes = {
@@ -578,6 +594,8 @@ export interface FlowCanvasProps {
   nodeOrigins?: Record<string, string>;
   /** Called when a node type is dropped from the palette onto the canvas at `position` (flow coordinates). */
   onDropNodeType?: (type: NodeType, position: { x: number; y: number }) => void;
+  /** Called when a sub-flow file is dropped from the Subflows section onto the canvas at `position` (flow coordinates). */
+  onDropSubflow?: (path: string, position: { x: number; y: number }) => void;
   /** Called when the user pans/zooms, so the viewport can be persisted with the flow. */
   onViewportChange?: (viewport: Viewport) => void;
   /** Initial viewport (pan + zoom) restored from the saved flow. */
@@ -609,6 +627,14 @@ export interface FlowCanvasProps {
   onSetEntry?: (nodeId: string) => void;
   /** A tool chip of `nodeId` was clicked (`tool`: the ref or called name). */
   onToolClick?: (nodeId: string, tool: string) => void;
+  /**
+   * Per-edge data flow of the traced run (from the debug trace): every
+   * payload that crossed each edge. Rendered as colored parallel channel
+   * lines beside the edge; clicking one opens the payload list in the
+   * property panel. Only real runs provide these — pinned/loaded data never
+   * highlights edges.
+   */
+  edgeFlows?: EdgeFlowRecord[];
 }
 
 function FlowCanvasInner({
@@ -628,6 +654,7 @@ function FlowCanvasInner({
   ghostEdges,
   nodeOrigins,
   onDropNodeType,
+  onDropSubflow,
   onViewportChange,
   defaultViewport,
   referenceEdges,
@@ -640,6 +667,7 @@ function FlowCanvasInner({
   onSelectBoundary,
   onSetEntry,
   onToolClick,
+  edgeFlows,
 }: FlowCanvasProps): React.JSX.Element {
   const { screenToFlowPosition, zoomIn, zoomOut, fitView } = useReactFlow();
   const colorScheme = useColorSchemeOrDefault();
@@ -727,8 +755,38 @@ function FlowCanvasInner({
     [editable, onNodesChange, nodes, ghostIds],
   );
 
+  // Channel lines are synthetic: they live only in `renderEdges`, never in the
+  // caller's `edges`, so a select change for one would be dropped and the line
+  // could never highlight. Track their selection locally, mirroring what the
+  // caller's state does for real edges.
+  const [selectedChannelIds, setSelectedChannelIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  // A new trace replaces the channel lines: drop a stale selection so lines a
+  // later run happens to reuse don't start out highlighted. (Render-phase
+  // reset — React's pattern for adjusting state when a prop changes.)
+  const [channelTrace, setChannelTrace] = useState(edgeFlows);
+  if (channelTrace !== edgeFlows) {
+    setChannelTrace(edgeFlows);
+    if (selectedChannelIds.size > 0) setSelectedChannelIds(new Set());
+  }
+
   const handleEdgesChange = useCallback(
     (changes: EdgeChange[]) => {
+      const channelSelects = changes.filter(
+        (c): c is Extract<EdgeChange, { type: "select" }> =>
+          c.type === "select" && "id" in c && isChannelEdgeId(c.id),
+      );
+      if (channelSelects.length > 0) {
+        setSelectedChannelIds((prev) => {
+          const next = new Set(prev);
+          for (const c of channelSelects) {
+            if (c.selected) next.add(c.id);
+            else next.delete(c.id);
+          }
+          return next;
+        });
+      }
       if (!editable || !onEdgesChange) return;
       const own = changes.filter((c) => !("id" in c) || !isOverlayEdgeId(c.id));
       if (own.length === 0) return;
@@ -814,7 +872,11 @@ function FlowCanvasInner({
   const handleDragOver = useCallback(
     (e: React.DragEvent) => {
       if (!editable) return;
-      if (!e.dataTransfer.types.includes(PALETTE_DND_TYPE)) return;
+      if (
+        !e.dataTransfer.types.includes(PALETTE_DND_TYPE) &&
+        !e.dataTransfer.types.includes(SUBFLOW_DND_TYPE)
+      )
+        return;
       e.preventDefault();
       e.dataTransfer.dropEffect = "copy";
     },
@@ -823,14 +885,22 @@ function FlowCanvasInner({
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
-      if (!editable || !onDropNodeType) return;
+      if (!editable) return;
+      const subflowPath = e.dataTransfer.getData(SUBFLOW_DND_TYPE);
+      if (subflowPath) {
+        if (!onDropSubflow) return;
+        e.preventDefault();
+        onDropSubflow(subflowPath, screenToFlowPosition({ x: e.clientX, y: e.clientY }));
+        return;
+      }
+      if (!onDropNodeType) return;
       const type = e.dataTransfer.getData(PALETTE_DND_TYPE) as NodeType | "";
       if (!type) return;
       e.preventDefault();
       const position = screenToFlowPosition({ x: e.clientX, y: e.clientY });
       onDropNodeType(type, position);
     },
-    [editable, onDropNodeType, screenToFlowPosition],
+    [editable, onDropNodeType, onDropSubflow, screenToFlowPosition],
   );
 
   // Stable identity for ReactFlow's onSelectionChange. Passing a fresh handler
@@ -850,9 +920,16 @@ function FlowCanvasInner({
       // Start/End are not flow nodes: reported on their own channel.
       const boundary = sel.nodes.length === 1 && isBoundaryId(sel.nodes[0]!.id) ? sel.nodes[0]!.id : null;
       onSelectBoundaryRef.current?.(boundary === null ? null : boundary === START_ID ? "start" : "end");
+      // A clicked channel line reports the edge it belongs to; several
+      // channels of one edge collapse to that single logical edge.
+      const mapped: string[] = [];
+      for (const e of sel.edges) {
+        if (isChannelEdgeId(e.id)) mapped.push(channelLogicalEdgeId(e.id));
+        else if (!isOverlayEdgeId(e.id)) mapped.push(e.id);
+      }
       onSelectionChangeRef.current?.(
         sel.nodes.filter((n) => !isBoundaryId(n.id)).map((n) => n.id),
-        sel.edges.filter((e) => !isOverlayEdgeId(e.id)).map((e) => e.id),
+        [...new Set(mapped)],
       );
     },
     [],
@@ -1015,10 +1092,10 @@ function FlowCanvasInner({
   const renderEdges = useMemo(() => {
     // Edges between the same two nodes share one curve: number their labels
     // so each gets its own spot along it (LabeledEdge `labelSlot`).
-    const pairKey = (e: { source: string; target: string }) => `${e.source}\u0000${e.target}`;
+    const edgePairKey = (e: { source: string; target: string }) => `${e.source}\u0000${e.target}`;
     const pairCount = new Map<string, number>();
     for (const edge of edges) {
-      if (edge.label) pairCount.set(pairKey(edge), (pairCount.get(pairKey(edge)) ?? 0) + 1);
+      if (edge.label) pairCount.set(edgePairKey(edge), (pairCount.get(edgePairKey(edge)) ?? 0) + 1);
     }
     const pairSeen = new Map<string, number>();
     // The run went along an edge when it ran both ends, the target after the
@@ -1029,10 +1106,52 @@ function FlowCanvasInner({
       if (!s || !t) return false;
       return s.sequence == null || t.sequence == null || t.sequence > s.sequence;
     };
-    const real = edges.map((edge) => {
-      const count = pairCount.get(pairKey(edge)) ?? 0;
-      const index = edge.label ? (pairSeen.get(pairKey(edge)) ?? 0) : 0;
-      if (edge.label) pairSeen.set(pairKey(edge), index + 1);
+    // Per-edge data flow of the traced run: the newest traversal per pair.
+    // Each payload becomes a colored channel line beside the base edge;
+    // `consumed` items still draw their line — the payload crossed THIS edge
+    // and ends at the target (e.g. the image at the vision node), which is
+    // exactly where the line stops.
+    const flowByPair = latestFlowsByPair(edgeFlows ?? []);
+    const CHANNEL_GAP = 6;
+    const channelEdgesFor = (
+      logicalId: string,
+      source: string,
+      target: string,
+    ) => {
+      if (!runActive) return [];
+      const record = flowByPair.get(pairKey(source, target));
+      if (record === undefined || record.items.length === 0) return [];
+      const n = record.items.length;
+      return record.items.map((item, i) => {
+        const status = CHANNEL_STATUS_LABEL[item.status];
+        return {
+          id: channelEdgeId(logicalId, i),
+          source,
+          target,
+          type: "channel",
+          selectable: true,
+          deletable: false,
+          focusable: false,
+          zIndex: 1,
+          selected: selectedChannelIds.has(channelEdgeId(logicalId, i)),
+          data: {
+            color: CHANNEL_COLORS[item.kind],
+            offset: (i - (n - 1) / 2) * CHANNEL_GAP,
+            logicalEdgeId: logicalId,
+            title: `${item.label} · ${status}`,
+          },
+        };
+      });
+    };
+    // The element type is widened to React Flow's `Edge`: the branches below
+    // return different shapes (base edges, dimmed/styled variants, channel
+    // lines), and without the annotation TS locks the union onto the first
+    // channel-line shape and rejects the base edges. `renderEdges` is handed
+    // to React Flow as `Edge[]` anyway.
+    const real = edges.flatMap<Edge>((edge) => {
+      const count = pairCount.get(edgePairKey(edge)) ?? 0;
+      const index = edge.label ? (pairSeen.get(edgePairKey(edge)) ?? 0) : 0;
+      if (edge.label) pairSeen.set(edgePairKey(edge), index + 1);
       const e = {
         ...edge,
         type: "labeled",
@@ -1060,19 +1179,26 @@ function FlowCanvasInner({
                 ? "#f87171"
                 : undefined;
       if (color === undefined) {
-        if (!runActive) return e;
-        return usedEdge(edge.source, edge.target)
-          ? { ...e, animated: true, style: { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 } }
-          : { ...e, style: { opacity: 0.35 } };
+        if (!runActive) return [e];
+        if (!usedEdge(edge.source, edge.target)) return [{ ...e, style: { opacity: 0.35 } }];
+        // The run went this way: one colored channel line per payload the
+        // runtime recorded for this edge. The channels REPLACE the base edge
+        // — as many lines as the panel lists payloads; clicking a channel
+        // still opens this edge's properties (logicalEdgeId).
+        const channels = channelEdgesFor(e.id, edge.source, edge.target);
+        if (channels.length > 0) return channels;
+        return [{ ...e, style: { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 } }];
       }
-      return {
-        ...e,
-        style: {
-          stroke: color,
-          strokeWidth: 2,
-          ...(diffState?.status === "removed" ? { strokeDasharray: "4 3" } : {}),
+      return [
+        {
+          ...e,
+          style: {
+            stroke: color,
+            strokeWidth: 2,
+            ...(diffState?.status === "removed" ? { strokeDasharray: "4 3" } : {}),
+          },
         },
-      };
+      ];
     });
     // Tool links leave the caller from one handle and share its first stretch,
     // so identical labels ("delegates" ×3) would pile up there: label only one
@@ -1135,36 +1261,50 @@ function FlowCanvasInner({
       ? [
           ...(boundaryLayout.b.entryId !== null ? [boundaryLayout.b.entryId] : []).map((id) => {
             const used = runActive && (liveStates?.has(id) ?? false);
-            return {
-              id: `${BOUNDARY_EDGE_PREFIX}start-${id}`,
-              source: START_ID,
-              target: id,
-              type: "labeled",
-              selectable: false,
-              deletable: false,
-              focusable: false,
-              animated: used,
-              style: boundaryStyle(used, "#10b981"),
-              data: {},
-            };
+            const channels = channelEdgesFor(boundaryStartEdgeId(id), START_ID, id);
+            return [
+              ...(used && channels.length > 0
+                ? []
+                : [
+                    {
+                      id: boundaryStartEdgeId(id),
+                      source: START_ID,
+                      target: id,
+                      type: "labeled",
+                      selectable: false,
+                      deletable: false,
+                      focusable: false,
+                      style: boundaryStyle(used, "#10b981"),
+                      data: {},
+                    },
+                  ]),
+              ...channels,
+            ];
           }),
           ...boundaryLayout.b.exits.map((x) => {
             const used = ranExit === x.nodeId;
-            return {
-              id: `${BOUNDARY_EDGE_PREFIX}end-${x.nodeId}`,
-              source: x.nodeId,
-              target: END_ID,
-              type: "labeled",
-              ...(x.kind === "nomatch" ? { label: "no match" } : {}),
-              selectable: false,
-              deletable: false,
-              focusable: false,
-              animated: used,
-              style: boundaryStyle(used, "#94a3b8"),
-              data: {},
-            };
+            const channels = channelEdgesFor(boundaryEndEdgeId(x.nodeId), x.nodeId, END_ID);
+            return [
+              ...(used && channels.length > 0
+                ? []
+                : [
+                    {
+                      id: boundaryEndEdgeId(x.nodeId),
+                      source: x.nodeId,
+                      target: END_ID,
+                      type: "labeled",
+                      ...(x.kind === "nomatch" ? { label: "no match" } : {}),
+                      selectable: false,
+                      deletable: false,
+                      focusable: false,
+                      style: boundaryStyle(used, "#94a3b8"),
+                      data: {},
+                    },
+                  ]),
+              ...channels,
+            ];
           }),
-        ]
+        ].flat()
       : [];
     // Node → its tool row.
     const railEdges = toolRails.map(({ node: n, chips }) => {
@@ -1207,7 +1347,7 @@ function FlowCanvasInner({
       };
     });
     return [...real, ...refs, ...railEdges, ...ghosts, ...implicit];
-  }, [edges, nodes, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout, liveStates, runActive, toolRails]);
+  }, [edges, nodes, edgeValidation, edgeDiff, ghostEdges, referenceEdges, showReferences, boundaryLayout, liveStates, runActive, toolRails, edgeFlows, selectedChannelIds]);
 
   return (
     <div

@@ -26,6 +26,9 @@ export interface FlowNodePaletteProps {
   subflows?: SubflowActions | undefined;
   /** Icon-only rail (still draggable) to leave more room for the canvas. */
   collapsed?: boolean;
+  /** Stretch to the container width (the Studio sidebar's Nodes section)
+      instead of the fixed rail width used left of the canvas. */
+  fullWidth?: boolean;
 }
 
 interface PaletteEntry {
@@ -111,6 +114,7 @@ export function FlowNodePalette({
   onAddNode,
   collapsed = false,
   subflows,
+  fullWidth = false,
 }: FlowNodePaletteProps): React.JSX.Element {
   const [query, setQuery] = useState("");
 
@@ -155,7 +159,7 @@ export function FlowNodePalette({
   }
 
   return (
-    <div className="flex h-full w-56 shrink-0 flex-col gap-2">
+    <div className={`flex ${fullWidth ? "w-full" : "h-full w-56 shrink-0"} flex-col gap-2`}>
       <input
         type="search"
         value={query}

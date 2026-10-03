@@ -66,6 +66,32 @@ export interface RunTraceMessage {
   tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }>;
 }
 
+/** What kind of payload crossed an edge (mirrors runtime types/edge-flow.ts). */
+export type EdgeFlowItemKind = "text" | "image" | "tool" | "data";
+
+/** Passed along, consumed by the target, or produced by the source node. */
+export type EdgeFlowItemStatus = "passed" | "produced" | "consumed";
+
+/** One payload channel on an edge — rendered as a colored parallel line. */
+export interface EdgeFlowItem {
+  kind: EdgeFlowItemKind;
+  label: string;
+  status: EdgeFlowItemStatus;
+  content?: string;
+  media_type?: string;
+  ref?: string;
+  bytes?: number;
+  tool_name?: string;
+}
+
+/** One traversal of an edge: every payload that crossed from source to target. */
+export interface EdgeFlowRecord {
+  source: string;
+  target: string;
+  sequence: number;
+  items: EdgeFlowItem[];
+}
+
 /** The input side of a recorded execution (`GET /monitoring/debug/:id`). */
 export interface RunTrace {
   execution_id: string;
@@ -78,6 +104,11 @@ export interface RunTrace {
   context: Record<string, unknown>;
   /** The conversation as received, all roles. */
   input_messages: RunTraceMessage[];
+  /**
+   * Per-edge data flow of this run (Studio-instrumented runs only): one
+   * record per traversal; the canvas renders the newest per (source, target).
+   */
+  edge_flows?: EdgeFlowRecord[];
 }
 
 /** The full debug trace of one run — what the Start panel shows as the run's input. */

@@ -7,8 +7,8 @@ import {
   BaseEdge,
   getBezierPath,
   getSmoothStepPath,
+  Position,
   type EdgeProps,
-  type Position,
 } from "@xyflow/react";
 
 /**
@@ -275,7 +275,73 @@ export function LabeledSmoothStepEdge(props: EdgeProps) {
   return <LabeledEdgeImpl {...props} kind="smoothstep" />;
 }
 
+/**
+ * A single data-flow channel line: one payload (query, image, tool, result)
+ * that a traced run carried over an edge. Drawn beside the edge's base line —
+ * the SAME bezier the base edge uses (type "labeled"), with both ends shifted
+ * sideways by `data.offset` perpendicular to the handle direction — so several
+ * payloads on one edge render as parallel lanes next to each other instead of
+ * piling onto one curve. In the payload kind's color, with a dot at the
+ * source end marking where each lane starts.
+ *
+ * Selectable: clicking it opens the property panel with the full list of
+ * payloads that crossed the logical edge (`data.logicalEdgeId`).
+ */
+function ChannelEdgeImpl({
+  id,
+  sourceX,
+  sourceY,
+  sourcePosition,
+  targetX,
+  targetY,
+  targetPosition,
+  data,
+  selected,
+}: EdgeProps) {
+  const offset =
+    typeof data?.offset === "number" && Number.isFinite(data.offset)
+      ? data.offset
+      : 0;
+  // Lanes run perpendicular to the direction the edge leaves its handles:
+  // top/bottom handles → shift sideways (x), left/right → shift vertically (y).
+  // Shifting BOTH ends keeps the bezier parallel to the base edge's curve.
+  const vertical =
+    sourcePosition === Position.Top || sourcePosition === Position.Bottom;
+  const sx = vertical ? sourceX + offset : sourceX;
+  const sy = vertical ? sourceY : sourceY + offset;
+  const tx = vertical ? targetX + offset : targetX;
+  const ty = vertical ? targetY : targetY + offset;
+  const path = getBezierPath({
+    sourceX: sx,
+    sourceY: sy,
+    sourcePosition,
+    targetX: tx,
+    targetY: ty,
+    targetPosition,
+  })[0];
+  const stroke = typeof data?.color === "string" ? data.color : "#10b981";
+  const title = typeof data?.title === "string" ? data.title : undefined;
+  return (
+    <>
+      <BaseEdge
+        id={id}
+        path={path}
+        style={{
+          stroke,
+          strokeWidth: selected ? 3 : 2,
+          opacity: selected ? 1 : 0.85,
+        }}
+      />
+      {/* Source-end dot on the lane's own start, so the bundle reads as
+          separate lines even where they converge at the handle. */}
+      <circle cx={sx} cy={sy} r={selected ? 4 : 3} fill={stroke} />
+      {title !== undefined && <title>{title}</title>}
+    </>
+  );
+}
+
 export const labeledEdgeTypes = {
   labeled: LabeledBezierEdge,
   labeledStep: LabeledSmoothStepEdge,
+  channel: ChannelEdgeImpl,
 };

@@ -150,7 +150,7 @@ describe("SubflowPalette", () => {
     expect(a.onCreate).toHaveBeenCalledWith("retrieval");
   });
 
-  test("Include: lists sub-flow files, marks those on the canvas, includes on click", async () => {
+  test("lists sub-flow files inline, marks those on the canvas, includes on click", async () => {
     global.fetch = vi.fn(async () => ({
       ok: true,
       json: async () => ({
@@ -162,13 +162,37 @@ describe("SubflowPalette", () => {
     })) as unknown as typeof fetch;
     const a = actions();
     render(<SubflowPalette actions={a} />);
-    fireEvent.click(screen.getByRole("button", { name: /Include/ }));
-    const dialog = await screen.findByRole("dialog");
-    await waitFor(() => expect(within(dialog).getByText("📄 lib.yaml")).toBeInTheDocument());
-    expect(within(dialog).getByText(/used by abby/)).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "On canvas" })).toBeDisabled();
-    fireEvent.click(within(dialog).getByRole("button", { name: "Include" }));
+    const card = await screen.findByText("📄 lib.yaml");
+    expect(screen.getByText(/used by abby/)).toBeInTheDocument();
+    // The card is draggable and carries the file path as its payload.
+    const li = card.closest("li") as HTMLElement;
+    expect(li.getAttribute("draggable")).toBe("true");
+    const setData = vi.fn();
+    fireEvent.dragStart(li, { dataTransfer: { setData, data: {} } });
+    expect(setData).toHaveBeenCalledWith(
+      "application/x-aiperator-subflow",
+      "subflows/lib.yaml",
+    );
+    // Already-on-canvas files are not draggable and their button is disabled.
+    const onCanvas = screen.getByText("📄 on-canvas.yaml").closest("li") as HTMLElement;
+    expect(onCanvas.getAttribute("draggable")).toBe("false");
+    expect(within(onCanvas).getByRole("button", { name: "On canvas" })).toBeDisabled();
+    fireEvent.click(within(li).getByRole("button", { name: "Include" }));
     await waitFor(() => expect(a.onInclude).toHaveBeenCalledWith("subflows/lib.yaml"));
-    expect(await within(dialog).findByText(/Included subflows\/lib.yaml/)).toBeInTheDocument();
+    expect(await screen.findByText(/Included subflows\/lib.yaml/)).toBeInTheDocument();
+  });
+
+  test("double-clicking a listed sub-flow includes it", async () => {
+    global.fetch = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        subflows: [{ path: "subflows/lib.yaml", nodeIds: ["recall"], edgeCount: 0, usedBy: [] }],
+      }),
+    })) as unknown as typeof fetch;
+    const a = actions();
+    render(<SubflowPalette actions={a} />);
+    const card = await screen.findByText("📄 lib.yaml");
+    fireEvent.doubleClick(card.closest("li") as HTMLElement);
+    await waitFor(() => expect(a.onInclude).toHaveBeenCalledWith("subflows/lib.yaml"));
   });
 });

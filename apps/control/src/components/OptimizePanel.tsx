@@ -122,6 +122,9 @@ export interface OptimizePanelProps {
   getCanvasDefinition?: () => FlowDefinition | null;
   /** How the canvas is named in messages, e.g. "canvas (unsaved changes)". */
   canvasLabel?: string;
+  /** The host renders its own heading (the Studio sidebar's accordion) —
+      skip the panel's own "Optimize" title. */
+  hideHeading?: boolean;
 }
 
 export function OptimizePanel({
@@ -129,6 +132,7 @@ export function OptimizePanel({
   token,
   getCanvasDefinition,
   canvasLabel = "canvas",
+  hideHeading = false,
 }: OptimizePanelProps): React.JSX.Element {
   const { ready, isAuthenticated } = useAuth();
   const [source, setSource] = useState<AdviceSource>(getCanvasDefinition ? "canvas" : "live");
@@ -171,7 +175,9 @@ export function OptimizePanel({
 
   return (
     <section className="space-y-3">
-      <h3 className="text-sm font-semibold text-foreground">Optimize</h3>
+      {!hideHeading && (
+        <h3 className="text-sm font-semibold text-foreground">Optimize</h3>
+      )}
 
       {!selectedFlowId && !getCanvasDefinition ? (
         <p className="text-xs text-muted-foreground">Select a flow to see routing recommendations.</p>

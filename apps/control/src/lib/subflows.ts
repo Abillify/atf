@@ -37,7 +37,7 @@ const headers = (token: string | undefined): Record<string, string> =>
 export async function fetchSubflows(token: string | undefined): Promise<SubflowInfo[]> {
   const resp = await fetch(backendUrl("/flows/subflows"), { headers: headers(token) });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return ((await resp.json()) as { subflows: SubflowInfo[] }).subflows;
+  return ((await resp.json()) as { subflows?: SubflowInfo[] }).subflows ?? [];
 }
 
 export async function fetchSubflowContent(path: string, token: string | undefined): Promise<SubflowContent> {

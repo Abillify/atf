@@ -8,7 +8,8 @@
  * Grid layout:
  *   - Builder (left/main): ReactFlow canvas + NodePropertyPanel
  *   - Run & Trace (in the builder): test the canvas or the live flow, save eval cases
- *   - Optimize (right): Routing recommendations + Eval summary
+ *   - Right sidebar: an accordion with one section expanded at a time —
+ *     Nodes (the palette), Optimize, Diff, Autopilot and Documentation
  *
  * Write/mutation controls are gated with <RequireRole role="operator"> (Req. 21.1).
  *
@@ -27,7 +28,9 @@ import type { FlowListEntry } from "../../../types/flow";
 import type { PlaygroundResult } from "../../../lib/studio-run";
 import { FlowPicker } from "../../../components/FlowPicker";
 import { NodeTypeDocs } from "../../../components/NodeTypeDocs";
+import { ResizeHandle } from "../../../components/ResizeHandle";
 import { useNodeDocs } from "../../../hooks/useNodeDocs";
+import { usePersistentWidth } from "../../../hooks/usePersistentWidth";
 import { useNodeTypeCatalog } from "../../../lib/node-types";
 import {
   validateStudioEvalCase,
@@ -40,15 +43,19 @@ import {
   PanelToggleGroup,
 } from "../../../components/PanelToggle";
 import {
+  BookOpen,
+  ChevronDown,
+  FolderInput,
+  Gauge,
+  GitCompare,
   Maximize2,
   Minimize2,
+  RefreshCw,
   Shapes,
   SlidersHorizontal,
-  Sparkles,
   PanelRight,
   PanelRightClose,
   PanelRightOpen,
-  BookOpen,
 } from "lucide-react";
 
 // Lazy-load heavy components (Req. 12.3)
@@ -154,6 +161,63 @@ async function deleteEvalCase(token: string | undefined, id: string): Promise<vo
 }
 
 // ---------------------------------------------------------------------------
+// Studio sidebar accordion
+// ---------------------------------------------------------------------------
+
+/**
+ * One section of the Studio's right sidebar. The sidebar is an accordion:
+ * exactly one section is expanded at a time (the parent owns which), the
+ * others render only their header button. The header doubles as the toggle.
+ */
+function SidebarSection({
+  id,
+  current,
+  onToggle,
+  icon,
+  title,
+  children,
+}: {
+  id: string;
+  current: string;
+  onToggle: (id: string) => void;
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const open = current === id;
+  return (
+    <section className="border-b border-border last:border-b-0">
+      <h2 className="m-0">
+        <button
+          type="button"
+          aria-expanded={open}
+          aria-controls={`studio-sidebar-${id}`}
+          onClick={() => onToggle(id)}
+          className={`flex w-full items-center gap-2 py-2.5 text-left text-sm font-semibold transition-colors ${
+            open
+              ? "text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          <span className="text-muted-foreground">{icon}</span>
+          {title}
+          <ChevronDown
+            size={14}
+            aria-hidden
+            className={`ml-auto shrink-0 transition-transform ${open ? "rotate-180" : ""}`}
+          />
+        </button>
+      </h2>
+      {open && (
+        <div id={`studio-sidebar-${id}`} className="pb-4">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main Studio page
 // ---------------------------------------------------------------------------
 
@@ -222,19 +286,72 @@ export default function StudioPage() {
     "studio.focusMode",
     false,
   );
-  const [paletteOpen, setPaletteOpen] = usePersistentToggle("studio.palette", true);
   const [propertiesOpen, setPropertiesOpen] = usePersistentToggle(
     "studio.properties",
     true,
   );
-  const [assistOpen, setAssistOpen] = usePersistentToggle("studio.assist", true);
+  // Right sidebar width, drag-resizable via the handle on its left edge.
+  const [sidebarWidth, setSidebarWidth] = usePersistentWidth(
+    "studio.sidebarWidth",
+    384,
+    280,
+    720,
+  );
+  // The right sidebar is an accordion: exactly one section (Nodes, Optimize,
+  // Diff, Autopilot, Documentation) is expanded, the rest stay collapsed.
+  // Persisted per browser; "" = everything collapsed.
+  const [sidebarSection, setSidebarSection] = useState<string>("nodes");
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem("atf.ui.studio.sidebarSection");
+      if (stored !== null) setSidebarSection(stored);
+    } catch {
+      /* storage unavailable — keep the default */
+    }
+  }, []);
+  const toggleSidebarSection = useCallback(
+    (section: string) => {
+      setSidebarSection((cur) => {
+        const next = cur === section ? "" : section;
+        try {
+          window.localStorage.setItem("atf.ui.studio.sidebarSection", next);
+        } catch {
+          /* storage unavailable — state still applies for this session */
+        }
+        return next;
+      });
+    },
+    [],
+  );
+  /** DOM node the builder's node palette is portalled into (Nodes section). */
+  const [paletteHost, setPaletteHost] = useState<HTMLElement | null>(null);
+  /** DOM node the builder's sub-flow palette is portalled into (Subflows section). */
+  const [subflowsHost, setSubflowsHost] = useState<HTMLElement | null>(null);
+  // Copilot and Run & Trace start hidden and are switched on individually from
+  // the builder toolbar (next to Undo/Redo) — they are not permanently visible.
+  const [copilotOpen, setCopilotOpen] = usePersistentToggle("studio.copilot", false);
+  const [runTraceOpen, setRunTraceOpen] = usePersistentToggle("studio.runTrace", false);
+  const handleTogglePanel = useCallback(
+    (panel: "copilot" | "runTrace") => {
+      if (panel === "copilot") setCopilotOpen((v) => !v);
+      else setRunTraceOpen((v) => !v);
+    },
+    [setCopilotOpen, setRunTraceOpen],
+  );
   // An attached request is shown in the Run & Trace bar — make sure it's visible.
   useEffect(() => {
-    if (attach !== null) setAssistOpen(true);
-  }, [attach, setAssistOpen]);
+    if (attach !== null) setRunTraceOpen(true);
+  }, [attach, setRunTraceOpen]);
   const builderPanels = useMemo(
-    () => ({ palette: paletteOpen, properties: propertiesOpen, assist: assistOpen }),
-    [paletteOpen, propertiesOpen, assistOpen],
+    () => ({
+      // With the sidebar open the palette lives in its "Nodes" section; when
+      // the sidebar is hidden the builder falls back to a narrow icon rail.
+      palette: !sidebarCollapsed && !focusMode,
+      properties: propertiesOpen,
+      copilot: copilotOpen,
+      runTrace: runTraceOpen,
+    }),
+    [sidebarCollapsed, focusMode, propertiesOpen, copilotOpen, runTraceOpen],
   );
 
   // Switching flows reloads the canvas — don't silently drop edits.
@@ -336,6 +453,49 @@ export default function StudioPage() {
   >(null);
   const nodeDocs = useNodeDocs(inspect, catalog);
   const docType = nodeDocs.doc;
+  const docsAvailable = docType !== undefined || nodeDocs.hidden !== undefined;
+  const nodeDocsShow = nodeDocs.show;
+  // Selecting a node — or focusing one of its settings — expands the
+  // Documentation section so the matching passage is visible right away. The
+  // key covers the focused field too: focusing another setting re-opens the
+  // section (and docs the user had closed) for the field being edited.
+  const inspectFocusKey =
+    inspect?.nodeId !== undefined
+      ? `${inspect.nodeId}:${inspect.field ?? ""}`
+      : undefined;
+  useEffect(() => {
+    if (inspectFocusKey === undefined || !docsAvailable) return;
+    nodeDocsShow();
+    setSidebarSection((cur) => {
+      if (cur === "documentation") return cur;
+      try {
+        window.localStorage.setItem("atf.ui.studio.sidebarSection", "documentation");
+      } catch {
+        /* storage unavailable — state still applies for this session */
+      }
+      return "documentation";
+    });
+  }, [inspectFocusKey, docsAvailable, nodeDocsShow]);
+  // Where the builder's palette renders: into the sidebar's expanded Nodes
+  // section; `null` while that section is collapsed (no palette anywhere);
+  // `undefined` while the sidebar itself is hidden — then the builder falls
+  // back to its classic rail left of the canvas.
+  const sidebarOpen = showSidebar && !sidebarCollapsed;
+  const paletteContainer = !sidebarOpen
+    ? undefined
+    : sidebarSection === "nodes"
+      ? paletteHost
+      : null;
+  // Same for the sub-flow palette: its own "Subflows" accordion section;
+  // while the sidebar is hidden it stays inside the palette's rail.
+  const subflowsContainer = !sidebarOpen
+    ? undefined
+    : sidebarSection === "subflows"
+      ? subflowsHost
+      : null;
+  // Sub-flows only apply to file flows with write access (mirrors the
+  // builder's showFileWrite gate) — otherwise the section would be empty.
+  const showSubflowsSection = fileWriting && selectedFlow?.source !== "online";
 
   return (
     <div className="flex h-full flex-col gap-0 overflow-hidden">
@@ -360,13 +520,6 @@ export default function StudioPage() {
         <div className="ml-auto flex items-center gap-2">
           <PanelToggleGroup caption="Show">
             <PanelToggle
-              label="Palette"
-              icon={<Shapes size={13} />}
-              on={paletteOpen}
-              onToggle={() => setPaletteOpen((v) => !v)}
-              what="the full node palette (hidden it stays as a narrow icon rail)"
-            />
-            <PanelToggle
               label="Properties"
               icon={<SlidersHorizontal size={13} />}
               on={propertiesOpen}
@@ -374,19 +527,12 @@ export default function StudioPage() {
               what="the properties panel for the selected node/edge"
             />
             <PanelToggle
-              label="Copilot & Run"
-              icon={<Sparkles size={13} />}
-              on={assistOpen}
-              onToggle={() => setAssistOpen((v) => !v)}
-              what="the Copilot and Run & Trace bars above the canvas"
-            />
-            <PanelToggle
               label="Sidebar"
               icon={<PanelRight size={13} />}
               on={showSidebar && !sidebarCollapsed}
               disabled={focusMode}
               onToggle={() => setSidebarCollapsed((v) => !v)}
-              what="the right sidebar (Optimize, Diff, Autopilot)"
+              what="the right sidebar (Nodes, Optimize, Diff, Autopilot, Docs)"
             />
           </PanelToggleGroup>
           <button
@@ -444,6 +590,9 @@ export default function StudioPage() {
                     onSaveEvalCase={handleSaveEvalCase}
                     onDeleteEvalCase={handleDeleteEvalCase}
                     panels={builderPanels}
+                    onTogglePanel={handleTogglePanel}
+                    paletteContainer={paletteContainer}
+                    subflowsContainer={subflowsContainer}
                     canvasDefinitionRef={canvasDefinitionRef}
                     {...(attach !== null && attach.flowId === selectedFlowId
                       ? { attachExecutionId: attach.executionId, onDetachExecution: detachExecution }
@@ -456,44 +605,42 @@ export default function StudioPage() {
 
         </div>
 
-        {/* Right column: node documentation (while a node is selected) +
-            Optimize + Diff + Autopilot. Collapsible to a rail; the docs still
-            open on their own while a node is being edited (without changing
-            the saved sidebar preference) and can be dismissed per node. */}
+        {/* Right column: an accordion — Nodes (the palette) and Subflows
+            (both portalled from the builder), Optimize, Diff, Autopilot and
+            Documentation. Exactly one section is expanded at a time, the
+            others stay collapsed; the choice is remembered per browser.
+            Selecting a node expands the Documentation section. Collapsible
+            to a rail; while the sidebar is hidden the palette (and the
+            sub-flow section inside it) falls back to the rail left of the
+            canvas. */}
         {(() => {
           const docsVisible = docType !== undefined && catalog !== undefined;
-          const docs = docsVisible ? (
-            <section className="border-b border-border pb-4">
-              <div className="mb-2 flex items-center justify-between">
-                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Node documentation
-                </span>
-                <button
-                  type="button"
-                  onClick={nodeDocs.close}
-                  title="Hide the documentation for this node"
-                  aria-label="Hide node documentation"
-                  className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  ×
-                </button>
-              </div>
-              <NodeTypeDocs
-                doc={docType}
-                common={catalog.common}
-                {...(inspect?.field ? { focusedField: inspect.field } : {})}
-                {...(inspect?.nodeId ? { nodeId: inspect.nodeId } : {})}
-              />
-            </section>
-          ) : null;
-
-          const sidebarOpen = showSidebar && !sidebarCollapsed;
           if (!sidebarOpen && docsVisible) {
             // Docs only, shown on demand.
             return (
-              <div className="w-96 shrink-0 overflow-auto border-l border-border bg-card p-4">
-                {docs}
-              </div>
+              <>
+                <ResizeHandle
+                  side="left"
+                  width={sidebarWidth}
+                  onWidth={setSidebarWidth}
+                  min={280}
+                  max={720}
+                  initial={384}
+                  label="Resize the documentation panel"
+                />
+                <div
+                  style={{ width: sidebarWidth }}
+                  className="shrink-0 overflow-auto border-l border-border bg-card p-4"
+                >
+                  <NodeTypeDocs
+                    doc={docType}
+                    common={catalog.common}
+                    {...(catalog.llmFields ? { llmFields: catalog.llmFields } : {})}
+                    {...(inspect?.field ? { focusedField: inspect.field } : {})}
+                    {...(inspect?.nodeId ? { nodeId: inspect.nodeId } : {})}
+                  />
+                </div>
+              </>
             );
           }
           if (!showSidebar) return null;
@@ -502,21 +649,37 @@ export default function StudioPage() {
               <div className="flex w-8 shrink-0 flex-col items-center border-l border-border bg-card pt-2">
                 <button type="button"
                   onClick={() => setSidebarCollapsed(false)}
-                  title="Show the sidebar (Docs, Optimize, Diff, Autopilot)"
+                  title="Show the sidebar (Nodes, Subflows, Optimize, Diff, Autopilot, Docs)"
                   aria-label="Show sidebar"
                   className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
                   <PanelRightOpen size={15} aria-hidden />
                 </button>
                 <span className="mt-2 text-[10px] uppercase tracking-wide text-muted-foreground [writing-mode:vertical-rl]">
-                  Docs · Optimize · Diff · Autopilot
+                  Nodes · Subflows · Optimize · Diff · Autopilot · Docs
                 </span>
               </div>
             );
           }
+          const hasDiff =
+            selectedFlow?.source === "online" && selectedFlow.hasDraft;
+          const showDocsSection = docsVisible || nodeDocs.hidden !== undefined;
           return (
-            <div className={`${docsVisible ? "w-96" : "w-80"} shrink-0 overflow-auto border-l border-border bg-card p-4 flex flex-col gap-6`}>
-              <div className="-mb-4 flex justify-end">
+            <>
+            <ResizeHandle
+              side="left"
+              width={sidebarWidth}
+              onWidth={setSidebarWidth}
+              min={280}
+              max={720}
+              initial={384}
+              label="Resize the sidebar"
+            />
+            <div
+              style={{ width: sidebarWidth }}
+              className="flex shrink-0 flex-col overflow-auto border-l border-border bg-card px-4"
+            >
+              <div className="flex justify-end pt-2">
                 <button type="button"
                   onClick={() => setSidebarCollapsed(true)}
                   title="Hide the sidebar to give the canvas more room"
@@ -526,48 +689,129 @@ export default function StudioPage() {
                   Hide
                 </button>
               </div>
-              {docs}
-              {nodeDocs.hidden && (
-                <button
-                  type="button"
-                  onClick={nodeDocs.show}
-                  className="-mb-2 flex items-center gap-1.5 self-start rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+
+              <SidebarSection
+                id="nodes"
+                current={sidebarSection}
+                onToggle={toggleSidebarSection}
+                icon={<Shapes size={13} aria-hidden />}
+                title="Nodes"
+              >
+                {/* The builder's node palette is portalled into this element —
+                    drag cards from here onto the canvas. */}
+                <div ref={setPaletteHost} />
+              </SidebarSection>
+
+              {/* Sub-flows (create / include) live in their own section — the
+                  builder portals its sub-flow palette in here. Only for file
+                  flows with write access, like the builder's own gate. */}
+              {showSubflowsSection && (
+                <SidebarSection
+                  id="subflows"
+                  current={sidebarSection}
+                  onToggle={toggleSidebarSection}
+                  icon={<FolderInput size={13} aria-hidden />}
+                  title="Subflows"
                 >
-                  <BookOpen size={13} aria-hidden />
-                  Show {nodeDocs.hidden.title} node documentation
-                </button>
+                  <div ref={setSubflowsHost} />
+                </SidebarSection>
               )}
-              <OptimizePanel
-                selectedFlowId={selectedFlowId}
-                token={token ?? null}
-                getCanvasDefinition={getCanvasDefinition}
-                canvasLabel={builderDirty ? "canvas (unsaved changes)" : "canvas"}
-              />
+
+              <SidebarSection
+                id="optimize"
+                current={sidebarSection}
+                onToggle={toggleSidebarSection}
+                icon={<Gauge size={13} aria-hidden />}
+                title="Optimize"
+              >
+                <OptimizePanel
+                  selectedFlowId={selectedFlowId}
+                  token={token ?? null}
+                  getCanvasDefinition={getCanvasDefinition}
+                  canvasLabel={builderDirty ? "canvas (unsaved changes)" : "canvas"}
+                  hideHeading
+                />
+              </SidebarSection>
 
               {/* Flow Diff panel — shows draft vs. published; only meaningful
                   once an online flow has both (file flows never do). */}
-              {selectedFlow?.source === "online" && selectedFlow.hasDraft && (
-                <section className="space-y-3">
-                  <h3 className="text-sm font-semibold text-foreground">
-                    Diff (live → draft)
-                  </h3>
+              {hasDiff && (
+                <SidebarSection
+                  id="diff"
+                  current={sidebarSection}
+                  onToggle={toggleSidebarSection}
+                  icon={<GitCompare size={13} aria-hidden />}
+                  title="Diff (live → draft)"
+                >
                   <FlowDiffPanel
                     flowId={selectedFlowId}
                     token={token ?? undefined}
                     draftMode
                   />
-                </section>
+                </SidebarSection>
               )}
 
-              {/* Autopilot panel */}
-              <section>
+              <SidebarSection
+                id="autopilot"
+                current={sidebarSection}
+                onToggle={toggleSidebarSection}
+                icon={<RefreshCw size={13} aria-hidden />}
+                title="Autopilot"
+              >
                 <AutopilotPanel
                   flowId={selectedFlowId || undefined}
                   fixedFlow
                   limit={5}
+                  hideHeading
                 />
-              </section>
+              </SidebarSection>
+
+              {showDocsSection && (
+                <SidebarSection
+                  id="documentation"
+                  current={sidebarSection}
+                  onToggle={toggleSidebarSection}
+                  icon={<BookOpen size={13} aria-hidden />}
+                  title="Documentation"
+                >
+                  {docsVisible ? (
+                    <>
+                      <div className="mb-2 flex items-center justify-between">
+                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          Node documentation
+                        </span>
+                        <button
+                          type="button"
+                          onClick={nodeDocs.close}
+                          title="Hide the documentation for this node"
+                          aria-label="Hide node documentation"
+                          className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                        >
+                          ×
+                        </button>
+                      </div>
+                      <NodeTypeDocs
+                        doc={docType}
+                        common={catalog.common}
+                        {...(catalog.llmFields ? { llmFields: catalog.llmFields } : {})}
+                        {...(inspect?.field ? { focusedField: inspect.field } : {})}
+                        {...(inspect?.nodeId ? { nodeId: inspect.nodeId } : {})}
+                      />
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={nodeDocs.show}
+                      className="flex items-center gap-1.5 self-start rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                    >
+                      <BookOpen size={13} aria-hidden />
+                      Show {nodeDocs.hidden?.title} node documentation
+                    </button>
+                  )}
+                </SidebarSection>
+              )}
             </div>
+            </>
           );
         })()}
       </div>

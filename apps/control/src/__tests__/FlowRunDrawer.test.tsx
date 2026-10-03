@@ -43,11 +43,105 @@ beforeEach(() => {
   run.register.mockReset();
   run.stream.mockReset();
   run.stream.mockImplementation(async function* () {
-    yield "hello";
+    yield { kind: "content", text: "hello" };
   });
 });
 
 describe("FlowRunDrawer", () => {
+  test("reasoning streams in an open Thinking block and collapses when the answer starts", async () => {
+    run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
+    run.stream.mockImplementation(async function* () {
+      yield { kind: "reasoning", text: "Ich prüfe das. " };
+      yield { kind: "reasoning", text: "Noch ein Gedanke." };
+      yield { kind: "content", text: "Die Antwort." };
+    });
+    render(
+      <FlowRunDrawer flowId="f" onLiveStatesChange={() => {}} getDefinition={() => canvas} />,
+    );
+    fireEvent.change(screen.getByLabelText("Test prompt"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("Die Antwort.")).toBeInTheDocument());
+    const thinking = screen.getByTestId("thinking");
+    // Auto-collapsed once the answer began, but the trail is kept and reopenable.
+    expect(thinking).toBeInTheDocument();
+    expect(screen.queryByText(/Ich prüfe das\. Noch ein Gedanke\./)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Thinking/ }));
+    expect(screen.getByText(/Ich prüfe das\. Noch ein Gedanke\./)).toBeInTheDocument();
+  });
+
+  test("a manual toggle from the previous run does not suppress auto-collapse in the next run", async () => {
+    run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
+    run.stream.mockImplementation(async function* () {
+      yield { kind: "reasoning", text: "Gedanke 1. " };
+      yield { kind: "content", text: "Antwort 1." };
+    });
+    render(
+      <FlowRunDrawer flowId="f" onLiveStatesChange={() => {}} getDefinition={() => canvas} />,
+    );
+    fireEvent.change(screen.getByLabelText("Test prompt"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("Antwort 1.")).toBeInTheDocument());
+    // Open the trail by hand — this marks the run as user-toggled.
+    fireEvent.click(screen.getByRole("button", { name: /Thinking/ }));
+    expect(screen.getByText(/Gedanke 1\./)).toBeInTheDocument();
+
+    // Second run: the fresh trail must auto-open and auto-collapse again,
+    // even though the user toggled it during the first run.
+    run.stream.mockImplementation(async function* () {
+      yield { kind: "reasoning", text: "Gedanke 2. " };
+      yield { kind: "content", text: "Antwort 2." };
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("Antwort 2.")).toBeInTheDocument());
+    // Collapsed again: the new trail is hidden until reopened.
+    expect(screen.queryByText(/Gedanke 2\./)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: /Thinking/ }));
+    expect(screen.getByText(/Gedanke 2\./)).toBeInTheDocument();
+    expect(screen.queryByText(/Gedanke 1\./)).toBeNull();
+  });
+
+  test("the answer previewed on the reasoning channel is not duplicated in Thinking", async () => {
+    run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
+    // Mirrors the runtime: narration + the answer are streamed live as
+    // reasoning, then the same answer arrives again as content.
+    run.stream.mockImplementation(async function* () {
+      yield { kind: "reasoning", text: "Ich prüfe das. " };
+      yield { kind: "reasoning", text: "Die Antwort." };
+      yield { kind: "content", text: "Die Antwort." };
+    });
+    render(
+      <FlowRunDrawer flowId="f" onLiveStatesChange={() => {}} getDefinition={() => canvas} />,
+    );
+    fireEvent.change(screen.getByLabelText("Test prompt"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("Die Antwort.")).toBeInTheDocument());
+    fireEvent.click(screen.getByRole("button", { name: /Thinking/ }));
+    // Thinking keeps the narration only — the answer is not repeated there.
+    expect(screen.getByText(/Ich prüfe das\./)).toBeInTheDocument();
+    const thinking = screen.getByTestId("thinking");
+    expect(thinking.textContent).not.toContain("Die Antwort.");
+  });
+
+  test("images attached to the prompt are forwarded to the stream", async () => {
+    run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
+    render(
+      <FlowRunDrawer flowId="f" onLiveStatesChange={() => {}} getDefinition={() => canvas} />,
+    );
+    const file = new File(["AAAA"], "screenshot.png", { type: "image/png" });
+    fireEvent.change(screen.getByLabelText("Attach images to the test prompt"), {
+      target: { files: [file] },
+    });
+    await waitFor(() => expect(screen.getByAltText("screenshot.png")).toBeInTheDocument());
+    fireEvent.change(screen.getByLabelText("Test prompt"), { target: { value: "hi" } });
+    fireEvent.click(screen.getByRole("button", { name: "Run" }));
+    await waitFor(() => expect(screen.getByText("hello")).toBeInTheDocument());
+    const args = run.stream.mock.calls[0] as unknown as [string, string, string, undefined, string[]];
+    expect(args[4]?.[0]).toMatch(/^data:image\/png;base64,/);
+    // Removing the attachment clears it again.
+    fireEvent.click(screen.getByLabelText("Remove screenshot.png"));
+    expect(screen.queryByAltText("screenshot.png")).toBeNull();
+  });
+
   test("runs the canvas under the throwaway model the runtime returns", async () => {
     run.register.mockResolvedValue({ ok: true, model: "f@studio-1" });
     renderDrawer();

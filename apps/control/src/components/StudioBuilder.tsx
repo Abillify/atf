@@ -25,6 +25,7 @@ import {
   useEffect,
   useRef,
 } from "react";
+import { createPortal } from "react-dom";
 import { FlowCanvas, type NodeValidationState, type EdgeValidationState } from "./FlowCanvas";
 import {
   NodePropertyPanel,
@@ -32,6 +33,9 @@ import {
   type EdgeSelection,
 } from "./NodePropertyPanel";
 import { FlowNodePalette } from "./FlowNodePalette";
+import { SubflowPalette } from "./SubflowPalette";
+import { ResizeHandle } from "./ResizeHandle";
+import { usePersistentWidth } from "../hooks/usePersistentWidth";
 import { SubflowGroupPanel } from "./SubflowGroupPanel";
 import { FlowRunDrawer } from "./FlowRunDrawer";
 import { FlowVersionBar } from "./FlowVersionBar";
@@ -57,6 +61,7 @@ import {
 import { useFlowHistory } from "../lib/flow-history";
 import type {
   FlowDefinition,
+  FlowDraftInfo,
   FlowListEntry,
   NodeType,
   FlowValidationReport,
@@ -66,8 +71,16 @@ import { backendUrl } from "../lib/backend-url";
 import { Button } from "../lib/ui";
 import type { PlaygroundResult } from "../lib/studio-run";
 import { useNodeTypeCatalog } from "../lib/node-types";
-import { fetchRunSample, loadPinnedRun, savePinnedRun, type PinnedRun } from "../lib/run-samples";
-import { Redo2, Undo2 } from "lucide-react";
+import {
+  fetchRunSample,
+  fetchRunTrace,
+  loadPinnedRun,
+  savePinnedRun,
+  type EdgeFlowRecord,
+  type PinnedRun,
+} from "../lib/run-samples";
+import { latestFlowsByPair, pairKey } from "../lib/edge-channels";
+import { Play, Redo2, Settings, Sparkles, Undo2 } from "lucide-react";
 import {
   fetchSubflowContent,
   subflowAt,
@@ -86,9 +99,12 @@ import { FormulaProvider, type RunsContext } from "./FormulaEditor";
 import { BoundaryPanel } from "./BoundaryPanel";
 import type { BoundaryCardInfo } from "./FlowCanvas";
 import {
+  END_ID,
+  parseBoundaryEdgeId,
   REQUEST_EVENT_ID,
   RESPONSE_EVENT_ID,
   flowBoundaries,
+  START_ID,
   withEntryFirst,
 } from "../lib/flow-boundaries";
 import { answerText } from "../lib/run-attach";
@@ -110,6 +126,22 @@ export interface StudioBuilderProps {
   onDirtyChange?: (dirty: boolean) => void;
   /** Panel visibility, owned by the page so all layout switches live in one place. */
   panels?: StudioBuilderPanels;
+  /** Switches Copilot / Run & Trace from the builder toolbar (next to Undo/Redo). */
+  onTogglePanel?: (panel: "copilot" | "runTrace") => void;
+  /**
+   * DOM node the node palette is portalled into — the Studio sidebar's
+   * "Nodes" section. `null` = the host shows no palette right now (section
+   * collapsed); `undefined` = render it inline left of the canvas, the
+   * classic layout (used when no sidebar hosts the palette).
+   */
+  paletteContainer?: HTMLElement | null;
+  /**
+   * DOM node the sub-flow palette is portalled into — the Studio sidebar's
+   * own "Subflows" section. `null` = the host shows it nowhere right now
+   * (another section is expanded); `undefined` = render it inside the node
+   * palette, the classic layout (used when no sidebar hosts it).
+   */
+  subflowsContainer?: HTMLElement | null;
   /** Stores a Run & Trace prompt/answer as an eval case. */
   /**
    * Stores prompt + answer as an eval case with `expected` as the reference
@@ -137,14 +169,17 @@ export interface StudioBuilderPanels {
   palette: boolean;
   /** Node/edge properties panel. */
   properties: boolean;
-  /** Copilot + Run & Trace bars. */
-  assist: boolean;
+  /** Copilot bar above the canvas. */
+  copilot: boolean;
+  /** Run & Trace bar above the canvas. */
+  runTrace: boolean;
 }
 
 const ALL_PANELS: StudioBuilderPanels = {
   palette: true,
   properties: true,
-  assist: true,
+  copilot: true,
+  runTrace: true,
 };
 
 // ---------------------------------------------------------------------------
@@ -237,6 +272,12 @@ async function fetchFlowDefinition(
   hash?: string;
   kind: LoadedKind;
   format?: "yaml" | "json";
+  /** The live (published) definition, when the flow has one. */
+  published: FlowDefinition | null;
+  /** All named drafts (default first), with definitions. */
+  drafts: FlowDraftInfo[];
+  /** Stored version counter of the online flow. */
+  version: number;
 } | null> {
   try {
     const resp = await fetch(backendUrl(`/flows/${encodeURIComponent(flowId)}`), {
@@ -248,6 +289,7 @@ async function fetchFlowDefinition(
       version?: number;
       published?: FlowDefinition | null;
       draft?: FlowDefinition | null;
+      drafts?: FlowDraftInfo[];
       sourceDefinition?: FlowDefinition;
       file?: { name: string; format: "yaml" | "json" };
       hash?: string;
@@ -258,13 +300,16 @@ async function fetchFlowDefinition(
     const def = data.draft ?? data.sourceDefinition ?? data.published ?? null;
     if (!def) return null;
     const kind: LoadedKind = data.draft
-      ? { kind: "draft", version: data.version ?? 0 }
+      ? { kind: "draft", version: data.version ?? 0, draftId: DEFAULT_DRAFT_ID }
       : data.source === "online"
         ? { kind: "published", version: data.version ?? 0 }
         : { kind: "file" };
     return {
       definition: def,
       kind,
+      published: data.published ?? null,
+      drafts: data.drafts ?? [],
+      version: data.version ?? 0,
       ...(data.hash !== undefined ? { hash: data.hash } : {}),
       ...(data.file ? { format: data.file.format } : {}),
     };
@@ -273,11 +318,14 @@ async function fetchFlowDefinition(
   }
 }
 
+/** The id of the implicit working draft — mirrors the runtime's DEFAULT_DRAFT_ID. */
+const DEFAULT_DRAFT_ID = "default";
+
 /** Which revision of the flow the canvas was loaded from. */
 type LoadedKind =
   | { kind: "new" }
   | { kind: "file" }
-  | { kind: "draft"; version: number }
+  | { kind: "draft"; version: number; draftId: string }
   | { kind: "published"; version: number };
 
 type StoreResult =
@@ -307,21 +355,29 @@ async function readStoreError(resp: Response): Promise<{
   }
 }
 
-/** PUT /flows/:id/draft — stores a WIP draft; the live flow is untouched. */
+/**
+ * PUT /flows/:id/draft (or /drafts/:draftId) — stores a WIP draft; the live
+ * flow is untouched. The default draft keeps the classic URL.
+ */
 async function saveDraftToBackend(
   token: string | null,
   definition: FlowDefinition,
+  draftId: string = DEFAULT_DRAFT_ID,
+  label?: string,
 ): Promise<StoreResult> {
+  const path =
+    draftId === DEFAULT_DRAFT_ID
+      ? `/flows/${encodeURIComponent(definition.id)}/draft`
+      : `/flows/${encodeURIComponent(definition.id)}/drafts/${encodeURIComponent(draftId)}`;
   try {
-    const resp = await fetch(
-      backendUrl(`/flows/${encodeURIComponent(definition.id)}/draft`),
+    const resp = await fetch(backendUrl(path),
       {
         method: "PUT",
         headers: {
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify(definition),
+        body: JSON.stringify(label !== undefined ? { ...definition, label } : definition),
       },
     );
     if (!resp.ok) return { ok: false, ...(await readStoreError(resp)) };
@@ -348,6 +404,7 @@ async function saveDraftToBackend(
 async function publishOnBackend(
   token: string | null,
   flowId: string,
+  draftId: string = DEFAULT_DRAFT_ID,
 ): Promise<StoreResult> {
   try {
     const resp = await fetch(
@@ -360,7 +417,7 @@ async function publishOnBackend(
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: "{}",
+        body: draftId === DEFAULT_DRAFT_ID ? "{}" : JSON.stringify({ draftId }),
       },
     );
     if (!resp.ok) return { ok: false, ...(await readStoreError(resp)) };
@@ -375,6 +432,32 @@ async function publishOnBackend(
         ? { version: data.record.version }
         : {}),
     };
+  } catch (err) {
+    return {
+      ok: false,
+      error: `Network error: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+/** DELETE /flows/:id/drafts/:draftId — removes one named draft. */
+async function deleteDraftOnBackend(
+  token: string | null,
+  flowId: string,
+  draftId: string,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const resp = await fetch(
+      backendUrl(
+        `/flows/${encodeURIComponent(flowId)}/drafts/${encodeURIComponent(draftId)}`,
+      ),
+      {
+        method: "DELETE",
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      },
+    );
+    if (!resp.ok) return { ok: false, ...(await readStoreError(resp)) };
+    return { ok: true };
   } catch (err) {
     return {
       ok: false,
@@ -441,6 +524,9 @@ export function StudioBuilder({
   fileWriting = false,
   onDirtyChange,
   panels = ALL_PANELS,
+  onTogglePanel,
+  paletteContainer,
+  subflowsContainer,
   onSaveEvalCase,
   onDeleteEvalCase,
   onInspect,
@@ -467,6 +553,13 @@ export function StudioBuilder({
    * `selectSubflowGroup`; cleared by any ordinary node/edge/pane selection.
    */
   const [selectedSubflowPath, setSelectedSubflowPath] = useState<string | null>(null);
+  /**
+   * The properties panel only appears while something is selected. Flow
+   * settings (id, name, description, variables) are the exception: with
+   * nothing selected, the toolbar's "Flow settings" button opens the panel
+   * for them.
+   */
+  const [flowSettingsOpen, setFlowSettingsOpen] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusKind, setStatusKind] = useState<
     "info" | "error" | "warn" | "ok"
@@ -483,6 +576,15 @@ export function StudioBuilder({
   >(undefined);
   /** Execution of the run traced in Run & Trace (the Start panel shows its input). */
   const [runExecutionId, setRunExecutionId] = useState<string | null>(null);
+  /**
+   * Per-edge data flow of the traced run (Studio-instrumented runs only):
+   * drawn as colored channel lines on the canvas and listed in full in the
+   * edge section of the property panel. The runtime records every traversal
+   * the moment the graph crosses an edge, so this is polled while the run is
+   * still going (see the live-polling effect) and refreshed one last time
+   * when it finishes.
+   */
+  const [edgeFlows, setEdgeFlows] = useState<EdgeFlowRecord[]>([]);
   const [problemsOpen, setProblemsOpen] = useState(false);
   const [diffOverlay, setDiffOverlay] = useState<DiffOverlay | undefined>(
     undefined,
@@ -498,9 +600,27 @@ export function StudioBuilder({
   const [loadedKind, setLoadedKind] = useState<LoadedKind>({ kind: "new" });
   /** Snapshot of the last loaded/saved definition (null until the first load). */
   const [baseline, setBaseline] = useState<string | null>(null);
+  /** All named drafts of the loaded flow (default first), with definitions. */
+  const [drafts, setDrafts] = useState<FlowDraftInfo[]>([]);
+  /** The live revision (published, or the file itself) for the Draft↔Live switch. */
+  const [liveDefinition, setLiveDefinition] = useState<FlowDefinition | null>(null);
+  /** Which kind the live revision is (file vs published + version). */
+  const [liveKind, setLiveKind] = useState<LoadedKind | null>(null);
+  /** The draft the Draft view works on — target of save/publish. */
+  const [activeDraftId, setActiveDraftId] = useState<string>(DEFAULT_DRAFT_ID);
+  /** True while the canvas shows the LIVE revision instead of a draft. */
+  const [viewingLive, setViewingLive] = useState(false);
   const paletteCollapsed = !panels.palette;
   const inspectorCollapsed = !panels.properties;
-  const assistBarsHidden = !panels.assist;
+  /** Property panel width, drag-resizable via the handle on its left edge. */
+  const [inspectorWidth, setInspectorWidth] = usePersistentWidth(
+    "studio.inspectorWidth",
+    320,
+    240,
+    640,
+  );
+  const copilotHidden = !panels.copilot;
+  const runTraceHidden = !panels.runTrace;
 
   const history = useFlowHistory({ nodes: [], edges: [] });
   /** Per-sub-flow undo/redo + saved-baseline, scoped to one `$include` group. */
@@ -509,9 +629,9 @@ export function StudioBuilder({
   const loadedPositionsRef = useRef<Map<string, { x: number; y: number }>>(
     new Map(),
   );
-  const rememberPositions = (ns: RFNode[]): void => {
+  const rememberPositions = useCallback((ns: RFNode[]): void => {
     loadedPositionsRef.current = new Map(ns.map((n) => [n.id, n.position]));
-  };
+  }, []);
   const clipboardRef = useRef<RFNode[]>([]);
   const skipHistoryRef = useRef(false);
   /** Node ids of the last explicit sub-flow-group selection, so the resulting
@@ -544,6 +664,10 @@ export function StudioBuilder({
       setValidation(null);
       setLiveStates(undefined);
       setDiffOverlay(undefined);
+      setDrafts([]);
+      setLiveDefinition(null);
+      setLiveKind(null);
+      setActiveDraftId(DEFAULT_DRAFT_ID);
 
       if (!flowToLoad) {
         const empty = emptyFlow("new-flow");
@@ -567,10 +691,33 @@ export function StudioBuilder({
       fetchFlowDefinition(token ?? null, flowToLoad.id)
         .then((result) => {
           if (result) {
-            const { definition, hash, kind, format } = result;
+            const { definition, hash, kind, format, published, drafts: ds, version } = result;
             setBase(definition);
             setLoadedKind(kind);
             setFileFormat(format ?? "yaml");
+            setDrafts(ds);
+            // The "live" revision the Draft view can be switched to: the
+            // published version, or — for a flow that is only live as a file
+            // — the file definition currently serving traffic.
+            const live =
+              published ??
+              (kind.kind === "published" || kind.kind === "file"
+                ? definition
+                : null);
+            setLiveDefinition(live);
+            setLiveKind(
+              published !== null
+                ? { kind: "published", version }
+                : kind.kind === "file"
+                  ? { kind: "file" }
+                  : null,
+            );
+            setActiveDraftId(
+              kind.kind === "draft" ? kind.draftId : DEFAULT_DRAFT_ID,
+            );
+            // A canvas loaded straight from the published revision IS the live
+            // view until the operator switches to a draft.
+            setViewingLive(kind.kind === "published");
             const g = flowToGraph(definition);
             setNodes(g.nodes);
             setEdges(g.edges);
@@ -884,8 +1031,14 @@ export function StudioBuilder({
     });
   }, []);
 
+  /**
+   * Places a sub-flow file's nodes/edges on the canvas. With `at` (dropped
+   * from the Subflows section), the group's top-left goes to that flow
+   * coordinate; without it (dialog / Include button) it lands to the right
+   * of the current graph.
+   */
   const includeSubflow = useCallback(
-    async (path: string): Promise<string> => {
+    async (path: string, at?: { x: number; y: number }): Promise<string> => {
       const content = await fetchSubflowContent(path, token);
       const existing = new Set(nodes.map((n) => n.id));
       const incoming = content.nodes.filter((n) => !existing.has(n.id));
@@ -903,8 +1056,8 @@ export function StudioBuilder({
       const minY = nodes.reduce((m, n) => Math.min(m, n.position.y), Number.POSITIVE_INFINITY);
       const gx = Math.min(...g.nodes.map((n) => n.position.x));
       const gy = Math.min(...g.nodes.map((n) => n.position.y));
-      const dx = (nodes.length > 0 ? maxX + 140 : 0) - gx;
-      const dy = (Number.isFinite(minY) ? minY : 0) - gy;
+      const dx = (at ? at.x : nodes.length > 0 ? maxX + 140 : 0) - gx;
+      const dy = (at ? at.y : Number.isFinite(minY) ? minY : 0) - gy;
       const newNodes = g.nodes.map((n) => ({ ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }));
       const edgeIds = new Set(edges.map((e) => e.id));
       const newEdges = flowToGraph({ id: "sub", name: "sub", nodes: incoming, edges: subEdges }).edges.map((e) => {
@@ -1627,7 +1780,11 @@ export function StudioBuilder({
     setIsSaving(true);
     setStatus("Saving draft…");
     setStatusKind("info");
-    const result = await saveDraftToBackend(token ?? null, def);
+    const label =
+      activeDraftId === DEFAULT_DRAFT_ID
+        ? undefined
+        : (drafts.find((d) => d.draftId === activeDraftId)?.label ?? activeDraftId);
+    const result = await saveDraftToBackend(token ?? null, def, activeDraftId, label);
     setIsSaving(false);
     if (!result.ok) {
       if (result.validation) setValidation(result.validation);
@@ -1637,7 +1794,30 @@ export function StudioBuilder({
     }
     if (result.validation) setValidation(result.validation);
     setBaseline(snapshotOf(def));
-    setLoadedKind({ kind: "draft", version: result.version ?? 0 });
+    setLoadedKind({ kind: "draft", version: result.version ?? 0, draftId: activeDraftId });
+    // Saving from the live view stages the content into the active draft.
+    setViewingLive(false);
+    // Keep the in-memory draft list in sync so switching doesn't lose this edit.
+    setDrafts((prev) => {
+      const info: FlowDraftInfo = {
+        draftId: activeDraftId,
+        label: label ?? activeDraftId,
+        definition: def,
+      };
+      const i = prev.findIndex((d) => d.draftId === activeDraftId);
+      if (i === -1) {
+        const next = [...prev, info];
+        return activeDraftId === DEFAULT_DRAFT_ID
+          ? next
+          : [
+              ...next.filter((d) => d.draftId === DEFAULT_DRAFT_ID),
+              ...next.filter((d) => d.draftId !== DEFAULT_DRAFT_ID),
+            ];
+      }
+      const next = [...prev];
+      next[i] = info;
+      return next;
+    });
     const issues = result.validation && !result.validation.valid;
     setStatus(
       issues
@@ -1647,14 +1827,14 @@ export function StudioBuilder({
     setStatusKind(issues ? "warn" : "ok");
     onSaved?.(def.id);
     return true;
-  }, [currentDefinition, token, onSaved]);
+  }, [currentDefinition, token, onSaved, activeDraftId, drafts]);
 
   const handlePublish = useCallback(async (): Promise<void> => {
     const def = currentDefinition();
     const shadows = flow?.source === "file" || flow?.shadowsFile;
     if (
       !window.confirm(
-        `Publish "${def.id}"? It becomes the live version for new requests.` +
+        `Publish "${def.id}"${activeDraftId === DEFAULT_DRAFT_ID ? "" : ` (draft '${activeDraftId}')`}? It becomes the live version for new requests.` +
           (shadows
             ? "\n\nThis flow also exists as a file — the published online version will take precedence over the file."
             : ""),
@@ -1663,14 +1843,16 @@ export function StudioBuilder({
       return;
     }
     // Publish acts on the stored draft, so store the current canvas first.
-    if (dirty || loadedKind.kind !== "draft") {
+    const onActiveDraft =
+      loadedKind.kind === "draft" && loadedKind.draftId === activeDraftId;
+    if (dirty || !onActiveDraft) {
       const saved = await handleSaveDraft();
       if (!saved) return;
     }
     setIsSaving(true);
     setStatus("Publishing…");
     setStatusKind("info");
-    const result = await publishOnBackend(token ?? null, def.id);
+    const result = await publishOnBackend(token ?? null, def.id, activeDraftId);
     setIsSaving(false);
     if (!result.ok) {
       if (result.validation) setValidation(result.validation);
@@ -1680,6 +1862,9 @@ export function StudioBuilder({
       return;
     }
     setLoadedKind({ kind: "published", version: result.version ?? 0 });
+    // The published revision is now the live one; keep the draft view in sync.
+    setLiveDefinition(def);
+    setLiveKind({ kind: "published", version: result.version ?? 0 });
     setStatus(
       `Published${result.version !== undefined ? ` v${result.version}` : ""} — live now.`,
     );
@@ -1690,10 +1875,11 @@ export function StudioBuilder({
     flow?.source,
     flow?.shadowsFile,
     dirty,
-    loadedKind.kind,
+    loadedKind,
     handleSaveDraft,
     token,
     onSaved,
+    activeDraftId,
   ]);
 
   const handleDiscard = useCallback((): void => {
@@ -1702,6 +1888,201 @@ export function StudioBuilder({
     setStatus("Changes discarded.");
     setStatusKind("info");
   }, [loadFlow, flow]);
+
+  // -------------------------------------------------------------------------
+  // Draft ↔ Live view + named drafts.
+  //
+  // The canvas always edits ONE revision at a time. `viewingLive` switches it
+  // to the live (published/file) revision; the draft selector picks which
+  // named draft to work on. Switching either way stages nothing — only
+  // "Save draft" writes, and it writes to the ACTIVE draft.
+  // -------------------------------------------------------------------------
+
+  /** Put a definition on the canvas as the current editing base. */
+  const showOnCanvas = useCallback(
+    (definition: FlowDefinition, kind: LoadedKind): void => {
+      skipHistoryRef.current = true;
+      setBase(definition);
+      setLoadedKind(kind);
+      const g = flowToGraph(definition);
+      setNodes(g.nodes);
+      setEdges(g.edges);
+      setViewport(g.viewport);
+      setNodeOrigins(g.nodeOrigins ?? {});
+      setBaseline(snapshotOf(graphToFlow(definition, g.nodes, g.edges, undefined, g.nodeOrigins ?? {}, definition.metadata?.ui !== undefined)));
+      rememberPositions(g.nodes);
+      history.reset({ nodes: g.nodes, edges: g.edges, base: definition, nodeOrigins: g.nodeOrigins ?? {} });
+      setValidation(null);
+      setLiveStates(undefined);
+      setDiffOverlay(undefined);
+    },
+    // history.reset and rememberPositions are stable (useCallback with no deps),
+    // so listing them keeps this callback identity stable too.
+    [history.reset, rememberPositions],
+  );
+
+  const confirmLeaveDraft = useCallback((): boolean => {
+    return (
+      !dirty ||
+      window.confirm(
+        "The canvas has unsaved changes. Switching revisions discards them.",
+      )
+    );
+  }, [dirty]);
+
+  /** Switch the canvas between the active draft and the live revision. */
+  const handleToggleViewLive = useCallback((): void => {
+    if (!confirmLeaveDraft()) return;
+    if (viewingLive) {
+      // Back to the active draft (in-memory copy, or the stored default).
+      const draft =
+        drafts.find((d) => d.draftId === activeDraftId)?.definition ?? null;
+      if (draft === null) {
+        loadFlow(flow);
+        return;
+      }
+      setViewingLive(false);
+      showOnCanvas(draft, {
+        kind: "draft",
+        version: flow?.version ?? 0,
+        draftId: activeDraftId,
+      });
+      return;
+    }
+    if (liveDefinition === null || liveKind === null) return;
+    setViewingLive(true);
+    showOnCanvas(liveDefinition, liveKind);
+  }, [
+    viewingLive,
+    drafts,
+    activeDraftId,
+    liveDefinition,
+    liveKind,
+    flow,
+    loadFlow,
+    showOnCanvas,
+    confirmLeaveDraft,
+  ]);
+
+  /** Switch to another named draft (or create one from the current canvas). */
+  const handleSelectDraft = useCallback(
+    (draftId: string): void => {
+      if (draftId === activeDraftId && !viewingLive) return;
+      if (!confirmLeaveDraft()) return;
+      const draft =
+        drafts.find((d) => d.draftId === draftId)?.definition ?? null;
+      if (draft === null) return;
+      setActiveDraftId(draftId);
+      setViewingLive(false);
+      showOnCanvas(draft, {
+        kind: "draft",
+        version: flow?.version ?? 0,
+        draftId,
+      });
+    },
+    [
+      activeDraftId,
+      viewingLive,
+      drafts,
+      flow,
+      showOnCanvas,
+      confirmLeaveDraft,
+    ],
+  );
+
+  /** Create a new named draft from the current canvas content. */
+  const handleCreateDraft = useCallback(async (): Promise<void> => {
+    const input = window.prompt(
+      "New draft id (lowercase letters, digits, '-' or '_'):",
+      `draft-${Date.now().toString(36)}`,
+    );
+    if (input === null) return;
+    const draftId = input.trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,62}$/.test(draftId)) {
+      setStatus("✗ Invalid draft id — use lowercase letters, digits, '-' or '_'.");
+      setStatusKind("error");
+      return;
+    }
+    if (drafts.some((d) => d.draftId === draftId)) {
+      setStatus(`✗ A draft '${draftId}' already exists.`);
+      setStatusKind("error");
+      return;
+    }
+    // Seed the new draft with the current canvas (or the live revision when
+    // viewing live), so it starts from something meaningful.
+    const seed = currentDefinition();
+    const result = await saveDraftToBackend(token ?? null, seed, draftId, draftId);
+    if (!result.ok) {
+      setStatus(`✗ Draft not created: ${result.error}`);
+      setStatusKind("error");
+      return;
+    }
+    setDrafts((prev) =>
+      [
+        ...prev.filter((d) => d.draftId !== draftId),
+        { draftId, label: draftId, definition: seed },
+      ].sort((a, b) =>
+        a.draftId === DEFAULT_DRAFT_ID
+          ? -1
+          : b.draftId === DEFAULT_DRAFT_ID
+            ? 1
+            : a.draftId.localeCompare(b.draftId),
+      ),
+    );
+    setActiveDraftId(draftId);
+    setViewingLive(false);
+    setLoadedKind({ kind: "draft", version: result.version ?? 0, draftId });
+    setBaseline(snapshotOf(seed));
+    setStatus(`Draft '${draftId}' created from the current canvas.`);
+    setStatusKind("ok");
+    onSaved?.(seed.id);
+  }, [currentDefinition, drafts, token, onSaved]);
+
+  /** Remove the active named draft (not the default one). */
+  const handleDeleteDraft = useCallback(async (): Promise<void> => {
+    if (activeDraftId === DEFAULT_DRAFT_ID) return;
+    if (
+      !window.confirm(
+        `Delete draft '${activeDraftId}'? Its canvas content is lost (the live flow is not affected).`,
+      )
+    ) {
+      return;
+    }
+    const result = await deleteDraftOnBackend(token ?? null, base.id, activeDraftId);
+    if (!result.ok) {
+      setStatus(`✗ Draft not deleted: ${result.error}`);
+      setStatusKind("error");
+      return;
+    }
+    const remaining = drafts.filter((d) => d.draftId !== activeDraftId);
+    setDrafts(remaining);
+    const next =
+      remaining.find((d) => d.draftId === DEFAULT_DRAFT_ID) ??
+      remaining[0] ??
+      null;
+    if (next === null || next.definition === undefined) {
+      loadFlow(flow);
+    } else {
+      setActiveDraftId(next.draftId);
+      showOnCanvas(next.definition, {
+        kind: "draft",
+        version: flow?.version ?? 0,
+        draftId: next.draftId,
+      });
+    }
+    setStatus(`Draft '${activeDraftId}' deleted.`);
+    setStatusKind("info");
+    onSaved?.(base.id);
+  }, [
+    activeDraftId,
+    base.id,
+    drafts,
+    token,
+    flow,
+    loadFlow,
+    showOnCanvas,
+    onSaved,
+  ]);
 
   const catalog = useNodeTypeCatalog();
   // Run data pinned for the expression builder's previews, per flow.
@@ -1816,10 +2197,23 @@ export function StudioBuilder({
     [nodes, selNode],
   );
 
+  /** Anything the properties panel can edit: a node, edge, boundary or sub-flow group. */
+  const hasInspectorSelection =
+    selectedNodeIds.length > 0 ||
+    selEdge !== null ||
+    selBoundary !== null ||
+    selectedSubflowPath !== null;
+  // A real selection takes the panel over — drop the flow-settings pin so
+  // deselecting later hides the panel again.
+  useEffect(() => {
+    if (hasInspectorSelection) setFlowSettingsOpen(false);
+  }, [hasInspectorSelection]);
+
   const inspectedId = selectedFlowNode?.id;
   const inspectedType = selectedFlowNode?.type;
   /** Text selected in the focused settings field (for the Copilot). */
   const [fieldSelection, setFieldSelection] = useState<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: inspectedId is the reset trigger, not a read — switching the inspected node clears focus & selection
   useEffect(() => {
     setFocusedField(undefined);
     setFieldSelection(undefined);
@@ -1854,15 +2248,81 @@ export function StudioBuilder({
     );
   }, [inspectedId, inspectedType, focusedField, onInspect]);
 
-  const selectedEdge: EdgeSelection | null = useMemo(() => {
-    const e = edges.find((x) => x.id === selEdge);
-    if (!e) return null;
-    return {
-      id: e.id,
-      conditions: e.data.conditions ?? "",
-      label: e.label ?? "",
+  // The run (or attached run) finished: pull its trace so the canvas shows
+  // the final per-edge data flow. Only real runs report edge flows — pinned
+  // or loaded data never highlights edges (operator decision).
+  const handleRunFinished = useCallback(
+    (executionId: string | null): void => {
+      if (executionId === null) {
+        setEdgeFlows([]);
+        return;
+      }
+      void fetchRunTrace(executionId, token ?? undefined)
+        .then((trace) => setEdgeFlows(trace.edge_flows ?? []))
+        .catch(() => setEdgeFlows([]));
+    },
+    [token],
+  );
+
+  // Live edge-flow polling: the trace store holds every edge record from the
+  // moment the graph crosses it and serves the trace while it still runs, so
+  // the canvas can draw the channels DURING the run instead of waiting for
+  // the stream to end. Poll every 1.5 s while the trace reports `running`;
+  // the finish handler above fetches the authoritative final state. A few
+  // tolerated misses cover the window where the execution id was locked from
+  // the event stream but the trace is not readable yet.
+  useEffect(() => {
+    if (runExecutionId === null) {
+      setEdgeFlows([]);
+      return;
+    }
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let misses = 0;
+    const poll = (): void => {
+      void fetchRunTrace(runExecutionId, token ?? undefined)
+        .then((trace) => {
+          if (cancelled) return;
+          misses = 0;
+          setEdgeFlows(trace.edge_flows ?? []);
+          if (trace.status === "running") timer = setTimeout(poll, 1_500);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          misses += 1;
+          if (misses <= 3) timer = setTimeout(poll, 1_500);
+        });
     };
-  }, [edges, selEdge]);
+    poll();
+    return () => {
+      cancelled = true;
+      if (timer !== undefined) clearTimeout(timer);
+    };
+  }, [runExecutionId, token]);
+
+  const selectedEdge: EdgeSelection | null = useMemo(() => {
+    if (selEdge === null) return null;
+    const flowOf = (source: string, target: string): EdgeFlowRecord[] => {
+      const record = latestFlowsByPair(edgeFlows).get(pairKey(source, target));
+      return record === undefined ? [] : [record];
+    };
+    const e = edges.find((x) => x.id === selEdge);
+    if (e) {
+      return {
+        id: e.id,
+        conditions: e.data.conditions ?? "",
+        label: e.label ?? "",
+        flows: flowOf(e.source, e.target),
+      };
+    }
+    // Implicit start/end link clicked via a channel line: not part of the
+    // definition, so the panel shows its data flow read-only.
+    const b = parseBoundaryEdgeId(selEdge);
+    if (b === null) return null;
+    return b.kind === "start"
+      ? { id: selEdge, conditions: "", label: "", readOnly: true, flows: flowOf(START_ID, b.nodeId) }
+      : { id: selEdge, conditions: "", label: "", readOnly: true, flows: flowOf(b.nodeId, END_ID) };
+  }, [edges, selEdge, edgeFlows]);
 
   const statusColors: Record<typeof statusKind, string> = {
     info: "text-muted-foreground",
@@ -1872,6 +2332,21 @@ export function StudioBuilder({
   };
 
   const revisionBadge = ((): { text: string; cls: string; title: string } => {
+    if (viewingLive) {
+      return liveKind?.kind === "published"
+        ? {
+            text: `live v${liveKind.version}`,
+            cls: "bg-green-50 text-green-700 border border-green-200",
+            title:
+              "Viewing the live (published) revision. Switch back to Draft to edit; 'Save draft' here stages this content into the active draft.",
+          }
+        : {
+            text: "live · file",
+            cls: "bg-muted text-muted-foreground",
+            title:
+              "Viewing the file revision that serves traffic. Switch back to Draft to edit.",
+          };
+    }
     switch (loadedKind.kind) {
       case "new":
         return {
@@ -1888,7 +2363,10 @@ export function StudioBuilder({
         };
       case "draft":
         return {
-          text: "draft",
+          text:
+            loadedKind.draftId === DEFAULT_DRAFT_ID
+              ? "draft"
+              : `draft · ${loadedKind.draftId}`,
           cls: "bg-amber-50 text-amber-700 border border-amber-200",
           title: "Editing the unpublished draft. The live flow is unchanged.",
         };
@@ -1901,6 +2379,17 @@ export function StudioBuilder({
     }
   })();
   const showFileWrite = fileWriting && flow?.source !== "online";
+  /** The sub-flow palette's actions — rendered inside the node palette or,
+   *  when the page provides a host, portalled into its own sidebar section. */
+  const subflowActions = showFileWrite
+    ? {
+        selectedCount: selectedNodeIds.length,
+        included: [...new Set(Object.values(nodeOrigins))],
+        onInclude: includeSubflow,
+        onCreate: createSubflow,
+        token,
+      }
+    : undefined;
 
   if (isLoading) {
     return (
@@ -1929,6 +2418,74 @@ export function StudioBuilder({
         >
           {revisionBadge.text}
         </span>
+
+        {/* Draft ↔ Live view switch + named-draft selector (online flows). */}
+        {onlineEditing && flow?.source === "online" && (
+          <div className="flex items-center gap-1">
+            <select
+              aria-label="Active draft"
+              value={viewingLive ? "__live__" : activeDraftId}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v === "__new__") {
+                  void handleCreateDraft();
+                } else if (v === "__live__") {
+                  if (!viewingLive) handleToggleViewLive();
+                } else {
+                  handleSelectDraft(v);
+                }
+              }}
+              className="rounded border border-border bg-card px-1.5 py-1 text-xs text-foreground"
+              title="Choose which draft to edit, or view the live revision."
+            >
+              {drafts.length === 0 && (
+                <option value={DEFAULT_DRAFT_ID}>
+                  draft · default
+                </option>
+              )}
+              {drafts.map((d) => (
+                <option key={d.draftId} value={d.draftId}>
+                  draft · {d.label || d.draftId}
+                </option>
+              ))}
+              {liveDefinition !== null && (
+                <option value="__live__">
+                  {liveKind?.kind === "published"
+                    ? `live · v${liveKind.version}`
+                    : "live · file"}
+                </option>
+              )}
+              <option value="__new__">＋ new draft…</option>
+            </select>
+            {liveDefinition !== null && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleToggleViewLive}
+                title={
+                  viewingLive
+                    ? "Switch back to the active draft"
+                    : "View the live revision (read the version serving traffic)"
+                }
+              >
+                {viewingLive ? "← Draft" : "View live"}
+              </Button>
+            )}
+            {!viewingLive && activeDraftId !== DEFAULT_DRAFT_ID && (
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={isSaving}
+                onClick={() => {
+                  void handleDeleteDraft();
+                }}
+                title={`Delete draft '${activeDraftId}' (the live flow is not affected)`}
+              >
+                Delete draft
+              </Button>
+            )}
+          </div>
+        )}
         {dirty && (
           <span
             className="rounded bg-blue-50 px-1.5 text-[10px] font-medium uppercase text-blue-700 border border-blue-200"
@@ -1962,6 +2519,77 @@ export function StudioBuilder({
             Redo
           </button>
         </div>
+
+        {/* Copilot / Run & Trace visibility. Both panels are hidden by default
+            and switched on individually here, right next to Undo/Redo. */}
+        {onTogglePanel && (
+          // biome-ignore lint/a11y/useSemanticElements: toolbar of toggle buttons, not a form control — <fieldset> would be wrong here
+          <div
+            className="flex items-center overflow-hidden rounded-md border border-border bg-card shadow-sm"
+            role="group"
+            aria-label="Panels"
+          >
+            <button
+              type="button"
+              onClick={() => onTogglePanel("copilot")}
+              aria-pressed={!copilotHidden}
+              title={
+                copilotHidden
+                  ? "Show the Copilot panel"
+                  : "Hide the Copilot panel"
+              }
+              className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
+                copilotHidden
+                  ? "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  : "bg-muted text-foreground"
+              }`}
+            >
+              <Sparkles size={14} aria-hidden />
+              Copilot
+            </button>
+            <button
+              type="button"
+              onClick={() => onTogglePanel("runTrace")}
+              aria-pressed={!runTraceHidden}
+              title={
+                runTraceHidden
+                  ? "Show the Run & Trace panel"
+                  : "Hide the Run & Trace panel"
+              }
+              className={`flex items-center gap-1 border-l border-border px-2 py-1 text-xs font-medium transition-colors ${
+                runTraceHidden
+                  ? "text-muted-foreground hover:bg-muted hover:text-foreground"
+                  : "bg-muted text-foreground"
+              }`}
+            >
+              <Play size={14} aria-hidden />
+              Run & Trace
+            </button>
+          </div>
+        )}
+
+        {/* Flow settings: the properties panel only shows with a selection, so
+            this opens it for the flow-level fields when nothing is selected. */}
+        {!inspectorCollapsed && !hasInspectorSelection && (
+          <button
+            type="button"
+            onClick={() => setFlowSettingsOpen((v) => !v)}
+            aria-pressed={flowSettingsOpen}
+            title={
+              flowSettingsOpen
+                ? "Hide the flow settings panel"
+                : "Show the flow settings (id, name, description, variables)"
+            }
+            className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
+              flowSettingsOpen
+                ? "border-border bg-muted text-foreground"
+                : "border-border text-foreground hover:bg-muted"
+            }`}
+          >
+            <Settings size={14} aria-hidden />
+            Flow settings
+          </button>
+        )}
 
         {/* Validation summary */}
         {(totalErrors > 0 || totalWarnings > 0) && (
@@ -2142,11 +2770,13 @@ export function StudioBuilder({
         </div>
       )}
 
-      {/* Copilot (Phase 3) + Run & Trace (Phase 1) side by side on wide
-          screens so they cost one row of height instead of two. */}
-      <div
-        className={`grid gap-2 xl:grid-cols-2 ${assistBarsHidden ? "hidden" : ""}`}
-      >
+      {/* Copilot (Phase 3) + Run & Trace (Phase 1) stacked vertically — each
+          is toggled on its own from the toolbar next to Undo/Redo and hidden
+          by default. Stacking (instead of side-by-side) gives Run & Trace the
+          full width and leaves room for a generous reasoning/output area. */}
+      {!(copilotHidden && runTraceHidden) && (
+      <div className="flex flex-col gap-2">
+        {!copilotHidden && (
         <FlowCopilotPanel
           key={`copilot-${canvasKey}`}
           flowId={base.id}
@@ -2164,6 +2794,8 @@ export function StudioBuilder({
           onAccept={handleCopilotAccept}
           prefill={copilotPrefill}
         />
+        )}
+        {!runTraceHidden && (
         <FlowRunDrawer
           key={canvasKey}
           flowId={base.id}
@@ -2183,8 +2815,11 @@ export function StudioBuilder({
           {...(attachExecutionId ? { attachExecutionId } : {})}
           {...(onDetachExecution ? { onDetach: onDetachExecution } : {})}
           onExecutionChange={setRunExecutionId}
+          onRunFinished={handleRunFinished}
         />
+        )}
       </div>
+      )}
 
       {/* Palette + canvas + property panel.
           `min-h-[320px]` keeps the graph usable even when the Copilot proposal
@@ -2192,21 +2827,33 @@ export function StudioBuilder({
           the remaining Builder height; the parent column scrolls if the stacked
           controls ever exceed the available space. */}
       <div className="flex flex-1 min-h-[320px] gap-3 overflow-hidden">
-        <FlowNodePalette
-          collapsed={paletteCollapsed}
-          onAddNode={(type) => addNodeAt(type)}
-          subflows={
-            showFileWrite
-              ? {
-                  selectedCount: selectedNodeIds.length,
-                  included: [...new Set(Object.values(nodeOrigins))],
-                  onInclude: includeSubflow,
-                  onCreate: createSubflow,
-                  token,
-                }
-              : undefined
-          }
-        />
+        {/* The palette lives in the page's sidebar ("Nodes" section) when a
+            container is provided — portalled there so its drag-and-drop
+            handlers keep working across the DOM. Without a container host it
+            falls back to the classic rail left of the canvas. */}
+        {paletteContainer === undefined ? (
+          <FlowNodePalette
+            collapsed={paletteCollapsed}
+            onAddNode={(type) => addNodeAt(type)}
+            subflows={subflowsContainer === undefined ? subflowActions : undefined}
+          />
+        ) : (
+          paletteContainer !== null &&
+          createPortal(
+            <FlowNodePalette
+              fullWidth
+              onAddNode={(type) => addNodeAt(type)}
+              subflows={undefined}
+            />,
+            paletteContainer,
+          )
+        )}
+        {/* The sub-flow palette gets its own sidebar section when the page
+            provides a host; `undefined` keeps it inside the palette above. */}
+        {subflowsContainer !== undefined &&
+          subflowsContainer !== null &&
+          subflowActions &&
+          createPortal(<SubflowPalette actions={subflowActions} />, subflowsContainer)}
 
         <div className="flex-1 min-h-0 min-w-0">
           <FlowCanvas
@@ -2218,7 +2865,20 @@ export function StudioBuilder({
             onEdgesChange={setEdges}
             onSelectionChange={handleSelectionChange}
             onDropNodeType={addNodeAt}
+            onDropSubflow={(path, position) => {
+              includeSubflow(path, position).then(
+                (msg) => {
+                  setStatus(msg);
+                  setStatusKind("info");
+                },
+                (e: unknown) => {
+                  setStatus(e instanceof Error ? e.message : String(e));
+                  setStatusKind("error");
+                },
+              );
+            }}
             liveStates={liveStates}
+            edgeFlows={edgeFlows}
             nodeValidation={nodeValidation}
             edgeValidation={edgeValidation}
             nodeDiff={diffOverlay?.nodeDiff}
@@ -2245,14 +2905,28 @@ export function StudioBuilder({
           />
         </div>
 
-        {/* Node/edge property panel, or bulk-action bar when multiple nodes are selected.
+        {/* Node/edge property panel, or bulk-action bar when multiple nodes are
+            selected. Only rendered while something is selected — or while the
+            toolbar's "Flow settings" button pinned the flow-level fields open.
             tabIndex=0 so the scrollable region is keyboard-accessible even when
             it holds no focusable children (empty state) — WCAG 2.1.1. */}
-        {!inspectorCollapsed && (
+        {!inspectorCollapsed && (hasInspectorSelection || flowSettingsOpen) && (
+          <ResizeHandle
+            side="left"
+            width={inspectorWidth}
+            onWidth={setInspectorWidth}
+            min={240}
+            max={640}
+            initial={320}
+            label="Resize the properties panel"
+          />
+        )}
+        {!inspectorCollapsed && (hasInspectorSelection || flowSettingsOpen) && (
         <aside
           tabIndex={0}
           aria-label="Node properties"
-          className="w-80 shrink-0 overflow-auto rounded-lg border border-border bg-card p-3 text-sm"
+          style={{ width: inspectorWidth }}
+          className="shrink-0 overflow-auto rounded-lg border border-border bg-card p-3 text-sm"
           onSelect={handlePanelSelect}
           // Runs before the field's own onFocus, which reports its name again —
           // so a field that doesn't report one isn't mistaken for the last.

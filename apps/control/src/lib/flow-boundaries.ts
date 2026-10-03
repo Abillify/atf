@@ -24,6 +24,30 @@ export const RESPONSE_EVENT_ID = "__response__";
 
 export const isBoundaryId = (id: string): boolean => id === START_ID || id === END_ID;
 
+/**
+ * Id prefix of the canvas' implicit start/end links (display-only, drawn by
+ * FlowCanvas). The property panel recognises these ids to show the run's
+ * entry/exit data flow, which belongs to no edge of the definition.
+ */
+export const BOUNDARY_EDGE_PREFIX = "boundary:";
+
+export const boundaryStartEdgeId = (nodeId: string): string =>
+  `${BOUNDARY_EDGE_PREFIX}start-${nodeId}`;
+
+export const boundaryEndEdgeId = (nodeId: string): string =>
+  `${BOUNDARY_EDGE_PREFIX}end-${nodeId}`;
+
+/** Which implicit link an id denotes, or null for a definition edge. */
+export function parseBoundaryEdgeId(
+  id: string,
+): { kind: "start" | "end"; nodeId: string } | null {
+  if (!id.startsWith(BOUNDARY_EDGE_PREFIX)) return null;
+  const rest = id.slice(BOUNDARY_EDGE_PREFIX.length);
+  if (rest.startsWith("start-")) return { kind: "start", nodeId: rest.slice("start-".length) };
+  if (rest.startsWith("end-")) return { kind: "end", nodeId: rest.slice("end-".length) };
+  return null;
+}
+
 export interface FlowExit {
   nodeId: string;
   /** `last`: no outgoing edge. `nomatch`: only conditional edges, none matched. */
