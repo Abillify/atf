@@ -1814,7 +1814,11 @@ export class McpWrapper implements McpWrapperService {
     }
     const annotations: ToolAnnotations | undefined = rawTool?.annotations;
     const retryable = annotations?.readOnlyHint === true || annotations?.idempotentHint === true;
-    const maxAttempts = retryable ? 3 : 1;
+    // A server config can override the annotation gate: slow-but-recoverable
+    // servers (embedding searches behind a loaded GPU) benefit from more
+    // attempts even when a tool forgets to declare readOnlyHint.
+    const maxAttempts =
+      config.retryAttempts ?? (retryable ? 3 : 1);
     const enhancedArgs = preparedCall?.args ?? buildEnhancedArgs(declaredParams);
     let attemptClient: Client | undefined;
     let attemptCount = 0;
@@ -1852,7 +1856,9 @@ export class McpWrapper implements McpWrapperService {
       {
         serverName,
         maxAttempts,
-        timeoutMs: this.retryTimeoutMs,
+        // Per-server override: embedding-backed searches (hybrid + HyDE + rerank)
+        // legitimately exceed the 5 s wrapper default under concurrent load.
+        timeoutMs: config.requestTimeoutMs ?? this.retryTimeoutMs,
         onAttemptFailure: async (error, attempt, signal) => {
           attemptFailures.push({ attempt, message: error.message });
           const timedOut = /^Attempt \d+ timed out after \d+ms$/u.test(error.message);
