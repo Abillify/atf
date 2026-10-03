@@ -359,6 +359,15 @@ export function createToolNodeHandler(
             runtime.signal,
           );
           const callArgs = contextualized.args;
+          // Report the final server-bound args so the live graph and the
+          // reasoning <details> block show the ACTUAL values (e.g. the search
+          // query after {{query}} substitution) instead of the key-only
+          // placeholder `onToolCall` keeps for pre-DLP telemetry.
+          await runtime.onToolEffectiveArgs?.(
+            toolCallId,
+            toolRef,
+            JSON.stringify(callArgs),
+          );
           const startMs = Date.now();
           const transactionEnabled = await shouldIssueTransaction(
             runtime.mcpWrapper,
@@ -631,6 +640,22 @@ export function createToolNodeHandler(
         ? { overviewCharBudget: cfg.overviewCharBudget }
         : undefined,
     );
+
+    // Ref-handle opt-in (config.refHandles on the downstream LLM node): the
+    // grounding sections below carry `(Ref: ...)` lines that the header
+    // explicitly advertises as get_document/get_summary arguments, so the
+    // model must re-quote long paths verbatim — exactly what a small model
+    // truncates (trace 55c5b138). Register every reference the tool results
+    // name (search `reference`/`base_ref`, summary `reference`) so the LLM
+    // node's prompt assembly can swap them for short handles at the model
+    // boundary (maskRagContextForModel). Registration only — the persisted
+    // state, client citations and audit surfaces keep the real references;
+    // masking happens on the model-facing copy alone.
+    if (runtime.refHandles !== undefined) {
+      for (const entry of accumulated) {
+        runtime.refHandles.registerFromPayload(entry.result);
+      }
+    }
 
     // Build the ONE context message the next LLM node actually sees.
     //

@@ -11,8 +11,9 @@ import { describe, test, expect } from "bun:test";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
-  NODE_TYPE_CATALOG,
   COMMON_CONFIG_FIELDS,
+  LLM_MODEL_FIELDS,
+  NODE_TYPE_CATALOG,
   catalogPromptReference,
   nodeTypeDoc,
 } from "../node-type-catalog.js";
@@ -92,7 +93,7 @@ describe("node type catalog", () => {
       if (f.includes("node-type-catalog")) continue;
       const src = fs.readFileSync(f, "utf8");
       for (const re of [castRe, castRe2]) {
-        for (const m of src.matchAll(re)) read.add(m[1]!);
+        for (const m of src.matchAll(re)) if (m[1]) read.add(m[1]);
       }
     }
     expect(read.size).toBeGreaterThan(10);
@@ -237,5 +238,48 @@ describe("node type catalog — top-level fields", () => {
       }
     }
     expect(wrong).toEqual([]);
+  });
+
+  test("`label` is explained on every type — the panel offers it everywhere", () => {
+    // The Studio renders a Label input for every node, so every type must say
+    // what it does (and that the id, not the label, is the reference).
+    const missing = NODE_TYPE_CATALOG.filter((d) => usage(d.type, "label") === undefined).map(
+      (d) => d.type,
+    );
+    expect(missing).toEqual([]);
+    for (const doc of NODE_TYPE_CATALOG) {
+      expect(usage(doc.type, "label")).toBe("optional");
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Model selection inside `llm` (`LLM_MODEL_FIELDS`)
+// ---------------------------------------------------------------------------
+
+describe("node type catalog — llm model fields", () => {
+  test("documents the keys of LlmConfig the Studio edits", () => {
+    // The panel's Model section edits exactly these; a new LlmConfig key
+    // without a passage here shows up in the JSON tab with no docs.
+    const src = fs.readFileSync(path.resolve(GRAPH, "../types/flow.ts"), "utf8");
+    const body = /export interface LlmConfig \{([\s\S]*?)\n\}/.exec(src)?.[1] ?? "";
+    const keys = [...body.matchAll(/^\s{2}([A-Za-z]+)\?:/gm)]
+      .map((m) => m[1])
+      .filter((k): k is string => k !== undefined);
+    expect(keys.length).toBeGreaterThan(3);
+    const documented = new Set(LLM_MODEL_FIELDS.map((f) => f.key.split(".")[1]));
+    expect(keys.filter((k) => !documented.has(k))).toEqual([]);
+  });
+
+  test("every llm field explains itself with a dotted key", () => {
+    const check = (fields: typeof LLM_MODEL_FIELDS, top: boolean): void => {
+      for (const f of fields) {
+        if (top) expect(f.key.startsWith("llm.")).toBe(true);
+        expect(f.description.length).toBeGreaterThan(20);
+        if (f.kind === "enum") expect(f.options?.length ?? 0).toBeGreaterThan(0);
+        if (f.fields) check(f.fields, false);
+      }
+    };
+    check(LLM_MODEL_FIELDS, true);
   });
 });

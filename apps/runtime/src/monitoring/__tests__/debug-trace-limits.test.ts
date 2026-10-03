@@ -5,10 +5,15 @@ import { describe, expect, it } from "bun:test";
 import { InMemoryDebugTraceStore } from "../debug-trace-store.js";
 import {
   DEFAULT_DEBUG_TRACE_LIMITS,
+  clampEdgeFlowRecord,
   clampPayload,
   clampUtf8,
 } from "../debug-trace-limits.js";
 import type { DebugNodeTrace, DebugTrace } from "../../types/debug-trace.js";
+import type {
+  EdgeFlowItem,
+  EdgeFlowRecord,
+} from "../../types/edge-flow.js";
 
 const byteLen = (s: string): number => new TextEncoder().encode(s).byteLength;
 
@@ -104,6 +109,44 @@ describe("InMemoryDebugTraceStore — text budgets", () => {
     expect(byteLen(stored?.full_prompt ?? "")).toBeLessThan(
       DEFAULT_DEBUG_TRACE_LIMITS.promptBytes + 128,
     );
+  });
+
+  it("keeps the final answer on its own budget, not the LLM node budget", () => {
+    const store = new InMemoryDebugTraceStore(10);
+    store.startTrace(trace());
+    const response = "a".repeat(200_000);
+    store.finishTrace("exec-1", "completed", {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    }, [], { response, nodeId: "answer" });
+
+    const stored = store.getTrace("exec-1");
+    // The answer IS the debug artifact: it must survive far beyond the
+    // 512-byte node budget, clamped only by finalResponseBytes.
+    expect(byteLen(stored?.final_response ?? "")).toBeGreaterThan(
+      DEFAULT_DEBUG_TRACE_LIMITS.llmResultBytes,
+    );
+    expect(byteLen(stored?.final_response ?? "")).toBeLessThan(
+      DEFAULT_DEBUG_TRACE_LIMITS.finalResponseBytes + 128,
+    );
+    expect(stored?.final_node_id).toBe("answer");
+  });
+
+  it("honours a custom finalResponseBytes limit", () => {
+    const store = new InMemoryDebugTraceStore(10, { finalResponseBytes: 64 });
+    store.startTrace(trace());
+    store.finishTrace("exec-1", "completed", {
+      prompt_tokens: 0,
+      completion_tokens: 0,
+      total_tokens: 0,
+    }, [], { response: "ä".repeat(1_000) });
+
+    const stored = store.getTrace("exec-1");
+    // Multibyte-safe: the clamp cuts at a codepoint boundary (32 x "ä" = 64
+    // bytes) and marks the truncation.
+    expect(stored?.final_response?.startsWith("ä".repeat(32))).toBe(true);
+    expect(stored?.final_response).toContain("truncated");
   });
 
   it("keeps a canonical latest node plus bounded per-attempt history", () => {
@@ -299,5 +342,133 @@ describe("InMemoryDebugTraceStore — text budgets", () => {
     const bytes = byteLen(JSON.stringify(store.getTrace("exec-1")));
     // Unbounded this is ~5.8 MB; the budgeted trace stays well under 200 KB.
     expect(bytes).toBeLessThan(200_000);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Edge-flow records
+// ---------------------------------------------------------------------------
+
+const flowItem = (
+  overrides: Partial<EdgeFlowItem> = {},
+): EdgeFlowItem => ({
+  kind: "text",
+  label: "Query",
+  status: "passed",
+  ...overrides,
+});
+
+const flowRecord = (
+  overrides: Partial<EdgeFlowRecord> = {},
+): EdgeFlowRecord => ({
+  source: "a",
+  target: "b",
+  sequence: 1,
+  items: [flowItem()],
+  ...overrides,
+});
+
+describe("clampEdgeFlowRecord", () => {
+  it("bounds item content to the edgeFlowBytes budget", () => {
+    const out = clampEdgeFlowRecord(
+      flowRecord({ items: [flowItem({ content: "x".repeat(10_000) })] }),
+      DEFAULT_DEBUG_TRACE_LIMITS,
+    );
+    expect(byteLen(out.items[0]?.content ?? "")).toBeLessThan(
+      DEFAULT_DEBUG_TRACE_LIMITS.edgeFlowBytes + 128,
+    );
+  });
+
+  it("keeps kind, label, status and metadata fields untouched", () => {
+    const out = clampEdgeFlowRecord(
+      flowRecord({
+        items: [
+          flowItem({
+            kind: "image",
+            label: "Bild img-1",
+            status: "consumed",
+            media_type: "image/png",
+            ref: "img-1",
+            bytes: 4_567,
+          }),
+        ],
+      }),
+      DEFAULT_DEBUG_TRACE_LIMITS,
+    );
+    expect(out.items[0]).toMatchObject({
+      kind: "image",
+      label: "Bild img-1",
+      status: "consumed",
+      media_type: "image/png",
+      ref: "img-1",
+      bytes: 4_567,
+    });
+  });
+
+  it("caps the item list at 16 entries", () => {
+    const items = Array.from({ length: 30 }, (_unused, i) =>
+      flowItem({ label: `Item ${i}` }),
+    );
+    const out = clampEdgeFlowRecord(
+      flowRecord({ items }),
+      DEFAULT_DEBUG_TRACE_LIMITS,
+    );
+    expect(out.items).toHaveLength(16);
+    expect(out.items[15]?.label).toBe("Item 15");
+  });
+});
+
+describe("InMemoryDebugTraceStore — edge flows", () => {
+  it("appends edge-flow records in traversal order", () => {
+    const store = new InMemoryDebugTraceStore(10);
+    store.startTrace(trace());
+    store.upsertEdgeFlow("exec-1", flowRecord({ sequence: 1 }));
+    store.upsertEdgeFlow(
+      "exec-1",
+      flowRecord({ source: "b", target: "__end__", sequence: 2 }),
+    );
+
+    const flows = store.getTrace("exec-1")?.edge_flows;
+    expect(flows?.map((f) => `${f.source}->${f.target}`)).toEqual([
+      "a->b",
+      "b->__end__",
+    ]);
+  });
+
+  it("clamps content on ingest", () => {
+    const store = new InMemoryDebugTraceStore(10);
+    store.startTrace(trace());
+    store.upsertEdgeFlow(
+      "exec-1",
+      flowRecord({ items: [flowItem({ content: "y".repeat(10_000) })] }),
+    );
+
+    const stored = store.getTrace("exec-1")?.edge_flows?.[0]?.items[0];
+    expect(byteLen(stored?.content ?? "")).toBeLessThan(
+      DEFAULT_DEBUG_TRACE_LIMITS.edgeFlowBytes + 128,
+    );
+  });
+
+  it("keeps the newest records when the per-trace cap is exceeded", () => {
+    const store = new InMemoryDebugTraceStore(10);
+    store.startTrace(trace());
+    for (let i = 1; i <= 205; i++) {
+      store.upsertEdgeFlow("exec-1", flowRecord({ sequence: i }));
+    }
+
+    const flows = store.getTrace("exec-1")?.edge_flows ?? [];
+    expect(flows).toHaveLength(200);
+    // Ring semantics: the LAST traversal must survive — the canvas renders it.
+    expect(flows[flows.length - 1]?.sequence).toBe(205);
+    expect(flows[0]?.sequence).toBe(6);
+  });
+
+  it("ignores records for unknown executions", () => {
+    const store = new InMemoryDebugTraceStore(10);
+    store.startTrace(trace());
+    expect(() => {
+      store.upsertEdgeFlow("exec-unknown", flowRecord());
+    }).not.toThrow();
+    expect(store.getTrace("exec-1")?.edge_flows).toBeUndefined();
   });
 });

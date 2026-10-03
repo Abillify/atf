@@ -116,6 +116,7 @@ import {
   lastUserMessageHasAttachments,
   deduplicateRagContext,
   isRagContextMessage,
+  maskRagContextForModel,
   trimConversationHistory,
   dedupeGuidanceListLines,
   attachVolatileGuidance,
@@ -132,6 +133,16 @@ import {
   type RequireToolUseConfig,
 } from "../require-tool-use.js";
 import { resolveToolSequenceContract } from "../tool-sequence-contract.js";
+import {
+  detectToolLoop,
+  hashToolArgs,
+  isFailedOutcome,
+  looksMutating,
+  recordToolCall,
+  recordToolOutcome,
+  shouldEmitLoopWarning,
+  type ToolLoopDetectionConfig,
+} from "../tool-loop-detection.js";
 import {
   promptPrefixTracker,
   streamKey,
@@ -625,6 +636,185 @@ export function createLlmNodeHandler(
     let unavailableTools: string[] = [];
     let toolKeyByRef: Record<string, string> = {};
     let activeToolKeys: Set<string> | undefined;
+    // Tool-call loop guard (opt-in: `config.toolLoopGuard: true`, or an object
+    // of ToolLoopDetectionConfig overrides). The detectors in
+    // tool-loop-detection.ts exist since their commit but were never wired into
+    // this loop — a production trace shows the consequence: an
+    // unanswerable question drove 11 near-identical searches (863k prompt
+    // tokens, 263 s) because `stopWhen: stepCountIs(maxToolSteps)` only bounds
+    // the ceiling, not the futility. Off by default: research flows
+    // legitimately fire dozens of varied searches per assignment; interactive
+    // responders opt in. The guard wraps
+    // `runtime.executeToolCall` (coverage single-flight) rather than replacing
+    // it, and runs BEFORE the call so a critical verdict never reaches the MCP
+    // server. Warnings ride inside the tool result — the model reads them;
+    // diagnostics alone would not.
+    const loopGuardSetting = (
+      node.config as { toolLoopGuard?: boolean | ToolLoopDetectionConfig } | undefined
+    )?.toolLoopGuard;
+    const loopGuardEnabled =
+      loopGuardSetting === true ||
+      (typeof loopGuardSetting === "object" && loopGuardSetting !== null);
+    const innerExecuteToolCall = runtime.executeToolCall;
+    // Result memo (per node execution): a research flow that repeats the exact
+    // same read-only call pays the MCP round-trip twice for identical bytes.
+    // An internal test series showed 27 tool steps whose prompts grew ~6k chars each —
+    // repeated searches for the same phrase cost ~1.2M prompt tokens in a single
+    // flow. Keyed by tool name + canonicalised args, so only bit-identical
+    // calls hit. Mutating tools (`looksMutating`) are never memoised, and a
+    // failed outcome is never stored — a timeout must stay retryable.
+    const toolResultMemo = new Map<string, Promise<unknown>>();
+    const loopGuardedExecuteToolCall: typeof runtime.executeToolCall =
+      loopGuardEnabled
+        ? async (toolCallId, toolName, args, execute) => {
+            const memoKey = looksMutating(toolName)
+              ? undefined
+              : `${toolName}\u0000${hashToolArgs(args)}`;
+            // The memo is consulted only AFTER the guard verdict below, never
+            // before: a cached answer must still count as a call, or the
+            // identical-repeat detector would never reach its threshold and a
+            // model looping on one query would loop forever for free.
+            const reuseMemo = async (): Promise<unknown> => {
+              const cached = await (toolResultMemo as Map<string, Promise<unknown>>).get(memoKey as string) as unknown;
+              runtime.onNodeDiagnostic?.(node.id, {
+                level: "info",
+                code: "tool_result_memo_hit",
+                message: `Reused cached result for \`${toolName}\` (identical arguments).`,
+                details: { node_id: node.id, tool: toolName },
+              });
+              return cached;
+            };
+            const runInner = (): Promise<unknown> =>
+              innerExecuteToolCall !== undefined
+                ? innerExecuteToolCall(toolCallId, toolName, args, execute)
+                : execute();
+            // Record the outcome against the call the guard is about to log, so
+            // the churn detector can tell "the model kept re-asking" from "the
+            // server kept timing out" — see CallRecord.failed.
+            const runAndRecord = async (): Promise<unknown> => {
+              let outcome: unknown;
+              try {
+                outcome = await runInner();
+              } catch (error) {
+                recordToolOutcome({
+                  state: runtime.toolLoopState as NonNullable<
+                    typeof runtime.toolLoopState
+                  >,
+                  toolName,
+                  outcome: error,
+                });
+                throw error;
+              }
+              recordToolOutcome({
+                state: runtime.toolLoopState as NonNullable<
+                  typeof runtime.toolLoopState
+                >,
+                toolName,
+                outcome,
+              });
+              return outcome;
+            };
+            const loopState = runtime.toolLoopState;
+            if (loopState === undefined) {
+              if (memoKey !== undefined && toolResultMemo.has(memoKey))
+                return reuseMemo();
+              const result = await runInner();
+              if (memoKey !== undefined && !isFailedOutcome(result))
+                toolResultMemo.set(memoKey, Promise.resolve(result));
+              return result;
+            }
+            const verdict = detectToolLoop({
+              state: loopState,
+              toolName,
+              args,
+              now: Date.now(),
+              ...(typeof loopGuardSetting === "object" && loopGuardSetting !== null
+                ? { config: loopGuardSetting }
+                : {}),
+            });
+            if (verdict.stuck) {
+              runtime.metrics.recordCounter(
+                "aiperator_tool_loop_guard_total",
+                {
+                  node: node.id,
+                  detector: verdict.detector,
+                  severity: verdict.severity,
+                },
+                1,
+              );
+              if (verdict.severity === "critical") {
+                runtime.onNodeDiagnostic?.(node.id, {
+                  level: "warn",
+                  code: "tool_loop_blocked",
+                  message: `Tool loop guard blocked \`${toolName}\` (${verdict.detector}, ${verdict.count}x): ${verdict.message}`,
+                  details: {
+                    node_id: node.id,
+                    detector: verdict.detector,
+                    count: verdict.count,
+                  },
+                });
+                // Deliberately NOT an `isError` envelope: the model must be
+                // able to READ why the call was refused so it can change
+                // strategy or answer from what it already has. A tool-error
+                // shape is anonymised to a generic "Tool execution failed."
+                // by `sanitizeToolResultOutput` before it reaches the prompt
+                // (message-mapping.ts), which would erase the only signal the
+                // model has. The operator-facing diagnostic above keeps the
+                // structured code; the model gets a plain, readable result.
+                return {
+                  loop_blocked: true,
+                  detector: verdict.detector,
+                  count: verdict.count,
+                  message: verdict.message,
+                };
+              }
+              if (shouldEmitLoopWarning(loopState, verdict.warningKey)) {
+                runtime.onNodeDiagnostic?.(node.id, {
+                  level: "info",
+                  code: "tool_loop_warning",
+                  message: `Tool loop guard warned on \`${toolName}\` (${verdict.detector}, ${verdict.count}x).`,
+                  details: {
+                    node_id: node.id,
+                    detector: verdict.detector,
+                    count: verdict.count,
+                  },
+                });
+                recordToolCall({ state: loopState, toolName, args, now: Date.now() });
+                if (memoKey !== undefined && toolResultMemo.has(memoKey)) {
+                  const cached = await reuseMemo();
+                  recordToolOutcome({ state: loopState, toolName, outcome: cached });
+                  // The warning must reach the MODEL, not just the operator: it
+                  // rides along as a sibling field of the real result.
+                  return { loop_warning: verdict.message, result: cached };
+                }
+                const result = await runAndRecord();
+                if (memoKey !== undefined && !isFailedOutcome(result))
+                  toolResultMemo.set(memoKey, Promise.resolve(result));
+                // The warning must reach the MODEL, not just the operator: it
+                // rides along as a sibling field of the real result.
+                return { loop_warning: verdict.message, result };
+              }
+            }
+            recordToolCall({ state: loopState, toolName, args, now: Date.now() });
+            if (memoKey !== undefined && toolResultMemo.has(memoKey)) {
+              const cached = await reuseMemo();
+              recordToolOutcome({ state: loopState, toolName, outcome: cached });
+              return cached;
+            }
+            const pending = runAndRecord();
+            if (memoKey !== undefined) {
+              // Store the promise so concurrent identical calls share one
+              // round-trip; drop the entry again if it fails, keeping the call
+              // retryable.
+              toolResultMemo.set(memoKey, pending);
+              pending.catch(() => {
+                if (toolResultMemo.get(memoKey) === pending)
+                  toolResultMemo.delete(memoKey);
+              });
+            }
+            return pending;
+          }
+        : innerExecuteToolCall;
     // A semantic hit only becomes actionable when its MCP schema was bound to
     // an AI-SDK tool key. Keep the best bound score separately: the visibility
     // threshold is intentionally permissive, while mandatory tool use needs a
@@ -712,8 +902,16 @@ export function createLlmNodeHandler(
                 JSON.stringify(args),
               );
             },
-            ...(runtime.executeToolCall !== undefined
-              ? { executeToolCall: runtime.executeToolCall }
+            ...(loopGuardedExecuteToolCall !== undefined
+              ? { executeToolCall: loopGuardedExecuteToolCall }
+              : {}),
+            // Ref-handle indirection (config.refHandles): resolve the model's
+            // short handles back to real references and mask references in
+            // tool results, per node opt-in only.
+            ...(runtime.refHandles !== undefined &&
+            (node.config as { refHandles?: unknown } | undefined)?.refHandles ===
+              true
+              ? { refHandles: runtime.refHandles }
               : {}),
           },
         );
@@ -864,6 +1062,8 @@ export function createLlmNodeHandler(
             activate: (keys) => {
               for (const k of keys) active.add(k);
             },
+            onEffectiveArgs: (toolCallId, toolName, argsJson) =>
+              runtime.onToolEffectiveArgs?.(toolCallId, toolName, argsJson),
           });
           aiTools[meta.key] = meta.tool;
           active.add(meta.key);
@@ -913,6 +1113,8 @@ export function createLlmNodeHandler(
       metrics: runtime.metrics,
       clientId: runtime.ctx.clientId,
       costAttribution: buildCostAttribution(runtime.ctx, runtime.flowId),
+      onEffectiveArgs: (toolCallId, toolName, argsJson) =>
+        runtime.onToolEffectiveArgs?.(toolCallId, toolName, argsJson),
     });
     if (Object.keys(mediaTools).length > 0) {
       aiTools = { ...(aiTools ?? {}), ...mediaTools };
@@ -1018,6 +1220,8 @@ export function createLlmNodeHandler(
         metrics: runtime.metrics,
         clientId: runtime.ctx.clientId,
         costAttribution: buildCostAttribution(runtime.ctx, runtime.flowId),
+        onEffectiveArgs: (toolCallId, toolName, argsJson) =>
+          runtime.onToolEffectiveArgs?.(toolCallId, toolName, argsJson),
       });
       if (Object.keys(inspectionTools).length > 0) {
         aiTools = { ...(aiTools ?? {}), ...inspectionTools };
@@ -1081,8 +1285,21 @@ export function createLlmNodeHandler(
           return !(typeof c === "string" && isRagContextMessage(c));
         })
       : state.messages;
+    // Ref-handle opt-in (config.refHandles): the tool node registered the
+    // grounding references; swap them for short handles on the MODEL-FACING
+    // copy only. The grounding header advertises `(Ref: ...)` as the
+    // get_document argument, and a small model truncates those long paths
+    // (trace 55c5b138) — a 4-char handle it can copy verbatim cannot. The
+    // persisted state keeps the real references, so history, client citations
+    // and audit surfaces are unaffected; resolution maps the handle back
+    // before every tool call.
+    const modelFacingMessages =
+      runtime.refHandles !== undefined &&
+      (node.config as { refHandles?: unknown } | undefined)?.refHandles === true
+        ? maskRagContextForModel(groundedMessages, runtime.refHandles)
+        : groundedMessages;
     const rawModelMessages = baseMessagesToModelMessages(
-      deduplicateRagContext(groundedMessages),
+      deduplicateRagContext(modelFacingMessages),
     );
 
     // `assistant-context` runs after the human turn and therefore emits a
@@ -2536,11 +2753,19 @@ export function createLlmNodeHandler(
         // nodes appear to never stream).
         let preambleResolved = false;
         let preambleStartedAt = 0;
-        // Tool-capable end nodes can opt into buffering a possible pre-tool
-        // narration until it is known whether a tool call follows. If one does,
-        // the narration is discarded; if no tool is called, the buffered text is
+        // Tool-capable end nodes can opt into buffering possible narration
+        // until it is known whether a tool call follows. If one does, the
+        // narration is discarded; if no tool is called, the buffered text is
         // emitted as the direct answer at stream completion. This prevents
         // internal action/research plans from becoming visible client content.
+        // With suppression the buffer stays armed for the WHOLE multi-step
+        // tool loop, not just before the first tool call: local models also
+        // emit first-person planning sentences between tool steps (after a
+        // tool result, before the next call), and those leaked into the
+        // user-visible answer when only the pre-first-call window was
+        // buffered. Each tool-call/result/error discards the current buffer
+        // and re-arms it for the next step; whatever remains when the stream
+        // ends is the real answer and is released below.
         const suppressToolPreamble =
           (node.config as { suppressToolPreamble?: boolean } | undefined)
             ?.suppressToolPreamble === true;
@@ -2954,18 +3179,21 @@ export function createLlmNodeHandler(
                 await routeFinalAnswerDelta(delta);
               } else if (
                 hasTools &&
-                !toolPhaseStarted &&
                 !preambleResolved &&
+                (!toolPhaseStarted || suppressToolPreamble) &&
                 !delta.startsWith("\x00r")
               ) {
                 if (preambleBuf.length === 0) preambleStartedAt = Date.now();
                 preambleBuf += delta;
-                if (!suppressToolPreamble) {
-                  try {
-                    await runtime.onReasoning(node.id, delta);
-                  } catch {
-                    /* disconnect */
-                  }
+                // The buffer only withholds text from `content` — the
+                // reasoning channel still shows it LIVE, so a user following
+                // the Thinking block can watch the model plan in real time
+                // even when a later tool call proves the text was narration
+                // rather than the answer.
+                try {
+                  await runtime.onReasoning(node.id, delta);
+                } catch {
+                  /* disconnect */
                 }
                 const elapsedMs = Date.now() - preambleStartedAt;
                 if (
@@ -3003,7 +3231,17 @@ export function createLlmNodeHandler(
               await flushThinkBuf();
               if (!toolPhaseStarted) {
                 toolPhaseStarted = true;
-                if (!suppressToolPreamble) reasoningText += preambleBuf;
+                // The narration was already streamed live on the reasoning
+                // channel; fold it into the persisted reasoning too, so the
+                // debug trace and history match what the client saw.
+                reasoningText += preambleBuf;
+                preambleBuf = "";
+              } else if (suppressToolPreamble && preambleBuf.length > 0) {
+                // Planning narration between tool steps: a subsequent call
+                // proves it was not the answer, so drop it from `content`
+                // (keeping it in the reasoning trail) and re-arm the buffer
+                // for the next step.
+                reasoningText += preambleBuf;
                 preambleBuf = "";
               }
               const id = part.toolCallId ?? crypto.randomUUID();
@@ -3040,7 +3278,13 @@ export function createLlmNodeHandler(
               await flushThinkBuf();
               if (!toolPhaseStarted) {
                 toolPhaseStarted = true;
-                if (!suppressToolPreamble) reasoningText += preambleBuf;
+                reasoningText += preambleBuf;
+                preambleBuf = "";
+              } else if (suppressToolPreamble && preambleBuf.length > 0) {
+                // Same as the tool-call branch: narration preceding a later
+                // tool result is planning text, not the answer — kept in the
+                // reasoning trail, dropped from `content`.
+                reasoningText += preambleBuf;
                 preambleBuf = "";
               }
               const id = part.toolCallId ?? crypto.randomUUID();
@@ -3090,7 +3334,13 @@ export function createLlmNodeHandler(
               await flushThinkBuf();
               if (!toolPhaseStarted) {
                 toolPhaseStarted = true;
-                if (!suppressToolPreamble) reasoningText += preambleBuf;
+                reasoningText += preambleBuf;
+                preambleBuf = "";
+              } else if (suppressToolPreamble && preambleBuf.length > 0) {
+                // Same as the tool-call branch: narration preceding a later
+                // tool error is planning text, not the answer — kept in the
+                // reasoning trail, dropped from `content`.
+                reasoningText += preambleBuf;
                 preambleBuf = "";
               }
               const id = part.toolCallId ?? crypto.randomUUID();
@@ -3305,10 +3555,16 @@ export function createLlmNodeHandler(
           // merely copied a historical assistant error. A legitimate inferred
           // text answer is emitted explicitly by the release branch below.
           const holdPreambleForToolUse = requireToolUse && !toolPhaseStarted;
+          // With suppression the buffer also collects text emitted AFTER the
+          // first tool call (per-step narration lookahead). Whatever is still
+          // buffered when the stream ends follows the last tool result, so it
+          // is the real answer and must be released here — this also keeps the
+          // `post_tool_answer_missing` guard below from firing on a correct
+          // answer that only ever lived in the buffer.
           if (
-            !toolPhaseStarted &&
             preambleBuf.length > 0 &&
-            !holdPreambleForToolUse
+            !holdPreambleForToolUse &&
+            (!toolPhaseStarted || suppressToolPreamble)
           ) {
             fullText += preambleBuf;
             emittedAny = true;
@@ -3907,6 +4163,19 @@ export function createLlmNodeHandler(
           // idempotent cleanup before LangGraph persists the turn.
           fullText = stripLeakedContextEcho(fullText);
 
+          // Ref-handle indirection (config.refHandles): the model wrote short
+          // handles where a long document reference belongs, and the SSE layer
+          // already mapped them back for the live stream. `fullText` is the
+          // engine-owned copy that feeds the response cache, the debug trace
+          // and the persisted turn — every one of those is a USER/OPERATOR
+          // surface, and a follow-up turn reads the persisted history with a
+          // FRESH (empty) registry, where a lingering handle would no longer
+          // resolve. Map them back to real references once, here, so nothing
+          // downstream ever stores or replays a handle. No-op without refHandles.
+          if (runtime.refHandles !== undefined) {
+            fullText = runtime.refHandles.unmapText(fullText);
+          }
+
           // ---- success: fold usage, record cost + metrics ----
           accountAttempt("ok");
 
@@ -3916,8 +4185,22 @@ export function createLlmNodeHandler(
           try {
             const response = (await result.response) as { messages?: unknown };
             if (Array.isArray(response.messages)) {
+              // Ref-handle indirection (config.refHandles): the tool results
+              // the model saw during THIS loop carry short handles. These
+              // messages are persisted to the checkpointer and replayed on the
+              // NEXT turn, where the run-scoped registry is fresh/empty and a
+              // lingering handle would no longer resolve (a dangling reference
+              // the model could copy). Map handles back to real references
+              // before persisting — `unmapContent` is pure (deep copy), so the
+              // SDK's own message array is left untouched. Real references
+              // resolve unconditionally, so the next turn stays correct whether
+              // or not the same documents are re-retrieved.
+              const persistedSource =
+                runtime.refHandles !== undefined
+                  ? runtime.refHandles.unmapContent(response.messages)
+                  : response.messages;
               responseMessages = aiResponseMessagesToBaseMessages(
-                response.messages,
+                persistedSource as unknown[],
               );
               // Persist the SAME capped tool output the model was shown during
               // the loop. The AI SDK hands back its own untruncated copies, so

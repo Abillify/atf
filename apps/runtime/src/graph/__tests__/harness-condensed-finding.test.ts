@@ -666,6 +666,57 @@ describe("search-driven discovery (second retrieval path)", () => {
 		expect(promoted.promotedRefs).toEqual(["/A"]);
 	});
 
+	test("a complete rerank gates promotion by score — rank is no bypass", () => {
+		const ledger = completeFirstDiscovery();
+		// /A is rank 1 but scores below the threshold; /B is rank 2 but above it.
+		const rerankPass = {
+			...pass("reranked", ["/A", "/B"]),
+			hits: [
+				{ ref: "/A", rank: 1, score: 0.2 },
+				{ ref: "/B", rank: 2, score: 0.7 },
+			],
+			rerankApplied: true,
+			rerankComplete: true,
+			scoreKind: "rerank" as const,
+		};
+		const promoted = promoteCoverageSearchHits(
+			ledger,
+			[rerankPass],
+			10,
+			0.5,
+		);
+		// The top-ranked low-score hit must NOT be promoted via the rank rule.
+		expect(promoted.promotedRefs).toEqual(["/B"]);
+	});
+
+	test("rank remains the fallback when the rerank is missing or incomplete", () => {
+		const ledger = completeFirstDiscovery();
+		// Threshold configured, but the pass has no server-confirmed rerank:
+		// the Top-N rank rule still applies (backward-compatible fallback).
+		const noRerank = { ...pass("ohne rerank", ["/A", "/B"]), scoreKind: "retrieval" as const };
+		const promoted = promoteCoverageSearchHits(
+			ledger,
+			[noRerank],
+			1,
+			0.5,
+		);
+		expect(promoted.promotedRefs).toEqual(["/A"]);
+		// An incomplete rerank must not gate either — otherwise a partial
+		// server rerank would silently drop every candidate.
+		const incomplete = {
+			...pass("unvollstaendig", ["/A", "/B"]),
+			hits: [
+				{ ref: "/A", rank: 1, score: 0.1 },
+				{ ref: "/B", rank: 2, score: 0.1 },
+			],
+			rerankApplied: true,
+			rerankComplete: false,
+			scoreKind: "rerank" as const,
+		};
+		const fallback = promoteCoverageSearchHits(ledger, [incomplete], 1, 0.5);
+		expect(fallback.promotedRefs).toEqual(["/A"]);
+	});
+
 	test("a settled dossier is not terminal while a discovery round is owed", () => {
 		const settled = {
 			...seed(),

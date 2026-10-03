@@ -169,6 +169,104 @@ const LLM_REF_FIELD = (key: string, label: string, description: string): ConfigF
   description: `${description} ${LLM_REF_DESC}`,
 });
 
+/**
+ * Inside the node's top-level `llm` field — the model selection. Not part of
+ * any type's `config` (it edits `node.llm`, not `node.config`), so the Studio
+ * renders it as its own documentation section and marks these dotted keys when
+ * the corresponding form control or JSON cursor position is inside `llm`.
+ */
+export const LLM_MODEL_FIELDS: ConfigField[] = [
+  {
+    key: "llm.shortcut",
+    kind: "string",
+    label: "Shortcut",
+    description:
+      "Name of a preset in `flows/model-shortcuts.yaml` (or a `{{vars.*}}` reference to one). A shortcut carries provider, model and preset parameters in one place, and may resolve to a **pool** (an ordered fallback/round-robin chain of models). Mutually exclusive with `provider`/`model` on the same node — the parser expands the shortcut over them at load time.",
+    example: "fast-pool",
+  },
+  {
+    key: "llm.provider",
+    kind: "string",
+    label: "Provider",
+    description:
+      "A PROVIDERS entry name (a named instance with its own base URL and key) or a protocol (`openai`, `google`, `anthropic`, `ollama`, `azure`, `bedrock`). Use it with `model` when no shortcut fits; omit both to fall back to the deployment's `DEFAULT_LLM`.",
+    example: "openai",
+  },
+  {
+    key: "llm.model",
+    kind: "string",
+    label: "Model",
+    description:
+      "Concrete model id served by `provider` (e.g. `qwen3-32b`, `gpt-4o`). Only meaningful together with `provider`; a shortcut sets both itself, so don't mix the two.",
+    example: "qwen3-32b",
+  },
+  {
+    key: "llm.parameters",
+    kind: "object",
+    label: "Generation parameters",
+    description:
+      "Generation parameters for this node's model calls (max 20 keys). Values here override what a shortcut preset carries. Unknown keys are forwarded to the provider SDK, so provider-specific options (e.g. `topP`) work without a code change.",
+    fields: [
+      {
+        key: "temperature",
+        kind: "number",
+        label: "Temperature",
+        min: 0,
+        max: 2,
+        step: 0.05,
+        description:
+          "Sampling temperature 0–2. Lower = deterministic (classification, extraction); higher = creative. Omitted = provider default.",
+      },
+      {
+        key: "maxTokens",
+        kind: "number",
+        label: "Max output tokens",
+        integer: true,
+        min: 1,
+        max: 65536,
+        description:
+          "Hard cap on output tokens. Raise it for long answers or structured output; the request fails when the answer would exceed it.",
+      },
+      {
+        key: "reasoningEffort",
+        kind: "enum",
+        label: "Reasoning effort",
+        options: ["none", "minimal", "low", "medium", "high"],
+        description:
+          "How much thinking the model invests, mapped per provider (OpenAI `reasoning_effort`, Anthropic thinking budget, Gemini/Ollama `thinking_config`/`think`). `none` disables reasoning where supported. Ignored by models without reasoning support.",
+      },
+      {
+        key: "contextLength",
+        kind: "number",
+        label: "Context window (tokens)",
+        integer: true,
+        min: 1,
+        description:
+          "Explicit context-window size for this model. Overrides the capability registry and drives history compression and the tool-result budget — set it when a self-hosted model's window is unknown to the platform or served with a reduced one.",
+      },
+    ],
+    example: { temperature: 0.2, maxTokens: 4096 },
+  },
+  {
+    key: "llm.weight",
+    kind: "number",
+    label: "Pool weight",
+    min: 0,
+    step: 0.1,
+    advanced: true,
+    description:
+      "Relative weight of this model inside a pool — used by `weighted-round-robin` and `weighted-random`. Ignored outside a pool. Set on a pool candidate, not usually on the node itself.",
+  },
+  {
+    key: "llm.pool",
+    kind: "json",
+    label: "Model pool",
+    description:
+      "Ordered model chain attached by a POOL shortcut, or written directly: `{ strategy?, candidates: [{ provider, model, parameters? }, …] }`. `strategy`: `fallback` (default — strict order, each later member is a failover), `round-robin`, `weighted-round-robin`, `random`, `weighted-random`, `least-used`. The host `llm` always carries the first candidate's provider/model, so consumers that ignore `pool` still see a valid model. A candidate may itself carry a nested `pool`.",
+    example: { strategy: "fallback", candidates: [{ provider: "openai", model: "gpt-4o" }, { provider: "ollama", model: "qwen3-32b" }] },
+  },
+];
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -192,9 +290,10 @@ const LLM: NodeTypeDoc = {
     { key: "llm", usage: "recommended", description: "Model to call. Omit to use DEFAULT_LLM." },
     { key: "systemPrompt", usage: "recommended", description: "Instructions for this step. Supports `#[[file:prompts/x.md]]` includes and `{{vars.*}}` / `{{context.*}}` / `{{node.<id>.classification.*}}` placeholders." },
     { key: "tools", usage: "optional", description: "MCP tool refs (`server/tool`, `server/*`) the agent loop may call. Empty = plain model call." },
-    { key: "overrides", usage: "optional", description: "Conditional per-request overrides of llm/systemPrompt/tools." },
+    { key: "overrides", usage: "optional", description: "Conditional per-request variants, applied in order — the FIRST matching entry wins and replaces `llm`, `systemPrompt` and `tools` wholesale (keys it omits stay as on the node). Match conditions (all present ones must hold): `whenClass` (classLabel, `*` wildcard), `whenClaim` (expression over JWT claims, e.g. `role == 'admin'`), `whenParam` (expression over requestParams), `whenPlan` (exact), `whenGroup` (ctx.groups contains), `whenLanguage` (BCP-47 prefix, `de` matches `de-AT`). Example: `[{ whenClass: \"SIMPLE\", llm: { shortcut: fast }, systemPrompt: \"...\" }]`." },
     { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; higher runs first. A flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes." },
     { key: "classifierSchema", usage: "ignored", description: "Not used — that is the `classifier` type. For a schema-constrained answer from an `llm` node use `config.finalAnswerContract` or a structured downstream classifier." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     {
@@ -260,6 +359,28 @@ const LLM: NodeTypeDoc = {
       example: { when: { pattern: "buche|reservier", flags: "i" }, sequence: ["parking/availability", "parking/book_space"] },
     },
     {
+      key: "toolLoopGuard",
+      kind: "object",
+      label: "Tool-call loop guard",
+      advanced: true,
+      default: "disabled (enable with `true` for defaults)",
+      description:
+        "Opt-in guard against a model stuck in a tool-call loop. `true` enables it with defaults; an object tunes the detectors. Counts identical calls, same-tool churn (varying args, time-windowed), mutating calls with no observable effect, and A→B→A→B cycles — each with a warn threshold (a steering notice is injected) and a block threshold (the repeated call is refused). Failed tool outcomes count toward churn so a retry storm is caught; policy/approval waits pause the clock.",
+      fields: [
+        { key: "enabled", kind: "boolean", label: "Enabled", default: true, description: "Master switch — only relevant when the object form is used; `toolLoopGuard: true` enables with defaults." },
+        { key: "identicalWarnAt", kind: "number", label: "Identical warn at", integer: true, min: 2, default: 3, description: "Identical calls (same tool, same args) before a warning is injected." },
+        { key: "identicalBlockAt", kind: "number", label: "Identical block at", integer: true, min: 2, default: 5, description: "Identical calls before the repeat is blocked." },
+        { key: "churnWarnAt", kind: "number", label: "Churn warn at", integer: true, min: 2, default: 6, description: "Same-tool calls with varying args inside the window before a warning." },
+        { key: "churnBlockAt", kind: "number", label: "Churn block at", integer: true, min: 2, default: 10, description: "Same-tool calls with varying args inside the window before blocking." },
+        { key: "churnWindowMs", kind: "number", label: "Churn window (ms)", integer: true, min: 1000, default: 120000, description: "Time window in which churn is counted; paused time (approvals) is excluded." },
+        { key: "noProgressWarnAt", kind: "number", label: "No-progress warn at", integer: true, min: 2, default: 3, description: "Mutating calls with no observable effect before a warning." },
+        { key: "noProgressBlockAt", kind: "number", label: "No-progress block at", integer: true, min: 2, default: 5, description: "Mutating calls with no observable effect before blocking." },
+        { key: "cycleWarnAt", kind: "number", label: "Cycle warn at", integer: true, min: 2, default: 3, description: "A→B→A→B cycle repetitions before a warning." },
+        { key: "cycleBlockAt", kind: "number", label: "Cycle block at", integer: true, min: 2, default: 4, description: "A→B→A→B cycle repetitions before blocking." },
+      ],
+      example: { identicalWarnAt: 2, identicalBlockAt: 4 },
+    },
+    {
       key: "clientTools",
       kind: "boolean",
       label: "Accept client tools",
@@ -288,6 +409,14 @@ const LLM: NodeTypeDoc = {
       ],
     },
     TOOL_CONTEXT_FIELD,
+    {
+      key: "refHandles",
+      kind: "boolean",
+      label: "Short reference handles",
+      default: false,
+      description:
+        "Replace long document references in tool results with short 4-character handles (e.g. `K3NQ`) that the model reads and quotes; the runtime maps them back to the real references before the tool call and in everything the user sees. Use on tool-loop nodes whose model must re-quote `reference`/`base_ref` arguments — small models truncate long paths. Unknown handles are rejected with the valid list instead of hitting the backend.",
+    },
     {
       key: "outputSchema",
       kind: "json",
@@ -427,7 +556,7 @@ const LLM: NodeTypeDoc = {
       label: "Cost routing",
       advanced: true,
       description:
-        "Picks the model per request from `candidates` (LlmConfig list): `strategy` `cheapest` (blended $/token), `balanced` (cost for this prompt size) or `quality-aware` (cheapest with observed quality ≥ `minQualityScore`, default 0.7; fewer than `minQualitySamples`, default 5, observations = exploration). Also what the Studio's Optimize panel analyses.",
+        "Picks the model per request from `candidates` (LlmConfig list): `strategy` `cheapest` (blended cost/token), `balanced` (cost for this prompt size) or `quality-aware` (cheapest with observed quality ≥ `minQualityScore`, default 0.7; fewer than `minQualitySamples`, default 5, observations = exploration). Also what the Studio's Optimize panel analyses.",
       example: { strategy: "quality-aware", candidates: [{ shortcut: "fast-pool" }, { shortcut: "sonnet" }], minQualityScore: 0.8 },
     },
     {
@@ -486,12 +615,21 @@ const TOOL: NodeTypeDoc = {
   ],
   topLevel: [
     { key: "tools", usage: "required", description: "Tool refs to call, in order." },
-    { key: "overrides", usage: "optional", description: "Conditional per-request variants of `tools` — the only way to vary which tools this node calls. The `llm`/`systemPrompt` of a matching entry are resolved but unused, like the node-level ones." },
+    { key: "overrides", usage: "optional", description: "Conditional per-request variants of `tools` — the only way to vary which tools this node calls. Entries match on `whenClass`/`whenClaim`/`whenParam`/`whenPlan`/`whenGroup`/`whenLanguage`, first match wins. The `llm`/`systemPrompt` of a matching entry are resolved but unused, like the node-level ones." },
     { key: "llm", usage: "ignored", description: "Not used — no model is involved." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — no model is involved." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     TOOL_ARGS_FIELD,
+    {
+      key: "args",
+      kind: "json",
+      label: "Default tool arguments",
+      description:
+        "Arguments applied to EVERY tool this node calls; `toolArgs[ref]` overrides them per tool. String values may contain templates (`{{query}}`, `{{classification.<field>}}`, …) resolved against the run state. Use it when several tools share the same parameter instead of repeating it in each `toolArgs` entry.",
+      example: { format: "json", limit: 50 },
+    },
     {
       key: "paginate",
       kind: "json",
@@ -555,13 +693,14 @@ const ROUTER: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used — routing is deterministic, no model runs." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — no model runs. The routing logic lives in the edges' `conditions`." },
     { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [],
   examples: [
     {
       title: "Route by a classification field",
       yaml: `edges:
-  - { source: router, target: inkasso, conditions: "classification.route == 'INKASSO'" }
+  - { source: router, target: retoure, conditions: "classification.route == 'RETOURE'" }
   - { source: router, target: answer-fast }   # default`,
     },
   ],
@@ -584,6 +723,7 @@ const CLASSIFIER: NodeTypeDoc = {
     { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; a flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes." },
     { key: "tools", usage: "ignored", description: "Not used — a classifier makes one structured call and never enters a tool loop. Classify first, then let an `llm` or `tool` node act on the result." },
     { key: "overrides", usage: "ignored", description: "NOT applied: unlike `llm` and `tool` nodes, a classifier reads `llm`/`systemPrompt` directly and never consults `overrides`. Put the variation in the prompt or split the node." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     {
@@ -601,6 +741,14 @@ const CLASSIFIER: NodeTypeDoc = {
       description: "Classification used when no model produced parseable output, so the turn continues on a safe route instead of failing.",
       example: { route: "ALLGEMEINES", needsInfo: false },
     },
+    {
+      key: "inputFilter",
+      kind: "enum",
+      label: "Run only for attachments",
+      options: ["attachments", "current-turn-attachments"],
+      description:
+        "Skip this node unless the conversation (`attachments`) or the latest user message (`current-turn-attachments`) contains attachments — for vision-preprocessing classifiers that would otherwise burn a model call on every text-only turn to answer \"no image\". The skip resolves to `config.fallback` (required — without it the filter is ignored with a trace warning), records the node as completed with a `classifier_skipped_no_attachments` diagnostic, and makes no model call.",
+    },
   ],
   examples: [
     {
@@ -613,7 +761,7 @@ const CLASSIFIER: NodeTypeDoc = {
     schema:
       type: object
       properties:
-        route: { type: string, enum: [INKASSO, TENANTS, BETRIEB, ALLGEMEINES] }
+        route: { type: string, enum: [RETOURE, TENANTS, BETRIEB, ALLGEMEINES] }
         needsInfo: { type: boolean }
       required: [route, needsInfo]
   config:
@@ -637,6 +785,7 @@ const PARALLEL: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used — the children carry their own models. The RAG compression model is `config.ragCompression.llm`." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — the children carry their own prompts." },
     { key: "tools", usage: "ignored", description: "Not used — `config.ragProfiles` is compiled into the search calls, and children call their own tools." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     {
@@ -646,10 +795,10 @@ const PARALLEL: NodeTypeDoc = {
       description:
         "`profiles`: name → list of sources; `select`: `[{ when: <condition>, use: <profile> }]` (first match wins), else `default`; `shared`: sources added to every profile. A source: `{ collection (required), tags?, limit? (≤100), hybrid?, minScore? (0–1), scoreWeight?, when?, rerank? (default true), groupByDocument? (default true), includeAllVersions?, validAt? (RFC 3339), filter?, filterV2?, pathPrefix?, hyde?, expand?, granularity?, includeAssets?, assets? }` — `tags` may be `{{…}}` templates. `filter` (metadata equality), `filterV2` (eq/in/range operators), `pathPrefix` (folder scope) and `hyde` (HyDE query expansion) are forwarded to vectorsearch. v2 retrieval: `expand` (none|neighbors|section|page) pulls in surrounding context, `granularity` (chunk|section|page|document) picks the unit size, `includeAssets` (none|refs|thumbnails, sent as `include_assets`) returns figure assets per hit; omitted → pre-v2 behaviour. `assets: { attach? (none|auto|always, default none), maxImages? (1–20, default 4), variant? (thumb|preview|full, default preview) }` attaches hit figures as image parts to the responder message — `auto` only when `config.responderLlm` confirms vision input, `always` regardless; the first source declaring `assets` sets the policy for the node. Fusion: `rerank: { topN }` (model rerank) or `maxDocuments` (score-only), plus `minScore`.",
       example: {
-        select: [{ when: "classification.route == 'INKASSO'", use: "inkasso" }],
+        select: [{ when: "classification.route == 'RETOURE'", use: "retoure" }],
         default: "allgemein",
         profiles: {
-          inkasso: [{ collection: "inkasso-docs", tags: ["{{classification.clientTag}}"], limit: 8 }],
+          retoure: [{ collection: "retoure-docs", tags: ["{{classification.clientTag}}"], limit: 8 }],
           allgemein: [{ collection: "docs", limit: 6 }],
         },
         maxDocuments: 8,
@@ -721,6 +870,7 @@ const RETRIEVAL: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used. The embedding model is a deployment setting (`EMBEDDING_MODEL`), not a node field — this node cannot be pointed at a different one." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — no model is prompted here. The retrieved chunks are injected for the NEXT llm node, whose prompt applies." },
     { key: "tools", usage: "ignored", description: "Not used — this node queries the platform vector store directly. For vectorsearch MCP collections use a `tool` or `parallel` node." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     { key: "collection", kind: "string", label: "Collection", required: true, description: "Vector collection to search. Without it the node does nothing." },
@@ -742,6 +892,7 @@ const MEMORY: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used. Recall runs against the memory store with the deployment's embedding model, not a per-node one." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — no model is prompted. The recalled memories become a system message for the next llm node." },
     { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     { key: "topK", kind: "number", label: "Top K", integer: true, min: 1, default: "MEMORY_TOP_K, else 5", description: "Number of memories to recall." },
@@ -771,6 +922,7 @@ const AGENT_HARNESS: NodeTypeDoc = {
     },
     { key: "tools", usage: "ignored", description: "Not used — the harness calls no tools itself, it delegates to the `config.allowlist` nodes, which carry their own tools." },
     { key: "overrides", usage: "ignored", description: "NOT applied: only `llm` and `tool` nodes consult `overrides`." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     { key: "allowlist", kind: "node-list", label: "Delegation targets", required: true, description: "Node ids the harness may delegate to (at least one). The Studio draws them as dotted links when the harness is selected." },
@@ -827,7 +979,7 @@ const AGENT_HARNESS: NodeTypeDoc = {
   type: agent-harness
   llm: { shortcut: structured-pool }
   config:
-    allowlist: [rag-context, betrieb-responder, inkasso-responder]
+    allowlist: [rag-context, betrieb-responder, retoure-responder]
     maxIterations: 6
     maxCost: 0.5
     carryForward: condensed
@@ -853,6 +1005,7 @@ const TRANSFORM: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used — the rules are deterministic, nothing is inferred. Use a `classifier` when you need a model." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — no model runs." },
     { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     {
@@ -885,6 +1038,7 @@ const TRIGGER: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used — the node is a pass-through at run time." },
     { key: "systemPrompt", usage: "ignored", description: "Not used. The message a trigger produces comes from `config.messageTemplate` / `config.scheduledMessage`." },
     { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     { key: "mode", kind: "enum", label: "Mode", options: ["webhook", "schedule"], required: true, description: "`webhook`: signed POST starts the flow. `schedule`: interval or cron." },
@@ -912,6 +1066,7 @@ const ASSISTANT_CONTEXT: NodeTypeDoc = {
     { key: "systemPrompt", usage: "ignored", description: "Not used. The assistant's prompt sections are rendered from its own identity, skills and inbox — put flow-level wording on the answering `llm` node instead." },
     { key: "llm", usage: "ignored", description: "Not used — this node loads context, it does not call a model." },
     { key: "tools", usage: "ignored", description: "Not used. Which tools the assistant may use follows from its credentials and `config.requiresToolAuthority`." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [
     { key: "defaultAssistantId", kind: "string", label: "Default assistant", description: "Assistant used when the request names none (max 64 chars)." },
@@ -933,6 +1088,7 @@ const ASSISTANT_LEARN: NodeTypeDoc = {
     { key: "llm", usage: "ignored", description: "Not used — the learning pass runs on the scheduler's own model, outside this node." },
     { key: "systemPrompt", usage: "ignored", description: "Not used — no model is prompted here." },
     { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
+    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
   ],
   config: [{ key: "learn", kind: "boolean", label: "Offer for learning", default: true, description: "False for flows whose turns should be recorded but never learned from." }],
   examples: [],
@@ -976,6 +1132,8 @@ export function catalogPromptReference(detailTypes?: readonly string[]): string 
   };
   const out: string[] = ["Node types:"];
   for (const doc of NODE_TYPE_CATALOG) out.push(`  - ${doc.type}: ${doc.summary}`);
+  out.push("Node field `llm` (model selection, every key optional):");
+  for (const f of LLM_MODEL_FIELDS) out.push(...fieldLine(f, "  "));
   out.push("Config keys available on every node:");
   for (const f of COMMON_CONFIG_FIELDS) out.push(...fieldLine(f, "  "));
   for (const doc of NODE_TYPE_CATALOG) {

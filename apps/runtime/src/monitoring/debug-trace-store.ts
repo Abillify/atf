@@ -38,10 +38,12 @@ import type {
   DebugUsage,
   DebugStreamError,
 } from "../types/debug-trace.js";
+import type { EdgeFlowRecord } from "../types/edge-flow.js";
 import {
   DEFAULT_DEBUG_TRACE_LIMITS,
   clampDebugNode,
   clampDebugTrace,
+  clampEdgeFlowRecord,
   clampUtf8,
 } from "./debug-trace-limits.js";
 
@@ -87,6 +89,15 @@ export interface DebugTraceStore {
   annotateContext(executionId: string, patch: Partial<DebugTraceContext>): void;
 
   /**
+   * Appends one edge-traversal record to the trace's `edge_flows`. Called by
+   * the engine each time the graph advances (conditional routers and
+   * unconditional edges), so a loop over the same edge yields several records
+   * and the consumer keeps the last per (source, target). No-op for an unknown
+   * execution id.
+   */
+  upsertEdgeFlow(executionId: string, record: EdgeFlowRecord): void;
+
+  /**
    * Seals the trace as finished, recording the final status, accumulated token
    * usage, any stream errors and — when there was one — the answer the flow
    * returned. Safe to call even when the execution errored mid-stream —
@@ -113,6 +124,9 @@ export interface DebugTraceStore {
 // ---------------------------------------------------------------------------
 // In-memory implementation
 // ---------------------------------------------------------------------------
+
+/** Cap on edge-flow records kept per trace (newest win on a loop). */
+const MAX_EDGE_FLOWS_PER_TRACE = 200;
 
 function nodeAttempt(node: DebugNodeTrace): DebugNodeAttempt | undefined {
   if (node.attempt === undefined) return undefined;
@@ -191,6 +205,20 @@ export class InMemoryDebugTraceStore implements DebugTraceStore {
     trace.context = { ...trace.context, ...patch };
   }
 
+  upsertEdgeFlow(executionId: string, record: EdgeFlowRecord): void {
+    const trace = this.traces.get(executionId);
+    if (trace === undefined) return;
+    const bounded = clampEdgeFlowRecord(record, this.limits);
+    const flows = trace.edge_flows ?? [];
+    flows.push(bounded);
+    // Ring semantics within the trace: a pathological loop could otherwise
+    // grow edge_flows unbounded between clamping passes. Keep the newest.
+    trace.edge_flows =
+      flows.length > MAX_EDGE_FLOWS_PER_TRACE
+        ? flows.slice(-MAX_EDGE_FLOWS_PER_TRACE)
+        : flows;
+  }
+
   finishTrace(
     executionId: string,
     status: "completed" | "error",
@@ -205,7 +233,10 @@ export class InMemoryDebugTraceStore implements DebugTraceStore {
     trace.usage = usage;
     trace.errors = errors;
     if (final !== undefined) {
-      trace.final_response = clampUtf8(final.response, this.limits.llmResultBytes);
+      trace.final_response = clampUtf8(
+        final.response,
+        this.limits.finalResponseBytes,
+      );
       if (final.nodeId !== undefined) trace.final_node_id = final.nodeId;
     }
   }

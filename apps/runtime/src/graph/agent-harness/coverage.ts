@@ -261,40 +261,40 @@ function normalizedRef(ref: string): string {
 }
 
 /**
- * Canonical DOCUMENT identity for cross-source deduplication.
+ * Canonical DOCUMENT-UNIT identity for cross-source deduplication.
  *
  * The coverage ledger is seeded from `get_summaries`, whose `reference` is a
- * document-level path (`/…/Datei.pdf`). Discovery `search` hits, however, carry
- * a `base_ref` when the server provides one but fall back to a chunk/section
- * `reference` (`/…/Datei.pdf/46. …/18. …`) when it does not. A raw-string
- * compare (trim+NFC only) then fails to recognize that a deep search hit and a
- * document-level triage entry are the SAME physical document, so the hit's
- * promotion/reopen is silently lost — and, where two differently formatted
- * strings for one document coexist, the document can be read in full twice.
+ * document-UNIT path (`/…/Datei.pdf/79. PFLICHTENHEFT …`): one entry per
+ * logical unit (title page, content section, …), never per physical file.
+ * `get_document` resolves exactly these unit references (directly or via a
+ * search hit's `base_ref`) and merges the unit's chunks into one readable
+ * document. Discovery `search` hits carry a `base_ref` when the server
+ * provides one, otherwise a chunk-level `reference`
+ * (`/…/Datei.pdf/79. …_chunk_8`).
  *
- * This collapses both forms to one key: NFC + trim, a stripped trailing slash,
- * case-folded, and — when the path contains a file-extension segment — the
- * prefix up to and including that document file. It is intentionally
- * conservative: a reference without a recognizable document file is only
- * slash/case-normalized, never truncated. Used ONLY for cross-source hit
- * matching; the displayed `ref` handed to `get_document` stays the full,
- * original ledger reference.
+ * Identity is therefore the UNIT: NFC + trim, a stripped trailing slash, a
+ * stripped trailing `_chunk_<n>` segment, case-folded. A chunk hit collapses
+ * onto its unit's ledger entry, while sibling units of the same physical file
+ * (e.g. the `/0` title page vs. a `/79. …` content section) stay DISTINCT —
+ * collapsing at the file-extension segment instead would map every search hit
+ * onto the title-page entry, so the researcher would be assigned a ~500-char
+ * title page instead of the content unit that actually matched.
+ *
+ * Used ONLY for cross-source hit matching; the displayed `ref` handed to
+ * `get_document` stays the full, original ledger reference.
  */
-const DOCUMENT_FILE_SEGMENT = /\.(?:pdf|docx?|xlsx?|pptx?|txt|md|html?|csv)(?=\/|$)/i;
+const CHUNK_REF_SEGMENT = /_chunk_\d+$/i;
 
 export function documentIdentityKey(ref: string): string {
 	let key = normalizedRef(ref);
 	if (key === "") return "";
 	// Drop a single trailing slash so `/a/b/` and `/a/b` collapse.
 	if (key.endsWith("/") && key.length > 1) key = key.slice(0, -1);
-	// Truncate a deep chunk/section path to its parent document file, so a
-	// search hit inside a document maps to the same key as the document-level
-	// triage reference. Match the FIRST document-file segment: the physical
-	// file is the outermost extension in these nested reference paths.
-	const match = DOCUMENT_FILE_SEGMENT.exec(key);
-	if (match !== null) {
-		key = key.slice(0, match.index + match[0].length);
-	}
+	// Collapse a chunk-level hit reference onto its parent document unit, so a
+	// search hit maps to the same ledger entry as the unit-level triage
+	// reference. Only the trailing chunk marker is removed — sibling units of
+	// one physical file must never collapse into each other.
+	key = key.replace(CHUNK_REF_SEGMENT, "");
 	return key.toLocaleLowerCase();
 }
 
@@ -745,6 +745,15 @@ export function freezeCoverageCandidates(
  * strength of its summary alone. A document already read in full — `reviewed`,
  * or excluded with observed windows — is never touched, which is what keeps
  * promotion from cycling.
+ *
+ * Selection: when `rerankScoreThreshold` is set AND the pass carries a
+ * server-confirmed complete rerank (`rerankApplied`/`rerankComplete`/
+ * `scoreKind === "rerank"`), ONLY hits with `score >= threshold` are selected —
+ * the rank rule is then NOT a bypass. The Top-`maxHitsPerPass` rank rule is the
+ * fallback for passes without a usable rerank (or when no threshold is
+ * configured). Previously the rank rule promoted Top-N hits regardless of the
+ * rerank score, which let low-scoring hits into original review past the
+ * threshold.
  */
 export function promoteCoverageSearchHits(
 	ledger: CoverageLedger,
@@ -764,14 +773,20 @@ export function promoteCoverageSearchHits(
 				rank: index + 1,
 			}));
 		for (const hit of hits) {
-			const selectedByRank = hit.rank <= maxHitsPerPass;
-			const selectedByScore =
+			// A configured threshold gates promotion through the server-confirmed
+			// rerank; the rank rule is only the fallback when no rerank backs the
+			// pass (otherwise Top-N would bypass the threshold entirely).
+			const rerankGated =
 				rerankScoreThreshold !== undefined &&
 				pass.rerankApplied === true &&
 				pass.rerankComplete === true &&
-				pass.scoreKind === "rerank" &&
+				pass.scoreKind === "rerank";
+			const selectedByScore =
+				rerankGated &&
 				typeof hit.score === "number" &&
 				hit.score >= rerankScoreThreshold;
+			const selectedByRank =
+				!rerankGated && hit.rank <= maxHitsPerPass;
 			if (!selectedByRank && !selectedByScore) continue;
 			// Key by canonical document identity so a deep chunk/section hit ref
 			// matches the document-level ledger reference from summary triage.
@@ -1895,6 +1910,23 @@ export function settleCoveragePhase(
 	return config.mode === "staged" && isCoverageTerminal(ledger, config)
 		? { ...ledger, phase: "complete" }
 		: ledger;
+}
+
+/**
+ * Exact count of documents that still owe work: every document whose status is
+ * not terminal ("reviewed" / "excluded"), i.e. "open" (awaiting summary triage)
+ * plus "summary-reviewed" (awaiting original review). Deterministic — derived
+ * from the ledger alone, never from model text — so the debug-trace gauge
+ * cannot drift with narration.
+ */
+export function coverageOpenCount(ledger: CoverageLedger): number {
+	let open = 0;
+	for (const document of ledger.documents) {
+		if (document.status === "open" || document.status === "summary-reviewed") {
+			open += 1;
+		}
+	}
+	return open;
 }
 
 export function coverageSummary(ledger: CoverageLedger): string {

@@ -22,6 +22,8 @@
  * No `any` at module boundaries.
  */
 
+import type { EdgeFlowRecord } from "./edge-flow.js";
+
 // ---------------------------------------------------------------------------
 // Top-level trace
 // ---------------------------------------------------------------------------
@@ -53,6 +55,15 @@ export interface DebugTrace {
   /** Per-node execution detail, in the order nodes were started. */
   nodes: DebugNodeTrace[];
 
+  /**
+   * Data that crossed graph edges during the run, in traversal order. One
+   * record per edge traversal (loops produce several records for the same
+   * edge; consumers keep the last). Captured by the engine via
+   * `ExecRuntime.onEdgeFlow`; absent for flows that never advanced an edge
+   * and for runtimes without edge instrumentation.
+   */
+  edge_flows?: EdgeFlowRecord[];
+
   /** Accumulated token usage across all LLM nodes. */
   usage: DebugUsage;
 
@@ -60,8 +71,10 @@ export interface DebugTrace {
   errors: DebugStreamError[];
 
   /**
-   * The answer the flow returned (last assistant message), bounded like
-   * `full_response`. Absent while running and when the flow produced none.
+   * The answer the flow returned (last assistant message), bounded to
+   * {@link DebugTraceLimits.finalResponseBytes} — see there for why this gets
+   * its own, much larger budget than `full_response`. Absent while running and
+   * when the flow produced none.
    */
   final_response?: string;
   /** Node that produced {@link final_response}. */
@@ -88,6 +101,17 @@ export interface DebugTraceLimits {
   messageBytes: number;
   /** Per string leaf inside {@link DebugToolCall.arguments} / `result`. */
   toolPayloadBytes: number;
+  /** Per {@link EdgeFlowRecord} `items[].content` in {@link DebugTrace.edge_flows}. */
+  edgeFlowBytes: number;
+  /**
+   * {@link DebugTrace.final_response} — the answer the flow returned.
+   *
+   * Deliberately far larger than {@link llmResultBytes}: a per-node excerpt
+   * only needs to identify an output, but the final answer IS the artifact an
+   * operator debugs ("why did the flow answer Nein?"). Truncating it to 512
+   * bytes made the trace useless for exactly the question it is opened for.
+   */
+  finalResponseBytes: number;
 }
 
 // ---------------------------------------------------------------------------

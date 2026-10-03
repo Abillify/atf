@@ -36,6 +36,10 @@
  *                               structured (only when the node errored)
  *         - usage            — accumulated token counts
  *         - errors           — stream errors
+ *         - edge_flows[]     — per-edge data flow (only while a Studio run
+ *                              instrumented it): every payload that crossed
+ *                              each edge traversal (query, images, tools,
+ *                              produced answers/results)
  *
  * No `any` at module boundaries.
  */
@@ -47,6 +51,7 @@ import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
+import { normalizeExecutionId } from "../util/execution-id.js";
 
 // ---------------------------------------------------------------------------
 // Router factory
@@ -126,7 +131,9 @@ export function createDebugRouter(deps: DebugRouterDeps): Hono {
   // -------------------------------------------------------------------------
   router.get("/monitoring/debug/:executionId/sample", async (ctx) => {
     if (!(await authed(ctx))) return unauthorized(ctx);
-    const trace = debugStore.getTrace(ctx.req.param("executionId"));
+    const trace = debugStore.getTrace(
+      normalizeExecutionId(ctx.req.param("executionId")),
+    );
     if (trace === undefined) {
       return ctx.json(
         {
@@ -147,7 +154,8 @@ export function createDebugRouter(deps: DebugRouterDeps): Hono {
   router.get("/monitoring/debug/:executionId", async (ctx) => {
     if (!(await authed(ctx))) return unauthorized(ctx);
 
-    const executionId = ctx.req.param("executionId");
+    // Accept the bare uuid or the `chatcmpl-<uuid>` id the chat endpoints report.
+    const executionId = normalizeExecutionId(ctx.req.param("executionId"));
     const trace = debugStore.getTrace(executionId);
 
     if (trace === undefined) {

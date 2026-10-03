@@ -26,6 +26,7 @@
  */
 
 import crypto from "node:crypto";
+import { SystemMessage } from "@langchain/core/messages";
 import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import type { LanguageModel, ModelMessage } from "ai";
 import type { FlowNode, LlmConfig } from "../types/flow.js";
@@ -347,6 +348,20 @@ export interface ExecRuntime {
    */
   onNodeRouting?: (nodeId: string, decision: RoutingDecision) => void;
   /**
+   * Called at the very start of every graph-node execution with the full state
+   * the node received. The engine uses it for edge data-flow capture: the state
+   * at a node's entry is exactly the state that crossed the edge leading into
+   * it, and `state.currentNodeId` names the node on the other end of that edge.
+   * Baselines the "what did this node produce?" counters and records the
+   * incoming edge's channel items on the debug trace (`edge_flows`), which the
+   * Studio canvas renders as colored parallel lines. Optional — only wired when
+   * a {@link DebugTraceStore} is configured; edge visualization is live-run only.
+   */
+  onNodeEntry?: (
+    nodeId: string,
+    state: import("./graph-engine/state.js").AgentState,
+  ) => void;
+  /**
    * Captures the semantic tool-selection decision made by an LLM node so it
    * can be included in the full debug trace export. Called from
    * `createLlmNodeHandler` after the tool index has ranked the candidate pool.
@@ -411,6 +426,15 @@ export interface ExecRuntime {
    * then left untouched and the vision capability guard applies as before.
    */
   imageRefs?: import("./image-reference.js").ImageRefRegistry;
+  /**
+   * Run-scoped reference-handle registry (see `ref-handles.ts`). Created once
+   * per execution when a node declares `config.refHandles: true`, so a handle
+   * registered by one node's tool result resolves in every later tool call,
+   * and the SSE layer can map handles back to real references for the user.
+   * Undefined when no node opts in — tool references then flow through
+   * unchanged.
+   */
+  refHandles?: import("./ref-handles.js").RefHandleRegistry;
   /** Metrics sink — defaults to a no-op when metrics are disabled. */
   metrics: Metrics;
   /**
@@ -1473,6 +1497,41 @@ export function deduplicateRagContext(
   // Keep only the last RAG message; remove all earlier ones.
   const toRemove = new Set(ragIndices.slice(0, -1));
   return messages.filter((_, i) => !toRemove.has(i));
+}
+
+/**
+ * Model-facing copy of `messages` with the injected RAG-context system
+ * messages' document references replaced by their short ref-handles.
+ *
+ * The tool node's grounding sections carry `(Ref: ...)` lines that the header
+ * explicitly advertises as `get_document`/`get_summary` arguments — the model
+ * must re-quote them verbatim, and a small model truncates long paths
+ * (trace 55c5b138). Registering the references happens in the tool node; this
+ * masks ONLY the copy handed to the model, so the persisted state, the client
+ * citations and every audit surface keep the real references. Non-RAG system
+ * messages and messages without a masked change are returned by reference.
+ */
+export function maskRagContextForModel(
+  messages: import("@langchain/core/messages").BaseMessage[],
+  refHandles: import("./ref-handles.js").RefHandleRegistry,
+): import("@langchain/core/messages").BaseMessage[] {
+  let changed = false;
+  const out = messages.map((m) => {
+    if (m._getType() !== "system") return m;
+    const content = typeof m.content === "string" ? m.content : "";
+    if (content === "" || !isRagContextMessage(content)) return m;
+    const masked = refHandles.maskText(content);
+    if (masked === content) return m;
+    changed = true;
+    return new SystemMessage({
+      content: masked,
+      additional_kwargs: m.additional_kwargs,
+      response_metadata: m.response_metadata,
+      id: m.id,
+      ...(m.name !== undefined ? { name: m.name } : {}),
+    });
+  });
+  return changed ? out : messages;
 }
 
 // ---------------------------------------------------------------------------

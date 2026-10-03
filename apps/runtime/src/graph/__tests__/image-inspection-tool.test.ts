@@ -129,6 +129,11 @@ function fixture(options?: {
   const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   const traces: unknown[][] = [];
   const diagnostics: unknown[] = [];
+  const effectiveArgs: Array<{
+    toolCallId: string;
+    toolName: string;
+    argsJson: string;
+  }> = [];
   const config: ImageInspectionConfig = {
     llm: visionLlm,
     ...(options?.maxAnswerChars !== undefined
@@ -156,6 +161,9 @@ function fixture(options?: {
     usage,
     setGenAiAttributes: (...attributes) => traces.push(attributes),
     onNodeDiagnostic: (...diagnostic) => diagnostics.push(diagnostic),
+    onEffectiveArgs: (toolCallId, toolName, argsJson) => {
+      effectiveArgs.push({ toolCallId, toolName, argsJson });
+    },
   } satisfies AgentImageInspectionHooks);
   return {
     registry,
@@ -164,6 +172,7 @@ function fixture(options?: {
     usage,
     traces,
     diagnostics,
+    effectiveArgs,
     fetchAssetCalls,
     tool: () => tools[IMAGE_INSPECTION_TOOL_NAME] as ExecutableTool,
   };
@@ -224,6 +233,25 @@ describe("buildImageInspectionTools", () => {
       tools[IMAGE_INSPECTION_TOOL_NAME] as unknown as { description: string }
     ).description;
     expect(description).toBe("Bild prüfen.");
+  });
+
+  test("reports the effective args as key-value JSON before running", async () => {
+    // The live graph's INPUT panel must show the real { image, question }
+    // payload, not the key-only placeholder that onToolCall records (pre-DLP
+    // policy). Local tools have no egress DLP, so the execute site is the
+    // authoritative place to fire the effective-args report.
+    const { tool, effectiveArgs } = fixture();
+    await tool().execute(
+      { image: "img-1", question: "Was zeigt das Bild?" },
+      { toolCallId: "call-42" },
+    );
+    expect(effectiveArgs).toHaveLength(1);
+    expect(effectiveArgs[0]?.toolCallId).toBe("call-42");
+    expect(effectiveArgs[0]?.toolName).toBe(IMAGE_INSPECTION_TOOL_NAME);
+    expect(JSON.parse(effectiveArgs[0]?.argsJson ?? "")).toEqual({
+      image: "img-1",
+      question: "Was zeigt das Bild?",
+    });
   });
 
   test("answers with the vision model's text and reports the spend", async () => {

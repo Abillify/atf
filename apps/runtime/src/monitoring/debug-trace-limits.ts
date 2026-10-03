@@ -27,6 +27,7 @@ import type {
   DebugTrace,
   DebugTraceLimits,
 } from "../types/debug-trace.js";
+import type { EdgeFlowRecord } from "../types/edge-flow.js";
 
 // ---------------------------------------------------------------------------
 // Limits
@@ -50,6 +51,16 @@ export const DEFAULT_DEBUG_TRACE_LIMITS: DebugTraceLimits = {
   messageBytes: 2_048,
   /** Per string leaf in `tool_calls[].arguments` / `tool_calls[].result`. */
   toolPayloadBytes: 512,
+  /** Per `edge_flows[].items[].content` — a channel excerpt, not an archive. */
+  edgeFlowBytes: 1_024,
+  /**
+   * `final_response` — the answer the flow returned. Unlike a per-node
+   * excerpt, this IS the artifact a post-mortem is opened for ("why did the
+   * flow answer Nein?"), so it gets a full 64 KB instead of the 512-byte
+   * identification budget. 200 ring-buffer traces × 64 KB stays well within
+   * the heap budget the 512-byte node limits were protecting.
+   */
+  finalResponseBytes: 65_536,
 };
 
 /** Maximum nesting depth traversed while clamping a tool payload. */
@@ -57,6 +68,12 @@ const MAX_CLAMP_DEPTH = 12;
 
 /** Maximum number of array elements kept per tool payload level. */
 const MAX_CLAMP_ARRAY_ITEMS = 200;
+
+/** Maximum payload items kept per edge-flow record. */
+const MAX_EDGE_FLOW_ITEMS = 16;
+
+/** Maximum edge-flow records kept per trace (loops traverse often). */
+const MAX_EDGE_FLOWS_PER_TRACE = 200;
 
 // ---------------------------------------------------------------------------
 // Byte-exact truncation
@@ -260,6 +277,27 @@ export function clampDebugNode(
 }
 
 /**
+ * Limits the free-text content of one edge-flow record. Kind, label, status,
+ * refs, media types and byte counts are metadata and stay complete.
+ */
+export function clampEdgeFlowRecord(
+  record: EdgeFlowRecord,
+  limits: DebugTraceLimits = DEFAULT_DEBUG_TRACE_LIMITS,
+): EdgeFlowRecord {
+  return {
+    ...record,
+    items: record.items
+      .slice(0, MAX_EDGE_FLOW_ITEMS)
+      .map((item) => {
+        const content = clampOptional(item.content, limits.edgeFlowBytes);
+        return content === undefined
+          ? { ...item }
+          : { ...item, content };
+      }),
+  };
+}
+
+/**
  * Limits a complete trace body (context + input messages + already present
  * nodes) and records the applied budgets as metadata, so that a reader does not
  * mistake a truncated trace for a complete one.
@@ -274,6 +312,15 @@ export function clampDebugTrace(
       clampMessage(message, limits),
     ),
     nodes: trace.nodes.map((node) => clampDebugNode(node, limits)),
+    ...(trace.edge_flows !== undefined
+      ? {
+          // Keep the LATEST traversals: on a looped edge the last record is
+          // the one the canvas renders, so dropping the oldest is the safe cut.
+          edge_flows: trace.edge_flows
+            .slice(-MAX_EDGE_FLOWS_PER_TRACE)
+            .map((record) => clampEdgeFlowRecord(record, limits)),
+        }
+      : {}),
     limits: { ...limits },
   };
 }

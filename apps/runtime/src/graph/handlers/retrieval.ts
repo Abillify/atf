@@ -95,6 +95,15 @@ export function createRetrievalNodeHandler(
         `retrieval/${collection}`,
         JSON.stringify({ collection, topK }),
       );
+      // The retrieval inputs are flow config (collection/topK), not model
+      // output — no pre-DLP concern. Report them as effective args so the
+      // live graph and the reasoning stream show the real key-value JSON
+      // instead of the key-only placeholder `onToolCall` keeps.
+      await runtime.onToolEffectiveArgs?.(
+        toolCallId,
+        `retrieval/${collection}`,
+        JSON.stringify({ collection, topK }),
+      );
       const startMs = Date.now();
       const vector = await runtime.embedder.embed(query);
       const chunks = await runtime.vectorStore.query(

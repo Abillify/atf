@@ -178,6 +178,16 @@ interface CallRecord {
   outcomeHash?: string;
   /** True when the tool is known to mutate state. */
   mutating: boolean;
+  /**
+   * True once the call is known to have FAILED (transport error, timeout,
+   * `isError` result). Infrastructure failures are not the model's fault: a
+   * retry after an MCP timeout is a legitimate attempt to make progress, not
+   * the aimless argument-guessing the churn detector exists to catch. The
+   * internal test series showed the consequence of ignoring this:
+   * 52-60 MCP 5 s timeouts per run inflated the churn counter until the guard
+   * blocked the very searches that would have answered the question.
+   */
+  failed?: boolean;
 }
 
 /**
@@ -390,9 +400,17 @@ export function detectToolLoop(input: DetectLoopInput): LoopVerdict {
   }
 
   // 2. Argument churn — same tool, varying arguments, within the active window.
+  // Calls already known to have FAILED are excluded: retrying after a
+  // transport error or timeout is progress-seeking, not guessing. Without
+  // this, an infra outage (e.g. an MCP server slower than the request
+  // timeout) drives the counter to a block while the model is doing
+  // exactly the right thing. In-flight calls (outcome unknown) still count.
   const windowStart = clock - config.churnWindowMs;
   const recentSameTool = calls.filter(
-    (call) => call.toolName === input.toolName && call.at >= windowStart,
+    (call) =>
+      call.toolName === input.toolName &&
+      call.at >= windowStart &&
+      call.failed !== true,
   );
   const distinctArgs = new Set(recentSameTool.map((call) => call.argsHash));
   distinctArgs.add(argsHash);
@@ -546,23 +564,60 @@ export function recordToolCall(params: {
 }
 
 /**
+ * Whether a tool outcome represents a FAILURE rather than a result.
+ *
+ * Three shapes reach the runtime: an explicit `isError` envelope (the AI-SDK
+ * tool-error convention), a thrown transport error surfaced as an error string,
+ * and the loop-guard's own refusal. All three mean "the tool never produced
+ * evidence", which the churn detector must not count against the model.
+ */
+export function isFailedOutcome(outcome: unknown): boolean {
+  if (outcome === undefined || outcome === null) return true;
+  // A thrown transport/execution error: never produced evidence.
+  if (outcome instanceof Error) return true;
+  if (typeof outcome === "object") {
+    const record = outcome as Record<string, unknown>;
+    if (record.isError === true) return true;
+    // The loop guard's refusal envelope — the call never reached the server.
+    if (record.loop_blocked === true) return true;
+    // An AI-SDK tool-error part: { type: "tool-error", ... }.
+    if (record.type === "tool-error") return true;
+    return false;
+  }
+  if (typeof outcome === "string") {
+    const trimmed = outcome.trim();
+    if (trimmed.length === 0) return true;
+    // `sanitizeToolResultOutput` maps any raw failure to this generic text
+    // (message-mapping.ts); the structured diagnostic keeps the real cause.
+    if (/^tool execution failed\.?$/iu.test(trimmed)) return true;
+    return false;
+  }
+  return false;
+}
+
+/**
  * Attaches an outcome to the most recent matching call.
  *
  * Searched backwards for the newest call of that tool without an outcome, rather
  * than assuming the last entry: several tools can be in flight concurrently and
  * results arrive out of order.
+ *
+ * A failed outcome additionally marks the call so the argument-churn detector
+ * ignores it — see {@link CallRecord.failed}.
  */
 export function recordToolOutcome(params: {
   state: ToolLoopState;
   toolName: string;
   outcome: unknown;
 }): void {
+  const failed = isFailedOutcome(params.outcome);
   const hash = hashToolOutcome(params.outcome);
   for (let index = params.state.calls.length - 1; index >= 0; index -= 1) {
     const call = params.state.calls[index];
     if (call === undefined) continue;
     if (call.toolName === params.toolName && call.outcomeHash === undefined) {
       call.outcomeHash = hash;
+      if (failed) call.failed = true;
       return;
     }
   }

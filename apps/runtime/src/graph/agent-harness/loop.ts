@@ -39,6 +39,7 @@ import {
   coverageCompletionStatus,
   coverageEvidenceFromToolResult,
   coverageFindingText,
+  coverageOpenCount,
   coverageSummary,
   coverageVerificationManifest,
   describeCoverageReportDefect,
@@ -2313,7 +2314,7 @@ export function createAgentHarnessNodeHandler(
             const selectionRule =
               coverageConfig.mode === "staged" &&
               promotion.rerankScoreThreshold !== undefined
-                ? `top ${promotion.maxHitsPerPass} per search pass or rerank score >= ${promotion.rerankScoreThreshold}`
+                ? `rerank score >= ${promotion.rerankScoreThreshold} (rank fallback: top ${promotion.maxHitsPerPass} per search pass without rerank)`
                 : `top ${promotion.maxHitsPerPass} per search pass`;
             emitHarnessStatus(
               `Candidate selection: ${candidateCount} candidate documents · ` +
@@ -3374,6 +3375,34 @@ export function createAgentHarnessNodeHandler(
             `Step ${progress.iterations}/${cfg.maxIterations ?? DEFAULT_MAX_ITERATIONS}: ${phaseSentence}`
           }${hypothesisDetail}${coveredScope}${coverageDetail}`,
         );
+      }
+      // Deterministic coverage gauge for the debug trace: the EXACT number of
+      // documents still owing work (open + summary-reviewed), derived from the
+      // ledger after this batch — never from narration or model text, so the
+      // "noch N offen" figure in the trace cannot drift from the queue state.
+      if (coverageLedger !== undefined) {
+        const openCount = coverageOpenCount(coverageLedger);
+        const awaitingTriage = coverageLedger.documents.filter(
+          (document) => document.status === "open",
+        ).length;
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "info",
+          code: "harness_coverage_gauge",
+          message:
+            `Coverage: noch ${openCount} von ${coverageLedger.total} offen ` +
+            `(${awaitingTriage} warten auf Summary-Triage, ` +
+            `${openCount - awaitingTriage} auf Originallektuere).`,
+          details: {
+            open: openCount,
+            total: coverageLedger.total,
+            awaiting_summary_triage: awaitingTriage,
+            awaiting_original_review: openCount - awaitingTriage,
+            phase: coverageLedger.phase,
+            terminal: isCoverageTerminal(coverageLedger, coverageConfig),
+            discovery_rounds: coverageLedger.discoveryRounds,
+            overflow_refs: coverageLedger.overflowRefs.length,
+          },
+        });
       }
 
       // Emit status changes (Req 9.2)

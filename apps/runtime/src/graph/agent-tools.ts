@@ -73,6 +73,10 @@ import {
   type ImageRefRegistry,
 } from "./image-reference.js";
 import {
+  resolveRefHandleArgs,
+  type RefHandleRegistry,
+} from "./ref-handles.js";
+import {
   getTransactionOrchestrator,
   thrownToolOutcome,
 } from "../transaction/orchestrator.js";
@@ -192,6 +196,20 @@ export interface AgentMediaHooks {
    * spend is broken down per user and per flow like regular LLM calls.
    */
   costAttribution?: CostAttribution;
+  /**
+   * Reports the final arguments this local tool executes with, as key-value
+   * JSON. Local tools run server-side and have no egress DLP, so the model's
+   * raw arguments ARE the effective ones — but the engine's `onToolCall`
+   * telemetry only records `argument_keys` (pre-DLP policy). Firing this hook
+   * lets the live graph / debug trace show the real `{ prompt }` payload
+   * instead of the key-only placeholder, mirroring the MCP tool path
+   * (`onEffectiveToolArgs` in the MCP execute wrapper).
+   */
+  onEffectiveArgs?: (
+    toolCallId: string,
+    toolName: string,
+    argsJson: string,
+  ) => void | Promise<void>;
 }
 
 /**
@@ -249,6 +267,15 @@ export async function buildAiTools(
       args: Record<string, unknown>,
       execute: () => Promise<unknown>,
     ) => Promise<unknown>;
+    /**
+     * Run-scoped reference-handle registry (see `ref-handles.ts`). When set
+     * (a node with `config.refHandles: true`), every tool result is scanned
+     * for document references, the model is shown short handles instead of the
+     * long real paths, and handle-valued arguments are resolved back to the
+     * real reference before the MCP call. Absent → tool args/results flow
+     * through unchanged (the default for every existing flow).
+     */
+    refHandles?: RefHandleRegistry;
   },
 ): Promise<{
   tools: ToolSet;
@@ -371,8 +398,40 @@ export async function buildAiTools(
         // else touches them, so the required-params guard, the approval-gate
         // audit record, and egress scrubbing all see (and log) the final,
         // enforced values — never the model's un-overridden originals.
-        const args =
+        let args =
           forcedArgs !== undefined ? { ...modelArgs, ...forcedArgs } : modelArgs;
+        // Ref-handle indirection (config.refHandles): the model quotes short
+        // handles (K3NQ) where a long document reference belongs, because
+        // small models cannot copy verbatim paths reliably (trace 55c5b138).
+        // Resolve them back to the real reference BEFORE the required-params
+        // guard, egress DLP, and the audit/journal trail — every downstream
+        // consumer (including the MCP server) sees only real references, never
+        // a handle. A handle-shaped argument that was never registered is the
+        // hallucination this feature exists to catch: reject it with the valid
+        // list instead of forwarding a value the tool would silently miss.
+        // Real paths (not handle-shaped) pass through untouched, so a
+        // user-supplied or tool-produced reference keeps working verbatim.
+        if (opts?.refHandles !== undefined) {
+          const handleResolution = resolveRefHandleArgs(opts.refHandles, args);
+          if (handleResolution.ok === false) {
+            return {
+              isError: true,
+              error: "unknown_ref_handle",
+              message:
+                `The reference handle(s) ${handleResolution.unknownHandles.join(", ")} are not valid. ` +
+                "Use one of the handles exactly as shown in the tool results: " +
+                (opts.refHandles.list().length > 0
+                  ? opts
+                      .refHandles
+                      .list()
+                      .map((i) => `${i.handle}`)
+                      .join(", ")
+                  : "(none retrieved yet — run a search first)"),
+              unknown_handles: handleResolution.unknownHandles,
+            };
+          }
+          args = handleResolution.args;
+        }
         // Required-parameter guard: the JSON-Schema `required` array is a hint
         // to the LLM but is NOT enforced by the AI SDK before invoking
         // execute(). Catch missing/null/empty required fields here so the model
@@ -764,6 +823,19 @@ export async function buildAiTools(
           });
         }
 
+        // Ref-handle masking (config.refHandles) — deliberately LAST, after
+        // citation registration above: the CitationRegistry and the client's
+        // `sources` must receive the REAL references, and only the copy the
+        // MODEL reads gets the short handles. Registering from the payload
+        // first makes every document identity in the result (reference/ref/
+        // base_ref, incl. inside MCP text-part JSON) resolvable before the
+        // substitution. The user never sees a handle: the SSE layer maps them
+        // back to real references on the way out.
+        if (opts?.refHandles !== undefined) {
+          opts.refHandles.registerFromPayload(content);
+          content = opts.refHandles.maskContent(content);
+        }
+
         return content;
         };
         return opts?.executeToolCall !== undefined
@@ -1122,6 +1194,16 @@ export function buildToolSelectionMetaTool(opts: {
   getInstructions?: (server: string) => string | undefined;
   /** Adds the given AI SDK keys to the node's active-tools set. */
   activate: (keys: string[]) => void;
+  /**
+   * Reports the final arguments this local tool executes with, as key-value
+   * JSON — see {@link AgentMediaHooks.onEffectiveArgs} for why local tools
+   * must fire it explicitly (no egress DLP, so raw args are effective args).
+   */
+  onEffectiveArgs?: (
+    toolCallId: string,
+    toolName: string,
+    argsJson: string,
+  ) => void | Promise<void>;
 }): { key: string; tool: ToolSet[string] } {
   const {
     name,
@@ -1134,6 +1216,7 @@ export function buildToolSelectionMetaTool(opts: {
     groupsSummary,
     getInstructions,
     activate,
+    onEffectiveArgs,
   } = opts;
   const key = sanitizeToolName(name);
 
@@ -1163,9 +1246,17 @@ export function buildToolSelectionMetaTool(opts: {
       },
       required: ["query"],
     }),
-    execute: async (args: Record<string, unknown>): Promise<unknown> => {
+    execute: async (
+      args: Record<string, unknown>,
+      execOpts: ToolExecutionOptions<never>,
+    ): Promise<unknown> => {
       const query =
         typeof args.query === "string" ? (args.query as string) : "";
+      await onEffectiveArgs?.(
+        execOpts.toolCallId,
+        key,
+        JSON.stringify({ query }),
+      );
       if (query.trim() === "") {
         return {
           isError: true,
@@ -1405,6 +1496,11 @@ export function buildMediaTools(
           typeof args.prompt === "string"
             ? args.prompt
             : String(args.prompt ?? "");
+        await media.onEffectiveArgs?.(
+          opts.toolCallId,
+          key,
+          JSON.stringify({ prompt }),
+        );
         return runMediaGeneration(mt, prompt, media, opts.toolCallId);
       },
     }) as ToolSet[string];
@@ -1622,6 +1718,16 @@ export interface AgentImageInspectionHooks {
     req?: GenAiRequest,
     res?: GenAiResponse,
   ) => void;
+  /**
+   * Reports the final arguments this local tool executes with, as key-value
+   * JSON — see {@link AgentMediaHooks.onEffectiveArgs} for why local tools
+   * must fire it explicitly (no egress DLP, so raw args are effective args).
+   */
+  onEffectiveArgs?: (
+    toolCallId: string,
+    toolName: string,
+    argsJson: string,
+  ) => void | Promise<void>;
 }
 
 /** Caps the vision answer so one inspection cannot bloat the hosting prompt. */
@@ -1686,13 +1792,16 @@ export function buildImageInspectionTools(
     execute: async (
       args: { image: string; question: string },
       opts: ToolExecutionOptions<never>,
-    ): Promise<unknown> =>
-      runImageInspection(
-        hooks,
-        String(args?.image ?? ""),
-        String(args?.question ?? ""),
+    ): Promise<unknown> => {
+      const image = String(args?.image ?? "");
+      const question = String(args?.question ?? "");
+      await hooks.onEffectiveArgs?.(
         opts.toolCallId,
-      ),
+        key,
+        JSON.stringify({ image, question }),
+      );
+      return runImageInspection(hooks, image, question, opts.toolCallId);
+    },
   }) as ToolSet[string];
   return tools;
 }

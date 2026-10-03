@@ -97,13 +97,27 @@ export function withNodeErrorStrategy(
 ) => Promise<Partial<AgentState>> {
   const errorConfig = resolveNodeErrorConfig(node.config);
 
+  // Read the per-execution runtime from LangGraph's configurable bag. The
+  // edge data-flow capture (`onNodeEntry`) fires here rather than in the
+  // handlers: this wrapper is the ONE place every standalone graph node passes
+  // through, and at entry the state is exactly what crossed the incoming edge
+  // (`state.currentNodeId` names the node on the other end of it).
+  const readRuntime = (
+    config?: LangGraphRunnableConfig,
+  ): ExecRuntime | undefined =>
+    (config?.configurable as { runtime?: ExecRuntime } | undefined)?.runtime;
+
   // Nothing to do for the default strategy: let the throw propagate exactly as
-  // before, with no wrapper cost on the hot path.
+  // before, with no wrapper cost on the hot path beyond the entry capture.
   if (errorConfig.strategy === "fail-fast") {
-    return async (state, config) => handler(state, config);
+    return async (state, config) => {
+      readRuntime(config)?.onNodeEntry?.(node.id, state);
+      return handler(state, config);
+    };
   }
 
   return async (state, config) => {
+    readRuntime(config)?.onNodeEntry?.(node.id, state);
     try {
       return await handler(state, config);
     } catch (err) {

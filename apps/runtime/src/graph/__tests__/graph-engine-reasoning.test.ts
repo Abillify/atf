@@ -20,6 +20,7 @@ import { createMetrics } from "../../observability/metrics.js";
 import type { FlowRegistry } from "../flow-parser.js";
 import { createGraphEngine } from "../graph-engine.js";
 import type { ResponseCache } from "../response-cache.js";
+import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 
 const baseConfig: AppConfig = {
   port: 3000,
@@ -305,8 +306,155 @@ describe("LLM node — reasoning_content routing", () => {
       .filter((text): text is string => typeof text === "string")
       .join("");
 
+    // The preamble never becomes the visible answer, but it IS shown live on
+    // the reasoning channel — suppression hides planning from `content`, it
+    // does not erase the model's thoughts from the Thinking block.
     expect(content).not.toContain(preamble);
-    expect(reasoning).not.toContain(preamble);
+    expect(reasoning).toContain(preamble);
+  });
+
+  test("discards planning narration emitted BETWEEN tool steps and releases only the final answer", async () => {
+    // Regression (observed in a production flow): a local model emits first-person
+    // planning sentences AFTER a tool result, right before the next tool call.
+    // Buffering only the pre-first-call window let those sentences stream
+    // straight into the user-visible content. With suppression the buffer must
+    // stay armed for the whole tool loop: each later tool-call discards the
+    // buffered narration, and whatever remains when the stream ends is the
+    // real answer and is released then.
+    const mcp: McpWrapperService = {
+      connect: async () => {},
+      reconnect: async () => {},
+      listTools: async () => ["datetime"],
+      getFilteredToolSchema: async (_server: string, tool: string) => ({
+        name: tool,
+        inputSchema: { type: "object", properties: {} },
+      }),
+      refreshSchemaIfChanged: async () => false,
+      callTool: async () => ({ content: "2026-01-01 10:00" }),
+      getInstructions: () => undefined,
+    } as unknown as McpWrapperService;
+
+    const narration = "Ich prüfe die Fortsetzung der Tabelle. ";
+    const answer = "Die finale Antwort steht hier.";
+    const usage = (output: number) => ({
+      inputTokens: {
+        total: 7,
+        noCache: undefined,
+        cacheRead: undefined,
+        cacheWrite: undefined,
+      },
+      outputTokens: { total: output, text: undefined, reasoning: undefined },
+    });
+    let steps = 0;
+    const factory = () =>
+      new MockLanguageModelV3({
+        doStream: async () => {
+          steps += 1;
+          return {
+            stream: new ReadableStream({
+              start(controller: ReadableStreamDefaultController<unknown>) {
+                if (steps === 1) {
+                  // Step 1: immediate tool call, no narration.
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: "c1",
+                    toolName: "base__datetime",
+                    input: "{}",
+                  });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: {
+                      unified: "tool-calls" as const,
+                      raw: "tool_calls",
+                    },
+                    usage: usage(3),
+                  });
+                } else if (steps === 2) {
+                  // Step 2: planning narration AFTER the tool result, then
+                  // another call — the narration must never become content.
+                  controller.enqueue({ type: "text-start", id: "1" });
+                  controller.enqueue({
+                    type: "text-delta",
+                    id: "1",
+                    delta: narration,
+                  });
+                  controller.enqueue({ type: "text-end", id: "1" });
+                  controller.enqueue({
+                    type: "tool-call",
+                    toolCallId: "c2",
+                    toolName: "base__datetime",
+                    input: "{}",
+                  });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: {
+                      unified: "tool-calls" as const,
+                      raw: "tool_calls",
+                    },
+                    usage: usage(3),
+                  });
+                } else {
+                  // Step 3: the real answer, following the last tool result.
+                  controller.enqueue({ type: "text-start", id: "2" });
+                  controller.enqueue({
+                    type: "text-delta",
+                    id: "2",
+                    delta: answer,
+                  });
+                  controller.enqueue({ type: "text-end", id: "2" });
+                  controller.enqueue({
+                    type: "finish",
+                    finishReason: { unified: "stop" as const, raw: "stop" },
+                    usage: usage(5),
+                  });
+                }
+                controller.close();
+              },
+            }),
+          } as unknown as import("@ai-sdk/provider").LanguageModelV3StreamResult;
+        },
+      });
+
+    const engine = createGraphEngine(baseConfig, {
+      flowRegistry: singleNodeRegistry(suppressedToolPreambleFlow),
+      mcpWrapper: mcp,
+      llmProviderFactory: factory,
+    });
+    const chunks: ChatCompletionChunk[] = [];
+    await engine.executeFlow(
+      suppressedToolPreambleFlow.id,
+      [{ role: "user", content: "Fasse die Tabelle zusammen" }],
+      { ssoToken: "a.b.c", executionId: "exec-suppressed-inter-step" },
+      async (chunk) => {
+        chunks.push(chunk);
+      },
+      async () => {},
+    );
+
+    const content = chunks
+      .map((chunk) => chunk.choices[0]?.delta.content)
+      .filter((text): text is string => typeof text === "string")
+      .join("");
+    const reasoning = chunks
+      .map(
+        (chunk) =>
+          (chunk.choices[0]?.delta as { reasoning_content?: string } | undefined)
+            ?.reasoning_content,
+      )
+      .filter((text): text is string => typeof text === "string")
+      .join("");
+
+    // The inter-step narration never becomes the answer, and the buffered
+    // final answer is released exactly once at stream end. The narration IS
+    // streamed live on the reasoning channel so a user can follow the model's
+    // planning while it runs.
+    expect(content).toBe(answer);
+    expect(content).not.toContain(narration);
+    expect(reasoning).toContain(narration);
+    // Exactly the three scripted steps ran: the released answer must not
+    // trigger a `post_tool_answer_missing` retry (which would re-call the
+    // model and, with this factory, produce no further text).
+    expect(steps).toBe(3);
   });
 
   test("native reasoning-delta parts (Gemini 3 / Anthropic / o-series) → reasoning_content", async () => {

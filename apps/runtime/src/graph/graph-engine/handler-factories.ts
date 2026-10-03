@@ -22,12 +22,13 @@
 
 import crypto from "node:crypto";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { FlowDefinition } from "../../types/flow.js";
+import type { FlowDefinition, FlowNode } from "../../types/flow.js";
 import type {
   RequestContext,
   NodeExecutionEvent,
   RoutingDecision,
 } from "../../types/monitoring.js";
+import { FLOW_END_NODE_ID } from "../../types/monitoring.js";
 import type {
   StreamError,
   ChatCompletionChunk,
@@ -58,6 +59,9 @@ import type { MemoryStore } from "../memory-store.js";
 import type { MediaStore } from "../media-store.js";
 import { decodeBase64Bytes, mediaExtension } from "../media-store.js";
 import { HashedImageRefRegistry } from "../image-reference.js";
+import { HashRefHandleRegistry } from "../ref-handles.js";
+import { classifyEdgeFlow } from "../edge-flow.js";
+import type { EdgeFlowCounters } from "../edge-flow.js";
 import type { OutputGuardrail } from "../output-guardrails.js";
 import type { ToolEgressGuardrail } from "../output-guardrails.js";
 import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
@@ -704,9 +708,19 @@ class GraphEngineServiceImpl implements GraphEngineService {
     // standalone collaborators (see their own file headers) since, unlike the
     // tool-tracking / node-monitoring / debug-trace state further below, their
     // state isn't shared with anything else in this method.
-    const sse = new SseEmitter(onChunk, model, guardrail);
-    const { onToken, onReasoning, emitReasoningStep } = sse;
-    if (flowProgressEnabled) {
+    // Ref-handle indirection (config.refHandles): created for the whole run
+    // when ANY node opts in, so a handle registered by one node's tool result
+    // resolves in another node's tool call and the SSE layer can unmap every
+    // channel. Flows without the flag pay nothing (undefined everywhere).
+    const refHandles = resolvedFlow.nodes.some(
+      (node) =>
+        (node.config as { refHandles?: unknown } | undefined)?.refHandles ===
+        true,
+    )
+      ? new HashRefHandleRegistry()
+      : undefined;
+    const sse = new SseEmitter(onChunk, model, guardrail, refHandles);
+    const { onToken, onReasoning, emitReasoningStep } = sse;    if (flowProgressEnabled) {
       await emitReasoningStep("🧭 Recherche gestartet\n");
     }
     const citations = new CitationRegistry(onChunk, model);
@@ -737,6 +751,18 @@ class GraphEngineServiceImpl implements GraphEngineService {
       s.length > TOOL_IO_LIMIT
         ? `${s.slice(0, TOOL_IO_LIMIT)}…[truncated]`
         : s;
+    /**
+     * Effective tool-call arguments (after forced flow args, ref-handle
+     * resolution and egress DLP), reported by `onToolEffectiveArgs` from
+     * inside the tool execution. `onToolCall` only ever sees the RAW model
+     * output, which is pre-DLP and therefore reduced to `argument_keys` for
+     * telemetry — which left operators unable to see the actual search query
+     * a tool ran with. The effective arguments are exactly what the tool
+     * received (in redact mode already scrubbed), so they may be surfaced
+     * wherever the full tool RESULT is already shown: the live graph node,
+     * the debug trace and the reasoning `<details>` block.
+     */
+    const toolEffectiveArgs = new Map<string, string>();
     /**
      * Builds the display "response" text for a tool node. Any tool result that
      * parses as a vectorsearch-style payload (`{ results: [...] }`, incl. the
@@ -911,7 +937,18 @@ class GraphEngineServiceImpl implements GraphEngineService {
       }
       // Tool arguments are pre-DLP model output. Telemetry records shape only;
       // execution receives the original value through the AI SDK tool closure.
-      toolNodeArgs.set(toolCallId, truncateToolIo(safeArgsJson));
+      // The SDK can start the tool's execute BEFORE this stream consumer
+      // reaches the tool-call part, so effective args may already exist —
+      // surface them immediately instead of the key-only placeholder.
+      const preEffective = toolEffectiveArgs.get(toolCallId);
+      const visibleArgsJson = preEffective ?? safeArgsJson;
+      toolNodeArgs.set(toolCallId, visibleArgsJson);
+      if (!_pendingToolCallIds.has(toolCallId)) {
+        _pendingToolCallIds.set(toolCallId, {
+          name: toolName,
+          argsJson: safeArgsJson,
+        });
+      }
       emitToolNodeStart(toolCallId, toolName);
       const activeNodeId = ownerNodeId ?? lastActiveNodeId;
       if (activeNodeId !== undefined) {
@@ -920,16 +957,24 @@ class GraphEngineServiceImpl implements GraphEngineService {
         existing.push({
           id: toolCallId,
           name: toolName,
-          args_json: safeArgsJson,
+          args_json: visibleArgsJson,
         });
         nodeToolCalls.set(activeNodeId, existing);
       }
       if (this.debugStore !== undefined && activeNodeId !== undefined) {
+        let debugArguments: unknown;
+        try {
+          debugArguments = JSON.parse(visibleArgsJson) as unknown;
+        } catch {
+          // Truncated effective args are not valid JSON — fall back to the
+          // key-only placeholder rather than failing the whole call.
+          debugArguments = JSON.parse(safeArgsJson) as unknown;
+        }
         const debugCalls = nodeDebugToolCalls.get(activeNodeId) ?? [];
         debugCalls.push({
           id: toolCallId,
           name: toolName,
-          arguments: JSON.parse(safeArgsJson) as unknown,
+          arguments: debugArguments,
           result: null,
           is_error: false,
           called_at: new Date().toISOString(),
@@ -940,13 +985,80 @@ class GraphEngineServiceImpl implements GraphEngineService {
         pendingToolTraceMetadata.delete(toolCallId);
         nodeDebugToolCalls.set(activeNodeId, debugCalls);
       }
-      await emitReasoningStep(
-        `🔧 Tool: **${toolName}** (argument shape: ${safeArgsJson})\n`,
-      );
-      _pendingToolCallIds.set(toolCallId, {
-        name: toolName,
-        argsJson: safeArgsJson,
-      });
+      // The initial line carries NO argument payload: at this moment only the
+      // raw pre-DLP model output exists, and showing just its keys
+      // (`argument_keys`) carried no value for operators. It stays as the
+      // "call started" marker (still shown when a tool errors before its
+      // effective args exist — approval denial, missing required params,
+      // egress block). The full key-value JSON follows on the next
+      // `🔧 Tool:` line from `onToolEffectiveArgs`. When the effective args
+      // already arrived BEFORE this callback (a fast tool execute racing the
+      // stream consumer), that line was emitted already — skip this one.
+      if (preEffective === undefined) {
+        await emitReasoningStep(`🔧 Tool: **${toolName}**\n`);
+      }
+    };
+
+    /**
+     * Receives the final server-bound arguments once the tool execution
+     * derives them (forced args + ref handles + egress DLP applied). Replaces
+     * the key-only placeholder on every surface that renders AFTER this point:
+     * the live graph node prompt (read at node completion), the owning node's
+     * `tool_calls` telemetry (the dashboard's Tool Calls accordion), the
+     * debug-trace tool call, and the `<details>` block built by
+     * `onToolResult`. It also emits the follow-up `🔧 Tool:` reasoning line
+     * carrying the FULL key-value JSON — the effective args are exactly what
+     * the tool received (already egress-DLP scrubbed), so they are safe to
+     * stream wherever the full tool RESULT is shown.
+     */
+    const onToolEffectiveArgs = async (
+      toolCallId: string,
+      toolName: string,
+      argsJson: string,
+    ): Promise<void> => {
+      // Prefer the name `onToolCall` used for the first `🔧 Tool:` line so the
+      // follow-up matches it exactly (MCP reports the `server/tool` ref there,
+      // while the call line shows the AI-SDK tool key).
+      const displayName =
+        _pendingToolCallIds.get(toolCallId)?.name ?? toolName;
+      const safe = truncateToolIo(argsJson);
+      toolEffectiveArgs.set(toolCallId, safe);
+      toolNodeArgs.set(toolCallId, safe);
+      let parsedValid = false;
+      try {
+        JSON.parse(argsJson);
+        parsedValid = true;
+      } catch {
+        /* invalid JSON stays key-only on every user-facing surface */
+      }
+      const ownerNodeId = toolCallOwnerNodeIds.get(toolCallId);
+      const call =
+        ownerNodeId === undefined
+          ? undefined
+          : nodeDebugToolCalls
+              .get(ownerNodeId)
+              ?.findLast((item) => item.id === toolCallId);
+      if (call !== undefined && parsedValid) {
+        call.arguments = JSON.parse(argsJson) as unknown;
+      }
+      if (ownerNodeId !== undefined && parsedValid) {
+        const tc = nodeToolCalls
+          .get(ownerNodeId)
+          ?.findLast(
+            (item) =>
+              item.id === toolCallId && item.exec_time_seconds === undefined,
+          );
+        if (tc !== undefined) tc.args_json = safe;
+      }
+      if (parsedValid) {
+        try {
+          await emitReasoningStep(
+            `🔧 Tool: **${displayName}** (arguments: ${safe})\n`,
+          );
+        } catch {
+          /* client disconnect — telemetry must never break tool execution */
+        }
+      }
     };
 
     // --- Client tool-call passthrough callback ---
@@ -972,6 +1084,14 @@ class GraphEngineServiceImpl implements GraphEngineService {
           clientToolCallIndex++,
         ),
       );
+      // A client tool has no server-side execute, so nothing ever fires
+      // `onToolEffectiveArgs` for it and the node would show no INPUT at all.
+      // The raw args are already handed to the client verbatim above and
+      // recorded in `nodeToolCalls`, so surfacing them on the node is not a
+      // new exposure — it just makes the live graph consistent with the
+      // server-side tools, whose effective key-value args are visible there.
+      // Must be set BEFORE the end-emit: `emitToolNodeEnd` deletes the entry.
+      toolNodeArgs.set(toolCallId, truncateToolIo(argsJson));
       emitToolNodeStart(toolCallId, toolName);
       emitToolNodeEnd(toolCallId, 0);
     };
@@ -1023,7 +1143,15 @@ class GraphEngineServiceImpl implements GraphEngineService {
       execTimeSec: number,
       options?: { streamDetails?: boolean },
     ): Promise<void> => {
-      const visibleContent = sanitizeToolResultOutput(content);
+      // The model was shown ref-handles in place of long document references
+      // (config.refHandles). Everything below — the client `tool_calls` details
+      // block, the live-graph findings table, and the debug trace — is a
+      // USER/OPERATOR surface, so map the handles back to real references
+      // first. No-op when the flow has no refHandles.
+      const visibleContent =
+        refHandles !== undefined
+          ? refHandles.unmapContent(sanitizeToolResultOutput(content))
+          : sanitizeToolResultOutput(content);
       const errorMessage = isToolErrorOutput(content)
         ? "Tool execution failed."
         : undefined;
@@ -1095,7 +1223,13 @@ class GraphEngineServiceImpl implements GraphEngineService {
           completionTokens: toolUsage.outputTokens,
         });
       }
-      const argsJson = callMeta?.argsJson ?? "{}";
+      // Prefer the effective (post forced-args / ref-handle / egress-DLP)
+      // arguments over the key-only placeholder captured at call time, so the
+      // details block shows the ACTUAL query a search ran with — the result
+      // body below is far more revealing than these args already.
+      const argsJson =
+        toolEffectiveArgs.get(toolCallId) ?? callMeta?.argsJson ?? "{}";
+      toolEffectiveArgs.delete(toolCallId);
 
       // The tool call itself was already streamed by onToolCall. Private
       // delegated workers can suppress the potentially large/sensitive result
@@ -1546,6 +1680,99 @@ class GraphEngineServiceImpl implements GraphEngineService {
       nodeAttemptContexts.delete(nodeId);
     };
     const debugErrors: DebugStreamError[] = [];
+    // ---------------------------------------------------------------------
+    // Edge data-flow capture (Studio canvas: solid active edges + colored
+    // channel lines + payload list in the property panel).
+    //
+    // `withNodeErrorStrategy` (compile.ts) calls `onNodeEntry` at the start of
+    // every graph-node execution. At that moment `state.currentNodeId` is the
+    // node that ran immediately before (every handler returns it), so the state
+    // the node received is exactly the payload that crossed the edge
+    // currentNodeId → this node. The first node of a run has no predecessor in
+    // the state — its incoming edge starts at `__start__`.
+    //
+    // Capturing at node ENTRY (rather than at routing decisions) covers
+    // conditional and unconditional edges uniformly, including parallel
+    // fan-out, and needs no edge-topology bookkeeping in the stream loop.
+    // The final edge into `__end__` is recorded after the stream loop from the
+    // last node's entry baseline.
+    // ---------------------------------------------------------------------
+    const edgeFlowNodeMap = new Map<string, FlowNode>(
+      (resolvedFlow.nodes ?? []).map((n) => [n.id, n]),
+    );
+    /** Per-node counters captured at entry — the "produced since" baseline. */
+    const edgeFlowBaselines = new Map<string, EdgeFlowCounters>();
+    /** Global edge traversal counter (1-based). */
+    let edgeSequence = 0;
+    /** Last node that completed without error — source of the `__end__` edge. */
+    let lastCompletedNodeId: string | undefined;
+    let edgeFlowInspectionAnnounced = false;
+    let edgeFlowImagesConsumed = false;
+    /** Id of the node that consumed the run's images (vision/transcription). */
+    let edgeFlowImageConsumerId: string | undefined;
+    /**
+     * Running merge of every node's state update (same reducer semantics as
+     * LangGraph). The entry state of a node lacks that node's OWN writes, so
+     * the final edge into `__end__` — which has no following node to observe
+     * them — is classified from this merged view instead. Initialised right
+     * before the stream loop (once the thread-reconciled messages are final).
+     */
+    let mergedEdgeState: AgentState;
+    const countersOf = (
+      state: AgentState,
+    ): EdgeFlowCounters => ({
+      messageCount: (state.messages ?? []).length,
+      toolResultCount: (state.toolResults ?? []).length,
+      citationCount: (state.citations ?? []).length,
+      imageRefCount: runImageRefs?.list().length ?? 0,
+      classificationJson:
+        state.classification && Object.keys(state.classification).length > 0
+          ? JSON.stringify(state.classification)
+          : "",
+    });
+    const recordEdge = (
+      source: string,
+      target: string,
+      state: AgentState,
+      baseline: EdgeFlowCounters | undefined,
+    ): void => {
+      if (this.debugStore === undefined) return;
+      edgeSequence += 1;
+      const result = classifyEdgeFlow({
+        source,
+        target,
+        sequence: edgeSequence,
+        state,
+        baseline,
+        nodeMap: edgeFlowNodeMap,
+        imageRefs: runImageRefs?.list() ?? [],
+        inspectionToolAnnounced: edgeFlowInspectionAnnounced,
+        imageConsumedUpstream: edgeFlowImagesConsumed,
+        imageConsumerId: edgeFlowImageConsumerId,
+      });
+      edgeFlowInspectionAnnounced = result.inspectionToolAnnounced;
+      edgeFlowImagesConsumed = result.imageConsumedUpstream;
+      edgeFlowImageConsumerId = result.imageConsumerId;
+      this.debugStore.upsertEdgeFlow(executionId, result.record);
+    };
+    const captureEdgeFlow = (
+      nodeId: string,
+      state: AgentState,
+    ): void => {
+      if (this.debugStore === undefined) return;
+      const source = state.currentNodeId ?? "__start__";
+      // The first node of a run has no graph predecessor: its incoming edge
+      // starts at `__start__`. Nothing was "produced" by the start itself —
+      // the baseline is the entry state, so only the query/images/tools show
+      // as passed along (threaded checkpoints carry old AI messages, which
+      // must NOT masquerade as freshly produced content).
+      const baseline =
+        source === "__start__" ? countersOf(state) : edgeFlowBaselines.get(source);
+      recordEdge(source, nodeId, state, baseline);
+      // Baseline for what THIS node produces: counters of the state it
+      // received (its own writes land after this point).
+      edgeFlowBaselines.set(nodeId, countersOf(state));
+    };
     /**
      * Outcome of the threaded-history contract for this turn. Only known once
      * the thread lock is held and the checkpoint has been read, so it is patched
@@ -1645,6 +1872,26 @@ class GraphEngineServiceImpl implements GraphEngineService {
         void emitReasoningStep(`${icon} ${label}…\n`);
       }
       spanManager.startNodeSpan(nodeId);
+      // Live progress in the debug trace: register the node as "running" the
+      // moment it starts, so GET /monitoring/debug/:id shows what a long run
+      // is doing right now instead of only the nodes that already finished.
+      // The final upsert from emitNodeEnd replaces this stub (same attempt
+      // number); a retried attempt appends its own entry.
+      this.debugStore?.upsertNode(executionId, {
+        node_id: nodeId,
+        ...(nodeTypes.has(nodeId) ? { node_type: nodeTypes.get(nodeId) } : {}),
+        status: "running",
+        started_at: startTime,
+        finished_at: null,
+        latency_ms: null,
+        ...(nodeAttempts.has(nodeId)
+          ? { attempt: nodeAttempts.get(nodeId) }
+          : {}),
+        ...(nodeSequences.has(nodeId)
+          ? { sequence: nodeSequences.get(nodeId) }
+          : {}),
+        tool_calls: [],
+      });
       monitoring?.emitNodeEvent(
         executionId,
         {
@@ -1702,6 +1949,11 @@ class GraphEngineServiceImpl implements GraphEngineService {
         );
       }
 
+      // Release any ref-handle hold-back tail BEFORE the guardrail flush so
+      // the released text still passes through the guardrail stream (whose own
+      // tail flush follows). No-op when the flow has no refHandles.
+      await sse.flushRefHandlesForNode(nodeId);
+
       if (guardrail !== undefined) {
         const findings = await sse.flushGuardrailForNode(nodeId);
         for (const [type, count] of Object.entries(findings)) {
@@ -1735,21 +1987,55 @@ class GraphEngineServiceImpl implements GraphEngineService {
         if (
           (nodeType === "llm" || nodeType === "agent-harness") &&
           typeof responseText === "string" &&
-          responseText.trim().length > 0 &&
-          !/\[\d+\]/.test(responseText)
+          responseText.trim().length > 0
         ) {
-          recordNodeDiagnostic(nodeId, {
-            level: "warn",
-            code: "answer_without_citation_markers",
-            message:
-              `${citations.size} source(s) were registered for this stream, but ` +
-              "the node response contains no [n] citation marker — the client " +
-              "will display no citations.",
-            details: {
-              registered_sources: citations.size,
-              response_chars: responseText.length,
-            },
-          });
+          const markers = [...responseText.matchAll(/\[(\d+)\]/g)].map(
+            (match) => Number(match[1]),
+          );
+          if (markers.length === 0) {
+            recordNodeDiagnostic(nodeId, {
+              level: "warn",
+              code: "answer_without_citation_markers",
+              message:
+                `${citations.size} source(s) were registered for this stream, but ` +
+                "the node response contains no [n] citation marker — the client " +
+                "will display no citations.",
+              details: {
+                registered_sources: citations.size,
+                response_chars: responseText.length,
+              },
+            });
+          } else {
+            // A marker outside 1..registered is one the model invented (or
+            // carried over from a stale numbering): the client renders it as
+            // a dead reference. Round 1 showed exactly this — `[151]` cited
+            // while far fewer sources existed.
+            const outOfRange = [
+              ...new Set(
+                markers.filter(
+                  (n) => !Number.isFinite(n) || n < 1 || n > citations.size,
+                ),
+              ),
+            ].sort((a, b) => a - b);
+            if (outOfRange.length > 0) {
+              recordNodeDiagnostic(nodeId, {
+                level: "warn",
+                code: "citation_marker_out_of_range",
+                message:
+                  `The node response cites [n] markers outside the registered ` +
+                  `range 1..${citations.size}: ${outOfRange
+                    .map((n) => `[${n}]`)
+                    .join(
+                      ", ",
+                    )} — those citations are unresolvable for the client.`,
+                details: {
+                  registered_sources: citations.size,
+                  out_of_range_markers: outOfRange,
+                  response_chars: responseText.length,
+                },
+              });
+            }
+          }
         }
       }
 
@@ -1902,6 +2188,30 @@ class GraphEngineServiceImpl implements GraphEngineService {
       return finalization;
     };
 
+    // Synthetic terminal marker for the execution rollup (see
+    // FLOW_END_NODE_ID). Emitted exactly once, at the same place the debug
+    // trace is sealed, so the history status flips to its real terminal value
+    // only when the whole flow is done — not on the first finished node.
+    let flowEndEmitted = false;
+    const emitFlowEnd = (status: "completed" | "error"): void => {
+      if (flowEndEmitted || monitoring === undefined) return;
+      flowEndEmitted = true;
+      const now = new Date().toISOString();
+      monitoring.emitNodeEvent(
+        executionId,
+        {
+          execution_id: executionId,
+          node_id: FLOW_END_NODE_ID,
+          status,
+          start_time: now,
+          end_time: now,
+          latency_ms: 0,
+          flow_id: flowId,
+        },
+        monitoringMeta,
+      );
+    };
+
     // --- Content processing + multimodal conversion (Req 8.x) ---
     const contentErrors: StreamError[] = [];
     const baseMessages = messages.map((m) =>
@@ -1910,6 +2220,14 @@ class GraphEngineServiceImpl implements GraphEngineService {
     for (const err of contentErrors) {
       await onChunk(makeErrorChunk(model, err));
     }
+
+    // Run-scoped image references, created once so the edge-flow capture and
+    // the node handlers share ONE registry: the `img-N` refs the edge records
+    // are exactly the refs the model sees in the prompt.
+    const runImageRefs =
+      this.mediaStore !== undefined
+        ? new HashedImageRefRegistry({ store: this.mediaStore })
+        : undefined;
 
     const usage: UsageAccumulator = {
       promptTokens: 0,
@@ -1939,6 +2257,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       onToken,
       onReasoning,
       onToolCall,
+      onToolEffectiveArgs,
       onToolTraceMetadata: mergeToolTraceMetadata,
       onClientToolCall,
       onToolResult,
@@ -1963,6 +2282,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
       onNodeRouting: (nodeId, decision) => {
         nodeRoutingDecisions.set(nodeId, decision);
       },
+      // Edge data-flow capture: fires at every graph-node entry (compile.ts
+      // wrapper). Only wired with a debug store — the Studio canvas reads the
+      // resulting `edge_flows` after the run.
+      ...(this.debugStore !== undefined
+        ? { onNodeEntry: captureEdgeFlow }
+        : {}),
       ...(this.debugStore !== undefined
         ? {
             onDebugToolSelection: (
@@ -2023,9 +2348,8 @@ class GraphEngineServiceImpl implements GraphEngineService {
       // Run-scoped image references. Unlike publishMedia this needs no
       // `mediaBaseUrl`: the bytes are only ever read back in-process by the
       // `inspect_image` tool, never served to a browser.
-      ...(this.mediaStore !== undefined
-        ? { imageRefs: new HashedImageRefRegistry({ store: this.mediaStore }) }
-        : {}),
+      ...(runImageRefs !== undefined ? { imageRefs: runImageRefs } : {}),
+      ...(refHandles !== undefined ? { refHandles } : {}),
       metrics: this.metrics,
       authorizationEnabled: this.appConfig.authzEnabled ?? true,
       ...(this.costTracker !== undefined
@@ -2194,6 +2518,12 @@ class GraphEngineServiceImpl implements GraphEngineService {
         toolResults: [],
         errors: [],
       };
+      // Seed the edge-flow merged view with the initial state (see the
+      // declaration above for why the final `__end__` edge needs it).
+      mergedEdgeState = {
+        ...(initialState as AgentState),
+        messages: stateMessages,
+      };
 
       const streamIterator = await graph.stream(initialState, {
         streamMode: "updates",
@@ -2257,6 +2587,27 @@ class GraphEngineServiceImpl implements GraphEngineService {
           }
           await emitNodeEnd(nodeId, nodeErrorMsg);
 
+          // Edge-flow merged view: fold this node's update in with the same
+          // reducer semantics as LangGraph (messages/toolResults/citations
+          // concat, classification last-write) so the final `__end__` edge can
+          // be classified from the complete post-run state.
+          mergedEdgeState = {
+            ...mergedEdgeState,
+            messages: mergedEdgeState.messages.concat(
+              nodeUpdate.messages ?? [],
+            ),
+            toolResults: mergedEdgeState.toolResults.concat(
+              nodeUpdate.toolResults ?? [],
+            ),
+            citations: mergedEdgeState.citations.concat(
+              nodeUpdate.citations ?? [],
+            ),
+            ...(nodeUpdate.classification !== undefined
+              ? { classification: nodeUpdate.classification }
+              : {}),
+          };
+          if (nodeErrorMsg === undefined) lastCompletedNodeId = nodeId;
+
           const nodeCitations = nodeUpdate.citations ?? [];
           for (const cit of nodeCitations) {
             const key = cit.url || cit.title;
@@ -2281,6 +2632,22 @@ class GraphEngineServiceImpl implements GraphEngineService {
             }
           }
         }
+      }
+
+      // Final edge into `__end__`: the answer the user sees crossed it. The
+      // merged view carries the last node's own writes (its entry state did
+      // not), so classify from it with the last node's entry baseline.
+      if (
+        this.debugStore !== undefined &&
+        lastCompletedNodeId !== undefined &&
+        finalResponse !== undefined
+      ) {
+        recordEdge(
+          lastCompletedNodeId,
+          "__end__",
+          mergedEdgeState,
+          edgeFlowBaselines.get(lastCompletedNodeId),
+        );
       }
 
       // Emit the merged sources chunk(s) once, before onDone/[DONE].
@@ -2369,6 +2736,11 @@ class GraphEngineServiceImpl implements GraphEngineService {
             ],
           );
         }
+        // Terminal rollup marker: without this the execution would stay
+        // "running" in the history store forever — the exception skips the
+        // success path below, and the chat route's `__response__` boundary
+        // only covers requests that go through it (not triggers/MCP).
+        emitFlowEnd("error");
         throw err;
       }
     } finally {
@@ -2383,55 +2755,64 @@ class GraphEngineServiceImpl implements GraphEngineService {
     // Close the flow span (success or handled timeout).
     spanManager.endFlow(flowErrored ? "error" : "ok");
 
-    if (flowProgressEnabled) {
-      const outcome = flowErrored ? "mit Fehlern beendet" : "abgeschlossen";
-      await emitReasoningStep(
-        `⚙️ Recherche ${outcome} · Gesamtlaufzeit ${formatProgressDuration(
-          Date.now() - flowProgressStartedAt,
-        )}\n`,
-      );
-    }
+    try {
+      if (flowProgressEnabled) {
+        const outcome = flowErrored ? "mit Fehlern beendet" : "abgeschlossen";
+        await emitReasoningStep(
+          `⚙️ Recherche ${outcome} · Gesamtlaufzeit ${formatProgressDuration(
+            Date.now() - flowProgressStartedAt,
+          )}\n`,
+        );
+      }
 
-    if (
-      !flowErrored &&
-      finalResponse !== undefined &&
-      onFinalResponse !== undefined
-    ) {
-      await onFinalResponse(finalResponse);
-    }
+      if (
+        !flowErrored &&
+        finalResponse !== undefined &&
+        onFinalResponse !== undefined
+      ) {
+        await onFinalResponse(finalResponse);
+      }
 
-    await onDone({
-      prompt_tokens: usage.promptTokens,
-      completion_tokens: usage.completionTokens,
-      total_tokens: usage.totalTokens,
-      ...(usage.costUsd !== undefined && usage.costUsd > 0
-        ? { cost_usd: Math.round(usage.costUsd * 1e6) / 1e6 }
-        : {}),
-      // Only present when a provider in this run reported prompt-cache usage,
-      // so an OpenAI-compatible client can read the cache hit rate the same way
-      // it would from OpenAI itself.
-      ...(usage.cachedPromptTokens !== undefined
-        ? {
-            prompt_tokens_details: {
-              cached_tokens: usage.cachedPromptTokens,
-            },
-          }
-        : {}),
-    });
-    if (this.debugStore !== undefined) {
-      this.debugStore.finishTrace(
-        executionId,
-        flowErrored ? "error" : "completed",
-        {
-          prompt_tokens: usage.promptTokens,
-          completion_tokens: usage.completionTokens,
-          total_tokens: usage.totalTokens,
-        },
-        debugErrors,
-        finalResponse !== undefined
-          ? { response: finalResponse, ...(finalNodeId !== undefined ? { nodeId: finalNodeId } : {}) }
-          : undefined,
-      );
+      await onDone({
+        prompt_tokens: usage.promptTokens,
+        completion_tokens: usage.completionTokens,
+        total_tokens: usage.totalTokens,
+        ...(usage.costUsd !== undefined && usage.costUsd > 0
+          ? { cost_usd: Math.round(usage.costUsd * 1e6) / 1e6 }
+          : {}),
+        // Only present when a provider in this run reported prompt-cache usage,
+        // so an OpenAI-compatible client can read the cache hit rate the same way
+        // it would from OpenAI itself.
+        ...(usage.cachedPromptTokens !== undefined
+          ? {
+              prompt_tokens_details: {
+                cached_tokens: usage.cachedPromptTokens,
+              },
+            }
+          : {}),
+      });
+      if (this.debugStore !== undefined) {
+        this.debugStore.finishTrace(
+          executionId,
+          flowErrored ? "error" : "completed",
+          {
+            prompt_tokens: usage.promptTokens,
+            completion_tokens: usage.completionTokens,
+            total_tokens: usage.totalTokens,
+          },
+          debugErrors,
+          finalResponse !== undefined
+            ? { response: finalResponse, ...(finalNodeId !== undefined ? { nodeId: finalNodeId } : {}) }
+            : undefined,
+        );
+      }
+      emitFlowEnd(flowErrored ? "error" : "completed");
+    } catch (err) {
+      // The flow itself finished but delivering the result failed (e.g. the
+      // client disconnected in `onDone`). Without a terminal marker the
+      // execution would stay "running" in the rollup forever.
+      emitFlowEnd("error");
+      throw err;
     }
   }
 }

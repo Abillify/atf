@@ -33,6 +33,9 @@ import {
   buildXmlSchemaHint,
   buildFallbackClassification,
   resolveContextPlaceholders,
+  messagesHaveAttachments,
+  lastUserMessageHasAttachments,
+  sanitizeSystemMessages,
 } from "../exec-runtime.js";
 import {
   appendNodeClassification,
@@ -68,7 +71,84 @@ export function createClassifierNodeHandler(
     const runtime = getRuntime(config);
     if (runtime === undefined) return { currentNodeId: node.id };
 
+    // Attachment gate (mirrors the `llm` handler's `config.inputFilter`): an
+    // optional vision-preprocessing classifier (e.g. an image-transcription
+    // step ahead of retrieval) runs on EVERY turn otherwise, costing a full
+    // LLM round-trip just to answer "no image present". With the filter set,
+    // a turn without attachments resolves to `config.fallback` immediately —
+    // the same classification a model failure would produce — and the graph
+    // continues on the unchanged route. `attachments` looks at the whole
+    // conversation, `current-turn-attachments` only at the latest user
+    // message (so a checkpointed image from an earlier turn cannot keep the
+    // classifier alive in a later text-only turn).
+    //
+    // Unlike the `llm` handler's silent skip, this node opens its monitoring
+    // lifecycle anyway: the fallback classification IS the node's (model-free)
+    // result, so the trace shows it completed in ~0 ms with a
+    // `classifier_skipped_no_attachments` diagnostic instead of vanishing from
+    // the graph — which is what makes "why is this node suddenly fast?"
+    // answerable from the trace alone.
+    // The gate runs AFTER onNodeStart so both branches (skip and warn) land
+    // their diagnostics in the node's current attempt — onNodeStart resets
+    // per-attempt trace state (clearNodeAttemptState), which would drop a
+    // diagnostic recorded before it.
     runtime.onNodeStart(node.id);
+
+    const inputFilter = (node.config as { inputFilter?: string } | undefined)
+      ?.inputFilter;
+    if (inputFilter !== undefined) {
+      const hasAttachments =
+        inputFilter === "current-turn-attachments"
+          ? lastUserMessageHasAttachments(state)
+          : messagesHaveAttachments(state);
+      if (!hasAttachments) {
+        const fb = buildFallbackClassification(
+          node,
+          node.classifierSchema ?? { classKey: "" },
+        );
+        if (fb !== undefined) {
+          runtime.onDebugClassification?.(node.id, {
+            response_format:
+              ((node.config?.responseFormat as string) ?? "json").toLowerCase(),
+            ...(node.classifierSchema !== undefined
+              ? { schema: node.classifierSchema.schema }
+              : {}),
+            raw_output: "",
+            parsed: fb.classification,
+            class_label: fb.label,
+            used_fallback: true,
+          });
+          runtime.onNodeDiagnostic?.(node.id, {
+            level: "info",
+            code: "classifier_skipped_no_attachments",
+            message: `Classifier node "${node.id}": skipped — no attachments for inputFilter "${inputFilter}"; using config.fallback route "${fb.label}".`,
+            details: {
+              node_id: node.id,
+              input_filter: inputFilter,
+              fallback_label: fb.label,
+            },
+          });
+          await runtime.onNodeEnd?.(node.id);
+          return {
+            currentNodeId: node.id,
+            classification: fb.classification,
+            classLabel: fb.label,
+            turns: appendNodeClassification(
+              state.turns,
+              node.id,
+              fb.classification,
+              fb.label,
+            ),
+          };
+        }
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "classifier_input_filter_without_fallback",
+          message: `Classifier node "${node.id}": config.inputFilter is set but config.fallback is missing — running the model call instead.`,
+          details: { node_id: node.id, input_filter: inputFilter },
+        });
+      }
+    }
 
     const llmConfig = node.llm ?? runtime.appConfig.defaultLlm;
     if (llmConfig === undefined) {
@@ -117,7 +197,19 @@ export function createClassifierNodeHandler(
         state.context,
         buildClassificationNamespaces(state.turns),
       ) ?? "";
-    const coreMessages = baseMessagesToModelMessages(state.messages);
+    // A classifier running AFTER a tool node with `injectResultContext` (e.g.
+    // a folder-listing tool → mode classifier) receives that node's live-result
+    // system message inside `state.messages` — mid-conversation, after the
+    // human turn. Strict chat templates (vLLM's Qwen: "System message must be
+    // at the beginning") reject that with a 500 Jinja error on EVERY pool
+    // candidate, so the classifier silently lands on `config.fallback` and the
+    // routing decision is worthless (observed in a production trace: every pool
+    // candidate failed, used_fallback=true, raw_output=""). The llm handler folds these
+    // via `sanitizeSystemMessages` before prepending its prompt; the classifier
+    // must apply the same contract.
+    const coreMessages = sanitizeSystemMessages(
+      baseMessagesToModelMessages(state.messages),
+    );
 
     // Pool support: a node whose shortcut resolved to a POOL carries
     // `llmConfig.pool` (see flows/model-shortcuts.yaml + LlmPoolConfig). The
@@ -580,7 +672,7 @@ export function createClassifierNodeHandler(
     // (e.g. provider-initialisation errors). Same terminal handling as a
     // generation failure on the last candidate.
     return finishWithFallback("", lastAttemptError);
-  };;
+  };
 }
 
 export const nodeType: NodeHandlerRegistration = {

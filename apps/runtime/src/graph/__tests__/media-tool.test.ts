@@ -134,6 +134,34 @@ describe("buildMediaTools", () => {
     expect(Object.keys(tools)).toEqual(["generate_image"]);
   });
 
+  test("reports the effective args as key-value JSON before running", async () => {
+    // The live graph's INPUT panel must show the real { prompt } payload, not
+    // the key-only placeholder that onToolCall records (pre-DLP policy). Local
+    // tools have no egress DLP, so the execute site is the authoritative place
+    // to fire the effective-args report — mirroring the MCP tool path.
+    const effectiveArgs: Array<{
+      toolCallId: string;
+      toolName: string;
+      argsJson: string;
+    }> = [];
+    const tools = buildMediaTools(nodeWithMediaTool(), {
+      appConfig: baseConfig,
+      llmProviderFactory: imageModelFactory("BASE64DATA", "image/png"),
+      emit: async () => {},
+      onEffectiveArgs: (toolCallId, toolName, argsJson) => {
+        effectiveArgs.push({ toolCallId, toolName, argsJson });
+      },
+    });
+    const tool = tools.generate_image as ExecutableTool;
+    await tool.execute({ prompt: "a red cat" }, { toolCallId: "call-7" });
+    expect(effectiveArgs).toHaveLength(1);
+    expect(effectiveArgs[0]?.toolCallId).toBe("call-7");
+    expect(effectiveArgs[0]?.toolName).toBe("generate_image");
+    expect(JSON.parse(effectiveArgs[0]?.argsJson ?? "")).toEqual({
+      prompt: "a red cat",
+    });
+  });
+
   test("streams the generated image as a markdown data-URI and confirms to the model", async () => {
     const emitted: string[] = [];
     const tools = buildMediaTools(nodeWithMediaTool(), {

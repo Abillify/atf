@@ -5,16 +5,16 @@
  * Cross-source deduplication in the staged coverage queue.
  *
  * The ledger is seeded from `get_summaries`, whose `reference` is a
- * document-level path. Discovery `search` hits, however, can carry a deep
- * chunk/section `reference` when the server omits `base_ref`. A raw-string
- * compare (trim+NFC only) then fails to recognize that a deep search hit and
- * the document-level triage entry are the SAME physical document, so the hit's
- * promotion is silently lost — and the same document can be read twice under
- * two differently formatted references.
+ * document-UNIT path (`/…/Datei.pdf/79. PFLICHTENHEFT …`): one entry per
+ * logical unit, never per physical file. `get_document` resolves these unit
+ * references and merges the unit's chunks. Discovery `search` hits carry a
+ * `base_ref` (the unit) when the server provides one, otherwise a chunk-level
+ * `reference` (`/…/Datei.pdf/79. …_chunk_8`).
  *
  * These tests pin the canonical identity contract: `documentIdentityKey`
- * collapses a deep reference to its parent document file, and seeding +
- * promotion both use it so triage and search converge on one ledger entry.
+ * collapses a chunk hit onto its unit while keeping sibling units of the same
+ * physical file distinct, and seeding + promotion both use it so triage and
+ * search converge on one ledger entry — the content unit, not the title page.
  */
 
 import { describe, expect, test } from "bun:test";
@@ -27,17 +27,28 @@ import {
 	seedCoverageLedger,
 } from "../agent-harness/coverage.js";
 
-// Synthetic references. The shape mirrors what a vector store returns — a
-// document-level path from get_summaries and a deeper chunk/section path from
-// search — including spaces, commas, and a numbered section, but with no real
+// Synthetic references. The shape mirrors what the production vector store
+// returns — unit-level paths from get_summaries and chunk-level paths from
+// search — including spaces and a numbered section, but with no real
 // customer, project, or file identity.
-const DOC_A =
-	"/2025_Requirements Spec_Module A, B, C/2025_Requirements Spec_Module A, B, C.pdf";
-const DEEP_HIT_A = `${DOC_A}/12. Requirements — Section/3. Sample Field Name`;
+const FILE = "/2025_Requirements Spec/2025_Requirements Spec.pdf";
+const UNIT_A = `${FILE}/12. Requirements — Section`;
+const CHUNK_HIT_A = `${UNIT_A}_chunk_3`;
+const TITLE_PAGE = `${FILE}/0`;
 
 describe("documentIdentityKey", () => {
-	test("collapses a deep chunk/section reference to its parent document file", () => {
-		expect(documentIdentityKey(DEEP_HIT_A)).toBe(documentIdentityKey(DOC_A));
+	test("collapses a chunk-level hit reference onto its document unit", () => {
+		expect(documentIdentityKey(CHUNK_HIT_A)).toBe(documentIdentityKey(UNIT_A));
+	});
+
+	test("keeps sibling units of one physical file distinct", () => {
+		// The title page must never absorb a content-section unit: collapsing
+		// at the file extension would map every hit onto the ~500-char `/0`
+		// entry and the researcher would read title pages instead of content.
+		expect(documentIdentityKey(TITLE_PAGE)).not.toBe(
+			documentIdentityKey(UNIT_A),
+		);
+		expect(documentIdentityKey(FILE)).not.toBe(documentIdentityKey(UNIT_A));
 	});
 
 	test("is case- and trailing-slash-insensitive", () => {
@@ -46,12 +57,12 @@ describe("documentIdentityKey", () => {
 
 	test("NFC-normalizes so precomposed and decomposed forms match", () => {
 		// "é" precomposed (U+00E9) vs decomposed (e + U+0301).
-		expect(documentIdentityKey("/Dossier-\u00e9.pdf")).toBe(
-			documentIdentityKey("/Dossier-e\u0301.pdf"),
+		expect(documentIdentityKey("/Dossier-\u00e9.pdf/79. Abschnitt")).toBe(
+			documentIdentityKey("/Dossier-e\u0301.pdf/79. Abschnitt"),
 		);
 	});
 
-	test("leaves an extension-less reference untruncated (only slash/case)", () => {
+	test("leaves a reference without a chunk marker untouched (only slash/case)", () => {
 		expect(documentIdentityKey("/A")).toBe("/a");
 		expect(documentIdentityKey("/folder/Item")).toBe("/folder/item");
 	});
@@ -84,6 +95,8 @@ describe("cross-source coverage dedup", () => {
 		},
 	} as const;
 
+	// Seed the production shape: a title-page unit and a content unit of the
+	// same physical file, both as unit-level get_summaries references.
 	const seed = () =>
 		seedCoverageLedger(
 			[
@@ -92,10 +105,11 @@ describe("cross-source coverage dedup", () => {
 					tool_name: config.sourceTool,
 					result: {
 						summaries: [
-							{ reference: DOC_A, title: "Requirements Spec", summary: "S" },
+							{ reference: TITLE_PAGE, title: "Titelseite", summary: "T" },
+							{ reference: UNIT_A, title: "Requirements", summary: "S" },
 						],
-						count: 1,
-						total: 1,
+						count: 2,
+						total: 2,
 					},
 					execution_time_seconds: 0,
 				},
@@ -116,34 +130,52 @@ describe("cross-source coverage dedup", () => {
 	// staged phase, so this isolates the cross-source hit-matching behavior.
 	const completeDiscovery = (ledger = seed()) =>
 		markCoverageDiscoveryCompleted(ledger, [
-			pass("sample field lookup", [DEEP_HIT_A]),
+			pass("sample field lookup", [CHUNK_HIT_A]),
 		]);
 
-	test("seeds one ledger entry keyed by document identity", () => {
+	test("seeds one ledger entry per unit, not per physical file", () => {
 		const ledger = seed();
-		expect(ledger.documents).toHaveLength(1);
-		expect(ledger.documents[0]?.ref).toBe(DOC_A);
+		expect(ledger.documents).toHaveLength(2);
+		expect(ledger.documents.map((d) => d.ref)).toEqual([TITLE_PAGE, UNIT_A]);
 	});
 
-	test("a deep search hit promotes the document-level triage entry", () => {
+	test("a chunk-level search hit promotes its unit entry, not the title page", () => {
 		const ledger = completeDiscovery();
 		const promoted = promoteCoverageSearchHits(
 			ledger,
-			[pass("sample field lookup", [DEEP_HIT_A])],
+			[pass("sample field lookup", [CHUNK_HIT_A])],
 			config.searchDiscovery.maxHitsPerPass,
 		);
-		// The document-level ref is promoted even though the hit ref was deeper.
-		expect(promoted.promotedRefs).toEqual([DOC_A]);
+		// The content unit is promoted even though the hit ref was a chunk ref;
+		// the title-page unit of the same physical file stays untouched.
+		expect(promoted.promotedRefs).toEqual([UNIT_A]);
 		expect(
-			promoted.ledger.documents.find((d) => d.ref === DOC_A)?.status,
+			promoted.ledger.documents.find((d) => d.ref === UNIT_A)?.status,
 		).toBe("summary-reviewed");
+		expect(
+			promoted.ledger.documents.find((d) => d.ref === TITLE_PAGE)?.status,
+		).toBe("open");
 	});
 
-	test("the promoted document is assigned for original review exactly once", () => {
+	test("the promoted unit is assigned for original review exactly once", () => {
 		let ledger = completeDiscovery();
+		// Triage has settled the title page (excluded on summary evidence), as
+		// it would in a real staged run, so only the promoted unit is pending.
+		ledger = {
+			...ledger,
+			documents: ledger.documents.map((document) =>
+				document.ref === TITLE_PAGE
+					? {
+							...document,
+							status: "excluded" as const,
+							reason: "Titelseite ohne Inhalt",
+						}
+					: document,
+			),
+		};
 		ledger = promoteCoverageSearchHits(
 			ledger,
-			[pass("sample field lookup", [DEEP_HIT_A])],
+			[pass("sample field lookup", [CHUNK_HIT_A])],
 			config.searchDiscovery.maxHitsPerPass,
 		).ledger;
 		// Real staged order: promote -> freeze candidates -> original assignment.
@@ -153,6 +185,6 @@ describe("cross-source coverage dedup", () => {
 		).ledger;
 		const first = nextCoverageAssignment(ledger, config);
 		expect(first?.mode).toBe("original");
-		expect(first?.documents.map((d) => d.ref)).toEqual([DOC_A]);
+		expect(first?.documents.map((d) => d.ref)).toEqual([UNIT_A]);
 	});
 });

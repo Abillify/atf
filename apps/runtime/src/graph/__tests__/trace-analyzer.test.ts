@@ -235,6 +235,7 @@ describe("createTraceAnalyzer", () => {
     return {
       startTrace() {},
       upsertNode() {},
+      upsertEdgeFlow() {},
       annotateContext() {},
       finishTrace() {},
       getTrace: (id) => (trace !== undefined && id === trace.execution_id ? trace : undefined),

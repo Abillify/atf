@@ -17,7 +17,9 @@ import {
   deduplicateRagContext,
   trimConversationHistory,
   isRagContextMessage,
+  maskRagContextForModel,
 } from "../exec-runtime.js";
+import { HashRefHandleRegistry } from "../ref-handles.js";
 import {
   applyAnthropicPromptCache,
   applyBedrockPromptCache,
@@ -138,6 +140,78 @@ describe("deduplicateRagContext", () => {
     expect(result).toContain(systemPrompt);
     expect(result).not.toContain(rag1);
     expect(result).toContain(rag2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// maskRagContextForModel — grounding refs become handles at the model boundary
+// ---------------------------------------------------------------------------
+
+describe("maskRagContextForModel", () => {
+  const REF =
+    "/2025_Requirements Spec/2025_Requirements Spec.pdf/22. Requirements — Section";
+
+  const groundingMessage = (ref: string) =>
+    new SystemMessage({
+      content:
+        "The following sources are ordered by relevance to the question. " +
+        "Base your answer on these case file contents.\n\n" +
+        `RELEVANT PASSAGES (ordered by relevance to the question).\n\n` +
+        `[1] Pflichtenheft (Ref: ${ref})\nPassage text.`,
+    });
+
+  test("replaces the grounding Ref with its handle", () => {
+    const reg = new HashRefHandleRegistry();
+    const handle = reg.register(REF);
+    const msgs = [groundingMessage(REF), new HumanMessage("frage")];
+    const result = maskRagContextForModel(msgs, reg);
+    const content = (result[0] as SystemMessage).content as string;
+    expect(content).toContain(`(Ref: ${handle})`);
+    expect(content).not.toContain(REF);
+  });
+
+  test("keeps the persisted message objects untouched (model-facing copy only)", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register(REF);
+    const rag = groundingMessage(REF);
+    const msgs = [rag, new HumanMessage("frage")];
+    maskRagContextForModel(msgs, reg);
+    // The state's own message still carries the real reference — history,
+    // client citations and audit surfaces must never see a handle.
+    expect(rag.content as string).toContain(REF);
+  });
+
+  test("returns the same array reference when nothing changes", () => {
+    const reg = new HashRefHandleRegistry();
+    const msgs = [
+      new SystemMessage("You are a helpful assistant."),
+      new HumanMessage("frage"),
+    ];
+    expect(maskRagContextForModel(msgs, reg)).toBe(msgs);
+  });
+
+  test("leaves a non-RAG system message and an unregistered ref alone", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register("/andere/datei.pdf");
+    const systemPrompt = new SystemMessage("Du bist ein Assistent.");
+    const rag = groundingMessage("/nicht/registriert.pdf");
+    const msgs = [systemPrompt, rag, new HumanMessage("frage")];
+    const result = maskRagContextForModel(msgs, reg);
+    expect(result).toBe(msgs);
+    expect(result[0]).toBe(systemPrompt);
+    expect(result[1]).toBe(rag);
+  });
+
+  test("preserves message identity fields on the masked copy", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register(REF);
+    const rag = new SystemMessage({
+      content: `The following sources are ordered by relevance to the question.\n(Ref: ${REF})`,
+      additional_kwargs: { trace: "keep-me" },
+    });
+    const [masked] = maskRagContextForModel([rag], reg);
+    expect(masked?.additional_kwargs).toEqual({ trace: "keep-me" });
+    expect(masked?._getType()).toBe("system");
   });
 });
 
