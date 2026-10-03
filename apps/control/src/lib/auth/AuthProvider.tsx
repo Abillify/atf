@@ -192,10 +192,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
   // --- Derived auth state and role ---
 
   const ready = tokenReady && authConfigReady;
-  const role: AuthRole | undefined = useMemo(
-    () => (token ? extractRoleFromToken(token) : authRequired ? undefined : "admin"),
-    [token, authRequired],
-  );
+  // When operator authentication is disabled the deployment grants full
+  // access regardless of any (possibly stale) session token — otherwise a
+  // leftover token without a valid `role` claim would resolve to `undefined`
+  // and grey out the whole UI via `RequireRole`.
+  const role: AuthRole | undefined = useMemo(() => {
+    if (!authRequired) return "admin";
+    return token ? extractRoleFromToken(token) : undefined;
+  }, [token, authRequired]);
 
   // --- Context value (stable identity unless values change) ---
 

@@ -122,6 +122,30 @@ describe("AuthProvider", () => {
     expect(screen.getByTestId("authenticated").textContent).toBe("true");
   });
 
+  test("grants admin when auth is not required, even with a stale token lacking a role claim", async () => {
+    vi.mocked(oidc.getAuthConfig).mockResolvedValueOnce({
+      enabled: false,
+      autoLogin: false,
+      required: false,
+    });
+    // A leftover token from a previous session without a valid `role` claim
+    // must not grey out the UI when authentication is disabled.
+    const staleJwt = makeJwt({ sub: "user1", exp: 9999999999 });
+    window.sessionStorage.setItem(TOKEN_STORAGE_KEY, staleJwt);
+
+    render(
+      <AuthProvider>
+        <AuthConsumer />
+      </AuthProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("ready").textContent).toBe("true");
+    });
+    expect(screen.getByTestId("role").textContent).toBe("admin");
+    expect(screen.getByTestId("authenticated").textContent).toBe("true");
+  });
+
   test("consumes session token from URL fragment (OIDC handoff)", async () => {
     const jwt = makeJwt({ role: "admin", exp: 9999999999 });
     vi.mocked(oidc.consumeSessionFromUrl).mockReturnValue({
