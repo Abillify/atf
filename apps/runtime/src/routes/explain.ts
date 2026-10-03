@@ -39,6 +39,7 @@ import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
+import { normalizeExecutionId } from "../util/execution-id.js";
 
 export interface ExplainRouterDeps {
   history: ExplainHistorySource;
@@ -86,7 +87,9 @@ export function createExplainRouter(deps: ExplainRouterDeps): Hono {
     );
     if (!r.ok) return unauthorized(ctx);
 
-    const executionId = ctx.req.param("executionId");
+    // Accept either the bare execution uuid or the `chatcmpl-<uuid>` id the
+    // chat endpoints report, so operators can paste whichever they have.
+    const executionId = normalizeExecutionId(ctx.req.param("executionId"));
     const card = await buildExplainCard(
       {
         history: deps.history,
@@ -152,7 +155,7 @@ export function createExplainRouter(deps: ExplainRouterDeps): Hono {
       );
     }
 
-    const executionId = ctx.req.param("executionId");
+    const executionId = normalizeExecutionId(ctx.req.param("executionId"));
     const card = await buildExplainCard(
       {
         history: deps.history,

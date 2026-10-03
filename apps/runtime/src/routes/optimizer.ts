@@ -46,6 +46,7 @@ import {
   computeRoutingRecommendations,
   buildCanaryInstruction,
 } from "../graph/routing-advisor.js";
+import { normalizeExecutionId } from "../util/execution-id.js";
 
 export interface OptimizerRouterDeps {
   /**
@@ -320,7 +321,8 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
         501,
       );
     }
-    const executionId = c.req.param("executionId");
+    // Accept the bare uuid or the `chatcmpl-<uuid>` id the chat endpoints report.
+    const executionId = normalizeExecutionId(c.req.param("executionId"));
     let body: { scopeNodeIds?: string[]; goal?: string } = {};
     try {
       body = await c.req.json<{ scopeNodeIds?: string[]; goal?: string }>();

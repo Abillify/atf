@@ -121,6 +121,36 @@ describe("GET /monitoring/explain/:executionId", () => {
     const res = await app.request("/monitoring/explain/exec-1");
     expect(res.status).toBe(401);
   });
+
+  it("resolves a chatcmpl-prefixed response id to the same execution", async () => {
+    // The chat endpoints report `chatcmpl-<executionId>` as the response id;
+    // operators paste that into the monitoring lookups, so the route must
+    // strip the prefix rather than 404.
+    const events: NodeExecutionEvent[] = [
+      {
+        execution_id: "exec-1",
+        node_id: "responder",
+        status: "completed",
+        start_time: "2026-01-01T00:00:00.000Z",
+        end_time: "2026-01-01T00:00:01.000Z",
+        latency_ms: 1000,
+      },
+    ];
+    const app = new Hono();
+    app.route(
+      "/",
+      createExplainRouter({
+        history: historyWith(events),
+        operatorAuth: viewerAuth,
+      }),
+    );
+    const res = await app.request("/monitoring/explain/chatcmpl-exec-1", {
+      headers: { Authorization: "Bearer viewer-tok" },
+    });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { card: { executionId: string } };
+    expect(body.card.executionId).toBe("exec-1");
+  });
 });
 
 // ---------------------------------------------------------------------------
