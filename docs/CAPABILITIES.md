@@ -360,6 +360,11 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   (`BUDGET_DAILY_PER_TENANT`, `COST_ANOMALY_ENABLED`).
 - **FinOps accounting.** Usage and cost per tenant, day, and model, with forecasting and CO2
   accounting derived from configurable energy and grid-intensity factors.
+- **Currency labelling.** Every cost display renders in one configured currency
+  (`CURRENCY`, default `EUR`; the Control mirrors it via `NEXT_PUBLIC_CURRENCY`, frozen at
+  build time). Values are never converted — only the label changes, and internal and wire
+  field names (`cost_usd`, `maxCostUsd`, …) stay as they are. An unknown value falls back to
+  `EUR` with a warning.
 - **Idempotency.** A repeated request with the same idempotency key does not execute a
   consequential action twice (`IDEMPOTENCY_ENABLED`).
 - **Limits.** Rate limiting per identity and per user, pre- and post-authentication buckets,
@@ -471,14 +476,18 @@ Control is a Next.js application for operating the platform.
   pinned to the flow directory's `prompts/` subtree); a variables table
   (typed values, usage counts, renaming that rewrites references); an expression builder
   behind every ƒx button with a variable browser, operators, a live result from Runtime, values
-  from a pinned run, and a copilot for the field; drafts, publish, and diff against the live
+  from a pinned run, and a copilot for the field; named drafts — several working copies per
+  flow (`GET/PUT/DELETE /flows/:id/drafts[/:draftId]`, the implicit draft route stays the
+  `default` draft) with publish selecting a draft via `?draftId=`, and diff against the live
   version; a Copilot that proposes changes, including node settings, as a previewed overlay that
   must be accepted; an Optimize panel with cheaper candidate models for the canvas or the live
   flow; and test runs of the canvas state (an ephemeral test registration, never the live flow)
   or of the live flow, with per-node tokens, cost, and saving a run as an eval case with an
   expected answer. A request picked in the Live Graph can be attached to Run & Trace and
   inspected there.
-- Execution history and trace viewer.
+- Execution history and trace viewer. The history table sorts server-side on its main
+  columns (`GET /monitoring/history?sortBy=&sortDir=asc|desc`, whitelisted columns only,
+  stable tiebreaker) — started, flow, user, nodes, latency, runtime, and cost.
 - Approval inbox with role-gated decisions.
 - Cost, budget, and FinOps panels.
 - Evaluation runs and eval cases (list and delete), canary status, shadow comparisons,
