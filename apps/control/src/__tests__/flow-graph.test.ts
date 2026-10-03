@@ -277,7 +277,7 @@ describe("flowToGraph / graphToFlow", () => {
     const commented = {
       ...def,
       edges: [{ ...def.edges[0]!, _comment: "why this route exists" }],
-    } as FlowDefinition;
+    } as unknown as FlowDefinition;
     const { nodes, edges } = flowToGraph(commented);
     const back = graphToFlow(commented, nodes, edges);
     expect((back.edges[0] as unknown as Record<string, unknown>)["_comment"]).toBe(

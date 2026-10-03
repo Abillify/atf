@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import "@testing-library/jest-dom";
+import "@testing-library/jest-dom/vitest";
 
 // Node.js 26 exposes an experimental localStorage global. Vitest preserves that
 // property when it installs jsdom globals, so bind the test global explicitly to

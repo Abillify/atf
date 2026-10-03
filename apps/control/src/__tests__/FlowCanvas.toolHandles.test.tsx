@@ -24,7 +24,7 @@ describe("FlowCanvas tool connections", () => {
       <div style={{ width: 800, height: 600 }}>
         <FlowCanvas
           nodes={nodes}
-          edges={[{ id: "e1", source: "ctx", target: "answer" }]}
+          edges={[{ id: "e1", source: "ctx", target: "answer", data: {} }]}
           referenceEdges={referenceEdges(nodes.map((n) => n.data.flowNode))}
           editable
           height={600}

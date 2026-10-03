@@ -173,7 +173,7 @@ describe("NodePropertyPanel — catalog-driven field visibility", () => {
   });
 
   test("an unknown node type falls back instead of hiding everything", () => {
-    const c = renderPanel({ id: "x", type: "future-type" } as FlowNode, CATALOG);
+    const c = renderPanel({ id: "x", type: "future-type" } as unknown as FlowNode, CATALOG);
     expect(hasSection(c, /^Model$/)).toBe(false);
     expect(prompt()).toBeNull();
   });
