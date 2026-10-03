@@ -17,6 +17,7 @@ import type {
   ChatCompletionChunk,
   ChatCompletionRequest,
   ChatCompletionResponse,
+  CitationSource,
   TokenUsage,
   MessageToolCall,
 } from "../../types/openai.js";
@@ -416,6 +417,12 @@ export async function executeNonStreaming(
     string,
     { id: string; name: string; arguments: string }
   >();
+  // Citation sources arrive on otherwise-empty chunks (the streaming path
+  // forwards them to the client's source panel). The non-streaming response
+  // must carry the same list, or every `[n]` in the answer is unresolvable.
+  // Keyed by index: a re-emission with the same index is an evidence merge,
+  // so the newest payload wins.
+  const sourceByIndex = new Map<number, CitationSource>();
   let hasError = false;
   let finalUsage: TokenUsage | undefined;
 
@@ -451,6 +458,19 @@ export async function executeNonStreaming(
         // Process content
         if (choice?.delta?.content != null && choice.delta.content !== "") {
           collectedContent.push(choice.delta.content);
+        }
+
+        // Collect citation sources carried on no-op chunks (see above).
+        // Only the indexed CitationRegistry format is kept: the legacy
+        // merged-sources envelope (`{ source: {name,url}, document[] }`,
+        // emitted once at flow end) has no `[n]` index and cannot be
+        // resolved by the client's citation filter — including it would
+        // add unresolvable entries to the response.
+        if (chunk.sources !== undefined && chunk.sources.length > 0) {
+          for (const source of chunk.sources) {
+            if (typeof source.index === "number")
+              sourceByIndex.set(source.index, source);
+          }
         }
 
         // Check for error finish_reason
@@ -532,5 +552,10 @@ export async function executeNonStreaming(
       },
     ],
     ...(finalUsage !== undefined ? { usage: finalUsage } : {}),
+    ...(sourceByIndex.size > 0
+      ? {
+          sources: [...sourceByIndex.values()].sort((a, b) => a.index - b.index),
+        }
+      : {}),
   };
 }

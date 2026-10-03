@@ -205,6 +205,13 @@ export interface ChatCompletionResponse {
   model: string;
   choices: ChatCompletionChoice[];
   usage?: TokenUsage;
+  /**
+   * Retrieved sources for citation, mirroring the `sources` chunks the
+   * streaming path emits. Non-standard OpenAI field — without it, a
+   * `stream: false` answer carries `[n]` markers that no client can resolve
+   * to documents, because the source panel only ever existed on the SSE path.
+   */
+  sources?: CitationSource[];
 }
 
 // ---------------------------------------------------------------------------
