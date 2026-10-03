@@ -940,7 +940,7 @@ function ExpressionCopilot({
           }}
           placeholder={
             kind === "condition"
-              ? "Describe the condition, e.g. “route is INKASSO or the user asks about parking”"
+              ? "Describe the condition, e.g. “route is RETOURE or the user asks about parking”"
               : "Describe what to write or change, e.g. “half of the worker budget, rounded”"
           }
           className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -1201,7 +1201,7 @@ function OperatorToolbar({
 
 const EXAMPLES: Record<FormulaKind, string[]> = {
   condition: [
-    "classification.route == 'INKASSO'",
+    "classification.route == 'RETOURE'",
     "groups.includes('staff') && language == 'de'",
     "lastMessageText =~ 'parkplatz|stellplatz'",
     "!hasErrors && messageCount > 2",
@@ -1258,7 +1258,7 @@ function BuilderHelp({
           <summary className="cursor-pointer font-medium">How conditions work</summary>
           <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
             <li>Names read the run state: classification fields, node results, user and request data, run state (see the tree).</li>
-            <li>Text in single quotes: <code>route == 'INKASSO'</code>. Combine with <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> and parentheses.</li>
+            <li>Text in single quotes: <code>route == 'RETOURE'</code>. Combine with <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> and parentheses.</li>
             <li><code>=~</code> is a case-insensitive regex match; <code>.includes()</code>, <code>.startsWith()</code>, <code>.endsWith()</code>, <code>.length</code> work on text and lists.</li>
             <li>Flow variables and constants are replaced textually when the flow loads — quote text: <code>'{"{{vars.x}}"}'</code>.</li>
             <li>An empty condition means: always follow this edge.</li>

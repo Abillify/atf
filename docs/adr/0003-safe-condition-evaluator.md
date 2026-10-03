@@ -9,7 +9,7 @@ Accepted
 ## Context
 
 Flow routing edges and dispatch/override/access rules branch on expressions like
-`classLabel == 'INKASSO'` or `tier == 'gold'`. These expressions come from flow
+`classLabel == 'RETOURE'` or `tier == 'gold'`. These expressions come from flow
 JSON and policy files that operators (and potentially less-trusted authors) edit.
 Evaluating them with `eval`/`new Function` would hand arbitrary JavaScript
 execution and access to the host scope to anyone who can author a flow — a

@@ -151,7 +151,7 @@ export const TEMPLATE_PLACEHOLDERS: PlaceholderGroup[] = [
     title: "Classification (this turn)",
     scopes: ["tool"],
     symbols: [
-      { path: "classLabel", description: "Value of the last classifier's `classKey` field.", example: "INKASSO" },
+      { path: "classLabel", description: "Value of the last classifier's `classKey` field.", example: "RETOURE" },
       { path: "classification.<field>", description: "A field of the merged classification of this turn (classifiers, structured `llm` output, `transform` nodes)." },
     ],
   },
@@ -227,7 +227,7 @@ export const CONDITION_FIELDS: PlaceholderGroup[] = [
     title: "Classification",
     scopes: [],
     symbols: [
-      { path: "classLabel", description: "Value of the last classifier's `classKey` field.", example: "INKASSO" },
+      { path: "classLabel", description: "Value of the last classifier's `classKey` field.", example: "RETOURE" },
       { path: "classification.<field>", description: "A field of the merged classification of this turn." },
       { path: "node.<id>.classification.<field>", description: "A field as node `<id>` set it in this run (node ids with hyphens cannot be used here)." },
       { path: "turn[<n>].<id>.classification.<field>", description: "A field from node `<id>` n runs ago." },

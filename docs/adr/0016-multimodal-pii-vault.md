@@ -16,8 +16,8 @@ transparently restored in the streamed response.
 That reversible round-trip only works for text. The vault's `tokenizeMessages`
 step iterated a message's content blocks and processed `text` blocks, passing
 every other block (`image`, `image_url`, `file`) through **unchanged**. For a
-document-heavy deployment — the driving debt-collection (Inkasso) use
-case routinely sends scanned IDs, invoices, and Mahnbescheide to a vision model
+document-heavy deployment — the driving debt-collection use case
+routinely sends scanned IDs, invoices, and dunning letters to a vision model
 — this meant raw PII embedded in an image reached the provider untouched. The
 platform's flagship privacy control had a blind spot in exactly the use case
 that most needed it.

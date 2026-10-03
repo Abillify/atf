@@ -27,7 +27,7 @@ import {
 // A representative dispatcher schema (route + a small client enum + flags).
 // The client enum is deliberately short so the assertion can prove the model
 // was constrained to the allowed set (structured output enforcement).
-const ROUTE_VALUES: string[] = ["INKASSO", "CLIENTS", "BETRIEB", "ALLGEMEINES"];
+const ROUTE_VALUES: string[] = ["RETOURE", "CLIENTS", "BETRIEB", "ALLGEMEINES"];
 const CLIENT_VALUES: string[] = [
   "Example Logistics",
   "Example Retail",
@@ -48,7 +48,7 @@ const DISPATCHER_SCHEMA = {
 
 const SYSTEM_PROMPT =
   "Du bist der Dispatcher fuer einen Kundenservice-Bot. Klassifiziere die " +
-  "letzte Anfrage: route (INKASSO = Inkasso/Forderungen, CLIENTS = eine " +
+  "letzte Anfrage: route (RETOURE = Retoure/Forderungen, CLIENTS = eine " +
   "konkrete Kundenfirma, BETRIEB = interne Firmenthemen, ALLGEMEINES = " +
   "Smalltalk), den erkannten Kunden (client, leer wenn keiner), und ob " +
   "Recherche (needsRag) bzw. mehrschrittige Orchestrierung (needsOrchestration) " +

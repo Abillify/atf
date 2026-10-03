@@ -9,8 +9,8 @@ const join = (parts: ReturnType<typeof diffText>, keep: "same" | "add" | "del") 
 
 describe("diffText", () => {
   test("token diff for one-liners", () => {
-    const parts = diffText("route == 'INKASSO'", "route == 'INKASSO' || route == 'BETRIEB'");
-    expect(parts[0]).toEqual({ type: "same", text: "route == 'INKASSO'" });
+    const parts = diffText("route == 'RETOURE'", "route == 'RETOURE' || route == 'BETRIEB'");
+    expect(parts[0]).toEqual({ type: "same", text: "route == 'RETOURE'" });
     expect(parts.filter((p) => p.type === "add").map((p) => p.text).join("")).toBe(" || route == 'BETRIEB'");
     expect(parts.some((p) => p.type === "del")).toBe(false);
   });

@@ -125,7 +125,7 @@ describe("evaluatePolicy", () => {
           blockedModels: [{ provider: "openai", model: "gpt-3*" }],
         },
         {
-          tenant: "inkasso",
+          tenant: "retoure",
           allowedModels: [{ provider: "openai", model: "gpt-4o" }],
         },
       ],
@@ -141,7 +141,7 @@ describe("evaluatePolicy", () => {
 
     it("denies a tenant-scoped model not on the allow-list", () => {
       const result = evaluatePolicy(policy, {
-        tenantId: "inkasso",
+        tenantId: "retoure",
         llmConfig: llm("anthropic", "claude-3-5-sonnet-latest"),
       });
       expect(result.decision).toBe("deny");
@@ -149,7 +149,7 @@ describe("evaluatePolicy", () => {
 
     it("allows a tenant-scoped model on the allow-list", () => {
       const result = evaluatePolicy(policy, {
-        tenantId: "inkasso",
+        tenantId: "retoure",
         llmConfig: llm("openai", "gpt-4o"),
       });
       expect(result.decision).toBe("allow");
@@ -170,7 +170,7 @@ describe("evaluatePolicy", () => {
       failClosed: true,
       approvalRules: [
         {
-          toolPatterns: ["inkasso-*"],
+          toolPatterns: ["retoure-*"],
           exemptRoles: ["admin"],
         },
       ],
@@ -178,14 +178,14 @@ describe("evaluatePolicy", () => {
 
     it("requires approval when a tool id matches the pattern", () => {
       const result = evaluatePolicy(policy, {
-        toolIds: ["inkasso-delete"],
+        toolIds: ["retoure-delete"],
       });
       expect(result.decision).toBe("require-approval");
     });
 
     it("does not require approval for an exempt role", () => {
       const result = evaluatePolicy(policy, {
-        toolIds: ["inkasso-delete"],
+        toolIds: ["retoure-delete"],
         role: "admin",
       });
       expect(result.decision).toBe("allow");
@@ -310,18 +310,18 @@ describe("policyRequiresToolApproval", () => {
   const policy: CompliancePolicy = {
     version: "1",
     failClosed: true,
-    approvalRules: [{ toolPatterns: ["inkasso-*"], exemptRoles: ["admin"] }],
+    approvalRules: [{ toolPatterns: ["retoure-*"], exemptRoles: ["admin"] }],
   };
 
   it("returns required:false when no policy is loaded", () => {
     expect(
-      policyRequiresToolApproval(undefined, "inkasso-delete", {}),
+      policyRequiresToolApproval(undefined, "retoure-delete", {}),
     ).toEqual({ required: false });
   });
 
   it("returns required:true for a matching tool pattern", () => {
     expect(
-      policyRequiresToolApproval(policy, "inkasso-delete", {}),
+      policyRequiresToolApproval(policy, "retoure-delete", {}),
     ).toEqual({ required: true });
   });
 
@@ -333,7 +333,7 @@ describe("policyRequiresToolApproval", () => {
 
   it("returns required:false for an exempt role", () => {
     expect(
-      policyRequiresToolApproval(policy, "inkasso-delete", { role: "admin" }),
+      policyRequiresToolApproval(policy, "retoure-delete", { role: "admin" }),
     ).toEqual({ required: false });
   });
 
@@ -352,16 +352,16 @@ describe("policyRequiresToolApproval", () => {
     const policyWithTimeout: CompliancePolicy = {
       version: "1",
       failClosed: true,
-      approvalRules: [{ toolPatterns: ["inkasso-*"], timeoutMs: 120_000 }],
+      approvalRules: [{ toolPatterns: ["retoure-*"], timeoutMs: 120_000 }],
     };
     expect(
-      policyRequiresToolApproval(policyWithTimeout, "inkasso-delete", {}),
+      policyRequiresToolApproval(policyWithTimeout, "retoure-delete", {}),
     ).toEqual({ required: true, timeoutMs: 120_000 });
   });
 
   it("omits timeoutMs when the matched rule does not set one (falls back to the gate's global default)", () => {
     expect(
-      policyRequiresToolApproval(policy, "inkasso-delete", {}),
+      policyRequiresToolApproval(policy, "retoure-delete", {}),
     ).toEqual({ required: true });
   });
 
@@ -370,12 +370,12 @@ describe("policyRequiresToolApproval", () => {
       version: "1",
       failClosed: true,
       approvalRules: [
-        { toolPatterns: ["inkasso-*"], timeoutMs: 60_000 },
+        { toolPatterns: ["retoure-*"], timeoutMs: 60_000 },
         { toolPatterns: ["*"], timeoutMs: 5_000 },
       ],
     };
     expect(
-      policyRequiresToolApproval(multiRulePolicy, "inkasso-delete", {}),
+      policyRequiresToolApproval(multiRulePolicy, "retoure-delete", {}),
     ).toEqual({ required: true, timeoutMs: 60_000 });
   });
 });

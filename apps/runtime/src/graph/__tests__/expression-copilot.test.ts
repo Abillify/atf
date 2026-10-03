@@ -38,7 +38,7 @@ const ctx = { constants: { budget: 300 }, env: { FLOW_PUBLIC_REGION: "eu" } };
 
 const input = (over: Partial<ExpressionCopilotInput> = {}): ExpressionCopilotInput => ({
   kind: "condition",
-  current: "classification.route == 'INKASSO'",
+  current: "classification.route == 'RETOURE'",
   instruction: "auch BETRIEB zulassen",
   vocabulary: [
     {
@@ -77,12 +77,12 @@ describe("checkExpression (engine checks)", () => {
 describe("proposeExpression", () => {
   test("returns a checked proposal and gives the model grammar, data and current value", async () => {
     const { model, prompts } = fakeModel([
-      { expression: "classification.route == 'INKASSO' || classification.route == 'BETRIEB'", explanation: "BETRIEB ergänzt." },
+      { expression: "classification.route == 'RETOURE' || classification.route == 'BETRIEB'", explanation: "BETRIEB ergänzt." },
     ]);
     const r = await proposeExpression(input(), model, { context: ctx });
     expect(r).toEqual({
       ok: true,
-      expression: "classification.route == 'INKASSO' || classification.route == 'BETRIEB'",
+      expression: "classification.route == 'RETOURE' || classification.route == 'BETRIEB'",
       explanation: "BETRIEB ergänzt.",
       changed: true,
     });
@@ -90,7 +90,7 @@ describe("proposeExpression", () => {
     expect(prompt).toContain("FIELD KIND: condition expression");
     expect(prompt).toContain("node.triage.classification.route = \\\"BETRIEB\\\"");
     expect(prompt).toContain("not usable here: context.userName");
-    expect(prompt).toContain("classification.route == 'INKASSO'");
+    expect(prompt).toContain("classification.route == 'RETOURE'");
   });
 
   test("an invalid proposal gets one repair round with the problem", async () => {
@@ -128,13 +128,13 @@ describe("cursor / selection", () => {
     const { model, prompts } = fakeModel([
       { expression: "classification.route == 'BETRIEB'⟦CURSOR⟧", explanation: "ok" },
     ]);
-    const current = "classification.route == 'INKASSO'";
+    const current = "classification.route == 'RETOURE'";
     const res = await proposeExpression(
       input({ current, selection: { start: current.indexOf("'"), end: current.length } }),
       model,
       { context: ctx },
     );
-    expect(prompts[0]).toContain("⟦SELECTION⟧'INKASSO'⟦/SELECTION⟧");
+    expect(prompts[0]).toContain("⟦SELECTION⟧'RETOURE'⟦/SELECTION⟧");
     expect(prompts[0]).toContain("marks the text the user selected");
     expect(res).toMatchObject({ ok: true, expression: "classification.route == 'BETRIEB'" });
   });
