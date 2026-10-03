@@ -68,7 +68,7 @@ edges: []
 | `recovery` | object | no | Crash recovery of async runs: `retry` states whether re-running from the start is safe; `maxAttempts` (1–10) lowers the global ceiling. |
 | `nodes` | list of object 1–100 | no | The steps; 1–100. In a flow file optional when `metadata.$include` merges them in from sub-flows. |
 | `edges` | list of object (≤ 500) | no | Connections between nodes; 0–500. The run starts at the first node; a node without an outgoing edge ends it. In a flow file optional when `metadata.$include` merges them in. |
-| `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces), `ui` (Studio layout), `$include.subflows` (sub-flow files). |
+| `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces), `ui` (Studio layout), `$include.subflows` (sub-flow files), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable). |
 
 Keys starting with `_` (`_comment`, `_comment_tools`, …) are annotations on flows, nodes, edges and overrides; the parser ignores them. Any other unknown key is an error in `schemas/flow.schema.json`, which editors can use to validate flow files as you type (it describes the file form, including `llm.shortcut` and flows whose nodes come from `metadata.$include`).
 
@@ -198,16 +198,17 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 | `llm` | recommended | Model to call. Omit to use DEFAULT_LLM. |
 | `systemPrompt` | recommended | Instructions for this step. Supports `#[[file:prompts/x.md]]` includes and `{{vars.*}}` / `{{context.*}}` / `{{node.<id>.classification.*}}` placeholders. |
 | `tools` | optional | MCP tool refs (`server/tool`, `server/*`) the agent loop may call. Empty = plain model call. |
-| `overrides` | optional | Conditional per-request overrides of llm/systemPrompt/tools. |
+| `overrides` | optional | Conditional per-request variants, applied in order — the FIRST matching entry wins and replaces `llm`, `systemPrompt` and `tools` wholesale (keys it omits stay as on the node). Match conditions (all present ones must hold): `whenClass` (classLabel, `*` wildcard), `whenClaim` (expression over JWT claims, e.g. `role == 'admin'`), `whenParam` (expression over requestParams), `whenPlan` (exact), `whenGroup` (ctx.groups contains), `whenLanguage` (BCP-47 prefix, `de` matches `de-AT`). Example: `[{ whenClass: "SIMPLE", llm: { shortcut: fast }, systemPrompt: "..." }]`. |
 | `priority` | optional | Queue priority for model requests from this node; higher runs first. A flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes. |
 | `classifierSchema` | ignored | Not used — that is the `classifier` type. For a schema-constrained answer from an `llm` node use `config.finalAnswerContract` or a structured downstream classifier. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `maxToolSteps` | integer ≥ 1 | runtime MAX_TOOL_STEPS | Upper bound on model↔tool round trips in one turn. Raise it for agentic nodes that read many documents; invalid values fall back to the global setting. |
-| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"casework","tags":["{{classification.clientTags}}"]}}`. |
+| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"cases","tags":["{{classification.clientTags}}"]}}`. |
 | `toolSelection` | object | — | With many tools, advertise only the relevant ones. In `semantic` mode the node's full `tools` list becomes a candidate pool: all stay callable, but only `alwaysInclude` + the top-K semantic matches (+ an optional `select_tools` meta-tool the model can use to pull more in) are advertised initially. |
 | `toolSelection.mode` | one of `static`, `semantic` | `static` | `static` advertises every tool; `semantic` gates by embedding similarity to the request. |
 | `toolSelection.topK` | integer ≥ 1 | `5` | Max semantically selected tools advertised initially. |
@@ -221,6 +222,17 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 | `requireToolUseWhenSelected` | boolean | `false` | A heuristic: force a tool call only when semantic tool selection found a plausibly relevant tool. Unlike `requireToolUse` it never fails the turn — when the forced call is refused the user still gets an answer. Messages without own intent ("retry", "test", "ok"…) never trigger it. |
 | `requireToolUseWhenSelectedMinScore` | number 0–1 | — | Minimum semantic score the best-selected tool needs before `requireToolUseWhenSelected` forces a call. |
 | `toolSequenceContract` | json | — | For consequential actions: when the user message matches `when.pattern` (a regex, optional `when.flags`), the tools in `sequence` must all have succeeded in that order before the answer is accepted. Invalid declarations are ignored. Example: `{"when":{"pattern":"buche\|reservier","flags":"i"},"sequence":["parking/availability","parking/book_space"]}`. |
+| `toolLoopGuard` | object | disabled (enable with `true` for defaults) | Opt-in guard against a model stuck in a tool-call loop. `true` enables it with defaults; an object tunes the detectors. Counts identical calls, same-tool churn (varying args, time-windowed), mutating calls with no observable effect, and A→B→A→B cycles — each with a warn threshold (a steering notice is injected) and a block threshold (the repeated call is refused). Failed tool outcomes count toward churn so a retry storm is caught; policy/approval waits pause the clock. |
+| `toolLoopGuard.enabled` | boolean | `true` | Master switch — only relevant when the object form is used; `toolLoopGuard: true` enables with defaults. |
+| `toolLoopGuard.identicalWarnAt` | integer ≥ 2 | `3` | Identical calls (same tool, same args) before a warning is injected. |
+| `toolLoopGuard.identicalBlockAt` | integer ≥ 2 | `5` | Identical calls before the repeat is blocked. |
+| `toolLoopGuard.churnWarnAt` | integer ≥ 2 | `6` | Same-tool calls with varying args inside the window before a warning. |
+| `toolLoopGuard.churnBlockAt` | integer ≥ 2 | `10` | Same-tool calls with varying args inside the window before blocking. |
+| `toolLoopGuard.churnWindowMs` | integer ≥ 1000 | `120000` | Time window in which churn is counted; paused time (approvals) is excluded. |
+| `toolLoopGuard.noProgressWarnAt` | integer ≥ 2 | `3` | Mutating calls with no observable effect before a warning. |
+| `toolLoopGuard.noProgressBlockAt` | integer ≥ 2 | `5` | Mutating calls with no observable effect before blocking. |
+| `toolLoopGuard.cycleWarnAt` | integer ≥ 2 | `3` | A→B→A→B cycle repetitions before a warning. |
+| `toolLoopGuard.cycleBlockAt` | integer ≥ 2 | `4` | A→B→A→B cycle repetitions before blocking. |
 | `clientTools` | boolean | `true` | Whether tools sent by the caller (OpenAI `tools` in the request, e.g. Open WebUI knowledge/functions) are offered to this node when client tools are enabled globally. Set false for RAG-only nodes that must answer strictly from the flow's own tools. |
 | `suppressToolPreamble` | boolean | `false` | Buffer any text the model writes before a tool call until it is known whether a tool follows. If one does, the narration ("I will now search…") is discarded; if not, it is emitted as the answer. Keeps internal plans out of the client. |
 | `streamToolResultDetails` | boolean | `true` | When false, tool calls stay visible in the client stream (name, status, duration) but their result payload is not streamed. The result still feeds grounding, citations, monitoring and the next model call. Use for private worker nodes. |
@@ -228,6 +240,7 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 | `toolResultBudget.perResultChars` | integer 1000–1000000 | — | Max characters kept from one tool result. |
 | `toolResultBudget.perTurnChars` | integer 1000–2000000 | — | Max tool-result characters across one turn. |
 | `toolContext` | json | — | Retrieves evidence with a context tool before (`pre`) and/or after (`post`) matching tool calls and attaches it to the call — e.g. look up the case file before creating a ticket. `server`/`tool` default to `vectorsearch`/`retrieve_evidence`. Each stage: `match` (tool patterns, default `["*"]`), `queryTemplate` (required), `arguments`, `handleArgument`, `required` (fail the action when no evidence, default false), `appendEvidence` (default true), `maxResultChars` (default 8000, min 256). `evidenceContract: { match, required }` declares actions that must carry a verified evidence pack into governance. Example: `{"server":"vectorsearch","tool":"retrieve_evidence","pre":{"match":["taiga/task_create"],"queryTemplate":"{{query}}","required":true}}`. |
+| `refHandles` | boolean | `false` | Replace long document references in tool results with short 4-character handles (e.g. `K3NQ`) that the model reads and quotes; the runtime maps them back to the real references before the tool call and in everything the user sees. Use on tool-loop nodes whose model must re-quote `reference`/`base_ref` arguments — small models truncate long paths. Unknown handles are rejected with the valid list instead of hitting the backend. |
 | `outputSchema` | json | — | Makes the node return a JSON object instead of prose: `{ name?: string (default "output"), schema: <JSON Schema> }`. Uses native structured output where the model supports it, otherwise a schema hint + tolerant parse. A malformed schema is treated as not configured (the node streams normally). Cannot be combined with `finalAnswerContract`. Example: `{"name":"result","schema":{"type":"object","properties":{"status":{"type":"string"}},"required":["status"]}}`. |
 | `finalAnswerContract` | object | — | Only the text between two markers is the answer; everything else (plans, scratch work) is dropped. The output is buffered and validated (both markers present once, in order, non-empty, not a placeholder like `...`). Cannot be combined with `outputSchema`. |
 | `finalAnswerContract.startMarker` (required) | string | — | Exact marker the model writes before the final answer. |
@@ -253,7 +266,7 @@ Structured output: with `config.outputSchema` the node returns a JSON object ins
 | `imageInspection.maxAnswerChars` | integer 200–100000 | — | Cap on the vision answer injected into the context. |
 | `imageInspection.assetSource` | json | — | Enables `asset:<id>[#bbox]` references, fetched via the MCP `get_asset` tool. Object with `server` (required, the MCP server exposing get_asset), optional `collection`, and optional `variant` (thumb\|preview\|full). |
 | `mediaTools` | json | — | Tools that generate images/audio/video with their own model and stream the result straight to the user: an array of `{ name, llm, description?, promptDescription? }`. The hosting model only passes a `prompt`. Example: `[{"name":"generate_image","llm":{"shortcut":"gemini-image"},"description":"Erzeugt ein Bild zur Beschreibung"}]`. |
-| `routing` | json | — | Picks the model per request from `candidates` (LlmConfig list): `strategy` `cheapest` (blended $/token), `balanced` (cost for this prompt size) or `quality-aware` (cheapest with observed quality ≥ `minQualityScore`, default 0.7; fewer than `minQualitySamples`, default 5, observations = exploration). Also what the Studio's Optimize panel analyses. Example: `{"strategy":"quality-aware","candidates":[{"shortcut":"fast-pool"},{"shortcut":"sonnet"}],"minQualityScore":0.8}`. |
+| `routing` | json | — | Picks the model per request from `candidates` (LlmConfig list): `strategy` `cheapest` (blended cost/token), `balanced` (cost for this prompt size) or `quality-aware` (cheapest with observed quality ≥ `minQualityScore`, default 0.7; fewer than `minQualitySamples`, default 5, observations = exploration). Also what the Studio's Optimize panel analyses. Example: `{"strategy":"quality-aware","candidates":[{"shortcut":"fast-pool"},{"shortcut":"sonnet"}],"minQualityScore":0.8}`. |
 | `objective` | json | — | Generalised routing (takes precedence over `routing`): `candidates` (LlmConfig list) walked cheapest-first, the first one meeting ALL `objectives` (`{ metric: "quality"\|"cost", op: "gte"\|"lte", value }`) wins. `minQualitySamples` (default 5; fewer = unproven, treated as eligible), `maxAttempts`, `fallback` (`cheapest` \| `best-quality` \| `first`). Every attempt is recorded in the explainability card. Example: `{"candidates":[{"shortcut":"fast-pool"},{"shortcut":"sonnet"}],"objectives":[{"metric":"quality","op":"gte","value":0.8}],"fallback":"best-quality"}`. |
 
 **Example: Responder with a model shortcut**
@@ -307,15 +320,17 @@ Search-style results (vectorsearch) become grounding context and citations for t
 | Field | Use | Meaning for this type |
 | --- | --- | --- |
 | `tools` | required | Tool refs to call, in order. |
-| `overrides` | optional | Conditional per-request variants of `tools` — the only way to vary which tools this node calls. The `llm`/`systemPrompt` of a matching entry are resolved but unused, like the node-level ones. |
+| `overrides` | optional | Conditional per-request variants of `tools` — the only way to vary which tools this node calls. Entries match on `whenClass`/`whenClaim`/`whenParam`/`whenPlan`/`whenGroup`/`whenLanguage`, first match wins. The `llm`/`systemPrompt` of a matching entry are resolved but unused, like the node-level ones. |
 | `llm` | ignored | Not used — no model is involved. |
 | `systemPrompt` | ignored | Not used — no model is involved. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"casework","tags":["{{classification.clientTags}}"]}}`. |
+| `toolArgs` | json | — | Per tool ref, arguments fixed server-side: `{ "server/tool": { arg: value } }`. On `llm` nodes they are MERGED over what the model supplies (the model still chooses e.g. `query`, the configured keys are enforced); on `tool` nodes they are the complete argument set. String values may contain templates resolved against the run state: `{{query}}`, `{{classification.<field>}}`, `{{node.<id>.classification.<field>}}`, `{{turn[1].<id>.classification.<field>}}`, `{{context.<key>}}`. Use it to pin e.g. a vectorsearch `collection` so a model can't hit the wrong store. Example: `{"vectorsearch/search":{"collection":"cases","tags":["{{classification.clientTags}}"]}}`. |
+| `args` | json | — | Arguments applied to EVERY tool this node calls; `toolArgs[ref]` overrides them per tool. String values may contain templates (`{{query}}`, `{{classification.<field>}}`, …) resolved against the run state. Use it when several tools share the same parameter instead of repeating it in each `toolArgs` entry. Example: `{"format":"json","limit":50}`. |
 | `paginate` | json | — | Per tool ref: call it repeatedly with an increasing offset until the server-reported `total` is fetched or `maxPages` (default 50) is hit. `{ "server/tool": { offsetParam?: "offset", limitParam?: "limit", maxPages?: 50 } }`; page size defaults to 200. Example: `{"vectorsearch/list_documents":{"offsetParam":"offset","limitParam":"limit","maxPages":20}}`. |
 | `overviewCharBudget` | integer | — | Raise the character budget of the injected collection overview so large dossiers list all document titles, not just the leading subset. |
 | `streamToolResultDetails` | boolean | `true` | When false, tool calls stay visible in the client stream (name, status, duration) but their result payload is not streamed. The result still feeds grounding, citations, monitoring and the next model call. Use for private worker nodes. |
@@ -359,6 +374,7 @@ Expressions can read `classLabel`, `classification.<field>`, `node.<id>.classifi
 | `llm` | ignored | Not used — routing is deterministic, no model runs. |
 | `systemPrompt` | ignored | Not used — no model runs. The routing logic lives in the edges' `conditions`. |
 | `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -368,7 +384,7 @@ No type-specific settings.
 
 ```yaml
 edges:
-  - { source: router, target: inkasso, conditions: "classification.route == 'INKASSO'" }
+  - { source: router, target: retoure, conditions: "classification.route == 'RETOURE'" }
   - { source: router, target: answer-fast }   # default
 ```
 
@@ -399,6 +415,7 @@ Uses native structured output where the model supports it, otherwise a schema hi
 | `priority` | optional | Queue priority for model requests from this node; a flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes. |
 | `tools` | ignored | Not used — a classifier makes one structured call and never enters a tool loop. Classify first, then let an `llm` or `tool` node act on the result. |
 | `overrides` | ignored | NOT applied: unlike `llm` and `tool` nodes, a classifier reads `llm`/`systemPrompt` directly and never consults `overrides`. Put the variation in the prompt or split the node. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -406,6 +423,7 @@ Uses native structured output where the model supports it, otherwise a schema hi
 | --- | --- | --- | --- |
 | `responseFormat` | one of `json`, `xml` | `json` | Output format asked of the model. `xml` helps models that struggle with JSON. |
 | `fallback` | json | — | Classification used when no model produced parseable output, so the turn continues on a safe route instead of failing. Example: `{"route":"ALLGEMEINES","needsInfo":false}`. |
+| `inputFilter` | one of `attachments`, `current-turn-attachments` | — | Skip this node unless the conversation (`attachments`) or the latest user message (`current-turn-attachments`) contains attachments — for vision-preprocessing classifiers that would otherwise burn a model call on every text-only turn to answer "no image". The skip resolves to `config.fallback` (required — without it the filter is ignored with a trace warning), records the node as completed with a `classifier_skipped_no_attachments` diagnostic, and makes no model call. |
 
 **Example: Triage**
 
@@ -418,7 +436,7 @@ Uses native structured output where the model supports it, otherwise a schema hi
     schema:
       type: object
       properties:
-        route: { type: string, enum: [INKASSO, TENANTS, BETRIEB, ALLGEMEINES] }
+        route: { type: string, enum: [RETOURE, TENANTS, BETRIEB, ALLGEMEINES] }
         needsInfo: { type: boolean }
       required: [route, needsInfo]
   config:
@@ -446,12 +464,13 @@ With `config.ragProfiles` it also acts as a **context assembler**: a retrieval p
 | `llm` | ignored | Not used — the children carry their own models. The RAG compression model is `config.ragCompression.llm`. |
 | `systemPrompt` | ignored | Not used — the children carry their own prompts. |
 | `tools` | ignored | Not used — `config.ragProfiles` is compiled into the search calls, and children call their own tools. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `ragProfiles` | json | — | `profiles`: name → list of sources; `select`: `[{ when: <condition>, use: <profile> }]` (first match wins), else `default`; `shared`: sources added to every profile. A source: `{ collection (required), tags?, limit? (≤100), hybrid?, minScore? (0–1), scoreWeight?, when?, rerank? (default true), groupByDocument? (default true), includeAllVersions?, validAt? (RFC 3339), filter?, filterV2?, pathPrefix?, hyde?, expand?, granularity?, includeAssets?, assets? }` — `tags` may be `{{…}}` templates. `filter` (metadata equality), `filterV2` (eq/in/range operators), `pathPrefix` (folder scope) and `hyde` (HyDE query expansion) are forwarded to vectorsearch. v2 retrieval: `expand` (none\|neighbors\|section\|page) pulls in surrounding context, `granularity` (chunk\|section\|page\|document) picks the unit size, `includeAssets` (none\|refs\|thumbnails, sent as `include_assets`) returns figure assets per hit; omitted → pre-v2 behaviour. `assets: { attach? (none\|auto\|always, default none), maxImages? (1–20, default 4), variant? (thumb\|preview\|full, default preview) }` attaches hit figures as image parts to the responder message — `auto` only when `config.responderLlm` confirms vision input, `always` regardless; the first source declaring `assets` sets the policy for the node. Fusion: `rerank: { topN }` (model rerank) or `maxDocuments` (score-only), plus `minScore`. Example: `{"select":[{"when":"classification.route == 'INKASSO'","use":"inkasso"}],"default":"allgemein","profiles":{"inkasso":[{"collection":"inkasso-docs","tags":["{{classification.clientTag}}"],"limit":8}],"allgemein":[{"collection":"docs","limit":6}]},"maxDocuments":8}`. |
+| `ragProfiles` | json | — | `profiles`: name → list of sources; `select`: `[{ when: <condition>, use: <profile> }]` (first match wins), else `default`; `shared`: sources added to every profile. A source: `{ collection (required), tags?, limit? (≤100), hybrid?, minScore? (0–1), scoreWeight?, when?, rerank? (default true), groupByDocument? (default true), includeAllVersions?, validAt? (RFC 3339), filter?, filterV2?, pathPrefix?, hyde?, expand?, granularity?, includeAssets?, assets? }` — `tags` may be `{{…}}` templates. `filter` (metadata equality), `filterV2` (eq/in/range operators), `pathPrefix` (folder scope) and `hyde` (HyDE query expansion) are forwarded to vectorsearch. v2 retrieval: `expand` (none\|neighbors\|section\|page) pulls in surrounding context, `granularity` (chunk\|section\|page\|document) picks the unit size, `includeAssets` (none\|refs\|thumbnails, sent as `include_assets`) returns figure assets per hit; omitted → pre-v2 behaviour. `assets: { attach? (none\|auto\|always, default none), maxImages? (1–20, default 4), variant? (thumb\|preview\|full, default preview) }` attaches hit figures as image parts to the responder message — `auto` only when `config.responderLlm` confirms vision input, `always` regardless; the first source declaring `assets` sets the policy for the node. Fusion: `rerank: { topN }` (model rerank) or `maxDocuments` (score-only), plus `minScore`. Example: `{"select":[{"when":"classification.route == 'RETOURE'","use":"retoure"}],"default":"allgemein","profiles":{"retoure":[{"collection":"retoure-docs","tags":["{{classification.clientTag}}"],"limit":8}],"allgemein":[{"collection":"docs","limit":6}]},"maxDocuments":8}`. |
 | `ragCompression` | object | — | After fusion, a small model condenses each source to the parts relevant to the question and drops irrelevant ones. Fail-open: on any problem the original chunks are used. |
 | `ragCompression.enabled` (required) | boolean | — | Turns the compression pass on; without it the fused chunks are used as retrieved. |
 | `ragCompression.llm` (required) | model (`llm` block) | — | Small extraction model. A model: `{ shortcut: <name from flows/model-shortcuts.yaml> }` or `{ provider, model, parameters? }` (provider = a PROVIDERS name or protocol). |
@@ -499,6 +518,7 @@ Embeds the latest user message, fetches the most similar chunks from `config.col
 | `llm` | ignored | Not used. The embedding model is a deployment setting (`EMBEDDING_MODEL`), not a node field — this node cannot be pointed at a different one. |
 | `systemPrompt` | ignored | Not used — no model is prompted here. The retrieved chunks are injected for the NEXT llm node, whose prompt applies. |
 | `tools` | ignored | Not used — this node queries the platform vector store directly. For vectorsearch MCP collections use a `tool` or `parallel` node. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -533,6 +553,7 @@ Recalls the memories most relevant to the request for the caller's scope and inj
 | `llm` | ignored | Not used. Recall runs against the memory store with the deployment's embedding model, not a per-node one. |
 | `systemPrompt` | ignored | Not used — no model is prompted. The recalled memories become a system message for the next llm node. |
 | `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -572,6 +593,7 @@ Results either stay the delegated answers (`resultMode: delegated`, harness is t
 | `systemPrompt` | optional | Domain guidance for the PLANNER, prepended to the generic planning instructions — not a prompt for the delegated nodes (those carry their own). Ignored entirely when `config.plannerless` is true, because no planner runs. |
 | `tools` | ignored | Not used — the harness calls no tools itself, it delegates to the `config.allowlist` nodes, which carry their own tools. |
 | `overrides` | ignored | NOT applied: only `llm` and `tool` nodes consult `overrides`. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -616,7 +638,7 @@ Results either stay the delegated answers (`resultMode: delegated`, harness is t
   type: agent-harness
   llm: { shortcut: structured-pool }
   config:
-    allowlist: [rag-context, betrieb-responder, inkasso-responder]
+    allowlist: [rag-context, betrieb-responder, retoure-responder]
     maxIterations: 6
     maxCost: 0.5
     carryForward: condensed
@@ -648,6 +670,7 @@ Runs no model. `derive` rules look up the value of a classification field in a s
 | `llm` | ignored | Not used — the rules are deterministic, nothing is inferred. Use a `classifier` when you need a model. |
 | `systemPrompt` | ignored | Not used — no model runs. |
 | `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -673,6 +696,7 @@ A pass-through at run time; its config registers the flow with the webhook endpo
 | `llm` | ignored | Not used — the node is a pass-through at run time. |
 | `systemPrompt` | ignored | Not used. The message a trigger produces comes from `config.messageTemplate` / `config.scheduledMessage`. |
 | `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -713,6 +737,7 @@ Resolves the assistant for the request (from the request, a model name `assistan
 | `systemPrompt` | ignored | Not used. The assistant's prompt sections are rendered from its own identity, skills and inbox — put flow-level wording on the answering `llm` node instead. |
 | `llm` | ignored | Not used — this node loads context, it does not call a model. |
 | `tools` | ignored | Not used. Which tools the assistant may use follows from its credentials and `config.requiresToolAuthority`. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 
@@ -739,6 +764,7 @@ Terminal node of an assistant flow: records what happened (depth, tools, aborts)
 | `llm` | ignored | Not used — the learning pass runs on the scheduler's own model, outside this node. |
 | `systemPrompt` | ignored | Not used — no model is prompted here. |
 | `tools` | ignored | Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool. |
+| `label` | optional | Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`. |
 
 **Settings (`config`)**
 

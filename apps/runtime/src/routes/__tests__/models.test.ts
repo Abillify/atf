@@ -52,6 +52,35 @@ describe("GET /v1/models", () => {
     const body = (await res.json()) as { data: unknown[] };
     expect(body.data).toEqual([]);
   });
+
+  test("omits flows with metadata.hidden from the listing", async () => {
+    const hiddenFlow: FlowDefinition = {
+      id: "task",
+      name: "Hidden helper",
+      metadata: { hidden: true },
+      nodes: [{ id: "n", type: "router" }],
+      edges: [],
+    };
+    const app = createModelsRouter(registry([flowA, hiddenFlow]));
+    const res = await app.fetch(new Request("http://localhost/v1/models"));
+    const body = (await res.json()) as {
+      data: Array<{ id: string; name?: string }>;
+    };
+    expect(body.data.map((m) => m.id)).toEqual(["flow-a"]);
+  });
+
+  test("a hidden flow is not discoverable by id either", async () => {
+    const hiddenFlow: FlowDefinition = {
+      id: "task",
+      name: "Hidden helper",
+      metadata: { hidden: true },
+      nodes: [{ id: "n", type: "router" }],
+      edges: [],
+    };
+    const app = createModelsRouter(registry([hiddenFlow]));
+    const res = await app.fetch(new Request("http://localhost/v1/models/task"));
+    expect(res.status).toBe(404);
+  });
 });
 
 describe("GET /v1/models/:id", () => {

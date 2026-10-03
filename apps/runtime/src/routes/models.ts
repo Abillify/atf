@@ -119,6 +119,16 @@ export function createModelsRouter(
       deps.authzEnabled ?? true,
     ).allowed;
 
+  /**
+   * Internal flows (`metadata.hidden: true`) stay loadable and dispatchable —
+   * the dispatcher routes by request content, not by this listing — but are
+   * not discoverable as models, so clients like Open WebUI never show them in
+   * the model picker (e.g. the `task` helper flow behind the `### Task:` rule).
+   */
+  const isHiddenFlow = (
+    flow: ReturnType<FlowRegistry["get"]>,
+  ): boolean => flow?.metadata?.hidden === true;
+
   /** Lists the caller's own assistants as selectable models. */
   const listAssistantModels = async (requestCtx: RequestContext): Promise<ModelObject[]> => {
     const store = deps.assistants;
@@ -146,6 +156,7 @@ export function createModelsRouter(
     const requestCtx = requestContext(ctx);
     const flows = flowRegistry
       .list()
+      .filter((flow) => !isHiddenFlow(flow))
       .filter((flow) => canAccessFlow(flow, requestCtx))
       .map((flow) => toModel(flow.id, flow.name));
     const assistantModels = await listAssistantModels(requestCtx);
@@ -156,7 +167,7 @@ export function createModelsRouter(
     const id = ctx.req.param("id");
     const flow = flowRegistry.get(id);
     const requestCtx = requestContext(ctx);
-    if (flow === undefined || !canAccessFlow(flow, requestCtx)) {
+    if (isHiddenFlow(flow) || flow === undefined || !canAccessFlow(flow, requestCtx)) {
       // An `assistant-<id>` name is not a flow. It is answered from the caller's own
       // assistants so a client that probes a name it just listed gets 200, not 404.
       if (flow === undefined && id.startsWith(ASSISTANT_MODEL_PREFIX)) {
