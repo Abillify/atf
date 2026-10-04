@@ -110,6 +110,7 @@ contract-package or example-flow change.
   longer greys out the UI; the role is `admin` whenever auth is not required. Server-side
   authorization is unchanged.
 - **`cli.ts validate`** skips the shared `constants.yaml`, like the flow loader.
+- Extract creates its `TEMP_DIR` scratch root on demand before allocating render and conversion work directories, so a cleaned or missing scratch root no longer fails `/v2/render` and conversions with HTTP 500.
 ### Migration
 - Runtime schema version 41 adds `flow_drafts` (PK `flow_id`/`draft_id`) and backfills each
   flow's current draft as `default`. Applied automatically on start; no manual step.
