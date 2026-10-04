@@ -39,7 +39,7 @@
  * partial content, also with a warning, for the same reason.
  */
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Logger } from "pino";
@@ -236,7 +236,11 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
     // A per-conversion scratch directory. LibreOffice profiles, rendered pages
     // and the intermediate PDF all live here, and it is removed unconditionally
     // so a failed conversion cannot accumulate hundreds of megabytes.
-    const workDir = await mkdtemp(join(config.tempDir || tmpdir(), "convert-"));
+    const scratchRoot = config.tempDir || tmpdir();
+    // TEMP_DIR is created at server start, but a cleaned /tmp or an embedder that never calls
+    // startServer must not turn every conversion into an ENOENT failure.
+    await mkdir(scratchRoot, { recursive: true });
+    const workDir = await mkdtemp(join(scratchRoot, "convert-"));
     const tools: PopplerTools = { binDir: config.popplerBinDir, home: workDir };
 
     try {

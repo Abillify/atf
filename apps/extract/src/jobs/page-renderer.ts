@@ -27,7 +27,7 @@
  * count.
  */
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import type { Logger } from "pino";
@@ -434,7 +434,11 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       );
     }
 
-    const workDir = await mkdtemp(join(config.tempDir || tmpdir(), "job-"));
+    const scratchRoot = config.tempDir || tmpdir();
+    // TEMP_DIR is created at server start, but a cleaned /tmp or an embedder that never calls
+    // startServer must not turn every render into an ENOENT 500.
+    await mkdir(scratchRoot, { recursive: true });
+    const workDir = await mkdtemp(join(scratchRoot, "job-"));
     const tools: PopplerTools = { binDir: config.popplerBinDir, home: workDir };
 
     let pageSource: PageSource;

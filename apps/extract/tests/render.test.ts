@@ -22,6 +22,8 @@
  * dependency (an image source has no text layer and needs no subprocess), which
  * keeps the test hermetic while still driving `createPageRenderer` → `render` /
  * `renderFigureCrop` for real.
+ * TEMP_DIR points at a not-yet-created directory, so the tests never depend on
+ * a host `/tmp/atf-extract` and prove the renderer creates its scratch root.
  */
 
 import { createHash } from "node:crypto";
@@ -42,6 +44,7 @@ const availableBinary = vi.fn(async () => ({ available: true, version: "stub" })
 
 let storeDir: string;
 let tmpUploadDir: string;
+let scratchParent: string;
 const cleanups: Array<() => void> = [];
 
 function toStream(buf: Buffer): Readable {
@@ -71,6 +74,7 @@ function buildApp(
   const config = loadTestConfig({
     SOURCE_STORE_DIR: storeDir,
     UPLOAD_TMP_DIR: tmpUploadDir,
+    TEMP_DIR: join(scratchParent, "not-yet-created"),
     ...configOverrides,
   });
   const created = createApp(config, {
@@ -88,6 +92,7 @@ function buildApp(
 beforeEach(async () => {
   storeDir = await mkdtemp(join(tmpdir(), "atf-render-store-"));
   tmpUploadDir = await mkdtemp(join(tmpdir(), "atf-render-tmp-"));
+  scratchParent = await mkdtemp(join(tmpdir(), "atf-render-scratch-"));
 });
 
 afterEach(async () => {
@@ -95,6 +100,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
   await rm(storeDir, { recursive: true, force: true });
   await rm(tmpUploadDir, { recursive: true, force: true });
+  await rm(scratchParent, { recursive: true, force: true });
 });
 
 describe("POST /v2/render", () => {

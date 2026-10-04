@@ -16,6 +16,9 @@
  * of the wrong region — and looked plausible.
  */
 
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import sharp from "sharp";
 import { validateDocument } from "@atf/extract-contract/v1";
@@ -275,6 +278,25 @@ describe("image extraction", () => {
       reference: "r",
     });
     expect(result.crops.get("p1-f1")?.width).toBe(200);
+  });
+
+  it("creates a missing TEMP_DIR instead of failing the conversion", async () => {
+    // TEMP_DIR is only created at server start; a cleaned /tmp or an embedder
+    // that never calls startServer must not turn every conversion into ENOENT.
+    const parent = await mkdtemp(join(tmpdir(), "atf-pipeline-scratch-"));
+    try {
+      const result = await extractor(fixedVision(WITH_FIGURE), {
+        tempDir: join(parent, "not-yet-created"),
+      }).extract({
+        buffer: await testPng(),
+        filename: "s.png",
+        declaredMimeType: "image/png",
+        reference: "r",
+      });
+      expect(result.document.pageCount).toBe(1);
+    } finally {
+      await rm(parent, { recursive: true, force: true });
+    }
   });
 });
 
