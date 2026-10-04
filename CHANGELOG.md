@@ -17,6 +17,18 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.13.1] — 2026-10-04
+Keeps an MCP server online when a reconnect attempt fails. No configuration, schema, flow,
+migration, HTTP endpoint, or contract-package change.
+### Fixed
+- **MCP reconnect is make-before-break** (`@atf/runtime`). `reconnect()` closed the shared
+  client before opening the replacement, so a failed handshake (for example a connect timeout
+  while the peer was busy) took every tool of that server offline until the next successful
+  periodic reconnect. The replacement session is now opened first and the old client is only
+  closed once the new one is live; a failed reconnect keeps the existing session, and a late
+  handshake is closed instead of leaking a transport. A caller-authenticated server
+  (`forwardAuthToken` without a static `Authorization` header) still gets no shared session on
+  reconnect, and its stale shared client is now closed rather than only dropped.
 ## [0.13.0] — 2026-10-04
 Studio works with named drafts per flow (Runtime schema migration 41), cost displays are
 currency-labelled via `CURRENCY` / `NEXT_PUBLIC_CURRENCY` (default EUR, label only, no
@@ -1442,7 +1454,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/abillify/atf/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/abillify/atf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/abillify/atf/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/abillify/atf/compare/v0.11.0...v0.11.1
