@@ -282,6 +282,15 @@ const PACKAGE_EMBEDDED_LICENSE_RULES: PackageEmbeddedLicenseRule[] = [
 
 const DECLARED_LICENSE_FALLBACK_RULES: DeclaredLicenseFallbackRule[] = [
 	{
+		packagePattern: /^@napi-rs\/lzma-linux-x64-gnu$/,
+		expectedVersion: "1.5.1",
+		expectedLicense: "MIT",
+		expectedRepository: "https://github.com/brooooooklyn/lzma",
+		files: ["licenses/declared-MIT-no-upstream-copyright.txt"],
+		reason:
+			"The exact package manifest declares MIT, but the published 1.5.1 tarball ships only package.json, README.md and the native binary, and the upstream Brooooooklyn/lzma tree at tag v1.5.1 has no license file or copyright notice; the package is a Linux x64 glibc optional dependency of rollup.",
+	},
+	{
 		packagePattern: /^bun-types$/,
 		expectedVersion: "1.4.0",
 		expectedLicense: "MIT",

@@ -59,13 +59,13 @@ Each file below is sourced from the linked authoritative upstream text. `Applies
 | `saxes-ISC.txt` | `^saxes$` | `ISC` | [saxes `LICENSE`](https://github.com/lddubeau/saxes/blob/4968bd09b5fd0270a989c69913614b0e640dae1b/LICENSE) |
 | `victory-MIT.txt` | `^victory-vendor$` | `MIT AND ISC` | [Victory `LICENSE.txt`](https://github.com/FormidableLabs/victory/blob/75549cf8c67e3ea220f862eb7f530c36d540d41c/LICENSE.txt) |
 | `d3-ISC.txt` | `^victory-vendor$` | `MIT AND ISC` | [d3-array `LICENSE`](https://github.com/d3/d3-array/blob/be0ae0d2b36ab91b833294ad2cfc5d5905acbd0f/LICENSE) |
-| `declared-MIT-no-upstream-copyright.txt` | exact `bun-types@1.4.0` and `stackback@0.0.2` fallback rules only | `MIT` | Canonical MIT terms; package manifests provide the license declaration, while reviewed package/source trees provide no package copyright notice. |
+| `declared-MIT-no-upstream-copyright.txt` | exact `@napi-rs/lzma-linux-x64-gnu@1.5.1`, `bun-types@1.4.0` and `stackback@0.0.2` fallback rules only | `MIT` | Canonical MIT terms; package manifests provide the license declaration, while reviewed package/source trees provide no package copyright notice. |
 | `declared-ISC-no-upstream-copyright.txt` | exact `guid-typescript@1.0.9` fallback rule only | `ISC` | Canonical ISC terms; the package manifest provides the license declaration, while the reviewed package/source tree provides no package copyright notice. |
 | `stackback-v8-BSD-3-Clause.txt` | exact `stackback@0.0.2` fallback rule only | embedded BSD-3-Clause code | Verbatim license header from the package's `formatstack.js`, preserving the V8 project copyright and terms. |
 
 ## Declared-license fallback policy
 
-The three fallback rules are a deliberate release-policy exception for exact immutable package identities, not a license-family default. Each generated provenance entry records the package/version manifest declaration, reviewed omission, and that no copyright holder or year was inferred. Any package version, declared expression, or normalized repository change fails closed and requires a new review.
+The four fallback rules are a deliberate release-policy exception for exact immutable package identities, not a license-family default. Each generated provenance entry records the package/version manifest declaration, reviewed omission, and that no copyright holder or year was inferred. Any package version, declared expression, or normalized repository change fails closed and requires a new review.
 
 `stackback@0.0.2` additionally contains a complete BSD-3-Clause header for V8-derived code. That embedded header remains in the distributed package; it does not substitute for the separately declared package-level MIT terms.
 
