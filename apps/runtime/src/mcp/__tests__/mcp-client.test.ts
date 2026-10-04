@@ -522,6 +522,36 @@ describe("reconnect", () => {
     await w.reconnect("srv");
     expect(created).toHaveLength(2);
   });
+
+  test("a failed reconnect keeps the existing working session usable", async () => {
+    const w = mkWrapper();
+    await w.connect(mkConfig({ name: "srv" }));
+    const original = created[0];
+    expect(original).toBeDefined();
+
+    // The replacement handshake fails (e.g. peer busy → connect timeout).
+    behavior.connect = async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:9999");
+    };
+    await expect(w.reconnect("srv")).rejects.toThrow(/ECONNREFUSED/);
+
+    // Make-before-break: the original client was NOT closed and still serves calls.
+    let closedOriginal = false;
+    behavior.close = async (client?: FakeClient) => {
+      if (client === original) closedOriginal = true;
+    };
+    const result = await w.callTool("srv", "t", {}, mkCtx());
+    expect(result).toBeDefined();
+    expect(closedOriginal).toBe(false);
+  });
+
+  test("reconnect does not open a shared session for a forward-auth server", async () => {
+    const w = mkWrapper();
+    await w.connect(mkConfig({ name: "srv", forwardAuthToken: true }));
+    expect(created).toHaveLength(0);
+    await w.reconnect("srv");
+    expect(created).toHaveLength(0);
+  });
 });
 
 // ---------------------------------------------------------------------------

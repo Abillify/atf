@@ -1055,30 +1055,84 @@ export class McpWrapper implements McpWrapperService {
   // -------------------------------------------------------------------------
 
   /**
-   * Tears down the existing client for the named server and opens a fresh
-   * connection using the original config. The tool-schema cache for that
-   * server is also invalidated so the first call after reconnect always
+   * Re-establishes the shared client for the named server using the original
+   * config, make-before-break: the replacement session is opened FIRST and the
+   * old client is only closed once the new one is live. A failed reconnect
+   * (e.g. a handshake timeout while the peer is busy) therefore keeps the
+   * existing working session instead of taking every tool of that server
+   * offline until the next successful attempt. The tool-schema cache for that
+   * server is invalidated so the first call after a successful reconnect
    * fetches fresh schemas from the new session.
    */
   async reconnect(serverName: string): Promise<void> {
     const config = this._requireConfig(serverName);
-
-    // Best-effort close of the old client — ignore errors, it may already be dead.
     const oldClient = this.clients.get(serverName);
+
+    // Keep parity with connect(): a reconnect may carry updated auth config.
+    const exchanger = this.tokenExchangerFactory(config);
+    if (exchanger !== undefined) this.tokenExchangers.set(config.name, exchanger);
+    else this.tokenExchangers.delete(config.name);
+
+    const hasBootstrapAuthorization = Object.entries(config.headers ?? {}).some(
+      ([name, value]) =>
+        name.toLowerCase() === "authorization" && value.trim().length > 0,
+    );
+    if (config.forwardAuthToken === true && !hasBootstrapAuthorization) {
+      // Caller-scoped server without a shared session — same semantics as
+      // connect(): drop any stale shared client and let the next caller
+      // establish its authenticated session on first use.
+      if (oldClient) {
+        try {
+          await oldClient.close();
+        } catch {
+          // intentionally ignored
+        }
+        this.clients.delete(serverName);
+      }
+      this.instructions.delete(serverName);
+      this._invalidateCapabilities(serverName);
+      this.schemaCache.invalidateDiscovery(serverName);
+      return;
+    }
+
+    const pending = this._createClient(config);
+    let client: Client;
+    try {
+      client = await this._bounded(
+        pending,
+        `MCP reconnect ${serverName}`,
+        undefined,
+        this.connectTimeoutMs,
+      );
+    } catch (error) {
+      // Make-before-break: the old session (if any) stays in place so tool
+      // calls keep working; the periodic reconnect will try again later.
+      // A late handshake must not leak a live transport past the timeout.
+      void pending.then((lateClient) => lateClient.close()).catch(() => {});
+      throw error;
+    }
+
+    // The replacement is live — best-effort close of the old client now.
     if (oldClient) {
       try {
         await oldClient.close();
       } catch {
         // intentionally ignored
       }
-      this.clients.delete(serverName);
+    }
+    this.clients.set(serverName, client);
+    this._invalidateCapabilities(serverName);
+
+    // Refresh server-level instructions from the new session's initialize.
+    const instr = client.getInstructions();
+    if (instr !== undefined && instr.trim().length > 0) {
+      this.instructions.set(serverName, instr);
+    } else {
+      this.instructions.delete(serverName);
     }
 
     // Force fresh discovery without discarding the accepted compatibility baseline.
     this.schemaCache.invalidateDiscovery(serverName);
-
-    // Re-use the existing connect() logic.
-    await this.connect(config);
   }
 
   // -------------------------------------------------------------------------
