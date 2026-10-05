@@ -218,9 +218,15 @@ interface RequestRowProps {
   replayingId?: string | null;
 }
 
-/** Shared shape for the compact per-row action buttons in the table. */
+/**
+ * Shared shape for the per-row action buttons in the table. Icon-only, but
+ * full-size (`size="icon"` — a fixed square without the `px-3` of `size="sm"`,
+ * which used to crush the 15 px icons down to a few pixels) and outlined, so
+ * they are clearly recognisable as buttons at a glance.
+ */
 const ACTION_BUTTON_CLASS =
-  "h-7 w-7 text-muted-foreground hover:text-foreground";
+  "text-muted-foreground hover:text-foreground";
+const ACTION_BUTTON_VARIANT = "outline" as const;
 
 /** One execution as a table row (used for single requests and inside threads). */
 function RequestRow({
@@ -283,8 +289,8 @@ function RequestRow({
           <div className="flex items-center justify-end gap-1">
             {onViewEvents && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant={ACTION_BUTTON_VARIANT}
+                size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onViewEvents(e.execution_id)}
                 title="Open in Live Graph — shows system prompt, tool calls and response per node"
@@ -295,8 +301,8 @@ function RequestRow({
             )}
             {onOpenTrace && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant={ACTION_BUTTON_VARIANT}
+                size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onOpenTrace(e.execution_id)}
                 title="Open in Trace Viewer — step replay, waterfall and the Decision-Provenance explainability card"
@@ -307,8 +313,8 @@ function RequestRow({
             )}
             {onDownloadDebug && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant={ACTION_BUTTON_VARIANT}
+                size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onDownloadDebug(e.execution_id)}
                 disabled={downloadingId === e.execution_id}
@@ -324,8 +330,8 @@ function RequestRow({
             )}
             {onAnalyze && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant={ACTION_BUTTON_VARIANT}
+                size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onAnalyze(e.execution_id)}
                 disabled={analyzingId === e.execution_id}
@@ -341,8 +347,8 @@ function RequestRow({
             )}
             {onReplay && (
               <Button
-                variant="ghost"
-                size="sm"
+                variant={ACTION_BUTTON_VARIANT}
+                size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onReplay(e.execution_id)}
                 disabled={replayingId === e.execution_id}

@@ -10,7 +10,7 @@ export type ButtonVariant =
   | "destructive"
   | "ghost"
   | "outline";
-export type ButtonSize = "sm" | "md" | "lg";
+export type ButtonSize = "sm" | "md" | "lg" | "icon";
 
 export interface ButtonProps
   extends React.ButtonHTMLAttributes<HTMLButtonElement> {
@@ -36,6 +36,8 @@ const sizeClasses: Record<ButtonSize, string> = {
   sm: "h-8 px-3 text-xs",
   md: "h-9 px-4 text-sm",
   lg: "h-11 px-6 text-base",
+  // Square, padding-free — for icon-only buttons (no label squeezing).
+  icon: "h-9 w-9 shrink-0 p-0",
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
