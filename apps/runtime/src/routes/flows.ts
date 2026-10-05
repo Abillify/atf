@@ -577,6 +577,12 @@ interface FlowListEntry {
   draftDirty: boolean;
   /** How many drafts (default + named) the flow has. */
   draftCount: number;
+  /**
+   * The flow's drafts (default first) with their display labels, so selectors
+   * (e.g. the /flow-diff dropdowns) can offer each draft without a request
+   * per flow. Absent for file-only flows (they hold no drafts).
+   */
+  drafts?: { draftId: string; label: string }[];
   editable: boolean;
   nodeCount: number;
   edgeCount: number;
@@ -688,8 +694,8 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     if (store !== undefined) {
       for (const s of await store.listAll()) {
         const fileShadowed = entries.get(s.id)?.source === "file";
-        const def =
-          (await store.get(s.id))?.published ?? (await store.get(s.id))?.draft;
+        const rec = await store.get(s.id);
+        const def = rec?.published ?? rec?.draft;
         entries.set(s.id, {
           id: s.id,
           name: s.name,
@@ -700,6 +706,14 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
           hasDraft: s.hasDraft,
           draftDirty: s.draftDirty,
           draftCount: s.draftCount,
+          ...(rec !== undefined
+            ? {
+                drafts: rec.drafts.map((d) => ({
+                  draftId: d.draftId,
+                  label: d.label,
+                })),
+              }
+            : {}),
           editable: true,
           nodeCount: def?.nodes.length ?? 0,
           edgeCount: def?.edges.length ?? 0,
@@ -727,16 +741,20 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const dir = path.join(sourceDir, "subflows");
     let files: string[] = [];
     try {
-      files = (await fs.promises.readdir(dir)).filter((f) => /\.(ya?ml|json)$/i.test(f)).sort();
+      files = (await fs.promises.readdir(dir))
+        .filter((f) => /\.(ya?ml|json)$/i.test(f))
+        .sort();
     } catch {
       return ctx.json({ subflows: [] });
     }
     // Which flows include which file (from the flows' source forms).
     const usedBy = new Map<string, string[]>();
     for (const flow of fileRegistry.list()) {
-      const origins = (fileRegistry.getSource?.(flow.id)?.definition.metadata as
-        | { $includeOrigins?: Record<string, string> }
-        | undefined)?.$includeOrigins;
+      const origins = (
+        fileRegistry.getSource?.(flow.id)?.definition.metadata as
+          | { $includeOrigins?: Record<string, string> }
+          | undefined
+      )?.$includeOrigins;
       for (const rel of new Set(Object.values(origins ?? {}))) {
         usedBy.set(rel, [...(usedBy.get(rel) ?? []), flow.id]);
       }
@@ -748,7 +766,8 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       try {
         const text = await fs.promises.readFile(path.join(dir, f), "utf-8");
         const v = /\.json$/i.test(f) ? JSON.parse(text) : parseYaml(text);
-        if (v !== null && typeof v === "object" && !Array.isArray(v)) parsed = v as Record<string, unknown>;
+        if (v !== null && typeof v === "object" && !Array.isArray(v))
+          parsed = v as Record<string, unknown>;
       } catch {
         /* unreadable file: listed without details */
       }
@@ -756,9 +775,15 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       subflows.push({
         path: rel,
         ...(typeof parsed.name === "string" ? { name: parsed.name } : {}),
-        ...(typeof parsed.description === "string" ? { description: parsed.description } : {}),
+        ...(typeof parsed.description === "string"
+          ? { description: parsed.description }
+          : {}),
         nodeIds: nodes
-          .map((n) => (n !== null && typeof n === "object" ? (n as { id?: unknown }).id : undefined))
+          .map((n) =>
+            n !== null && typeof n === "object"
+              ? (n as { id?: unknown }).id
+              : undefined,
+          )
           .filter((id): id is string => typeof id === "string"),
         edgeCount: Array.isArray(parsed.edges) ? parsed.edges.length : 0,
         usedBy: usedBy.get(rel) ?? [],
@@ -770,17 +795,36 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
   router.get("/flows/subflows/content", async (ctx) => {
     if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
     const rel = (ctx.req.query("path") ?? "").trim();
-    if (sourceDir === undefined || !/^subflows\/[\w.-]+\.(ya?ml|json)$/i.test(rel)) {
+    if (
+      sourceDir === undefined ||
+      !/^subflows\/[\w.-]+\.(ya?ml|json)$/i.test(rel)
+    ) {
       return ctx.json(
-        { error: { message: "path must name a file in subflows/ (e.g. subflows/x.yaml).", type: "invalid_request_error" } },
+        {
+          error: {
+            message:
+              "path must name a file in subflows/ (e.g. subflows/x.yaml).",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
     if (!fs.existsSync(path.join(sourceDir, rel))) {
-      return ctx.json({ error: { message: `Sub-flow ${rel} not found.`, type: "not_found_error" } }, 404);
+      return ctx.json(
+        {
+          error: {
+            message: `Sub-flow ${rel} not found.`,
+            type: "not_found_error",
+          },
+        },
+        404,
+      );
     }
     // Same resolution as loading a flow that includes it, in source form.
-    const raw: Record<string, unknown> = { metadata: { $include: { subflows: [rel] } } };
+    const raw: Record<string, unknown> = {
+      metadata: { $include: { subflows: [rel] } },
+    };
     resolveFlowSourceIncludes(raw, sourceDir, "<studio>");
     const meta = (raw.metadata ?? {}) as Record<string, unknown>;
     return ctx.json({
@@ -811,7 +855,8 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         return ctx.json(
           {
             error: {
-              message: "Insufficient role: flow writing requires operator or admin role.",
+              message:
+                "Insufficient role: flow writing requires operator or admin role.",
               type: "authorization_error",
             },
           },
@@ -827,15 +872,30 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       body = await ctx.req.json();
     } catch {
       return ctx.json(
-        { error: { message: "Request body must be valid JSON.", type: "invalid_request_error" } },
+        {
+          error: {
+            message: "Request body must be valid JSON.",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
-    const req = (body ?? {}) as { path?: unknown; nodes?: unknown; edges?: unknown };
+    const req = (body ?? {}) as {
+      path?: unknown;
+      nodes?: unknown;
+      edges?: unknown;
+    };
     const rel = typeof req.path === "string" ? req.path.trim() : "";
     if (!/^subflows\/[\w.-]+\.(ya?ml|json)$/i.test(rel)) {
       return ctx.json(
-        { error: { message: "Field 'path' must name a file in subflows/ (e.g. subflows/x.yaml).", type: "invalid_request_error" } },
+        {
+          error: {
+            message:
+              "Field 'path' must name a file in subflows/ (e.g. subflows/x.yaml).",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
@@ -843,7 +903,12 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const edges = Array.isArray(req.edges) ? req.edges : [];
     if (nodes.length === 0) {
       return ctx.json(
-        { error: { message: "A sub-flow needs at least one node.", type: "invalid_request_error" } },
+        {
+          error: {
+            message: "A sub-flow needs at least one node.",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
@@ -856,14 +921,22 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     // fragment; add lightweight placeholders for those so the edge-reference
     // check doesn't reject an edge that resolves fine after the merge.
     const fragmentNodeIds = new Set(
-      nodes.map((n) => (n !== null && typeof n === "object" ? (n as { id?: unknown }).id : undefined)),
+      nodes.map((n) =>
+        n !== null && typeof n === "object"
+          ? (n as { id?: unknown }).id
+          : undefined,
+      ),
     );
     const placeholders: Array<{ id: string; type: string }> = [];
     for (const e of edges) {
       if (e === null || typeof e !== "object") continue;
       for (const end of ["source", "target"] as const) {
         const id = (e as Record<string, unknown>)[end];
-        if (typeof id === "string" && !fragmentNodeIds.has(id) && !placeholders.some((p) => p.id === id)) {
+        if (
+          typeof id === "string" &&
+          !fragmentNodeIds.has(id) &&
+          !placeholders.some((p) => p.id === id)
+        ) {
           placeholders.push({ id, type: "llm" });
         }
       }
@@ -895,7 +968,12 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       const e = err as NodeJS.ErrnoException;
       if (e.code === "PATH_TRAVERSAL") {
         return ctx.json(
-          { error: { message: `Path traversal rejected: ${e.message}`, type: "invalid_request_error" } },
+          {
+            error: {
+              message: `Path traversal rejected: ${e.message}`,
+              type: "invalid_request_error",
+            },
+          },
           400,
         );
       }
@@ -919,12 +997,25 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     // full-flow split), keeping other top-level keys (name, description, …)
     // and not inventing an empty `edges` list the file never had.
     let content: string;
-    if (existing !== null && existing.trim().length > 0 && (ext === ".yaml" || ext === ".yml")) {
+    if (
+      existing !== null &&
+      existing.trim().length > 0 &&
+      (ext === ".yaml" || ext === ".yml")
+    ) {
       try {
         const current = parseYaml(existing) as Record<string, unknown> | null;
-        const base = current !== null && typeof current === "object" && !Array.isArray(current) ? current : {};
-        const next: Record<string, unknown> = { ...base, nodes: fragment.nodes };
-        if (fragment.edges.length > 0 || "edges" in base) next.edges = fragment.edges;
+        const base =
+          current !== null &&
+          typeof current === "object" &&
+          !Array.isArray(current)
+            ? current
+            : {};
+        const next: Record<string, unknown> = {
+          ...base,
+          nodes: fragment.nodes,
+        };
+        if (fragment.edges.length > 0 || "edges" in base)
+          next.edges = fragment.edges;
         else delete next.edges;
         content = mergeFlowIntoYaml(existing, next, { lineWidth: 120 });
       } catch {
@@ -933,7 +1024,9 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     } else {
       // A fresh file: don't write an empty `edges: []` the sub-flow never had.
       const fresh =
-        fragment.edges.length > 0 ? fragment : ({ nodes: fragment.nodes } as typeof fragment);
+        fragment.edges.length > 0
+          ? fragment
+          : ({ nodes: fragment.nodes } as typeof fragment);
       content = serializeSubflowFragment(ext, fresh);
     }
 
@@ -945,7 +1038,11 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       role: actor.role,
       action: "flows.subflows.write",
       target: rel,
-      details: { path: targetPath, nodeCount: fragment.nodes.length, edgeCount: fragment.edges.length },
+      details: {
+        path: targetPath,
+        nodeCount: fragment.nodes.length,
+        edgeCount: fragment.edges.length,
+      },
     });
 
     // Reflect the write immediately for subsequent reads/lists.
@@ -1227,7 +1324,11 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       reference: FLOW_REFERENCE,
       // Concrete model ids of the central model presets (for `llm.model`).
       models: shortcuts
-        ? [...new Set(Object.values(shortcuts.modelPresets ?? {}).map((p) => p.model))].sort()
+        ? [
+            ...new Set(
+              Object.values(shortcuts.modelPresets ?? {}).map((p) => p.model),
+            ),
+          ].sort()
         : [],
     });
   });
@@ -1241,11 +1342,18 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
   // -------------------------------------------------------------------------
   router.post("/flows/variables/evaluate", async (ctx) => {
     if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
-    const body = (await ctx.req.json().catch(() => null)) as { variables?: unknown } | null;
+    const body = (await ctx.req.json().catch(() => null)) as {
+      variables?: unknown;
+    } | null;
     const vars = body?.variables;
     if (typeof vars !== "object" || vars === null || Array.isArray(vars)) {
       return ctx.json(
-        { error: { message: "`variables` must be an object.", type: "invalid_request_error" } },
+        {
+          error: {
+            message: "`variables` must be an object.",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
@@ -1274,21 +1382,32 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     }
     if (typeof body.expression !== "string") {
       return ctx.json(
-        { error: { message: "Field 'expression' (string) is required.", type: "invalid_request_error" } },
+        {
+          error: {
+            message: "Field 'expression' (string) is required.",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
     const expression = body.expression.slice(0, 4000);
-    if (expression.trim() === "") return ctx.json({ valid: true, result: true, empty: true });
+    if (expression.trim() === "")
+      return ctx.json({ valid: true, result: true, empty: true });
     const check = validateConditionExpression(expression);
     if (!check.valid) return ctx.json({ valid: false, error: check.error });
     const sample =
-      body.sample !== null && typeof body.sample === "object" && !Array.isArray(body.sample)
+      body.sample !== null &&
+      typeof body.sample === "object" &&
+      !Array.isArray(body.sample)
         ? (body.sample as Record<string, unknown>)
         : {};
     return ctx.json({
       valid: true,
-      result: evaluateConditionExpression(expression, sample as Parameters<typeof evaluateConditionExpression>[1]),
+      result: evaluateConditionExpression(
+        expression,
+        sample as Parameters<typeof evaluateConditionExpression>[1],
+      ),
     });
   });
 
@@ -1339,11 +1458,17 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     if (!(await guard(ctx, "flows:write"))) return unauthorized(ctx);
     if (appConfig?.defaultLlm === undefined) {
       return ctx.json(
-        { ok: false, message: "Copilot is not configured — set DEFAULT_LLM on the backend." },
+        {
+          ok: false,
+          message:
+            "Copilot is not configured — set DEFAULT_LLM on the backend.",
+        },
         501,
       );
     }
-    const body = (await ctx.req.json().catch(() => null)) as Partial<ExpressionCopilotInput> | null;
+    const body = (await ctx.req
+      .json()
+      .catch(() => null)) as Partial<ExpressionCopilotInput> | null;
     const kinds = ["template", "condition", "vars"];
     if (
       body === null ||
@@ -1356,7 +1481,8 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       return ctx.json(
         {
           error: {
-            message: "Required: kind (template|condition|vars), instruction (non-empty), vocabulary (array).",
+            message:
+              "Required: kind (template|condition|vars), instruction (non-empty), vocabulary (array).",
             type: "invalid_request_error",
           },
         },
@@ -1370,14 +1496,17 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         instruction: body.instruction,
         ...(typeof body.field === "string" ? { field: body.field } : {}),
         vocabulary: body.vocabulary,
-        ...(body.variables && typeof body.variables === "object" ? { variables: body.variables } : {}),
+        ...(body.variables && typeof body.variables === "object"
+          ? { variables: body.variables }
+          : {}),
         runtimeAllowed: body.runtimeAllowed === true,
         ...(isSelection(body.selection) ? { selection: body.selection } : {}),
       },
       createLlmProvider(appConfig.defaultLlm, appConfig),
       {
         context: {
-          constants: sourceDir !== undefined ? loadFlowConstants(sourceDir) : {},
+          constants:
+            sourceDir !== undefined ? loadFlowConstants(sourceDir) : {},
           env: publicEnv(),
         },
       },
@@ -1423,7 +1552,10 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       );
     }
 
-    if (typeof body.instruction !== "string" || body.instruction.trim().length === 0) {
+    if (
+      typeof body.instruction !== "string" ||
+      body.instruction.trim().length === 0
+    ) {
       return ctx.json(
         {
           error: {
@@ -1460,7 +1592,9 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         ...(knownToolIds !== undefined ? { knownToolIds } : {}),
         expand: (def) => expandForValidation(def),
         shortcuts: Object.keys(
-          (sourceDir !== undefined ? loadModelShortcuts(sourceDir)?.shortcuts : undefined) ?? {},
+          (sourceDir !== undefined
+            ? loadModelShortcuts(sourceDir)?.shortcuts
+            : undefined) ?? {},
         ).sort(),
         ...(focus !== undefined ? { focus } : {}),
       },
@@ -1471,7 +1605,9 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         {
           ok: false,
           message: result.message,
-          ...(result.validation !== undefined ? { validation: result.validation } : {}),
+          ...(result.validation !== undefined
+            ? { validation: result.validation }
+            : {}),
         },
         422,
       );
@@ -1520,7 +1656,9 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
                 fileDefinition: fileBaseline.definition,
                 file: {
                   name: fileBaseline.fileName,
-                  format: /\.json$/i.test(fileBaseline.fileName) ? "json" : "yaml",
+                  format: /\.json$/i.test(fileBaseline.fileName)
+                    ? "json"
+                    : "yaml",
                 },
               }
             : {}),
@@ -1539,7 +1677,10 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       if (src !== undefined && sourceDir !== undefined) {
         try {
           hash = sha256Hex(
-            await fs.promises.readFile(path.join(sourceDir, src.fileName), "utf-8"),
+            await fs.promises.readFile(
+              path.join(sourceDir, src.fileName),
+              "utf-8",
+            ),
           );
         } catch {
           /* file vanished between load and request — serve without a hash */
@@ -1731,7 +1872,10 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     if (rec === undefined) {
       return ctx.json(
         {
-          error: { message: `Flow '${id}' not found.`, type: "not_found_error" },
+          error: {
+            message: `Flow '${id}' not found.`,
+            type: "not_found_error",
+          },
         },
         404,
       );
@@ -1882,8 +2026,8 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const source =
       rec === undefined
         ? undefined
-        : rec.drafts.find((d) => d.draftId === draftId)?.definition ??
-          (draftId === DEFAULT_DRAFT_ID ? rec.draft : undefined);
+        : (rec.drafts.find((d) => d.draftId === draftId)?.definition ??
+          (draftId === DEFAULT_DRAFT_ID ? rec.draft : undefined));
     if (rec === undefined || source === null || source === undefined) {
       return ctx.json(
         {
@@ -1963,7 +2107,15 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const record = store === undefined ? undefined : await store.get(id);
     const flow = record?.published ?? record?.draft ?? fileRegistry.get(id);
     if (flow === undefined) {
-      return ctx.json({ error: { message: `Flow '${id}' was not found.`, type: "not_found_error" } }, 404);
+      return ctx.json(
+        {
+          error: {
+            message: `Flow '${id}' was not found.`,
+            type: "not_found_error",
+          },
+        },
+        404,
+      );
     }
     return ctx.json(describeFlowCapabilities(flow));
   });
@@ -1986,7 +2138,15 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         draftDef === null ||
         draftDef === undefined
       ) {
-        return ctx.json({ error: { message: `Flow '${id}' needs both a published version and a draft.`, type: "invalid_request_error" } }, 400);
+        return ctx.json(
+          {
+            error: {
+              message: `Flow '${id}' needs both a published version and a draft.`,
+              type: "invalid_request_error",
+            },
+          },
+          400,
+        );
       }
       return ctx.json({
         from: { kind: "published", version: record.version },
@@ -1997,12 +2157,26 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const versions = store === undefined ? [] : await store.listVersions(id);
     if (versions.length >= 1) {
       const latest = versions[0]!.version;
-      const toVersion = ctx.req.query("to") === undefined ? latest : Number(ctx.req.query("to"));
-      const fromVersion = ctx.req.query("from") === undefined ? (versions[1]?.version ?? latest) : Number(ctx.req.query("from"));
+      const toVersion =
+        ctx.req.query("to") === undefined
+          ? latest
+          : Number(ctx.req.query("to"));
+      const fromVersion =
+        ctx.req.query("from") === undefined
+          ? (versions[1]?.version ?? latest)
+          : Number(ctx.req.query("from"));
       const from = versions.find((entry) => entry.version === fromVersion);
       const to = versions.find((entry) => entry.version === toVersion);
       if (!from || !to) {
-        return ctx.json({ error: { message: `Flow '${id}' is missing version ${!from ? fromVersion : toVersion}.`, type: "not_found_error" } }, 404);
+        return ctx.json(
+          {
+            error: {
+              message: `Flow '${id}' is missing version ${!from ? fromVersion : toVersion}.`,
+              type: "not_found_error",
+            },
+          },
+          404,
+        );
       }
       return ctx.json({
         from: { kind: "version", version: fromVersion },
@@ -2012,14 +2186,29 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     }
     const flow = fileRegistry.get(id);
     if (flow === undefined) {
-      return ctx.json({ error: { message: `Flow '${id}' was not found.`, type: "not_found_error" } }, 404);
+      return ctx.json(
+        {
+          error: {
+            message: `Flow '${id}' was not found.`,
+            type: "not_found_error",
+          },
+        },
+        404,
+      );
     }
     return ctx.json({
       from: null,
       to: { kind: "file" },
       report: {
         status: "unknown",
-        findings: [{ severity: "unknown", code: "baseline-missing", path: "$", message: "No historical baseline is available for this file flow" }],
+        findings: [
+          {
+            severity: "unknown",
+            code: "baseline-missing",
+            path: "$",
+            message: "No historical baseline is available for this file flow",
+          },
+        ],
         structuralDiff: diffFlows(flow, flow),
       },
     });
@@ -2033,7 +2222,10 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     const id = ctx.req.param("id");
     const requested = ctx.req.query("version");
     const versions = store === undefined ? [] : await store.listVersions(id);
-    const targetVersion = requested === undefined ? versions[0] : versions.find((entry) => entry.version === Number(requested));
+    const targetVersion =
+      requested === undefined
+        ? versions[0]
+        : versions.find((entry) => entry.version === Number(requested));
     let flow = targetVersion?.definition;
     let source: "file" | "online" = "online";
     if (flow === undefined && requested === undefined) {
@@ -2045,25 +2237,166 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
       source = "file";
     }
     if (flow === undefined) {
-      return ctx.json({ error: { message: `Flow '${id}'${requested ? ` version ${requested}` : ""} was not found.`, type: "not_found_error" } }, 404);
+      return ctx.json(
+        {
+          error: {
+            message: `Flow '${id}'${requested ? ` version ${requested}` : ""} was not found.`,
+            type: "not_found_error",
+          },
+        },
+        404,
+      );
     }
-    const targetIndex = targetVersion === undefined ? -1 : versions.findIndex((entry) => entry.version === targetVersion.version);
+    const targetIndex =
+      targetVersion === undefined
+        ? -1
+        : versions.findIndex(
+            (entry) => entry.version === targetVersion.version,
+          );
     const previous = targetIndex >= 0 ? versions[targetIndex + 1] : undefined;
-    const compatibility = previous === undefined ? undefined : analyzeFlowCompatibility(previous.definition, flow);
+    const compatibility =
+      previous === undefined
+        ? undefined
+        : analyzeFlowCompatibility(previous.definition, flow);
     const capabilities = describeFlowCapabilities(flow);
-    const policy = evaluatePolicyForModels(getCompliancePolicy?.(), collectFlowLlmConfigs(flow), {
-      flowId: flow.id,
-      toolIds: capabilities.graph.tools,
-      ...(flow.dataClasses !== undefined ? { dataClasses: flow.dataClasses } : {}),
+    const policy = evaluatePolicyForModels(
+      getCompliancePolicy?.(),
+      collectFlowLlmConfigs(flow),
+      {
+        flowId: flow.id,
+        toolIds: capabilities.graph.tools,
+        ...(flow.dataClasses !== undefined
+          ? { dataClasses: flow.dataClasses }
+          : {}),
+      },
+    );
+    return ctx.json(
+      buildReleasePassport({
+        flow,
+        source,
+        ...(targetVersion !== undefined
+          ? { storeVersion: targetVersion.version }
+          : {}),
+        ...(compatibility !== undefined ? { compatibility } : {}),
+        policy,
+        capabilities,
+      }),
+    );
+  });
+
+  // -------------------------------------------------------------------------
+  // GET /flows/diff/compare — structural diff between two ARBITRARY endpoints
+  // (any flow/draft combination, not just two versions of one flow):
+  //   ?from=<flowId>[&fromDraft=<draftId>]   left side
+  //   ?to=<flowId>[&toDraft=<draftId>]       right side
+  // Each side resolves to: the named draft (when *Draft is given), else the
+  // published online definition, else the flow's file definition (source form,
+  // like the draft-vs-file comparison above), else its default draft.
+  // Powers the /flow-diff dropdowns; 3 path segments, so it never collides
+  // with /flows/:id (2) or /flows/:id/diff (last segment differs).
+  // -------------------------------------------------------------------------
+  type DiffSide =
+    | {
+        ok: true;
+        definition: FlowDefinition;
+        endpoint: {
+          flowId: string;
+          kind: "published" | "draft" | "file";
+          draftId?: string;
+          version?: number;
+          file?: string;
+        };
+      }
+    | { ok: false; message: string };
+
+  const resolveDiffSide = async (
+    flowId: string,
+    draftId: string | undefined,
+  ): Promise<DiffSide> => {
+    const rec = store !== undefined ? await store.get(flowId) : undefined;
+    if (draftId !== undefined && draftId !== "") {
+      if (rec === undefined)
+        return { ok: false, message: `Flow '${flowId}' not found.` };
+      const draft =
+        rec.drafts.find((d) => d.draftId === draftId)?.definition ??
+        (draftId === DEFAULT_DRAFT_ID ? rec.draft : null);
+      if (draft === null || draft === undefined)
+        return {
+          ok: false,
+          message: `Flow '${flowId}' has no draft${draftId === DEFAULT_DRAFT_ID ? "" : ` '${draftId}'`} to compare.`,
+        };
+      return {
+        ok: true,
+        definition: draft,
+        endpoint: { flowId, kind: "draft", draftId },
+      };
+    }
+    if (rec !== undefined && rec.published !== null)
+      return {
+        ok: true,
+        definition: rec.published,
+        endpoint: { flowId, kind: "published", version: rec.version },
+      };
+    const fileSource = fileRegistry.getSource?.(flowId);
+    const fileDef = (fileSource?.definition ?? fileRegistry.get(flowId)) as
+      | FlowDefinition
+      | undefined;
+    if (fileDef !== undefined)
+      return {
+        ok: true,
+        definition: fileDef,
+        endpoint: {
+          flowId,
+          kind: "file",
+          ...(fileSource !== undefined ? { file: fileSource.fileName } : {}),
+        },
+      };
+    if (rec !== undefined && rec.draft !== null)
+      return {
+        ok: true,
+        definition: rec.draft,
+        endpoint: { flowId, kind: "draft", draftId: DEFAULT_DRAFT_ID },
+      };
+    return { ok: false, message: `Flow '${flowId}' not found.` };
+  };
+
+  router.get("/flows/diff/compare", async (ctx) => {
+    if (!(await guard(ctx, "flows:read"))) return unauthorized(ctx);
+    const fromId = ctx.req.query("from");
+    const toId = ctx.req.query("to");
+    if (
+      fromId === undefined ||
+      fromId === "" ||
+      toId === undefined ||
+      toId === ""
+    ) {
+      return ctx.json(
+        {
+          error: {
+            message: "Query params 'from' and 'to' (flow ids) are required.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    const fromSide = await resolveDiffSide(fromId, ctx.req.query("fromDraft"));
+    if (!fromSide.ok)
+      return ctx.json(
+        { error: { message: fromSide.message, type: "not_found_error" } },
+        404,
+      );
+    const toSide = await resolveDiffSide(toId, ctx.req.query("toDraft"));
+    if (!toSide.ok)
+      return ctx.json(
+        { error: { message: toSide.message, type: "not_found_error" } },
+        404,
+      );
+    return ctx.json({
+      from: fromSide.endpoint,
+      to: toSide.endpoint,
+      diff: diffFlows(fromSide.definition, toSide.definition),
     });
-    return ctx.json(buildReleasePassport({
-      flow,
-      source,
-      ...(targetVersion !== undefined ? { storeVersion: targetVersion.version } : {}),
-      ...(compatibility !== undefined ? { compatibility } : {}),
-      policy,
-      capabilities,
-    }));
   });
 
   // -------------------------------------------------------------------------

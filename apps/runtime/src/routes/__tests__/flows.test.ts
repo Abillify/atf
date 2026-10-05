@@ -86,6 +86,30 @@ describe("GET /flows + GET /flows/:id", () => {
     expect(online1.editable).toBe(true);
   });
 
+  test("lists each online flow's drafts with labels (for the diff dropdowns)", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("d1", def("d1"));
+    await store.saveDraft("d1", def("d1"), "tester", {
+      draftId: "exp",
+      label: "Experiment",
+    });
+    const a = app({ fileRegistry: fileRegistry(), store });
+
+    const res = await a.request("/flows");
+    const body = (await res.json()) as {
+      flows: Array<{
+        id: string;
+        drafts?: { draftId: string; label: string }[];
+      }>;
+    };
+    const d1 = body.flows.find((f) => f.id === "d1");
+    if (d1 === undefined || d1.drafts === undefined) {
+      throw new Error("expected d1 with its drafts");
+    }
+    expect(d1.drafts.map((d) => d.draftId)).toEqual(["default", "exp"]);
+    expect(d1.drafts[1]?.label).toBe("Experiment");
+  });
+
   test("GET /flows/:id returns the file definition for a file flow", async () => {
     const a = app({ fileRegistry: fileRegistry(def("f")) });
     const res = await a.request("/flows/f");

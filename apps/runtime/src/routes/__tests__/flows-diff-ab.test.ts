@@ -98,6 +98,91 @@ describe("GET /flows/:id/diff", () => {
   });
 });
 
+describe("GET /flows/diff/compare", () => {
+  test("diffs a draft of one flow against the published version of another", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("alpha", {
+      ...flow("A", "gpt-4o-mini"),
+      id: "alpha",
+    });
+    await store.publish("alpha");
+    await store.saveDraft("beta", { ...flow("B", "gpt-4o"), id: "beta" });
+    await store.publish("beta");
+    await store.saveDraft(
+      "alpha",
+      { ...flow("A wip", "gpt-5"), id: "alpha" },
+      "tester",
+      {
+        draftId: "exp",
+        label: "Experiment",
+      },
+    );
+
+    const res = await app({ fileRegistry: fileRegistry(), store }).request(
+      "/flows/diff/compare?from=alpha&fromDraft=exp&to=beta",
+    );
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      from: { flowId: string; kind: string; draftId?: string };
+      to: { flowId: string; kind: string; version?: number };
+      diff: { changed: boolean };
+    };
+    expect(body.from).toEqual({
+      flowId: "alpha",
+      kind: "draft",
+      draftId: "exp",
+    });
+    expect(body.to.flowId).toBe("beta");
+    expect(body.to.kind).toBe("published");
+    expect(body.diff.changed).toBe(true);
+  });
+
+  test("falls back to the file definition for a never-published file flow", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("online", {
+      ...flow("Online", "gpt-4o"),
+      id: "online",
+    });
+    await store.publish("online");
+    const res = await app({
+      fileRegistry: fileRegistry({
+        ...flow("File", "gpt-4o-mini"),
+        id: "filef",
+      }),
+      store,
+    }).request("/flows/diff/compare?from=filef&to=online");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      from: { kind: string };
+      diff: { changed: boolean };
+    };
+    expect(body.from.kind).toBe("file");
+    expect(body.diff.changed).toBe(true);
+  });
+
+  test("400 when from or to is missing", async () => {
+    const res = await app({
+      fileRegistry: fileRegistry(),
+      store: new InMemoryFlowStore(),
+    }).request("/flows/diff/compare?from=a");
+    expect(res.status).toBe(400);
+  });
+
+  test("404 for an unknown flow or missing named draft", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("a", { ...flow("A", "gpt-4o-mini"), id: "a" });
+    await store.publish("a");
+    const unknown = await app({ fileRegistry: fileRegistry(), store }).request(
+      "/flows/diff/compare?from=ghost&to=a",
+    );
+    expect(unknown.status).toBe(404);
+    const noDraft = await app({ fileRegistry: fileRegistry(), store }).request(
+      "/flows/diff/compare?from=a&fromDraft=exp&to=a",
+    );
+    expect(noDraft.status).toBe(404);
+  });
+});
+
 describe("GET /flows/experiments", () => {
   test("returns experiment status when a manager is present", async () => {
     const fakeAb = {
