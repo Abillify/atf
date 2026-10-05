@@ -464,7 +464,11 @@ settings are listed in [CONFIGURATION.md](CONFIGURATION.md) under `ROCKETCHAT_*`
 
 Control is a Next.js application for operating the platform.
 
-- Flow registry, and **Studio** for building and changing flows: a canvas with auto-layout and
+- Flow registry with per-flow run statistics (runs, average runtime, average and total cost)
+  over a selectable window of 1h, 1d, 1w or 1m (`GET /monitoring/flow-stats?since=`), and a
+  flow diff page that compares any two flows or drafts (`GET /flows/diff/compare?from=&to=`,
+  optional `fromDraft`/`toDraft`).
+- **Studio** for building and changing flows: a canvas with auto-layout and
   tool links for settings-defined calls (parallel children, harness verifier and delegates) that
   dock right → left, apart from the top → bottom flow, with Start and End showing where a run
   begins and ends and what a request brings in and returns; the nodes of a sub-flow file drawn in
@@ -473,7 +477,8 @@ Control is a Next.js application for operating the platform.
   catalog (`GET /flows/node-types`) with the full node type reference beside it; an editor for the
   prompt file behind a `#[[file:prompts/….md]]` reference, so the prompt text itself is editable
   and not just the reference (`GET /flows/prompts/content`, `POST /flows/prompts/write`, both
-  pinned to the flow directory's `prompts/` subtree); a variables table
+  pinned to the flow directory's `prompts/` subtree), which can also save the edit under a new
+  file name for this flow only or copy the text into the flow and drop the include; a variables table
   (typed values, usage counts, renaming that rewrites references); an expression builder
   behind every ƒx button with a variable browser, operators, a live result from Runtime, values
   from a pinned run, and a copilot for the field; named drafts — several working copies per
@@ -487,7 +492,12 @@ Control is a Next.js application for operating the platform.
   inspected there.
 - Execution history and trace viewer. The history table sorts server-side on its main
   columns (`GET /monitoring/history?sortBy=&sortDir=asc|desc`, whitelisted columns only,
-  stable tiebreaker) — started, flow, user, nodes, latency, runtime, and cost.
+  stable tiebreaker) — started, flow, user, nodes, latency, runtime, and cost. Requests of one
+  conversation are grouped under a header row with flow, user, summed runtime and cost, and
+  status; History and the Live Graph share a flow include/exclude and searchable user filter.
+  The Live Graph enriches failed nodes with the error type, details, diagnostics timeline and
+  failing tool result from the execution debug trace (`GET /monitoring/debug/:executionId`)
+  while that trace is still held in memory.
 - Approval inbox with role-gated decisions.
 - Cost, budget, and FinOps panels.
 - Evaluation runs and eval cases (list and delete), canary status, shadow comparisons,
