@@ -47,6 +47,16 @@ export interface UseFlowsResult {
     id: string,
     params?: { from?: number; to?: number; draft?: boolean },
   ) => Promise<FlowDiffResponse | null>;
+  /**
+   * Structural diff between two arbitrary endpoints (any flow/draft
+   * combination) via GET /flows/diff/compare — powers the /flow-diff page.
+   */
+  compare: (params: {
+    from: string;
+    fromDraft?: string;
+    to: string;
+    toDraft?: string;
+  }) => Promise<FlowDiffResponse>;
 }
 
 function backendBase(): string {
@@ -233,6 +243,34 @@ export function useFlows(options?: UseFlowsOptions): UseFlowsResult {
     [af],
   );
 
+  const compare = useCallback(
+    async (params: {
+      from: string;
+      fromDraft?: string;
+      to: string;
+      toDraft?: string;
+    }): Promise<FlowDiffResponse> => {
+      const qs = new URLSearchParams();
+      qs.set("from", params.from);
+      if (params.fromDraft !== undefined && params.fromDraft !== "")
+        qs.set("fromDraft", params.fromDraft);
+      qs.set("to", params.to);
+      if (params.toDraft !== undefined && params.toDraft !== "")
+        qs.set("toDraft", params.toDraft);
+      const res = await af(`/diff/compare?${qs.toString()}`, {
+        headers: { Accept: "application/json" },
+      });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => null)) as {
+          error?: { message?: string };
+        } | null;
+        throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+      }
+      return (await res.json()) as FlowDiffResponse;
+    },
+    [af],
+  );
+
   return {
     flows,
     onlineEditing,
@@ -247,5 +285,6 @@ export function useFlows(options?: UseFlowsOptions): UseFlowsResult {
     listVersions,
     rollback,
     diff,
+    compare,
   };
 }

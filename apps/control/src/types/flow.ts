@@ -151,6 +151,8 @@ export interface FlowListEntry {
   draftDirty: boolean;
   /** How many drafts (default + named) the flow has. */
   draftCount?: number;
+  /** The flow's drafts (default first) with labels — for draft selectors. */
+  drafts?: { draftId: string; label: string }[];
   editable: boolean;
   nodeCount: number;
   edgeCount: number;
@@ -231,8 +233,20 @@ export interface FlowDiff {
 }
 
 export interface FlowDiffResponse {
-  from: { kind: string; version?: number; file?: string };
-  to: { kind: string; version?: number; file?: string };
+  from: {
+    kind: string;
+    version?: number;
+    file?: string;
+    flowId?: string;
+    draftId?: string;
+  };
+  to: {
+    kind: string;
+    version?: number;
+    file?: string;
+    flowId?: string;
+    draftId?: string;
+  };
   diff: FlowDiff;
 }
 
