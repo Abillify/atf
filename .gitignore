@@ -33,3 +33,6 @@ __pycache__/
 .kiro/
 .git/
 .DS_Store
+
+# Local agent task artifacts (may contain secrets)
+/.agents/tasks/
