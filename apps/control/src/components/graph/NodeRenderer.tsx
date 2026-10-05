@@ -27,6 +27,7 @@ import {
   approvalRing,
   approvalBadge,
   formatCost,
+  nodeErrorTooltip,
   type NodeState,
 } from "./graphUtils";
 import { Wrench } from "lucide-react";
@@ -98,7 +99,9 @@ export function NodeCard({
   const isRunning = state.status === "running";
   const isTool = state.kind === "tool";
   const status = statusIndicator(state.status);
-  const statusRing = state.approval ? approvalRing(state.approval) : status.ring;
+  const statusRing = state.approval
+    ? approvalRing(state.approval)
+    : status.ring;
   // Selection is a deliberate user action, so it wins over the passive
   // status/approval ring: a selected node gets a bold, high-contrast ring plus
   // a lift (shadow + slight scale) so it's unmistakable even on the coloured,
@@ -122,11 +125,18 @@ export function NodeCard({
       ? "shadow-lg shadow-emerald-500/40"
       : "shadow-md";
 
+  // Full error recording (type, message, diagnostics, failing tool result)
+  // as a native hover tooltip — the card body only has room for a two-line
+  // snippet. Undefined for nodes without error info, so healthy nodes carry
+  // no title attribute at all.
+  const errorTooltip = nodeErrorTooltip(state);
+
   return (
     <div
       role="button"
       tabIndex={0}
       aria-label={`${isTool ? "Tool" : nodeTypeLabel(state.nodeType)} ${state.label} — ${state.status}${state.approval ? ` — approval ${state.approval}` : ""}`}
+      title={errorTooltip}
       onClick={() => onClick?.(state)}
       onKeyDown={(e) => e.key === "Enter" && onClick?.(state)}
       className={`
@@ -154,100 +164,108 @@ export function NodeCard({
       )}
 
       <div className={`flex items-start ${compact ? "gap-2" : "gap-2.5"}`}>
-      {/* Type icon — tells the node types apart at a glance. */}
-      <div
-        aria-hidden
-        data-testid="node-type-icon"
-        className={`flex shrink-0 items-center justify-center rounded-lg bg-black/20 ring-1 ring-inset ring-white/20 ${
-          compact ? "h-9 w-9" : "h-10 w-10"
-        }`}
-      >
-        <Icon size={compact ? 22 : 24} strokeWidth={2} />
-      </div>
-      <div className="min-w-0 flex-1">
-      {/* Top row: label + type badge */}
-      <div className={`flex items-start justify-between gap-1 ${compact ? "mb-0.5" : "mb-1"}`}>
+        {/* Type icon — tells the node types apart at a glance. */}
         <div
-          className="font-semibold text-xs leading-snug"
-          style={{
-            maxWidth: "75%",
-            wordBreak: "break-word",
-            display: "-webkit-box",
-            WebkitLineClamp: compact ? 2 : 3,
-            WebkitBoxOrient: "vertical",
-            overflow: "hidden",
-          }}
-          title={state.label}
+          aria-hidden
+          data-testid="node-type-icon"
+          className={`flex shrink-0 items-center justify-center rounded-lg bg-black/20 ring-1 ring-inset ring-white/20 ${
+            compact ? "h-9 w-9" : "h-10 w-10"
+          }`}
         >
-          {state.label}
+          <Icon size={compact ? 22 : 24} strokeWidth={2} />
         </div>
-        <span className="shrink-0 text-[9px] uppercase tracking-wide bg-black/20 rounded px-1 py-0.5 leading-none mt-0.5">
-          {nodeTypeLabel(state.nodeType)}
-        </span>
-      </div>
-
-      {/* Subtitle row — editor-only static summary (e.g. "openai/gpt-4o-mini") */}
-      {state.subtitle && (
-        <div
-          className="mb-0.5 truncate text-[10px] opacity-80"
-          title={state.subtitle}
-        >
-          {state.subtitle}
-        </div>
-      )}
-
-      {/* Middle row: status / latency / model — empty for idle editor nodes */}
-      {(!compact ||
-        state.status === "running" ||
-        state.latency_ms != null ||
-        state.model) && (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs opacity-85">
-        {state.status === "running" && <span>⏳ running…</span>}
-        {state.latency_ms != null && state.status !== "running" && (
-          <span>{state.latency_ms}ms</span>
-        )}
-        {state.model && (
-          <span
-            className="text-[10px] opacity-80 truncate max-w-[110px]"
-            title={state.model}
+        <div className="min-w-0 flex-1">
+          {/* Top row: label + type badge */}
+          <div
+            className={`flex items-start justify-between gap-1 ${compact ? "mb-0.5" : "mb-1"}`}
           >
-            {state.model.split("/").pop()}
-          </span>
-        )}
-      </div>
-      )}
+            <div
+              className="font-semibold text-xs leading-snug"
+              style={{
+                maxWidth: "75%",
+                wordBreak: "break-word",
+                display: "-webkit-box",
+                WebkitLineClamp: compact ? 2 : 3,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }}
+              title={state.label}
+            >
+              {state.label}
+            </div>
+            <span className="shrink-0 text-[9px] uppercase tracking-wide bg-black/20 rounded px-1 py-0.5 leading-none mt-0.5">
+              {nodeTypeLabel(state.nodeType)}
+            </span>
+          </div>
 
-      {/* Approval badge */}
-      {badge && (
-        <span
-          className={`inline-block rounded px-1 mt-0.5 text-[10px] font-semibold ${badge.className}`}
-        >
-          {badge.label}
-        </span>
-      )}
+          {/* Subtitle row — editor-only static summary (e.g. "openai/gpt-4o-mini") */}
+          {state.subtitle && (
+            <div
+              className="mb-0.5 truncate text-[10px] opacity-80"
+              title={state.subtitle}
+            >
+              {state.subtitle}
+            </div>
+          )}
 
-      {/* Tokens + cost row */}
-      {(state.input_tokens != null ||
-        state.output_tokens != null ||
-        state.cost != null) && (
-        <div className="flex items-center gap-2 mt-0.5 text-[10px] opacity-75">
-          {state.input_tokens != null && <span>↑{state.input_tokens}</span>}
-          {state.output_tokens != null && <span>↓{state.output_tokens}</span>}
-          {state.cost != null && (
-            <span className="font-semibold text-emerald-200">
-              ~{formatCost(state.cost)}
+          {/* Middle row: status / latency / model — empty for idle editor nodes */}
+          {(!compact ||
+            state.status === "running" ||
+            state.latency_ms != null ||
+            state.model) && (
+            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs opacity-85">
+              {state.status === "running" && <span>⏳ running…</span>}
+              {state.latency_ms != null && state.status !== "running" && (
+                <span>{state.latency_ms}ms</span>
+              )}
+              {state.model && (
+                <span
+                  className="text-[10px] opacity-80 truncate max-w-[110px]"
+                  title={state.model}
+                >
+                  {state.model.split("/").pop()}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Approval badge */}
+          {badge && (
+            <span
+              className={`inline-block rounded px-1 mt-0.5 text-[10px] font-semibold ${badge.className}`}
+            >
+              {badge.label}
             </span>
           )}
-        </div>
-      )}
 
-      {/* Error snippet */}
-      {state.status === "error" && state.error_message && (
-        <div className="mt-1 text-[10px] bg-red-800/80 rounded px-1.5 py-0.5 line-clamp-2 break-words">
-          {state.error_message}
+          {/* Tokens + cost row */}
+          {(state.input_tokens != null ||
+            state.output_tokens != null ||
+            state.cost != null) && (
+            <div className="flex items-center gap-2 mt-0.5 text-[10px] opacity-75">
+              {state.input_tokens != null && <span>↑{state.input_tokens}</span>}
+              {state.output_tokens != null && (
+                <span>↓{state.output_tokens}</span>
+              )}
+              {state.cost != null && (
+                <span className="font-semibold text-emerald-200">
+                  ~{formatCost(state.cost)}
+                </span>
+              )}
+            </div>
+          )}
+
+          {/* Error snippet — hover (the card or this line) for the full recording */}
+          {state.status === "error" && state.error_message && (
+            <div
+              className="mt-1 cursor-help text-[10px] bg-red-800/80 rounded px-1.5 py-0.5 line-clamp-2 break-words"
+              title={errorTooltip}
+              data-testid="node-error-snippet"
+            >
+              {state.error_message}
+            </div>
+          )}
         </div>
-      )}
-      </div>
       </div>
 
       {/* Sequence badge (top-left) */}

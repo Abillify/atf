@@ -19,6 +19,7 @@ import type {
   NodeToolCall,
   RoutingDecision,
 } from "../../types/monitoring";
+import type { DebugNodeDiagnostic, DebugTrace } from "../../types/debug-trace";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,6 +65,30 @@ export interface NodeState {
   parent_node_id?: string;
   /** Visual category driving the node's fill colour (resolved at render). */
   nodeType?: NodeVisualType;
+  /**
+   * Machine-readable error category (e.g. "provider_error"), from the debug
+   * trace's structured error recording. Present only when the node failed
+   * AND its trace is still in the runtime's in-memory buffer.
+   */
+  error_type?: string;
+  /**
+   * Structured error context (mirrors the runtime's `StreamError.details`),
+   * from the debug trace. Present only for failed nodes with a live trace.
+   */
+  error_details?: Record<string, unknown>;
+  /**
+   * Ordered in-node diagnostics timeline (retries, fallbacks, tool errors,
+   * …) from the debug trace. Present even on completed nodes that degraded
+   * along the way; absent when no trace is available.
+   */
+  diagnostics?: DebugNodeDiagnostic[];
+  /**
+   * For a failed synthetic tool node: the full result payload the tool
+   * returned for the failing call, from the debug trace. The monitoring
+   * event stream only carries the anonymized `error_message`; the trace
+   * keeps the complete (still operator-safe) payload.
+   */
+  tool_error_result?: unknown;
   /**
    * Short editor-only descriptive line (e.g. "openai/gpt-4o-mini", "3 tool(s)")
    * shown under the label. Set by the Studio builder for a node that has no
@@ -325,4 +350,156 @@ export function formatCost(cost: number): string {
         ? cost.toFixed(6).replace(/0+$/, "").replace(/\.$/, "")
         : cost.toFixed(cost < 1 ? 4 : 2);
   return withCurrency(bare);
+}
+
+// ---------------------------------------------------------------------------
+// Debug-trace error enrichment
+// ---------------------------------------------------------------------------
+
+/**
+ * Id of the synthetic tool node the engine emits for one tool call issued by
+ * `nodeId` (see runtime `handler-factories.ts`: `${parentId}::tool::${id}`).
+ */
+export function toolNodeId(nodeId: string, toolCallId: string): string {
+  return `${nodeId}::tool::${toolCallId}`;
+}
+
+/** Best-effort human message from an unknown tool-error payload. */
+function toolResultMessage(result: unknown): string | undefined {
+  if (typeof result === "string" && result.trim() !== "") return result;
+  if (result !== null && typeof result === "object") {
+    const obj = result as Record<string, unknown>;
+    for (const key of ["error", "message", "error_message"]) {
+      const v = obj[key];
+      if (typeof v === "string" && v.trim() !== "") return v;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Enriches event-derived `NodeState`s with the structured error recording from
+ * the execution's debug trace (`GET /monitoring/debug/:executionId`).
+ *
+ * The monitoring event stream only carries a bare `error_message`; the trace
+ * additionally holds the machine-readable `error_type`, structured
+ * `error_details`, the in-node diagnostics timeline (retries, fallbacks,
+ * tool errors), and full tool-call result payloads. Synthetic tool nodes
+ * (`kind === "tool"`) are NOT trace nodes of their own — their data lives on
+ * the issuing node's `tool_calls[]` entry (matched by tool-call id) plus the
+ * diagnostics tagged with `details.tool_call_id`.
+ *
+ * Pure: returns a new Map; the input is untouched. A null/undefined trace
+ * (evicted from the runtime's bounded buffer, not fetched yet, or fetch
+ * failed) returns the input map unchanged — the UI degrades to event-level
+ * error info. Node STATUS always stays event-derived (the durable log is the
+ * source of truth); the trace only adds detail, and `error_message` is only
+ * backfilled when the event stream never delivered one for a failed node.
+ */
+export function mergeDebugTraceIntoNodeStates(
+  states: Map<string, NodeState>,
+  trace: DebugTrace | null | undefined,
+): Map<string, NodeState> {
+  if (trace == null || !Array.isArray(trace.nodes)) return states;
+  const merged = new Map(states);
+  for (const tn of trace.nodes) {
+    // Diagnostics tagged with a tool_call_id belong to the synthetic tool
+    // node, not (only) to the issuing node.
+    const diagsByToolCall = new Map<string, DebugNodeDiagnostic[]>();
+    for (const d of tn.diagnostics ?? []) {
+      const tcId =
+        typeof d.details?.tool_call_id === "string"
+          ? d.details.tool_call_id
+          : undefined;
+      if (tcId === undefined) continue;
+      const list = diagsByToolCall.get(tcId) ?? [];
+      list.push(d);
+      diagsByToolCall.set(tcId, list);
+    }
+
+    const own = merged.get(tn.node_id);
+    if (own !== undefined) {
+      merged.set(tn.node_id, {
+        ...own,
+        ...(tn.status === "error" && tn.error_type !== undefined
+          ? { error_type: tn.error_type }
+          : {}),
+        ...(tn.status === "error" && tn.error_details !== undefined
+          ? { error_details: tn.error_details }
+          : {}),
+        ...(tn.diagnostics !== undefined && tn.diagnostics.length > 0
+          ? { diagnostics: tn.diagnostics }
+          : {}),
+        ...(own.status === "error" &&
+        own.error_message === undefined &&
+        tn.error_message !== undefined
+          ? { error_message: tn.error_message }
+          : {}),
+      });
+    }
+
+    for (const tc of tn.tool_calls ?? []) {
+      const id = toolNodeId(tn.node_id, tc.id);
+      const toolState = merged.get(id);
+      if (toolState === undefined) continue;
+      const toolDiags = diagsByToolCall.get(tc.id);
+      merged.set(id, {
+        ...toolState,
+        ...(tc.is_error ? { tool_error_result: tc.result } : {}),
+        ...(toolDiags !== undefined && toolDiags.length > 0
+          ? { diagnostics: toolDiags }
+          : {}),
+        ...(toolState.status === "error" &&
+        toolState.error_message === undefined &&
+        tc.is_error
+          ? { error_message: toolResultMessage(tc.result) ?? "Tool call failed" }
+          : {}),
+      });
+    }
+  }
+  return merged;
+}
+
+/** Longest tool-result snippet shown in a hover tooltip. */
+const TOOLTIP_RESULT_MAX = 400;
+
+function truncate(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+}
+
+/**
+ * Multi-line hover-tooltip text summarising a node's full error recording
+ * (type, message, diagnostics timeline, failing tool result). Returns
+ * undefined for a node without any error info, so the card omits the
+ * `title` attribute entirely.
+ */
+export function nodeErrorTooltip(state: NodeState): string | undefined {
+  const lines: string[] = [];
+  if (state.error_message !== undefined || state.error_type !== undefined) {
+    lines.push(
+      state.error_type !== undefined
+        ? `${state.error_type}: ${state.error_message ?? "no message"}`
+        : (state.error_message ?? ""),
+    );
+  }
+  for (const d of state.diagnostics ?? []) {
+    lines.push(`[${d.level}] ${d.code}: ${truncate(d.message, 160)}`);
+  }
+  if (state.tool_error_result !== undefined && state.tool_error_result !== null) {
+    const raw =
+      typeof state.tool_error_result === "string"
+        ? state.tool_error_result
+        : safeJsonStringify(state.tool_error_result);
+    if (raw !== undefined) lines.push(`Result: ${truncate(raw, TOOLTIP_RESULT_MAX)}`);
+  }
+  return lines.length > 0 ? lines.join("\n") : undefined;
+}
+
+/** JSON stringify that never throws (circular structures → undefined). */
+function safeJsonStringify(value: unknown): string | undefined {
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
 }

@@ -2,9 +2,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { Filter, Search, X } from "lucide-react";
 import { Badge, Button } from "../lib/ui";
 import { FlowMultiSelect } from "./FlowMultiSelect";
+import { UserSelectFilter } from "./UserSelectFilter";
 
 export interface ExecutionPickerItem {
   executionId: string;
@@ -31,12 +33,21 @@ export interface ExecutionPickerProps {
   flowOptions?: string[];
   /** Flow names by id, shown and searchable in the flow filters. */
   flowNames?: ReadonlyMap<string, string>;
+  /** Free-text keyword the visible flows are filtered by (id or name). */
+  flowQuery?: string;
+  onFlowQueryChange?: (query: string) => void;
   /** Flow ids that must be shown. An empty list includes every flow. */
   includeFlows?: string[];
   /** Flow ids that must be hidden (takes precedence over inclusion). */
   excludeFlows?: string[];
   onIncludeFlowsChange?: (flows: string[]) => void;
   onExcludeFlowsChange?: (flows: string[]) => void;
+  /** Distinct user names to offer in the user filter (from history facets). */
+  userOptions?: string[];
+  /** Currently selected user filter ("" = all users). */
+  userFilter?: string;
+  /** Called when the user filter changes ("" clears it). */
+  onUserFilterChange?: (userName: string) => void;
   /** Currently selected execution_id, or null while following live. */
   selectedId: string | null;
   /** True when the view auto-tracks the newest execution. */
@@ -77,16 +88,48 @@ export function ExecutionPicker({
   items,
   flowOptions,
   flowNames,
+  flowQuery = "",
+  onFlowQueryChange,
   includeFlows = [],
   excludeFlows = [],
   onIncludeFlowsChange,
   onExcludeFlowsChange,
+  userOptions,
+  userFilter = "",
+  onUserFilterChange,
   selectedId,
   following,
   onSelect,
   onFollowLive,
   onClearHistory,
 }: ExecutionPickerProps): React.JSX.Element {
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
+
+  // Close the include/exclude popover on outside click or Escape.
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (e: MouseEvent): void => {
+      if (!filterRef.current?.contains(e.target as Node)) setFilterOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setFilterOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filterOpen]);
+
+  const activeFilterCount =
+    includeFlows.length + excludeFlows.length + (userFilter !== "" ? 1 : 0);
+  const showFilterButton =
+    onIncludeFlowsChange !== undefined ||
+    onExcludeFlowsChange !== undefined ||
+    onUserFilterChange !== undefined;
+
   return (
     <aside className="flex w-full shrink-0 flex-col border-r border-border bg-card lg:w-64">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
@@ -111,25 +154,86 @@ export function ExecutionPicker({
         </button>
       </div>
 
-      {(onIncludeFlowsChange || onExcludeFlowsChange) && (
-        <div className="flex flex-col gap-2 border-b border-border p-2">
-          {onIncludeFlowsChange && (
-            <FlowMultiSelect
-              label="Flows einschließen"
-              options={flowOptions ?? []}
-              {...(flowNames !== undefined ? { names: flowNames } : {})}
-              value={includeFlows}
-              onChange={onIncludeFlowsChange}
-            />
+      {(onFlowQueryChange || showFilterButton) && (
+        <div className="flex items-center gap-1.5 border-b border-border p-2">
+          {onFlowQueryChange && (
+            <div className="relative min-w-0 flex-1">
+              <Search
+                size={13}
+                aria-hidden
+                className="pointer-events-none absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+              />
+              <input
+                value={flowQuery}
+                onChange={(e) => onFlowQueryChange(e.target.value)}
+                placeholder="Requests filtern…"
+                aria-label="Requests nach Stichwort filtern (Request-ID, Prompt, Nutzer, Flow)"
+                className="h-8 w-full rounded-md border border-border bg-background pl-7 pr-6 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent"
+              />
+              {flowQuery !== "" && (
+                <button
+                  type="button"
+                  onClick={() => onFlowQueryChange("")}
+                  aria-label="Stichwort löschen"
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X size={13} aria-hidden />
+                </button>
+              )}
+            </div>
           )}
-          {onExcludeFlowsChange && (
-            <FlowMultiSelect
-              label="Flows ausschließen"
-              options={flowOptions ?? []}
-              {...(flowNames !== undefined ? { names: flowNames } : {})}
-              value={excludeFlows}
-              onChange={onExcludeFlowsChange}
-            />
+          {showFilterButton && (
+            <div className="relative shrink-0" ref={filterRef}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen((open) => !open)}
+                aria-expanded={filterOpen}
+                aria-label="Filter: Flows und User"
+                title="Filter: Flows und User"
+                className={`relative flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
+                  filterOpen || activeFilterCount > 0
+                    ? "border-accent bg-accent/10 text-accent"
+                    : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <Filter size={14} aria-hidden />
+                {activeFilterCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold text-accent-foreground">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              {filterOpen && (
+                <div className="absolute right-0 z-30 mt-1 flex w-64 flex-col gap-2 rounded-md border border-border bg-card p-2 shadow-lg">
+                  {onIncludeFlowsChange && (
+                    <FlowMultiSelect
+                      label="Flows einschließen"
+                      options={flowOptions ?? []}
+                      {...(flowNames !== undefined ? { names: flowNames } : {})}
+                      value={includeFlows}
+                      onChange={onIncludeFlowsChange}
+                    />
+                  )}
+                  {onExcludeFlowsChange && (
+                    <FlowMultiSelect
+                      label="Flows ausschließen"
+                      options={flowOptions ?? []}
+                      {...(flowNames !== undefined ? { names: flowNames } : {})}
+                      value={excludeFlows}
+                      onChange={onExcludeFlowsChange}
+                    />
+                  )}
+                  {onUserFilterChange && (
+                    <UserSelectFilter
+                      label="User"
+                      options={userOptions ?? []}
+                      value={userFilter}
+                      onChange={onUserFilterChange}
+                    />
+                  )}
+                </div>
+              )}
+            </div>
           )}
         </div>
       )}
@@ -223,10 +327,24 @@ export function ExecutionPicker({
                           </span>
                         )}
                       </span>
-                      <span>
-                        {it.startedAt
-                          ? new Date(it.startedAt).toLocaleTimeString()
-                          : "—"}
+                      <span className="text-right leading-tight">
+                        <span className="block">
+                          {it.startedAt
+                            ? new Date(it.startedAt).toLocaleTimeString()
+                            : "—"}
+                        </span>
+                        <span className="block">
+                          {it.startedAt
+                            ? new Date(it.startedAt).toLocaleDateString(
+                                "de-DE",
+                                {
+                                  day: "2-digit",
+                                  month: "2-digit",
+                                  year: "2-digit",
+                                },
+                              )
+                            : ""}
+                        </span>
                       </span>
                     </div>
                     <div className="flex items-center gap-1 text-[10px] text-muted-foreground">

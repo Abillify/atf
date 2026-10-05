@@ -53,10 +53,12 @@ import { useThrottledValue } from "../hooks/useThrottledValue";
 import {
   nodeTypeHex,
   deriveNodeStates,
+  mergeDebugTraceIntoNodeStates,
   type NodeVisualType,
   type NodeState,
   type ApprovalState,
 } from "./graph/graphUtils";
+import type { DebugTrace } from "../types/debug-trace";
 
 // ---------------------------------------------------------------------------
 // Public props — must not change (Req 11.2)
@@ -74,6 +76,15 @@ export interface GraphVisualizerProps {
   onNodeSelect?: (node: NodeState | null) => void;
   /** Externally controlled selected node (when managed by parent). */
   selectedNodeExternal?: NodeState | null;
+  /**
+   * Full debug trace of the displayed execution (optional). Enriches node
+   * states with the structured error recording — error type/details,
+   * diagnostics timeline, failing tool results — that the SSE event stream
+   * does not carry. Node status always stays event-derived; the trace only
+   * adds detail. Null/undefined (evicted, loading, failed) degrades to the
+   * plain event-derived view.
+   */
+  debugTrace?: DebugTrace | null;
 }
 
 /** "flow" = Dagre top-down layout; "timeline" = chronological waterfall */
@@ -354,8 +365,10 @@ export function GraphVisualizer({
   resolvedApprovals,
   onNodeSelect,
   selectedNodeExternal,
+  debugTrace,
 }: GraphVisualizerProps) {
-  const [selectedNodeInternal, setSelectedNodeInternal] = useState<NodeState | null>(null);
+  const [selectedNodeInternal, setSelectedNodeInternal] =
+    useState<NodeState | null>(null);
   const [viewMode, setViewMode] = useState<ViewMode>("flow");
   // Layout derivation (below) is throttled; the "keep selected node in sync"
   // effect further down intentionally uses the RAW `events` so the detail
@@ -364,21 +377,33 @@ export function GraphVisualizer({
   const throttledEvents = useThrottledValue(events, GRAPH_THROTTLE_MS);
 
   // Use external state when provided, otherwise internal
-  const selectedNode = selectedNodeExternal !== undefined ? selectedNodeExternal : selectedNodeInternal;
-  const setSelectedNode = useCallback((node: NodeState | null) => {
-    if (onNodeSelect) {
-      onNodeSelect(node);
-    } else {
-      setSelectedNodeInternal(node);
-    }
-  }, [onNodeSelect]);
+  const selectedNode =
+    selectedNodeExternal !== undefined
+      ? selectedNodeExternal
+      : selectedNodeInternal;
+  const setSelectedNode = useCallback(
+    (node: NodeState | null) => {
+      if (onNodeSelect) {
+        onNodeSelect(node);
+      } else {
+        setSelectedNodeInternal(node);
+      }
+    },
+    [onNodeSelect],
+  );
 
-  const handleNodeClick = useCallback((state: NodeState) => {
-    setSelectedNode(selectedNode?.id === state.id ? null : state);
-  }, [setSelectedNode, selectedNode]);
+  const handleNodeClick = useCallback(
+    (state: NodeState) => {
+      setSelectedNode(selectedNode?.id === state.id ? null : state);
+    },
+    [setSelectedNode, selectedNode],
+  );
 
   const { rfNodes, rfEdges, layoutMeta } = useMemo(() => {
-    const nodeStates = deriveNodeStates(throttledEvents);
+    const nodeStates = mergeDebugTraceIntoNodeStates(
+      deriveNodeStates(throttledEvents),
+      debugTrace,
+    );
     const approvalStates = deriveApprovalStates(
       pendingApprovals ?? [],
       resolvedApprovals ?? [],
@@ -614,7 +639,10 @@ export function GraphVisualizer({
           const model = state.model;
           // Function replacement (not a string) so a model id containing `$`
           // is never interpreted as a `$&`/`$1` replacement pattern.
-          state.label = state.label.replace(/\{\{\s*vars\.\S*?\}\}/g, () => model);
+          state.label = state.label.replace(
+            /\{\{\s*vars\.\S*?\}\}/g,
+            () => model,
+          );
         }
         state.label = state.label.replace(/\{\{\s*[^{}]*?\}\}/g, "…");
       }
@@ -709,17 +737,21 @@ export function GraphVisualizer({
     resolvedApprovals,
     handleNodeClick,
     viewMode,
+    debugTrace,
   ]);
 
   // Keep selected node in sync when events update
   useEffect(() => {
     if (selectedNode === null) return;
-    const nodeStates = deriveNodeStates(events);
+    const nodeStates = mergeDebugTraceIntoNodeStates(
+      deriveNodeStates(events),
+      debugTrace,
+    );
     const updated = nodeStates.get(selectedNode.id);
     if (updated && JSON.stringify(updated) !== JSON.stringify(selectedNode)) {
       setSelectedNode({ ...updated });
     }
-  }, [events, selectedNode, setSelectedNode]);
+  }, [events, debugTrace, selectedNode, setSelectedNode]);
 
   const hasNodes = rfNodes.length > 0;
 

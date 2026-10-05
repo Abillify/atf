@@ -20,7 +20,9 @@ import type { NodeExecutionEvent } from "../types/monitoring";
 import type { ExecutionPickerItem } from "../components/ExecutionPicker";
 import type { PersistedExecution } from "../types/history";
 import { useExecutionEvents } from "./useExecutionEvents";
+import { useExecutionDebugTrace } from "./useExecutionDebugTrace";
 import { FLOW_END_NODE_ID } from "../components/graph/graphUtils";
+import type { DebugTrace } from "../types/debug-trace";
 
 export interface UseExecutionScopingOptions {
   /** Accumulated live SSE events from useMonitoringEvents. */
@@ -29,8 +31,21 @@ export interface UseExecutionScopingOptions {
   executions: PersistedExecution[];
   /** Optional operator token passed through to useExecutionEvents. */
   token?: string;
+  /**
+   * Free-text keyword; only runs matching the flow id/display name, the
+   * execution (request) id, the user name, or the user prompt are listed.
+   */
+  flowQuery?: string;
+  /** Flow names by id, used to match `flowQuery` against display names. */
+  flowNames?: ReadonlyMap<string, string>;
   includeFlows?: string[];
   excludeFlows?: string[];
+  /**
+   * When set (non-empty), only runs triggered by this user (display name,
+   * matched case-insensitively) are listed — the Live Graph counterpart of
+   * the History user filter.
+   */
+  userFilter?: string;
 }
 
 export interface UseExecutionScopingResult {
@@ -40,6 +55,13 @@ export interface UseExecutionScopingResult {
   pickerItems: ExecutionPickerItem[];
   /** Events scoped to the execution currently shown in the graph. */
   displayEvents: NodeExecutionEvent[];
+  /**
+   * Full debug trace of the execution currently shown, or null when it is
+   * unavailable (evicted from the runtime's bounded in-memory buffer, still
+   * loading, or fetch failed). Backs the node detail panel's full error
+   * recording (error type/details, diagnostics timeline, tool results).
+   */
+  debugTrace: DebugTrace | null;
   /** The execution_id currently displayed (may be null when nothing is tracked). */
   effectiveExecutionId: string | null;
   /** True when "Follow Live" mode is active. */
@@ -68,18 +90,28 @@ export function useExecutionScoping({
   events,
   executions,
   token,
+  flowQuery = "",
+  flowNames,
   includeFlows = [],
   excludeFlows = [],
+  userFilter = "",
 }: UseExecutionScopingOptions): UseExecutionScopingResult {
   // A `?execution=<id>` deep link (e.g. the History "View" button) selects
   // that run up front instead of the default Follow Live mode — otherwise the
   // picker always jumps back to whatever is newest, ignoring the link.
   const deepLinkExecutionId = useRef(readExecutionIdFromUrl()).current;
   const [following, setFollowing] = useState(deepLinkExecutionId === null);
-  const [selectedExecutionId, setSelectedExecutionId] = useState<
-    string | null
-  >(deepLinkExecutionId);
+  const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(
+    deepLinkExecutionId,
+  );
   const historicEvents = useExecutionEvents(
+    token !== undefined ? { token } : undefined,
+  );
+  // Full debug trace of the effective execution — the structured error
+  // recording (type, details, diagnostics, tool results) the SSE event
+  // stream does not carry. Best-effort: traces live in a bounded in-memory
+  // buffer on the runtime, so older runs legitimately have none.
+  const debugTraceState = useExecutionDebugTrace(
     token !== undefined ? { token } : undefined,
   );
 
@@ -174,6 +206,33 @@ export function useExecutionScoping({
   // Merge live runs with durable history (exclude rows already in live buffer).
   // -------------------------------------------------------------------------
   const pickerItems = useMemo<ExecutionPickerItem[]>(() => {
+    // Backfill identity fields on live rows from the durable history. A live
+    // row can be built solely from events that arrived after the dashboard
+    // joined a run in progress (e.g. only synthetic tool-node events, when
+    // the `__request__` boundary was missed); until the parent node's
+    // terminal event lands, such a row has no user/prompt. The durable
+    // `executions` row carries both immediately — the runtime persists them
+    // from the `__request__` boundary event — so use them as a fallback.
+    // Values already seen live always win.
+    const durableById = new Map<string, PersistedExecution>();
+    for (const e of executions) durableById.set(e.execution_id, e);
+    const live = liveExecutions.map((item) => {
+      const needsUser = item.user === undefined;
+      const needsPrompt = item.prompt === undefined;
+      const needsFlow = item.flowId === undefined;
+      if (!needsUser && !needsPrompt && !needsFlow) return item;
+      const durable = durableById.get(item.executionId);
+      if (durable === undefined) return item;
+      const user = item.user ?? durable.user_name ?? undefined;
+      const prompt = item.prompt ?? durable.user_prompt ?? undefined;
+      const flowId = item.flowId ?? durable.flow_id ?? undefined;
+      return {
+        ...item,
+        ...(user !== undefined ? { user } : {}),
+        ...(prompt !== undefined ? { prompt } : {}),
+        ...(flowId !== undefined ? { flowId } : {}),
+      };
+    });
     const persisted: ExecutionPickerItem[] = executions
       .filter((e) => !liveIds.has(e.execution_id))
       .map((e) => {
@@ -199,19 +258,48 @@ export function useExecutionScoping({
             : {}),
         };
       });
-    return [...liveExecutions, ...persisted]
+    return [...live, ...persisted]
       .filter((item) => {
         const flowId = item.flowId ?? "";
         if (excludeFlows.includes(flowId)) return false;
-        return includeFlows.length === 0 || includeFlows.includes(flowId);
+        if (includeFlows.length > 0 && !includeFlows.includes(flowId))
+          return false;
+        // User filter (Live Graph parity with History): exact display-name
+        // match, case-insensitive. Rows whose user is not yet known (live
+        // runs whose identity has not been backfilled) are hidden while a
+        // user filter is active.
+        const user = userFilter.trim().toLowerCase();
+        if (user !== "" && (item.user ?? "").trim().toLowerCase() !== user)
+          return false;
+        const q = flowQuery.trim().toLowerCase();
+        if (q !== "") {
+          // Free-text keyword across the row's identifying fields: flow
+          // id/display name, execution (request) id, user name, and the user
+          // prompt — matching any one of them keeps the row visible.
+          const name = flowNames?.get(flowId) ?? flowId;
+          const haystack = [
+            flowId,
+            name,
+            item.executionId,
+            item.user ?? "",
+            item.prompt ?? "",
+          ]
+            .join("\n")
+            .toLowerCase();
+          if (!haystack.includes(q)) return false;
+        }
+        return true;
       })
       .sort((a, b) => b.startedAt - a.startedAt);
   }, [
     liveExecutions,
     executions,
     liveIds,
+    flowQuery,
+    flowNames,
     includeFlows,
     excludeFlows,
+    userFilter,
   ]);
 
   // -------------------------------------------------------------------------
@@ -228,10 +316,11 @@ export function useExecutionScoping({
   // this browser tab's SSE connection was established, or replayed out of
   // order after a reconnect). The durable audit log is the source of truth;
   // the live buffer only fills in events that haven't landed there yet.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the loaders are the trigger targets; only a new execution id re-fetches
   useEffect(() => {
     if (effectiveExecutionId === null) return;
     void historicEvents.load(effectiveExecutionId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    void debugTraceState.load(effectiveExecutionId);
   }, [effectiveExecutionId]);
 
   // Re-fetch the durable log for a still-live execution once it completes, so
@@ -243,6 +332,7 @@ export function useExecutionScoping({
       ?.status;
   }, [effectiveExecutionId, pickerItems]);
   const prevStatusRef = useRef<string | undefined>(undefined);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-fetch only on the running -> finished transition, not when the loaders change
   useEffect(() => {
     if (
       effectiveExecutionId !== null &&
@@ -250,9 +340,11 @@ export function useExecutionScoping({
       effectiveStatus !== "running"
     ) {
       void historicEvents.load(effectiveExecutionId, true);
+      // The trace only gains node detail as nodes complete — a run fetched
+      // while running has an incomplete (or absent) error record.
+      void debugTraceState.load(effectiveExecutionId, true);
     }
     prevStatusRef.current = effectiveStatus;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [effectiveExecutionId, effectiveStatus]);
 
   // Events scoped to the execution currently shown in the graph: the durable
@@ -301,6 +393,10 @@ export function useExecutionScoping({
     liveExecutions,
     pickerItems,
     displayEvents,
+    debugTrace:
+      debugTraceState.executionId === effectiveExecutionId
+        ? debugTraceState.trace
+        : null,
     effectiveExecutionId,
     following,
     selectedExecutionId,

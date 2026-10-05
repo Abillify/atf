@@ -1427,6 +1427,124 @@ function ToolCallEntry({ tc }: { tc: NodeToolCall }) {
 }
 
 // ---------------------------------------------------------------------------
+// Error recording (debug-trace backed)
+// ---------------------------------------------------------------------------
+
+const DIAG_LEVEL_CLASS: Record<string, string> = {
+  info: "text-sky-600 dark:text-sky-400",
+  warn: "text-amber-600 dark:text-amber-400",
+  error: "text-red-600 dark:text-red-400",
+};
+
+/**
+ * Full error recording for one node. The monitoring event stream only
+ * carries a bare `error_message`; when the execution's debug trace is still
+ * in the runtime's in-memory buffer, the node additionally carries the
+ * machine-readable error type, structured error details, the in-node
+ * diagnostics timeline (retries, fallbacks, tool errors), and — for a failed
+ * synthetic tool node — the failing call's full result payload. Everything
+ * the trace did not provide simply is not rendered, so an evicted trace
+ * degrades to the plain message exactly as before.
+ */
+function ErrorRecording({ state }: { state: NodeState }) {
+  const hasError =
+    state.error_message !== undefined ||
+    state.error_type !== undefined ||
+    state.error_details !== undefined ||
+    state.tool_error_result !== undefined;
+  const diagnostics = state.diagnostics ?? [];
+  if (!hasError && diagnostics.length === 0) return null;
+
+  return (
+    <>
+      {hasError && (
+        <section
+          className="border border-red-200 dark:border-red-800 rounded-lg overflow-hidden"
+          data-testid="node-error-recording"
+        >
+          <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30 space-y-2">
+            <div className="flex items-center gap-2">
+              <h4 className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide">
+                Error
+              </h4>
+              {state.error_type && (
+                <span className="rounded bg-red-600/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-red-700 dark:text-red-300">
+                  {state.error_type}
+                </span>
+              )}
+            </div>
+            {state.error_message && (
+              <pre className="text-xs text-red-700 dark:text-red-300 break-words whitespace-pre-wrap">
+                {state.error_message}
+              </pre>
+            )}
+            {state.tool_error_result !== undefined && (
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-red-600/80 dark:text-red-400/80">
+                  Tool result
+                </div>
+                <div className="mt-1 max-h-48 overflow-auto rounded border border-red-200 dark:border-red-800 bg-card p-2 font-mono text-[11px] text-foreground">
+                  <JsonTree data={state.tool_error_result} maxDepth={6} />
+                </div>
+              </div>
+            )}
+            {state.error_details !== undefined && (
+              <div>
+                <div className="text-[10px] font-semibold uppercase tracking-wide text-red-600/80 dark:text-red-400/80">
+                  Details
+                </div>
+                <div className="mt-1 max-h-48 overflow-auto rounded border border-red-200 dark:border-red-800 bg-card p-2 font-mono text-[11px] text-foreground">
+                  <JsonTree data={state.error_details} maxDepth={6} />
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
+      {diagnostics.length > 0 && (
+        <AccordionSection
+          title={`Diagnostics (${diagnostics.length})`}
+          defaultOpen={state.status === "error"}
+        >
+          <ol className="space-y-1.5" data-testid="node-diagnostics">
+            {diagnostics.map((d, i) => (
+              <li
+                // biome-ignore lint/suspicious/noArrayIndexKey: diagnostics have no id and may repeat at/code; the list is append-only
+                key={`${d.at}-${d.code}-${i}`}
+                className="rounded border border-border bg-muted/50 px-2 py-1.5"
+              >
+                <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+                  <span
+                    className={`font-mono text-[10px] font-bold uppercase ${DIAG_LEVEL_CLASS[d.level] ?? DIAG_LEVEL_CLASS.info}`}
+                  >
+                    {d.level}
+                  </span>
+                  <span className="font-mono text-xs font-semibold text-foreground">
+                    {d.code}
+                  </span>
+                  <span className="ml-auto text-[10px] text-muted-foreground">
+                    {d.at ? new Date(d.at).toLocaleTimeString() : ""}
+                  </span>
+                </div>
+                <div className="mt-0.5 text-xs text-foreground break-words whitespace-pre-wrap">
+                  {d.message}
+                </div>
+                {d.details !== undefined &&
+                  Object.keys(d.details).length > 0 && (
+                    <div className="mt-1 max-h-40 overflow-auto rounded border border-border bg-card p-1.5 font-mono text-[10px] text-foreground">
+                      <JsonTree data={d.details} maxDepth={5} />
+                    </div>
+                  )}
+              </li>
+            ))}
+          </ol>
+        </AccordionSection>
+      )}
+    </>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Main panel
 // ---------------------------------------------------------------------------
 
@@ -1472,9 +1590,17 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
           data={[
             ["Start", fmt(state.start_time)],
             ["End", fmt(state.end_time)],
-            ["Latency", state.latency_ms != null ? `${state.latency_ms} ms` : "—"],
+            [
+              "Latency",
+              state.latency_ms != null ? `${state.latency_ms} ms` : "—",
+            ],
             ...(state.sequence != null
-              ? [["Sequence", `#${state.sequence}`] as [string, React.ReactNode]]
+              ? [
+                  ["Sequence", `#${state.sequence}`] as [
+                    string,
+                    React.ReactNode,
+                  ],
+                ]
               : []),
           ]}
         />
@@ -1489,19 +1615,50 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
           <KvGrid
             data={[
               ...(state.model
-                ? [["Model", <span key="m" className="font-mono">{state.model}</span>] as [string, React.ReactNode]]
+                ? [
+                    [
+                      "Model",
+                      <span key="m" className="font-mono">
+                        {state.model}
+                      </span>,
+                    ] as [string, React.ReactNode],
+                  ]
                 : []),
               ...(state.input_tokens != null
-                ? [["Input tokens", state.input_tokens.toLocaleString()] as [string, React.ReactNode]]
+                ? [
+                    ["Input tokens", state.input_tokens.toLocaleString()] as [
+                      string,
+                      React.ReactNode,
+                    ],
+                  ]
                 : []),
               ...(state.output_tokens != null
-                ? [["Output tokens", state.output_tokens.toLocaleString()] as [string, React.ReactNode]]
+                ? [
+                    ["Output tokens", state.output_tokens.toLocaleString()] as [
+                      string,
+                      React.ReactNode,
+                    ],
+                  ]
                 : []),
               ...(state.input_tokens != null && state.output_tokens != null
-                ? [["Total tokens", (state.input_tokens + state.output_tokens).toLocaleString()] as [string, React.ReactNode]]
+                ? [
+                    [
+                      "Total tokens",
+                      (
+                        state.input_tokens + state.output_tokens
+                      ).toLocaleString(),
+                    ] as [string, React.ReactNode],
+                  ]
                 : []),
               ...(state.cost != null
-                ? [["Est. cost", <span key="c" className="font-semibold text-emerald-600">{formatCost(state.cost)}</span>] as [string, React.ReactNode]]
+                ? [
+                    [
+                      "Est. cost",
+                      <span key="c" className="font-semibold text-emerald-600">
+                        {formatCost(state.cost)}
+                      </span>,
+                    ] as [string, React.ReactNode],
+                  ]
                 : []),
             ]}
           />
@@ -1512,9 +1669,7 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
       {(state.user_name != null || state.user_prompt != null) && (
         <AccordionSection title="User">
           <div className="space-y-1">
-            {state.user_name && (
-              <KvGrid data={[["Name", state.user_name]]} />
-            )}
+            {state.user_name && <KvGrid data={[["Name", state.user_name]]} />}
             {state.user_prompt && (
               <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted p-2 text-xs">
                 {state.user_prompt}
@@ -1531,9 +1686,7 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
       {state.tool_calls &&
         state.tool_calls.length > 0 &&
         state.nodeType !== "retrieval" && (
-          <AccordionSection
-            title={`Tool Calls (${state.tool_calls.length})`}
-          >
+          <AccordionSection title={`Tool Calls (${state.tool_calls.length})`}>
             <div className="space-y-2">
               {state.tool_calls.map((tc, i) => (
                 <ToolCallEntry key={tc.id ?? i} tc={tc} />
@@ -1542,19 +1695,8 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
           </AccordionSection>
         )}
 
-      {/* Error */}
-      {state.error_message && (
-        <section className="border border-red-200 dark:border-red-800 rounded-lg overflow-hidden">
-          <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30">
-            <h4 className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide">
-              Error
-            </h4>
-            <pre className="mt-1 text-xs text-red-700 dark:text-red-300 break-words whitespace-pre-wrap">
-              {state.error_message}
-            </pre>
-          </div>
-        </section>
-      )}
+      {/* Error — full recording (type, details, tool result, diagnostics) */}
+      <ErrorRecording state={state} />
     </div>
   );
 }
@@ -1648,9 +1790,17 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
             data={[
               ["Start", fmt(state.start_time)],
               ["End", fmt(state.end_time)],
-              ["Latency", state.latency_ms != null ? `${state.latency_ms} ms` : "—"],
+              [
+                "Latency",
+                state.latency_ms != null ? `${state.latency_ms} ms` : "—",
+              ],
               ...(state.sequence != null
-                ? [["Sequence", `#${state.sequence}`] as [string, React.ReactNode]]
+                ? [
+                    ["Sequence", `#${state.sequence}`] as [
+                      string,
+                      React.ReactNode,
+                    ],
+                  ]
                 : []),
             ]}
           />
@@ -1665,19 +1815,53 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
             <KvGrid
               data={[
                 ...(state.model
-                  ? [["Model", <span key="m" className="font-mono">{state.model}</span>] as [string, React.ReactNode]]
+                  ? [
+                      [
+                        "Model",
+                        <span key="m" className="font-mono">
+                          {state.model}
+                        </span>,
+                      ] as [string, React.ReactNode],
+                    ]
                   : []),
                 ...(state.input_tokens != null
-                  ? [["Input tokens", state.input_tokens.toLocaleString()] as [string, React.ReactNode]]
+                  ? [
+                      ["Input tokens", state.input_tokens.toLocaleString()] as [
+                        string,
+                        React.ReactNode,
+                      ],
+                    ]
                   : []),
                 ...(state.output_tokens != null
-                  ? [["Output tokens", state.output_tokens.toLocaleString()] as [string, React.ReactNode]]
+                  ? [
+                      [
+                        "Output tokens",
+                        state.output_tokens.toLocaleString(),
+                      ] as [string, React.ReactNode],
+                    ]
                   : []),
                 ...(state.input_tokens != null && state.output_tokens != null
-                  ? [["Total tokens", (state.input_tokens + state.output_tokens).toLocaleString()] as [string, React.ReactNode]]
+                  ? [
+                      [
+                        "Total tokens",
+                        (
+                          state.input_tokens + state.output_tokens
+                        ).toLocaleString(),
+                      ] as [string, React.ReactNode],
+                    ]
                   : []),
                 ...(state.cost != null
-                  ? [["Est. cost", <span key="c" className="font-semibold text-emerald-600">{formatCost(state.cost)}</span>] as [string, React.ReactNode]]
+                  ? [
+                      [
+                        "Est. cost",
+                        <span
+                          key="c"
+                          className="font-semibold text-emerald-600"
+                        >
+                          {formatCost(state.cost)}
+                        </span>,
+                      ] as [string, React.ReactNode],
+                    ]
                   : []),
               ]}
             />
@@ -1688,9 +1872,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
         {(state.user_name != null || state.user_prompt != null) && (
           <AccordionSection title="User">
             <div className="space-y-1">
-              {state.user_name && (
-                <KvGrid data={[["Name", state.user_name]]} />
-              )}
+              {state.user_name && <KvGrid data={[["Name", state.user_name]]} />}
               {state.user_prompt && (
                 <pre className="mt-1 max-h-24 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted p-2 text-xs">
                   {state.user_prompt}
@@ -1707,9 +1889,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
         {state.tool_calls &&
           state.tool_calls.length > 0 &&
           state.nodeType !== "retrieval" && (
-            <AccordionSection
-              title={`Tool Calls (${state.tool_calls.length})`}
-            >
+            <AccordionSection title={`Tool Calls (${state.tool_calls.length})`}>
               <div className="space-y-2">
                 {state.tool_calls.map((tc, i) => (
                   <ToolCallEntry key={tc.id ?? i} tc={tc} />
@@ -1718,19 +1898,8 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
             </AccordionSection>
           )}
 
-        {/* Error */}
-        {state.error_message && (
-          <section className="border border-red-200 dark:border-red-800 rounded-lg overflow-hidden">
-            <div className="px-3 py-2 bg-red-50 dark:bg-red-900/30">
-              <h4 className="text-xs font-semibold text-red-600 dark:text-red-400 uppercase tracking-wide">
-                Error
-              </h4>
-              <pre className="mt-1 text-xs text-red-700 dark:text-red-300 break-words whitespace-pre-wrap">
-                {state.error_message}
-              </pre>
-            </div>
-          </section>
-        )}
+        {/* Error — full recording (type, details, tool result, diagnostics) */}
+        <ErrorRecording state={state} />
       </div>
     </div>
   );

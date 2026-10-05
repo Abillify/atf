@@ -2,13 +2,14 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
   Eye,
   FileJson,
+  Filter,
   Loader2,
   Play,
   ScrollText,
@@ -17,6 +18,7 @@ import {
 import type { PersistedExecution } from "../types/history";
 import { withCurrency } from "../lib/currency";
 import { FlowMultiSelect } from "./FlowMultiSelect";
+import { UserSelectFilter } from "./UserSelectFilter";
 import {
   Badge,
   Button,
@@ -206,8 +208,65 @@ function formatCost(cost: number): string {
   return withCurrency(bare);
 }
 
+/**
+ * Aggregated figures shown in a thread's group header row: flow and user
+ * (identical across a conversation's requests — shown only when they truly
+ * are), summed runtime and cost, an error-preferring status (error if any
+ * request failed, otherwise the newest request's status) and the start date
+ * of the oldest request.
+ */
+function threadSummary(requests: PersistedExecution[]): {
+  flow: string | null;
+  user: string | null;
+  runtime: number | null;
+  cost: number | null;
+  status: PersistedExecution["status"];
+  startedAt: number | null;
+} {
+  const sameOr = (values: Array<string | null>): string | null => {
+    const first = values[0] ?? null;
+    return values.every((v) => v === first) ? first : null;
+  };
+  let runtime: number | null = null;
+  let cost: number | null = null;
+  let latest: PersistedExecution | null = null;
+  let oldest = Number.POSITIVE_INFINITY;
+  let hasError = false;
+  for (const r of requests) {
+    if (r.status === "error") hasError = true;
+    const rMs = runtimeMs(r);
+    if (rMs !== null) runtime = (runtime ?? 0) + rMs;
+    if (r.total_cost != null) cost = (cost ?? 0) + r.total_cost;
+    const t = new Date(r.started_at).getTime();
+    if (!Number.isNaN(t)) {
+      if (
+        latest === null ||
+        t >= new Date(latest.started_at).getTime()
+      )
+        latest = r;
+      oldest = Math.min(oldest, t);
+    }
+  }
+  return {
+    flow: sameOr(requests.map((r) => r.flow_id)),
+    user: sameOr(requests.map((r) => r.user_name)),
+    runtime,
+    cost,
+    status: hasError
+      ? "error"
+      : (latest?.status ?? requests[0]?.status ?? "completed"),
+    startedAt: Number.isFinite(oldest) ? oldest : null,
+  };
+}
+
 interface RequestRowProps {
   execution: PersistedExecution;
+  /**
+   * Marks the row as a member of an expanded thread group: a left accent
+   * bar, tinted background and indented id make the group's requests
+   * instantly distinguishable from the plain rows around them.
+   */
+  threadChild?: boolean;
   onViewEvents?: (executionId: string) => void;
   onDownloadDebug?: (executionId: string) => void;
   downloadingId?: string | null;
@@ -231,6 +290,7 @@ const ACTION_BUTTON_VARIANT = "outline" as const;
 /** One execution as a table row (used for single requests and inside threads). */
 function RequestRow({
   execution: e,
+  threadChild = false,
   onViewEvents,
   onDownloadDebug,
   downloadingId,
@@ -249,8 +309,22 @@ function RequestRow({
     onOpenTrace !== undefined ||
     onReplay !== undefined;
   return (
-    <TableRow>
-      <TableCell className="font-mono text-xs text-muted-foreground">
+    <TableRow
+      {...(threadChild
+        ? {
+            "data-testid": "thread-request-row",
+            className: "border-l-2 border-l-primary/60 bg-muted/30",
+          }
+        : {})}
+    >
+      <TableCell
+        className={`font-mono text-xs text-muted-foreground${threadChild ? " pl-7" : ""}`}
+      >
+        {threadChild && (
+          <span aria-hidden="true" className="mr-1 text-muted-foreground/60">
+            └
+          </span>
+        )}
         {e.execution_id.slice(0, 8)}
       </TableCell>
       <TableCell className="text-xs text-muted-foreground">
@@ -259,9 +333,7 @@ function RequestRow({
       <TableCell className="text-xs text-muted-foreground">
         {e.user_name ?? "—"}
       </TableCell>
-      <TableCell className="text-right tabular-nums">
-        {e.node_count}
-      </TableCell>
+      <TableCell className="text-right tabular-nums">{e.node_count}</TableCell>
       <TableCell className="text-right tabular-nums">
         {e.total_latency_ms ?? 0} ms
       </TableCell>
@@ -280,9 +352,7 @@ function RequestRow({
         <Badge variant={b.variant}>{b.label}</Badge>
       </TableCell>
       <TableCell className="text-right text-xs text-muted-foreground">
-        {Number.isNaN(started.getTime())
-          ? "—"
-          : started.toLocaleString()}
+        {Number.isNaN(started.getTime()) ? "—" : started.toLocaleString()}
       </TableCell>
       {hasActions && (
         <TableCell className="text-right">
@@ -322,7 +392,11 @@ function RequestRow({
                 aria-label="Download debug trace as JSON"
               >
                 {downloadingId === e.execution_id ? (
-                  <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                  <Loader2
+                    size={15}
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
                   <FileJson size={15} aria-hidden="true" />
                 )}
@@ -339,7 +413,11 @@ function RequestRow({
                 aria-label="Analyse this run with an LLM post-mortem"
               >
                 {analyzingId === e.execution_id ? (
-                  <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                  <Loader2
+                    size={15}
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
                   <Sparkles size={15} aria-hidden="true" />
                 )}
@@ -356,7 +434,11 @@ function RequestRow({
                 aria-label="Replay this run"
               >
                 {replayingId === e.execution_id ? (
-                  <Loader2 size={15} className="animate-spin" aria-hidden="true" />
+                  <Loader2
+                    size={15}
+                    className="animate-spin"
+                    aria-hidden="true"
+                  />
                 ) : (
                   <Play size={15} aria-hidden="true" />
                 )}
@@ -421,11 +503,32 @@ export function PersistedHistory({
   const canPrev = currentOffset > 0;
   const canNext = currentOffset + size < totalCount;
 
-  const selectClass =
-    "rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground";
   const [collapsedThreads, setCollapsedThreads] = useState<Set<string>>(
     () => new Set(),
   );
+  // The filters live behind a filter icon (like the Live Graph's request
+  // picker) so the header stays compact even with flows + user active.
+  const [filterOpen, setFilterOpen] = useState(false);
+  const filterRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!filterOpen) return;
+    const onPointerDown = (e: MouseEvent): void => {
+      if (!filterRef.current?.contains(e.target as Node)) setFilterOpen(false);
+    };
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key === "Escape") setFilterOpen(false);
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [filterOpen]);
+  const activeFilterCount =
+    includeFlows.length +
+    excludeFlows.length +
+    (userFilter !== undefined && userFilter !== "" ? 1 : 0);
   // The default view (newest first) groups a conversation's requests into a
   // collapsible thread shown chronologically. For any *custom* sort the server
   // already ordered the rows by the chosen column — re-sorting here would
@@ -438,19 +541,24 @@ export function PersistedHistory({
     for (const execution of executions) {
       const stableId =
         execution.conversation_id ?? execution.chat_id ?? execution.session_id;
-      const key = stableId == null
-        ? `execution:${execution.execution_id}`
-        : `thread:${stableId}`;
+      const key =
+        stableId == null
+          ? `execution:${execution.execution_id}`
+          : `thread:${stableId}`;
       const values = grouped.get(key) ?? [];
       values.push(execution);
       grouped.set(key, values);
     }
     const groups = [...grouped.entries()].map(([key, requests]) => ({
       key,
-      label: key.startsWith("thread:") ? key.slice(7) : requests[0]?.execution_id ?? key,
+      label: key.startsWith("thread:")
+        ? key.slice(7)
+        : (requests[0]?.execution_id ?? key),
       requests: defaultSort
         ? [...requests].sort(
-            (a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime(),
+            (a, b) =>
+              new Date(a.started_at).getTime() -
+              new Date(b.started_at).getTime(),
           )
         : requests,
     }));
@@ -463,17 +571,9 @@ export function PersistedHistory({
   }, [executions, defaultSort]);
   // All row actions live in one compact icon column, so the table gains a
   // single extra column whenever any action is wired up.
-  const columnCount =
-    9 +
-    Number(
-      Boolean(
-        onViewEvents ||
-          onDownloadDebug ||
-          onAnalyze ||
-          onOpenTrace ||
-          onReplay,
-      ),
-    );
+  const hasActions = Boolean(
+    onViewEvents || onDownloadDebug || onAnalyze || onOpenTrace || onReplay,
+  );
   const toggleThread = (key: string): void => {
     setCollapsedThreads((current) => {
       const next = new Set(current);
@@ -494,45 +594,63 @@ export function PersistedHistory({
         </h3>
         <div className="flex flex-wrap items-center gap-3">
           {showFilters && (
-            <>
-              {onIncludeFlowsChange && (
-                <FlowMultiSelect
-                  label="Flows einschließen"
-                  options={flowOptions ?? []}
-                  {...(flowNames !== undefined ? { names: flowNames } : {})}
-                  value={includeFlows}
-                  onChange={onIncludeFlowsChange}
-                />
+            <div className="relative" ref={filterRef}>
+              <button
+                type="button"
+                onClick={() => setFilterOpen((open) => !open)}
+                aria-expanded={filterOpen}
+                aria-label="Filter: Flows und User"
+                title="Filter: Flows und User"
+                className={`relative flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
+                  filterOpen || activeFilterCount > 0
+                    ? "border-accent bg-accent/10 text-accent"
+                    : "border-border bg-background text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <Filter size={14} aria-hidden />
+                {activeFilterCount > 0 && (
+                  <span className="absolute -right-1 -top-1 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-accent px-0.5 text-[9px] font-semibold text-accent-foreground">
+                    {activeFilterCount}
+                  </span>
+                )}
+              </button>
+              {filterOpen && (
+                <div className="absolute right-0 z-30 mt-1 flex w-64 flex-col gap-2 rounded-md border border-border bg-card p-2 shadow-lg">
+                  {onIncludeFlowsChange && (
+                    <FlowMultiSelect
+                      label="Flows einschließen"
+                      options={flowOptions ?? []}
+                      {...(flowNames !== undefined ? { names: flowNames } : {})}
+                      value={includeFlows}
+                      onChange={onIncludeFlowsChange}
+                    />
+                  )}
+                  {onExcludeFlowsChange && (
+                    <FlowMultiSelect
+                      label="Flows ausschließen"
+                      options={flowOptions ?? []}
+                      {...(flowNames !== undefined ? { names: flowNames } : {})}
+                      value={excludeFlows}
+                      onChange={onExcludeFlowsChange}
+                    />
+                  )}
+                  {onUserFilterChange && (
+                    <UserSelectFilter
+                      label="User"
+                      options={userOptions ?? []}
+                      value={userFilter ?? ""}
+                      onChange={onUserFilterChange}
+                    />
+                  )}
+                </div>
               )}
-              {onExcludeFlowsChange && (
-                <FlowMultiSelect
-                  label="Flows ausschließen"
-                  options={flowOptions ?? []}
-                  {...(flowNames !== undefined ? { names: flowNames } : {})}
-                  value={excludeFlows}
-                  onChange={onExcludeFlowsChange}
-                />
-              )}
-              {onUserFilterChange && (
-                <label className="flex items-center gap-1 text-xs text-muted-foreground">
-                  User
-                  <select
-                    className={selectClass}
-                    value={userFilter ?? ""}
-                    onChange={(ev) => onUserFilterChange(ev.target.value)}
-                  >
-                    <option value="">All</option>
-                    {(userOptions ?? []).map((u) => (
-                      <option key={u} value={u}>
-                        {u}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              )}
-            </>
+            </div>
           )}
-          {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+          {error && (
+            <span className="text-xs text-red-600 dark:text-red-400">
+              {error}
+            </span>
+          )}
           {onRefresh && (
             <Button variant="secondary" size="sm" onClick={onRefresh}>
               Refresh
@@ -541,128 +659,99 @@ export function PersistedHistory({
         </div>
       </div>
       {isLoading && executions.length === 0 ? (
-        <p className="py-6 text-center text-sm text-muted-foreground">Loading…</p>
+        <p className="py-6 text-center text-sm text-muted-foreground">
+          Loading…
+        </p>
       ) : executions.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
           No executions recorded yet.
         </p>
       ) : (
         <div className="overflow-x-auto">
-        <Table>
-          <TableHead>
-            <TableRow className="uppercase tracking-wide">
-              <TableHeaderCell>Execution</TableHeaderCell>
-              <SortableHeader
-                label="Flow"
-                column="flow_id"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-              />
-              <SortableHeader
-                label="User"
-                column="user_name"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-              />
-              <SortableHeader
-                label="Nodes"
-                column="node_count"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-                align="right"
-              />
-              <SortableHeader
-                label="Latency"
-                column="total_latency_ms"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-                align="right"
-              />
-              <SortableHeader
-                label="Runtime"
-                column="runtime"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-                align="right"
-              />
-              <SortableHeader
-                label="Cost"
-                column="total_cost"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-                align="right"
-              />
-              <TableHeaderCell className="text-center">Status</TableHeaderCell>
-              <SortableHeader
-                label="Started"
-                column="started_at"
-                sortBy={sortBy}
-                sortDir={sortDir}
-                onSortChange={onSortChange}
-                align="right"
-              />
-              {(onViewEvents ||
-                onDownloadDebug ||
-                onAnalyze ||
-                onOpenTrace ||
-                onReplay) && (
-                <TableHeaderCell className="text-right">
-                  Aktionen
+          <Table>
+            <TableHead>
+              <TableRow className="uppercase tracking-wide">
+                <TableHeaderCell>Execution</TableHeaderCell>
+                <SortableHeader
+                  label="Flow"
+                  column="flow_id"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                />
+                <SortableHeader
+                  label="User"
+                  column="user_name"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                />
+                <SortableHeader
+                  label="Nodes"
+                  column="node_count"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Latency"
+                  column="total_latency_ms"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Runtime"
+                  column="runtime"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                  align="right"
+                />
+                <SortableHeader
+                  label="Cost"
+                  column="total_cost"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                  align="right"
+                />
+                <TableHeaderCell className="text-center">
+                  Status
                 </TableHeaderCell>
-              )}
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {threads.map((thread) => {
-              const collapsed = collapsedThreads.has(thread.key);
-              // A single request needs no disclosure row — it renders as a
-              // plain table row; only real multi-request threads get the
-              // collapsible group header.
-              if (thread.requests.length < 2) {
-                const e = thread.requests[0];
-                if (e === undefined) return null;
-                return (
-                  <RequestRow
-                    key={thread.key}
-                    execution={e}
-                    onViewEvents={onViewEvents}
-                    onDownloadDebug={onDownloadDebug}
-                    downloadingId={downloadingId}
-                    onAnalyze={onAnalyze}
-                    analyzingId={analyzingId}
-                    onOpenTrace={onOpenTrace}
-                    onReplay={onReplay}
-                    replayingId={replayingId}
-                  />
-                );
-              }
-              return (
-                <React.Fragment key={thread.key}>
-                  <TableRow className="bg-muted/60">
-                    <TableCell colSpan={columnCount}>
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 text-left text-xs font-medium text-foreground"
-                        onClick={() => toggleThread(thread.key)}
-                        aria-expanded={!collapsed}
-                      >
-                        <span aria-hidden="true">{collapsed ? "▶" : "▼"}</span>
-                        <span className="font-mono">{thread.label}</span>
-                        <span className="text-muted-foreground">
-                          {thread.requests.length} Requests
-                        </span>
-                      </button>
-                    </TableCell>
-                  </TableRow>
-                  {!collapsed && thread.requests.map((e) => (
+                <SortableHeader
+                  label="Started"
+                  column="started_at"
+                  sortBy={sortBy}
+                  sortDir={sortDir}
+                  onSortChange={onSortChange}
+                  align="right"
+                />
+                {(onViewEvents ||
+                  onDownloadDebug ||
+                  onAnalyze ||
+                  onOpenTrace ||
+                  onReplay) && (
+                  <TableHeaderCell className="text-right">
+                    Aktionen
+                  </TableHeaderCell>
+                )}
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {threads.map((thread) => {
+                const collapsed = collapsedThreads.has(thread.key);
+                // A single request needs no disclosure row — it renders as a
+                // plain table row; only real multi-request threads get the
+                // collapsible group header.
+                if (thread.requests.length < 2) {
+                  const e = thread.requests[0];
+                  if (e === undefined) return null;
+                  return (
                     <RequestRow
-                      key={e.execution_id}
+                      key={thread.key}
                       execution={e}
                       onViewEvents={onViewEvents}
                       onDownloadDebug={onDownloadDebug}
@@ -673,12 +762,92 @@ export function PersistedHistory({
                       onReplay={onReplay}
                       replayingId={replayingId}
                     />
-                  ))}
-                </React.Fragment>
-              );
-            })}
-          </TableBody>
-        </Table>
+                  );
+                }
+                const summary = threadSummary(thread.requests);
+                const groupBadge = badge(summary.status);
+                const groupStarted =
+                  summary.startedAt === null
+                    ? null
+                    : new Date(summary.startedAt);
+                return (
+                  <React.Fragment key={thread.key}>
+                    <TableRow
+                      className="bg-muted/60"
+                      data-testid="thread-group-row"
+                    >
+                      <TableCell>
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-2 text-left text-xs font-medium text-foreground"
+                          onClick={() => toggleThread(thread.key)}
+                          aria-expanded={!collapsed}
+                          title={thread.label}
+                        >
+                          <span aria-hidden="true">
+                            {collapsed ? "▶" : "▼"}
+                          </span>
+                          <span className="rounded bg-primary/10 px-1.5 py-0.5 tabular-nums text-foreground">
+                            {thread.requests.length} Requests
+                          </span>
+                        </button>
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {summary.flow ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {summary.user ?? "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        —
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        —
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-muted-foreground">
+                        {summary.runtime === null
+                          ? "—"
+                          : formatDuration(summary.runtime)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums text-emerald-700">
+                        {summary.cost != null && summary.cost > 0
+                          ? formatCost(summary.cost)
+                          : "—"}
+                      </TableCell>
+                      <TableCell className="text-center">
+                        <Badge variant={groupBadge.variant}>
+                          {groupBadge.label}
+                        </Badge>
+                      </TableCell>
+                      <TableCell className="text-right text-xs text-muted-foreground">
+                        {groupStarted === null ||
+                        Number.isNaN(groupStarted.getTime())
+                          ? "—"
+                          : groupStarted.toLocaleString()}
+                      </TableCell>
+                      {hasActions && <TableCell />}
+                    </TableRow>
+                    {!collapsed &&
+                      thread.requests.map((e) => (
+                        <RequestRow
+                          key={e.execution_id}
+                          execution={e}
+                          threadChild
+                          onViewEvents={onViewEvents}
+                          onDownloadDebug={onDownloadDebug}
+                          downloadingId={downloadingId}
+                          onAnalyze={onAnalyze}
+                          analyzingId={analyzingId}
+                          onOpenTrace={onOpenTrace}
+                          onReplay={onReplay}
+                          replayingId={replayingId}
+                        />
+                      ))}
+                  </React.Fragment>
+                );
+              })}
+            </TableBody>
+          </Table>
         </div>
       )}
       {showPager && totalCount > 0 && (

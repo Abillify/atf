@@ -28,6 +28,7 @@ import {
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useMonitoringEvents } from "../../../hooks/useMonitoringEvents";
 import { useHistory } from "../../../hooks/useHistory";
+import { useHistoryFacets } from "../../../hooks/useHistoryFacets";
 import { useApprovals } from "../../../hooks/useApprovals";
 import { useSessionRenew } from "../../../hooks/useSessionRenew";
 import { useFlows } from "../../../hooks/useFlows";
@@ -57,12 +58,23 @@ export default function GraphPage() {
     ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
   });
 
+  // User filter (Live Graph parity with History): applied server-side to the
+  // durable rows via the `user` param; live SSE rows are filtered client-side
+  // in useExecutionScoping.
+  const [userFilter, setUserFilter] = useState("");
+
   const { executions } = useHistory({
     enabled,
     // The request picker is intentionally broader than the paginated history
     // table. Load every run retained by the in-memory backend (500 by default)
     // so older requests do not disappear from the Live Graph sidebar.
     limit: 500,
+    ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
+    ...(userFilter !== "" ? { userName: userFilter } : {}),
+  });
+
+  const { facets } = useHistoryFacets({
+    enabled,
     ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
   });
 
@@ -76,16 +88,25 @@ export default function GraphPage() {
     ...(tokenOpt !== undefined ? { token: tokenOpt } : {}),
   });
 
-  const flowNames = useMemo(() => new Map(flows.map((f) => [f.id, f.name])), [flows]);
+  const flowNames = useMemo(
+    () => new Map(flows.map((f) => [f.id, f.name])),
+    [flows],
+  );
+  const [flowQuery, setFlowQuery] = useState("");
   const [includeFlows, setIncludeFlows] = useState<string[]>([]);
   const [excludeFlows, setExcludeFlows] = useState<string[]>([]);
   const flowOptions = useMemo(
     () =>
-      [...new Set([
-        ...executions.map((execution) => execution.flow_id),
-        ...events.map((event) => event.flow_id),
-      ].filter((flow): flow is string => typeof flow === "string" && flow !== ""))]
-        .sort((a, b) => a.localeCompare(b)),
+      [
+        ...new Set(
+          [
+            ...executions.map((execution) => execution.flow_id),
+            ...events.map((event) => event.flow_id),
+          ].filter(
+            (flow): flow is string => typeof flow === "string" && flow !== "",
+          ),
+        ),
+      ].sort((a, b) => a.localeCompare(b)),
     [executions, events],
   );
 
@@ -94,8 +115,11 @@ export default function GraphPage() {
     events,
     executions,
     token: tokenOpt,
+    flowQuery,
+    flowNames,
     includeFlows,
     excludeFlows,
+    userFilter,
   });
 
   // Flow topology: resolve the FlowDefinition that best matches the displayed run.
@@ -128,7 +152,11 @@ export default function GraphPage() {
       scoping.pickerItems.find((p) => p.executionId === id)?.flowId ??
       scoping.displayEvents.find((e) => e.flow_id)?.flow_id;
     return flowId ? studioRunHref(flowId, id) : null;
-  }, [scoping.effectiveExecutionId, scoping.pickerItems, scoping.displayEvents]);
+  }, [
+    scoping.effectiveExecutionId,
+    scoping.pickerItems,
+    scoping.displayEvents,
+  ]);
 
   // Lifted node selection state — shared between graph and sidebar
   const [selectedNode, setSelectedNode] = useState<NodeState | null>(null);
@@ -151,10 +179,15 @@ export default function GraphPage() {
         items={scoping.pickerItems}
         flowOptions={flowOptions}
         flowNames={flowNames}
+        flowQuery={flowQuery}
+        onFlowQueryChange={setFlowQuery}
         includeFlows={includeFlows}
         excludeFlows={excludeFlows}
         onIncludeFlowsChange={setIncludeFlows}
         onExcludeFlowsChange={setExcludeFlows}
+        userOptions={facets.users}
+        userFilter={userFilter}
+        onUserFilterChange={setUserFilter}
         selectedId={scoping.selectedExecutionId}
         following={scoping.following}
         onSelect={scoping.handleSelectExecution}
@@ -172,10 +205,18 @@ export default function GraphPage() {
               isConnected ? "bg-green-500" : "bg-red-400"
             }`}
           />
-          <span className={isConnected ? "text-green-600" : "text-red-600 dark:text-red-400"}>
+          <span
+            className={
+              isConnected ? "text-green-600" : "text-red-600 dark:text-red-400"
+            }
+          >
             {isConnected ? "Connected" : "Disconnected"}
           </span>
-          {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+          {error && (
+            <span className="text-xs text-red-600 dark:text-red-400">
+              {error}
+            </span>
+          )}
           {studioHref !== null && (
             <Link
               href={studioHref}
@@ -205,6 +246,7 @@ export default function GraphPage() {
               resolvedApprovals={graphApprovals.resolved}
               onNodeSelect={handleNodeSelect}
               selectedNodeExternal={selectedNode}
+              debugTrace={scoping.debugTrace}
             />
           </div>
         )}
@@ -254,7 +296,8 @@ export default function GraphPage() {
                       aria-hidden
                     />
                     <span className="capitalize">
-                      {nodeTypeLabel(selectedNode.nodeType)} · {selectedNode.status}
+                      {nodeTypeLabel(selectedNode.nodeType)} ·{" "}
+                      {selectedNode.status}
                     </span>
                   </div>
                 </div>

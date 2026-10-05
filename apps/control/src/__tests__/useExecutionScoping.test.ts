@@ -310,3 +310,290 @@ describe("useExecutionScoping — persisted + live event merge", () => {
     expect(mockLoad).toHaveBeenCalledWith("exec-a");
   });
 });
+
+// ---------------------------------------------------------------------------
+// Free-text keyword filter (flowQuery)
+// ---------------------------------------------------------------------------
+
+describe("useExecutionScoping — keyword filter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHistoric = { executionId: null, events: [] };
+    window.history.replaceState(null, "", "/graph");
+  });
+
+  function makeRichEvent(
+    executionId: string,
+    nodeId: string,
+    extra: Partial<NodeExecutionEvent>,
+  ): NodeExecutionEvent {
+    return { ...makeEvent(executionId, nodeId), ...extra };
+  }
+
+  const events: NodeExecutionEvent[] = [
+    makeRichEvent("exec-alpha", "n1", {
+      flow_id: "route-auto",
+      user_name: "anonymous",
+      user_prompt: "Was ist 2+2?",
+    }),
+    makeRichEvent("exec-beta", "n1", {
+      flow_id: "route-flash",
+      user_name: "jdoe",
+      user_prompt: "Untersuche die Meldung des Kunden.",
+    }),
+  ];
+
+  function idsFor(query: string): string[] {
+    const { result } = renderHook(() =>
+      useExecutionScoping({ events, executions: NO_EXECUTIONS, flowQuery: query }),
+    );
+    return result.current.pickerItems.map((p) => p.executionId);
+  }
+
+  test("matches the user prompt case-insensitively", () => {
+    expect(idsFor("unt")).toEqual(["exec-beta"]);
+    expect(idsFor("UNTERSUCHE")).toEqual(["exec-beta"]);
+  });
+
+  test("matches the flow id and the flow display name", () => {
+    expect(idsFor("flash")).toEqual(["exec-beta"]);
+    expect(idsFor("auto")).toEqual(["exec-alpha"]);
+  });
+
+  test("matches the user name", () => {
+    expect(idsFor("jdoe")).toEqual(["exec-beta"]);
+  });
+
+  test("matches the execution (request) id", () => {
+    expect(idsFor("exec-alpha")).toEqual(["exec-alpha"]);
+    // Partial id match works too (prefix of one, substring of none other).
+    expect(idsFor("alpha")).toEqual(["exec-alpha"]);
+  });
+
+  test("empty query keeps every row", () => {
+    expect(idsFor("")).toHaveLength(2);
+    expect(idsFor("   ")).toHaveLength(2);
+  });
+
+  test("non-matching query hides every row", () => {
+    expect(idsFor("zzzz")).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// User filter (Live Graph parity with History)
+// ---------------------------------------------------------------------------
+
+describe("useExecutionScoping — user filter", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHistoric = { executionId: null, events: [] };
+    window.history.replaceState(null, "", "/graph");
+  });
+
+  function makeRichEvent(
+    executionId: string,
+    nodeId: string,
+    extra: Partial<NodeExecutionEvent>,
+  ): NodeExecutionEvent {
+    return { ...makeEvent(executionId, nodeId), ...extra };
+  }
+
+  const events: NodeExecutionEvent[] = [
+    makeRichEvent("exec-alpha", "n1", {
+      flow_id: "route-auto",
+      user_name: "Example User",
+    }),
+    makeRichEvent("exec-beta", "n1", {
+      flow_id: "route-flash",
+      user_name: "Second User",
+    }),
+  ];
+
+  function idsFor(userFilter: string): string[] {
+    const { result } = renderHook(() =>
+      useExecutionScoping({ events, executions: NO_EXECUTIONS, userFilter }),
+    );
+    return result.current.pickerItems.map((p) => p.executionId);
+  }
+
+  test("empty user filter keeps every row", () => {
+    expect(idsFor("")).toHaveLength(2);
+    expect(idsFor("   ")).toHaveLength(2);
+  });
+
+  test("selects only rows of the chosen user", () => {
+    expect(idsFor("Example User")).toEqual(["exec-alpha"]);
+    expect(idsFor("Second User")).toEqual(["exec-beta"]);
+  });
+
+  test("matching is case-insensitive and trims whitespace", () => {
+    expect(idsFor("example user")).toEqual(["exec-alpha"]);
+    expect(idsFor("  EXAMPLE USER  ")).toEqual(["exec-alpha"]);
+  });
+
+  test("unknown user hides every row", () => {
+    expect(idsFor("Niemand Hier")).toEqual([]);
+  });
+
+  test("rows whose user is not yet known are hidden while filtering", () => {
+    const eventsNoUser: NodeExecutionEvent[] = [
+      makeEvent("exec-anon", "n1"),
+      makeRichEvent("exec-known", "n1", { user_name: "jdoe" }),
+    ];
+    const { result } = renderHook(() =>
+      useExecutionScoping({
+        events: eventsNoUser,
+        executions: NO_EXECUTIONS,
+        userFilter: "jdoe",
+      }),
+    );
+    expect(result.current.pickerItems.map((p) => p.executionId)).toEqual([
+      "exec-known",
+    ]);
+  });
+
+  test("durable rows are filtered by user too", () => {
+    const executions: PersistedExecution[] = [
+      {
+        execution_id: "hist-1",
+        flow_id: "route-auto",
+        tenant_id: null,
+        status: "completed",
+        node_count: 1,
+        error_count: 0,
+        total_latency_ms: 10,
+        total_cost: null,
+        started_at: new Date(1_700_000_002_000).toISOString(),
+        finished_at: null,
+        user_name: "Example User",
+        user_prompt: null,
+      },
+      {
+        execution_id: "hist-2",
+        flow_id: "route-flash",
+        tenant_id: null,
+        status: "completed",
+        node_count: 1,
+        error_count: 0,
+        total_latency_ms: 10,
+        total_cost: null,
+        started_at: new Date(1_700_000_001_000).toISOString(),
+        finished_at: null,
+        user_name: "Second User",
+        user_prompt: null,
+      },
+    ];
+    const { result } = renderHook(() =>
+      useExecutionScoping({
+        events: [],
+        executions,
+        userFilter: "second user",
+      }),
+    );
+    expect(result.current.pickerItems.map((p) => p.executionId)).toEqual([
+      "hist-2",
+    ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Durable backfill of identity fields on live rows
+// ---------------------------------------------------------------------------
+
+describe("useExecutionScoping — live row identity backfill", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockHistoric = { executionId: null, events: [] };
+    window.history.replaceState(null, "", "/graph");
+  });
+
+  function makePersisted(
+    executionId: string,
+    extra: Partial<PersistedExecution> = {},
+  ): PersistedExecution {
+    return {
+      execution_id: executionId,
+      flow_id: "route-flash",
+      tenant_id: null,
+      status: "running",
+      node_count: 3,
+      error_count: 0,
+      total_latency_ms: null,
+      total_cost: null,
+      started_at: new Date(1_700_000_000_000).toISOString(),
+      finished_at: null,
+      user_name: "jdoe",
+      user_prompt: "Untersuche die Meldung des Kunden.",
+      ...extra,
+    };
+  }
+
+  function rowFor(
+    events: NodeExecutionEvent[],
+    executions: PersistedExecution[],
+  ) {
+    const { result } = renderHook(() =>
+      useExecutionScoping({ events, executions }),
+    );
+    return result.current.pickerItems.find((p) => p.executionId === "exec-a");
+  }
+
+  test("live row built only from tool events gets user/prompt/flow from history", () => {
+    // Simulates joining a run in progress: the live buffer only holds a
+    // synthetic tool-node event without any identity fields.
+    const events: NodeExecutionEvent[] = [makeEvent("exec-a", "n1::tool::t1")];
+    const row = rowFor(events, [makePersisted("exec-a")]);
+    expect(row?.live).toBe(true);
+    expect(row?.user).toBe("jdoe");
+    expect(row?.prompt).toBe("Untersuche die Meldung des Kunden.");
+    expect(row?.flowId).toBe("route-flash");
+  });
+
+  test("live identity fields win over the durable row", () => {
+    const events: NodeExecutionEvent[] = [
+      {
+        ...makeEvent("exec-a", "n1"),
+        user_name: "live-user",
+        user_prompt: "Live-Prompt",
+        flow_id: "route-auto",
+      },
+    ];
+    const row = rowFor(events, [makePersisted("exec-a")]);
+    expect(row?.user).toBe("live-user");
+    expect(row?.prompt).toBe("Live-Prompt");
+    expect(row?.flowId).toBe("route-auto");
+  });
+
+  test("live row without a durable counterpart stays as-is", () => {
+    const events: NodeExecutionEvent[] = [makeEvent("exec-a", "n1")];
+    const row = rowFor(events, NO_EXECUTIONS);
+    expect(row?.live).toBe(true);
+    expect(row?.user).toBeUndefined();
+    expect(row?.prompt).toBeUndefined();
+  });
+
+  test("backfilled identity fields participate in the keyword filter", () => {
+    const events: NodeExecutionEvent[] = [makeEvent("exec-a", "n1::tool::t1")];
+    const { result } = renderHook(() =>
+      useExecutionScoping({
+        events,
+        executions: [makePersisted("exec-a")],
+        flowQuery: "untersuche",
+      }),
+    );
+    expect(result.current.pickerItems.map((p) => p.executionId)).toEqual([
+      "exec-a",
+    ]);
+  });
+
+  test("backfill never duplicates the row (durable row stays hidden)", () => {
+    const events: NodeExecutionEvent[] = [makeEvent("exec-a", "n1")];
+    const { result } = renderHook(() =>
+      useExecutionScoping({ events, executions: [makePersisted("exec-a")] }),
+    );
+    expect(
+      result.current.pickerItems.filter((p) => p.executionId === "exec-a"),
+    ).toHaveLength(1);
+  });
+});
