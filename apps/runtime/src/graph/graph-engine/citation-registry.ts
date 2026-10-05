@@ -42,6 +42,19 @@ export class CitationRegistry {
     return this.citationIndexByKey.size;
   }
 
+  /**
+   * The source registered under the global citation number `index`, or
+   * `undefined` when no source carries that number in this stream. Used by
+   * the opt-in post-answer sources check to complete `## Quellen` only from
+   * sources that were actually registered.
+   */
+  citationAt = (index: number): Citation | undefined => {
+    for (const [key, registeredIndex] of this.citationIndexByKey) {
+      if (registeredIndex === index) return this.citationByKey.get(key);
+    }
+    return undefined;
+  };
+
   registerCitations = async (
     entries: { key: string; citation: Citation }[],
   ): Promise<number[]> => {

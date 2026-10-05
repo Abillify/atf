@@ -91,6 +91,7 @@ import type {
   DebugStreamError,
   DebugNodeDiagnostic,
   DebugNodeAttemptContext,
+  DebugNodeTrace,
   DebugHistoryReconciliation,
 } from "../../types/debug-trace.js";
 import { reconcileThreadedHistory } from "./history-contract.js";
@@ -135,6 +136,39 @@ import {
 } from "./compile.js";
 import { SseEmitter } from "./sse-emitter.js";
 import { CitationRegistry } from "./citation-registry.js";
+
+// ---------------------------------------------------------------------------
+// Provider-attempt summary for the debug trace
+// ---------------------------------------------------------------------------
+
+/**
+ * Summarises the `llm_provider_attempt_completed` diagnostics of one node
+ * attempt into the trace field `provider_attempts`. The node-level `attempt`
+ * counts GRAPH attempts only, so without this an LLM node that needed two
+ * provider calls looked like a single clean call in the trace. Returns
+ * `undefined` when no provider attempt was recorded (non-LLM nodes, cache
+ * hits), so the field stays absent.
+ */
+export function providerAttemptsSummary(
+  diagnostics: readonly DebugNodeDiagnostic[] | undefined,
+): { provider_attempts: NonNullable<DebugNodeTrace["provider_attempts"]> } | undefined {
+  const completed = (diagnostics ?? []).filter(
+    (d) => d.code === "llm_provider_attempt_completed",
+  );
+  const last = completed.at(-1);
+  if (last === undefined) return undefined;
+  const failed = completed.filter((d) => d.details?.outcome !== "ok").length;
+  const lastAttempt = last.details?.attempt;
+  return {
+    provider_attempts: {
+      total: completed.length,
+      failed,
+      final_attempt:
+        typeof lastAttempt === "number" ? lastAttempt : completed.length,
+      final_outcome: last.details?.outcome === "ok" ? "ok" : "error",
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Tool-reported usage/cost extraction
@@ -724,7 +758,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       await emitReasoningStep("🧭 Recherche gestartet\n");
     }
     const citations = new CitationRegistry(onChunk, model);
-    const { registerCitations, onCitations } = citations;
+    const { registerCitations, onCitations, citationAt } = citations;
 
     // Tracks in-flight tool calls so onToolResult can build the <details> block
     const _pendingToolCallIds = new Map<
@@ -2053,6 +2087,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
           ...(nodeAttempts.has(nodeId)
             ? { attempt: nodeAttempts.get(nodeId) }
             : {}),
+          ...(providerAttemptsSummary(nodeDiagnostics.get(nodeId)) ?? {}),
           ...(nodeAttemptContexts.has(nodeId)
             ? {
                 attempt_trigger: nodeAttemptContexts.get(nodeId)?.trigger,
@@ -2264,6 +2299,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       onToolError,
       onCitations,
       registerCitations,
+      lookupCitation: citationAt,
       onNodeStart,
       onNodeEnd: emitNodeEnd,
       onNodeIo: (nodeId, io) => {

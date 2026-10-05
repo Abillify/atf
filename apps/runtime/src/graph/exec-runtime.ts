@@ -40,6 +40,7 @@ import type {
 import type { AppConfig } from "../config/index.js";
 import {
   renderTemplateNamespaced,
+  TEMPLATE_PLACEHOLDER_RE,
   type TurnSnapshot,
 } from "./classification-access.js";
 import type { McpWrapperService } from "../mcp/mcp-wrapper.js";
@@ -487,6 +488,12 @@ export interface ExecRuntime {
   registerCitations?: (
     entries: { key: string; citation: Citation }[],
   ) => Promise<number[]>;
+  /**
+   * Looks up the source registered under the global citation number `[n]` in
+   * this execution (see {@link registerCitations}); `undefined` when no source
+   * carries that number or citation streaming is not wired.
+   */
+  lookupCitation?: (index: number) => Citation | undefined;
   /** Optional embedder for RAG retrieval nodes (embeds the query). */
   embedder?: Embedder;
   /** Optional vector store backing RAG retrieval nodes. */
@@ -1289,6 +1296,41 @@ export function resolveContextPlaceholders(
   return renderTemplateNamespaced(template, roots);
 }
 
+/**
+ * Resolves an LLM node's `turnContext` template with the same placeholder
+ * roots as {@link resolveContextPlaceholders} and returns the trimmed text, or
+ * `undefined` when there is nothing worth sending.
+ *
+ * Omission rule: when the template references at least one known-root
+ * placeholder (`context`, `now`, `node`, `turn`) and EVERY such placeholder
+ * resolves to an empty/whitespace value, the whole block is dropped — a static
+ * frame like "Bildkontext: " without its value would only mislead the model.
+ * Each placeholder is resolved individually: an unknown root stays intact (so
+ * it neither counts as referenced nor as empty). A template without any
+ * known-root placeholder is sent as-is when non-empty.
+ */
+export function resolveTurnContext(
+  template: unknown,
+  ctx: RequestContext,
+  namespaces?: { node?: TurnSnapshot; turn?: TurnSnapshot[] },
+  now: Date = new Date(),
+): string | undefined {
+  if (typeof template !== "string" || template.trim() === "") return undefined;
+  let referenced = 0;
+  let nonEmpty = 0;
+  for (const match of template.matchAll(TEMPLATE_PLACEHOLDER_RE)) {
+    const value = resolveContextPlaceholders(match[0], ctx, namespaces, now);
+    if (value === match[0]) continue; // unknown root — left intact
+    referenced++;
+    if ((value ?? "").trim() !== "") nonEmpty++;
+  }
+  if (referenced > 0 && nonEmpty === 0) return undefined;
+  const resolved = (
+    resolveContextPlaceholders(template, ctx, namespaces, now) ?? ""
+  ).trim();
+  return resolved === "" ? undefined : resolved;
+}
+
 /** Timezone the `{{now.*}}` prompt placeholders render in. */
 export const NOW_TIMEZONE = "Europe/Berlin";
 
@@ -1367,16 +1409,36 @@ export function dedupeGuidanceListLines(text: string): string {
 // State readers
 // ---------------------------------------------------------------------------
 
+const ATTACHED_FILES_BLOCK_RE = /<attached_files>[\s\S]*?<\/attached_files>/gi;
+
+/**
+ * Removes Open WebUI `<attached_files>…</attached_files>` blocks from a user
+ * text and collapses the leading/repeated blank lines the removal leaves
+ * behind. Open WebUI stores file attachments as a separate text part listing
+ * file ids and names; used as a retrieval query that markup only adds noise to
+ * embedding/BM25 search (local-model trace 01636a1d). Text without the markup
+ * is returned unchanged.
+ */
+export function stripAttachmentMarkup(text: string): string {
+  if (!/<attached_files>/i.test(text)) return text;
+  return text
+    .replace(ATTACHED_FILES_BLOCK_RE, "")
+    .replace(/\n[ \t]*\n(?:[ \t]*\n)+/g, "\n\n")
+    .replace(/^\s+/, "");
+}
+
 export function lastUserQuery(state: AgentState): string {
   for (const m of state.messages.toReversed()) {
     if (m._getType() === "human") {
       const c = m.content;
-      if (typeof c === "string") return c;
+      if (typeof c === "string") return stripAttachmentMarkup(c).trim();
       if (Array.isArray(c)) {
         return c
           .map((p) => {
             const pp = p as { type?: string; text?: string };
-            return pp.type === "text" ? (pp.text ?? "") : "";
+            return pp.type === "text"
+              ? stripAttachmentMarkup(pp.text ?? "")
+              : "";
           })
           .join(" ")
           .trim();

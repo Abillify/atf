@@ -240,8 +240,28 @@ export interface DebugNodeTrace {
   finished_at: string | null;
   /** Wall-clock duration in milliseconds; null while still running. */
   latency_ms: number | null;
-  /** 1-based execution attempt for this node within the flow run. */
+  /**
+   * 1-based GRAPH execution attempt for this node within the flow run (graph
+   * retries, harness re-delegation). Provider/model retries inside one node
+   * attempt do not increment it — see {@link DebugNodeTrace.provider_attempts}.
+   */
   attempt?: number;
+  /**
+   * Provider/model call attempts made inside THIS node attempt (LLM retries
+   * after an empty, reasoning-only or contract-violating reply, plus fallback
+   * candidates), derived from the `llm_provider_attempt_completed` diagnostics.
+   * Present only when at least one provider attempt was recorded.
+   *   - `total`         — provider attempts made
+   *   - `failed`        — attempts that completed with outcome `error`
+   *   - `final_attempt` — per-candidate attempt number of the last attempt
+   *   - `final_outcome` — outcome of the last attempt
+   */
+  provider_attempts?: {
+    total: number;
+    failed: number;
+    final_attempt: number;
+    final_outcome: "ok" | "error";
+  };
   /** Why this attempt started (graph lifecycle, harness delegation, retry, …). */
   attempt_trigger?: string;
   /** Parent node that initiated the attempt, when delegated. */

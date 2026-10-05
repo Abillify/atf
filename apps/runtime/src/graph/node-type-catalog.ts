@@ -418,6 +418,26 @@ const LLM: NodeTypeDoc = {
         "Replace long document references in tool results with short 4-character handles (e.g. `K3NQ`) that the model reads and quotes; the runtime maps them back to the real references before the tool call and in everything the user sees. Use on tool-loop nodes whose model must re-quote `reference`/`base_ref` arguments — small models truncate long paths. Unknown handles are rejected with the valid list instead of hitting the backend.",
     },
     {
+      key: "turnContext",
+      kind: "text",
+      label: "Turn context",
+      description:
+        "Per-request context appended to the newest user turn (not the system prompt). Supports {{context.*}}, {{now.*}}, {{node.<id>.classification.<field>}} and {{turn[n]...}}. Omitted when every referenced placeholder resolves empty. Use for classifier output such as an image transcription.",
+    },
+    {
+      key: "sourcesCheck",
+      kind: "object",
+      label: "Post-answer sources check",
+      description:
+        "Opt-in deterministic check of the final answer (every switch defaults to off). `completeSection` appends each inline-cited `[n]` that the sources section lacks, built only from the sources registered in this execution, as a trailing stream chunk; it creates the section when missing. Unregistered `[n]` are reported, never invented. `stripRuleMarkers` removes the pseudo marker `[Regel: …]` from answer text that has not been streamed yet (buffered answers, e.g. with `suppressToolPreamble`). Results are reported in the `answer_sources_check` diagnostic.",
+      example: { completeSection: true, heading: "## Quellen", stripRuleMarkers: true },
+      fields: [
+        { key: "completeSection", kind: "boolean", label: "Complete sources section", default: false, description: "Append inline-cited `[n]` missing from the sources section, from registered sources only." },
+        { key: "heading", kind: "text", label: "Sources heading", description: "Markdown heading of the sources section, matched by its text (default `## Quellen`)." },
+        { key: "stripRuleMarkers", kind: "boolean", label: "Remove [Regel: …] markers", default: false, description: "Remove the pseudo marker `[Regel: …]` from not-yet-streamed answer text. Other bracketed content is left untouched." },
+      ],
+    },
+    {
       key: "outputSchema",
       kind: "json",
       label: "Structured output schema",

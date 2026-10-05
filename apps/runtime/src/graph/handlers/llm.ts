@@ -111,6 +111,7 @@ import {
   ensureValidConversationStart,
   ensureTrailingUserTurn,
   resolveContextPlaceholders,
+  resolveTurnContext,
   lastUserQuery,
   messagesHaveAttachments,
   lastUserMessageHasAttachments,
@@ -133,6 +134,18 @@ import {
   type RequireToolUseConfig,
 } from "../require-tool-use.js";
 import { resolveToolSequenceContract } from "../tool-sequence-contract.js";
+import {
+  completeSourcesSection,
+  findRuleMarkers,
+  parseSourcesCheckConfig,
+  stripRuleMarkers,
+} from "../answer-sources-check.js";
+import { answerOnlyToolMode, toolHistoryAsText } from "../answer-only-tools.js";
+import { resolveProviderProtocol } from "../../config/providers.js";
+import {
+  detectTextToolCall,
+  looksLikeTextToolCallPrefix,
+} from "../text-tool-call.js";
 import {
   detectToolLoop,
   hashToolArgs,
@@ -1591,7 +1604,23 @@ export function createLlmNodeHandler(
     // changing a single byte there re-prefills the entire conversation. It is
     // attached to the last user message below instead (see
     // `attachVolatileGuidance`), which keeps the cacheable prefix byte-stable.
-    const volatileGuidance = (instructionsNote + unavailableNote).trim();
+    //
+    // `config.turnContext` joins it for the same reason: per-request context
+    // derived from untrusted input (e.g. a classifier's image transcription)
+    // belongs on the user turn — it keeps the cacheable prefix stable and gives
+    // that text no system authority. Omitted entirely when every placeholder it
+    // references resolves empty (see `resolveTurnContext`).
+    const turnContextText = resolveTurnContext(
+      (node.config as { turnContext?: unknown } | undefined)?.turnContext,
+      state.context,
+      buildClassificationNamespaces(state.turns),
+    );
+    const volatileGuidance = [
+      turnContextText ?? "",
+      (instructionsNote + unavailableNote).trim(),
+    ]
+      .filter((part) => part !== "")
+      .join("\n\n");
 
     // The leading system prompt contains the node's stable instructions plus
     // assistant-owned identity/limits extracted above. Keeping those sections
@@ -2275,6 +2304,20 @@ export function createLlmNodeHandler(
       // dead endpoint cost ~6 s (3 × 3 calls ≈ 18 s before the fallback). The
       // last candidate keeps the SDK default as its final line of resilience.
       if (c < candidates.length - 1) streamParams.maxRetries = 0;
+      // Set once a retry must answer from an interrupted tool loop — from its
+      // recorded tool calls/results or, as a fallback, a result excerpt
+      // (post_tool_answer_missing, text_tool_call_rejected). Such a retry may
+      // only answer: prepareStep offers no tools and the attempt is limited
+      // to a single step. Sticky for this candidate.
+      let finalAnswerOnly = false;
+      // How answer-only rounds keep tools out on this candidate's wire protocol
+      // (strip / declare with NONE / tool history as text). See
+      // answer-only-tools.ts for the per-SDK reasoning.
+      const answerOnlyMode = answerOnlyToolMode(
+        resolveProviderProtocol(candidate.provider),
+      );
+      // Attempt number visible to prepareStep diagnostics (assigned per attempt).
+      let currentAttempt = 0;
       if (aiTools !== undefined && Object.keys(aiTools).length > 0) {
         streamParams.tools = aiTools;
         // A node may raise its tool-step budget above the global default via
@@ -2290,7 +2333,13 @@ export function createLlmNodeHandler(
           nodeMaxToolSteps > 0
             ? Math.floor(nodeMaxToolSteps)
             : runtime.appConfig.maxToolSteps;
-        streamParams.stopWhen = stepCountIs(effectiveMaxToolSteps);
+        // One step beyond the tool budget is reserved for the answer. Stopping
+        // exactly at `maxToolSteps` ended the loop right after the last tool
+        // result (local-model traces 01636a1d / f679dbe6): the model never got a
+        // turn to phrase the answer, `post_tool_answer_missing` fired and the
+        // retry restarted without the gathered evidence. prepareStep below
+        // turns the reserved step into a tool-free final-answer round.
+        streamParams.stopWhen = stepCountIs(effectiveMaxToolSteps + 1);
         const liveActive = activeToolKeys;
         if (liveActive !== undefined) {
           streamParams.activeTools = [...liveActive];
@@ -2399,6 +2448,51 @@ export function createLlmNodeHandler(
             });
             throw new Error("VISION_INPUT_NOT_SUPPORTED");
           }
+          // Final-answer round on the reserved step past the tool budget (see
+          // stopWhen above). No tool can be called, and an explicit instruction
+          // asks for the answer from the results gathered so far. How tools
+          // are kept out depends on the provider (`answerOnlyMode`): OpenAI-
+          // family requests drop the definitions (`toolChoice: "none"` alone
+          // still sends the tool list with @ai-sdk/openai and local models
+          // keep "calling" them as plain text), Google keeps them declared
+          // with mode NONE, and all others get the tool history as text.
+          const toolBudgetExhausted =
+            !finalAnswerOnly &&
+            typeof stepNumber === "number" &&
+            stepNumber >= effectiveMaxToolSteps;
+          if (toolBudgetExhausted) {
+            stepMessages = [
+              ...stepMessages,
+              {
+                role: "user",
+                content:
+                  "The tool budget for this turn is exhausted. Answer the " +
+                  "user now using only the tool results above; cite sources " +
+                  "as instructed and name any evidence gaps. Do not call or " +
+                  "describe further tool calls.",
+              },
+            ];
+            if (stepNumber === effectiveMaxToolSteps) {
+              runtime.onNodeDiagnostic?.(node.id, {
+                level: "info",
+                code: "tool_budget_final_answer_round",
+                message:
+                  "Tool-step budget exhausted; running a final answer round " +
+                  "without tools.",
+                details: {
+                  max_tool_steps: effectiveMaxToolSteps,
+                  attempt: currentAttempt,
+                },
+              });
+            }
+          }
+          const answerOnlyStep = finalAnswerOnly || toolBudgetExhausted;
+          if (answerOnlyStep && answerOnlyMode === "text") {
+            // Runs after sanitization, DLP-effective arguments and the
+            // tool-result budget above, so the text carries exactly what the
+            // structured blocks would have carried.
+            stepMessages = toolHistoryAsText(stepMessages);
+          }
           const effectiveStepMaxTokens = clampMaxOutputTokens(
             stepMessages,
             candidate,
@@ -2409,12 +2503,23 @@ export function createLlmNodeHandler(
             ...(effectiveStepMaxTokens !== undefined
               ? { maxOutputTokens: effectiveStepMaxTokens }
               : {}),
-            ...(liveActive !== undefined
-              ? { activeTools: [...liveActive] }
-              : {}),
-            ...(requireToolUse && firstStep
-              ? { toolChoice: "required" as const }
-              : {}),
+            ...(answerOnlyStep
+              ? answerOnlyMode === "declare-none"
+                ? {
+                    ...(liveActive !== undefined
+                      ? { activeTools: [...liveActive] }
+                      : {}),
+                    toolChoice: "none" as const,
+                  }
+                : { activeTools: [], toolChoice: "none" as const }
+              : {
+                  ...(liveActive !== undefined
+                    ? { activeTools: [...liveActive] }
+                    : {}),
+                  ...(requireToolUse && firstStep
+                    ? { toolChoice: "required" as const }
+                    : {}),
+                }),
           };
         };
         if (clientToolKeys.size > 0) {
@@ -2454,6 +2559,12 @@ export function createLlmNodeHandler(
       });
 
       let retryGuidance: ModelMessage | undefined;
+      // Tool calls/results of an interrupted tool loop (sanitized, budgeted),
+      // replayed after the original prefix so an answer-only retry continues
+      // from the gathered evidence instead of restarting with a truncated
+      // result excerpt. Model-facing only: the successful attempt persists its
+      // final-step response messages exactly as an uninterrupted loop does.
+      let retryContinuation: ModelMessage[] | undefined;
       const omittedHistoricalAssistantIndexes = new Set<number>();
       const messagesForAttempt = (): ModelMessage[] => {
         const retryBaseMessages =
@@ -2464,9 +2575,13 @@ export function createLlmNodeHandler(
                   !omittedHistoricalAssistantIndexes.has(index),
               );
         const attemptMessages =
-          retryGuidance === undefined
+          retryGuidance === undefined && retryContinuation === undefined
             ? retryBaseMessages
-            : [...retryBaseMessages, retryGuidance];
+            : [
+                ...retryBaseMessages,
+                ...(retryContinuation ?? []),
+                ...(retryGuidance !== undefined ? [retryGuidance] : []),
+              ];
         return runtime.appConfig.anthropicPromptCacheEnabled !== false
           ? cacheMode === "anthropic"
             ? applyAnthropicPromptCache(attemptMessages)
@@ -2478,10 +2593,18 @@ export function createLlmNodeHandler(
 
       for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         providerAttemptCount += 1;
-        // Every retry starts from the identical original prefix plus at most one
-        // replacement guidance message. Invalid model output is never appended
-        // cumulatively, preserving provider prompt-cache reuse.
+        currentAttempt = attempt;
+        // Every retry starts from the identical original prefix, optionally
+        // followed by the recorded tool exchange of an interrupted loop, plus
+        // at most one replacement guidance message. Invalid model output is
+        // never appended cumulatively, preserving provider prompt-cache reuse.
         streamParams.messages = messagesForAttempt();
+        if (finalAnswerOnly && streamParams.tools !== undefined) {
+          // Answer-only continuation: one step, no tool calls (prepareStep
+          // applies the provider-specific `answerOnlyMode` for that step).
+          streamParams.stopWhen = stepCountIs(1);
+          if (answerOnlyMode !== "declare-none") streamParams.activeTools = [];
+        }
         const attemptStartedAt = Date.now();
         // Hard cap against the output-token clamp: deterministically shrink the
         // assembled prompt so it fits the usable input budget, BEFORE clamping
@@ -2736,6 +2859,14 @@ export function createLlmNodeHandler(
         let thinkBuf = "";
         let inThink = false;
         let toolPhaseStarted = false;
+        // Per-step lookahead for the non-suppressed live path after the tool
+        // phase began. Re-armed after every tool result/error; holds the next
+        // step's text only while it may still become a text-template tool
+        // call (`looksLikeTextToolCallPrefix`), then streams it live. Without
+        // it a tool call written as text in a later step — e.g. the reserved
+        // final-answer round — reached `content` before the stream-end guard
+        // could reject it. `undefined` = disarmed.
+        let stepLookahead: string | undefined;
         // A tool call itself is not a user-facing completion. Remember the
         // visible-text boundary at the latest result so an empty post-tool
         // model step cannot silently complete the node with a stale preamble.
@@ -2769,6 +2900,14 @@ export function createLlmNodeHandler(
         const suppressToolPreamble =
           (node.config as { suppressToolPreamble?: boolean } | undefined)
             ?.suppressToolPreamble === true;
+        // Opt-in post-answer sources check (default off; see
+        // answer-sources-check.ts). Markers removed from this attempt's
+        // released answer are reported in the `answer_sources_check`
+        // diagnostic.
+        const sourcesCheck = parseSourcesCheckConfig(
+          (node.config as { sourcesCheck?: unknown } | undefined)?.sourcesCheck,
+        );
+        const removedRuleMarkers: string[] = [];
         // Tool-call metadata is emitted immediately by onToolCall. Nodes whose
         // workers are private can suppress the later result detail block while
         // retaining monitoring, duration, cost and error accounting.
@@ -3057,6 +3196,44 @@ export function createLlmNodeHandler(
             requestDeadline,
           );
           const result = streamText(streamParams);
+          // Records this attempt's tool exchange as the continuation of the
+          // next (answer-only) attempt. The trailing text-only assistant turn
+          // is the rejected output and is dropped. Returns false when the
+          // provider response is unavailable or holds no tool exchange.
+          const captureRetryContinuation = async (): Promise<boolean> => {
+            // `responseMessages` accumulates every step of the call; with
+            // ai@7 `result.response.messages` holds only the final step.
+            let providerMessages: unknown;
+            try {
+              providerMessages = await result.responseMessages;
+            } catch {
+              return false;
+            }
+            if (!Array.isArray(providerMessages)) return false;
+            const exchange = [...(providerMessages as ModelMessage[])];
+            while (exchange.length > 0) {
+              const last = exchange[exchange.length - 1];
+              if (last === undefined || last.role !== "assistant") break;
+              const callsTool =
+                Array.isArray(last.content) &&
+                last.content.some(
+                  (part) => (part as { type?: string }).type === "tool-call",
+                );
+              if (callsTool) break;
+              exchange.pop();
+            }
+            if (exchange.length === 0) return false;
+            const modelFacing = applyToolResultBudget(
+              sanitizeToolResultModelMessages(
+                sanitizeToolCallModelMessages(
+                  sanitizeReasoningSentinelModelMessages(exchange),
+                ),
+              ),
+              toolResultBudget,
+            ).messages;
+            retryContinuation = [...(retryContinuation ?? []), ...modelFacing];
+            return true;
+          };
 
           for await (const rawPart of result.fullStream) {
             const part = rawPart as StreamPart;
@@ -3064,7 +3241,10 @@ export function createLlmNodeHandler(
             const generatedChars =
               (finalAnswerContract !== undefined
                 ? finalAnswerBuffer.length
-                : fullText.length + preambleBuf.length + thinkBuf.length) +
+                : fullText.length +
+                  preambleBuf.length +
+                  thinkBuf.length +
+                  (stepLookahead?.length ?? 0)) +
               reasoningText.length;
             let abortAfterPart = false;
             if (
@@ -3084,6 +3264,7 @@ export function createLlmNodeHandler(
               outputAborted = true;
               thinkBuf = "";
               preambleBuf = "";
+              stepLookahead = undefined;
               repAbort.abort(
                 new Error(
                   `LLM output exceeded the ${maxOutputChars}-character ceiling`,
@@ -3133,6 +3314,7 @@ export function createLlmNodeHandler(
                 loopAborted = true;
                 thinkBuf = "";
                 preambleBuf = "";
+                stepLookahead = undefined;
                 runtime.metrics.recordCounter(
                   "aiperator_llm_repetition_aborted_total",
                   { node: node.id, model: candidate.model },
@@ -3196,9 +3378,13 @@ export function createLlmNodeHandler(
                   /* disconnect */
                 }
                 const elapsedMs = Date.now() - preambleStartedAt;
+                // A buffer that is (or may still become) a text-template tool
+                // call must never be resolved as the live answer; the
+                // stream-end guard rejects it (detectTextToolCall).
                 if (
                   !suppressToolPreamble &&
                   !requireToolUse &&
+                  !looksLikeTextToolCallPrefix(preambleBuf) &&
                   (elapsedMs >= PREAMBLE_MAX_MS ||
                     preambleBuf.length >= PREAMBLE_MAX_CHARS ||
                     PREAMBLE_SENTENCE_BOUNDARY_RE.test(preambleBuf))
@@ -3212,6 +3398,20 @@ export function createLlmNodeHandler(
                     /* disconnect */
                   }
                   preambleBuf = "";
+                }
+              } else if (
+                stepLookahead !== undefined &&
+                !inThink &&
+                !delta.startsWith("\x00r")
+              ) {
+                // Non-suppressed step after the tool phase: hold the step's
+                // text while it may still be a text tool call; the stream-end
+                // guard rejects it. Anything else is released at once.
+                stepLookahead += delta;
+                if (!looksLikeTextToolCallPrefix(stepLookahead)) {
+                  const released = stepLookahead;
+                  stepLookahead = undefined;
+                  await routeDelta(released);
                 }
               } else {
                 await routeDelta(delta);
@@ -3243,6 +3443,11 @@ export function createLlmNodeHandler(
                 // for the next step.
                 reasoningText += preambleBuf;
                 preambleBuf = "";
+              }
+              if (stepLookahead !== undefined) {
+                // Held step text followed by a native call was not the answer.
+                reasoningText += stepLookahead;
+                stepLookahead = undefined;
               }
               const id = part.toolCallId ?? crypto.randomUUID();
               const toolName = part.toolName ?? "unknown";
@@ -3314,6 +3519,9 @@ export function createLlmNodeHandler(
               }
               visibleTextLengthAtLastToolResult = fullText.length;
               lastToolResultForRetry = output;
+              // Re-arm the per-step text-tool-call lookahead (non-suppressed
+              // path; the suppressed path buffers every step anyway).
+              if (!suppressToolPreamble) stepLookahead ??= "";
               if (toolRef !== undefined && isSuccessfulToolResult(output)) {
                 successfulToolRefs.push(toolRef);
               }
@@ -3400,6 +3608,7 @@ export function createLlmNodeHandler(
                 isError: true,
                 error: detail,
               };
+              if (!suppressToolPreamble) stepLookahead ??= "";
               try {
                 await runtime.onToolResult(
                   id,
@@ -3521,6 +3730,7 @@ export function createLlmNodeHandler(
               outputAborted = true;
               thinkBuf = "";
               preambleBuf = "";
+              stepLookahead = undefined;
               repAbort.abort(
                 new Error(
                   `LLM output exceeded the ${maxOutputChars}-character ceiling`,
@@ -3547,7 +3757,119 @@ export function createLlmNodeHandler(
             }
           }
 
+          // Step text still held by the per-step lookahead is released unless
+          // it is a text tool call, which stays withheld for the guard below.
+          let heldStepText = stepLookahead ?? "";
+          stepLookahead = undefined;
+          if (
+            heldStepText.length > 0 &&
+            !(hasTools && detectTextToolCall(heldStepText).detected)
+          ) {
+            await routeDelta(heldStepText);
+            heldStepText = "";
+          }
           await flushThinkBuf();
+
+          // Text tool-call guard. A tool call written as template text
+          // (`<tool_call><function=…>` / Hermes JSON) is never an answer: the
+          // local-model responder in trace 01636a1d "answered" with an
+          // unexecuted inspect_image call. Reject it before any release or
+          // success accounting, keep it in the reasoning trail only, and retry
+          // as an answer-only continuation of this attempt's tool exchange.
+          const textToolCall = hasTools
+            ? detectTextToolCall(fullText + preambleBuf + heldStepText)
+            : { detected: false as const };
+          if (textToolCall.detected) {
+            const rejectedChars =
+              fullText.length + preambleBuf.length + heldStepText.length;
+            // `preambleBuf` was already streamed live on the reasoning channel;
+            // text in `fullText` already reached `content` (non-suppressed live
+            // path, e.g. narration before an inline call) and cannot be
+            // retracted. `heldStepText` never left the handler. None of it is
+            // emitted again.
+            reasoningText += fullText + preambleBuf + heldStepText;
+            fullText = "";
+            preambleBuf = "";
+            emittedAny = false;
+            forcedAnswer = true;
+            if (attempt < maxAttempts) {
+              // Answer-only continuation only once there is evidence to answer
+              // from (a recorded tool exchange) or as the last chance before
+              // the final attempt. A text call on the very first step usually
+              // means the provider parser missed a real call; taking all tools
+              // away then forced an answer without any tool evidence.
+              // requireToolUse / toolSequence contracts are judged per attempt
+              // and demand a real tool call, so an answer-only continuation
+              // would always be rejected there.
+              const continued =
+                !requireToolUse && toolPhaseStarted
+                  ? await captureRetryContinuation()
+                  : false;
+              const answerOnly =
+                !requireToolUse &&
+                (continued || attempt === maxAttempts - 1);
+              if (!answerOnly) {
+                // Retry the loop with tools and ask for a native call instead.
+                retryGuidance = {
+                  role: "user",
+                  content:
+                    "Your last reply was a tool call written as plain text, " +
+                    "which is never executed. Call the tool through the " +
+                    "native tool-calling interface, or answer the user " +
+                    "directly in prose.",
+                };
+              } else {
+                retryGuidance = {
+                  role: "user",
+                  content:
+                    "Your last reply was a tool call written as plain text. " +
+                    "Tools are not available now. Answer the user directly " +
+                    "in prose.",
+                };
+                finalAnswerOnly = true;
+                streamParams.toolChoice = "none" as const;
+              }
+              runtime.onNodeDiagnostic?.(node.id, {
+                level: "warn",
+                code: "text_tool_call_rejected",
+                message:
+                  "Model wrote a tool call as plain text instead of an " +
+                  "answer; the output was suppressed and the attempt is " +
+                  `retried (attempt ${attempt}/${maxAttempts}).`,
+                details: {
+                  attempt,
+                  model: `${candidate.provider}/${candidate.model}`,
+                  format: textToolCall.format,
+                  chars: rejectedChars,
+                  final_answer_only: finalAnswerOnly,
+                  continuation_messages: retryContinuation?.length ?? 0,
+                },
+              });
+              accountAttempt("error");
+              runtime.metrics.recordLlmRetry(
+                candidate.provider,
+                candidate.model,
+              );
+              await sleep(fullJitter(backoffMs));
+              continue;
+            }
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "error",
+              code: "text_tool_call_unrecoverable",
+              message:
+                "Model kept writing tool calls as plain text instead of an " +
+                "answer on every attempt; the output was suppressed.",
+              details: {
+                attempt,
+                model: `${candidate.provider}/${candidate.model}`,
+                format: textToolCall.format,
+                chars: rejectedChars,
+              },
+            });
+            throw new StreamErrorSignal(
+              "model emitted an unparsed text tool call instead of an answer",
+            );
+          }
 
           // A held-back preamble is normally released here as the direct answer.
           // Keep it held for every requireToolUse attempt, including the final
@@ -3566,6 +3888,14 @@ export function createLlmNodeHandler(
             !holdPreambleForToolUse &&
             (!toolPhaseStarted || suppressToolPreamble)
           ) {
+            // Opt-in `sourcesCheck.stripRuleMarkers`: the held answer has not
+            // reached the client yet, so the observed `[Regel: …]` pseudo
+            // marker can still be removed before release.
+            if (sourcesCheck?.stripRuleMarkers === true) {
+              const stripped = stripRuleMarkers(preambleBuf);
+              preambleBuf = stripped.text;
+              removedRuleMarkers.push(...stripped.removed);
+            }
             fullText += preambleBuf;
             emittedAny = true;
             try {
@@ -3924,14 +4254,13 @@ export function createLlmNodeHandler(
             fullText.slice(visibleTextLengthAtLastToolResult).trim().length ===
               0;
           if (missingPostToolAnswer) {
-            const serializedResult = (() => {
-              try {
-                const text = JSON.stringify(lastToolResultForRetry);
-                return text.length > 6_000 ? `${text.slice(0, 6_000)}…` : text;
-              } catch {
-                return "[Tool result could not be serialized]";
-              }
-            })();
+            const retryPostToolAnswer = attempt < maxAttempts && !requireToolUse;
+            // Continue from this attempt's complete tool exchange (all calls
+            // and results) rather than restarting from the original prefix
+            // with an excerpt of only the last result.
+            const continued = retryPostToolAnswer
+              ? await captureRetryContinuation()
+              : false;
             fullText = "";
             preambleBuf = "";
             emittedAny = false;
@@ -3945,18 +4274,48 @@ export function createLlmNodeHandler(
               details: {
                 attempt,
                 model: `${candidate.provider}/${candidate.model}`,
+                continuation_messages: continued
+                  ? (retryContinuation?.length ?? 0)
+                  : 0,
               },
             });
-            if (attempt < maxAttempts && !requireToolUse) {
-              retryGuidance = {
-                role: "user",
-                content:
-                  "You received a tool result but did not phrase a visible " +
-                  "answer for the user. Produce a short, correct answer from " +
-                  "this result now. Do not call another tool. " +
-                  "Tool result: " +
-                  serializedResult,
-              };
+            if (retryPostToolAnswer) {
+              if (continued) {
+                retryGuidance = {
+                  role: "user",
+                  content:
+                    "You received the tool results above but produced no " +
+                    "visible answer. Answer the user now from these " +
+                    "results. Do not call another tool.",
+                };
+              } else {
+                // Fallback when the provider response is unavailable: inject
+                // a bounded excerpt of the last result as before. The retry is
+                // answer-only as well (see `finalAnswerOnly` below).
+                const serializedResult = (() => {
+                  try {
+                    const text = JSON.stringify(lastToolResultForRetry);
+                    return text.length > 6_000
+                      ? `${text.slice(0, 6_000)}…`
+                      : text;
+                  } catch {
+                    return "[Tool result could not be serialized]";
+                  }
+                })();
+                retryGuidance = {
+                  role: "user",
+                  content:
+                    "You received a tool result but did not phrase a visible " +
+                    "answer for the user. Produce a short, correct answer from " +
+                    "this result now. Do not call another tool. " +
+                    "Tool result: " +
+                    serializedResult,
+                };
+              }
+              // Both variants run without tools: `toolChoice: "none"` alone
+              // still sends the tool list with @ai-sdk/openai, which is how
+              // the original text tool call arose (trace 01636a1d).
+              finalAnswerOnly = true;
               streamParams.toolChoice = "none" as const;
               accountAttempt("error");
               runtime.metrics.recordLlmRetry(
@@ -4174,6 +4533,63 @@ export function createLlmNodeHandler(
           // downstream ever stores or replays a handle. No-op without refHandles.
           if (runtime.refHandles !== undefined) {
             fullText = runtime.refHandles.unmapText(fullText);
+          }
+
+          // Opt-in post-answer sources check (`config.sourcesCheck`, default
+          // off). Inline-cited `[n]` missing from the sources section are
+          // appended from the sources registered in THIS execution only and
+          // streamed as a trailing chunk; unregistered numbers are reported,
+          // never invented. Skipped for the engine's empty-response fallback.
+          if (sourcesCheck !== undefined && !emptyResponseFallbackUsed) {
+            const completion =
+              sourcesCheck.completeSection && runtime.lookupCitation !== undefined
+                ? completeSourcesSection(
+                    fullText,
+                    runtime.lookupCitation,
+                    sourcesCheck.heading,
+                  )
+                : undefined;
+            if (completion !== undefined && completion.appendix.length > 0) {
+              fullText += completion.appendix;
+              // Persist exactly what the client received.
+              forcedAnswer = true;
+              try {
+                await runtime.onToken(node.id, completion.appendix);
+              } catch {
+                /* disconnect */
+              }
+            }
+            if (removedRuleMarkers.length > 0) forcedAnswer = true;
+            // Markers that reached the client live (non-buffered path) cannot
+            // be removed any more; they are reported instead.
+            const retainedMarkers = sourcesCheck.stripRuleMarkers
+              ? findRuleMarkers(fullText)
+              : [];
+            const unresolved = completion?.unresolved ?? [];
+            if (
+              (completion?.appended.length ?? 0) > 0 ||
+              unresolved.length > 0 ||
+              removedRuleMarkers.length > 0 ||
+              retainedMarkers.length > 0
+            ) {
+              runtime.onNodeDiagnostic?.(node.id, {
+                level:
+                  unresolved.length > 0 || retainedMarkers.length > 0
+                    ? "warn"
+                    : "info",
+                code: "answer_sources_check",
+                message:
+                  "Post-answer sources check: completed the sources section " +
+                  "from registered sources and/or removed pseudo markers.",
+                details: {
+                  appended_sources: completion?.appended ?? [],
+                  unresolved_markers: unresolved,
+                  created_section: completion?.createdSection ?? false,
+                  removed_markers: [...removedRuleMarkers],
+                  retained_markers: retainedMarkers,
+                },
+              });
+            }
           }
 
           // ---- success: fold usage, record cost + metrics ----
