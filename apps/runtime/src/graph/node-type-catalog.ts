@@ -274,7 +274,8 @@ export const LLM_MODEL_FIELDS: ConfigField[] = [
 const LLM: NodeTypeDoc = {
   type: "llm",
   title: "LLM",
-  summary: "Streaming model call, optionally with an agent tool loop over MCP tools.",
+  summary:
+    "Streaming model call, optionally with an agent tool loop over MCP tools.",
   description: [
     "Calls a language model with the conversation so far, the node's system prompt and any grounding context injected by earlier nodes (retrieval, parallel/RAG, memory). The answer streams to the client unless a later node produces the final answer.",
     "With `tools`, the node runs an **agent loop**: the model may call MCP tools, sees their results and continues until it answers or the step budget (`maxToolSteps`) is used up. Tool results are budgeted to the model's context window (`toolResultBudget`) and can be grounded/cited.",
@@ -287,13 +288,47 @@ const LLM: NodeTypeDoc = {
     "Any free-text transformation step (summarise, rewrite, extract into prose).",
   ],
   topLevel: [
-    { key: "llm", usage: "recommended", description: "Model to call. Omit to use DEFAULT_LLM." },
-    { key: "systemPrompt", usage: "recommended", description: "Instructions for this step. Supports `#[[file:prompts/x.md]]` includes and `{{vars.*}}` / `{{context.*}}` / `{{node.<id>.classification.*}}` placeholders." },
-    { key: "tools", usage: "optional", description: "MCP tool refs (`server/tool`, `server/*`) the agent loop may call. Empty = plain model call." },
-    { key: "overrides", usage: "optional", description: "Conditional per-request variants, applied in order — the FIRST matching entry wins and replaces `llm`, `systemPrompt` and `tools` wholesale (keys it omits stay as on the node). Match conditions (all present ones must hold): `whenClass` (classLabel, `*` wildcard), `whenClaim` (expression over JWT claims, e.g. `role == 'admin'`), `whenParam` (expression over requestParams), `whenPlan` (exact), `whenGroup` (ctx.groups contains), `whenLanguage` (BCP-47 prefix, `de` matches `de-AT`). Example: `[{ whenClass: \"SIMPLE\", llm: { shortcut: fast }, systemPrompt: \"...\" }]`." },
-    { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; higher runs first. A flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes." },
-    { key: "classifierSchema", usage: "ignored", description: "Not used — that is the `classifier` type. For a schema-constrained answer from an `llm` node use `config.finalAnswerContract` or a structured downstream classifier." },
-    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
+    {
+      key: "llm",
+      usage: "recommended",
+      description: "Model to call. Omit to use DEFAULT_LLM.",
+    },
+    {
+      key: "systemPrompt",
+      usage: "recommended",
+      description:
+        "Instructions for this step. Supports `#[[file:prompts/x.md]]` includes and `{{vars.*}}` / `{{context.*}}` / `{{node.<id>.classification.*}}` placeholders.",
+    },
+    {
+      key: "tools",
+      usage: "optional",
+      description:
+        "MCP tool refs (`server/tool`, `server/*`) the agent loop may call. Empty = plain model call.",
+    },
+    {
+      key: "overrides",
+      usage: "optional",
+      description:
+        'Conditional per-request variants, applied in order — the FIRST matching entry wins and replaces `llm`, `systemPrompt` and `tools` wholesale (keys it omits stay as on the node). Match conditions (all present ones must hold): `whenClass` (classLabel, `*` wildcard), `whenClaim` (expression over JWT claims, e.g. `role == \'admin\'`), `whenParam` (expression over requestParams), `whenPlan` (exact), `whenGroup` (ctx.groups contains), `whenLanguage` (BCP-47 prefix, `de` matches `de-AT`). Example: `[{ whenClass: "SIMPLE", llm: { shortcut: fast }, systemPrompt: "..." }]`.',
+    },
+    {
+      key: "priority",
+      usage: "optional",
+      description:
+        "Queue priority for model requests from this node; higher runs first. A flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes.",
+    },
+    {
+      key: "classifierSchema",
+      usage: "ignored",
+      description:
+        "Not used — that is the `classifier` type. For a schema-constrained answer from an `llm` node use `config.finalAnswerContract` or a structured downstream classifier.",
+    },
+    {
+      key: "label",
+      usage: "optional",
+      description:
+        "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`.",
+    },
   ],
   config: [
     {
@@ -314,14 +349,70 @@ const LLM: NodeTypeDoc = {
       description:
         "With many tools, advertise only the relevant ones. In `semantic` mode the node's full `tools` list becomes a candidate pool: all stay callable, but only `alwaysInclude` + the top-K semantic matches (+ an optional `select_tools` meta-tool the model can use to pull more in) are advertised initially.",
       fields: [
-        { key: "mode", kind: "enum", label: "Mode", options: ["static", "semantic"], default: "static", description: "`static` advertises every tool; `semantic` gates by embedding similarity to the request." },
-        { key: "topK", kind: "number", label: "Top K", integer: true, min: 1, default: 5, description: "Max semantically selected tools advertised initially." },
-        { key: "minScore", kind: "number", label: "Min score", min: 0, max: 1, step: 0.05, description: "Drop semantic hits below this cosine similarity." },
-        { key: "alwaysInclude", kind: "tool-list", label: "Always include", description: "Refs/patterns always advertised (full ref, bare name, `server/*`, `*`)." },
-        { key: "metaTool", kind: "boolean", label: "Meta tool", description: "Expose the on-demand `select_tools` meta-tool." },
-        { key: "metaToolName", kind: "string", label: "Meta tool name", default: "select_tools", description: "Name advertised for the meta-tool." },
-        { key: "metaTopK", kind: "number", label: "Meta top K", integer: true, min: 1, default: 2, description: "Max tools activated per meta-tool call." },
-        { key: "cacheStable", kind: "boolean", label: "Cache-stable", default: false, description: "Advertise the full pool in a stable order instead of gating per request — keeps the tools+system prompt prefix byte-identical so provider prompt caching hits. Good for hot multi-turn nodes with a large stable prompt." },
+        {
+          key: "mode",
+          kind: "enum",
+          label: "Mode",
+          options: ["static", "semantic"],
+          default: "static",
+          description:
+            "`static` advertises every tool; `semantic` gates by embedding similarity to the request.",
+        },
+        {
+          key: "topK",
+          kind: "number",
+          label: "Top K",
+          integer: true,
+          min: 1,
+          default: 5,
+          description: "Max semantically selected tools advertised initially.",
+        },
+        {
+          key: "minScore",
+          kind: "number",
+          label: "Min score",
+          min: 0,
+          max: 1,
+          step: 0.05,
+          description: "Drop semantic hits below this cosine similarity.",
+        },
+        {
+          key: "alwaysInclude",
+          kind: "tool-list",
+          label: "Always include",
+          description:
+            "Refs/patterns always advertised (full ref, bare name, `server/*`, `*`).",
+        },
+        {
+          key: "metaTool",
+          kind: "boolean",
+          label: "Meta tool",
+          description: "Expose the on-demand `select_tools` meta-tool.",
+        },
+        {
+          key: "metaToolName",
+          kind: "string",
+          label: "Meta tool name",
+          default: "select_tools",
+          description: "Name advertised for the meta-tool.",
+        },
+        {
+          key: "metaTopK",
+          kind: "number",
+          label: "Meta top K",
+          integer: true,
+          min: 1,
+          default: 2,
+          description: "Max tools activated per meta-tool call.",
+        },
+        {
+          key: "cacheStable",
+          kind: "boolean",
+          label: "Cache-stable",
+          default: false,
+          description:
+            "Advertise the full pool in a stable order instead of gating per request — keeps the tools+system prompt prefix byte-identical so provider prompt caching hits. Good for hot multi-turn nodes with a large stable prompt.",
+        },
       ],
     },
     {
@@ -338,7 +429,7 @@ const LLM: NodeTypeDoc = {
       label: "Require tool use when selected (heuristic)",
       default: false,
       description:
-        "A heuristic: force a tool call only when semantic tool selection found a plausibly relevant tool. Unlike `requireToolUse` it never fails the turn — when the forced call is refused the user still gets an answer. Messages without own intent (\"retry\", \"test\", \"ok\"…) never trigger it.",
+        'A heuristic: force a tool call only when semantic tool selection found a plausibly relevant tool. Unlike `requireToolUse` it never fails the turn — when the forced call is refused the user still gets an answer. Messages without own intent ("retry", "test", "ok"…) never trigger it.',
     },
     {
       key: "requireToolUseWhenSelectedMinScore",
@@ -347,7 +438,8 @@ const LLM: NodeTypeDoc = {
       min: 0,
       max: 1,
       step: 0.05,
-      description: "Minimum semantic score the best-selected tool needs before `requireToolUseWhenSelected` forces a call.",
+      description:
+        "Minimum semantic score the best-selected tool needs before `requireToolUseWhenSelected` forces a call.",
     },
     {
       key: "toolSequenceContract",
@@ -356,7 +448,10 @@ const LLM: NodeTypeDoc = {
       advanced: true,
       description:
         "For consequential actions: when the user message matches `when.pattern` (a regex, optional `when.flags`), the tools in `sequence` must all have succeeded in that order before the answer is accepted. Invalid declarations are ignored.",
-      example: { when: { pattern: "buche|reservier", flags: "i" }, sequence: ["parking/availability", "parking/book_space"] },
+      example: {
+        when: { pattern: "buche|reservier", flags: "i" },
+        sequence: ["parking/availability", "parking/book_space"],
+      },
     },
     {
       key: "toolLoopGuard",
@@ -367,16 +462,101 @@ const LLM: NodeTypeDoc = {
       description:
         "Opt-in guard against a model stuck in a tool-call loop. `true` enables it with defaults; an object tunes the detectors. Counts identical calls, same-tool churn (varying args, time-windowed), mutating calls with no observable effect, and A→B→A→B cycles — each with a warn threshold (a steering notice is injected) and a block threshold (the repeated call is refused). Failed tool outcomes count toward churn so a retry storm is caught; policy/approval waits pause the clock.",
       fields: [
-        { key: "enabled", kind: "boolean", label: "Enabled", default: true, description: "Master switch — only relevant when the object form is used; `toolLoopGuard: true` enables with defaults." },
-        { key: "identicalWarnAt", kind: "number", label: "Identical warn at", integer: true, min: 2, default: 3, description: "Identical calls (same tool, same args) before a warning is injected." },
-        { key: "identicalBlockAt", kind: "number", label: "Identical block at", integer: true, min: 2, default: 5, description: "Identical calls before the repeat is blocked." },
-        { key: "churnWarnAt", kind: "number", label: "Churn warn at", integer: true, min: 2, default: 6, description: "Same-tool calls with varying args inside the window before a warning." },
-        { key: "churnBlockAt", kind: "number", label: "Churn block at", integer: true, min: 2, default: 10, description: "Same-tool calls with varying args inside the window before blocking." },
-        { key: "churnWindowMs", kind: "number", label: "Churn window (ms)", integer: true, min: 1000, default: 120000, description: "Time window in which churn is counted; paused time (approvals) is excluded." },
-        { key: "noProgressWarnAt", kind: "number", label: "No-progress warn at", integer: true, min: 2, default: 3, description: "Mutating calls with no observable effect before a warning." },
-        { key: "noProgressBlockAt", kind: "number", label: "No-progress block at", integer: true, min: 2, default: 5, description: "Mutating calls with no observable effect before blocking." },
-        { key: "cycleWarnAt", kind: "number", label: "Cycle warn at", integer: true, min: 2, default: 3, description: "A→B→A→B cycle repetitions before a warning." },
-        { key: "cycleBlockAt", kind: "number", label: "Cycle block at", integer: true, min: 2, default: 4, description: "A→B→A→B cycle repetitions before blocking." },
+        {
+          key: "enabled",
+          kind: "boolean",
+          label: "Enabled",
+          default: true,
+          description:
+            "Master switch — only relevant when the object form is used; `toolLoopGuard: true` enables with defaults.",
+        },
+        {
+          key: "identicalWarnAt",
+          kind: "number",
+          label: "Identical warn at",
+          integer: true,
+          min: 2,
+          default: 3,
+          description:
+            "Identical calls (same tool, same args) before a warning is injected.",
+        },
+        {
+          key: "identicalBlockAt",
+          kind: "number",
+          label: "Identical block at",
+          integer: true,
+          min: 2,
+          default: 5,
+          description: "Identical calls before the repeat is blocked.",
+        },
+        {
+          key: "churnWarnAt",
+          kind: "number",
+          label: "Churn warn at",
+          integer: true,
+          min: 2,
+          default: 6,
+          description:
+            "Same-tool calls with varying args inside the window before a warning.",
+        },
+        {
+          key: "churnBlockAt",
+          kind: "number",
+          label: "Churn block at",
+          integer: true,
+          min: 2,
+          default: 10,
+          description:
+            "Same-tool calls with varying args inside the window before blocking.",
+        },
+        {
+          key: "churnWindowMs",
+          kind: "number",
+          label: "Churn window (ms)",
+          integer: true,
+          min: 1000,
+          default: 120000,
+          description:
+            "Time window in which churn is counted; paused time (approvals) is excluded.",
+        },
+        {
+          key: "noProgressWarnAt",
+          kind: "number",
+          label: "No-progress warn at",
+          integer: true,
+          min: 2,
+          default: 3,
+          description:
+            "Mutating calls with no observable effect before a warning.",
+        },
+        {
+          key: "noProgressBlockAt",
+          kind: "number",
+          label: "No-progress block at",
+          integer: true,
+          min: 2,
+          default: 5,
+          description:
+            "Mutating calls with no observable effect before blocking.",
+        },
+        {
+          key: "cycleWarnAt",
+          kind: "number",
+          label: "Cycle warn at",
+          integer: true,
+          min: 2,
+          default: 3,
+          description: "A→B→A→B cycle repetitions before a warning.",
+        },
+        {
+          key: "cycleBlockAt",
+          kind: "number",
+          label: "Cycle block at",
+          integer: true,
+          min: 2,
+          default: 4,
+          description: "A→B→A→B cycle repetitions before blocking.",
+        },
       ],
       example: { identicalWarnAt: 2, identicalBlockAt: 4 },
     },
@@ -394,7 +574,7 @@ const LLM: NodeTypeDoc = {
       label: "Suppress pre-tool narration",
       default: false,
       description:
-        "Buffer any text the model writes before a tool call until it is known whether a tool follows. If one does, the narration (\"I will now search…\") is discarded; if not, it is emitted as the answer. Keeps internal plans out of the client.",
+        'Buffer any text the model writes before a tool call until it is known whether a tool follows. If one does, the narration ("I will now search…") is discarded; if not, it is emitted as the answer. Keeps internal plans out of the client.',
     },
     STREAM_TOOL_DETAILS_FIELD,
     {
@@ -404,8 +584,24 @@ const LLM: NodeTypeDoc = {
       description:
         "Caps on tool output fed back to the model. Derived from the model's context window by default (fixed defaults when the window is unknown); set to override.",
       fields: [
-        { key: "perResultChars", kind: "number", label: "Per result (chars)", integer: true, min: 1000, max: 1_000_000, description: "Max characters kept from one tool result." },
-        { key: "perTurnChars", kind: "number", label: "Per turn (chars)", integer: true, min: 1000, max: 2_000_000, description: "Max tool-result characters across one turn." },
+        {
+          key: "perResultChars",
+          kind: "number",
+          label: "Per result (chars)",
+          integer: true,
+          min: 1000,
+          max: 1_000_000,
+          description: "Max characters kept from one tool result.",
+        },
+        {
+          key: "perTurnChars",
+          kind: "number",
+          label: "Per turn (chars)",
+          integer: true,
+          min: 1000,
+          max: 2_000_000,
+          description: "Max tool-result characters across one turn.",
+        },
       ],
     },
     TOOL_CONTEXT_FIELD,
@@ -430,11 +626,35 @@ const LLM: NodeTypeDoc = {
       label: "Post-answer sources check",
       description:
         "Opt-in deterministic check of the final answer (every switch defaults to off). `completeSection` appends each inline-cited `[n]` that the sources section lacks, built only from the sources registered in this execution, as a trailing stream chunk; it creates the section when missing. Unregistered `[n]` are reported, never invented. `stripRuleMarkers` removes the pseudo marker `[Regel: …]` from answer text that has not been streamed yet (buffered answers, e.g. with `suppressToolPreamble`). Results are reported in the `answer_sources_check` diagnostic.",
-      example: { completeSection: true, heading: "## Quellen", stripRuleMarkers: true },
+      example: {
+        completeSection: true,
+        heading: "## Quellen",
+        stripRuleMarkers: true,
+      },
       fields: [
-        { key: "completeSection", kind: "boolean", label: "Complete sources section", default: false, description: "Append inline-cited `[n]` missing from the sources section, from registered sources only." },
-        { key: "heading", kind: "text", label: "Sources heading", description: "Markdown heading of the sources section, matched by its text (default `## Quellen`)." },
-        { key: "stripRuleMarkers", kind: "boolean", label: "Remove [Regel: …] markers", default: false, description: "Remove the pseudo marker `[Regel: …]` from not-yet-streamed answer text. Other bracketed content is left untouched." },
+        {
+          key: "completeSection",
+          kind: "boolean",
+          label: "Complete sources section",
+          default: false,
+          description:
+            "Append inline-cited `[n]` missing from the sources section, from registered sources only.",
+        },
+        {
+          key: "heading",
+          kind: "text",
+          label: "Sources heading",
+          description:
+            "Markdown heading of the sources section, matched by its text (default `## Quellen`).",
+        },
+        {
+          key: "stripRuleMarkers",
+          kind: "boolean",
+          label: "Remove [Regel: …] markers",
+          default: false,
+          description:
+            "Remove the pseudo marker `[Regel: …]` from not-yet-streamed answer text. Other bracketed content is left untouched.",
+        },
       ],
     },
     {
@@ -442,8 +662,15 @@ const LLM: NodeTypeDoc = {
       kind: "json",
       label: "Structured output schema",
       description:
-        "Makes the node return a JSON object instead of prose: `{ name?: string (default \"output\"), schema: <JSON Schema> }`. Uses native structured output where the model supports it, otherwise a schema hint + tolerant parse. A malformed schema is treated as not configured (the node streams normally). Cannot be combined with `finalAnswerContract`.",
-      example: { name: "result", schema: { type: "object", properties: { status: { type: "string" } }, required: ["status"] } },
+        'Makes the node return a JSON object instead of prose: `{ name?: string (default "output"), schema: <JSON Schema> }`. Uses native structured output where the model supports it, otherwise a schema hint + tolerant parse. A malformed schema is treated as not configured (the node streams normally). Cannot be combined with `finalAnswerContract`.',
+      example: {
+        name: "result",
+        schema: {
+          type: "object",
+          properties: { status: { type: "string" } },
+          required: ["status"],
+        },
+      },
     },
     {
       key: "finalAnswerContract",
@@ -453,9 +680,28 @@ const LLM: NodeTypeDoc = {
       description:
         "Only the text between two markers is the answer; everything else (plans, scratch work) is dropped. The output is buffered and validated (both markers present once, in order, non-empty, not a placeholder like `...`). Cannot be combined with `outputSchema`.",
       fields: [
-        { key: "startMarker", kind: "string", label: "Start marker", required: true, description: "Exact marker the model writes before the final answer." },
-        { key: "endMarker", kind: "string", label: "End marker", required: true, description: "Exact marker after the final answer." },
-        { key: "streamAfterStartMarker", kind: "boolean", label: "Stream after start marker", default: false, description: "Start streaming once the start marker appeared (marker text itself never reaches the client) instead of buffering the whole answer." },
+        {
+          key: "startMarker",
+          kind: "string",
+          label: "Start marker",
+          required: true,
+          description: "Exact marker the model writes before the final answer.",
+        },
+        {
+          key: "endMarker",
+          kind: "string",
+          label: "End marker",
+          required: true,
+          description: "Exact marker after the final answer.",
+        },
+        {
+          key: "streamAfterStartMarker",
+          kind: "boolean",
+          label: "Stream after start marker",
+          default: false,
+          description:
+            "Start streaming once the start marker appeared (marker text itself never reaches the client) instead of buffering the whole answer.",
+        },
       ],
       example: { startMarker: "<<ANSWER>>", endMarker: "<<END>>" },
     },
@@ -467,7 +713,8 @@ const LLM: NodeTypeDoc = {
       min: 1000,
       max: 1_000_000,
       default: "runtime LLM_MAX_OUTPUT_CHARS, else 64000",
-      description: "Hard ceiling on generated characters (answer and reasoning together); generation is cut off there. Protects against runaway or looping generations.",
+      description:
+        "Hard ceiling on generated characters (answer and reasoning together); generation is cut off there. Protects against runaway or looping generations.",
     },
     {
       key: "emptyResponseFallback",
@@ -488,7 +735,8 @@ const LLM: NodeTypeDoc = {
       key: "reasoningSalvage",
       kind: "boolean",
       label: "Salvage reasoning as answer",
-      default: "true (unless the runtime fallback policy is `explicit`/`disabled`)",
+      default:
+        "true (unless the runtime fallback policy is `explicit`/`disabled`)",
       description:
         "When a reasoning model puts its whole answer into the reasoning channel and returns empty visible text, use the reasoning as the answer. Set false where reasoning must never be shown.",
     },
@@ -497,8 +745,10 @@ const LLM: NodeTypeDoc = {
       kind: "boolean",
       label: "Allow inferred tool-use fallback",
       advanced: true,
-      default: "true (unless the runtime fallback policy is `explicit`/`disabled`)",
-      description: "Allow the runtime to recover a tool call the model described in text instead of emitting it natively.",
+      default:
+        "true (unless the runtime fallback policy is `explicit`/`disabled`)",
+      description:
+        "Allow the runtime to recover a tool call the model described in text instead of emitting it natively.",
     },
     {
       key: "dropRagContext",
@@ -514,7 +764,8 @@ const LLM: NodeTypeDoc = {
       label: "Max history turns",
       integer: true,
       min: 1,
-      description: "Keep only the last N conversation turns in this node's prompt. Absent = full history.",
+      description:
+        "Keep only the last N conversation turns in this node's prompt. Absent = full history.",
     },
     {
       key: "historyCompression",
@@ -524,9 +775,30 @@ const LLM: NodeTypeDoc = {
       description:
         "Summarises older turns when the context gets full. Identical tool results are always deduplicated; summarisation engages above the threshold and needs a known context window. The summary is cached per conversation+node so the prompt prefix stays stable.",
       fields: [
-        { key: "enabled", kind: "boolean", label: "Enabled", default: false, description: "Turns history summarisation on; without it only duplicate tool results are removed." },
-        { key: "thresholdRatio", kind: "number", label: "Threshold ratio", min: 0, max: 1, step: 0.05, description: "Share of the context window above which summarisation starts." },
-        { key: "llm", kind: "llm", label: "Summariser model", description: `Model used for summaries; defaults to this node's model. ${LLM_REF_DESC}` },
+        {
+          key: "enabled",
+          kind: "boolean",
+          label: "Enabled",
+          default: false,
+          description:
+            "Turns history summarisation on; without it only duplicate tool results are removed.",
+        },
+        {
+          key: "thresholdRatio",
+          kind: "number",
+          label: "Threshold ratio",
+          min: 0,
+          max: 1,
+          step: 0.05,
+          description:
+            "Share of the context window above which summarisation starts.",
+        },
+        {
+          key: "llm",
+          kind: "llm",
+          label: "Summariser model",
+          description: `Model used for summaries; defaults to this node's model. ${LLM_REF_DESC}`,
+        },
       ],
     },
     {
@@ -554,11 +826,43 @@ const LLM: NodeTypeDoc = {
       description:
         "Keeps a text-only node usable with images: inline images are parked as `img-N` references and the node gets a tool to ask a vision model about them. The vision model is mandatory (it must support vision input).",
       fields: [
-        { key: "llm", kind: "llm", label: "Vision model", required: true, description: `Model that looks at the images. ${LLM_REF_DESC}` },
-        { key: "description", kind: "text", label: "Tool description", description: "Description of the inspection tool shown to the hosting model (max 2000 chars)." },
-        { key: "imageDescription", kind: "string", label: "Image parameter description", description: "Description of the image argument (max 1000 chars)." },
-        { key: "maxAnswerChars", kind: "number", label: "Max answer (chars)", integer: true, min: 200, max: 100_000, description: "Cap on the vision answer injected into the context." },
-        { key: "assetSource", kind: "json", label: "Asset source", advanced: true, description: "Enables `asset:<id>[#bbox]` references, fetched via the MCP `get_asset` tool. Object with `server` (required, the MCP server exposing get_asset), optional `collection`, and optional `variant` (thumb|preview|full)." },
+        {
+          key: "llm",
+          kind: "llm",
+          label: "Vision model",
+          required: true,
+          description: `Model that looks at the images. ${LLM_REF_DESC}`,
+        },
+        {
+          key: "description",
+          kind: "text",
+          label: "Tool description",
+          description:
+            "Description of the inspection tool shown to the hosting model (max 2000 chars).",
+        },
+        {
+          key: "imageDescription",
+          kind: "string",
+          label: "Image parameter description",
+          description: "Description of the image argument (max 1000 chars).",
+        },
+        {
+          key: "maxAnswerChars",
+          kind: "number",
+          label: "Max answer (chars)",
+          integer: true,
+          min: 200,
+          max: 100_000,
+          description: "Cap on the vision answer injected into the context.",
+        },
+        {
+          key: "assetSource",
+          kind: "json",
+          label: "Asset source",
+          advanced: true,
+          description:
+            "Enables `asset:<id>[#bbox]` references, fetched via the MCP `get_asset` tool. Object with `server` (required, the MCP server exposing get_asset), optional `collection`, and optional `variant` (thumb|preview|full).",
+        },
       ],
     },
     {
@@ -568,7 +872,13 @@ const LLM: NodeTypeDoc = {
       advanced: true,
       description:
         "Tools that generate images/audio/video with their own model and stream the result straight to the user: an array of `{ name, llm, description?, promptDescription? }`. The hosting model only passes a `prompt`.",
-      example: [{ name: "generate_image", llm: { shortcut: "gemini-image" }, description: "Erzeugt ein Bild zur Beschreibung" }],
+      example: [
+        {
+          name: "generate_image",
+          llm: { shortcut: "gemini-image" },
+          description: "Erzeugt ein Bild zur Beschreibung",
+        },
+      ],
     },
     {
       key: "routing",
@@ -577,7 +887,11 @@ const LLM: NodeTypeDoc = {
       advanced: true,
       description:
         "Picks the model per request from `candidates` (LlmConfig list): `strategy` `cheapest` (blended cost/token), `balanced` (cost for this prompt size) or `quality-aware` (cheapest with observed quality ≥ `minQualityScore`, default 0.7; fewer than `minQualitySamples`, default 5, observations = exploration). Also what the Studio's Optimize panel analyses.",
-      example: { strategy: "quality-aware", candidates: [{ shortcut: "fast-pool" }, { shortcut: "sonnet" }], minQualityScore: 0.8 },
+      example: {
+        strategy: "quality-aware",
+        candidates: [{ shortcut: "fast-pool" }, { shortcut: "sonnet" }],
+        minQualityScore: 0.8,
+      },
     },
     {
       key: "objective",
@@ -585,8 +899,12 @@ const LLM: NodeTypeDoc = {
       label: "Objective solver",
       advanced: true,
       description:
-        "Generalised routing (takes precedence over `routing`): `candidates` (LlmConfig list) walked cheapest-first, the first one meeting ALL `objectives` (`{ metric: \"quality\"|\"cost\", op: \"gte\"|\"lte\", value }`) wins. `minQualitySamples` (default 5; fewer = unproven, treated as eligible), `maxAttempts`, `fallback` (`cheapest` | `best-quality` | `first`). Every attempt is recorded in the explainability card.",
-      example: { candidates: [{ shortcut: "fast-pool" }, { shortcut: "sonnet" }], objectives: [{ metric: "quality", op: "gte", value: 0.8 }], fallback: "best-quality" },
+        'Generalised routing (takes precedence over `routing`): `candidates` (LlmConfig list) walked cheapest-first, the first one meeting ALL `objectives` (`{ metric: "quality"|"cost", op: "gte"|"lte", value }`) wins. `minQualitySamples` (default 5; fewer = unproven, treated as eligible), `maxAttempts`, `fallback` (`cheapest` | `best-quality` | `first`). Every attempt is recorded in the explainability card.',
+      example: {
+        candidates: [{ shortcut: "fast-pool" }, { shortcut: "sonnet" }],
+        objectives: [{ metric: "quality", op: "gte", value: 0.8 }],
+        fallback: "best-quality",
+      },
     },
   ],
   examples: [
@@ -708,12 +1026,34 @@ const ROUTER: NodeTypeDoc = {
     "Does no work itself. After it runs, its outgoing edges are evaluated: the first edge whose `conditions` expression is true is taken; an edge without condition is the default.",
     "Expressions can read `classLabel`, `classification.<field>`, `node.<id>.classification.<field>` (this run), `turn[<n>].<id>.classification.<field>` (earlier turns), `messageCount`, `hasErrors`, `errorCount`, `toolResultCount`, `lastMessageText`, `currentNodeId`. Operators: `== != === !== < <= > >= && || !`, `+ -`, parentheses, and `=~` (case-insensitive regex test, e.g. `lastMessageText =~ 'parkplatz|stellplatz'`). Methods: `.includes(x)` / `.contains(x)`, `.startsWith(x)`, `.endsWith(x)`, `.length`; array index `x[0]`. Literals: numbers, 'strings', true/false, null. No code execution — anything else is a validation error.",
   ].join("\n\n"),
-  whenToUse: ["Branch after a classifier.", "Merge point that fans out to several alternatives."],
+  whenToUse: [
+    "Branch after a classifier.",
+    "Merge point that fans out to several alternatives.",
+  ],
   topLevel: [
-    { key: "llm", usage: "ignored", description: "Not used — routing is deterministic, no model runs." },
-    { key: "systemPrompt", usage: "ignored", description: "Not used — no model runs. The routing logic lives in the edges' `conditions`." },
-    { key: "tools", usage: "ignored", description: "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool." },
-    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
+    {
+      key: "llm",
+      usage: "ignored",
+      description: "Not used — routing is deterministic, no model runs.",
+    },
+    {
+      key: "systemPrompt",
+      usage: "ignored",
+      description:
+        "Not used — no model runs. The routing logic lives in the edges' `conditions`.",
+    },
+    {
+      key: "tools",
+      usage: "ignored",
+      description:
+        "Not used — MCP tools are called by `llm` and `tool` nodes. Route to one of those when this step needs a tool.",
+    },
+    {
+      key: "label",
+      usage: "optional",
+      description:
+        "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`.",
+    },
   ],
   config: [],
   examples: [
@@ -724,26 +1064,66 @@ const ROUTER: NodeTypeDoc = {
   - { source: router, target: answer-fast }   # default`,
     },
   ],
-  notes: ["Hyphenated node ids can't be referenced in edge expressions (they work in templates). Use ids with underscores for classifiers you route on."],
+  notes: [
+    "Hyphenated node ids can't be referenced in edge expressions (they work in templates). Use ids with underscores for classifiers you route on.",
+  ],
 };
 
 const CLASSIFIER: NodeTypeDoc = {
   type: "classifier",
   title: "Classifier",
-  summary: "Structured output that sets `classification` (and `classLabel`) for routing.",
+  summary:
+    "Structured output that sets `classification` (and `classLabel`) for routing.",
   description: [
     "Asks the model for an object matching `classifierSchema.schema` and stores it as `state.classification`; the field named by `classifierSchema.classKey` also becomes `classLabel`. Edge conditions, templates (`{{classification.x}}`) and later nodes read it.",
     "Uses native structured output where the model supports it, otherwise a schema hint and tolerant JSON parsing. With a model pool, an unparseable answer rotates to the next model; when nothing parses, `config.fallback` is used instead of failing the turn.",
   ].join("\n\n"),
-  whenToUse: ["Triage/intent detection before a router.", "Extracting routing-relevant fields (client, needsInfo, hasAttachment)."],
+  whenToUse: [
+    "Triage/intent detection before a router.",
+    "Extracting routing-relevant fields (client, needsInfo, hasAttachment).",
+  ],
   topLevel: [
-    { key: "classifierSchema", usage: "required", description: "`{ classKey, schema }` — JSON Schema of the result; `classKey` names the label field." },
-    { key: "llm", usage: "recommended", description: "Model; a pool gives per-model fallback." },
-    { key: "systemPrompt", usage: "recommended", description: "Classification instructions; may reference earlier classifiers via `{{node.<id>.classification.*}}`." },
-    { key: "priority", usage: "optional", description: "Queue priority for model requests from this node; a flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes." },
-    { key: "tools", usage: "ignored", description: "Not used — a classifier makes one structured call and never enters a tool loop. Classify first, then let an `llm` or `tool` node act on the result." },
-    { key: "overrides", usage: "ignored", description: "NOT applied: unlike `llm` and `tool` nodes, a classifier reads `llm`/`systemPrompt` directly and never consults `overrides`. Put the variation in the prompt or split the node." },
-    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
+    {
+      key: "classifierSchema",
+      usage: "required",
+      description:
+        "`{ classKey, schema }` — JSON Schema of the result; `classKey` names the label field.",
+    },
+    {
+      key: "llm",
+      usage: "recommended",
+      description: "Model; a pool gives per-model fallback.",
+    },
+    {
+      key: "systemPrompt",
+      usage: "recommended",
+      description:
+        "Classification instructions; may reference earlier classifiers via `{{node.<id>.classification.*}}`.",
+    },
+    {
+      key: "priority",
+      usage: "optional",
+      description:
+        "Queue priority for model requests from this node; a flow's effective priority is the maximum of its own and those of its `llm`/`classifier` nodes.",
+    },
+    {
+      key: "tools",
+      usage: "ignored",
+      description:
+        "Not used — a classifier makes one structured call and never enters a tool loop. Classify first, then let an `llm` or `tool` node act on the result.",
+    },
+    {
+      key: "overrides",
+      usage: "ignored",
+      description:
+        "NOT applied: unlike `llm` and `tool` nodes, a classifier reads `llm`/`systemPrompt` directly and never consults `overrides`. Put the variation in the prompt or split the node.",
+    },
+    {
+      key: "label",
+      usage: "optional",
+      description:
+        "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`.",
+    },
   ],
   config: [
     {
@@ -752,13 +1132,15 @@ const CLASSIFIER: NodeTypeDoc = {
       label: "Response format",
       options: ["json", "xml"],
       default: "json",
-      description: "Output format asked of the model. `xml` helps models that struggle with JSON.",
+      description:
+        "Output format asked of the model. `xml` helps models that struggle with JSON.",
     },
     {
       key: "fallback",
       kind: "json",
       label: "Fallback classification",
-      description: "Classification used when no model produced parseable output, so the turn continues on a safe route instead of failing.",
+      description:
+        "Classification used when no model produced parseable output, so the turn continues on a safe route instead of failing.",
       example: { route: "ALLGEMEINES", needsInfo: false },
     },
     {
@@ -767,7 +1149,7 @@ const CLASSIFIER: NodeTypeDoc = {
       label: "Run only for attachments",
       options: ["attachments", "current-turn-attachments"],
       description:
-        "Skip this node unless the conversation (`attachments`) or the latest user message (`current-turn-attachments`) contains attachments — for vision-preprocessing classifiers that would otherwise burn a model call on every text-only turn to answer \"no image\". The skip resolves to `config.fallback` (required — without it the filter is ignored with a trace warning), records the node as completed with a `classifier_skipped_no_attachments` diagnostic, and makes no model call.",
+        'Skip this node unless the conversation (`attachments`) or the latest user message (`current-turn-attachments`) contains attachments — for vision-preprocessing classifiers that would otherwise burn a model call on every text-only turn to answer "no image". The skip resolves to `config.fallback` (required — without it the filter is ignored with a trace warning), records the node as completed with a `classifier_skipped_no_attachments` diagnostic, and makes no model call.',
     },
   ],
   examples: [
@@ -799,13 +1181,40 @@ const PARALLEL: NodeTypeDoc = {
     "Runs the nodes listed in `parallelNodes` concurrently (each entry a node id or `{ node, condition }` — the child only runs when the condition is true) and merges their messages/results.",
     "With `config.ragProfiles` it also acts as a **context assembler**: a retrieval plan per request profile, compiled at runtime into `vectorsearch/search` calls. Results of all sources are fused (reranker or score-only), deduplicated per document and injected as grounding context with citations.",
   ].join("\n\n"),
-  whenToUse: ["Assemble context from several collections at once.", "Run independent enrichment steps (memory recall, vision extraction) side by side."],
+  whenToUse: [
+    "Assemble context from several collections at once.",
+    "Run independent enrichment steps (memory recall, vision extraction) side by side.",
+  ],
   topLevel: [
-    { key: "parallelNodes", usage: "recommended", description: "Child node ids, or `{ node, condition }` for conditional children. Without it the node only runs `config.ragProfiles`." },
-    { key: "llm", usage: "ignored", description: "Not used — the children carry their own models. The RAG compression model is `config.ragCompression.llm`." },
-    { key: "systemPrompt", usage: "ignored", description: "Not used — the children carry their own prompts." },
-    { key: "tools", usage: "ignored", description: "Not used — `config.ragProfiles` is compiled into the search calls, and children call their own tools." },
-    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
+    {
+      key: "parallelNodes",
+      usage: "recommended",
+      description:
+        "Child node ids, or `{ node, condition }` for conditional children. Without it the node only runs `config.ragProfiles`.",
+    },
+    {
+      key: "llm",
+      usage: "ignored",
+      description:
+        "Not used — the children carry their own models. The RAG compression model is `config.ragCompression.llm`.",
+    },
+    {
+      key: "systemPrompt",
+      usage: "ignored",
+      description: "Not used — the children carry their own prompts.",
+    },
+    {
+      key: "tools",
+      usage: "ignored",
+      description:
+        "Not used — `config.ragProfiles` is compiled into the search calls, and children call their own tools.",
+    },
+    {
+      key: "label",
+      usage: "optional",
+      description:
+        "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`.",
+    },
   ],
   config: [
     {
@@ -818,7 +1227,13 @@ const PARALLEL: NodeTypeDoc = {
         select: [{ when: "classification.route == 'RETOURE'", use: "retoure" }],
         default: "allgemein",
         profiles: {
-          retoure: [{ collection: "retoure-docs", tags: ["{{classification.clientTag}}"], limit: 8 }],
+          retoure: [
+            {
+              collection: "retoure-docs",
+              tags: ["{{classification.clientTag}}"],
+              limit: 8,
+            },
+          ],
           allgemein: [{ collection: "docs", limit: 6 }],
         },
         maxDocuments: 8,
@@ -832,10 +1247,39 @@ const PARALLEL: NodeTypeDoc = {
       description:
         "After fusion, a small model condenses each source to the parts relevant to the question and drops irrelevant ones. Fail-open: on any problem the original chunks are used.",
       fields: [
-        { key: "enabled", kind: "boolean", label: "Enabled", required: true, description: "Turns the compression pass on; without it the fused chunks are used as retrieved." },
-        { key: "llm", kind: "llm", label: "Model", required: true, description: `Small extraction model. ${LLM_REF_DESC}` },
-        { key: "minChars", kind: "number", label: "Min chunk chars", integer: true, min: 0, default: 400, description: "Only compress chunks at least this long." },
-        { key: "maxTokens", kind: "number", label: "Max tokens", integer: true, min: 1, default: 2048, description: "Output budget of the extraction call." },
+        {
+          key: "enabled",
+          kind: "boolean",
+          label: "Enabled",
+          required: true,
+          description:
+            "Turns the compression pass on; without it the fused chunks are used as retrieved.",
+        },
+        {
+          key: "llm",
+          kind: "llm",
+          label: "Model",
+          required: true,
+          description: `Small extraction model. ${LLM_REF_DESC}`,
+        },
+        {
+          key: "minChars",
+          kind: "number",
+          label: "Min chunk chars",
+          integer: true,
+          min: 0,
+          default: 400,
+          description: "Only compress chunks at least this long.",
+        },
+        {
+          key: "maxTokens",
+          kind: "number",
+          label: "Max tokens",
+          integer: true,
+          min: 1,
+          default: 2048,
+          description: "Output budget of the extraction call.",
+        },
       ],
     },
     {
@@ -846,9 +1290,32 @@ const PARALLEL: NodeTypeDoc = {
       description:
         "In threaded conversations, documents already shown in earlier turns compete at a reduced weight so follow-ups prefer fresh material (they can still resurface when strongly relevant). No effect on the model-rerank path.",
       fields: [
-        { key: "enabled", kind: "boolean", label: "Enabled", description: "Turns down-weighting on (only effective in threaded conversations)." },
-        { key: "factor", kind: "number", label: "Factor", min: 0, max: 1, step: 0.05, default: 0.5, description: "Weight multiplier for already-seen documents." },
-        { key: "cap", kind: "number", label: "Remembered documents", integer: true, min: 1, default: 100, description: "How many seen documents are remembered across turns." },
+        {
+          key: "enabled",
+          kind: "boolean",
+          label: "Enabled",
+          description:
+            "Turns down-weighting on (only effective in threaded conversations).",
+        },
+        {
+          key: "factor",
+          kind: "number",
+          label: "Factor",
+          min: 0,
+          max: 1,
+          step: 0.05,
+          default: 0.5,
+          description: "Weight multiplier for already-seen documents.",
+        },
+        {
+          key: "cap",
+          kind: "number",
+          label: "Remembered documents",
+          integer: true,
+          min: 1,
+          default: 100,
+          description: "How many seen documents are remembered across turns.",
+        },
       ],
     },
     {
@@ -858,7 +1325,8 @@ const PARALLEL: NodeTypeDoc = {
       integer: true,
       min: 0,
       default: 0,
-      description: "Limit how many children run at the same time (0 = all at once). Protects provider rate limits and single local inference servers.",
+      description:
+        "Limit how many children run at the same time (0 = all at once). Protects provider rate limits and single local inference servers.",
     },
   ],
   examples: [
@@ -876,7 +1344,9 @@ const PARALLEL: NodeTypeDoc = {
         allgemein: [{ collection: docs, limit: 6 }]`,
     },
   ],
-  notes: ["Children referenced only via `parallelNodes` need no edges; the Studio draws them as dashed reference links."],
+  notes: [
+    "Children referenced only via `parallelNodes` need no edges; the Studio draws them as dashed reference links.",
+  ],
 };
 
 const RETRIEVAL: NodeTypeDoc = {
@@ -925,72 +1395,309 @@ const MEMORY: NodeTypeDoc = {
 const AGENT_HARNESS: NodeTypeDoc = {
   type: "agent-harness",
   title: "Agent harness",
-  summary: "Planner/worker loop that delegates tasks to other nodes within budgets.",
+  summary:
+    "Planner/worker loop that delegates tasks to other nodes within budgets.",
   description: [
     "An orchestrator: a planner model splits the request into tasks and delegates each to a node from `allowlist` (the delegated nodes run like normal nodes). After each round it re-plans with the findings until done, a stop signal appears, or a budget (iterations, cost, time) is exhausted.",
     "Optional **verification** delegates the findings to a reviewer node that must answer with the pass signal before the run counts as complete. **Plannerless** mode skips the planner and loops a worker (optionally over a deterministic document coverage queue).",
     "Results either stay the delegated answers (`resultMode: delegated`, harness is the end node) or are aggregated into one context message for a downstream synthesizer (`context`).",
   ].join("\n\n"),
-  whenToUse: ["Multi-step, multi-domain questions.", "Exhaustive research over a corpus (coverage queue)."],
+  whenToUse: [
+    "Multi-step, multi-domain questions.",
+    "Exhaustive research over a corpus (coverage queue).",
+  ],
   topLevel: [
-    { key: "llm", usage: "optional", description: "Default planner model (overridden by `config.plannerLlm`)." },
+    {
+      key: "llm",
+      usage: "optional",
+      description: "Default planner model (overridden by `config.plannerLlm`).",
+    },
     {
       key: "systemPrompt",
       usage: "optional",
       description:
         "Domain guidance for the PLANNER, prepended to the generic planning instructions — not a prompt for the delegated nodes (those carry their own). Ignored entirely when `config.plannerless` is true, because no planner runs.",
     },
-    { key: "tools", usage: "ignored", description: "Not used — the harness calls no tools itself, it delegates to the `config.allowlist` nodes, which carry their own tools." },
-    { key: "overrides", usage: "ignored", description: "NOT applied: only `llm` and `tool` nodes consult `overrides`." },
-    { key: "label", usage: "optional", description: "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`." },
+    {
+      key: "tools",
+      usage: "ignored",
+      description:
+        "Not used — the harness calls no tools itself, it delegates to the `config.allowlist` nodes, which carry their own tools.",
+    },
+    {
+      key: "overrides",
+      usage: "ignored",
+      description:
+        "NOT applied: only `llm` and `tool` nodes consult `overrides`.",
+    },
+    {
+      key: "label",
+      usage: "optional",
+      description:
+        "Human-readable name shown on the canvas, in lists and as the default progress text. Purely cosmetic — edges, templates and references address the node by its `id`.",
+    },
   ],
   config: [
-    { key: "allowlist", kind: "node-list", label: "Delegation targets", required: true, description: "Node ids the harness may delegate to (at least one). The Studio draws them as dotted links when the harness is selected." },
-    { key: "maxIterations", kind: "number", label: "Max iterations", integer: true, min: 1, max: 1000, default: 12, description: "Hard cap on plan/delegate rounds." },
-    { key: "maxCost", kind: "number", label: "Max cost (USD)", min: 0, step: 0.01, description: "Stop when the accumulated cost reaches this." },
-    { key: "maxTimeMs", kind: "number", label: "Max time (ms)", integer: true, min: 1, description: "Wall-clock ceiling for the whole harness run; it stops with the findings so far." },
-    { key: "consequentialTargets", kind: "node-list", label: "Targets needing approval", description: "Delegations to these nodes pause for human approval; such a task always runs alone." },
-    { key: "maxDelegationDepth", kind: "number", label: "Max nesting depth", integer: true, min: 0, default: 2, description: "How deep harnesses may delegate to other harnesses (0 forbids it). Guards against self-referential loops." },
-    { key: "maxConcurrentTasks", kind: "number", label: "Max concurrent tasks", integer: true, min: 1, max: 8, default: 3, description: "Parallel tasks when the planner marks them parallelizable (never the same node twice at once)." },
-    { key: "maxTaskAttempts", kind: "number", label: "Task retries", integer: true, min: 0, default: 0, description: "Retries of a failed task before it is recorded as failed (transient provider/tool errors)." },
+    {
+      key: "allowlist",
+      kind: "node-list",
+      label: "Delegation targets",
+      required: true,
+      description:
+        "Node ids the harness may delegate to (at least one). The Studio draws them as dotted links when the harness is selected.",
+    },
+    {
+      key: "maxIterations",
+      kind: "number",
+      label: "Max iterations",
+      integer: true,
+      min: 1,
+      max: 1000,
+      default: 12,
+      description: "Hard cap on plan/delegate rounds.",
+    },
+    {
+      key: "maxCost",
+      kind: "number",
+      label: "Max cost (USD)",
+      min: 0,
+      step: 0.01,
+      description: "Stop when the accumulated cost reaches this.",
+    },
+    {
+      key: "maxTimeMs",
+      kind: "number",
+      label: "Max time (ms)",
+      integer: true,
+      min: 1,
+      description:
+        "Wall-clock ceiling for the whole harness run; it stops with the findings so far.",
+    },
+    {
+      key: "consequentialTargets",
+      kind: "node-list",
+      label: "Targets needing approval",
+      description:
+        "Delegations to these nodes pause for human approval; such a task always runs alone.",
+    },
+    {
+      key: "maxDelegationDepth",
+      kind: "number",
+      label: "Max nesting depth",
+      integer: true,
+      min: 0,
+      default: 2,
+      description:
+        "How deep harnesses may delegate to other harnesses (0 forbids it). Guards against self-referential loops.",
+    },
+    {
+      key: "maxConcurrentTasks",
+      kind: "number",
+      label: "Max concurrent tasks",
+      integer: true,
+      min: 1,
+      max: 8,
+      default: 3,
+      description:
+        "Parallel tasks when the planner marks them parallelizable (never the same node twice at once).",
+    },
+    {
+      key: "maxTaskAttempts",
+      kind: "number",
+      label: "Task retries",
+      integer: true,
+      min: 0,
+      default: 0,
+      description:
+        "Retries of a failed task before it is recorded as failed (transient provider/tool errors).",
+    },
     {
       key: "verification",
       kind: "object",
       label: "Verification gate",
-      description: "A reviewer node checks the findings before the run may report completion; a rejection feeds its feedback into a re-plan.",
+      description:
+        "A reviewer node checks the findings before the run may report completion; a rejection feeds its feedback into a re-plan.",
       fields: [
-        { key: "target", kind: "node-ref", label: "Reviewer node", required: true, description: "Node id of the reviewer (not scheduled as ordinary work)." },
-        { key: "passSignal", kind: "string", label: "Pass signal", required: true, description: "Exact verdict the reviewer emits to pass (case-insensitive); anything else is a rejection." },
-        { key: "maxAttempts", kind: "number", label: "Rounds", integer: true, min: 1, description: "Verification rounds (each costs a verifier call and a re-plan)." },
-        { key: "failClosed", kind: "boolean", label: "Fail closed", default: false, description: "Reject completion when the verifier is missing/unavailable instead of accepting unverified." },
+        {
+          key: "target",
+          kind: "node-ref",
+          label: "Reviewer node",
+          required: true,
+          description:
+            "Node id of the reviewer (not scheduled as ordinary work).",
+        },
+        {
+          key: "passSignal",
+          kind: "string",
+          label: "Pass signal",
+          required: true,
+          description:
+            "Exact verdict the reviewer emits to pass (case-insensitive); anything else is a rejection.",
+        },
+        {
+          key: "maxAttempts",
+          kind: "number",
+          label: "Rounds",
+          integer: true,
+          min: 1,
+          description:
+            "Verification rounds (each costs a verifier call and a re-plan).",
+        },
+        {
+          key: "failClosed",
+          kind: "boolean",
+          label: "Fail closed",
+          default: false,
+          description:
+            "Reject completion when the verifier is missing/unavailable instead of accepting unverified.",
+        },
       ],
     },
-    LLM_REF_FIELD("plannerLlm", "Planner model", "Model for planning/re-planning; falls back to the node's `llm`, then DEFAULT_LLM."),
+    LLM_REF_FIELD(
+      "plannerLlm",
+      "Planner model",
+      "Model for planning/re-planning; falls back to the node's `llm`, then DEFAULT_LLM.",
+    ),
     {
       key: "progressNarrator",
       kind: "object",
       label: "Progress narrator",
       advanced: true,
-      description: "Phrases one status line from completed findings for the client. Sees only a sanitized summary, never reasoning or tool payloads; failures never affect the run.",
+      description:
+        "Phrases one status line from completed findings for the client. Sees only a sanitized summary, never reasoning or tool payloads; failures never affect the run.",
       fields: [
-        { key: "enabled", kind: "boolean", label: "Enabled", default: true, description: "Defaults to true when the object is present." },
-        { key: "llm", kind: "llm", label: "Model", required: true, description: `Small fast model. ${LLM_REF_DESC}` },
-        { key: "timeoutMs", kind: "number", label: "Timeout (ms)", integer: true, min: 1, description: "Deadline per narration call; a timeout just skips that status line." },
-        { key: "maxOutputChars", kind: "number", label: "Max chars", integer: true, min: 80, description: "Ceiling on the status line." },
-        { key: "includeHypotheses", kind: "json", label: "Include hypotheses", description: "`{ active?, confirmed?, rejected? }` — which labelled hypotheses may be mentioned." },
+        {
+          key: "enabled",
+          kind: "boolean",
+          label: "Enabled",
+          default: true,
+          description: "Defaults to true when the object is present.",
+        },
+        {
+          key: "llm",
+          kind: "llm",
+          label: "Model",
+          required: true,
+          description: `Small fast model. ${LLM_REF_DESC}`,
+        },
+        {
+          key: "timeoutMs",
+          kind: "number",
+          label: "Timeout (ms)",
+          integer: true,
+          min: 1,
+          description:
+            "Deadline per narration call; a timeout just skips that status line.",
+        },
+        {
+          key: "maxOutputChars",
+          kind: "number",
+          label: "Max chars",
+          integer: true,
+          min: 80,
+          description: "Ceiling on the status line.",
+        },
+        {
+          key: "includeHypotheses",
+          kind: "json",
+          label: "Include hypotheses",
+          description:
+            "`{ active?, confirmed?, rejected? }` — which labelled hypotheses may be mentioned.",
+        },
       ],
     },
-    { key: "carryForward", kind: "enum", label: "Carry forward", options: ["full", "condensed"], default: "full", description: "`full` passes each worker's entire output to later rounds; `condensed` only its final answer — needed for long loops over large corpora." },
-    { key: "condensedFindingMaxChars", kind: "number", label: "Finding cap (chars)", integer: true, min: 6000, default: 6000, description: "Per-finding cap in `condensed` mode." },
-    { key: "resultMode", kind: "enum", label: "Result mode", options: ["delegated", "context"], default: "delegated", description: "`delegated`: keep the delegated answers (harness is the end node). `context`: one aggregated context message for a downstream synthesizer." },
-    { key: "streamDelegates", kind: "boolean", label: "Stream delegates", default: true, description: "Stream workers' tokens to the client. Set false when only a later synthesizer should be visible." },
-    { key: "stopSignal", kind: "string", label: "Stop signal", description: "When a finding contains this text (case-insensitive) the loop stops as completed without another planner call." },
-    { key: "requiredFindingMarkers", kind: "string-list", label: "Required finding markers", description: "Line prefixes a worker result must contain to count as a finding." },
-    { key: "plannerless", kind: "boolean", label: "Plannerless", default: false, description: "Skip all planner calls and loop the first allowlist target (or coverage-queue targets)." },
-    { key: "maxStagnantIterations", kind: "number", label: "Max stagnant passes", integer: true, min: 1, description: "Plannerless: stop after this many passes without a new finding (stagnation-limit), keeping all findings." },
-    { key: "coverageQueue", kind: "json", label: "Coverage queue", advanced: true, description: "Deterministic plannerless document coverage: assigns documents to workers until the corpus is covered. See the flow schema for the full shape (targets per assignment mode must be allowlisted)." },
-    { key: "coverageWorkerContextMaxChars", kind: "number", label: "Worker context cap", integer: true, min: 16000, advanced: true, description: "Max stable context passed to a coverage worker (besides its assignment)." },
-    { key: "verificationContextMaxChars", kind: "number", label: "Verifier context cap", integer: true, advanced: true, description: "Ceiling for the complete verifier state." },
+    {
+      key: "carryForward",
+      kind: "enum",
+      label: "Carry forward",
+      options: ["full", "condensed"],
+      default: "full",
+      description:
+        "`full` passes each worker's entire output to later rounds; `condensed` only its final answer — needed for long loops over large corpora.",
+    },
+    {
+      key: "condensedFindingMaxChars",
+      kind: "number",
+      label: "Finding cap (chars)",
+      integer: true,
+      min: 6000,
+      default: 6000,
+      description: "Per-finding cap in `condensed` mode.",
+    },
+    {
+      key: "resultMode",
+      kind: "enum",
+      label: "Result mode",
+      options: ["delegated", "context"],
+      default: "delegated",
+      description:
+        "`delegated`: keep the delegated answers (harness is the end node). `context`: one aggregated context message for a downstream synthesizer.",
+    },
+    {
+      key: "streamDelegates",
+      kind: "boolean",
+      label: "Stream delegates",
+      default: true,
+      description:
+        "Stream workers' tokens to the client. Set false when only a later synthesizer should be visible.",
+    },
+    {
+      key: "stopSignal",
+      kind: "string",
+      label: "Stop signal",
+      description:
+        "When a finding contains this text (case-insensitive) the loop stops as completed without another planner call.",
+    },
+    {
+      key: "requiredFindingMarkers",
+      kind: "string-list",
+      label: "Required finding markers",
+      description:
+        "Line prefixes a worker result must contain to count as a finding.",
+    },
+    {
+      key: "plannerless",
+      kind: "boolean",
+      label: "Plannerless",
+      default: false,
+      description:
+        "Skip all planner calls and loop the first allowlist target (or coverage-queue targets).",
+    },
+    {
+      key: "maxStagnantIterations",
+      kind: "number",
+      label: "Max stagnant passes",
+      integer: true,
+      min: 1,
+      description:
+        "Plannerless: stop after this many passes without a new finding (stagnation-limit), keeping all findings.",
+    },
+    {
+      key: "coverageQueue",
+      kind: "json",
+      label: "Coverage queue",
+      advanced: true,
+      description:
+        "Deterministic plannerless document coverage: assigns documents to workers until the corpus is covered. See the flow schema for the full shape (targets per assignment mode must be allowlisted).",
+    },
+    {
+      key: "coverageWorkerContextMaxChars",
+      kind: "number",
+      label: "Worker context cap",
+      integer: true,
+      min: 16000,
+      advanced: true,
+      description:
+        "Max stable context passed to a coverage worker (besides its assignment).",
+    },
+    {
+      key: "verificationContextMaxChars",
+      kind: "number",
+      label: "Verifier context cap",
+      integer: true,
+      advanced: true,
+      description: "Ceiling for the complete verifier state.",
+    },
   ],
   examples: [
     {

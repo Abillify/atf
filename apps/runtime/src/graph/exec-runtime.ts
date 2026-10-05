@@ -245,7 +245,10 @@ export interface ExecRuntime {
    * `costTracker.record()` entirely (that call is gated on `cost > 0`) and
    * makes the model's spend/usage appear to never change on the dashboard.
    */
-  pricingOverrides?: Record<string, import("../observability/cost.js").ModelPrice>;
+  pricingOverrides?: Record<
+    string,
+    import("../observability/cost.js").ModelPrice
+  >;
   onToken: (nodeId: string, token: string) => Promise<void>;
   /** Emit a reasoning/thinking token — shown as collapsible block in Open WebUI. */
   onReasoning: (nodeId: string, token: string) => Promise<void>;
