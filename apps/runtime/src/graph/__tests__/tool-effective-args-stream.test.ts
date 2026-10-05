@@ -158,7 +158,7 @@ async function run() {
   await engine.executeFlow(
     flow.id,
     [{ role: "user", content: "Wie spaet ist es in Berlin?" }],
-    { ssoToken: "a.b.c", executionId: "exec-eff-args" },
+    { ssoToken: "a.b.c", executionId: "exec-eff-args", userName: "jdoe" },
     async (chunk) => {
       chunks.push(chunk);
     },
@@ -218,5 +218,21 @@ describe("live stream — tool-call arguments show full key-value JSON", () => {
       (e) => e.kind === "tool" && e.status === "completed",
     );
     expect(toolDone?.prompt).toBe('{"query":"Berlin"}');
+  });
+
+  test("every synthetic tool-node event carries user_name and user_prompt", async () => {
+    // A dashboard that joins a run in progress may only ever see the
+    // synthetic tool-node events (the parent node's events and the
+    // __request__ boundary were emitted before it connected). Without the
+    // identity fields stamped here, its picker row would show no user or
+    // prompt until the parent node's terminal event finally lands.
+    const { events } = await run();
+
+    const toolEvents = events.filter((e) => e.kind === "tool");
+    expect(toolEvents.length).toBeGreaterThanOrEqual(2); // running + completed
+    for (const e of toolEvents) {
+      expect(e.user_name).toBe("jdoe");
+      expect(e.user_prompt).toBe("Wie spaet ist es in Berlin?");
+    }
   });
 });

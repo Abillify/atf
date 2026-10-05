@@ -849,6 +849,15 @@ class GraphEngineServiceImpl implements GraphEngineService {
           end_time: null,
           latency_ms: null,
           sequence,
+          // Identity fields, stamped like regular node events (see
+          // userPromptPreview below): a live picker row built solely from
+          // tool-node events (e.g. when the dashboard joined mid-run and
+          // missed the parent node's events) would otherwise show no user
+          // or prompt until the parent node finally completes.
+          ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
+          ...(userPromptPreview !== undefined
+            ? { user_prompt: userPromptPreview }
+            : {}),
           flow_id: flowId,
         },
         monitoringMeta,
@@ -912,6 +921,11 @@ class GraphEngineServiceImpl implements GraphEngineService {
             : {}),
           ...(toolNodeResults.has(toolCallId)
             ? { response: toolNodeResults.get(toolCallId) }
+            : {}),
+          // See emitToolNodeStart: keep identity fields on every tool event.
+          ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
+          ...(userPromptPreview !== undefined
+            ? { user_prompt: userPromptPreview }
             : {}),
           flow_id: flowId,
         },
