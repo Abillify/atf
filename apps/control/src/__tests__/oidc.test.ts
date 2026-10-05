@@ -71,6 +71,53 @@ describe("oidc BFF client", () => {
       await getAuthConfig();
       expect(fetchMock).toHaveBeenCalledTimes(1);
     });
+
+    test("does not memoise a failed probe — a later call retries", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse({}, false))
+        .mockResolvedValueOnce(jsonResponse({ enabled: true }));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+      const { getAuthConfig } = await loadModule();
+      const first = await getAuthConfig();
+      expect(first.enabled).toBe(false);
+      const second = await getAuthConfig();
+      expect(second.enabled).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    test("resolves to disabled when the probe hangs past its timeout", async () => {
+      vi.useFakeTimers();
+      try {
+        // A request that never settles unless the abort signal fires —
+        // simulating a hung localhost connection (proxy/extension interception).
+        globalThis.fetch = vi.fn(
+          (_input: unknown, init?: { signal?: AbortSignal }) =>
+            new Promise((_resolve, reject) => {
+              init?.signal?.addEventListener("abort", () =>
+                reject(new DOMException("aborted", "AbortError")),
+              );
+            }),
+        ) as unknown as typeof fetch;
+        const { getAuthConfig } = await loadModule();
+        const pending = getAuthConfig();
+        let settled = false;
+        void pending.then(() => {
+          settled = true;
+        });
+        await vi.advanceTimersByTimeAsync(4_000);
+        expect(settled).toBe(false);
+        await vi.advanceTimersByTimeAsync(1_500);
+        const cfg = await pending;
+        expect(cfg).toEqual({
+          enabled: false,
+          autoLogin: false,
+          required: true,
+        });
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("beginLogin", () => {

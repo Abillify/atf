@@ -42,20 +42,30 @@ const AUTH_CONFIG_UNSET: AuthConfig = {
 let cachedConfig: AuthConfig | null = null;
 
 /**
+ * Upper bound (ms) for the auth-config probe. Without it, a request that
+ * never settles (a hung proxy/extension interception of the localhost call,
+ * a half-open socket while the backend restarts) would keep
+ * `AuthProvider.ready` false forever and the dashboard would be stuck on its
+ * loading spinner with no way out but to guess the cause.
+ */
+const AUTH_CONFIG_TIMEOUT_MS = 5_000;
+
+/**
  * Fetches (once, then memoised) whether backend-driven SSO is available. Never
- * throws — a network/parse failure resolves to "disabled" so the manual token
- * box stays usable.
+ * throws — a network/parse failure or a timeout resolves to "disabled" so the
+ * manual token box stays usable. Failures are deliberately NOT memoised, so a
+ * later page load retries the probe once the backend answers again.
  */
 export async function getAuthConfig(): Promise<AuthConfig> {
   if (cachedConfig !== null) return cachedConfig;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AUTH_CONFIG_TIMEOUT_MS);
   try {
     const res = await fetch(backendUrl("/monitoring/auth/config"), {
       headers: { Accept: "application/json" },
+      signal: controller.signal,
     });
-    if (!res.ok) {
-      cachedConfig = AUTH_CONFIG_UNSET;
-      return cachedConfig;
-    }
+    if (!res.ok) return AUTH_CONFIG_UNSET;
     const data = (await res.json()) as Partial<AuthConfig>;
     cachedConfig = {
       enabled: data.enabled === true,
@@ -65,8 +75,9 @@ export async function getAuthConfig(): Promise<AuthConfig> {
     };
     return cachedConfig;
   } catch {
-    cachedConfig = AUTH_CONFIG_UNSET;
-    return cachedConfig;
+    return AUTH_CONFIG_UNSET;
+  } finally {
+    clearTimeout(timer);
   }
 }
 
