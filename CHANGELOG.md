@@ -21,9 +21,39 @@ releases:
 Hardens the LLM tool loop for local models: the `maxToolSteps` budget ends with an answer
 round, retries continue from the recorded tool results, and tool calls written as plain text
 are never delivered as the answer. LLM nodes gain the opt-in configs `turnContext` and
-`sourcesCheck`, and the execution debug trace reports `provider_attempts`. No environment
-variable, migration, HTTP endpoint, contract-package, or example-flow change.
+`sourcesCheck`, and the execution debug trace reports `provider_attempts`. Control gains
+per-flow run statistics, a flow diff page for any two flows or drafts, the full error recording
+from the debug trace in the Live Graph, a user filter and conversation header rows in History,
+and flow-local save modes in the prompt editor. Two read-only HTTP endpoints are added
+(`GET /monitoring/flow-stats`, `GET /flows/diff/compare`); no environment variable, migration,
+contract-package, or example-flow change.
 ### Added
+- **Per-flow run statistics** (`@atf/runtime`, Control). `GET /monitoring/flow-stats?since=<ISO>`
+  returns runs, average runtime, average and total cost per flow for executions started at or
+  after `since` (400 without a valid timestamp; same read gate as the history endpoints;
+  operator-plane across tenants like the other history reads). The flow table shows these as
+  columns with a 1h/1d/1w/1m window selector (default 1d); flows without runs show a dash.
+- **Flow diff between any two endpoints** (`@atf/runtime`, Control).
+  `GET /flows/diff/compare?from=<flowId>&to=<flowId>` (optional `fromDraft`/`toDraft`, scope
+  `flows:read`) diffs two arbitrary flows or drafts. Each side resolves to the named draft, else
+  the published definition, else the file definition, else the default draft; an unknown flow
+  or draft answers 404. The `/flow-diff` page picks both sides in a searchable picker that can
+  list each flow's named drafts under it, and `GET /flows` entries carry their `drafts`
+  (`draftId`, `label`).
+- **Full error recording in the Live Graph** (Control). Failed nodes show the error type,
+  structured details, the diagnostics timeline and the failing tool result from
+  `GET /monitoring/debug/:executionId`, also as a hover tooltip on the node card. The trace is
+  fetched once per execution and again when a running execution finishes; a 404 (trace evicted
+  from the bounded in-memory buffer) falls back to the plain event `error_message`. Node status
+  stays event-derived.
+- **History grouping and user filter** (Control). Requests of one conversation sit under a
+  header row with flow, user, summed runtime and cost, status and start. History and the Live
+  Graph share a filter popover with flow include/exclude and a searchable user select; the
+  Live Graph keyword filter also matches user, flow name and request id.
+- **Flow-local save modes in the prompt editor** (Control). Besides saving the prompt file
+  (which affects every flow that includes it), "Save as" writes a copy under a new name and
+  points only this flow's `#[[file:…]]` reference at it, and "Copy into flow" replaces the
+  include with the edited text without writing to disk.
 - **`turnContext`** (LLM nodes, `@atf/runtime`). A template appended to the newest user turn
   instead of the system prompt, so per-request context such as a classifier's image
   transcription reaches the responder without system authority and without changing the
@@ -71,6 +101,17 @@ variable, migration, HTTP endpoint, contract-package, or example-flow change.
 - **Attachment markup no longer leaks into `{{query}}`** (`@atf/runtime`). Open WebUI's
   `<attached_files>…</attached_files>` part is stripped from the last user query before it
   is used in retrieval tool arguments.
+- **Reasoning preamble no longer leaks into the persisted answer** (`@atf/runtime`). When the
+  final assistant message is the streamed answer plus a prefix (a model echoing its reasoning
+  through the LM Studio reasoning shim), the persisted and replayed response keeps only the
+  streamed answer; diagnostic `reasoning_prefix_stripped` reports the removed length.
+- **Tool node events carry the request identity** (`@atf/runtime`). Tool start and end events
+  include `user_name` and `user_prompt`, so a live picker row built only from tool events (for
+  example after joining mid-run) shows user and prompt before the parent node completes; the
+  Live Graph also backfills these fields from the durable history row.
+- **Auth config probe times out** (Control). The OIDC config probe aborts after 5 s and
+  resolves to "disabled", so a hung request no longer leaves the dashboard on its loading
+  spinner; failed probes are not cached, so a later page load retries.
 - **History table row actions are full-size icon buttons** (Control). The per-row actions in
   the persisted history use a new outlined `size="icon"` button variant instead of small ghost
   buttons whose padding squeezed the icons.
