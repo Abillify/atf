@@ -40,6 +40,11 @@ async function errorMessage(resp: Response): Promise<string> {
   return body?.error?.message ?? `HTTP ${resp.status}`;
 }
 
+/** Paths the Studio may edit: Markdown/text under `prompts/`, no `..`. */
+export function isEditablePromptPath(path: string): boolean {
+  return !path.includes("..") && EDITABLE_PROMPT_PATH_RE.test(path);
+}
+
 /**
  * Every prompt file referenced from a `systemPrompt` value, in order of
  * appearance and without duplicates. Paths outside `prompts/` are reported too
@@ -56,12 +61,39 @@ export function promptFileRefs(
     const path = (match[1] ?? "").trim();
     if (path === "" || seen.has(path)) continue;
     seen.add(path);
-    refs.push({
-      path,
-      editable: !path.includes("..") && EDITABLE_PROMPT_PATH_RE.test(path),
-    });
+    refs.push({ path, editable: isEditablePromptPath(path) });
   }
   return refs;
+}
+
+/**
+ * Swap a `#[[file:oldPath]]` reference for `#[[file:newPath]]` — the flow-side
+ * half of "save as". Only the flow whose text is rewritten switches files;
+ * every other flow keeps referencing `oldPath`, so their prompts are unaffected.
+ */
+export function rewritePromptRef(
+  text: string,
+  oldPath: string,
+  newPath: string,
+): string {
+  return text.replace(PROMPT_INCLUDE_RE, (whole, raw: string) =>
+    (raw ?? "").trim() === oldPath ? `#[[file:${newPath}]]` : whole,
+  );
+}
+
+/**
+ * Replace a `#[[file:path]]` reference with the prompt text itself — the
+ * modified copy lives in the flow alone and the include is dropped. The file
+ * on disk (and every other flow including it) stays as it is.
+ */
+export function inlinePromptRef(
+  text: string,
+  path: string,
+  content: string,
+): string {
+  return text.replace(PROMPT_INCLUDE_RE, (whole, raw: string) =>
+    (raw ?? "").trim() === path ? content : whole,
+  );
 }
 
 /** GET /flows/prompts/content — the file's current text plus its hash. */

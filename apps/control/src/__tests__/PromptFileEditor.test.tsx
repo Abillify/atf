@@ -5,12 +5,21 @@
  * The prompt files behind `#[[file:prompts/x.md]]` must be editable in the
  * Studio — before this editor existed the node panel showed the reference and
  * the prompt text itself was unreachable from the UI.
+ *
+ * Saving comes in three scopes: the file itself (every flow including it
+ * changes), a copy under a new name referenced only by this flow ("save as"),
+ * or the text moved into the flow with the include dropped ("copy into flow").
  */
 
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { PromptFileEditor } from "../components/PromptFileEditor";
-import { promptFileRefs } from "../lib/prompt-files";
+import {
+  inlinePromptRef,
+  isEditablePromptPath,
+  promptFileRefs,
+  rewritePromptRef,
+} from "../lib/prompt-files";
 
 const FILE = "prompts/casework-loop-researcher.md";
 const BODY = "Du bist ein Rechercheur.\n";
@@ -71,6 +80,47 @@ describe("promptFileRefs", () => {
   });
 });
 
+describe("isEditablePromptPath", () => {
+  test("accepts Markdown under prompts/ only", () => {
+    expect(isEditablePromptPath("prompts/a.md")).toBe(true);
+    expect(isEditablePromptPath("prompts/sub/dir/a.markdown")).toBe(true);
+    expect(isEditablePromptPath("prompts/a.txt")).toBe(true);
+    expect(isEditablePromptPath("shared/a.md")).toBe(false);
+    expect(isEditablePromptPath("prompts/a.sh")).toBe(false);
+    expect(isEditablePromptPath("prompts/../secrets.md")).toBe(false);
+  });
+});
+
+describe("rewritePromptRef", () => {
+  test("points only the matching reference at the new file", () => {
+    expect(
+      rewritePromptRef(`#[[file:${FILE}]]`, FILE, "prompts/other.md"),
+    ).toBe("#[[file:prompts/other.md]]");
+  });
+
+  test("trims the raw tag and leaves other references untouched", () => {
+    const text = `#[[file: ${FILE} ]]\n#[[file:prompts/keep.md]]`;
+    expect(rewritePromptRef(text, FILE, "prompts/other.md")).toBe(
+      "#[[file:prompts/other.md]]\n#[[file:prompts/keep.md]]",
+    );
+  });
+});
+
+describe("inlinePromptRef", () => {
+  test("replaces the matching reference with the prompt text", () => {
+    expect(inlinePromptRef(`Vortext\n#[[file:${FILE}]]`, FILE, BODY)).toBe(
+      `Vortext\n${BODY}`,
+    );
+  });
+
+  test("leaves other references in place", () => {
+    const text = `#[[file:${FILE}]] #[[file:prompts/keep.md]]`;
+    expect(inlinePromptRef(text, FILE, "Text")).toBe(
+      "Text #[[file:prompts/keep.md]]",
+    );
+  });
+});
+
 describe("PromptFileEditor", () => {
   test("renders nothing for an inline prompt", () => {
     const { container } = render(
@@ -102,7 +152,7 @@ describe("PromptFileEditor", () => {
       ([url]) => String(url).includes("/flows/prompts/write"),
     );
     expect(writeCall).toBeDefined();
-    expect(JSON.parse(String((writeCall?.[1] as RequestInit).body))).toEqual({
+    expect(JSON.parse(String((writeCall?.[1] as RequestInit | undefined)?.body))).toEqual({
       path: FILE,
       content: "Neuer Prompt.",
       baseHash: "h1",
@@ -145,5 +195,80 @@ describe("PromptFileEditor", () => {
     render(<PromptFileEditor systemPrompt="#[[file:shared/a.md]]" token="t" />);
     expect(screen.getByText(/cannot be edited here/)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).toBeNull();
+  });
+
+  test("hides the flow-local modes without onSystemPromptChange", async () => {
+    render(<PromptFileEditor systemPrompt={`#[[file:${FILE}]]`} token="t" />);
+    await screen.findByRole("textbox", { name: `Prompt file ${FILE}` });
+    expect(screen.queryByRole("button", { name: /Save as/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /Copy into flow/ })).toBeNull();
+  });
+
+  test("save as writes a new file and repoints only this flow's reference", async () => {
+    const onSystemPromptChange = vi.fn();
+    const fetchMock = mockFetch();
+    render(
+      <PromptFileEditor
+        systemPrompt={`#[[file:${FILE}]]`}
+        token="t"
+        onSystemPromptChange={onSystemPromptChange}
+      />,
+    );
+    const area = (await screen.findByRole("textbox", {
+      name: `Prompt file ${FILE}`,
+    })) as HTMLTextAreaElement;
+    await waitFor(() => expect(area.value).toBe(BODY));
+
+    fireEvent.click(screen.getByRole("button", { name: /Save as\u2026/ }));
+    const pathInput = screen.getByRole("textbox", {
+      name: `New prompt file path for ${FILE}`,
+    }) as HTMLInputElement;
+    // Pre-filled with the current path so the user only edits the name.
+    expect(pathInput.value).toBe(FILE);
+    fireEvent.change(pathInput, { target: { value: "prompts/other.md" } });
+    fireEvent.change(area, { target: { value: "Angepasster Prompt." } });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Save as$/ }));
+    await waitFor(() => expect(onSystemPromptChange).toHaveBeenCalledOnce());
+
+    // The copy is a new file — written without baseHash, unlike a plain save.
+    const writeCall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes("/flows/prompts/write"),
+    );
+    expect(writeCall).toBeDefined();
+    expect(JSON.parse(String((writeCall?.[1] as RequestInit | undefined)?.body))).toEqual({
+      path: "prompts/other.md",
+      content: "Angepasster Prompt.",
+    });
+    // Only this flow's reference moves; the old file stays on disk untouched.
+    expect(onSystemPromptChange).toHaveBeenCalledWith(
+      "#[[file:prompts/other.md]]",
+    );
+  });
+
+  test("copy into flow drops the include and never writes to disk", async () => {
+    const onSystemPromptChange = vi.fn();
+    const fetchMock = mockFetch();
+    render(
+      <PromptFileEditor
+        systemPrompt={`#[[file:${FILE}]]`}
+        token="t"
+        onSystemPromptChange={onSystemPromptChange}
+      />,
+    );
+    const area = (await screen.findByRole("textbox", {
+      name: `Prompt file ${FILE}`,
+    })) as HTMLTextAreaElement;
+    await waitFor(() => expect(area.value).toBe(BODY));
+
+    fireEvent.change(area, { target: { value: "Nur in diesem Flow." } });
+    fireEvent.click(screen.getByRole("button", { name: /Copy into flow/ }));
+
+    expect(onSystemPromptChange).toHaveBeenCalledWith("Nur in diesem Flow.");
+    expect(
+      fetchMock.mock.calls.some(([url]) =>
+        String(url).includes("/flows/prompts/write"),
+      ),
+    ).toBe(false);
   });
 });

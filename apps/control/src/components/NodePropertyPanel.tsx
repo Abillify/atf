@@ -868,7 +868,9 @@ export function NodePropertyPanel({
         <NodeIdHeading
           key={node.id}
           id={node.id}
-          {...(onRenameNode ? { onRename: (next: string) => onRenameNode(node.id, next) } : {})}
+          {...(onRenameNode
+            ? { onRename: (next: string) => onRenameNode(node.id, next) }
+            : {})}
         />
         <span className="shrink-0 rounded bg-muted px-1.5 text-[10px] uppercase text-muted-foreground">
           {node.type}
@@ -877,27 +879,34 @@ export function NodePropertyPanel({
 
       {onOriginChange && (
         <label className="flex items-center gap-2 text-[11px]">
-          <span className="shrink-0 font-medium uppercase tracking-wide text-muted-foreground">Saved in</span>
+          <span className="shrink-0 font-medium uppercase tracking-wide text-muted-foreground">
+            Saved in
+          </span>
           <select
             aria-label="Saved in"
             value={origin ?? ""}
-            onChange={(e) => onOriginChange(e.target.value === "" ? null : e.target.value)}
+            onChange={(e) =>
+              onOriginChange(e.target.value === "" ? null : e.target.value)
+            }
             className="min-w-0 flex-1 rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[11px]"
             title="The file this node is written to on save — the flow file or a sub-flow (use “New subflow” in the palette to create one)"
           >
             <option value="">this flow's file</option>
-            {[...new Set([...originOptions, ...(origin ? [origin] : [])])].sort().map((p) => (
-              <option key={p} value={p}>
-                📄 {p}
-              </option>
-            ))}
+            {[...new Set([...originOptions, ...(origin ? [origin] : [])])]
+              .sort()
+              .map((p) => (
+                <option key={p} value={p}>
+                  📄 {p}
+                </option>
+              ))}
           </select>
         </label>
       )}
 
       <div role="tablist" className="flex gap-1 text-xs">
         {(["form", "json"] as const).map((t) => (
-          <button type="button"
+          <button
+            type="button"
             key={t}
             role="tab"
             aria-selected={tab === t}
@@ -1001,7 +1010,9 @@ export function NodePropertyPanel({
                 <Field label="Reasoning effort">
                   <select
                     className={inputCls}
-                    onFocus={() => onFocusField?.("llm.parameters.reasoningEffort")}
+                    onFocus={() =>
+                      onFocusField?.("llm.parameters.reasoningEffort")
+                    }
                     value={String(params.reasoningEffort ?? "")}
                     onChange={(e) =>
                       setParam("reasoningEffort", e.target.value || undefined)
@@ -1013,7 +1024,9 @@ export function NodePropertyPanel({
                       </option>
                     ))}
                     {params.reasoningEffort !== undefined &&
-                      !REASONING_EFFORTS.includes(String(params.reasoningEffort)) && (
+                      !REASONING_EFFORTS.includes(
+                        String(params.reasoningEffort),
+                      ) && (
                         <option value={String(params.reasoningEffort)}>
                           {String(params.reasoningEffort)}
                         </option>
@@ -1035,7 +1048,9 @@ export function NodePropertyPanel({
                 {...(onFocusField
                   ? { onCursorKey: (): void => onFocusField("llm.parameters") }
                   : {})}
-                value={Object.keys(extraParams).length > 0 ? extraParams : undefined}
+                value={
+                  Object.keys(extraParams).length > 0 ? extraParams : undefined
+                }
                 onChange={(v) => {
                   const known = Object.fromEntries(
                     Object.entries(params).filter(([k]) => knownParams.has(k)),
@@ -1089,12 +1104,18 @@ export function NodePropertyPanel({
                 key={`${node.id}-prompt-files`}
                 systemPrompt={node.systemPrompt}
                 token={authToken}
+                onSystemPromptChange={(v) =>
+                  set({ systemPrompt: v || undefined })
+                }
               />
             </Section>
           )}
 
           {showTools && (
-            <Section title={`Tools (${node.tools?.length ?? 0})`} sectionId="tools">
+            <Section
+              title={`Tools (${node.tools?.length ?? 0})`}
+              sectionId="tools"
+            >
               {isUnread("tools") && (
                 <UnreadFieldNotice field="tools" type={node.type} />
               )}
@@ -1106,7 +1127,10 @@ export function NodePropertyPanel({
                     : "Tool ids like vectorsearch/search; patterns like server/* are allowed."
                 }
               >
-                <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("tools")}>
+                <fieldset
+                  className="m-0 min-w-0 border-0 p-0"
+                  onFocus={() => onFocusField?.("tools")}
+                >
                   <ListInput
                     listId={`tools-${node.id}`}
                     value={node.tools}
@@ -1130,81 +1154,87 @@ export function NodePropertyPanel({
 
           {node.type === "classifier" && (
             <Section title="Classifier">
-              <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("classifierSchema")}>
-              <Field label="Class key">
-                <input
-                  className={inputCls}
-                  onFocus={() => onFocusField?.("classifierSchema")}
-                  value={node.classifierSchema?.classKey ?? ""}
-                  onChange={(e) =>
+              <fieldset
+                className="m-0 min-w-0 border-0 p-0"
+                onFocus={() => onFocusField?.("classifierSchema")}
+              >
+                <Field label="Class key">
+                  <input
+                    className={inputCls}
+                    onFocus={() => onFocusField?.("classifierSchema")}
+                    value={node.classifierSchema?.classKey ?? ""}
+                    onChange={(e) =>
+                      set({
+                        classifierSchema: {
+                          schema: node.classifierSchema?.schema ?? {
+                            type: "object",
+                            properties: {},
+                          },
+                          classKey: e.target.value,
+                        },
+                      })
+                    }
+                  />
+                </Field>
+                <JsonEditor
+                  key={`${node.id}-schema`}
+                  label="Output schema (JSON Schema)"
+                  rows={8}
+                  allowEmpty={false}
+                  value={node.classifierSchema?.schema ?? {}}
+                  onChange={(v) =>
                     set({
                       classifierSchema: {
-                        schema: node.classifierSchema?.schema ?? {
-                          type: "object",
-                          properties: {},
-                        },
-                        classKey: e.target.value,
+                        classKey: node.classifierSchema?.classKey ?? "",
+                        schema: v as Record<string, unknown>,
                       },
                     })
                   }
                 />
-              </Field>
-              <JsonEditor
-                key={`${node.id}-schema`}
-                label="Output schema (JSON Schema)"
-                rows={8}
-                allowEmpty={false}
-                value={node.classifierSchema?.schema ?? {}}
-                onChange={(v) =>
-                  set({
-                    classifierSchema: {
-                      classKey: node.classifierSchema?.classKey ?? "",
-                      schema: v as Record<string, unknown>,
-                    },
-                  })
-                }
-              />
               </fieldset>
             </Section>
           )}
 
           {node.type === "parallel" && (
             <Section title="Parallel children">
-              <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("parallelNodes")}>
-              {parallelHasConditions ? (
-                <JsonEditor
-                  key={`${node.id}-parallel`}
-                  label="Children"
-                  hint='Plain ids or { "node": id, "condition": expr }.'
-                  rows={6}
-                  value={parallel}
-                  onChange={(v) =>
-                    set({
-                      parallelNodes: Array.isArray(v)
-                        ? (v as FlowNode["parallelNodes"])
-                        : undefined,
-                    })
-                  }
-                />
-              ) : (
-                <Field
-                  label="Child node ids (one per line)"
-                  hint={`${parallel.map(parallelChildId).length} child(ren)`}
-                >
-                  <textarea
-                    className={`${inputCls} h-20 resize-y font-mono text-xs`}
-                    value={parallel.map(parallelChildId).join("\n")}
-                    onChange={(e) =>
+              <fieldset
+                className="m-0 min-w-0 border-0 p-0"
+                onFocus={() => onFocusField?.("parallelNodes")}
+              >
+                {parallelHasConditions ? (
+                  <JsonEditor
+                    key={`${node.id}-parallel`}
+                    label="Children"
+                    hint='Plain ids or { "node": id, "condition": expr }.'
+                    rows={6}
+                    value={parallel}
+                    onChange={(v) =>
                       set({
-                        parallelNodes: e.target.value
-                          .split("\n")
-                          .map((s) => s.trim())
-                          .filter((s) => s.length > 0),
+                        parallelNodes: Array.isArray(v)
+                          ? (v as FlowNode["parallelNodes"])
+                          : undefined,
                       })
                     }
                   />
-                </Field>
-              )}
+                ) : (
+                  <Field
+                    label="Child node ids (one per line)"
+                    hint={`${parallel.map(parallelChildId).length} child(ren)`}
+                  >
+                    <textarea
+                      className={`${inputCls} h-20 resize-y font-mono text-xs`}
+                      value={parallel.map(parallelChildId).join("\n")}
+                      onChange={(e) =>
+                        set({
+                          parallelNodes: e.target.value
+                            .split("\n")
+                            .map((s) => s.trim())
+                            .filter((s) => s.length > 0),
+                        })
+                      }
+                    />
+                  </Field>
+                )}
               </fieldset>
             </Section>
           )}
@@ -1251,16 +1281,19 @@ export function NodePropertyPanel({
               {isUnread("overrides") && (
                 <UnreadFieldNotice field="overrides" type={node.type} />
               )}
-              <fieldset className="m-0 min-w-0 border-0 p-0" onFocus={() => onFocusField?.("overrides")}>
-              <JsonEditor
-                key={`${node.id}-overrides`}
-                label="Overrides"
-                rows={6}
-                value={node.overrides}
-                onChange={(v) =>
-                  set({ overrides: v as unknown[] | undefined })
-                }
-              />
+              <fieldset
+                className="m-0 min-w-0 border-0 p-0"
+                onFocus={() => onFocusField?.("overrides")}
+              >
+                <JsonEditor
+                  key={`${node.id}-overrides`}
+                  label="Overrides"
+                  rows={6}
+                  value={node.overrides}
+                  onChange={(v) =>
+                    set({ overrides: v as unknown[] | undefined })
+                  }
+                />
               </fieldset>
             </Section>
           )}
