@@ -17,6 +17,63 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+## [0.13.2] — 2026-10-05
+Hardens the LLM tool loop for local models: the `maxToolSteps` budget ends with an answer
+round, retries continue from the recorded tool results, and tool calls written as plain text
+are never delivered as the answer. LLM nodes gain the opt-in configs `turnContext` and
+`sourcesCheck`, and the execution debug trace reports `provider_attempts`. No environment
+variable, migration, HTTP endpoint, contract-package, or example-flow change.
+### Added
+- **`turnContext`** (LLM nodes, `@atf/runtime`). A template appended to the newest user turn
+  instead of the system prompt, so per-request context such as a classifier's image
+  transcription reaches the responder without system authority and without changing the
+  cacheable prefix. Supports `{{context.*}}`, `{{now.*}}`,
+  `{{node.<id>.classification.<field>}}` and `{{turn[n]...}}`; the block is omitted when every
+  referenced placeholder resolves empty.
+- **`provider_attempts` in the execution debug trace** (`@atf/runtime`). LLM nodes report
+  `total`, `failed`, `final_attempt` and `final_outcome` of the provider calls made inside one
+  node attempt, derived from the `llm_provider_attempt_completed` diagnostics. `attempt` keeps
+  counting graph attempts only, so a provider retry no longer looks like a single clean call.
+- **Opt-in post-answer sources check `sourcesCheck`** (LLM nodes, `@atf/runtime`). Off by
+  default. `completeSection: true` appends every inline-cited `[n]` that the sources section
+  (`heading`, default `## Quellen`) lacks, built only from the sources registered in the same
+  execution, and creates the section when it is missing; the completion is streamed as a
+  trailing chunk and persisted with the answer. Cited numbers without a registered source are
+  reported, never invented. `stripRuleMarkers: true` separately removes the pseudo marker
+  `[Regel: …]` from answer text that has not been streamed yet (for example with
+  `suppressToolPreamble`); other bracketed content is left untouched. Results appear in the
+  `answer_sources_check` diagnostic.
+### Fixed
+- **Tool loop ends with an answer round at the `maxToolSteps` budget** (`@atf/runtime`).
+  When the budget is exhausted the node now runs one extra model round without tools and with
+  an explicit answer instruction (diagnostic `tool_budget_final_answer_round`) instead of
+  stopping right after the last tool result. Flows that exhaust the budget make one more model
+  call per attempt. This round and the answer-only retries below keep tool calls out in a
+  provider-valid way: OpenAI, Azure, Ollama and OpenAI-compatible endpoints get no tool
+  definitions; Google keeps the declarations with function calling mode `NONE`; Anthropic,
+  Bedrock and unknown providers get the recorded tool calls and results as plain text
+  (tool name, call id, arguments, result) without tool definitions, because their SDKs drop
+  the tools under tool choice `none`. Anthropic would otherwise reject the request, and
+  Bedrock would silently remove the tool results from it.
+- **`post_tool_answer_missing` retry continues from the tool results** (`@atf/runtime`). The
+  retry replays the attempt's tool calls and results and offers no tools, instead of
+  restarting from the original prompt with a truncated excerpt of the last result. The
+  excerpt remains only as a fallback when no tool exchange can be recorded, and that retry
+  offers no tools either.
+- **Text tool calls are never delivered as the answer** (`@atf/runtime`). Tool calls written
+  as plain text (Qwen XML `<function=…>`, Hermes `<tool_call>{…}</tool_call>`) are held back
+  from `content` in every step, with or without `suppressToolPreamble`, and rejected
+  (`text_tool_call_rejected`). After a tool exchange the retry is an answer-only continuation
+  without tools; before any tool use it keeps the tools and asks for a native call (answer-only
+  from the second-to-last attempt on). The node fails on the last attempt
+  (`text_tool_call_unrecoverable`). Without `suppressToolPreamble`, prose already streamed
+  before an inline call in the same step cannot be retracted.
+- **Attachment markup no longer leaks into `{{query}}`** (`@atf/runtime`). Open WebUI's
+  `<attached_files>…</attached_files>` part is stripped from the last user query before it
+  is used in retrieval tool arguments.
+- **History table row actions are full-size icon buttons** (Control). The per-row actions in
+  the persisted history use a new outlined `size="icon"` button variant instead of small ghost
+  buttons whose padding squeezed the icons.
 ## [0.13.1] — 2026-10-04
 Keeps an MCP server online when a reconnect attempt fails. No configuration, schema, flow,
 migration, HTTP endpoint, or contract-package change.
@@ -1454,7 +1511,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.13.2...HEAD
+[0.13.2]: https://github.com/abillify/atf/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/abillify/atf/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/abillify/atf/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/abillify/atf/compare/v0.11.1...v0.12.0

@@ -16,16 +16,16 @@
     },
     "component": {
       "type": "application",
-      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.13.1",
+      "bom-ref": "pkg:npm/aiperator-trust-fabric@0.13.2",
       "group": "Abillify Technology GmbH",
       "name": "aiperator-trust-fabric",
-      "version": "0.13.1",
+      "version": "0.13.2",
       "licenses": [
         {
           "expression": "Elastic-2.0"
         }
       ],
-      "purl": "pkg:npm/aiperator-trust-fabric@0.13.1"
+      "purl": "pkg:npm/aiperator-trust-fabric@0.13.2"
     },
     "properties": [
       {
@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "566db5b94796a2c5c53d17dc04f692b23ab4668db814e86d0193dfbb489e0404"
+        "value": "8a65c04ee439400aaab47b4cf0529a659dd5243de2746ab404235f0581aefe90"
       }
     ]
   },
