@@ -481,8 +481,16 @@ export function FlowRunDrawer({
           aria-label="What to run"
           className="flex shrink-0 overflow-hidden rounded border border-border"
         >
-          {targetBtn("canvas", "Canvas", "Run what is on the canvas now, unsaved edits included. Nothing is saved.")}
-          {targetBtn("live", "Live", "Run the version the runtime currently serves.")}
+          {targetBtn(
+            "canvas",
+            "Canvas",
+            "Run what is on the canvas now, unsaved edits included. Nothing is saved.",
+          )}
+          {targetBtn(
+            "live",
+            "Live",
+            "Run the version the runtime currently serves.",
+          )}
         </div>
         {/* Prompt input — images can be attached with the button or dropped here. */}
         {/* biome-ignore lint/a11y/noStaticElementInteractions: drag & drop is a pointer-only affordance; attaching also works via the button */}
@@ -600,15 +608,21 @@ export function FlowRunDrawer({
           {notice && <p className="text-amber-600">{notice}</p>}
           {attached && (
             <p className="text-muted-foreground" data-testid="attached-run">
-              Request <code className="font-mono">{attached.slice(0, 8)}</code> opened from the Live Graph
-              {attachedInfo?.flowId && attachedInfo.flowId !== flowId ? ` (ran as ${attachedInfo.flowId})` : ""}
+              Request <code className="font-mono">{attached.slice(0, 8)}</code>{" "}
+              opened from the Live Graph
+              {attachedInfo?.flowId && attachedInfo.flowId !== flowId
+                ? ` (ran as ${attachedInfo.flowId})`
+                : ""}
               {attachedRunning ? " — still running, tracing live…" : "."}
             </p>
           )}
           {/* Thinking (Open-WebUI style): the reasoning trail, open while it
               streams and auto-collapsed once the answer starts. */}
           {reasoning && (
-            <div className="rounded border border-border/70 bg-card" data-testid="thinking">
+            <div
+              className="rounded border border-border/70 bg-card"
+              data-testid="thinking"
+            >
               <button
                 type="button"
                 aria-expanded={thinkingOpen}
@@ -656,76 +670,99 @@ export function FlowRunDrawer({
               </pre>
             )
           )}
-          {onSaveEvalCase && (evalForm.state === "editing" || evalForm.state === "saving") && (
-            <div className="space-y-1 rounded border border-border bg-card p-2">
-              <label className="block text-[11px] font-medium text-foreground">
-                Expected answer (reference for the eval)
-                <textarea
-                  aria-label="Expected answer"
-                  rows={4}
-                  value={evalForm.expected}
-                  disabled={evalForm.state === "saving"}
-                  onChange={(e) => setEvalForm({ state: "editing", expected: e.target.value })}
-                  className="mt-0.5 w-full resize-y rounded border border-border bg-background px-2 py-1 text-[11px] font-normal"
-                />
-              </label>
-              <p className="text-[10px] text-muted-foreground">
-                Pre-filled with this run's answer — correct it to what the flow SHOULD answer. Evals compare future runs against it.
-              </p>
-              {evalForm.error && (
-                <p role="alert" className="text-[11px] text-red-600">{evalForm.error}</p>
-              )}
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setEvalForm({ state: "closed" })}
-                  className="rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  disabled={evalForm.state === "saving" || !evalForm.expected.trim()}
-                  onClick={() => {
-                    const expected = evalForm.expected;
-                    setEvalForm({ state: "saving", expected });
-                    onSaveEvalCase(
-                      lastPrompt,
-                      flowId,
-                      {
-                        content: streamingContent,
-                        ...(totals
-                          ? { promptTokens: totals.input, completionTokens: totals.output, cost: totals.cost }
-                          : {}),
-                      },
-                      expected,
-                    ).then(
-                      (id) => setEvalForm({ state: "saved", ...(id ? { id } : {}) }),
-                      (err: unknown) =>
-                        setEvalForm({
-                          state: "editing",
-                          expected,
-                          error: `Not saved: ${err instanceof Error ? err.message : String(err)}`,
-                        }),
-                    );
-                  }}
-                  className="rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
-                >
-                  {evalForm.state === "saving" ? "Saving…" : "Save eval case"}
-                </button>
+          {onSaveEvalCase &&
+            (evalForm.state === "editing" || evalForm.state === "saving") && (
+              <div className="space-y-1 rounded border border-border bg-card p-2">
+                <label className="block text-[11px] font-medium text-foreground">
+                  Expected answer (reference for the eval)
+                  <textarea
+                    aria-label="Expected answer"
+                    rows={4}
+                    value={evalForm.expected}
+                    disabled={evalForm.state === "saving"}
+                    onChange={(e) =>
+                      setEvalForm({
+                        state: "editing",
+                        expected: e.target.value,
+                      })
+                    }
+                    className="mt-0.5 w-full resize-y rounded border border-border bg-background px-2 py-1 text-[11px] font-normal"
+                  />
+                </label>
+                <p className="text-[10px] text-muted-foreground">
+                  Pre-filled with this run's answer — correct it to what the
+                  flow SHOULD answer. Evals compare future runs against it.
+                </p>
+                {evalForm.error && (
+                  <p role="alert" className="text-[11px] text-red-600">
+                    {evalForm.error}
+                  </p>
+                )}
+                <div className="flex justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setEvalForm({ state: "closed" })}
+                    className="rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    disabled={
+                      evalForm.state === "saving" || !evalForm.expected.trim()
+                    }
+                    onClick={() => {
+                      const expected = evalForm.expected;
+                      setEvalForm({ state: "saving", expected });
+                      onSaveEvalCase(
+                        lastPrompt,
+                        flowId,
+                        {
+                          content: streamingContent,
+                          ...(totals
+                            ? {
+                                promptTokens: totals.input,
+                                completionTokens: totals.output,
+                                cost: totals.cost,
+                              }
+                            : {}),
+                        },
+                        expected,
+                      ).then(
+                        (id) =>
+                          setEvalForm({
+                            state: "saved",
+                            ...(id ? { id } : {}),
+                          }),
+                        (err: unknown) =>
+                          setEvalForm({
+                            state: "editing",
+                            expected,
+                            error: `Not saved: ${err instanceof Error ? err.message : String(err)}`,
+                          }),
+                      );
+                    }}
+                    className="rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
+                  >
+                    {evalForm.state === "saving" ? "Saving…" : "Save eval case"}
+                  </button>
+                </div>
               </div>
-            </div>
-          )}
+            )}
           {!busy && !error && (streamingContent || attached) && (
             <div className="flex flex-wrap items-center gap-3 border-t border-border pt-1.5 text-[11px] text-muted-foreground">
               {totals ? (
                 <>
                   <span>{totals.nodes} node(s) traced</span>
-                  <span>↑{totals.input} / ↓{totals.output} tokens</span>
+                  <span>
+                    ↑{totals.input} / ↓{totals.output} tokens
+                  </span>
                   <span>~{formatCost(totals.cost, 5)}</span>
                 </>
               ) : (
-                <span>No trace data received (monitoring stream unavailable?)</span>
+                <span>
+                  No trace data received (monitoring stream unavailable?)
+                </span>
               )}
               {onPinRun && runExecutionId && (
                 <button
@@ -737,34 +774,56 @@ export function FlowRunDrawer({
                     onPinRun(id).then(
                       () => setPinState({ state: "pinned" }),
                       (err: unknown) =>
-                        setPinState({ state: "error", message: err instanceof Error ? err.message : String(err) }),
+                        setPinState({
+                          state: "error",
+                          message:
+                            err instanceof Error ? err.message : String(err),
+                        }),
                     );
                   }}
                   className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-card disabled:opacity-50"
                   title="Use this run's node results, query and user context as preview values in the expression builder (ƒx)"
                 >
-                  {pinState.state === "pinned" ? "📌 Pinned as sample data" : pinState.state === "pinning" ? "Pinning…" : "📌 Pin as sample data"}
+                  {pinState.state === "pinned"
+                    ? "📌 Pinned as sample data"
+                    : pinState.state === "pinning"
+                      ? "Pinning…"
+                      : "📌 Pin as sample data"}
                 </button>
               )}
               {pinState.state === "error" && (
-                <span role="alert" className="text-red-600">Not pinned: {pinState.message}</span>
+                <span role="alert" className="text-red-600">
+                  Not pinned: {pinState.message}
+                </span>
               )}
-              {onSaveEvalCase && evalForm.state === "closed" && streamingContent && (
-                <button
-                  type="button"
-                  onClick={() => setEvalForm({ state: "editing", expected: streamingContent })}
-                  className="rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-card"
-                  title="Store this prompt with a reference answer in the eval dataset"
-                >
-                  Save as eval case…
-                </button>
-              )}
-              {(evalForm.state === "saved" || evalForm.state === "removing") && (
+              {onSaveEvalCase &&
+                evalForm.state === "closed" &&
+                streamingContent && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEvalForm({
+                        state: "editing",
+                        expected: streamingContent,
+                      })
+                    }
+                    className="rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-card"
+                    title="Store this prompt with a reference answer in the eval dataset"
+                  >
+                    Save as eval case…
+                  </button>
+                )}
+              {(evalForm.state === "saved" ||
+                evalForm.state === "removing") && (
                 <span className="ml-auto flex items-center gap-2">
                   {evalForm.error ? (
-                    <span role="alert" className="text-red-600">{evalForm.error}</span>
+                    <span role="alert" className="text-red-600">
+                      {evalForm.error}
+                    </span>
                   ) : (
-                    <span className="text-green-700">Saved to the eval dataset.</span>
+                    <span className="text-green-700">
+                      Saved to the eval dataset.
+                    </span>
                   )}
                   {onDeleteEvalCase && evalForm.id && (
                     <button

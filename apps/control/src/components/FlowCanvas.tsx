@@ -1166,7 +1166,8 @@ function FlowCanvasInner({
       const validationState = edgeValidation?.get(e.id);
       const diffState = edgeDiff?.get(e.id);
       const hasError = (validationState?.errors.length ?? 0) > 0;
-      const hasWarning = !hasError && (validationState?.warnings.length ?? 0) > 0;
+      const hasWarning =
+        !hasError && (validationState?.warnings.length ?? 0) > 0;
       const color = hasError
         ? "#dc2626"
         : hasWarning
@@ -1180,14 +1181,17 @@ function FlowCanvasInner({
                 : undefined;
       if (color === undefined) {
         if (!runActive) return [e];
-        if (!usedEdge(edge.source, edge.target)) return [{ ...e, style: { opacity: 0.35 } }];
+        if (!usedEdge(edge.source, edge.target))
+          return [{ ...e, style: { opacity: 0.35 } }];
         // The run went this way: one colored channel line per payload the
         // runtime recorded for this edge. The channels REPLACE the base edge
         // — as many lines as the panel lists payloads; clicking a channel
         // still opens this edge's properties (logicalEdgeId).
         const channels = channelEdgesFor(e.id, edge.source, edge.target);
         if (channels.length > 0) return channels;
-        return [{ ...e, style: { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 } }];
+        return [
+          { ...e, style: { stroke: USED_EDGE_STROKE, strokeWidth: 2.5 } },
+        ];
       }
       return [
         {
@@ -1195,7 +1199,9 @@ function FlowCanvasInner({
           style: {
             stroke: color,
             strokeWidth: 2,
-            ...(diffState?.status === "removed" ? { strokeDasharray: "4 3" } : {}),
+            ...(diffState?.status === "removed"
+              ? { strokeDasharray: "4 3" }
+              : {}),
           },
         },
       ];

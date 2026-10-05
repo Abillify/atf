@@ -128,7 +128,10 @@ describe("NodeTypeDocs", () => {
     // Sub-fields carry their parent's dotted prefix so panel focus matches.
     expect(container.querySelector('[data-doc-key="llm.shortcut"]')).not.toBeNull();
     expect(container.querySelector('[data-doc-key="llm.parameters.temperature"]')).not.toBeNull();
-    expect(container.querySelector('[data-doc-key="llm.parameters.temperature"]')?.className).toContain("border-primary");
+    expect(
+      container.querySelector('[data-doc-key="llm.parameters.temperature"]')
+        ?.className,
+    ).toContain("border-primary");
     // Config sub-fields stay bare — the config form reports bare keys.
     expect(container.querySelector('[data-doc-key="perResultChars"]')).not.toBeNull();
   });
