@@ -202,6 +202,25 @@ export interface HistoryFacets {
   users: string[];
 }
 
+/**
+ * Per-flow run statistics aggregated over a time window — powers the flow
+ * table's stats columns (run count, average runtime, average/total cost).
+ */
+export interface FlowStats {
+  flow_id: string;
+  /** Number of executions started within the window. */
+  runs: number;
+  /**
+   * Mean of `total_latency_ms` over runs that have a latency (null when no
+   * run in the window recorded one yet).
+   */
+  avg_latency_ms: number | null;
+  /** Mean of `total_cost` over runs that have a cost (null when none did). */
+  avg_cost: number | null;
+  /** Sum of `total_cost` over the window (null when no run recorded a cost). */
+  total_cost: number | null;
+}
+
 /** Extra context attached when persisting an event. */
 export interface ExecutionEventMeta {
   flowId?: string;
@@ -262,6 +281,12 @@ export interface ExecutionStore {
   listHistory(query: HistoryQuery): Promise<HistoryPage>;
   /** Returns the distinct flow ids and user names present in the history. */
   listHistoryFacets(): Promise<HistoryFacets>;
+  /**
+   * Per-flow run statistics (runs, avg latency, avg/total cost) over every
+   * execution started at or after `sinceIso`. Powers the flow table's stats
+   * columns. Flows without runs in the window are omitted.
+   */
+  listFlowStats(sinceIso: string): Promise<FlowStats[]>;
   /**
    * Returns the most recent permanent per-request token-usage records, newest
    * first. Unlike {@link listRecent}, these survive retention purges.
@@ -460,6 +485,37 @@ export class InMemoryExecutionStore implements ExecutionStore {
     };
   }
 
+  async listFlowStats(sinceIso: string): Promise<FlowStats[]> {
+    const acc = new Map<string, FlowStatsAccumulator>();
+    for (const exec of this.byId.values()) {
+      if (exec.flow_id === null) continue;
+      if (exec.started_at < sinceIso) continue;
+      let a = acc.get(exec.flow_id);
+      if (a === undefined) {
+        a = { runs: 0, latencySum: 0, latencyN: 0, costSum: 0, costN: 0 };
+        acc.set(exec.flow_id, a);
+      }
+      a.runs += 1;
+      if (exec.total_latency_ms !== null) {
+        a.latencySum += exec.total_latency_ms;
+        a.latencyN += 1;
+      }
+      if (exec.total_cost !== null) {
+        a.costSum += exec.total_cost;
+        a.costN += 1;
+      }
+    }
+    return [...acc.entries()]
+      .map(([flowId, a]) => ({
+        flow_id: flowId,
+        runs: a.runs,
+        avg_latency_ms: a.latencyN > 0 ? a.latencySum / a.latencyN : null,
+        avg_cost: a.costN > 0 ? a.costSum / a.costN : null,
+        total_cost: a.costN > 0 ? a.costSum : null,
+      }))
+      .sort((x, y) => x.flow_id.localeCompare(y.flow_id));
+  }
+
   async listRecentUsage(limit: number): Promise<UsageLogEntry[]> {
     const out: UsageLogEntry[] = [];
     for (const id of this.order.toReversed()) {
@@ -521,6 +577,15 @@ function stripEvents(e: MemExecution): ExecutionSummary {
   const { events: _events, ...summary } = e;
   void _events;
   return summary;
+}
+
+/** Running totals for one flow while aggregating {@link FlowStats}. */
+interface FlowStatsAccumulator {
+  runs: number;
+  latencySum: number;
+  latencyN: number;
+  costSum: number;
+  costN: number;
 }
 
 /** Projects an in-memory execution into a permanent-log-shaped usage entry. */
@@ -972,6 +1037,42 @@ export class PostgresExecutionStore implements ExecutionStore {
     });
   }
 
+  // Per-flow run statistics over a time window (operator-plane, cross-tenant
+  // by design — same RLS caveat as listRecent). AVG/SUM ignore NULL rows, so
+  // flows whose runs have no latency/cost yet report null instead of 0.
+  async listFlowStats(sinceIso: string): Promise<FlowStats[]> {
+    const rows = await this.db.withOperator((db) =>
+      db.query<FlowStatsRow>(
+        `SELECT flow_id,
+                COUNT(*)::bigint AS runs,
+                AVG(total_latency_ms) AS avg_latency_ms,
+                AVG(total_cost) AS avg_cost,
+                SUM(total_cost) AS total_cost
+           FROM executions
+          WHERE started_at >= $1::timestamptz AND flow_id IS NOT NULL
+          GROUP BY flow_id
+          ORDER BY flow_id ASC`,
+        [sinceIso],
+      ),
+    );
+    return rows.map((r) => ({
+      flow_id: r.flow_id,
+      runs: Number(r.runs),
+      avg_latency_ms:
+        r.avg_latency_ms === null || r.avg_latency_ms === undefined
+          ? null
+          : Number(r.avg_latency_ms),
+      avg_cost:
+        r.avg_cost === null || r.avg_cost === undefined
+          ? null
+          : Number(r.avg_cost),
+      total_cost:
+        r.total_cost === null || r.total_cost === undefined
+          ? null
+          : Number(r.total_cost),
+    }));
+  }
+
   // Permanent usage log read (operator-plane, cross-tenant by design — same RLS
   // caveat as listRecent). Reads the durable token_usage_log, newest first.
   async listRecentUsage(limit: number): Promise<UsageLogEntry[]> {
@@ -1127,6 +1228,15 @@ interface ExecutionRow {
   conversation_id: string | null;
   chat_id: string | null;
   session_id: string | null;
+}
+
+/** Aggregated {@link FlowStats} row as Postgres returns it (numeric as string). */
+interface FlowStatsRow {
+  flow_id: string;
+  runs: number | string;
+  avg_latency_ms: number | string | null;
+  avg_cost: number | string | null;
+  total_cost: number | string | null;
 }
 
 interface NodeEventRow {

@@ -46,6 +46,7 @@ import {
   type HistoryQuery,
   type HistoryPage,
   type HistoryFacets,
+  type FlowStats,
   parseHistorySortColumn,
 } from "./execution-store.js";
 
@@ -335,6 +336,12 @@ export interface MonitoringServiceInterface {
   /** Distinct flow ids and user names available as history filters. */
   getHistoryFacets(): Promise<HistoryFacets>;
   /**
+   * Per-flow run statistics (runs, avg runtime, avg/total cost) for every
+   * execution started at or after the given ISO timestamp. Optional — fakes
+   * without a backing store omit it and callers treat that as "no stats".
+   */
+  getFlowStats?(sinceIso: string): Promise<FlowStats[]>;
+  /**
    * Recent permanent per-request token-usage records (flow, time, duration,
    * tokens, model, user, prompt preview, cost). Survive retention purges.
    */
@@ -521,6 +528,10 @@ export class MonitoringService implements MonitoringServiceInterface {
     return this.executionStore.listHistoryFacets();
   }
 
+  getFlowStats(sinceIso: string): Promise<FlowStats[]> {
+    return this.executionStore.listFlowStats(sinceIso);
+  }
+
   getUsageLog(limit: number): Promise<UsageLogEntry[]> {
     return this.executionStore.listRecentUsage(limit);
   }
@@ -653,7 +664,12 @@ export function createMonitoringRouter(
   router.get("/monitoring/events/buffer", async (ctx) => {
     if (!(await authedRead(ctx))) {
       return ctx.json(
-        { error: { message: "Unauthorized monitoring access.", type: "authentication_error" } },
+        {
+          error: {
+            message: "Unauthorized monitoring access.",
+            type: "authentication_error",
+          },
+        },
         401,
       );
     }
@@ -661,22 +677,33 @@ export function createMonitoringRouter(
     const afterNumber = rawAfter === undefined ? Number.NaN : Number(rawAfter);
     if (!Number.isSafeInteger(afterNumber) || afterNumber <= 0) {
       return ctx.json(
-        { error: { message: "Query parameter 'after' must be a positive sequence id.", type: "invalid_request_error" } },
+        {
+          error: {
+            message: "Query parameter 'after' must be a positive sequence id.",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
     const rawLimit = Number.parseInt(ctx.req.query("limit") ?? "100", 10);
-    const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 500) : 100;
-    const buffered = service.getBufferedEventsSince === undefined
-      ? []
-      : await service.getBufferedEventsSince(String(afterNumber));
+    const limit = Number.isFinite(rawLimit)
+      ? Math.min(Math.max(rawLimit, 1), 500)
+      : 100;
+    const buffered =
+      service.getBufferedEventsSince === undefined
+        ? []
+        : await service.getBufferedEventsSince(String(afterNumber));
     const events = buffered.slice(0, limit);
     const firstId = events[0] === undefined ? undefined : Number(events[0].id);
     return ctx.json({
       after: String(afterNumber),
       events,
       nextAfter: events.at(-1)?.id ?? String(afterNumber),
-      gap: firstId !== undefined && Number.isFinite(firstId) && firstId > afterNumber + 1,
+      gap:
+        firstId !== undefined &&
+        Number.isFinite(firstId) &&
+        firstId > afterNumber + 1,
       scope: "resume-buffer",
     });
   });
@@ -745,6 +772,42 @@ export function createMonitoringRouter(
     }
     const facets = await service.getHistoryFacets();
     return ctx.json(facets);
+  });
+
+  // Per-flow run statistics (runs, avg runtime, avg/total cost) over a time
+  // window — powers the flow table's stats columns. `since` is a required
+  // ISO-8601 timestamp (the client picks the window, e.g. last 1h/1d/7d/30d).
+  // Same read gate as the history endpoints.
+  router.get("/monitoring/flow-stats", async (ctx) => {
+    if (!(await authedRead(ctx))) {
+      return ctx.json(
+        {
+          error: {
+            message: "Unauthorized monitoring access.",
+            type: "authentication_error",
+          },
+        },
+        401,
+      );
+    }
+    const sinceRaw = ctx.req.query("since");
+    const sinceMs = sinceRaw === undefined ? Number.NaN : Date.parse(sinceRaw);
+    if (!Number.isFinite(sinceMs)) {
+      return ctx.json(
+        {
+          error: {
+            message: "Query parameter 'since' must be an ISO-8601 timestamp.",
+            type: "invalid_request_error",
+          },
+        },
+        400,
+      );
+    }
+    if (service.getFlowStats === undefined) {
+      return ctx.json({ stats: [], since: new Date(sinceMs).toISOString() });
+    }
+    const stats = await service.getFlowStats(new Date(sinceMs).toISOString());
+    return ctx.json({ stats, since: new Date(sinceMs).toISOString() });
   });
 
   // Permanent per-request token-usage log — the durable cost record (flow,
@@ -894,7 +957,9 @@ export function createMonitoringRouter(
       }
 
       const rawLimit = Number.parseInt(ctx.req.query("limit") ?? "10000", 10);
-      const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100_000) : 10_000;
+      const limit = Number.isFinite(rawLimit)
+        ? Math.min(Math.max(rawLimit, 1), 100_000)
+        : 10_000;
 
       const actor = ctx.req.query("actor");
       const action = ctx.req.query("action");
@@ -922,7 +987,11 @@ export function createMonitoringRouter(
       const CEF_VERSION_STR = "1.0";
 
       const escapeCef = (s: string): string =>
-        s.replace(/\\/g, "\\\\").replace(/\|/g, "\\|").replace(/\n/g, "\\n").replace(/\r/g, "\\r");
+        s
+          .replace(/\\/g, "\\\\")
+          .replace(/\|/g, "\\|")
+          .replace(/\n/g, "\\n")
+          .replace(/\r/g, "\\r");
 
       const severityForOutcome = (outcome?: string): number => {
         if (outcome === "denied") return 7;
@@ -941,7 +1010,8 @@ export function createMonitoringRouter(
           `outcome=${escapeCef(e.outcome ?? "success")}`,
         ];
         if (e.target !== undefined) ext.push(`target=${escapeCef(e.target)}`);
-        if (e.role !== undefined) ext.push(`cs1Label=role cs1=${escapeCef(e.role)}`);
+        if (e.role !== undefined)
+          ext.push(`cs1Label=role cs1=${escapeCef(e.role)}`);
         if (e.details !== undefined) {
           const detailsStr = JSON.stringify(e.details).slice(0, 512);
           ext.push(`msg=${escapeCef(detailsStr)}`);
