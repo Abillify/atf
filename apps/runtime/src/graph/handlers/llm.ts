@@ -3244,8 +3244,7 @@ export function createLlmNodeHandler(
                 : fullText.length +
                   preambleBuf.length +
                   thinkBuf.length +
-                  (stepLookahead?.length ?? 0)) +
-              reasoningText.length;
+                  (stepLookahead?.length ?? 0)) + reasoningText.length;
             let abortAfterPart = false;
             if (
               (part.type === "text-delta" || part.type === "reasoning-delta") &&
@@ -3513,7 +3512,9 @@ export function createLlmNodeHandler(
                   details: {
                     tool_call_id: id,
                     ...(toolRef !== undefined ? { tool_ref: toolRef } : {}),
-                    ...(excerpt !== undefined ? { error_excerpt: excerpt } : {}),
+                    ...(excerpt !== undefined
+                      ? { error_excerpt: excerpt }
+                      : {}),
                   },
                 });
               }
@@ -3806,8 +3807,7 @@ export function createLlmNodeHandler(
                   ? await captureRetryContinuation()
                   : false;
               const answerOnly =
-                !requireToolUse &&
-                (continued || attempt === maxAttempts - 1);
+                !requireToolUse && (continued || attempt === maxAttempts - 1);
               if (!answerOnly) {
                 // Retry the loop with tools and ask for a native call instead.
                 retryGuidance = {
@@ -4254,7 +4254,8 @@ export function createLlmNodeHandler(
             fullText.slice(visibleTextLengthAtLastToolResult).trim().length ===
               0;
           if (missingPostToolAnswer) {
-            const retryPostToolAnswer = attempt < maxAttempts && !requireToolUse;
+            const retryPostToolAnswer =
+              attempt < maxAttempts && !requireToolUse;
             // Continue from this attempt's complete tool exchange (all calls
             // and results) rather than restarting from the original prefix
             // with an excerpt of only the last result.
@@ -4542,7 +4543,8 @@ export function createLlmNodeHandler(
           // never invented. Skipped for the engine's empty-response fallback.
           if (sourcesCheck !== undefined && !emptyResponseFallbackUsed) {
             const completion =
-              sourcesCheck.completeSection && runtime.lookupCitation !== undefined
+              sourcesCheck.completeSection &&
+              runtime.lookupCitation !== undefined
                 ? completeSourcesSection(
                     fullText,
                     runtime.lookupCitation,
@@ -4642,6 +4644,51 @@ export function createLlmNodeHandler(
             }
           } catch {
             responseMessages = undefined;
+          }
+
+          // Reasoning-echo guard: the LM Studio reasoning shim rewrites native
+          // chain-of-thought into `content` with a sentinel prefix (see
+          // REASONING_SENTINEL); on a plain answer turn
+          // aiResponseMessagesToBaseMessages keeps that text minus the markers.
+          // A model that echoes its thinking — or a retry instruction such as
+          // "Answer the user now" — into the visible channel therefore leaks a
+          // chain-of-thought preamble into the persisted/replayed final answer
+          // even though the STREAMED answer (fullText, sentinel-routed) was
+          // clean. When the SDK's final assistant message is exactly the
+          // streamed answer plus a prefix, trust the streamed text and drop
+          // the prefix. The prefix can only be sentinel-routed reasoning (the
+          // streamed channel saw everything else), so this is lossless for
+          // genuine answers.
+          if (responseMessages !== undefined && fullText.length > 0) {
+            for (let i = responseMessages.length - 1; i >= 0; i--) {
+              const m = responseMessages[i];
+              if (m?._getType() !== "ai") continue;
+              const ai = m as AIMessage;
+              if ((ai.tool_calls?.length ?? 0) > 0) break;
+              if (typeof ai.content !== "string") break;
+              if (
+                ai.content.length > fullText.length &&
+                ai.content.endsWith(fullText)
+              ) {
+                const strippedChars = ai.content.length - fullText.length;
+                responseMessages[i] = new AIMessage({
+                  content: fullText,
+                  additional_kwargs: ai.additional_kwargs,
+                  response_metadata: ai.response_metadata,
+                  id: ai.id,
+                });
+                runtime.onNodeDiagnostic?.(node.id, {
+                  level: "warn",
+                  code: "reasoning_prefix_stripped",
+                  message:
+                    "The final assistant message carried a reasoning preamble " +
+                    "before the streamed answer; the preamble was removed " +
+                    "from the persisted response.",
+                  details: { stripped_chars: strippedChars },
+                });
+              }
+              break;
+            }
           }
 
           // Never cache a response the repetition guard had to truncate: it is

@@ -234,6 +234,39 @@ describe("LLM node — reasoning_content routing", () => {
     expect(content).toBe("answer");
   });
 
+  // Regression (production trace b36ae6ad): after a post_tool_answer_missing
+  // retry the model echoed its instruction ("Ich muss jetzt antworten, ohne
+  // weitere Tools…") through the sentinel channel. The AI SDK concatenates
+  // sentinel deltas into the assistant message it reports in
+  // result.response.messages, so the PERSISTED final answer carried the
+  // chain-of-thought preamble even though the streamed answer was clean.
+  // The reasoning-echo guard in handlers/llm.ts must strip the prefix from
+  // the returned AIMessage and record a `reasoning_prefix_stripped`
+  // diagnostic.
+  test("sentinel reasoning prefix is stripped from the persisted final answer", async () => {
+    const debugStore = new InMemoryDebugTraceStore();
+    const answer =
+      "**Einstufung: Rueckfrage**\n\nBegruendung aus den Suchergebnissen.";
+    const { content, reasoning } = await runFlow(
+      [
+        "\x00rIch muss jetzt antworten, ohne weitere Tools.",
+        "\x00r Ich habe die Suchergebnisse.",
+        answer,
+      ],
+      llmFlow,
+      baseConfig,
+      debugStore,
+    );
+    expect(content).toBe(answer);
+    expect(reasoning).toContain("Ich muss jetzt antworten");
+    const trace = debugStore.getTrace(`exec-${llmFlow.id}`);
+    expect(trace?.final_response).toBe(answer);
+    const node = trace?.nodes.find((entry) => entry.node_id === "llm-1");
+    expect((node?.diagnostics ?? []).map((entry) => entry.code)).toContain(
+      "reasoning_prefix_stripped",
+    );
+  });
+
   test("suppresses a text preamble when a tool call follows", async () => {
     const preamble = "Ich werde zuerst recherchieren. ";
     const factory = () =>
@@ -243,7 +276,11 @@ describe("LLM node — reasoning_content routing", () => {
             stream: new ReadableStream({
               start(controller: ReadableStreamDefaultController<unknown>) {
                 controller.enqueue({ type: "text-start", id: "1" });
-                controller.enqueue({ type: "text-delta", id: "1", delta: preamble });
+                controller.enqueue({
+                  type: "text-delta",
+                  id: "1",
+                  delta: preamble,
+                });
                 controller.enqueue({ type: "text-end", id: "1" });
                 controller.enqueue({
                   type: "tool-call",
@@ -253,10 +290,22 @@ describe("LLM node — reasoning_content routing", () => {
                 });
                 controller.enqueue({
                   type: "finish",
-                  finishReason: { unified: "tool-calls" as const, raw: "tool_calls" },
+                  finishReason: {
+                    unified: "tool-calls" as const,
+                    raw: "tool_calls",
+                  },
                   usage: {
-                    inputTokens: { total: 7, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
-                    outputTokens: { total: 3, text: undefined, reasoning: undefined },
+                    inputTokens: {
+                      total: 7,
+                      noCache: undefined,
+                      cacheRead: undefined,
+                      cacheWrite: undefined,
+                    },
+                    outputTokens: {
+                      total: 3,
+                      text: undefined,
+                      reasoning: undefined,
+                    },
                   },
                 });
                 controller.close();
@@ -300,8 +349,11 @@ describe("LLM node — reasoning_content routing", () => {
     const reasoning = chunks
       .map(
         (chunk) =>
-          (chunk.choices[0]?.delta as { reasoning_content?: string } | undefined)
-            ?.reasoning_content,
+          (
+            chunk.choices[0]?.delta as
+              | { reasoning_content?: string }
+              | undefined
+          )?.reasoning_content,
       )
       .filter((text): text is string => typeof text === "string")
       .join("");
@@ -438,8 +490,11 @@ describe("LLM node — reasoning_content routing", () => {
     const reasoning = chunks
       .map(
         (chunk) =>
-          (chunk.choices[0]?.delta as { reasoning_content?: string } | undefined)
-            ?.reasoning_content,
+          (
+            chunk.choices[0]?.delta as
+              | { reasoning_content?: string }
+              | undefined
+          )?.reasoning_content,
       )
       .filter((text): text is string => typeof text === "string")
       .join("");
@@ -506,9 +561,9 @@ describe("LLM node — reasoning_content routing", () => {
       });
 
     const engine = createGraphEngine(baseConfig, {
-    flowRegistry: singleNodeRegistry(llmFlow),
-    llmProviderFactory: factory,
-  });
+      flowRegistry: singleNodeRegistry(llmFlow),
+      llmProviderFactory: factory,
+    });
     const chunks: ChatCompletionChunk[] = [];
     await engine.executeFlow(
       "r-flow",
