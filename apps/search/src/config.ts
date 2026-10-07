@@ -53,6 +53,14 @@ export interface Config {
   rerankModel: string | null; // RERANK_MODEL (required to enable)
   rerankInputSeparator: string; // RERANK_SEPARATOR (default: "\n")
   rerankCandidateMultiplier: number; // RERANK_CANDIDATE_MULTIPLIER (default: 4)
+  /**
+   * Optional relevance threshold (Requirement 4.8). When set, final search
+   * results are filtered to `score >= MIN_RERANK_SCORE` (reranker score when
+   * reranking was applied, retrieval score otherwise) and the response
+   * carries an `abstention` signal; `abstain: true` when every candidate
+   * fell below the threshold. Empty / unset = disabled, no field emitted.
+   */
+  minRerankScore: number | null; // MIN_RERANK_SCORE (default: leer = aus)
   rerankEndpoint: "embeddings" | "rerank"; // RERANK_ENDPOINT (default: "rerank")
   /**
    * JSON field name used to pass documents in native rerank requests.
@@ -80,6 +88,15 @@ export interface Config {
 
   /** HNSW ef_search at query time (recall vs latency). Default: 100. */
   hnswEfSearch: number; // HNSW_EF_SEARCH (default: 100)
+  /**
+   * pgvector HNSW iterative-scan mode for dense/binary searches (Req 4.1).
+   * `relaxed_order` (default) keeps recall under selective filters without
+   * re-sorting; `strict_order` re-scans for exact ordering; `off` disables.
+   * Automatically forced to `off` when pgvector < 0.8 (Req 4.2).
+   */
+  hnswIterativeScan: "relaxed_order" | "strict_order" | "off"; // HNSW_ITERATIVE_SCAN (default: relaxed_order)
+  /** Cap on tuples visited per iterative-scan round. Default: 20000. */
+  hnswMaxScanTuples: number; // HNSW_MAX_SCAN_TUPLES (default: 20000)
   /** HNSW ef_construction for new indexes. Default: 128. */
   hnswEfConstruction: number; // HNSW_EF_CONSTRUCTION (default: 128)
   /** HNSW m (max connections) for new indexes. Default: 16. */
@@ -113,6 +130,29 @@ export interface Config {
    * Set 0 to disable. Default: 90.
    */
   statsRetentionDays: number; // STATS_RETENTION_DAYS (default: 90)
+
+  /**
+   * Store the raw query text in `vs_search_stats.query` in addition to the
+   * hash. Off by default: raw search terms may carry personal or confidential
+   * data, so only the hash lands in the database (Requirement 2.6).
+   * Default: false.
+   */
+  statsStoreRawQuery: boolean; // STATS_STORE_RAW_QUERY (default: false)
+
+  /**
+   * Pepper for the HMAC-SHA-256 query hash in `vs_search_stats.query_hash`.
+   * Without a pepper the plain SHA-256 is used, which is dictionary-attackable
+   * for common queries; set this in production. null = no pepper.
+   */
+  statsQueryPepper: string | null; // STATS_QUERY_PEPPER (optional)
+
+  /**
+   * Metadata field whose value identifies the data subject in a document
+   * (`metadata->>ERASURE_SUBJECT_METADATA_FIELD`), matched against the
+   * identifiers of a subject-scoped `POST /v1/erasure` request in addition to
+   * the `allowed_users` ACL column (Requirement 2.5).
+   */
+  erasureSubjectMetadataField: string; // ERASURE_SUBJECT_METADATA_FIELD (default: subject)
 
   // ── HyDE (Hypothetical Document Embeddings) ─────────────────────────────
   /** URL of the chat-completions server for HyDE expansion. Default: EMBED_URL. */
@@ -199,6 +239,27 @@ export interface Config {
   rrfWeightDense: number; // RRF_WEIGHT_DENSE (default: 1.0)
   rrfWeightFts: number; // RRF_WEIGHT_FTS (default: 1.0)
   rrfWeightIdentifier: number; // RRF_WEIGHT_IDENTIFIER (default: 1.0)
+  /**
+   * Weight of the SPLADE sparse list in the RRF fusion (Requirement 4.3).
+   * Must be > 0; only applied when the sparse branch participates.
+   */
+  rrfWeightSparse: number; // RRF_WEIGHT_SPARSE (default: 1.0)
+  /**
+   * Requirement 4.4: a list a document did not appear in contributes 0 to the
+   * RRF fusion instead of the legacy `1/(k+1000)` pseudo-rank. Breaking
+   * default (changed with this minor — see CHANGELOG/upgrade hint); set to
+   * `false` to restore the legacy behaviour verbatim.
+   */
+  rrfMissingZero: boolean; // RRF_MISSING_ZERO (default: true)
+
+  /**
+   * Requirement 4.7: ranker for the lexical (full-text) list. `ts_rank_cd`
+   * (default) uses PostgreSQL's coverage-density rank with length
+   * normalisation. `bm25` is honoured only when a BM25 extension
+   * (ParadeDB `pg_search` or VectorChord-bm25) is installed; without one,
+   * the search service logs a warning once and keeps `ts_rank_cd`.
+   */
+  ftsRanker: "ts_rank_cd" | "bm25"; // FTS_RANKER (default: ts_rank_cd)
 
   /** Interval in ms for flushing buffered stats to DB. Default: 30 000. */
   statsFlushIntervalMs: number; // STATS_FLUSH_INTERVAL_MS (default: 30000)
@@ -418,6 +479,24 @@ export interface Config {
    * ACL_REQUIRE_IDENTITY (default: false)
    */
   aclRequireIdentity: boolean;
+  /**
+   * Documented exception for the production gate: with `ACL_REQUIRE_IDENTITY`
+   * disabled in production, this non-empty string (e.g. a ticket reference)
+   * downgrades the fatal finding to a warning. It never relaxes runtime ACL
+   * behaviour — it only acknowledges the risk.
+   *
+   * ACL_REQUIRE_IDENTITY_WAIVER (default: empty)
+   */
+  aclRequireIdentityWaiver: string;
+  /**
+   * Visibility of documents whose `allowed_users`/`allowed_groups` are both
+   * empty. `allow` (default, backward compatible): every principal of the
+   * tenant may read them. `deny`: only service or authorization-bypass
+   * principals may; end users need an explicit ACL match (Req 3.2).
+   *
+   * DOCUMENT_ACL_DEFAULT (default: allow) — the production gate warns on `allow`.
+   */
+  documentAclDefault: "allow" | "deny";
   /**
    * Return the internal error message to the client in the `detail` field of a
    * 500 response. Off by default: for a database error that message is the
@@ -751,7 +830,14 @@ export function loadConfig(): Config {
           `API_OIDC_ISSUERS[${i}]: "issuer" must be a non-empty string`,
         );
       }
-      for (const key of ["audience", "userClaim", "groupsClaim", "tenantClaim", "scopesClaim", "clientIdClaim"]) {
+      for (const key of [
+        "audience",
+        "userClaim",
+        "groupsClaim",
+        "tenantClaim",
+        "scopesClaim",
+        "clientIdClaim",
+      ]) {
         if (e[key] !== undefined && typeof e[key] !== "string") {
           throw new Error(
             `API_OIDC_ISSUERS[${i}]: "${key}" must be a string when present`,
@@ -786,13 +872,14 @@ export function loadConfig(): Config {
   const postgresUrl = requireString("POSTGRES_URL");
   const embedUrl = requireString("EMBED_URL");
   const embedModel = requireString("EMBED_MODEL");
-  const embedModelRevision = optionalString("EMBED_MODEL_REVISION") ?? embedModel;
+  const embedModelRevision =
+    optionalString("EMBED_MODEL_REVISION") ?? embedModel;
 
   // ── Simple optional fields ──────────────────────────────────────────────────
   const embedInputField = optionalString("EMBED_INPUT_FIELD") ?? "inputs";
   const embedFallbackModel = optionalString("EMBED_FALLBACK_MODEL");
   const embedFallbackUrl = embedFallbackModel
-    ? optionalString("EMBED_FALLBACK_URL") ?? embedUrl
+    ? (optionalString("EMBED_FALLBACK_URL") ?? embedUrl)
     : null;
   const embedFallbackInputField =
     optionalString("EMBED_FALLBACK_INPUT_FIELD") ?? "input";
@@ -820,13 +907,18 @@ export function loadConfig(): Config {
   const assetStoreBackendRaw = (process.env.ASSET_STORE_BACKEND ?? "postgres")
     .trim()
     .toLowerCase();
-  if (assetStoreBackendRaw !== "postgres" && assetStoreBackendRaw !== "filesystem") {
+  if (
+    assetStoreBackendRaw !== "postgres" &&
+    assetStoreBackendRaw !== "filesystem"
+  ) {
     throw new Error('ASSET_STORE_BACKEND must be "postgres" or "filesystem"');
   }
   const assetStoreBackend = assetStoreBackendRaw as "postgres" | "filesystem";
   const assetStoreDir = optionalString("ASSET_STORE_DIR");
   if (assetStoreBackend === "filesystem" && assetStoreDir === null) {
-    throw new Error("ASSET_STORE_DIR is required when ASSET_STORE_BACKEND=filesystem");
+    throw new Error(
+      "ASSET_STORE_DIR is required when ASSET_STORE_BACKEND=filesystem",
+    );
   }
   const defaultFtsLanguage = (process.env["FTS_LANGUAGE"] ?? "simple")
     .trim()
@@ -850,6 +942,14 @@ export function loadConfig(): Config {
   // ── Integer fields ──────────────────────────────────────────────────────────
   const port = parseIntEnv("PORT", 3000, { min: 1, max: 65535 });
   const hnswEfSearch = parseIntEnv("HNSW_EF_SEARCH", 100);
+  const hnswIterativeScan = parseEnumEnv(
+    "HNSW_ITERATIVE_SCAN",
+    ["relaxed_order", "strict_order", "off"] as const,
+    "relaxed_order",
+  );
+  const hnswMaxScanTuples = parseIntEnv("HNSW_MAX_SCAN_TUPLES", 20_000, {
+    min: 1,
+  });
   const hnswEfConstruction = parseIntEnv("HNSW_EF_CONSTRUCTION", 128);
   const hnswM = parseIntEnv("HNSW_M", 16, { min: 2 });
   const fetchTimeoutMs = parseNonNegIntEnv("FETCH_TIMEOUT_MS", 30_000);
@@ -878,6 +978,13 @@ export function loadConfig(): Config {
   const rrfWeightDense = parsePosFloatEnv("RRF_WEIGHT_DENSE", 1.0);
   const rrfWeightFts = parsePosFloatEnv("RRF_WEIGHT_FTS", 1.0);
   const rrfWeightIdentifier = parsePosFloatEnv("RRF_WEIGHT_IDENTIFIER", 1.0);
+  const rrfWeightSparse = parsePosFloatEnv("RRF_WEIGHT_SPARSE", 1.0);
+  const rrfMissingZero = parseBoolEnv("RRF_MISSING_ZERO", true);
+  const ftsRanker = parseEnumEnv(
+    "FTS_RANKER",
+    ["ts_rank_cd", "bm25"] as const,
+    "ts_rank_cd",
+  );
   const breakpointPercentile = parseIntEnv("BREAKPOINT_PERCENTILE", 75, {
     min: 1,
     max: 99,
@@ -889,21 +996,43 @@ export function loadConfig(): Config {
     30_000,
   );
   const statsRetentionDays = parseNonNegIntEnv("STATS_RETENTION_DAYS", 90);
+  // Query statistics are hashed by default; the raw term is persisted only on
+  // explicit opt-in (Requirement 2.6). The pepper makes the hash salted.
+  const statsStoreRawQuery = parseBoolEnv("STATS_STORE_RAW_QUERY", false);
+  const statsQueryPepper = optionalString("STATS_QUERY_PEPPER");
+  // Subject-scoped erasure matches this metadata field plus allowed_users
+  // (Requirement 2.5); "subject" is the convention Extract writes.
+  const erasureSubjectMetadataField =
+    optionalString("ERASURE_SUBJECT_METADATA_FIELD") ?? "subject";
   // REVISION_TTL is expressed in seconds; default 14 days.
   const revisionTtlMs =
     parseIntEnv("REVISION_TTL", 14 * 24 * 60 * 60, { min: 1 }) * 1000;
-  const revisionTtlSweepMs = parseNonNegIntEnv("REVISION_TTL_SWEEP_MS", 3_600_000);
-  const sourceClaimTtlMs = parseIntEnv("SOURCE_CLAIM_TTL", 24 * 60 * 60, { min: 1 }) * 1000;
+  const revisionTtlSweepMs = parseNonNegIntEnv(
+    "REVISION_TTL_SWEEP_MS",
+    3_600_000,
+  );
+  const sourceClaimTtlMs =
+    parseIntEnv("SOURCE_CLAIM_TTL", 24 * 60 * 60, { min: 1 }) * 1000;
   const dedupNearThreshold =
     parseFloatEnv("DEDUP_NEAR_THRESHOLD", 0.9, { gt: 0, lt: 1.000001 }) ?? 0.9;
   const dedupDuplicateSimilarity =
-    parseFloatEnv("DEDUP_DUPLICATE_SIMILARITY", 0.97, { gt: 0, lt: 1.000001 }) ?? 0.97;
+    parseFloatEnv("DEDUP_DUPLICATE_SIMILARITY", 0.97, {
+      gt: 0,
+      lt: 1.000001,
+    }) ?? 0.97;
   const batchWorkerEnabled = parseBoolEnv("BATCH_WORKER", false);
-  const batchWorkerIntervalMs = parseNonNegIntEnv("BATCH_WORKER_INTERVAL_MS", 2_000);
-  const batchWorkerBackoffMs = parseNonNegIntEnv("BATCH_WORKER_BACKOFF_MS", 30_000);
+  const batchWorkerIntervalMs = parseNonNegIntEnv(
+    "BATCH_WORKER_INTERVAL_MS",
+    2_000,
+  );
+  const batchWorkerBackoffMs = parseNonNegIntEnv(
+    "BATCH_WORKER_BACKOFF_MS",
+    30_000,
+  );
   const contextualChunkLlm = parseBoolEnv("CONTEXTUAL_CHUNK_LLM", false);
   const contextHeaderMaxFraction =
-    parseFloatEnv("CONTEXT_HEADER_MAX_FRACTION", 0.15, { gt: 0, lt: 1 }) ?? 0.15;
+    parseFloatEnv("CONTEXT_HEADER_MAX_FRACTION", 0.15, { gt: 0, lt: 1 }) ??
+    0.15;
   const rateLimit = parseNonNegIntEnv("RATE_LIMIT", 120);
   const contextPrefixSizeRaw = parseIntEnv("CHUNK_CONTEXT_PREFIX_SIZE", 0);
   const contextPrefixSize =
@@ -919,8 +1048,18 @@ export function loadConfig(): Config {
   const hybridSearch = parseBoolEnv("HYBRID_SEARCH", true);
   const trustProxy = parseBoolEnv("TRUST_PROXY", false);
   const aclRequireIdentity = parseBoolEnv("ACL_REQUIRE_IDENTITY", false);
+  const aclRequireIdentityWaiver = (
+    process.env["ACL_REQUIRE_IDENTITY_WAIVER"] ?? ""
+  ).trim();
+  const documentAclDefault = parseEnumEnv(
+    "DOCUMENT_ACL_DEFAULT",
+    ["allow", "deny"] as const,
+    "allow",
+  );
   const exposeErrorDetail = parseBoolEnv("EXPOSE_ERROR_DETAIL", false);
-  const nodeEnv = (process.env["NODE_ENV"] ?? "development").trim().toLowerCase();
+  const nodeEnv = (process.env["NODE_ENV"] ?? "development")
+    .trim()
+    .toLowerCase();
   const halfPrecision = parseBoolEnv("VECTOR_HALF_PRECISION", false);
   const semanticChunking = parseBoolEnv("SEMANTIC_CHUNKING", false);
   const hydeEnableThinking = parseBoolEnv("HYDE_ENABLE_THINKING", false);
@@ -933,7 +1072,10 @@ export function loadConfig(): Config {
     "off",
   );
   const authzEnabledRaw = process.env["AUTHZ_ENABLED"]?.trim();
-  if (!authzEnabledRaw && legacyAuthzEnforcementRaw?.toLowerCase() === "optional") {
+  if (
+    !authzEnabledRaw &&
+    legacyAuthzEnforcementRaw?.toLowerCase() === "optional"
+  ) {
     throw new Error(
       "AUTHZ_ENFORCEMENT=optional cannot be migrated safely; set AUTHZ_ENABLED explicitly to true or false",
     );
@@ -941,25 +1083,39 @@ export function loadConfig(): Config {
   const authzEnabled = authzEnabledRaw
     ? parseBoolEnv("AUTHZ_ENABLED", false)
     : legacyAuthzEnforcement === "required";
-  const authzEnforcement: "off" | "required" = authzEnabled ? "required" : "off";
-  const tenantIsolationEnabled = parseBoolEnv("TENANT_ISOLATION_ENABLED", false);
-  const legacyServiceTenantId = optionalString("API_SERVICE_TENANT_ID") ?? undefined;
-  const legacyOidcTenantId = optionalString("API_OIDC_DEFAULT_TENANT_ID") ?? undefined;
+  const authzEnforcement: "off" | "required" = authzEnabled
+    ? "required"
+    : "off";
+  const tenantIsolationEnabled = parseBoolEnv(
+    "TENANT_ISOLATION_ENABLED",
+    false,
+  );
+  const legacyServiceTenantId =
+    optionalString("API_SERVICE_TENANT_ID") ?? undefined;
+  const legacyOidcTenantId =
+    optionalString("API_OIDC_DEFAULT_TENANT_ID") ?? undefined;
   if (
     legacyServiceTenantId !== undefined &&
     legacyOidcTenantId !== undefined &&
     legacyServiceTenantId !== legacyOidcTenantId
   ) {
-    throw new Error("API_SERVICE_TENANT_ID and API_OIDC_DEFAULT_TENANT_ID must match during migration to DEFAULT_TENANT_ID");
+    throw new Error(
+      "API_SERVICE_TENANT_ID and API_OIDC_DEFAULT_TENANT_ID must match during migration to DEFAULT_TENANT_ID",
+    );
   }
   const defaultTenantId =
     optionalString("DEFAULT_TENANT_ID") ??
     legacyServiceTenantId ??
     legacyOidcTenantId ??
     "default";
-  const apiServiceScopes = [...new Set(
-    parseCsvEnv("API_SERVICE_SCOPES").flatMap((scope) => scope.split(/[\s,]+/)).map((scope) => scope.trim()).filter(Boolean),
-  )];
+  const apiServiceScopes = [
+    ...new Set(
+      parseCsvEnv("API_SERVICE_SCOPES")
+        .flatMap((scope) => scope.split(/[\s,]+/))
+        .map((scope) => scope.trim())
+        .filter(Boolean),
+    ),
+  ];
   const apiServiceTenantId = legacyServiceTenantId ?? defaultTenantId;
   const apiOidcDefaultTenantId = legacyOidcTenantId ?? defaultTenantId;
   const transactionEnforcement = parseEnumEnv(
@@ -968,18 +1124,31 @@ export function loadConfig(): Config {
     "off",
   );
   const transactionSecret = optionalString("TRANSACTION_HS256_SECRET");
-  const transactionIssuer = optionalString("TRANSACTION_ISSUER") ?? "vectorsearch-client";
-  const transactionAudience = optionalString("TRANSACTION_AUDIENCE") ?? "vectorsearch";
-  const transactionClockToleranceSeconds = parseNonNegIntEnv("TRANSACTION_CLOCK_TOLERANCE_SECONDS", 30);
-  const transactionMaxTtlSeconds = parseIntEnv("TRANSACTION_MAX_TTL_SECONDS", 900, { min: 1 });
+  const transactionIssuer =
+    optionalString("TRANSACTION_ISSUER") ?? "vectorsearch-client";
+  const transactionAudience =
+    optionalString("TRANSACTION_AUDIENCE") ?? "vectorsearch";
+  const transactionClockToleranceSeconds = parseNonNegIntEnv(
+    "TRANSACTION_CLOCK_TOLERANCE_SECONDS",
+    30,
+  );
+  const transactionMaxTtlSeconds = parseIntEnv(
+    "TRANSACTION_MAX_TTL_SECONDS",
+    900,
+    { min: 1 },
+  );
   const mcp2026Path = optionalString("MCP_2026_PATH") ?? "/mcp/v2026";
   if (!mcp2026Path.startsWith("/") || mcp2026Path === "/mcp") {
-    throw new Error("MCP_2026_PATH must be an absolute path distinct from /mcp");
+    throw new Error(
+      "MCP_2026_PATH must be an absolute path distinct from /mcp",
+    );
   }
   const mcpServiceName = optionalString("MCP_SERVICE_NAME") ?? "vectorsearch";
   const mcpServiceVersion = optionalString("MCP_SERVICE_VERSION") ?? "1.0.0";
   if (transactionEnforcement !== "off" && !transactionSecret) {
-    throw new Error("TRANSACTION_HS256_SECRET is required when TRANSACTION_ENFORCEMENT is optional or required");
+    throw new Error(
+      "TRANSACTION_HS256_SECRET is required when TRANSACTION_ENFORCEMENT is optional or required",
+    );
   }
 
   // ── Enum fields ─────────────────────────────────────────────────────────────
@@ -1013,7 +1182,7 @@ export function loadConfig(): Config {
     optionalString("RERANK_DOCUMENTS_FIELD") ?? "texts";
   const rerankFallbackModel = optionalString("RERANK_FALLBACK_MODEL");
   const rerankFallbackUrl = rerankFallbackModel
-    ? optionalString("RERANK_FALLBACK_URL") ?? rerankUrl
+    ? (optionalString("RERANK_FALLBACK_URL") ?? rerankUrl)
     : null;
   const rerankFallbackInputSeparator =
     optionalString("RERANK_FALLBACK_SEPARATOR") ?? "\n";
@@ -1023,6 +1192,15 @@ export function loadConfig(): Config {
     "RERANK_CANDIDATE_MULTIPLIER",
     4,
   );
+  const minRerankScoreRaw = process.env["MIN_RERANK_SCORE"];
+  let minRerankScore: number | null = null;
+  if (minRerankScoreRaw !== undefined && minRerankScoreRaw.trim() !== "") {
+    const parsed = Number.parseFloat(minRerankScoreRaw);
+    if (!Number.isFinite(parsed)) {
+      throw new Error("MIN_RERANK_SCORE must be a finite number");
+    }
+    minRerankScore = parsed;
+  }
 
   // ── Chunking (CHUNK_SIZE + CHUNK_OVERLAP must both be set or both absent) ──
   const chunkSizeRaw = process.env["CHUNK_SIZE"];
@@ -1092,12 +1270,14 @@ export function loadConfig(): Config {
   // or request. Groups are signed by the IdP and can be narrowed further here.
   const uiBff: UiBffConfig = {
     tenantId: optionalString("UI_TENANT_ID") ?? defaultTenantId,
-    scopes: [...new Set(
-      parseCsvEnv("UI_SCOPES")
-        .flatMap((scope) => scope.split(/[\s,]+/))
-        .map((scope) => scope.trim())
-        .filter(Boolean),
-    )],
+    scopes: [
+      ...new Set(
+        parseCsvEnv("UI_SCOPES")
+          .flatMap((scope) => scope.split(/[\s,]+/))
+          .map((scope) => scope.trim())
+          .filter(Boolean),
+      ),
+    ],
     allowedGroups: [...new Set(parseCsvEnv("UI_ALLOWED_GROUPS"))],
     operatorGroup: optionalString("UI_OPERATOR_GROUP"),
   };
@@ -1121,11 +1301,19 @@ export function loadConfig(): Config {
     ["disabled", "token", "oidc", "token_or_oidc"] as const,
     inferredAuthnMode,
   );
-  if ((authnMode === "token" || authnMode === "token_or_oidc") && apiToken === null) {
+  if (
+    (authnMode === "token" || authnMode === "token_or_oidc") &&
+    apiToken === null
+  ) {
     throw new Error(`API_TOKEN is required when AUTHN_MODE=${authnMode}`);
   }
-  if ((authnMode === "oidc" || authnMode === "token_or_oidc") && apiOidcIssuers.length === 0) {
-    throw new Error(`API_OIDC_ISSUERS is required when AUTHN_MODE=${authnMode}`);
+  if (
+    (authnMode === "oidc" || authnMode === "token_or_oidc") &&
+    apiOidcIssuers.length === 0
+  ) {
+    throw new Error(
+      `API_OIDC_ISSUERS is required when AUTHN_MODE=${authnMode}`,
+    );
   }
   if (tenantIsolationEnabled && authnMode === "disabled") {
     throw new Error(
@@ -1153,24 +1341,33 @@ export function loadConfig(): Config {
   //   dense/sparse embeddings ≈ $0.02 in  (OpenAI text-embedding-3-small class)
   //   reranker                ≈ $0.10 in  (Cohere Rerank class, token-approx)
   //   HyDE / summary LLM      ≈ $0.15 in / $0.60 out (GPT-4o-mini class)
-  const embedInputTokenCost = parseFloatEnv("EMBED_INPUT_TOKEN_COST", 0.02) ?? 0.02;
+  const embedInputTokenCost =
+    parseFloatEnv("EMBED_INPUT_TOKEN_COST", 0.02) ?? 0.02;
   const embedOutputTokenCost = parseFloatEnv("EMBED_OUTPUT_TOKEN_COST", 0) ?? 0;
   const embedFallbackInputTokenCost =
     parseFloatEnv("EMBED_FALLBACK_INPUT_TOKEN_COST", 0) ?? 0;
   const embedFallbackOutputTokenCost =
     parseFloatEnv("EMBED_FALLBACK_OUTPUT_TOKEN_COST", 0) ?? 0;
-  const sparseInputTokenCost = parseFloatEnv("SPARSE_INPUT_TOKEN_COST", 0.02) ?? 0.02;
-  const sparseOutputTokenCost = parseFloatEnv("SPARSE_OUTPUT_TOKEN_COST", 0) ?? 0;
-  const rerankInputTokenCost = parseFloatEnv("RERANK_INPUT_TOKEN_COST", 0.1) ?? 0.1;
-  const rerankOutputTokenCost = parseFloatEnv("RERANK_OUTPUT_TOKEN_COST", 0) ?? 0;
+  const sparseInputTokenCost =
+    parseFloatEnv("SPARSE_INPUT_TOKEN_COST", 0.02) ?? 0.02;
+  const sparseOutputTokenCost =
+    parseFloatEnv("SPARSE_OUTPUT_TOKEN_COST", 0) ?? 0;
+  const rerankInputTokenCost =
+    parseFloatEnv("RERANK_INPUT_TOKEN_COST", 0.1) ?? 0.1;
+  const rerankOutputTokenCost =
+    parseFloatEnv("RERANK_OUTPUT_TOKEN_COST", 0) ?? 0;
   const rerankFallbackInputTokenCost =
     parseFloatEnv("RERANK_FALLBACK_INPUT_TOKEN_COST", 0.1) ?? 0.1;
   const rerankFallbackOutputTokenCost =
     parseFloatEnv("RERANK_FALLBACK_OUTPUT_TOKEN_COST", 0) ?? 0;
-  const hydeInputTokenCost = parseFloatEnv("HYDE_INPUT_TOKEN_COST", 0.15) ?? 0.15;
-  const hydeOutputTokenCost = parseFloatEnv("HYDE_OUTPUT_TOKEN_COST", 0.6) ?? 0.6;
-  const summaryInputTokenCost = parseFloatEnv("SUMMARY_INPUT_TOKEN_COST", 0.15) ?? 0.15;
-  const summaryOutputTokenCost = parseFloatEnv("SUMMARY_OUTPUT_TOKEN_COST", 0.6) ?? 0.6;
+  const hydeInputTokenCost =
+    parseFloatEnv("HYDE_INPUT_TOKEN_COST", 0.15) ?? 0.15;
+  const hydeOutputTokenCost =
+    parseFloatEnv("HYDE_OUTPUT_TOKEN_COST", 0.6) ?? 0.6;
+  const summaryInputTokenCost =
+    parseFloatEnv("SUMMARY_INPUT_TOKEN_COST", 0.15) ?? 0.15;
+  const summaryOutputTokenCost =
+    parseFloatEnv("SUMMARY_OUTPUT_TOKEN_COST", 0.6) ?? 0.6;
 
   return {
     postgresUrl,
@@ -1192,6 +1389,7 @@ export function loadConfig(): Config {
     rerankModel,
     rerankInputSeparator,
     rerankCandidateMultiplier,
+    minRerankScore,
     rerankEndpoint,
     rerankDocumentsField,
     rerankFallbackUrl,
@@ -1204,6 +1402,8 @@ export function loadConfig(): Config {
     rateLimit,
     trustProxy,
     hnswEfSearch,
+    hnswIterativeScan,
+    hnswMaxScanTuples,
     hnswEfConstruction,
     hnswM,
     halfPrecision,
@@ -1211,6 +1411,9 @@ export function loadConfig(): Config {
     defaultFtsLanguage,
     fetchTimeoutMs,
     statsRetentionDays,
+    statsStoreRawQuery,
+    statsQueryPepper,
+    erasureSubjectMetadataField,
     hydeUrl,
     hydeModel,
     hydeMaxTokens,
@@ -1235,6 +1438,9 @@ export function loadConfig(): Config {
     rrfWeightDense,
     rrfWeightFts,
     rrfWeightIdentifier,
+    rrfWeightSparse,
+    rrfMissingZero,
+    ftsRanker,
     statsFlushIntervalMs,
     streamBodyLimit,
     revisionBatchBodyLimit,
@@ -1271,6 +1477,8 @@ export function loadConfig(): Config {
     apiOidcDefaultTenantId,
     monitorToken: monitorToken ?? null,
     aclRequireIdentity,
+    aclRequireIdentityWaiver,
+    documentAclDefault,
     exposeErrorDetail,
     nodeEnv: nodeEnv.length > 0 ? nodeEnv : "development",
     transactionEnforcement,

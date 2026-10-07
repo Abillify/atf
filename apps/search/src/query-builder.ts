@@ -20,6 +20,16 @@
  * `id` (BIGSERIAL) makes ties deterministic, which a keyset cursor requires and
  * which the FTS and hybrid queries previously lacked entirely.
  *
+ * The dense query expresses its leading key as the RAW distance
+ * `ORDER BY (vector <=> q) ASC` instead of `vector_similarity DESC`:
+ * `sim = 1 - dist` is strictly monotone, so both orderings are identical, but
+ * only the raw-distance form matches the HNSW index ordering. With the
+ * similarity expression the planner cannot see the index provides the sort
+ * order and falls back to Bitmap-Scan + full Sort — which defeats ANN entirely
+ * under selective filters (verified via EXPLAIN, task 6.5). The returned
+ * `vector_similarity` column and the keyset cursor keep using the similarity
+ * expression unchanged.
+ *
  * Keyset pagination
  * ─────────────────
  * A cursor encodes the sort key `(score, id)` of the last row of the previous
@@ -48,6 +58,7 @@
  */
 
 import { resolveFigureKinds } from "./figure-kinds.js";
+import { deniesEmptyAcl } from "./acl-default.js";
 import type { AccessScope } from "./access-scope.js";
 import type { SearchFilter, SearchCursor } from "./postgres-client.js";
 import {
@@ -272,52 +283,59 @@ function buildTagsSql(p: SqlParams, tags: string[] | undefined): string {
   return ` AND tags @> ${p.add(tags)}::text[]`;
 }
 
-function normalizeBuilderScope(
-  scopeOrUserId: AccessScope | string | undefined,
-  userGroups: string[] | undefined,
-): AccessScope | undefined {
-  if (typeof scopeOrUserId !== "string") {
-    if (scopeOrUserId) return scopeOrUserId;
-    if (!userGroups || userGroups.length === 0) return undefined;
-    return {
-      principal: { userId: undefined, userGroups, scopes: [], source: "asserted" },
-      userId: undefined,
-      userGroups,
-      tenantId: undefined,
-      scopes: [],
-      service: false,
-    };
+/**
+ * Raised when an access predicate is requested without an explicit scope.
+ *
+ * There is no "no scope" read any more (platform-hardening Req 3.1): every
+ * query must carry an `AccessScope`. Cross-tenant operator paths must use
+ * `operatorScope()` explicitly rather than omitting a scope.
+ */
+export class AccessScopeRequiredError extends Error {
+  constructor() {
+    super("ACCESS_SCOPE_REQUIRED: an explicit AccessScope is required");
+    this.name = "AccessScopeRequiredError";
   }
-  return {
-    principal: { userId: scopeOrUserId, userGroups, scopes: [], source: "asserted" },
-    userId: scopeOrUserId,
-    userGroups: userGroups ?? [],
-    tenantId: undefined,
-    scopes: [],
-    service: false,
-  };
 }
 
 export function buildAccessSql(
   p: SqlParams,
-  scope: AccessScope | undefined,
+  scope: AccessScope,
   tableAlias = "",
 ): string {
-  if (scope === undefined) return "";
+  // Defensive runtime guard: TypeScript makes the scope non-optional, but a
+  // JS caller or a `undefined as AccessScope` must still fail closed loudly.
+  if (scope === undefined || scope === null)
+    throw new AccessScopeRequiredError();
   const tenantId = scope.tenantId?.trim();
-  if (!tenantId) throw new Error("TENANT_REQUIRED");
+  // Explicit cross-tenant operator escape (Req 3.1): only an operatorScope
+  // without a tenant may drop the tenant predicate.
+  if (!tenantId) {
+    if (scope.operator) return "";
+    throw new Error("TENANT_REQUIRED");
+  }
   const prefix = tableAlias ? `${tableAlias}.` : "";
   const tenantSql = ` AND ${prefix}tenant_id = ${p.add(tenantId)}`;
   if (scope.authorizationBypass || scope.service) return tenantSql;
-  const conds = [
-    `(COALESCE(cardinality(${prefix}allowed_users), 0) = 0 AND COALESCE(cardinality(${prefix}allowed_groups), 0) = 0)`,
-  ];
+  const conds: string[] = [];
+  // Req 3.2: under DOCUMENT_ACL_DEFAULT=deny, rows with an empty ACL are only
+  // visible to service/bypass principals (handled above), never to end users.
+  // Under the `allow` default they remain publicly readable within the tenant.
+  if (!deniesEmptyAcl()) {
+    conds.push(
+      `(COALESCE(cardinality(${prefix}allowed_users), 0) = 0 AND COALESCE(cardinality(${prefix}allowed_groups), 0) = 0)`,
+    );
+  }
   if (scope.userId) {
-    conds.push(`${prefix}allowed_users @> ARRAY[${p.add(scope.userId)}]::text[]`);
+    conds.push(
+      `${prefix}allowed_users @> ARRAY[${p.add(scope.userId)}]::text[]`,
+    );
   }
   if (scope.userGroups.length > 0) {
     conds.push(`${prefix}allowed_groups && ${p.add(scope.userGroups)}::text[]`);
   }
+  // With deny and no end-user identity there is nothing left to match on:
+  // fail closed instead of emitting an empty `AND ()`.
+  if (conds.length === 0) return `${tenantSql} AND FALSE`;
   return `${tenantSql} AND (${conds.join(" OR ")})`;
 }
 
@@ -405,6 +423,16 @@ function buildScoreCursorSql(
 }
 
 /**
+ * Hard cap of the hybrid (RRF) candidate pool in {@link buildHybridQuery}.
+ * Exported so {@link candidatePoolSize} consumers outside the builder —
+ * notably the `hnsw.ef_search ≥ candidateLimit` tuning in postgres-client —
+ * compute the SAME pool size the SQL will use (Req 4.1).
+ */
+export const HYBRID_CANDIDATE_HARD_CAP = 1000;
+/** Hard cap of the binary two-stage candidate pool in {@link buildBinaryDenseQuery}. */
+export const BINARY_CANDIDATE_HARD_CAP = 4000;
+
+/**
  * Size the first-stage candidate pool so it can still satisfy the requested
  * window after OFFSET is applied.
  *
@@ -445,9 +473,8 @@ export function buildDenseQuery(
   includeAllVersions: boolean,
   offset: number,
   vectorJson: string,
+  scope: AccessScope,
   tags?: string[],
-  scopeOrUserId?: AccessScope | string,
-  userGroups?: string[],
   cursor?: SearchCursor,
   pathLike?: string,
   validAt?: string,
@@ -455,13 +482,28 @@ export function buildDenseQuery(
 ): { sql: string; params: unknown[] } {
   const p = new SqlParams();
   const vecPh = p.add(vectorJson);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
+  const temporalFilter = buildTemporalFilterSql(
+    p,
+    table,
+    includeAllVersions,
+    validAt,
+    "",
+    collection,
+  );
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
-  const accessSql = buildAccessSql(p, normalizeBuilderScope(scopeOrUserId, userGroups));
+  const accessSql = buildAccessSql(p, scope);
   // The cursor predicate repeats the similarity expression exactly as the
-  // ORDER BY uses it, so the keyset key matches the sort key.
+  // returned score uses it, so the keyset key matches the sort key.
+  // NOTE: the ORDER BY below sorts by the RAW distance (ASC), not by the
+  // similarity alias — see the comment there for why. The two orderings are
+  // mathematically identical (sim = 1 - dist is strictly monotone), so the
+  // cursor predicate on similarity stays correct. The only divergence is an
+  // ulp-level tie (dist₁ ≠ dist₂ yet 1-dist₁ == 1-dist₂ after rounding),
+  // where the tie-break falls to `id` in both forms with at most one row
+  // shifted across a page boundary — the same precision class the keyset
+  // cursor already documents for timestamptz truncation.
   const scoreExpr = `(1 - (vector <=> ${vecPh}::${vecType}))`;
   const cursorSql = buildScoreCursorSql(p, cursor, scoreExpr);
   const limitPh = p.add(limit);
@@ -491,7 +533,7 @@ export function buildDenseQuery(
         NULL::float8                           AS sparse_score
       FROM "${table}"
       WHERE TRUE${temporalFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
-      ORDER BY vector_similarity DESC, id ASC
+      ORDER BY (vector <=> ${vecPh}::${vecType}) ASC, id ASC
       LIMIT ${limitPh} OFFSET ${offsetPh}
     `,
     params: p.values,
@@ -515,9 +557,8 @@ export function buildBinaryDenseQuery(
   vectorJson: string,
   binaryStr: string,
   candidateMultiplier: number,
+  scope: AccessScope,
   tags?: string[],
-  scopeOrUserId?: AccessScope | string,
-  userGroups?: string[],
   cursor?: SearchCursor,
   pathLike?: string,
   validAt?: string,
@@ -531,14 +572,21 @@ export function buildBinaryDenseQuery(
     limit,
     offset,
     candidateMultiplier,
-    4000,
+    BINARY_CANDIDATE_HARD_CAP,
   );
   const candPh = p.add(candidateLimit);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
+  const temporalFilter = buildTemporalFilterSql(
+    p,
+    table,
+    includeAllVersions,
+    validAt,
+    "",
+    collection,
+  );
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
-  const accessSql = buildAccessSql(p, normalizeBuilderScope(scopeOrUserId, userGroups));
+  const accessSql = buildAccessSql(p, scope);
   // The candidate CTE is ordered by Hamming distance, not by the final float32
   // similarity, so the cursor cannot be applied there. It is applied on the
   // outer, similarity-ordered query where the sort key actually lives.
@@ -590,6 +638,60 @@ export function buildBinaryDenseQuery(
   };
 }
 
+// ─── Lexical ranking (task 6.9, Requirement 4.7) ─────────────────────────────
+
+export type LexicalRankerName = "ts_rank" | "ts_rank_cd" | "bm25";
+export type Bm25EngineName = "pg_search" | "vchord_bm25";
+
+/**
+ * Which ranker the lexical (FTS) list uses. `bm25` is only honoured when a
+ * BM25 extension was actually detected (`bm25Engine` non-null) — Requirement
+ * 4.7 makes BM25 conditional on `pg_search`/VectorChord-bm25 being available;
+ * without one the builder falls back to `ts_rank_cd` with length
+ * normalisation, which is the default ranker anyway.
+ */
+export interface LexicalRanker {
+  ranker: LexicalRankerName;
+  bm25Engine: Bm25EngineName | null;
+}
+
+/**
+ * `ts_rank_cd` normalisation flag 32: divide the score by 1 + log(document
+ * length) — the Längennormalisierung Requirement 4.7 demands of the default
+ * ranker so long chunks do not outrank short ones on raw term hits alone.
+ */
+const TS_RANK_CD_LENGTH_NORMALIZATION = 32;
+
+/**
+ * The match predicate and score expression for the lexical list.
+ *
+ * Default (`ts_rank_cd`): the GIN-indexed `ts_search @@ websearch_to_tsquery`
+ * predicate with `ts_rank_cd(..., 32)`. `ts_rank` keeps the legacy un-
+ * normalised expression verbatim. `bm25` (extension detected): ParadeDB
+ * pg_search scores via `paradedb.score(id)` over its `bm25` index, VectorChord-
+ * bm25 via `bm25_score(id)`; both match with the `|||` operator on `content`.
+ */
+export function buildLexicalQuerySql(
+  lexical: LexicalRanker | undefined,
+  language: string,
+  queryPh: string,
+): { match: string; score: string } {
+  const name = lexical?.ranker ?? "ts_rank_cd";
+  if (name === "bm25" && lexical?.bm25Engine) {
+    const scoreFn =
+      lexical.bm25Engine === "pg_search" ? "paradedb.score" : "bm25_score";
+    return { match: `content ||| ${queryPh}`, score: `${scoreFn}(id)` };
+  }
+  const tsq = `websearch_to_tsquery('${language}', ${queryPh})`;
+  if (name === "ts_rank") {
+    return { match: `ts_search @@ ${tsq}`, score: `ts_rank(ts_search, ${tsq})` };
+  }
+  return {
+    match: `ts_search @@ ${tsq}`,
+    score: `ts_rank_cd(ts_search, ${tsq}, ${TS_RANK_CD_LENGTH_NORMALIZATION})`,
+  };
+}
+
 // ─── FTS-only query ───────────────────────────────────────────────────────────
 
 /**
@@ -604,24 +706,31 @@ export function buildFtsQuery(
   includeAllVersions: boolean,
   offset: number,
   queryText: string,
+  scope: AccessScope,
   tags?: string[],
-  scopeOrUserId?: AccessScope | string,
-  userGroups?: string[],
   cursor?: SearchCursor,
   baseRef?: string,
   pathLike?: string,
   validAt?: string,
   collection?: string,
+  lexical?: LexicalRanker,
 ): { sql: string; params: unknown[] } {
   // ── baseRef-only branch: skip FTS entirely, filter by base_ref column directly ──
   // Uses a fresh SqlParams so $1 is never an untyped query-text parameter.
   if (baseRef) {
     const p2 = new SqlParams();
-    const temporalFilter2 = buildTemporalFilterSql(p2, table, includeAllVersions, validAt, "", collection);
+    const temporalFilter2 = buildTemporalFilterSql(
+      p2,
+      table,
+      includeAllVersions,
+      validAt,
+      "",
+      collection,
+    );
     const filterSql2 = buildFilterSql(p2, filter);
     const pathSql2 = buildPathPrefixSql(p2, pathLike);
     const tagsSql2 = buildTagsSql(p2, tags);
-    const accessSql2 = buildAccessSql(p2, normalizeBuilderScope(scopeOrUserId, userGroups));
+    const accessSql2 = buildAccessSql(p2, scope);
     const baseRefPh = p2.add(baseRef);
     // This branch orders by chunk_index, not by relevance, so a keyset cursor
     // over (score, created, id) is meaningless here. Offset pagination is the
@@ -669,13 +778,22 @@ export function buildFtsQuery(
 
   const p = new SqlParams();
   const queryPh = p.add(queryText);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
+  const temporalFilter = buildTemporalFilterSql(
+    p,
+    table,
+    includeAllVersions,
+    validAt,
+    "",
+    collection,
+  );
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
-  const accessSql = buildAccessSql(p, normalizeBuilderScope(scopeOrUserId, userGroups));
-  const rankExpr = `ts_rank(ts_search, websearch_to_tsquery('${language}', ${queryPh}))`;
-  const cursorSql = buildScoreCursorSql(p, cursor, rankExpr);
+  const accessSql = buildAccessSql(p, scope);
+  // FTS_RANKER (task 6.9, Requirement 4.7): default ts_rank_cd with length
+  // normalisation; bm25 only when a BM25 extension was detected.
+  const { match, score } = buildLexicalQuerySql(lexical, language, queryPh);
+  const cursorSql = buildScoreCursorSql(p, cursor, score);
   const limitPh = p.add(limit);
   const offsetPh = p.add(offset);
 
@@ -699,12 +817,12 @@ export function buildFtsQuery(
         valid_from,
         revision_id,
         COALESCE(valid_from, created) AS effective_valid_from,
-        NULL::float8                                                          AS vector_similarity,
-        ts_rank(ts_search, websearch_to_tsquery('${language}', ${queryPh}))  AS text_score,
-        NULL::float8                                                          AS sparse_score
+        NULL::float8  AS vector_similarity,
+        ${score}      AS text_score,
+        NULL::float8  AS sparse_score
       FROM "${table}"
       WHERE TRUE${temporalFilter}${filterSql}${pathSql}${tagsSql}${accessSql}${cursorSql}
-        AND ts_search @@ websearch_to_tsquery('${language}', ${queryPh})
+        AND ${match}
       ORDER BY text_score DESC, id ASC
       LIMIT ${limitPh} OFFSET ${offsetPh}
     `,
@@ -728,6 +846,17 @@ export interface HybridRrfOptions {
   weightDense?: number;
   weightFts?: number;
   weightIdentifier?: number;
+  /**
+   * Weight for the SPLADE sparse list (Requirement 4.3, `RRF_WEIGHT_SPARSE`,
+   * default 1.0). Only applied when the sparse branch participates.
+   */
+  weightSparse?: number;
+  /**
+   * Requirement 4.4 (`RRF_MISSING_ZERO`, default true): a list a document did
+   * not appear in contributes 0 instead of the legacy `1/(k+1000)` pseudo-rank.
+   * False restores the legacy behaviour exactly.
+   */
+  missingZero?: boolean;
   /** Unit ids matched by the query's identifiers, in exact-match (best-first) order. */
   identifierUnitIds?: string[];
   /**
@@ -739,6 +868,46 @@ export interface HybridRrfOptions {
    * rank. Omitted/empty → no lexical branch.
    */
   identifierTsQuery?: string | null;
+}
+
+/**
+ * One list's contribution to the fused RRF score: `weight / (k + rank)` over
+ * the list's rank column. `weight` must already be a rendered literal (see
+ * `weightLit` semantics in `buildHybridQuery`); "1" omits the multiplier.
+ */
+export interface RrfScoreTerm {
+  weight: string;
+  rankCol: string;
+}
+
+/**
+ * The fused `rrf_score` expression over one or more ranked lists
+ * (Requirement 4.3/4.4; Property 7 — RRF monotonicity).
+ *
+ * `missingZero` true: a NULL rank (document absent from the list) makes the
+ * division NULL and the whole term COALESCEs to 0 — a missing list contributes
+ * nothing. false: legacy behaviour, the missing rank becomes the pseudo-rank
+ * 1000. Both forms are monotonically non-increasing in each rank, so improving
+ * a document's rank in one list never lowers its fused score.
+ *
+ * Exported as the test seam for the Property-7 test, which evaluates this very
+ * expression against PostgreSQL with synthetic rank values.
+ */
+export function buildRrfScoreSql(
+  rrfK: number,
+  missingZero: boolean,
+  terms: readonly RrfScoreTerm[],
+): string {
+  return terms
+    .map(({ weight, rankCol }) => {
+      const rank = missingZero ? rankCol : `COALESCE(${rankCol}, 1000)`;
+      const term =
+        weight === "1"
+          ? `(1.0 / (${rrfK} + ${rank}))`
+          : `(${weight} * (1.0 / (${rrfK} + ${rank})))`;
+      return missingZero ? `COALESCE(${term}, 0)` : term;
+    })
+    .join(" + ");
 }
 
 /** Hybrid search: RRF over dense + full-text + optional SPLADE sparse + optional identifier list. */
@@ -759,14 +928,14 @@ export function buildHybridQuery(
   sparseJson: string | undefined,
   binaryStr: string | undefined,
   binaryDim: number | null,
+  scope: AccessScope,
   tags?: string[],
-  scopeOrUserId?: AccessScope | string,
-  userGroups?: string[],
   cursor?: SearchCursor,
   pathLike?: string,
   validAt?: string,
   collection?: string,
   rrfOptions?: HybridRrfOptions,
+  lexical?: LexicalRanker,
 ): { sql: string; params: unknown[] } {
   // RRF ranks are POOL-RELATIVE: a document's rrf_score depends on which other
   // documents are in the candidate set. Filtering the pool by a cursor changes
@@ -791,7 +960,7 @@ export function buildHybridQuery(
     limit,
     offset,
     candidateMultiplier,
-    1000,
+    HYBRID_CANDIDATE_HARD_CAP,
   );
   const candPh = p.add(candidateLimit);
 
@@ -804,37 +973,84 @@ export function buildHybridQuery(
     binCandPh = p.add(Math.min(candidateLimit * 4, 4000));
   }
 
-
   const filterSql = buildFilterSql(p, filter);
   const pathSql = buildPathPrefixSql(p, pathLike);
   const tagsSql = buildTagsSql(p, tags);
-  const accessSql = buildAccessSql(p, normalizeBuilderScope(scopeOrUserId, userGroups));
+  const accessSql = buildAccessSql(p, scope);
   const extraSql = pathSql + tagsSql + accessSql;
 
   const limitPh = p.add(limit);
   const offsetPh = p.add(offset);
-  const temporalFilter = buildTemporalFilterSql(p, table, includeAllVersions, validAt, "", collection);
+  const temporalFilter = buildTemporalFilterSql(
+    p,
+    table,
+    includeAllVersions,
+    validAt,
+    "",
+    collection,
+  );
 
-  // Per-list RRF weights (task 3.4, Req 12.3). Defaults are 1.0, which makes the
-  // weighted terms identical to the previous unweighted ones — a no-identifier,
-  // default-weight call is byte-for-byte the same ranking as before. The weights
-  // are numeric config (not user input); sanitise to a finite positive float and
-  // render as a literal because they multiply an interpolated arithmetic term.
+  // Requirement 4.6: temporal visibility is evaluated ONCE per query as a
+  // shared `visible` CTE when the caller asks for a point-in-time view
+  // (`validAt`) or an all-versions view. The point-in-time predicate is a
+  // correlated subquery per row; repeating it in every rank list (vec, txt,
+  // sparse, both identifier branches) multiplied its cost by the list count.
+  // The default latest-only path keeps its predicates INLINE: that is the
+  // shape the partial `*_vector_latest_hnsw_idx` index scan depends on, and
+  // the EXPLAIN test (task 6.8) pins it.
+  const temporalActive = validAt !== undefined || includeAllVersions;
+  const visibleCTE = temporalActive
+    ? `
+    visible AS (
+      SELECT id FROM "${table}"
+      WHERE TRUE${temporalFilter}${filterSql}${extraSql}
+    ),`
+    : "";
+  const visibilitySql = temporalActive
+    ? ` AND id IN (SELECT id FROM visible)`
+    : `${temporalFilter}${filterSql}${extraSql}`;
+
+  // Per-list RRF weights (task 3.4, Req 12.3; sparse weight Req 4.3). Defaults
+  // are 1.0. The weights are numeric config (not user input); sanitise to a
+  // finite positive float and render as a literal because they multiply an
+  // interpolated arithmetic term.
+  //
+  // Requirement 4.5: render WITHOUT exponential notation. JS `toString()`
+  // switches to `1e-7`-style below 1e-6, which PostgreSQL would accept but
+  // which no human reviewing generated SQL should have to parse; expand to a
+  // plain decimal literal instead.
   const weightLit = (w: number | undefined, fallback = 1.0): string => {
-    const v = typeof w === "number" && Number.isFinite(w) && w > 0 ? w : fallback;
-    // A plain decimal literal; no exponent/NaN/Infinity can reach the SQL.
-    return v.toString();
+    const v =
+      typeof w === "number" && Number.isFinite(w) && w > 0 ? w : fallback;
+    let s = v.toString();
+    if (/e/i.test(s)) {
+      s = v.toFixed(20).replace(/0+$/, "").replace(/\.$/, "");
+      // Still exponential (absurd magnitude, e.g. >1e21) — fall back to the
+      // safe default rather than emit a literal we cannot render plainly.
+      if (/e/i.test(s)) s = fallback.toString();
+    }
+    return s;
   };
   const wDense = weightLit(rrfOptions?.weightDense);
   const wFts = weightLit(rrfOptions?.weightFts);
   const wIdent = weightLit(rrfOptions?.weightIdentifier);
+  const wSparse = weightLit(rrfOptions?.weightSparse);
 
-  // Render a weighted reciprocal-rank term. When the weight is exactly 1.0 the
-  // multiplier is omitted so a default-weight call emits the identical SQL text
-  // it did before this change (regression guard) — `1 * x` and `x` rank the same
-  // but only the bare form is byte-for-byte unchanged.
-  const rrfTerm = (weight: string, rankExpr: string): string =>
-    weight === "1" ? `(1.0 / (${rankExpr}))` : `(${weight} * (1.0 / (${rankExpr})))`;
+  // Requirement 4.4 (RRF_MISSING_ZERO, default true from this minor): a list a
+  // document did NOT appear in contributes 0, not the old `1/(k+1000)`
+  // pseudo-rank. The old penalty rewarded every missing list almost as much as
+  // a bottom-of-pool hit, which compressed the score differences between lists
+  // and let documents in three weak lists outrank a document first in one.
+  // With missingZero the NULL rank propagates through the division and each
+  // term is COALESCEd to 0. Setting the flag to false restores the legacy
+  // `COALESCE(rank, 1000)` behaviour verbatim (upgrade-hint in CHANGELOG).
+  const missingZero = rrfOptions?.missingZero ?? true;
+
+  // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranks with
+  // ts_rank_cd + length normalisation by default; bm25 only when a BM25
+  // extension was detected (the caller passes the engine in, or null to
+  // keep the default).
+  const lexicalSql = buildLexicalQuerySql(lexical, language, queryPh);
 
   // Identifier list (Req 12.3): only when the query resolved to at least one
   // unit id. Empty/omitted → no ident CTE, no join, no term, so the emitted SQL
@@ -842,7 +1058,8 @@ export function buildHybridQuery(
   // best-first order; we carry that order as the exact-match rank.
   const identUnitIds = rrfOptions?.identifierUnitIds ?? [];
   const identTsQuery =
-    typeof rrfOptions?.identifierTsQuery === "string" && rrfOptions.identifierTsQuery.trim() !== ""
+    typeof rrfOptions?.identifierTsQuery === "string" &&
+    rrfOptions.identifierTsQuery.trim() !== ""
       ? rrfOptions.identifierTsQuery
       : null;
   const hasExactIdent = identUnitIds.length > 0;
@@ -850,6 +1067,15 @@ export function buildHybridQuery(
   const hasIdent = hasExactIdent || hasLexIdent;
   const identPh = hasExactIdent ? p.add(identUnitIds) : null;
   const identTsPh = hasLexIdent ? p.add(identTsQuery) : null;
+
+  // The fused score sums one weighted reciprocal-rank term per participating
+  // list (dense + fts always; sparse/identifier only when their branch runs).
+  const rrfScoreSql = buildRrfScoreSql(rrfK, missingZero, [
+    { weight: wDense, rankCol: `v.vrank` },
+    { weight: wFts, rankCol: `t.trank` },
+    ...(sparsePh ? [{ weight: wSparse, rankCol: `spr.sprrank` }] : []),
+    ...(hasIdent ? [{ weight: wIdent, rankCol: `i.identrank` }] : []),
+  ]);
 
   // language is validated via ALLOWED_FTS_LANGUAGES; PostgreSQL does not support
   // regconfig as a bind parameter, so string interpolation is intentional here.
@@ -859,7 +1085,7 @@ export function buildHybridQuery(
     spr AS (
       SELECT id, (sparse_vector <#> ${sparsePh}::sparsevec(${sparseVocabSize})) * -1 AS sprscore
       FROM "${table}"
-      WHERE TRUE${temporalFilter}${filterSql}${extraSql}
+      WHERE TRUE${visibilitySql}
         AND sparse_vector IS NOT NULL
       ORDER BY sparse_vector <#> ${sparsePh}::sparsevec(${sparseVocabSize})
       LIMIT ${candPh}
@@ -870,15 +1096,17 @@ export function buildHybridQuery(
     ),`
       : "";
 
-  // The fused key is the coalesce of every participating list's id. Sparse and
-  // identifier both LEFT JOIN onto it, so their key must include the ident id
-  // when the ident branch is present.
-  const fusedId = hasIdent ? `COALESCE(v.id, t.id, i.id)` : `COALESCE(v.id, t.id)`;
+  // The fused key is the coalesce of every participating list's id. Every list
+  // after the first FULL OUTER JOINs onto it (Requirement 4.3: the sparse list
+  // used to LEFT JOIN, so a document found ONLY by sparse was silently dropped
+  // from the fusion). Join order vec→txt→spr→ident keeps each join condition
+  // expressible over the ids already coalesced by the preceding joins.
+  const fusedIdParts = [`v.id`, `t.id`];
+  if (sparsePh) fusedIdParts.push(`spr.id`);
+  if (hasIdent) fusedIdParts.push(`i.id`);
+  const fusedId = `COALESCE(${fusedIdParts.join(", ")})`;
   const sprJoin = sparsePh
-    ? `\n        LEFT JOIN spr_ranked spr ON spr.id = ${fusedId}`
-    : "";
-  const sprRrf = sparsePh
-    ? `+ (1.0 / (${rrfK} + COALESCE(spr.sprrank, 1000)))`
+    ? `\n        FULL OUTER JOIN spr_ranked spr ON spr.id = COALESCE(v.id, t.id)`
     : "";
   const sprScore = sparsePh
     ? `COALESCE(spr.sprscore, 0) AS sparse_score,`
@@ -908,7 +1136,7 @@ export function buildHybridQuery(
       SELECT "${table}".id, u.ord AS identrank
       FROM unnest(${identPh}::text[]) WITH ORDINALITY AS u(ident_unit_id, ord)
       JOIN "${table}" ON "${table}".unit_id = u.ident_unit_id
-      WHERE TRUE${temporalFilter}${filterSql}${extraSql}`
+      WHERE TRUE${visibilitySql}`
     : "";
   const identLexSelect = hasLexIdent
     ? `
@@ -916,7 +1144,7 @@ export function buildHybridQuery(
       FROM (
         SELECT id, ts_rank(ts_ident, to_tsquery('simple', ${identTsPh})) AS lscore
         FROM "${table}"
-        WHERE TRUE${temporalFilter}${filterSql}${extraSql}
+        WHERE TRUE${visibilitySql}
           AND ts_ident @@ to_tsquery('simple', ${identTsPh})
         ORDER BY lscore DESC, id ASC
         LIMIT ${candPh}
@@ -935,11 +1163,10 @@ export function buildHybridQuery(
       GROUP BY id
     ),`
     : "";
+  const identJoinKey = [`v.id`, `t.id`];
+  if (sparsePh) identJoinKey.push(`spr.id`);
   const identJoin = hasIdent
-    ? `\n        FULL OUTER JOIN ident_ranked i ON i.id = COALESCE(v.id, t.id)`
-    : "";
-  const identRrf = hasIdent
-    ? `+ ${rrfTerm(wIdent, `${rrfK} + COALESCE(i.identrank, 1000)`)}`
+    ? `\n        FULL OUTER JOIN ident_ranked i ON i.id = COALESCE(${identJoinKey.join(", ")})`
     : "";
 
   const binCTE =
@@ -947,7 +1174,7 @@ export function buildHybridQuery(
       ? `
     bin_pre AS (
       SELECT id FROM "${table}"
-      WHERE TRUE${temporalFilter}${filterSql}${extraSql}
+      WHERE TRUE${visibilitySql}
         AND bit_vector IS NOT NULL
       ORDER BY bit_vector <~> ${binPh}::bit(${binaryDim})
       LIMIT ${binCandPh}
@@ -958,19 +1185,20 @@ export function buildHybridQuery(
   return {
     sql: `
       WITH
+      ${visibleCTE}
       ${binCTE}
       vec AS (
         SELECT id, 1 - (vector <=> ${vecPh}::${vecType}) AS vscore
         FROM "${table}"
-        WHERE TRUE${temporalFilter}${filterSql}${extraSql}${vecIdFilter}
+        WHERE TRUE${visibilitySql}${vecIdFilter}
         ORDER BY vector <=> ${vecPh}::${vecType}
         LIMIT ${candPh}
       ),
       txt AS (
-        SELECT id, ts_rank(ts_search, websearch_to_tsquery('${language}', ${queryPh})) AS tscore
+        SELECT id, ${lexicalSql.score} AS tscore
         FROM "${table}"
-        WHERE TRUE${temporalFilter}${filterSql}${extraSql}
-          AND ts_search @@ websearch_to_tsquery('${language}', ${queryPh})
+        WHERE TRUE${visibilitySql}
+          AND ${lexicalSql.match}
         ORDER BY tscore DESC
         LIMIT ${candPh}
       ),
@@ -990,14 +1218,11 @@ export function buildHybridQuery(
           COALESCE(v.vscore, 0) AS vector_similarity,
           COALESCE(t.tscore, 0) AS text_score,
           ${sprScore}
-          ${rrfTerm(wDense, `${rrfK} + COALESCE(v.vrank, 1000)`)} +
-          ${rrfTerm(wFts, `${rrfK} + COALESCE(t.trank, 1000)`)}
-          ${sprRrf}
-          ${identRrf} AS rrf_score
+          ${rrfScoreSql} AS rrf_score
         FROM vec_ranked v
         FULL OUTER JOIN txt_ranked t ON v.id = t.id
-        ${identJoin}
         ${sprJoin}
+        ${identJoin}
       )
       SELECT
         d.id::text,

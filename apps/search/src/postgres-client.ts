@@ -10,16 +10,17 @@
  */
 
 import { resolveFigureKinds } from "./figure-kinds.js";
+import { setDocumentAclDefault } from "./acl-default.js";
 import {
-  forgetDocument,
   groupMemberReferences,
   resolveDocumentGroups,
   type DocumentGroup,
 } from "./document-identity.js";
+import { deleteDocumentCascade } from "./revision-store.js";
 import type pino from "pino";
 import { Pool, type PoolClient } from "pg";
 import { v4 as uuidv4 } from "uuid";
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { Metadata } from "./metadata.js";
 import {
   type SparseVector,
@@ -47,6 +48,11 @@ import {
   buildFtsQuery,
   buildAccessSql,
   buildTemporalFilterSql,
+  type Bm25EngineName,
+  type LexicalRanker,
+  candidatePoolSize,
+  BINARY_CANDIDATE_HARD_CAP,
+  HYBRID_CANDIDATE_HARD_CAP,
   SqlParams,
 } from "./query-builder.js";
 import type { ExpandMode, ExpansionUnit } from "./expansion.js";
@@ -337,11 +343,47 @@ export function buildFtsText(point: DocumentPoint): string {
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+/**
+ * Allowed values of the pgvector `hnsw.iterative_scan` GUC (Req 4.1).
+ * `relaxed_order` returns results in scan order (cheapest, default);
+ * `strict_order` re-visits tuples to preserve exact distance ordering;
+ * `off` disables iterative deepening entirely (pre-0.8 behaviour).
+ */
+export type HnswIterativeScanMode = "relaxed_order" | "strict_order" | "off";
+
+/**
+ * Compare a pgvector version string (`0.8.6`, `0.7`, `0.8.0`) against a
+ * minimum major/minor pair. Non-numeric suffixes (e.g. `0.8.0-rc1`) are
+ * ignored; unparseable input counts as NOT meeting the minimum.
+ */
+export function pgvectorVersionAtLeast(
+  version: string,
+  minMajor: number,
+  minMinor: number,
+): boolean {
+  const [majorRaw, minorRaw] = version.trim().split(".");
+  const major = Number.parseInt(majorRaw ?? "", 10);
+  const minor = Number.parseInt(minorRaw ?? "0", 10);
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) return false;
+  return major > minMajor || (major === minMajor && minor >= minMinor);
+}
+
 export interface PostgresClientConfig {
   connectionString: string;
   logger: pino.Logger;
   /** HNSW ef_search: controls recall vs latency at query time. Default: 100. */
   efSearch?: number;
+  /**
+   * pgvector HNSW iterative-scan mode for dense/binary searches (Req 4.1).
+   * Forced to `off` automatically when the installed pgvector is < 0.8
+   * (Req 4.2, see ensurePgvectorVersion). Default: 'relaxed_order'.
+   */
+  hnswIterativeScan?: HnswIterativeScanMode;
+  /**
+   * Cap on tuples visited per iterative-scan round
+   * (`hnsw.max_scan_tuples`). Default: 20 000.
+   */
+  hnswMaxScanTuples?: number;
   /** HNSW ef_construction for new indexes (default: 128). */
   efConstruction?: number;
   /** HNSW m parameter for new indexes (default: 16). */
@@ -350,14 +392,43 @@ export interface PostgresClientConfig {
   halfPrecision?: boolean;
   /** Server-wide default FTS language for new collections. Default: 'simple'. */
   defaultFtsLanguage?: string;
+  /**
+   * Visibility of rows with an empty ACL (Req 3.2). `allow` (default) keeps
+   * them tenant-public; `deny` restricts them to service/bypass principals.
+   */
+  documentAclDefault?: "allow" | "deny";
   /** Delete stats rows older than N days. 0 = keep forever. Default: 90. */
   statsRetentionDays?: number;
+  /**
+   * Persist the raw query text in vs_search_stats.query in addition to the
+   * hash. Default: false — only query_hash is stored (Requirement 2.6).
+   */
+  statsStoreRawQuery?: boolean;
+  /**
+   * Pepper for the HMAC-SHA-256 query hash. null/empty = plain SHA-256.
+   * Set STATS_QUERY_PEPPER in production so common queries are not
+   * dictionary-reversible from the hash alone.
+   */
+  statsQueryPepper?: string | null;
   /** RRF k parameter for hybrid search scoring. Default: 60. */
   rrfK?: number;
-  /** Per-list RRF weights (task 3.4, Req 12.3). All default to 1.0 (unchanged ranking). */
+  /** Per-list RRF weights (task 3.4, Req 12.3; sparse Req 4.3). All default to 1.0. */
   rrfWeightDense?: number;
   rrfWeightFts?: number;
   rrfWeightIdentifier?: number;
+  rrfWeightSparse?: number;
+  /**
+   * Req 4.4: missing lists contribute 0 instead of `1/(k+1000)`. Default true;
+   * false restores the legacy pseudo-rank.
+   */
+  rrfMissingZero?: boolean;
+  /**
+   * Req 4.7: ranker for the lexical (full-text) list. `ts_rank_cd` (default)
+   * with length normalisation; `bm25` only takes effect when a BM25 extension
+   * (ParadeDB `pg_search` or VectorChord-bm25) is installed — otherwise the
+   * client logs a warning once and keeps `ts_rank_cd`.
+   */
+  ftsRanker?: "ts_rank_cd" | "bm25";
   /** Interval in ms for flushing buffered stats to the database. Default: 30 000. */
   statsFlushIntervalMs?: number;
   /**
@@ -803,7 +874,10 @@ export interface IngestStats {
 export interface SearchStats {
   tenant_id: string;
   collection: string;
-  query: string;
+  /** Raw query text — only present when STATS_STORE_RAW_QUERY=true. */
+  query: string | null;
+  /** SHA-256 / HMAC-SHA-256 of the query (Requirement 2.6). */
+  query_hash: string | null;
   timestamp: Date;
   duration_ms: number;
   results_count: number;
@@ -1067,6 +1141,15 @@ export interface PostgresClient {
     searchOptions?: SearchOptions,
   ): Promise<PostgresResponse<SearchResult[]>>;
   /**
+   * Check the installed pgvector version once (Req 4.2): `true` when it
+   * supports `hnsw.iterative_scan` (≥ 0.8), `false` when it is older (a
+   * warning is logged and iterative scans stay disabled), `null` when the
+   * extension is not installed yet — the verdict stays uncached and the
+   * next call re-checks. Called at startup after migrations; searches also
+   * check lazily, so calling this is an optimisation, not a prerequisite.
+   */
+  ensurePgvectorVersion(): Promise<boolean | null>;
+  /**
    * Resolve the source sha256 of a stored revision SERVER-SIDE (Requirement
    * 14.4/14.5): the `document.begin.source.sha256` the producer staged with the
    * revision's batches. Used by the MCP `get_asset(region)` zoom so the render
@@ -1162,7 +1245,11 @@ export interface PostgresClient {
     collection: string,
     scope: AccessScope,
     reference: string,
-    options?: NavReadOptions & { depth?: number; limit?: number; offset?: number },
+    options?: NavReadOptions & {
+      depth?: number;
+      limit?: number;
+      offset?: number;
+    },
   ): Promise<PostgresResponse<{ entries: OutlineEntry[]; total: number }>>;
 
   /**
@@ -1203,7 +1290,13 @@ export interface PostgresClient {
     before: number,
     after: number,
     options?: NavReadOptions,
-  ): Promise<PostgresResponse<{ before: NavUnitRow[]; unit: NavUnitRow | null; after: NavUnitRow[] }>>;
+  ): Promise<
+    PostgresResponse<{
+      before: NavUnitRow[];
+      unit: NavUnitRow | null;
+      after: NavUnitRow[];
+    }>
+  >;
 
   /**
    * The figure units of a document, optionally restricted to a page range
@@ -1257,8 +1350,14 @@ export interface PostgresClient {
     collection: string,
     scope: AccessScope,
     valueNorm: string,
-    options?: NavReadOptions & { limit?: number; offset?: number; pathPrefix?: string },
-  ): Promise<PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>>;
+    options?: NavReadOptions & {
+      limit?: number;
+      offset?: number;
+      pathPrefix?: string;
+    },
+  ): Promise<
+    PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>
+  >;
 
   delete(
     filter: SearchFilter,
@@ -1266,6 +1365,16 @@ export interface PostgresClient {
     scope: AccessScope,
     reference?: string,
   ): Promise<PostgresResponse<{ deleted: number }>>;
+
+  /**
+   * Register the post-delete cache-invalidation hook (task 4.2, Requirement
+   * 2.4). Invoked after a document cascade COMMITS with the affected root
+   * references, so the server can drop in-process caches derived from them.
+   * A hook failure is logged, never propagated — the delete already committed.
+   */
+  setOnDocumentsDeleted?(
+    hook: (collection: string, rootRefs: string[]) => void,
+  ): void;
 
   ensureCollection(
     collection: string,
@@ -1366,9 +1475,7 @@ export interface PostgresClient {
       /** List only documents directly under the prefix (folder-browser view). */
       directOnly?: boolean;
     },
-  ): Promise<
-    PostgresResponse<{ documents: DocumentSummary[]; total: number }>
-  >;
+  ): Promise<PostgresResponse<{ documents: DocumentSummary[]; total: number }>>;
 
   /**
    * List the sub-folders beneath a folder path prefix, derived from document
@@ -1408,9 +1515,7 @@ export interface PostgresClient {
     scope: AccessScope,
     query: string,
     options?: { limit?: number; matchFullPath?: boolean; threshold?: number },
-  ): Promise<
-    PostgresResponse<{ query: string; matches: FolderSummary[] }>
-  >;
+  ): Promise<PostgresResponse<{ query: string; matches: FolderSummary[] }>>;
 
   /**
    * Reassemble a whole document from its latest chunks (ordered by chunk
@@ -1434,7 +1539,12 @@ export interface PostgresClient {
   getDocumentsByPrefix(
     collection: string,
     scope: AccessScope,
-    options?: { pathPrefix?: string; limit?: number; maxChars?: number; validAt?: string },
+    options?: {
+      pathPrefix?: string;
+      limit?: number;
+      maxChars?: number;
+      validAt?: string;
+    },
   ): Promise<
     PostgresResponse<{
       documents: DocumentContent[];
@@ -1464,10 +1574,13 @@ export interface PostgresClient {
   getSummaries(
     collection: string,
     scope: AccessScope,
-    options?: { pathPrefix?: string; limit?: number; offset?: number; validAt?: string },
-  ): Promise<
-    PostgresResponse<{ summaries: SummaryEntry[]; total: number }>
-  >;
+    options?: {
+      pathPrefix?: string;
+      limit?: number;
+      offset?: number;
+      validAt?: string;
+    },
+  ): Promise<PostgresResponse<{ summaries: SummaryEntry[]; total: number }>>;
 
   /**
    * List the `base_ref`s of documents whose chunk-0 row has no `prefix`
@@ -2009,6 +2122,15 @@ function mergeChunksWithCoordinates<T extends {
 export function createPostgresClient(
   config: PostgresClientConfig,
 ): PostgresClient {
+  // Req 3.2: resolve DOCUMENT_ACL_DEFAULT once per process so the SQL builder
+  // and the row-ACL helper agree on the empty-ACL rule.
+  setDocumentAclDefault(config.documentAclDefault ?? "allow");
+  // Post-delete cache-invalidation hook (task 4.2, Requirement 2.4). Set via
+  // setOnDocumentsDeleted() after construction — the caches live in createApp,
+  // which runs after the client. Invoked post-COMMIT with the affected refs.
+  let onDocumentsDeleted:
+    | ((collection: string, rootRefs: string[]) => void)
+    | undefined;
   const scopedWhere = (
     scope: AccessScope,
     params: unknown[],
@@ -2033,22 +2155,36 @@ export function createPostgresClient(
   ): { sql: string; params: unknown[] } => {
     const p = new SqlParams();
     p.values.push(...params);
-    const temporal = buildTemporalFilterSql(p, table, false, validAt, "", collection);
+    const temporal = buildTemporalFilterSql(
+      p,
+      table,
+      false,
+      validAt,
+      "",
+      collection,
+    );
     return { sql: temporal + buildAccessSql(p, scope), params: p.values };
   };
   const {
     connectionString,
     logger,
     efSearch = 100,
+    hnswIterativeScan = "relaxed_order",
+    hnswMaxScanTuples = 20_000,
     efConstruction = 128,
     hnswM = 16,
     halfPrecision = false,
     defaultFtsLanguage = "simple",
     statsRetentionDays = 90,
+    statsStoreRawQuery = false,
+    statsQueryPepper = null,
     rrfK = 60,
     rrfWeightDense = 1.0,
     rrfWeightFts = 1.0,
     rrfWeightIdentifier = 1.0,
+    rrfWeightSparse = 1.0,
+    rrfMissingZero = true,
+    ftsRanker = "ts_rank_cd",
     statsFlushIntervalMs = 30_000,
     quantization: quantizationConfig = "none",
     embeddingModel: expectedEmbeddingModel,
@@ -2091,6 +2227,121 @@ export function createPostgresClient(
     statsRetentionDays,
     statsFlushIntervalMs,
   );
+
+  // ── BM25 extension detection (Req 4.7, task 6.9) ─────────────────────────
+  // FTS_RANKER=bm25 is honoured only when a BM25 extension is actually
+  // installed: ParadeDB `pg_search` (preferred) or VectorChord-bm25.
+  // Detected once per process, lazily on the first search that needs the
+  // lexical ranker. `undefined` = not checked yet; a result (including
+  // `null` = none installed) is cached — these extensions are never created
+  // by this service, so a restart is required after installing one anyway.
+  // When bm25 was requested but no extension exists, a single warning is
+  // logged and queries keep the `ts_rank_cd` default (fail-safe).
+  let bm25Engine: Bm25EngineName | null | undefined;
+  let bm25FallbackWarned = false;
+
+  async function detectBm25Engine(
+    exec?: Pick<PoolClient, "query">,
+  ): Promise<Bm25EngineName | null> {
+    if (bm25Engine !== undefined) return bm25Engine;
+    try {
+      const res = await (exec ?? pool).query<{ extname: string }>(
+        "SELECT extname FROM pg_extension WHERE extname IN ('pg_search', 'vchord_bm25')",
+      );
+      const installed = new Set(res.rows.map((r) => r.extname));
+      bm25Engine = installed.has("pg_search")
+        ? "pg_search"
+        : installed.has("vchord_bm25")
+          ? "vchord_bm25"
+          : null;
+    } catch (err) {
+      // Fail safe: an unreadable extension list means no BM25, never a
+      // broken query — ts_rank_cd works on every PostgreSQL.
+      bm25Engine = null;
+      logger.warn({ err }, "BM25 extension detection failed");
+    }
+    if (bm25Engine === null && !bm25FallbackWarned) {
+      bm25FallbackWarned = true;
+      logger.warn(
+        "FTS_RANKER=bm25 requested but neither pg_search nor vchord_bm25 is installed; falling back to ts_rank_cd",
+      );
+    } else if (bm25Engine !== null) {
+      logger.info({ engine: bm25Engine }, "BM25 lexical ranking enabled");
+    }
+    return bm25Engine;
+  }
+
+  // ── pgvector version gate (Req 4.2) ───────────────────────────────────────
+  // `hnsw.iterative_scan` / `hnsw.max_scan_tuples` exist only from pgvector
+  // 0.8. Checked once per process — lazily on the first dense search, or
+  // eagerly at startup via the exported ensurePgvectorVersion() on the
+  // client. A version < 0.8 forces iterative scans off (setting the GUC
+  // would abort every query) and logs a single warning.
+  // `null` = not checked yet, `true`/`false` = cached verdict.
+  let pgvectorSupportsIterativeScan: boolean | null = null;
+
+  /**
+   * Read `extversion` of the installed `vector` extension once (on the given
+   * connection, defaulting to the pool) and cache whether it supports
+   * iterative HNSW scans (≥ 0.8). Never throws: an unreadable version is
+   * treated as unsupported — plain scans work on every version, so this
+   * fails safe. Returns null when the extension is not installed yet (fresh
+   * database; the first ensureCollection creates it) so the verdict stays
+   * uncached and the next call re-checks.
+   */
+  async function checkPgvectorVersion(
+    exec?: Pick<PoolClient, "query">,
+  ): Promise<boolean | null> {
+    if (pgvectorSupportsIterativeScan !== null)
+      return pgvectorSupportsIterativeScan;
+    try {
+      const res = await (exec ?? pool).query<{ extversion: string | null }>(
+        "SELECT extversion FROM pg_extension WHERE extname = 'vector'",
+      );
+      const version = res.rows[0]?.extversion ?? null;
+      if (version === null) {
+        logger.debug(
+          "pgvector extension not installed yet; deferring iterative-scan version check",
+        );
+        return null;
+      }
+      pgvectorSupportsIterativeScan = pgvectorVersionAtLeast(version, 0, 8);
+      if (!pgvectorSupportsIterativeScan) {
+        logger.warn(
+          { version },
+          "pgvector < 0.8: hnsw.iterative_scan is unavailable; iterative scans disabled (selective filters may return fewer than `limit` hits)",
+        );
+      }
+      return pgvectorSupportsIterativeScan;
+    } catch (err) {
+      pgvectorSupportsIterativeScan = false;
+      logger.warn(
+        { err },
+        "pgvector version check failed; disabling iterative scans",
+      );
+      return false;
+    }
+  }
+
+  /**
+   * Effective iterative-scan mode for a dense/binary search: the configured
+   * mode, or `off` when pgvector is too old (Req 4.2). Runs the version
+   * check on the current transaction's connection on first use only.
+   */
+  async function effectiveIterativeScan(
+    client: PoolClient,
+  ): Promise<HnswIterativeScanMode> {
+    if (hnswIterativeScan === "off") return "off";
+    if (pgvectorSupportsIterativeScan === null) {
+      const supported = await checkPgvectorVersion(client);
+      // Extension not installed yet (fresh database): the verdict stays
+      // uncached and this search optimistically uses the configured mode —
+      // pgvector is created together with the first collection, so a search
+      // that reaches an HNSW index almost certainly runs against ≥ 0.8.
+      if (supported === null) return hnswIterativeScan;
+    }
+    return pgvectorSupportsIterativeScan ? hnswIterativeScan : "off";
+  }
 
   // ── Helper: run an operation with a pooled client ─────────────────────────
   async function withClient<T>(
@@ -2146,7 +2397,10 @@ export function createPostgresClient(
           },
         };
       }
-      if (cause instanceof AppError && cause.code === "EMBEDDING_PROVENANCE_MISMATCH") {
+      if (
+        cause instanceof AppError &&
+        cause.code === "EMBEDDING_PROVENANCE_MISMATCH"
+      ) {
         return {
           ok: false,
           error: {
@@ -2199,12 +2453,22 @@ export function createPostgresClient(
 
   // ── Public client ─────────────────────────────────────────────────────────
   return {
+    async ensurePgvectorVersion(): Promise<boolean | null> {
+      return checkPgvectorVersion();
+    },
+
     async upsertDocumentAsset(
       asset: DocumentAssetUpsert,
       scope: AccessScope,
     ): Promise<PostgresResponse<{ created: boolean } | null>> {
       if (!asset.tenantId.trim() || asset.tenantId !== scope.tenantId) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const table = collectionTableName(asset.collection);
       return withClient(async (client) => {
@@ -2252,10 +2516,20 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<DocumentAsset | null>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       return withClient(async (client) => {
-        const access = scopedWhere(scope, [assetId, collection, scope.tenantId], "d");
+        const access = scopedWhere(
+          scope,
+          [assetId, collection, scope.tenantId],
+          "d",
+        );
         const result = await client.query<{
           asset_id: string;
           document_reference: string;
@@ -2280,16 +2554,18 @@ export function createPostgresClient(
           access.params,
         );
         const row = result.rows[0];
-        return row ? {
-          assetId: row.asset_id,
-          documentReference: row.document_reference,
-          figureId: row.figure_id,
-          mimeType: row.mime_type,
-          data: row.data,
-          ...(row.checksum ? { checksum: row.checksum } : {}),
-          created: row.created,
-          modified: row.modified,
-        } : null;
+        return row
+          ? {
+              assetId: row.asset_id,
+              documentReference: row.document_reference,
+              figureId: row.figure_id,
+              mimeType: row.mime_type,
+              data: row.data,
+              ...(row.checksum ? { checksum: row.checksum } : {}),
+              created: row.created,
+              modified: row.modified,
+            }
+          : null;
       });
     },
 
@@ -2304,7 +2580,10 @@ export function createPostgresClient(
           rowCount: result.rowCount ?? 0,
         };
       });
-      if (!response.ok) throw new Error(response.error.message, { cause: response.error.cause });
+      if (!response.ok)
+        throw new Error(response.error.message, {
+          cause: response.error.cause,
+        });
       return response.result;
     },
 
@@ -2325,12 +2604,20 @@ export function createPostgresClient(
       hybridSearch: boolean;
       reranked: boolean;
     }): void {
+      // Query text may carry personal or confidential data. The stable hash
+      // (HMAC when STATS_QUERY_PEPPER is set, plain SHA-256 otherwise) is
+      // always stored; the raw term lands in the database only on explicit
+      // opt-in via STATS_STORE_RAW_QUERY (Requirement 2.6).
+      const queryHash = statsQueryPepper
+        ? createHmac("sha256", statsQueryPepper)
+            .update(stat.query)
+            .digest("hex")
+        : createHash("sha256").update(stat.query).digest("hex");
       statsBuffer.recordSearch({
         tenant_id: stat.tenantId,
         collection: stat.collection,
-        // Query text may carry personal or confidential data. Keep the stable
-        // hash needed for aggregation/correlation, never the raw term.
-        query: createHash("sha256").update(stat.query).digest("hex"),
+        query: statsStoreRawQuery ? stat.query : null,
+        query_hash: queryHash,
         duration_ms: stat.durationMs,
         results_count: stat.resultsCount,
         hybrid_search: stat.hybridSearch,
@@ -2365,12 +2652,21 @@ export function createPostgresClient(
 
       const cachedMeta = ensuredCollections.get(table);
       if (cachedMeta) {
-        const modelMismatch = options?.embeddingModel !== undefined &&
+        const modelMismatch =
+          options?.embeddingModel !== undefined &&
           cachedMeta.embeddingModel !== options.embeddingModel;
-        const revisionMismatch = options?.embeddingModelRevision !== undefined &&
+        const revisionMismatch =
+          options?.embeddingModelRevision !== undefined &&
           cachedMeta.embeddingModelRevision !== options.embeddingModelRevision;
         if (modelMismatch || revisionMismatch) {
-          return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "EMBEDDING_PROVENANCE_MISMATCH: provenance is unknown or differs; reindex into a new collection and cut over explicitly" } };
+          return {
+            ok: false,
+            error: {
+              code: "POSTGRES_INVALID_RESPONSE",
+              message:
+                "EMBEDDING_PROVENANCE_MISMATCH: provenance is unknown or differs; reindex into a new collection and cut over explicitly",
+            },
+          };
         }
         return { ok: true, result: undefined };
       }
@@ -2411,12 +2707,19 @@ export function createPostgresClient(
           // setup inside its own DDL path.
           await ensureCollectionConfigTable(client);
           const existing = await loadCollectionMeta(client, table);
-          const modelMismatch = existing !== null && meta.embeddingModel !== null &&
+          const modelMismatch =
+            existing !== null &&
+            meta.embeddingModel !== null &&
             existing.embeddingModel !== meta.embeddingModel;
-          const revisionMismatch = existing !== null && meta.embeddingModelRevision !== null &&
+          const revisionMismatch =
+            existing !== null &&
+            meta.embeddingModelRevision !== null &&
             existing.embeddingModelRevision !== meta.embeddingModelRevision;
           if (modelMismatch || revisionMismatch) {
-            throw new AppError("EMBEDDING_PROVENANCE_MISMATCH", "EMBEDDING_PROVENANCE_MISMATCH: provenance is unknown or differs; create a new collection, fully reindex, validate it, then use renameCollection for an explicit cutover");
+            throw new AppError(
+              "EMBEDDING_PROVENANCE_MISMATCH",
+              "EMBEDDING_PROVENANCE_MISMATCH: provenance is unknown or differs; create a new collection, fully reindex, validate it, then use renameCollection for an explicit cutover",
+            );
           }
           await ensureCollectionDDL(client, table, vectorSize, meta, ddlConfig);
           // Re-read from DB after DDL so the cache always reflects the
@@ -2439,7 +2742,13 @@ export function createPostgresClient(
       versionMode: "replace" | "version" = "replace",
     ): Promise<PostgresResponse<{ id: string }>> {
       if (!point.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       // Store keys in canonical NFC form so later exact/prefix lookups (which
       // normalize their args to NFC) match regardless of the source filesystem's
@@ -2455,9 +2764,10 @@ export function createPostgresClient(
         const meta = await getOrLoadCollectionMeta(client, table);
         const lang = meta.language;
         const sql = buildUpsertSqlParts(meta, vecType);
-        const aclConflictUpdate = point.preserveExistingAclOnConflict === true
-          ? ""
-          : "allowed_users = EXCLUDED.allowed_users, allowed_groups = EXCLUDED.allowed_groups,";
+        const aclConflictUpdate =
+          point.preserveExistingAclOnConflict === true
+            ? ""
+            : "allowed_users = EXCLUDED.allowed_users, allowed_groups = EXCLUDED.allowed_groups,";
 
         if (versionMode === "replace") {
           // Fixed params: $1–$13 (reference, base_ref, content, vector, metadata, chunk,
@@ -2661,20 +2971,31 @@ export function createPostgresClient(
         normPrefix === "" ? undefined : escapeLikeLiteral(normPrefix) + "/%";
       return withClient(async (client) => {
         const meta = await getOrLoadCollectionMeta(client, table);
-        if (expectedEmbeddingModel !== undefined && meta.embeddingModel !== expectedEmbeddingModel) {
+        if (
+          expectedEmbeddingModel !== undefined &&
+          meta.embeddingModel !== expectedEmbeddingModel
+        ) {
           // A collection that does not exist has no provenance either; say
           // what is actually wrong instead of reporting a model mismatch.
-          const exists = await client.query<{ t: string | null }>(`SELECT to_regclass($1) AS t`, [`"${table}"`]);
+          const exists = await client.query<{ t: string | null }>(
+            `SELECT to_regclass($1) AS t`,
+            [`"${table}"`],
+          );
           if (!exists.rows[0]?.t) {
-            throw new AppError("COLLECTION_NOT_FOUND", `Collection "${collection}" not found`);
+            throw new AppError(
+              "COLLECTION_NOT_FOUND",
+              `Collection "${collection}" not found`,
+            );
           }
           throw new AppError(
             "EMBEDDING_PROVENANCE_MISMATCH",
             "EMBEDDING_PROVENANCE_MISMATCH: collection model provenance is unknown or differs; reindex and cut over explicitly",
           );
         }
-        if (expectedEmbeddingModelRevision !== undefined &&
-            meta.embeddingModelRevision !== expectedEmbeddingModelRevision) {
+        if (
+          expectedEmbeddingModelRevision !== undefined &&
+          meta.embeddingModelRevision !== expectedEmbeddingModelRevision
+        ) {
           throw new AppError(
             "EMBEDDING_PROVENANCE_MISMATCH",
             "EMBEDDING_PROVENANCE_MISMATCH: collection model revision is unknown or differs; reindex and cut over explicitly",
@@ -2687,20 +3008,66 @@ export function createPostgresClient(
         let abortListener: (() => void) | undefined;
         try {
           if (timeoutMs !== undefined && timeoutMs > 0) {
-            await client.query(`SET LOCAL statement_timeout = ${Math.max(1, Math.ceil(timeoutMs))}`);
+            await client.query(
+              `SET LOCAL statement_timeout = ${Math.max(1, Math.ceil(timeoutMs))}`,
+            );
           }
           if (signal) {
             if (signal.aborted) throw new Error("Search aborted");
-            const backend = await client.query<{ pid: number }>("SELECT pg_backend_pid() AS pid");
+            const backend = await client.query<{ pid: number }>(
+              "SELECT pg_backend_pid() AS pid",
+            );
             const pid = backend.rows[0]?.pid;
             if (pid !== undefined) {
               abortListener = () => {
-                void pool.query("SELECT pg_cancel_backend($1)", [pid]).catch(() => {});
+                void pool
+                  .query("SELECT pg_cancel_backend($1)", [pid])
+                  .catch(() => {});
               };
               signal.addEventListener("abort", abortListener, { once: true });
             }
           }
-          await client.query(`SET LOCAL hnsw.ef_search = ${efSearch}`);
+          // HNSW tuning inside this transaction (Req 4.1). Skipped for
+          // FTS-only searches, which never touch an HNSW index. The
+          // candidate pool mirrors the builder exactly (same
+          // candidatePoolSize + hard cap), so `ef_search ≥ candidateLimit`
+          // holds for the pool the SQL actually requests; a plain dense
+          // search has no multiplier pool — its window is limit + offset.
+          if (!ftsOnly) {
+            // Mirrors the builder dispatch: hybrid → buildHybridQuery
+            // (HYBRID cap), binary quantization on the dense path →
+            // buildBinaryDenseQuery (BINARY cap), both with a
+            // candidateMultiplier pool; plain dense has no pool — its
+            // window is limit + offset.
+            const binaryDense =
+              meta.quantization === "binary" &&
+              !!meta.vectorSize &&
+              !hybridSearch;
+            const poolHardCap = binaryDense
+              ? BINARY_CANDIDATE_HARD_CAP
+              : HYBRID_CANDIDATE_HARD_CAP;
+            const candidateLimit =
+              hybridSearch || binaryDense
+                ? candidatePoolSize(
+                    limit,
+                    offset,
+                    candidateMultiplier,
+                    poolHardCap,
+                  )
+                : Math.max(1, limit + Math.max(0, offset));
+            const scanMode = await effectiveIterativeScan(client);
+            if (scanMode !== "off") {
+              // Both values come from validated config (enum / integer),
+              // never from request input — safe to interpolate.
+              await client.query(`SET LOCAL hnsw.iterative_scan = ${scanMode}`);
+              await client.query(
+                `SET LOCAL hnsw.max_scan_tuples = ${hnswMaxScanTuples}`,
+              );
+            }
+            await client.query(
+              `SET LOCAL hnsw.ef_search = ${Math.max(efSearch, candidateLimit)}`,
+            );
+          }
 
           const vectorJson = JSON.stringify(vector);
           const sparseJson = useSparse
@@ -2721,13 +3088,31 @@ export function createPostgresClient(
           // No identifier → no lookup, no third list, unchanged SQL.
           const identifierNorms =
             searchOptions?.identifierList === true && hybridSearch && !ftsOnly
-              ? queryIdentifierValueNorms(query, searchOptions.identifiers ?? [])
+              ? queryIdentifierValueNorms(
+                  query,
+                  searchOptions.identifiers ?? [],
+                )
               : [];
           const identifierUnitIds =
             identifierNorms.length > 0
-              ? await lookupIdentifierUnitIds(client, identifierNorms, scope.tenantId, collection, logger)
+              ? await lookupIdentifierUnitIds(
+                  client,
+                  identifierNorms,
+                  scope.tenantId,
+                  collection,
+                  logger,
+                )
               : [];
           const identifierTsQuery = buildIdentifierTsQuery(identifierNorms);
+
+          // FTS_RANKER (Req 4.7, task 6.9): only detect the BM25 extension
+          // when bm25 was actually configured — the default path never runs
+          // the extra catalog query. `bm25Engine: null` (no extension) makes
+          // the builders fall back to ts_rank_cd verbatim.
+          const lexical: LexicalRanker | undefined =
+            ftsRanker === "bm25"
+              ? { ranker: "bm25", bm25Engine: await detectBm25Engine(client) }
+              : undefined;
 
           const { sql, params } = ftsOnly
             ? buildFtsQuery(
@@ -2738,14 +3123,14 @@ export function createPostgresClient(
                 includeAllVersions,
                 offset,
                 query,
-                tags,
                 scope,
-                undefined,
+                tags,
                 cursor,
                 baseRef,
                 pathLike,
                 validAt,
                 collection,
+                lexical,
               )
             : hybridSearch
               ? buildHybridQuery(
@@ -2765,9 +3150,8 @@ export function createPostgresClient(
                   sparseJson,
                   binaryStr,
                   meta.vectorSize,
-                  tags,
                   scope,
-                  undefined,
+                  tags,
                   cursor,
                   pathLike,
                   validAt,
@@ -2776,9 +3160,12 @@ export function createPostgresClient(
                     weightDense: rrfWeightDense,
                     weightFts: rrfWeightFts,
                     weightIdentifier: rrfWeightIdentifier,
+                    weightSparse: rrfWeightSparse,
+                    missingZero: rrfMissingZero,
                     identifierUnitIds,
                     identifierTsQuery,
                   },
+                  lexical,
                 )
               : binaryStr && meta.vectorSize
                 ? buildBinaryDenseQuery(
@@ -2792,9 +3179,8 @@ export function createPostgresClient(
                     vectorJson,
                     binaryStr,
                     candidateMultiplier,
-                    tags,
                     scope,
-                    undefined,
+                    tags,
                     cursor,
                     pathLike,
                     validAt,
@@ -2808,9 +3194,8 @@ export function createPostgresClient(
                     includeAllVersions,
                     offset,
                     vectorJson,
-                    tags,
                     scope,
-                    undefined,
+                    tags,
                     cursor,
                     pathLike,
                     validAt,
@@ -2851,11 +3236,21 @@ export function createPostgresClient(
                 ...(chunk?.chunk_id ? { chunk_id: chunk.chunk_id } : {}),
                 reference,
                 root_document_id: chunk?.root_document_id ?? baseRef,
-                ...(chunk?.char_start !== undefined ? { char_start: chunk.char_start } : {}),
-                ...(chunk?.char_end !== undefined ? { char_end: chunk.char_end } : {}),
-                ...(chunk?.page_start !== undefined ? { page_start: chunk.page_start } : {}),
-                ...(chunk?.page_end !== undefined ? { page_end: chunk.page_end } : {}),
-                ...(chunk?.section_path ? { section_path: chunk.section_path } : {}),
+                ...(chunk?.char_start !== undefined
+                  ? { char_start: chunk.char_start }
+                  : {}),
+                ...(chunk?.char_end !== undefined
+                  ? { char_end: chunk.char_end }
+                  : {}),
+                ...(chunk?.page_start !== undefined
+                  ? { page_start: chunk.page_start }
+                  : {}),
+                ...(chunk?.page_end !== undefined
+                  ? { page_end: chunk.page_end }
+                  : {}),
+                ...(chunk?.section_path
+                  ? { section_path: chunk.section_path }
+                  : {}),
                 ...(chunk?.modality ? { modality: chunk.modality } : {}),
                 ...(chunk?.figure_id ? { figure_id: chunk.figure_id } : {}),
                 ...(chunk?.asset_id ? { asset_id: chunk.asset_id } : {}),
@@ -2875,7 +3270,9 @@ export function createPostgresClient(
             title: row.title as string | undefined,
             tags: row.tags as string[] | undefined,
             ...((row.chunk as ChunkInfo | null)?.asset_id
-              ? { asset_url: `/document-assets/${encodeURIComponent((row.chunk as ChunkInfo).asset_id!)}?collection=${encodeURIComponent(collection)}` }
+              ? {
+                  asset_url: `/document-assets/${encodeURIComponent((row.chunk as ChunkInfo).asset_id!)}?collection=${encodeURIComponent(collection)}`,
+                }
               : {}),
             created: row.created as Date,
             modified: row.modified as Date,
@@ -2893,14 +3290,18 @@ export function createPostgresClient(
             ...new Set(
               result.rows
                 .map((r) => (r as { revision_id?: string | null }).revision_id)
-                .filter((id): id is string => typeof id === "string" && id.length > 0),
+                .filter(
+                  (id): id is string => typeof id === "string" && id.length > 0,
+                ),
             ),
           ];
           if (revisionIds.length > 0) {
             const partial = await annotatePartialRevisions(client, revisionIds);
             if (partial.size > 0) {
               for (let i = 0; i < searchResults.length; i++) {
-                const revId = (result.rows[i] as { revision_id?: string | null }).revision_id;
+                const revId = (
+                  result.rows[i] as { revision_id?: string | null }
+                ).revision_id;
                 const info = revId ? partial.get(revId) : undefined;
                 const sr = searchResults[i];
                 if (!info || !sr) continue;
@@ -2935,7 +3336,13 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<ExpandUnitRow[]>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const baseRef = coords.baseRef?.trim();
       if (!baseRef) return { ok: true, result: [] };
@@ -2971,7 +3378,11 @@ export function createPostgresClient(
           const group = groups.get(baseRef);
           const members =
             group?.kind === "email_thread"
-              ? await groupMemberReferences(client, { tenantId, collection, groupId: group.id })
+              ? await groupMemberReferences(client, {
+                  tenantId,
+                  collection,
+                  groupId: group.id,
+                })
               : [];
           const refs = members.length > 0 ? members : [baseRef];
           const refsPh = p.add(refs);
@@ -3005,9 +3416,11 @@ export function createPostgresClient(
         // The hit plus whichever of its prev/next reading-order siblings exist.
         // With no sibling ids there is nothing to expand to; return the hit's
         // own row set (which dedupes to empty in the assembler), i.e. [].
-        const ids = [coords.unitId, coords.prevUnitId, coords.nextUnitId].filter(
-          (id): id is string => typeof id === "string" && id.length > 0,
-        );
+        const ids = [
+          coords.unitId,
+          coords.prevUnitId,
+          coords.nextUnitId,
+        ].filter((id): id is string => typeof id === "string" && id.length > 0);
         if (ids.length === 0) return { ok: true, result: [] };
         const idsPh = p.add(ids);
         targetSql = `unit_id = ANY(${idsPh}::text[])`;
@@ -3057,7 +3470,13 @@ export function createPostgresClient(
       references: string[],
     ): Promise<PostgresResponse<Map<string, DocumentGroup>>> {
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const tenantId = scope.tenantId;
       return withClient((client) =>
@@ -3071,10 +3490,22 @@ export function createPostgresClient(
       threadId: string,
     ): Promise<PostgresResponse<string[]>> {
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const tenantId = scope.tenantId;
-      return withClient((client) => groupMemberReferences(client, { tenantId, collection, groupId: threadId }));
+      return withClient((client) =>
+        groupMemberReferences(client, {
+          tenantId,
+          collection,
+          groupId: threadId,
+        }),
+      );
     },
 
     async lookupFigureUnits(
@@ -3086,10 +3517,20 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<FigureUnitInfo[]>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const ref = baseRef?.trim();
-      const ids = [...new Set(figureIds.filter((id) => typeof id === "string" && id.length > 0))];
+      const ids = [
+        ...new Set(
+          figureIds.filter((id) => typeof id === "string" && id.length > 0),
+        ),
+      ];
       if (!ref || ids.length === 0) return { ok: true, result: [] };
 
       // Same document + tenant/ACL + temporal/revision-visibility gates as a
@@ -3137,7 +3578,9 @@ export function createPostgresClient(
         for (const row of res.rows) {
           if (!row.figure_id || byFigure.has(row.figure_id)) continue;
           const bbox =
-            Array.isArray(row.bbox) && row.bbox.length === 4 && row.bbox.every((n) => typeof n === "number")
+            Array.isArray(row.bbox) &&
+            row.bbox.length === 4 &&
+            row.bbox.every((n) => typeof n === "number")
               ? (row.bbox as [number, number, number, number])
               : null;
           byFigure.set(row.figure_id, {
@@ -3164,14 +3607,25 @@ export function createPostgresClient(
       collection: string,
       scope: AccessScope,
       reference: string,
-      options?: NavReadOptions & { depth?: number; limit?: number; offset?: number },
+      options?: NavReadOptions & {
+        depth?: number;
+        limit?: number;
+        offset?: number;
+      },
     ): Promise<PostgresResponse<{ entries: OutlineEntry[]; total: number }>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const ref = normalizeReference(reference);
-      const depth = options?.depth != null && options.depth > 0 ? options.depth : null;
+      const depth =
+        options?.depth != null && options.depth > 0 ? options.depth : null;
       const limit = clampInt(options?.limit, 200, 1, 2000);
       const offset = clampInt(options?.offset, 0, 0, Number.MAX_SAFE_INTEGER);
       return withClient(async (client) => {
@@ -3221,7 +3675,8 @@ export function createPostgresClient(
             depth: path.length,
             heading: path.at(-1) ?? row.section_id ?? "",
             // Section units carry a sentinel page range; expose null instead of 0.
-            page_start: row.page_start && row.page_start > 0 ? row.page_start : null,
+            page_start:
+              row.page_start && row.page_start > 0 ? row.page_start : null,
             page_end: row.page_end && row.page_end > 0 ? row.page_end : null,
           };
         });
@@ -3238,18 +3693,31 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<NavUnitRow[]>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const ref = normalizeReference(reference);
       const sectionId = selector.sectionId?.trim();
-      const sectionPath = selector.sectionPath?.filter((s) => typeof s === "string" && s.length > 0);
+      const sectionPath = selector.sectionPath?.filter(
+        (s) => typeof s === "string" && s.length > 0,
+      );
       if (!sectionId && (!sectionPath || sectionPath.length === 0)) {
         return { ok: true, result: [] };
       }
       return withClient(async (client) => {
         const p = new SqlParams();
         const temporalFilter = buildTemporalFilterSql(
-          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
         );
         const accessSql = buildAccessSql(p, scope);
         const refPh = p.add(ref);
@@ -3284,7 +3752,13 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<NavUnitRow[]>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const start = Math.max(1, Math.min(from, to));
       const end = Math.max(from, to);
@@ -3292,7 +3766,12 @@ export function createPostgresClient(
       return withClient(async (client) => {
         const p = new SqlParams();
         const temporalFilter = buildTemporalFilterSql(
-          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
         );
         const accessSql = buildAccessSql(p, scope);
         const refPh = p.add(ref);
@@ -3322,27 +3801,58 @@ export function createPostgresClient(
       before: number,
       after: number,
       options?: NavReadOptions,
-    ): Promise<PostgresResponse<{ before: NavUnitRow[]; unit: NavUnitRow | null; after: NavUnitRow[] }>> {
+    ): Promise<
+      PostgresResponse<{
+        before: NavUnitRow[];
+        unit: NavUnitRow | null;
+        after: NavUnitRow[];
+      }>
+    > {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const target = unitId?.trim();
-      if (!target) return { ok: true, result: { before: [], unit: null, after: [] } };
+      if (!target)
+        return { ok: true, result: { before: [], unit: null, after: [] } };
       const beforeN = clampInt(before, 1, 0, 50);
       const afterN = clampInt(after, 1, 0, 50);
       return withClient(async (client) => {
         // Resolve the target under the visibility gates, and walk its prev/next
         // graph within the same document. Each hop re-checks visibility, so a
         // neighbour the caller cannot see terminates the walk (never leaks).
-        const load = async (id: string): Promise<(NavUnitRow & { prev_unit_id: string | null; next_unit_id: string | null }) | null> => {
+        const load = async (
+          id: string,
+        ): Promise<
+          | (NavUnitRow & {
+              prev_unit_id: string | null;
+              next_unit_id: string | null;
+            })
+          | null
+        > => {
           const p = new SqlParams();
           const temporalFilter = buildTemporalFilterSql(
-            p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+            p,
+            table,
+            options?.includeAllVersions ?? false,
+            options?.validAt,
+            "",
+            collection,
           );
           const accessSql = buildAccessSql(p, scope);
           const idPh = p.add(id);
-          const res = await client.query<NavRowShape & { prev_unit_id: string | null; next_unit_id: string | null }>(
+          const res = await client.query<
+            NavRowShape & {
+              prev_unit_id: string | null;
+              next_unit_id: string | null;
+            }
+          >(
             `${NAV_ROW_SELECT}, prev_unit_id, next_unit_id
                FROM "${table}"
               WHERE unit_id = ${idPh}${temporalFilter}${accessSql}
@@ -3351,7 +3861,11 @@ export function createPostgresClient(
           );
           const row = res.rows[0];
           if (!row) return null;
-          return { ...navRow(row), prev_unit_id: row.prev_unit_id, next_unit_id: row.next_unit_id };
+          return {
+            ...navRow(row),
+            prev_unit_id: row.prev_unit_id,
+            next_unit_id: row.next_unit_id,
+          };
         };
         const center = await load(target);
         if (!center) return { before: [], unit: null, after: [] };
@@ -3372,7 +3886,11 @@ export function createPostgresClient(
           afterRows.push(stripLinks(row));
           cursor = row.next_unit_id;
         }
-        return { before: beforeRows, unit: stripLinks(center), after: afterRows };
+        return {
+          before: beforeRows,
+          unit: stripLinks(center),
+          after: afterRows,
+        };
       });
     },
 
@@ -3380,11 +3898,23 @@ export function createPostgresClient(
       collection: string,
       scope: AccessScope,
       reference: string,
-      options?: NavReadOptions & { fromPage?: number; toPage?: number; kind?: string; limit?: number; offset?: number },
+      options?: NavReadOptions & {
+        fromPage?: number;
+        toPage?: number;
+        kind?: string;
+        limit?: number;
+        offset?: number;
+      },
     ): Promise<PostgresResponse<{ figures: FigureUnitInfo[]; total: number }>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const ref = normalizeReference(reference);
       const limit = clampInt(options?.limit, 50, 1, 500);
@@ -3392,7 +3922,12 @@ export function createPostgresClient(
       return withClient(async (client) => {
         const p = new SqlParams();
         const temporalFilter = buildTemporalFilterSql(
-          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
         );
         const accessSql = buildAccessSql(p, scope);
         const refPh = p.add(ref);
@@ -3438,7 +3973,9 @@ export function createPostgresClient(
           .filter((row) => row.figure_id)
           .map((row) => {
             const bbox =
-              Array.isArray(row.bbox) && row.bbox.length === 4 && row.bbox.every((n) => typeof n === "number")
+              Array.isArray(row.bbox) &&
+              row.bbox.length === 4 &&
+              row.bbox.every((n) => typeof n === "number")
                 ? (row.bbox as [number, number, number, number])
                 : null;
             return {
@@ -3462,7 +3999,13 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<{ units: NavUnitRow[]; total: number }>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const id = tableId?.trim();
       if (!id) return { ok: true, result: { units: [], total: 0 } };
@@ -3470,7 +4013,12 @@ export function createPostgresClient(
       return withClient(async (client) => {
         const p = new SqlParams();
         const temporalFilter = buildTemporalFilterSql(
-          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
         );
         const accessSql = buildAccessSql(p, scope);
         const idPh = p.add(id);
@@ -3501,18 +4049,31 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<NavUnitRow | null>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const id = unitId?.trim();
       if (!id) return { ok: true, result: null };
       return withClient(async (client) => {
         const p = new SqlParams();
         const temporalFilter = buildTemporalFilterSql(
-          p, table, options?.includeAllVersions ?? false, options?.validAt, "", collection,
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "",
+          collection,
         );
         const accessSql = buildAccessSql(p, scope);
         const idPh = p.add(id);
-        const res = await client.query<NavRowShape & { base_ref: string; figure_refs: string[] | null }>(
+        const res = await client.query<
+          NavRowShape & { base_ref: string; figure_refs: string[] | null }
+        >(
           `${NAV_ROW_SELECT}, base_ref, figure_refs
              FROM "${table}"
             WHERE unit_id = ${idPh}${temporalFilter}${accessSql}
@@ -3525,7 +4086,11 @@ export function createPostgresClient(
         // Surface figure_refs (figure ids the unit references) on the metadata
         // mirror so follow_ref can resolve them via lookupFigureUnits.
         if (Array.isArray(row.figure_refs) && row.figure_refs.length > 0) {
-          unit.metadata = { ...unit.metadata, base_ref: row.base_ref, figure_refs: row.figure_refs };
+          unit.metadata = {
+            ...unit.metadata,
+            base_ref: row.base_ref,
+            figure_refs: row.figure_refs,
+          };
         } else {
           unit.metadata = { ...unit.metadata, base_ref: row.base_ref };
         }
@@ -3539,7 +4104,8 @@ export function createPostgresClient(
       revisionId: string,
     ): Promise<PostgresResponse<string | null>> {
       const tenant = tenantId.trim();
-      if (tenant === "" || revisionId.trim() === "") return { ok: true, result: null };
+      if (tenant === "" || revisionId.trim() === "")
+        return { ok: true, result: null };
       return withClient(async (client) => {
         // Only the HEAD of each staged payload is read: `document.begin` is the
         // first record of the NDJSON stream, so a bounded prefix is enough and a
@@ -3557,7 +4123,13 @@ export function createPostgresClient(
               AND b.payload IS NOT NULL
             ORDER BY b.seq ASC
             LIMIT $5`,
-          [tenant, collection, revisionId, SOURCE_HEAD_BYTES, SOURCE_HEAD_MAX_BATCHES],
+          [
+            tenant,
+            collection,
+            revisionId,
+            SOURCE_HEAD_BYTES,
+            SOURCE_HEAD_MAX_BATCHES,
+          ],
         );
         for (const row of res.rows) {
           const sha = sourceSha256FromPayloadHead(row.head);
@@ -3571,11 +4143,23 @@ export function createPostgresClient(
       collection: string,
       scope: AccessScope,
       valueNorm: string,
-      options?: NavReadOptions & { limit?: number; offset?: number; pathPrefix?: string },
-    ): Promise<PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>> {
+      options?: NavReadOptions & {
+        limit?: number;
+        offset?: number;
+        pathPrefix?: string;
+      },
+    ): Promise<
+      PostgresResponse<{ occurrences: IdentifierOccurrence[]; total: number }>
+    > {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
       const norm = valueNorm?.trim();
       if (!norm) return { ok: true, result: { occurrences: [], total: 0 } };
@@ -3587,7 +4171,12 @@ export function createPostgresClient(
         // unit is visible to the caller in the current revision.
         const p = new SqlParams();
         const temporalFilter = buildTemporalFilterSql(
-          p, table, options?.includeAllVersions ?? false, options?.validAt, "d", collection,
+          p,
+          table,
+          options?.includeAllVersions ?? false,
+          options?.validAt,
+          "d",
+          collection,
         );
         const access = buildAccessSql(p, scope, "d");
         const tenantPh = p.add(scope.tenantId);
@@ -3595,7 +4184,10 @@ export function createPostgresClient(
         const normPh = p.add(norm);
         // A folder scope (a project) keeps occurrences from other folders out.
         const prefix = normalizePathPrefix(options?.pathPrefix);
-        const prefixSql = prefix === "" ? "" : ` AND d.base_ref LIKE ${p.add(escapeLikeLiteral(prefix) + "/%")} ESCAPE '\\'`;
+        const prefixSql =
+          prefix === ""
+            ? ""
+            : ` AND d.base_ref LIKE ${p.add(escapeLikeLiteral(prefix) + "/%")} ESCAPE '\\'`;
         const where =
           `i.tenant_id = ${tenantPh} AND i.collection = ${collPh} AND i.value_norm = ${normPh}` +
           ` AND d.tenant_id = i.tenant_id AND d.unit_id = i.unit_id${prefixSql}${temporalFilter}${access}`;
@@ -3648,8 +4240,15 @@ export function createPostgresClient(
     ): Promise<PostgresResponse<{ deleted: number }>> {
       const table = collectionTableName(collection);
       if (!scope.tenantId?.trim()) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
+      const tenantId = scope.tenantId;
       return withClient(async (client) => {
         const baseParams: unknown[] = reference
           ? [normalizeReference(reference)]
@@ -3660,36 +4259,68 @@ export function createPostgresClient(
           : `metadata @> $1`;
         await client.query("BEGIN");
         try {
-          const result = await client.query<{ root_ref: string }>(
+          // Task 4.2 (Requirements 2.3/2.4): the access-scoped DELETE names the
+          // root references the caller may delete; the document cascade then
+          // removes EVERYTHING for those references — every revision's units,
+          // staged batches, identifiers, segments, assets (including derived
+          // render-cache variants), legacy vs_document_assets rows, and the
+          // identity rows (sources, groups, thread references, pointer) —
+          // instead of leaving superseded revisions and identity rows behind.
+          const result = await client.query<{
+            root_ref: string;
+            unit_id: string | null;
+          }>(
             `DELETE FROM "${table}" WHERE ${target}${access.sql}
-             RETURNING COALESCE(chunk->>'parent_ref', base_ref) AS root_ref`,
+             RETURNING unit_id, COALESCE(chunk->>'parent_ref', base_ref) AS root_ref`,
             access.params,
           );
+          const deleted = result.rowCount ?? 0;
           const rootRefs = [...new Set(result.rows.map((row) => row.root_ref))];
-          if (rootRefs.length > 0) {
-            await client.query(
-              `DELETE FROM vs_document_assets
-               WHERE tenant_id = $1 AND collection = $2
-                 AND document_reference = ANY($3)`,
-              [scope.tenantId, collection, rootRefs],
-            );
+          const deletedUnitIds = [
+            ...new Set(
+              result.rows
+                .map((row) => row.unit_id)
+                .filter((u): u is string => u !== null),
+            ),
+          ];
+          if (reference !== undefined) {
+            // The named reference cascades even when no unit row matched — its
+            // pointer, sources, or group rows must go too (old forgetDocument
+            // behaviour, now part of the cascade).
+            const named = normalizeReference(reference);
+            if (!rootRefs.includes(named)) rootRefs.push(named);
           }
-          if (reference && scope.tenantId) {
-            // A deleted document must not linger as a revision pointer, a source
-            // a re-ingest would be a "duplicate" of, or a thread member.
-            await forgetDocument(client, {
-              tenantId: scope.tenantId,
+          if (rootRefs.length > 0) {
+            await deleteDocumentCascade(client, {
+              tenantId,
               collection,
-              reference: normalizeReference(reference),
+              rootRefs,
+              deletedUnitIds,
             });
           }
           await client.query("COMMIT");
-          return { deleted: result.rowCount ?? 0 };
+          if (rootRefs.length > 0 && onDocumentsDeleted !== undefined) {
+            try {
+              onDocumentsDeleted(collection, rootRefs);
+            } catch (error) {
+              logger.error(
+                { err: error, collection },
+                "post-delete cache invalidation hook failed",
+              );
+            }
+          }
+          return { deleted };
         } catch (error) {
           await client.query("ROLLBACK").catch(() => {});
           throw error;
         }
       });
+    },
+
+    setOnDocumentsDeleted(
+      hook: (collection: string, rootRefs: string[]) => void,
+    ): void {
+      onDocumentsDeleted = hook;
     },
 
     async batchUpsert(
@@ -3706,11 +4337,25 @@ export function createPostgresClient(
         return { ok: true, result: { ids: [], operations: [] } };
 
       if (points.some((point) => !point.tenantId?.trim())) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "TENANT_REQUIRED" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "TENANT_REQUIRED",
+          },
+        };
       }
-      const batchTenants = new Set(points.map((point) => point.tenantId!.trim()));
+      const batchTenants = new Set(
+        points.map((point) => point.tenantId!.trim()),
+      );
       if (batchTenants.size !== 1) {
-        return { ok: false, error: { code: "POSTGRES_INVALID_RESPONSE", message: "A batch must contain exactly one tenant" } };
+        return {
+          ok: false,
+          error: {
+            code: "POSTGRES_INVALID_RESPONSE",
+            message: "A batch must contain exactly one tenant",
+          },
+        };
       }
       const batchTenantId = [...batchTenants][0]!;
 
@@ -3850,8 +4495,9 @@ export function createPostgresClient(
             // any root document represented in this replacement batch.
             const rootRefsInBatch = [
               ...new Set(
-                points.map((point) =>
-                  point.chunk?.parent_ref ?? point.baseRef ?? point.reference,
+                points.map(
+                  (point) =>
+                    point.chunk?.parent_ref ?? point.baseRef ?? point.reference,
                 ),
               ),
             ];
@@ -3879,13 +4525,19 @@ export function createPostgresClient(
             // and equal valid_from values can still be broken by created/id.
             const versionGroups = new Map<string, string>();
             points = points.map((point) => {
-              const root = point.chunk?.root_document_id ?? point.baseRef ?? point.reference;
+              const root =
+                point.chunk?.root_document_id ??
+                point.baseRef ??
+                point.reference;
               let group = versionGroups.get(root);
               if (!group) {
                 group = uuidv4();
                 versionGroups.set(root, group);
               }
-              return { ...point, metadata: { ...point.metadata, _atf_version_group: group } };
+              return {
+                ...point,
+                metadata: { ...point.metadata, _atf_version_group: group },
+              };
             });
             const versionedRefs = points.map((p) => {
               const baseRef = p.baseRef ?? p.reference;
@@ -4275,8 +4927,12 @@ export function createPostgresClient(
         };
       }
       // De-duplicate + drop blanks so the stored ACL is clean.
-      const users = [...new Set(allowedUsers.map((u) => u.trim()).filter(Boolean))];
-      const groups = [...new Set(allowedGroups.map((g) => g.trim()).filter(Boolean))];
+      const users = [
+        ...new Set(allowedUsers.map((u) => u.trim()).filter(Boolean)),
+      ];
+      const groups = [
+        ...new Set(allowedGroups.map((g) => g.trim()).filter(Boolean)),
+      ];
       return withClient(async (client) => {
         await ensureCollectionConfigTable(client);
         const res = await client.query(
@@ -4327,7 +4983,10 @@ export function createPostgresClient(
           );
         }
         const norm = normalizePathPrefix(pathPrefix);
-        const where = norm === "" ? "is_latest" : "is_latest AND base_ref LIKE $1 ESCAPE '\\'";
+        const where =
+          norm === ""
+            ? "is_latest"
+            : "is_latest AND base_ref LIKE $1 ESCAPE '\\'";
         const params = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
         const access = scopedWhere(scope, params);
         const { rows } = await client.query<{
@@ -4718,7 +5377,8 @@ export function createPostgresClient(
         const norm = normalizePathPrefix(options?.pathPrefix);
         const prefixClause =
           norm === "" ? "" : " AND base_ref LIKE $1 ESCAPE '\\'";
-        const prefixParams = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
+        const prefixParams =
+          norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
         const access = scopedWhere(scope, prefixParams);
 
         // One row per document with its chunk count; the folder structure is
@@ -4769,9 +5429,7 @@ export function createPostgresClient(
       scope: AccessScope,
       query: string,
       options?: { limit?: number; matchFullPath?: boolean; threshold?: number },
-    ): Promise<
-      PostgresResponse<{ query: string; matches: FolderSummary[] }>
-    > {
+    ): Promise<PostgresResponse<{ query: string; matches: FolderSummary[] }>> {
       let table: string;
       try {
         table = collectionTableName(collection);
@@ -4790,10 +5448,7 @@ export function createPostgresClient(
       const matchFullPath = options?.matchFullPath ?? false;
       // Minimum fuzzy score (0..1) for a folder to be considered a match.
       // Default 0.4 keeps typos/partial names in while dropping unrelated ones.
-      const threshold = Math.min(
-        Math.max(options?.threshold ?? 0.4, 0),
-        1,
-      );
+      const threshold = Math.min(Math.max(options?.threshold ?? 0.4, 0), 1);
       return withClient(async (client) => {
         const reg = await client.query<{ t: string | null }>(
           `SELECT to_regclass($1) AS t`,
@@ -4923,7 +5578,13 @@ export function createPostgresClient(
           );
         }
         // Resolve base_ref: accept either the document ref or any chunk ref.
-        const resolveAccess = versionedWhere(table, collection, scope, [reference], options?.validAt);
+        const resolveAccess = versionedWhere(
+          table,
+          collection,
+          scope,
+          [reference],
+          options?.validAt,
+        );
         const resolve = await client.query<{ base_ref: string }>(
           `SELECT base_ref FROM "${table}"
             WHERE (base_ref = $1 OR reference = $1)${resolveAccess.sql}
@@ -4932,7 +5593,13 @@ export function createPostgresClient(
         );
         if (resolve.rows.length === 0) return null;
         const baseRef = resolve.rows[0]!.base_ref;
-        const chunkAccess = versionedWhere(table, collection, scope, [baseRef], options?.validAt);
+        const chunkAccess = versionedWhere(
+          table,
+          collection,
+          scope,
+          [baseRef],
+          options?.validAt,
+        );
 
         const { rows } = await client.query<{
           content: string;
@@ -4964,7 +5631,9 @@ export function createPostgresClient(
         if (rows.length === 0) return null;
 
         const mergedDocument = mergeChunksWithCoordinates(
-          rows.map((r) => (r.unit_type != null ? { ...r, content: documentBodyText(r) } : r)),
+          rows.map((r) =>
+            r.unit_type != null ? { ...r, content: documentBodyText(r) } : r,
+          ),
         );
         const fullContent = mergedDocument.content;
         const totalChars = fullContent.length;
@@ -4972,37 +5641,52 @@ export function createPostgresClient(
         const truncated = offset > 0 || content.length < totalChars;
         const first = rows[0]!;
         let latestModified = first.modified;
-        for (const r of rows) if (r.modified > latestModified) latestModified = r.modified;
+        for (const r of rows)
+          if (r.modified > latestModified) latestModified = r.modified;
         const windowEnd = offset + content.length;
-        const evidenceSpans = mergedDocument.coordinates.flatMap((coordinate) => {
-          const chunk = coordinate.item.chunk;
-          const unit = coordinate.item;
-          if (coordinate.originalStart === undefined || coordinate.originalEnd === undefined) return [];
-          const start = Math.max(coordinate.returnedStart, offset);
-          const end = Math.min(coordinate.returnedEnd, windowEnd);
-          if (start >= end) return [];
-          const deltaStart = start - coordinate.returnedStart;
-          const deltaEnd = coordinate.returnedEnd - end;
-          return [{
-            ...(chunk?.chunk_id ? { chunk_id: chunk.chunk_id } : {}),
-            reference: coordinate.item.reference,
-            window_start: start - offset,
-            window_end: end - offset,
-            original_start: coordinate.originalStart + deltaStart,
-            original_end: coordinate.originalEnd - deltaEnd,
-            ...(unit.unit_id ? { unit_id: unit.unit_id } : {}),
-            ...(unit.unit_type ? { unit_type: unit.unit_type } : {}),
-            ...(chunk?.page_start !== undefined
-              ? { page_start: chunk.page_start }
-              : unit.page_start != null ? { page_start: unit.page_start } : {}),
-            ...(chunk?.page_end !== undefined
-              ? { page_end: chunk.page_end }
-              : unit.page_end != null ? { page_end: unit.page_end } : {}),
-            ...(chunk?.section_path
-              ? { section_path: chunk.section_path }
-              : unit.section_path && unit.section_path.length > 0 ? { section_path: unit.section_path } : {}),
-          }];
-        });
+        const evidenceSpans = mergedDocument.coordinates.flatMap(
+          (coordinate) => {
+            const chunk = coordinate.item.chunk;
+            const unit = coordinate.item;
+            if (
+              coordinate.originalStart === undefined ||
+              coordinate.originalEnd === undefined
+            )
+              return [];
+            const start = Math.max(coordinate.returnedStart, offset);
+            const end = Math.min(coordinate.returnedEnd, windowEnd);
+            if (start >= end) return [];
+            const deltaStart = start - coordinate.returnedStart;
+            const deltaEnd = coordinate.returnedEnd - end;
+            return [
+              {
+                ...(chunk?.chunk_id ? { chunk_id: chunk.chunk_id } : {}),
+                reference: coordinate.item.reference,
+                window_start: start - offset,
+                window_end: end - offset,
+                original_start: coordinate.originalStart + deltaStart,
+                original_end: coordinate.originalEnd - deltaEnd,
+                ...(unit.unit_id ? { unit_id: unit.unit_id } : {}),
+                ...(unit.unit_type ? { unit_type: unit.unit_type } : {}),
+                ...(chunk?.page_start !== undefined
+                  ? { page_start: chunk.page_start }
+                  : unit.page_start != null
+                    ? { page_start: unit.page_start }
+                    : {}),
+                ...(chunk?.page_end !== undefined
+                  ? { page_end: chunk.page_end }
+                  : unit.page_end != null
+                    ? { page_end: unit.page_end }
+                    : {}),
+                ...(chunk?.section_path
+                  ? { section_path: chunk.section_path }
+                  : unit.section_path && unit.section_path.length > 0
+                    ? { section_path: unit.section_path }
+                    : {}),
+              },
+            ];
+          },
+        );
 
         return {
           reference: baseRef,
@@ -5025,7 +5709,12 @@ export function createPostgresClient(
     async getDocumentsByPrefix(
       collection: string,
       scope: AccessScope,
-      options?: { pathPrefix?: string; limit?: number; maxChars?: number; validAt?: string },
+      options?: {
+        pathPrefix?: string;
+        limit?: number;
+        maxChars?: number;
+        validAt?: string;
+      },
     ): Promise<
       PostgresResponse<{
         documents: DocumentContent[];
@@ -5065,10 +5754,17 @@ export function createPostgresClient(
         const norm = normalizePathPrefix(options?.pathPrefix);
         const prefixClause =
           norm === "" ? "" : " AND base_ref LIKE $1 ESCAPE '\\'";
-        const prefixParams = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
+        const prefixParams =
+          norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
 
         // Total distinct documents beneath the prefix (for the truncated flag).
-        const access = versionedWhere(table, collection, scope, prefixParams, options?.validAt);
+        const access = versionedWhere(
+          table,
+          collection,
+          scope,
+          prefixParams,
+          options?.validAt,
+        );
         const totalRes = await client.query<{ total: string }>(
           `SELECT COUNT(DISTINCT base_ref) AS total
              FROM "${table}" WHERE TRUE${prefixClause}${access.sql}`,
@@ -5091,7 +5787,13 @@ export function createPostgresClient(
         }
 
         // Fetch all visible chunks for the selected documents in ONE query, then group.
-        const chunkAccess = versionedWhere(table, collection, scope, [baseRefs], options?.validAt);
+        const chunkAccess = versionedWhere(
+          table,
+          collection,
+          scope,
+          [baseRefs],
+          options?.validAt,
+        );
         const { rows } = await client.query<{
           base_ref: string;
           content: string;
@@ -5205,7 +5907,13 @@ export function createPostgresClient(
             `Collection "${collection}" not found`,
           );
         }
-        const resolveAccess = versionedWhere(table, collection, scope, [reference], options?.validAt);
+        const resolveAccess = versionedWhere(
+          table,
+          collection,
+          scope,
+          [reference],
+          options?.validAt,
+        );
         const resolve = await client.query<{ base_ref: string }>(
           `SELECT base_ref FROM "${table}"
             WHERE (base_ref = $1 OR reference = $1)${resolveAccess.sql}
@@ -5214,7 +5922,13 @@ export function createPostgresClient(
         );
         if (resolve.rows.length === 0) return null;
         const baseRef = resolve.rows[0]!.base_ref;
-        const summaryAccess = versionedWhere(table, collection, scope, [baseRef], options?.validAt);
+        const summaryAccess = versionedWhere(
+          table,
+          collection,
+          scope,
+          [baseRef],
+          options?.validAt,
+        );
 
         // The summary/prefix lives on chunk 0 only.
         const { rows } = await client.query<{
@@ -5257,7 +5971,12 @@ export function createPostgresClient(
     async getSummaries(
       collection: string,
       scope: AccessScope,
-      options?: { pathPrefix?: string; limit?: number; offset?: number; validAt?: string },
+      options?: {
+        pathPrefix?: string;
+        limit?: number;
+        offset?: number;
+        validAt?: string;
+      },
     ): Promise<PostgresResponse<{ summaries: SummaryEntry[]; total: number }>> {
       let table: string;
       try {
@@ -5288,9 +6007,16 @@ export function createPostgresClient(
         const norm = normalizePathPrefix(options?.pathPrefix);
         const prefixClause =
           norm === "" ? "" : " AND base_ref LIKE $1 ESCAPE '\\'";
-        const prefixParams = norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
+        const prefixParams =
+          norm === "" ? [] : [escapeLikeLiteral(norm) + "/%"];
 
-        const access = versionedWhere(table, collection, scope, prefixParams, options?.validAt);
+        const access = versionedWhere(
+          table,
+          collection,
+          scope,
+          prefixParams,
+          options?.validAt,
+        );
         const totalRes = await client.query<{ total: string }>(
           `SELECT COUNT(DISTINCT base_ref) AS total
              FROM "${table}" WHERE TRUE${prefixClause}${access.sql}`,

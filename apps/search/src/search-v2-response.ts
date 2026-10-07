@@ -303,17 +303,39 @@ export function evidenceOf(
 	result: SearchResult,
 ): SearchHitV2["evidence"] | undefined {
 	const evidence = result.evidence as SearchHitV2["evidence"] | undefined;
-	const metaBlocks = metaOf(result).block_ids;
-	const blockIds = Array.isArray(metaBlocks)
-		? metaBlocks.filter((b): b is string => typeof b === "string" && b !== "")
-		: [];
+	const meta = metaOf(result);
+  const metaBlocks = meta.block_ids;
+  const blockIds = Array.isArray(metaBlocks)
+    ? metaBlocks.filter((b): b is string => typeof b === "string" && b !== "")
+    : [];
+  // v2 units (batch worker) keep figure coordinates in `metadata` instead of
+  // the legacy `chunk` column the v1 evidence is derived from; mirror them
+  // into the evidence so citations and figure-level scoring work for both
+  // ingest paths. Existing evidence fields always win.
+  const figureId = asString(meta.figure_id);
+  const assetId = asString(meta.asset_id);
+  type Evidence = NonNullable<SearchHitV2["evidence"]>;
+  const withFigure = (ev: Evidence): Evidence => {
+    const out: Evidence = { ...ev };
+    if (out.modality === undefined && meta.modality === "image")
+      out.modality = "image";
+    if (out.figure_id === undefined && figureId !== undefined)
+      out.figure_id = figureId;
+    if (out.asset_id === undefined && assetId !== undefined)
+      out.asset_id = assetId;
+    return out;
+  };
 	if (!evidence) {
-		return blockIds.length > 0
-			? ({ block_ids: blockIds } as SearchHitV2["evidence"])
-			: undefined;
+		if (blockIds.length === 0 && figureId === undefined) return undefined;
+    return withFigure({ block_ids: blockIds } as unknown as Evidence);
 	}
-	if (evidence.block_ids && evidence.block_ids.length > 0) return evidence;
-	return blockIds.length > 0 ? { ...evidence, block_ids: blockIds } : evidence;
+	const base =
+    evidence.block_ids && evidence.block_ids.length > 0
+      ? evidence
+      : blockIds.length > 0
+        ? { ...evidence, block_ids: blockIds }
+        : evidence;
+  return withFigure(base);
 }
 
 /** Shape a single pipeline result into the v2 hit (design §7.2). */

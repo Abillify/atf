@@ -72,6 +72,7 @@ import type { RowAcl } from "./access-scope.js";
 import { collectionTableName } from "./collection-ddl.js";
 import {
   documentInfoOf,
+  forgetDocument,
   isOlderVersion,
   markSourceIndexed,
   parseDocumentInfo,
@@ -1559,6 +1560,188 @@ async function loadMissingAssets(
 }
 
 /**
+ * Delete every row written under `revisionIds` — staged batches, the units in
+ * the collection table, their vs_identifiers entries, segments, and
+ * revision-bound assets (Requirements 2.3, 14.3) — inside the CALLER's
+ * transaction. The caller holds the cascade advisory lock. Shared by the
+ * revision cascade (one id) and the document cascade (all ids of a reference).
+ * Returns the number of unit rows removed from the collection table.
+ */
+async function deleteRevisionRows(
+  client: PoolClient,
+  table: string | null,
+  tenantId: string,
+  collection: string,
+  revisionIds: string[],
+): Promise<number> {
+  if (revisionIds.length === 0) return 0;
+  await client.query(
+    `DELETE FROM ${BATCHES} WHERE tenant_id = $1 AND collection = $2 AND revision_id = ANY($3::text[])`,
+    [tenantId, collection, revisionIds],
+  );
+  let deleted = 0;
+  if (table) {
+    const identifiers = await client.query<{ t: string | null }>(
+      `SELECT to_regclass($1)::text AS t`,
+      [IDENTIFIERS],
+    );
+    if (identifiers.rows[0]?.t) {
+      await client.query(
+        `DELETE FROM ${IDENTIFIERS} i
+          WHERE i.tenant_id = $1 AND i.collection = $2
+            AND i.unit_id IN (
+              SELECT u.unit_id FROM "${table}" u
+               WHERE u.tenant_id = $1 AND u.revision_id = ANY($3::text[]) AND u.unit_id IS NOT NULL)`,
+        [tenantId, collection, revisionIds],
+      );
+    }
+    const units = await client.query(
+      `DELETE FROM "${table}" WHERE tenant_id = $1 AND revision_id = ANY($2::text[])`,
+      [tenantId, revisionIds],
+    );
+    deleted = units.rowCount ?? 0;
+  }
+  await client.query(
+    `DELETE FROM ${SEGMENTS} WHERE tenant_id = $1 AND collection = $2 AND revision_id = ANY($3::text[])`,
+    [tenantId, collection, revisionIds],
+  );
+  // Assets are bound to the revision and cleaned with it (Requirement 14.3).
+  await client.query(
+    `DELETE FROM ${ASSETS} WHERE tenant_id = $1 AND collection = $2 AND revision_id = ANY($3::text[])`,
+    [tenantId, collection, revisionIds],
+  );
+  return deleted;
+}
+
+/**
+ * Remove a document COMPLETELY (task 4.2, Requirements 2.3/2.4): every unit
+ * row of every revision (current, superseded, legacy rows without a revision,
+ * and child units linked through `chunk->>'parent_ref'`), the staged batches,
+ * identifiers, segments and assets of all its revisions, the legacy
+ * vs_document_assets rows, and the identity rows (sources, group membership,
+ * thread references, revision pointer) — for every NFC spelling of each root
+ * reference. Runs inside the CALLER's transaction; the caller commits.
+ *
+ * Derived render-cache assets (task 3.8) are vs_assets rows bound to the
+ * document, so the asset deletes here ARE the render-cache invalidation; the
+ * in-process embedding cache is cleared by the caller after COMMIT
+ * (`onDocumentsDeleted`).
+ *
+ * Locking: one transaction-scoped advisory lock per (tenant, collection)
+ * serialises concurrent document cascades, whose multi-row DELETEs would
+ * otherwise deadlock on row order. A revision cascade racing a document
+ * cascade uses a different advisory key; the row locks still serialise them
+ * and Postgres resolves any true deadlock by aborting one side.
+ *
+ * Returns the number of unit rows removed from the collection table.
+ */
+export async function deleteDocumentCascade(
+  client: PoolClient,
+  args: {
+    tenantId: string;
+    collection: string;
+    rootRefs: string[];
+    /**
+     * Unit ids whose rows the CALLER already deleted (the access-scoped DELETE
+     * in PostgresClient.delete runs before the cascade). Their identifier rows
+     * are removed too — the reference/subquery sweeps below can no longer see
+     * unit rows that are already gone.
+     */
+    deletedUnitIds?: string[];
+  },
+): Promise<number> {
+  const { tenantId, collection } = args;
+  const refs = [...new Set(args.rootRefs.flatMap((r) => referenceVariants(r)))];
+  if (refs.length === 0) return 0;
+  const table = await resolveCollectionTable(client, collection);
+  await client.query(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [
+    `atf:document-cascade:${JSON.stringify([tenantId, collection])}`,
+  ]);
+  // Identifier rows of units the caller already removed: the reference and
+  // revision subqueries below join through the collection table, which no
+  // longer holds those rows — without this sweep they would be orphaned.
+  const callerUnitIds = [...new Set(args.deletedUnitIds ?? [])];
+  if (callerUnitIds.length > 0) {
+    const ident = await client.query<{ t: string | null }>(
+      `SELECT to_regclass($1)::text AS t`,
+      [IDENTIFIERS],
+    );
+    if (ident.rows[0]?.t) {
+      await client.query(
+        `DELETE FROM ${IDENTIFIERS}
+          WHERE tenant_id = $1 AND collection = $2 AND unit_id = ANY($3::text[])`,
+        [tenantId, collection, callerUnitIds],
+      );
+    }
+  }
+  // Every revision ever written for these references — the cascade must not
+  // leave rows of superseded or aborted revisions behind.
+  const revisions = await client.query<{ revision_id: string }>(
+    `SELECT revision_id FROM ${REVISIONS}
+      WHERE tenant_id = $1 AND collection = $2 AND reference = ANY($3::text[])`,
+    [tenantId, collection, refs],
+  );
+  let deleted = await deleteRevisionRows(
+    client,
+    table,
+    tenantId,
+    collection,
+    revisions.rows.map((r) => r.revision_id),
+  );
+  if (table) {
+    // Reference-keyed rows the revision pass did not cover: legacy units
+    // without a revision_id, and units whose revision row is already gone.
+    const refWhere =
+      `tenant_id = $1 AND (base_ref = ANY($2::text[]) OR reference = ANY($2::text[]) OR chunk->>'parent_ref' = ANY($2::text[]))`;
+    const identifiers = await client.query<{ t: string | null }>(
+      `SELECT to_regclass($1)::text AS t`,
+      [IDENTIFIERS],
+    );
+    if (identifiers.rows[0]?.t) {
+      // The subquery re-uses $1 (tenant) and takes the refs as $3 — the
+      // statement-level $2 is the identifiers collection, which the per-
+      // collection unit table does not carry as a column.
+      await client.query(
+        `DELETE FROM ${IDENTIFIERS} i
+          WHERE i.tenant_id = $1 AND i.collection = $2
+            AND i.unit_id IN (
+              SELECT u.unit_id FROM "${table}" u
+               WHERE u.tenant_id = $1
+                 AND (u.base_ref = ANY($3::text[]) OR u.reference = ANY($3::text[])
+                      OR u.chunk->>'parent_ref' = ANY($3::text[]))
+                 AND u.unit_id IS NOT NULL)`,
+        [tenantId, collection, refs],
+      );
+    }
+    const units = await client.query(`DELETE FROM "${table}" WHERE ${refWhere}`, [
+      tenantId,
+      refs,
+    ]);
+    deleted += units.rowCount ?? 0;
+  }
+  // Assets addressed by document (figures, page images, derived render-cache
+  // variants) in addition to the revision-bound rows deleted above.
+  await client.query(
+    `DELETE FROM ${ASSETS} WHERE tenant_id = $1 AND collection = $2 AND document_reference = ANY($3::text[])`,
+    [tenantId, collection, refs],
+  );
+  await client.query(
+    `DELETE FROM vs_document_assets WHERE tenant_id = $1 AND collection = $2 AND document_reference = ANY($3)`,
+    [tenantId, collection, refs],
+  );
+  // Identity rows: a deleted document must not linger as a source a re-ingest
+  // would call a "duplicate", a group member, a thread reference, or a pointer.
+  for (const reference of refs) {
+    await forgetDocument(client, { tenantId, collection, reference });
+  }
+  await client.query(
+    `DELETE FROM ${REVISIONS} WHERE tenant_id = $1 AND collection = $2 AND reference = ANY($3::text[])`,
+    [tenantId, collection, refs],
+  );
+  return deleted;
+}
+
+/**
  * Delete a revision and everything written under it, in one transaction:
  * staged batches, the revision's unit rows in the collection table, their
  * vs_identifiers entries, segments, revision-bound assets (Requirement 14.3),
@@ -1587,39 +1770,9 @@ async function deleteRevisionCascade(
       await client.query(`SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`, [
         `atf:revision-cascade:${JSON.stringify([tenantId, collection, revisionId])}`,
       ]);
-      await client.query(
-        `DELETE FROM ${BATCHES} WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
-        params,
-      );
-      if (table) {
-        const identifiers = await client.query<{ t: string | null }>(
-          `SELECT to_regclass($1)::text AS t`,
-          [IDENTIFIERS],
-        );
-        if (identifiers.rows[0]?.t) {
-          await client.query(
-            `DELETE FROM ${IDENTIFIERS} i
-              WHERE i.tenant_id = $1 AND i.collection = $2
-                AND i.unit_id IN (
-                  SELECT u.unit_id FROM "${table}" u
-                   WHERE u.tenant_id = $1 AND u.revision_id = $3 AND u.unit_id IS NOT NULL)`,
-            params,
-          );
-        }
-        await client.query(
-          `DELETE FROM "${table}" WHERE tenant_id = $1 AND revision_id = $2`,
-          [tenantId, revisionId],
-        );
-      }
-      await client.query(
-        `DELETE FROM ${SEGMENTS} WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
-        params,
-      );
-      // Assets are bound to the revision and cleaned with it (Requirement 14.3).
-      await client.query(
-        `DELETE FROM ${ASSETS} WHERE tenant_id = $1 AND collection = $2 AND revision_id = $3`,
-        params,
-      );
+      await deleteRevisionRows(client, table, tenantId, collection, [
+        revisionId,
+      ]);
       const revision = await lockRevision(client, tenantId, collection, revisionId, "UPDATE");
       if (revision) {
         const pointer = await client.query<{ current_revision_id: string }>(

@@ -39,6 +39,10 @@ class LRUCache<K, V> {
     this.store.set(key, val);
   }
 
+  clear(): void {
+    this.store.clear();
+  }
+
   get size(): number {
     return this.store.size;
   }
@@ -50,12 +54,20 @@ export interface QueryEmbeddingCache {
    * cache the result, and return it.
    */
   getOrEmbed(text: string, embed: () => Promise<number[]>): Promise<number[]>;
+  /**
+   * Drop every cached embedding (task 4.2, Requirement 2.4). Called after a
+   * document delete so no in-process entry survives the data it was derived
+   * from. The cache is keyed by query text alone — a per-collection subset
+   * cannot be addressed, so the whole LRU is dropped.
+   */
+  clear(): void;
   get size(): number;
 }
 
 /** No-op implementation used when caching is disabled (maxSize = 0). */
 const noopCache: QueryEmbeddingCache = {
   getOrEmbed: (_text, embed) => embed(),
+  clear(): void {},
   get size() {
     return 0;
   },
@@ -93,6 +105,12 @@ export function createQueryEmbeddingCache(
 
       pending.set(text, promise);
       return promise;
+    },
+    clear(): void {
+      // Drop in-flight entries too: a joiner must not receive a vector that
+      // was computed against the pre-delete state.
+      cache.clear();
+      pending.clear();
     },
     get size(): number {
       return cache.size;

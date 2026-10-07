@@ -170,6 +170,12 @@ export interface McpHandlerOptions {
   defaultCollection?: string;
   hybridSearchDefault?: boolean;
   candidateMultiplier?: number;
+  /**
+   * MIN_RERANK_SCORE (Requirement 4.8): server-side relevance threshold for
+   * the search tool, used when the call omits its per-request `minScore`.
+   * null / undefined = disabled (the tool keeps its per-request-only behavior).
+   */
+  minRerankScore?: number | null;
   /** Chunking options forwarded from server config. null = no chunking. */
   chunkingOptions?: ChunkingOptions | null;
   /**
@@ -267,6 +273,7 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
     defaultCollection = "documents",
     hybridSearchDefault = true,
     candidateMultiplier = 4,
+    minRerankScore = null,
     chunkingOptions = null,
     summaryClient = null,
   } = opts;
@@ -890,6 +897,9 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       const useHyde = hydeRequested && hydeClient !== null;
       const rerankRequested = rerank === true;
       const rerankActive = rerankRequested && rerankerClient !== null;
+      // MIN_RERANK_SCORE (task 6.10, Requirement 4.8): the server-side default
+      // threshold applies when the call omits its per-request minScore.
+      const effectiveMinScore = minScore ?? minRerankScore ?? undefined;
       // v2 mode (Req 15.2): any Requirement-13.3 parameter switches on the v2
       // extras (identifier list, v2 hit fields, assets). A legacy call with none
       // of them keeps its exact previous request/response (Req 13.7).
@@ -913,9 +923,15 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       const groupByDocument =
         group_by === undefined ? group_by_document === true : false;
       const groupBySection =
-        group_by === undefined ? group_by_section === true && !groupByDocument : false;
+        group_by === undefined
+          ? group_by_section === true && !groupByDocument
+          : false;
       const fetchLimit =
-        rerankActive || groupByDocument || groupBySection || groupByV2 !== undefined || minScore !== undefined
+        rerankActive ||
+        groupByDocument ||
+        groupBySection ||
+        groupByV2 !== undefined ||
+        effectiveMinScore !== undefined
           ? Math.min(limit * Math.max(1, candidateMultiplier), 500)
           : limit;
       let effectiveFilter = filter as Record<string, unknown> | undefined;
@@ -923,9 +939,22 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         try {
           const filterV2 = normalizeFilterV2(filter_v2);
           effectiveFilter = { ...(effectiveFilter ?? {}) };
-          (effectiveFilter as Record<string, unknown> & { [FILTER_V2]?: typeof filterV2 })[FILTER_V2] = filterV2;
+          (
+            effectiveFilter as Record<string, unknown> & {
+              [FILTER_V2]?: typeof filterV2;
+            }
+          )[FILTER_V2] = filterV2;
         } catch (error) {
-          return { content: [{ type: "text", text: error instanceof Error ? error.message : "Invalid filter_v2" }], isError: true };
+          return {
+            content: [
+              {
+                type: "text",
+                text:
+                  error instanceof Error ? error.message : "Invalid filter_v2",
+              },
+            ],
+            isError: true,
+          };
         }
       }
 
@@ -942,14 +971,22 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         });
         const unit: UnitFilterV2 = parsed.unit;
         explicitIdentifier = parsed.identifier;
-        if (granularity !== undefined && unit.unitType === undefined) unit.unitType = granularity;
+        if (granularity !== undefined && unit.unitType === undefined)
+          unit.unitType = granularity;
         if (unitFilterV2HasPredicates(unit)) {
           effectiveFilter = { ...(effectiveFilter ?? {}) };
-          (effectiveFilter as Record<string, unknown> & { [UNIT_FILTER_V2]?: UnitFilterV2 })[UNIT_FILTER_V2] = unit;
+          (
+            effectiveFilter as Record<string, unknown> & {
+              [UNIT_FILTER_V2]?: UnitFilterV2;
+            }
+          )[UNIT_FILTER_V2] = unit;
         }
       } catch (error) {
         if (error instanceof BadRequest) {
-          return { content: [{ type: "text", text: error.message }], isError: true };
+          return {
+            content: [{ type: "text", text: error.message }],
+            isError: true,
+          };
         }
         throw error;
       }
@@ -991,8 +1028,15 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       // is still used for the PostgreSQL FTS/ts_rank/lexical branch below (keeps exact terms).
       let embedText = query;
       let hydeApplied = false;
-      let hydeFallbackReason: "not-requested" | "unavailable" | "failed" | null =
-        hydeRequested ? (hydeClient === null ? "unavailable" : null) : "not-requested";
+      let hydeFallbackReason:
+        | "not-requested"
+        | "unavailable"
+        | "failed"
+        | null = hydeRequested
+        ? hydeClient === null
+          ? "unavailable"
+          : null
+        : "not-requested";
       if (useHyde) {
         const hydeRes = await hydeClient!.expand(query);
         if (hydeRes.ok) {
@@ -1064,7 +1108,9 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         identifierList
           ? {
               identifierList: true,
-              ...(explicitIdentifier ? { identifiers: [explicitIdentifier] } : {}),
+              ...(explicitIdentifier
+                ? { identifiers: [explicitIdentifier] }
+                : {}),
             }
           : undefined,
       );
@@ -1087,7 +1133,12 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         complete: boolean;
         scoredCount: number;
         inputCount: number;
-        fallbackReason: "not-requested" | "unavailable" | "failed" | "empty-or-invalid" | null;
+        fallbackReason:
+          | "not-requested"
+          | "unavailable"
+          | "failed"
+          | "empty-or-invalid"
+          | null;
       } = {
         requested: rerankRequested,
         available: rerankerClient !== null,
@@ -1146,8 +1197,10 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         );
       }
       const countBeforeMinScore = rankedResults.length;
-      if (minScore !== undefined) {
-        rankedResults = rankedResults.filter((result) => result.score >= minScore);
+      if (effectiveMinScore !== undefined) {
+        rankedResults = rankedResults.filter(
+          (result) => result.score >= effectiveMinScore,
+        );
       }
       const countAfterMinScore = rankedResults.length;
       // Preserve compact provenance for every fully reranked candidate before
@@ -1172,7 +1225,9 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       // unchanged. Each hit's expansion honours the same visibility/ACL/revision
       // predicates as the search itself.
       const expandMode =
-        expand === undefined || expand === "none" ? undefined : (expand as ExpandMode);
+        expand === undefined || expand === "none"
+          ? undefined
+          : (expand as ExpandMode);
       const expandedResults =
         expandMode !== undefined
           ? await attachExpansions({
@@ -1207,41 +1262,45 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           ? shapeHitV2(r, { collection: col, includeAssets, figureInfo })
           : null;
         return {
-        id: r.id,
-        score: r.score,
-        vector_score: r.vector_score ?? undefined,
-        reference: r.reference,
-        base_ref: r.base_ref,
-        title: r.title ?? null,
-        source: r.source ?? null,
-        link: r.link ?? null,
-        tags: r.tags ?? [],
-        content: r.content,
-        chunk: r.chunk ?? null,
-        evidence: r.evidence ?? null,
-        asset_url: r.asset_url ?? null,
-        metadata: r.metadata,
-        modified: r.modified,
-        valid_from: r.valid_from?.toISOString() ?? null,
-        effective_valid_from: r.effective_valid_from.toISOString(),
-        ...(r.document_group ? { document_group: r.document_group } : {}),
-        ...(r.group_members ? { group_members: r.group_members } : {}),
-        ...("expanded" in r && r.expanded ? { expanded: r.expanded } : {}),
-        // v2 hit fields (design §7.2), only in v2 mode so legacy output is unchanged.
-        ...(v2
-          ? {
-              ...(v2.unit_id ? { unit_id: v2.unit_id } : {}),
-              ...(v2.unit_type ? { unit_type: v2.unit_type } : {}),
-              section_path: v2.section_path,
-              pages: v2.pages,
-              navigation: v2.navigation,
-              evidence: v2.evidence ?? null,
-              ...(v2.assets ? { assets: v2.assets } : {}),
-              ...(v2.group ? { group: v2.group } : {}),
-              ...(v2.revision_state ? { revision_state: v2.revision_state } : {}),
-              ...(v2.pages_available ? { pages_available: v2.pages_available } : {}),
-            }
-          : {}),
+          id: r.id,
+          score: r.score,
+          vector_score: r.vector_score ?? undefined,
+          reference: r.reference,
+          base_ref: r.base_ref,
+          title: r.title ?? null,
+          source: r.source ?? null,
+          link: r.link ?? null,
+          tags: r.tags ?? [],
+          content: r.content,
+          chunk: r.chunk ?? null,
+          evidence: r.evidence ?? null,
+          asset_url: r.asset_url ?? null,
+          metadata: r.metadata,
+          modified: r.modified,
+          valid_from: r.valid_from?.toISOString() ?? null,
+          effective_valid_from: r.effective_valid_from.toISOString(),
+          ...(r.document_group ? { document_group: r.document_group } : {}),
+          ...(r.group_members ? { group_members: r.group_members } : {}),
+          ...("expanded" in r && r.expanded ? { expanded: r.expanded } : {}),
+          // v2 hit fields (design §7.2), only in v2 mode so legacy output is unchanged.
+          ...(v2
+            ? {
+                ...(v2.unit_id ? { unit_id: v2.unit_id } : {}),
+                ...(v2.unit_type ? { unit_type: v2.unit_type } : {}),
+                section_path: v2.section_path,
+                pages: v2.pages,
+                navigation: v2.navigation,
+                evidence: v2.evidence ?? null,
+                ...(v2.assets ? { assets: v2.assets } : {}),
+                ...(v2.group ? { group: v2.group } : {}),
+                ...(v2.revision_state
+                  ? { revision_state: v2.revision_state }
+                  : {}),
+                ...(v2.pages_available
+                  ? { pages_available: v2.pages_available }
+                  : {}),
+              }
+            : {}),
         };
       });
 
@@ -1260,7 +1319,12 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
       // Build next_cursor when the full page was returned (and no reranking —
       // rerank reorders results, so keyset pagination would be unreliable).
       let nextCursor: string | undefined;
-      if (!rerankActive && !groupBySection && groupByV2 === undefined && hits.length === limit) {
+      if (
+        !rerankActive &&
+        !groupBySection &&
+        groupByV2 === undefined &&
+        hits.length === limit
+      ) {
         const last = rankedResults[rankedResults.length - 1];
         if (last) {
           // Include `score` — it is the value the query ordered by and thus part
@@ -1303,12 +1367,14 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
           tags: tags?.length ? tags : undefined,
           source: "mcp",
         }),
-        usage: usage ? {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cost: usage.cost,
-          modelCosts: usage.modelCosts,
-        } : undefined,
+        usage: usage
+          ? {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              cost: usage.cost,
+              modelCosts: usage.modelCosts,
+            }
+          : undefined,
       });
 
       return {
@@ -1330,14 +1396,27 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
                   fallbackReason: hydeFallbackReason,
                 },
                 score_kind: rerankStatus.applied ? "rerank" : "retrieval",
-                minScore: minScore ?? null,
+                minScore: effectiveMinScore ?? null,
                 score_filter: {
-                  applied: minScore !== undefined,
+                  applied: effectiveMinScore !== undefined,
                   score_kind: rerankStatus.applied ? "rerank" : "retrieval",
                   before: countBeforeMinScore,
                   after: countAfterMinScore,
                   removed: countBeforeMinScore - countAfterMinScore,
                 },
+                ...(effectiveMinScore !== undefined
+                  ? {
+                      abstention: {
+                        threshold: effectiveMinScore,
+                        score_kind: rerankStatus.applied
+                          ? "rerank"
+                          : "retrieval",
+                        candidates: countBeforeMinScore,
+                        kept: countAfterMinScore,
+                        abstain: countAfterMinScore === 0,
+                      },
+                    }
+                  : {}),
                 ...(sections ? { sections } : {}),
                 ...(nextCursor ? { next_cursor: nextCursor } : {}),
                 ...(usage !== undefined &&

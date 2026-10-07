@@ -13,6 +13,7 @@ import {
 } from "../src/document-identity.js";
 import { groupResultsV2 } from "../src/rerank-context.js";
 import { rowAclAllows, rowAclForRevision, type AccessScope } from "../src/access-scope.js";
+import { setDocumentAclDefault } from "../src/acl-default.js";
 import { groupResultsByDocument } from "../src/handlers/search.js";
 import type { SearchResult } from "../src/postgres-client.js";
 
@@ -127,40 +128,106 @@ describe("grouping by document group", () => {
 });
 
 describe("row ACL of a revision", () => {
-  const base = { principal: { userId: undefined, userGroups: [], scopes: [], source: "asserted" as const }, tenantId: "t", scopes: [] };
-  const service: AccessScope = { ...base, userId: undefined, userGroups: [], service: true };
-  const user: AccessScope = { ...base, userId: "anna", userGroups: ["team", "sales"], service: false };
+  const base = {
+    principal: {
+      userId: undefined,
+      userGroups: [],
+      scopes: [],
+      source: "asserted" as const,
+    },
+    tenantId: "t",
+    scopes: [],
+  };
+  const service: AccessScope = {
+    ...base,
+    userId: undefined,
+    userGroups: [],
+    service: true,
+  };
+  const user: AccessScope = {
+    ...base,
+    userId: "anna",
+    userGroups: ["team", "sales"],
+    service: false,
+  };
 
   it("a service writes the ACL it resolved, else the collection ACL, else none", () => {
-    expect(rowAclForRevision(service, undefined, { users: ["b", "a", "a"], groups: [] })).toEqual({
+    expect(
+      rowAclForRevision(service, undefined, {
+        users: ["b", "a", "a"],
+        groups: [],
+      }),
+    ).toEqual({
       allowedUsers: ["a", "b"],
       allowedGroups: [],
     });
-    expect(rowAclForRevision(service, { allowedUsers: [], allowedGroups: ["g"] }, { users: [], groups: [] })).toEqual({
+    expect(
+      rowAclForRevision(
+        service,
+        { allowedUsers: [], allowedGroups: ["g"] },
+        { users: [], groups: [] },
+      ),
+    ).toEqual({
       allowedUsers: [],
       allowedGroups: ["g"],
     });
-    expect(rowAclForRevision(service, undefined, { users: [], groups: [] })).toEqual({
+    expect(
+      rowAclForRevision(service, undefined, { users: [], groups: [] }),
+    ).toEqual({
       allowedUsers: [],
       allowedGroups: [],
     });
   });
 
   it("an end user can only narrow to its own identity", () => {
-    expect(rowAclForRevision(user, undefined, { users: [], groups: [] })).toEqual({
+    expect(
+      rowAclForRevision(user, undefined, { users: [], groups: [] }),
+    ).toEqual({
       allowedUsers: ["anna"],
       allowedGroups: ["sales", "team"],
     });
-    expect(rowAclForRevision(user, undefined, { users: ["mallory"], groups: ["team", "admins"] })).toEqual({
+    expect(
+      rowAclForRevision(user, undefined, {
+        users: ["mallory"],
+        groups: ["team", "admins"],
+      }),
+    ).toEqual({
       allowedUsers: [],
       allowedGroups: ["team"],
     });
   });
 
   it("rowAclAllows mirrors the search predicate", () => {
-    expect(rowAclAllows(user, { allowedUsers: [], allowedGroups: [] })).toBe(true);
-    expect(rowAclAllows(user, { allowedUsers: ["bob"], allowedGroups: ["sales"] })).toBe(true);
-    expect(rowAclAllows(user, { allowedUsers: ["bob"], allowedGroups: [] })).toBe(false);
-    expect(rowAclAllows(service, { allowedUsers: ["bob"], allowedGroups: [] })).toBe(true);
+    expect(rowAclAllows(user, { allowedUsers: [], allowedGroups: [] })).toBe(
+      true,
+    );
+    expect(
+      rowAclAllows(user, { allowedUsers: ["bob"], allowedGroups: ["sales"] }),
+    ).toBe(true);
+    expect(
+      rowAclAllows(user, { allowedUsers: ["bob"], allowedGroups: [] }),
+    ).toBe(false);
+    expect(
+      rowAclAllows(service, { allowedUsers: ["bob"], allowedGroups: [] }),
+    ).toBe(true);
+  });
+
+  // Req 3.2: under DOCUMENT_ACL_DEFAULT=deny an empty row ACL grants nothing
+  // to end users — only service/bypass principals still match it.
+  it("rowAclAllows hides empty-ACL rows from end users under deny", () => {
+    setDocumentAclDefault("deny");
+    try {
+      expect(rowAclAllows(user, { allowedUsers: [], allowedGroups: [] })).toBe(
+        false,
+      );
+      expect(
+        rowAclAllows(service, { allowedUsers: [], allowedGroups: [] }),
+      ).toBe(true);
+      expect(
+        rowAclAllows(user, { allowedUsers: ["bob"], allowedGroups: ["sales"] }),
+      ).toBe(true);
+    } finally {
+      setDocumentAclDefault("allow");
+    }
   });
 });

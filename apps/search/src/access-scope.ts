@@ -3,6 +3,7 @@
 
 import type { PostgresClient, PostgresResponse } from "./postgres-client.js";
 import type { CollectionAcl } from "./collection-access.js";
+import { deniesEmptyAcl } from "./acl-default.js";
 import {
   getAmbientPrincipal,
   getPrincipal,
@@ -22,6 +23,13 @@ export interface AccessScope {
   service: boolean;
   /** AUTHZ_ENABLED=false bypasses operation permissions and all ACL checks. */
   authorizationBypass?: boolean;
+  /**
+   * Explicit cross-tenant operator scope (platform-hardening Req 3.1). Set
+   * ONLY by `operatorScope()`; `buildAccessSql` omits the tenant predicate for
+   * an operator scope without a tenant. Never derived from a request header,
+   * token or tool argument.
+   */
+  operator?: boolean;
 }
 
 export class AccessDeniedError extends Error {
@@ -50,6 +58,34 @@ export function serviceAccessScope(): AccessScope {
     userGroups: undefined,
     source: "service",
   });
+}
+
+/**
+ * Explicit cross-tenant operator scope (platform-hardening Req 3.1).
+ *
+ * Every SQL path must carry an `AccessScope`; there is no "no scope" read.
+ * Operator maintenance paths that legitimately span tenants (administration,
+ * erasure, migration) must construct this scope EXPLICITLY instead of omitting
+ * one: without `tenantId` the tenant predicate is dropped, with `tenantId` the
+ * scope is restricted to that single tenant. This factory must only be reached
+ * from trusted server-side operator code — never from a request principal.
+ */
+export function operatorScope(tenantId?: string): AccessScope {
+  const tid = tenantId?.trim();
+  return {
+    principal: {
+      userId: undefined,
+      userGroups: undefined,
+      tenantId: tid || undefined,
+      source: "service",
+    },
+    userId: undefined,
+    userGroups: [],
+    tenantId: tid || undefined,
+    scopes: ["operator"],
+    service: true,
+    operator: true,
+  };
 }
 
 export function principalFingerprint(principal: RequestPrincipal): string {
@@ -230,7 +266,11 @@ export function rowAclForRevision(
 /** True when a row with this ACL is readable by the scope (the buildAccessSql rule). */
 export function rowAclAllows(scope: AccessScope, acl: RowAcl): boolean {
   if (scope.authorizationBypass || scope.service) return true;
-  if (acl.allowedUsers.length === 0 && acl.allowedGroups.length === 0) return true;
+  if (acl.allowedUsers.length === 0 && acl.allowedGroups.length === 0) {
+    // Req 3.2: under DOCUMENT_ACL_DEFAULT=deny an empty row ACL grants nothing
+    // to end users; only service/bypass principals (handled above) see it.
+    return !deniesEmptyAcl();
+  }
   if (scope.userId && acl.allowedUsers.includes(scope.userId)) return true;
   return scope.userGroups.some((g) => acl.allowedGroups.includes(g));
 }
@@ -254,13 +294,18 @@ export type AuthorizationOperation =
   | "admin"
   | "acl.manage"
   | "metrics"
-  | "global.admin";
+  | "global.admin"
+  /** Subjektbezogene Löschung (DSAR / Erasure, Requirement 2.5). */
+  | "erasure";
 
-const OPERATION_SCOPES: Readonly<Record<AuthorizationOperation, readonly string[]>> = {
+const OPERATION_SCOPES: Readonly<
+  Record<AuthorizationOperation, readonly string[]>
+> = {
   read: ["vectorsearch.read", "knowledge"],
   write: ["vectorsearch.write"],
   delete: ["vectorsearch.delete"],
   admin: ["vectorsearch.admin"],
+  erasure: ["vectorsearch.erasure"],
   "acl.manage": ["vectorsearch.acl.manage"],
   metrics: ["vectorsearch.metrics"],
   "global.admin": ["vectorsearch.global.admin"],

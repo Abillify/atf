@@ -163,14 +163,37 @@ export function checkProductionReadiness(
   // ── Access control ────────────────────────────────────────────────────────
 
   if (!config.aclRequireIdentity) {
-    // Not fatal: a service-to-service ingest legitimately has no end user, and
-    // forcing this would break correct deployments. But an operator running
-    // per-user ACLs needs to know that a request without an identity still sees
-    // everything.
-    warnings.push(
+    // Req 3.3: in production a disabled identity requirement is fatal unless
+    // the operator records an explicit, documented exception via
+    // ACL_REQUIRE_IDENTITY_WAIVER — which downgrades the finding to a warning.
+    // Outside production it stays a warning: a service-to-service ingest
+    // legitimately has no end user.
+    const waiver = config.aclRequireIdentityWaiver?.trim();
+    const base =
       "ACL_REQUIRE_IDENTITY is disabled — a request that establishes no end-user " +
-        "identity is treated as a service context and bypasses row- and " +
-        "collection-level ACLs. Enable it if every read must be attributable.",
+      "identity is treated as a service context and bypasses row- and " +
+      "collection-level ACLs. Enable it if every read must be attributable.";
+    if (isProd && !waiver) {
+      fatal.push(
+        base +
+          " In production this is refused: set ACL_REQUIRE_IDENTITY=true or " +
+          "record a documented exception in ACL_REQUIRE_IDENTITY_WAIVER.",
+      );
+    } else if (isProd) {
+      warnings.push(base + ` Waiver recorded: "${waiver}".`);
+    } else {
+      warnings.push(base);
+    }
+  }
+
+  // Req 3.2 / design: DOCUMENT_ACL_DEFAULT=allow keeps documents with an empty
+  // ACL readable by every principal of the tenant. Warn in production so the
+  // switch to `deny` is a deliberate deployment decision.
+  if (isProd && config.documentAclDefault !== "deny") {
+    warnings.push(
+      "DOCUMENT_ACL_DEFAULT=allow — documents with empty allowed_users and " +
+        "allowed_groups are readable by every principal of the tenant. Set " +
+        "DOCUMENT_ACL_DEFAULT=deny to restrict them to service principals.",
     );
   }
 

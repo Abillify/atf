@@ -73,6 +73,96 @@ describe("Config", () => {
     expect(() => loadConfig()).toThrow("RRF_WEIGHT_IDENTIFIER");
   });
 
+  // Req 4.3/4.4: sparse list weight + missing-list-zero flag.
+  it("defaults RRF_WEIGHT_SPARSE to 1.0 and RRF_MISSING_ZERO to true", () => {
+    delete process.env["RRF_WEIGHT_SPARSE"];
+    delete process.env["RRF_MISSING_ZERO"];
+    expect(loadConfig()).toMatchObject({
+      rrfWeightSparse: 1.0,
+      rrfMissingZero: true,
+    });
+  });
+
+  it("parses RRF_WEIGHT_SPARSE and RRF_MISSING_ZERO=false", () => {
+    process.env["RRF_WEIGHT_SPARSE"] = "2.5";
+    process.env["RRF_MISSING_ZERO"] = "false";
+    expect(loadConfig()).toMatchObject({
+      rrfWeightSparse: 2.5,
+      rrfMissingZero: false,
+    });
+  });
+
+  it("rejects a non-positive RRF_WEIGHT_SPARSE", () => {
+    process.env["RRF_WEIGHT_SPARSE"] = "-1";
+    expect(() => loadConfig()).toThrow("RRF_WEIGHT_SPARSE");
+  });
+
+  // Req 4.7 (task 6.9): lexical list ranker. bm25 is parsed here; whether it
+  // takes effect depends on the BM25 extension detection in postgres-client.
+  it("defaults FTS_RANKER to ts_rank_cd and parses bm25", () => {
+    delete process.env["FTS_RANKER"];
+    expect(loadConfig()).toMatchObject({ ftsRanker: "ts_rank_cd" });
+    process.env["FTS_RANKER"] = "bm25";
+    expect(loadConfig()).toMatchObject({ ftsRanker: "bm25" });
+  });
+
+  it("rejects an unknown FTS_RANKER", () => {
+    process.env["FTS_RANKER"] = "bm15";
+    expect(() => loadConfig()).toThrow("FTS_RANKER");
+  });
+
+  // Req 4.8 (task 6.10): optional relevance threshold + abstention signal.
+  it("defaults MIN_RERANK_SCORE to null (disabled)", () => {
+    delete process.env["MIN_RERANK_SCORE"];
+    expect(loadConfig()).toMatchObject({ minRerankScore: null });
+  });
+
+  it("parses MIN_RERANK_SCORE and treats empty as disabled", () => {
+    process.env["MIN_RERANK_SCORE"] = "0.35";
+    expect(loadConfig()).toMatchObject({ minRerankScore: 0.35 });
+    process.env["MIN_RERANK_SCORE"] = "";
+    expect(loadConfig()).toMatchObject({ minRerankScore: null });
+    process.env["MIN_RERANK_SCORE"] = "   ";
+    expect(loadConfig()).toMatchObject({ minRerankScore: null });
+  });
+
+  it("rejects a non-numeric MIN_RERANK_SCORE", () => {
+    process.env["MIN_RERANK_SCORE"] = "abc";
+    expect(() => loadConfig()).toThrow(
+      "MIN_RERANK_SCORE must be a finite number",
+    );
+  });
+
+  it("defaults the HNSW iterative-scan tuning (Req 4.1)", () => {
+    delete process.env["HNSW_ITERATIVE_SCAN"];
+    delete process.env["HNSW_MAX_SCAN_TUPLES"];
+    expect(loadConfig()).toMatchObject({
+      hnswIterativeScan: "relaxed_order",
+      hnswMaxScanTuples: 20_000,
+    });
+  });
+
+  it("parses each allowed HNSW_ITERATIVE_SCAN mode", () => {
+    for (const mode of ["relaxed_order", "strict_order", "off"] as const) {
+      process.env["HNSW_ITERATIVE_SCAN"] = mode;
+      expect(loadConfig().hnswIterativeScan).toBe(mode);
+    }
+  });
+
+  it("rejects an invalid HNSW_ITERATIVE_SCAN value", () => {
+    process.env["HNSW_ITERATIVE_SCAN"] = "aggressive";
+    expect(() => loadConfig()).toThrow(
+      "HNSW_ITERATIVE_SCAN must be one of: relaxed_order, strict_order, off",
+    );
+  });
+
+  it("parses HNSW_MAX_SCAN_TUPLES and rejects non-positive values", () => {
+    process.env["HNSW_MAX_SCAN_TUPLES"] = "50000";
+    expect(loadConfig().hnswMaxScanTuples).toBe(50_000);
+    process.env["HNSW_MAX_SCAN_TUPLES"] = "0";
+    expect(() => loadConfig()).toThrow("HNSW_MAX_SCAN_TUPLES");
+  });
+
   it("throws when EMBED_URL is empty", () => {
     process.env["EMBED_URL"] = "";
     expect(() => loadConfig()).toThrow("EMBED_URL");
@@ -120,13 +210,18 @@ describe("Config", () => {
     process.env["AUTHN_MODE"] = "oidc";
     process.env["AUTHZ_ENABLED"] = "true";
     process.env["TENANT_ISOLATION_ENABLED"] = "true";
+    // Req 3.3: a production deployment must require an end-user identity (or
+    // record a waiver) to pass the gate.
+    process.env["ACL_REQUIRE_IDENTITY"] = "true";
     process.env["DEFAULT_TENANT_ID"] = "tenant-production";
-    process.env["API_OIDC_ISSUERS"] = JSON.stringify([{
-      issuer: "https://id.example.com",
-      audience: "vectorsearch",
-      tenantClaim: "tenant_id",
-      scopesClaim: "scope",
-    }]);
+    process.env["API_OIDC_ISSUERS"] = JSON.stringify([
+      {
+        issuer: "https://id.example.com",
+        audience: "vectorsearch",
+        tenantClaim: "tenant_id",
+        scopesClaim: "scope",
+      },
+    ]);
     process.env["TRANSACTION_ENFORCEMENT"] = "required";
     process.env["TRANSACTION_HS256_SECRET"] = "t".repeat(40);
     process.env["TRANSACTION_ISSUER"] = "agent-runtime";
@@ -190,10 +285,12 @@ describe("Config", () => {
       process.env["TENANT_ISOLATION_ENABLED"] = "true";
       delete process.env["API_SERVICE_TENANT_ID"];
       if (mode === "token_or_oidc") {
-        process.env["API_OIDC_ISSUERS"] = JSON.stringify([{
-          issuer: "https://id.example.com",
-          tenantClaim: "tenant_id",
-        }]);
+        process.env["API_OIDC_ISSUERS"] = JSON.stringify([
+          {
+            issuer: "https://id.example.com",
+            tenantClaim: "tenant_id",
+          },
+        ]);
       }
 
       expect(() => loadConfig()).toThrow("API_SERVICE_TENANT_ID is required");
@@ -208,10 +305,12 @@ describe("Config", () => {
       process.env["API_SERVICE_TENANT_ID"] = "service-tenant";
       process.env["TENANT_ISOLATION_ENABLED"] = "true";
       if (mode === "token_or_oidc") {
-        process.env["API_OIDC_ISSUERS"] = JSON.stringify([{
-          issuer: "https://id.example.com",
-          tenantClaim: "tenant_id",
-        }]);
+        process.env["API_OIDC_ISSUERS"] = JSON.stringify([
+          {
+            issuer: "https://id.example.com",
+            tenantClaim: "tenant_id",
+          },
+        ]);
       }
 
       expect(loadConfig()).toMatchObject({

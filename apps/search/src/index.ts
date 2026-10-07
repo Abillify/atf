@@ -66,6 +66,7 @@ import {
 import { createSearchHandler } from "./handlers/search.js";
 import { createSearchV2Handler } from "./handlers/search-v2.js";
 import { createDeleteHandler } from "./handlers/delete.js";
+import { createErasureHandler } from "./handlers/erasure.js";
 import {
   createAdminStatsHandler,
   createHealthHandler,
@@ -268,7 +269,9 @@ export function createApp(
       const start = Date.now();
       const endMetrics = httpMetrics.begin();
       const finishRequest = (): void => {
-        const route = req.route?.path ? String(req.route.path) : "__unmatched__";
+        const route = req.route?.path
+          ? String(req.route.path)
+          : "__unmatched__";
         // Only canonical Express route templates are labels; raw paths, IDs,
         // tenants and query text are never exported. endMetrics is idempotent,
         // so finish followed by close records and decrements exactly once.
@@ -309,7 +312,10 @@ export function createApp(
 
   // ── Token Usage Context propagation ─────────────────────────────────────────
   app.use((req: Request, _res: Response, next: NextFunction) => {
-    usageStorage.run({ inputTokens: 0, outputTokens: 0, cost: 0, modelCosts: {} }, next);
+    usageStorage.run(
+      { inputTokens: 0, outputTokens: 0, cost: 0, modelCosts: {} },
+      next,
+    );
   });
 
   const primaryEmbeddingClient = createEmbeddingClient({
@@ -488,14 +494,11 @@ export function createApp(
     oidcProvider ?? undefined,
     { mode: config.authnMode },
   );
-  const uiPrincipalMiddleware = createUiPrincipalMiddleware(
-    oidcProvider,
-    {
-      ...config.uiBff,
-      authnMode: config.authnMode,
-      authzEnabled: config.authzEnabled,
-    },
-  );
+  const uiPrincipalMiddleware = createUiPrincipalMiddleware(oidcProvider, {
+    ...config.uiBff,
+    authnMode: config.authnMode,
+    authzEnabled: config.authzEnabled,
+  });
   const requireUiOperator = createRequireUiOperatorMiddleware(
     config.uiBff.operatorGroup,
     config.authnMode,
@@ -503,7 +506,10 @@ export function createApp(
   const uiMutationGuard = createUiMutationGuard((req) =>
     resolveServerUrl(req, config.port),
   );
-  const loginHandler = createLoginHandler(config.monitorToken, config.trustProxy);
+  const loginHandler = createLoginHandler(
+    config.monitorToken,
+    config.trustProxy,
+  );
 
   const ingestDefaults = {
     defaultChunkSize: config.defaultChunkSize,
@@ -545,6 +551,18 @@ export function createApp(
     logger,
   );
   const queryCache = createQueryEmbeddingCache(config.queryCacheSize);
+  // Task 4.2 (Requirement 2.4): after a document cascade commits, drop the
+  // in-process embedding cache. The cache is keyed by query text alone, so a
+  // per-collection subset cannot be addressed — the whole LRU is dropped.
+  // Render-cache invalidation needs no hook here: derived render assets are
+  // vs_assets rows, and the cascade deletes them with the document.
+  postgresClient.setOnDocumentsDeleted?.((deletedCollection, rootRefs) => {
+    logger.debug(
+      { collection: deletedCollection, refs: rootRefs.length },
+      "document cascade committed — clearing the query embedding cache",
+    );
+    queryCache.clear();
+  });
 
   const searchHandler = createSearchHandler(
     embeddingClient,
@@ -557,6 +575,7 @@ export function createApp(
       hydeClient,
       sparseClient,
       queryCache,
+      minRerankScore: config.minRerankScore,
     },
   );
   // Token counter (task 3.1) used by the full multi-level unit builder to size
@@ -582,6 +601,7 @@ export function createApp(
       sparseClient,
       queryCache,
       tokenCounter: unitTokenCounter,
+      minRerankScore: config.minRerankScore,
     },
   );
   const deleteHandler = createDeleteHandler(postgresClient, logger);
@@ -603,7 +623,11 @@ export function createApp(
     postgresClient,
     logger,
   );
-  const metricsHandler = createMetricsHandler(postgresClient, httpMetrics, queryCache);
+  const metricsHandler = createMetricsHandler(
+    postgresClient,
+    httpMetrics,
+    queryCache,
+  );
   const retrievalEvaluationHandler = createRetrievalEvaluationHandler(
     embeddingClient,
     postgresClient,
@@ -617,8 +641,14 @@ export function createApp(
   const queryHandlers = createQueryHandlers(postgresClient, logger, {
     defaultCollection: config.defaultCollection,
   });
-  const putDocumentAssetHandler = createPutDocumentAssetHandler(postgresClient, logger);
-  const getDocumentAssetHandler = createGetDocumentAssetHandler(postgresClient, logger);
+  const putDocumentAssetHandler = createPutDocumentAssetHandler(
+    postgresClient,
+    logger,
+  );
+  const getDocumentAssetHandler = createGetDocumentAssetHandler(
+    postgresClient,
+    logger,
+  );
 
   // ── v2 revision API (design §6.1, task 1.9) ───────────────────────────────
   // A dedicated pool for the revision staging tables keeps the revision store
@@ -689,7 +719,11 @@ export function createApp(
   let batchBacklogInFlight = false;
   async function refreshBatchBacklog(): Promise<void> {
     const now = Date.now();
-    if (batchBacklogInFlight || now - batchBacklogRefreshedAt < BATCH_BACKLOG_REFRESH_MS) return;
+    if (
+      batchBacklogInFlight ||
+      now - batchBacklogRefreshedAt < BATCH_BACKLOG_REFRESH_MS
+    )
+      return;
     batchBacklogInFlight = true;
     batchBacklogRefreshedAt = now;
     try {
@@ -731,7 +765,9 @@ export function createApp(
     ensureCollection: (collection, vectorSize) =>
       postgresClient.ensureCollection(collection, vectorSize, {
         language: config.defaultFtsLanguage,
-        ...(config.sparseModel ? { sparseVocabSize: config.sparseVocabSize } : {}),
+        ...(config.sparseModel
+          ? { sparseVocabSize: config.sparseVocabSize }
+          : {}),
         quantization: config.quantization,
         embeddingModel: config.embedModel,
         embeddingModelRevision: config.embedModelRevision,
@@ -771,6 +807,7 @@ export function createApp(
     defaultCollection: config.defaultCollection,
     hybridSearchDefault: config.hybridSearch,
     candidateMultiplier: config.rerankCandidateMultiplier,
+    minRerankScore: config.minRerankScore,
     chunkingOptions: mcpChunkingOptions,
     summaryClient,
     hydeClient,
@@ -827,8 +864,9 @@ export function createApp(
   const collectionAccessAsset = createCollectionAccessMiddleware(
     postgresClient,
     (req) =>
-      (typeof req.query["collection"] === "string" ? req.query["collection"] : undefined) ??
-      collectionFromHeader(req),
+      (typeof req.query["collection"] === "string"
+        ? req.query["collection"]
+        : undefined) ?? collectionFromHeader(req),
     { defaultCollection: config.defaultCollection, logger },
   );
   const collectionAccessParam = createCollectionAccessMiddleware(
@@ -836,12 +874,34 @@ export function createApp(
     collectionFromParam,
     { logger },
   );
-  const authorizeRead = createAuthorizationMiddleware("read", config.authzEnforcement);
-  const authorizeWrite = createAuthorizationMiddleware("write", config.authzEnforcement);
-  const authorizeDelete = createAuthorizationMiddleware("delete", config.authzEnforcement);
-  const authorizeAdmin = createAuthorizationMiddleware("admin", config.authzEnforcement);
-  const authorizeMetrics = createAuthorizationMiddleware("metrics", config.authzEnforcement);
-  const authorizeGlobalAdmin = createAuthorizationMiddleware("global.admin", config.authzEnforcement);
+  const authorizeRead = createAuthorizationMiddleware(
+    "read",
+    config.authzEnforcement,
+  );
+  const authorizeWrite = createAuthorizationMiddleware(
+    "write",
+    config.authzEnforcement,
+  );
+  const authorizeDelete = createAuthorizationMiddleware(
+    "delete",
+    config.authzEnforcement,
+  );
+  const authorizeErasure = createAuthorizationMiddleware(
+    "erasure",
+    config.authzEnforcement,
+  );
+  const authorizeAdmin = createAuthorizationMiddleware(
+    "admin",
+    config.authzEnforcement,
+  );
+  const authorizeMetrics = createAuthorizationMiddleware(
+    "metrics",
+    config.authzEnforcement,
+  );
+  const authorizeGlobalAdmin = createAuthorizationMiddleware(
+    "global.admin",
+    config.authzEnforcement,
+  );
 
   // ── Routes ────────────────────────────────────────────────────────────────
   app.get("/health", healthHandler);
@@ -924,13 +984,48 @@ export function createApp(
     collectionAccessHeader,
     deleteHandler,
   );
-  ui.get("/documents", authorizeRead, collectionAccessQuery, queryHandlers.listDocuments);
-  ui.get("/documents/content", authorizeRead, collectionAccessQuery, queryHandlers.getDocuments);
-  ui.get("/document", authorizeRead, collectionAccessQuery, queryHandlers.getDocument);
-  ui.get("/folders", authorizeRead, collectionAccessQuery, queryHandlers.listFolders);
-  ui.get("/summaries", authorizeRead, collectionAccessQuery, queryHandlers.getSummaries);
-  ui.get("/summary", authorizeRead, collectionAccessQuery, queryHandlers.getSummary);
-  ui.get("/collection-stats", authorizeRead, collectionAccessQuery, queryHandlers.collectionStats);
+  ui.get(
+    "/documents",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.listDocuments,
+  );
+  ui.get(
+    "/documents/content",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getDocuments,
+  );
+  ui.get(
+    "/document",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getDocument,
+  );
+  ui.get(
+    "/folders",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.listFolders,
+  );
+  ui.get(
+    "/summaries",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getSummaries,
+  );
+  ui.get(
+    "/summary",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getSummary,
+  );
+  ui.get(
+    "/collection-stats",
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.collectionStats,
+  );
   ui.get("/collections", authorizeRead, uiListCollectionsHandler);
   ui.get(
     "/admin/stats",
@@ -1214,18 +1309,87 @@ export function createApp(
     collectionAccessHeader,
     deleteHandler,
   );
-  app.get("/admin/stats", authMiddleware, authorizeAdmin, collectionAccessQuery, adminStatsHandler);
+  // Subject-related erasure (task 4.5, Requirement 2.5): service-authenticated,
+  // scope `vectorsearch.erasure`, idempotent over requestId through the
+  // invocation ledger. The body is parsed by the global JSON parser.
+  app.post(
+    "/v1/erasure",
+    rateLimiter.middleware,
+    authMiddleware,
+    authorizeErasure,
+    createErasureHandler({
+      postgresClient,
+      ledger: invocationLedger ?? new MemoryInvocationLedger(),
+      subjectMetadataField: config.erasureSubjectMetadataField,
+      statsQueryPepper: config.statsQueryPepper,
+      logger,
+    }),
+  );
+  app.get(
+    "/admin/stats",
+    authMiddleware,
+    authorizeAdmin,
+    collectionAccessQuery,
+    adminStatsHandler,
+  );
 
   // ── Read-only query endpoints (mirror the MCP read tools) ────────────────
-  app.get("/documents", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.listDocuments);
-  app.get("/documents/content", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.getDocuments);
-  app.get("/document", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.getDocument);
-  app.get("/folders", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.listFolders);
-  app.get("/summaries", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.getSummaries);
-  app.get("/summary", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.getSummary);
-  app.get("/collection-stats", authMiddleware, authorizeRead, collectionAccessQuery, queryHandlers.collectionStats);
+  app.get(
+    "/documents",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.listDocuments,
+  );
+  app.get(
+    "/documents/content",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getDocuments,
+  );
+  app.get(
+    "/document",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getDocument,
+  );
+  app.get(
+    "/folders",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.listFolders,
+  );
+  app.get(
+    "/summaries",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getSummaries,
+  );
+  app.get(
+    "/summary",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.getSummary,
+  );
+  app.get(
+    "/collection-stats",
+    authMiddleware,
+    authorizeRead,
+    collectionAccessQuery,
+    queryHandlers.collectionStats,
+  );
 
-  app.get("/collections", authMiddleware, authorizeGlobalAdmin, listCollectionsHandler);
+  app.get(
+    "/collections",
+    authMiddleware,
+    authorizeGlobalAdmin,
+    listCollectionsHandler,
+  );
   app.delete(
     "/collections/:name",
     authMiddleware,
@@ -1273,7 +1437,9 @@ export function createApp(
   app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
     const bodyError = err as { type?: string; status?: number };
     if (bodyError.type === "entity.too.large" || bodyError.status === 413) {
-      res.status(413).json({ error: "Request body exceeds the configured size limit" });
+      res
+        .status(413)
+        .json({ error: "Request body exceeds the configured size limit" });
       return;
     }
     const code =
@@ -1397,15 +1563,23 @@ async function main(): Promise<void> {
     connectionString: config.postgresUrl,
     logger,
     efSearch: config.hnswEfSearch,
+    hnswIterativeScan: config.hnswIterativeScan,
+    hnswMaxScanTuples: config.hnswMaxScanTuples,
     efConstruction: config.hnswEfConstruction,
     hnswM: config.hnswM,
     halfPrecision: config.halfPrecision,
     defaultFtsLanguage: config.defaultFtsLanguage,
+    documentAclDefault: config.documentAclDefault,
     statsRetentionDays: config.statsRetentionDays,
+    statsStoreRawQuery: config.statsStoreRawQuery,
+    statsQueryPepper: config.statsQueryPepper,
     rrfK: config.rrfK,
     rrfWeightDense: config.rrfWeightDense,
     rrfWeightFts: config.rrfWeightFts,
     rrfWeightIdentifier: config.rrfWeightIdentifier,
+    rrfWeightSparse: config.rrfWeightSparse,
+    rrfMissingZero: config.rrfMissingZero,
+    ftsRanker: config.ftsRanker,
     statsFlushIntervalMs: config.statsFlushIntervalMs,
     quantization: config.quantization,
     embeddingModel: config.embedModel,
@@ -1454,6 +1628,21 @@ async function main(): Promise<void> {
   } catch (err) {
     logger.error({ err }, "Schema migration failed; aborting startup");
     process.exit(1);
+  }
+
+  // Check the installed pgvector version once at startup (Requirement 4.2):
+  // < 0.8 forces hnsw.iterative_scan off with a warning. On a brand-new
+  // database the extension is created lazily with the first collection, so a
+  // null verdict here only defers the decision — searches re-check lazily.
+  try {
+    const supportsIterative = await postgresClient.ensurePgvectorVersion();
+    if (supportsIterative === null) {
+      logger.info(
+        "pgvector extension not installed yet; iterative-scan support will be checked with the first search",
+      );
+    }
+  } catch (err) {
+    logger.warn({ err }, "pgvector version check failed at startup");
   }
 
   let invocationLedger: InvocationLedger;

@@ -139,7 +139,7 @@ async function recordMigration(
  * Current version of the global (system-table) schema.
  * Increment when adding a step to GLOBAL_MIGRATIONS.
  */
-export const GLOBAL_SCHEMA_VERSION = 8;
+export const GLOBAL_SCHEMA_VERSION = 9;
 
 interface MigrationStep {
   toVersion: number;
@@ -207,8 +207,12 @@ export const GLOBAL_MIGRATIONS: MigrationStep[] = [
           PRIMARY KEY (tenant_id, collection, asset_id)
         )
       `);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_vs_document_assets_document ON vs_document_assets(tenant_id, collection, document_reference)`);
-      await client.query(`CREATE INDEX IF NOT EXISTS idx_vs_document_assets_figure ON vs_document_assets(tenant_id, collection, document_reference, figure_id)`);
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_vs_document_assets_document ON vs_document_assets(tenant_id, collection, document_reference)`,
+      );
+      await client.query(
+        `CREATE INDEX IF NOT EXISTS idx_vs_document_assets_figure ON vs_document_assets(tenant_id, collection, document_reference, figure_id)`,
+      );
     },
   },
   {
@@ -261,6 +265,38 @@ export const GLOBAL_MIGRATIONS: MigrationStep[] = [
       // no-op on redeploy; the same DDL runs from the revision schema's lazy
       // ensure, so a deployment that skips this step is still brought current.
       await ensureRevisionSchema(client);
+    },
+  },
+  {
+    toVersion: 9,
+    description:
+      "Add vs_search_stats.query_hash (HMAC/SHA-256) and minimise the legacy query column: backfill already-hashed rows, drop the NOT NULL constraint, and clear remaining legacy rows that may still carry raw query text",
+    up: async (client) => {
+      // Requirement 2.6: query statistics are keyed by query_hash from now on;
+      // the raw query column is only written when STATS_STORE_RAW_QUERY=true
+      // and is therefore nullable. Rows written by older versions already
+      // stored a plain SHA-256 in `query` — those move to query_hash and have
+      // their query nulled. Any row whose `query` is NOT a 64-char hex digest
+      // predates the hashing and may contain raw personal data, so it is
+      // deleted outright (data minimisation: Altbestände werden geleert).
+      await client.query(`
+        ALTER TABLE vs_search_stats
+          ADD COLUMN IF NOT EXISTS query_hash TEXT
+      `);
+      // Raw storage is opt-in from now on, so the column must accept NULL.
+      // DROP NOT NULL must come BEFORE the backfill: the UPDATE below nulls
+      // `query`, which a legacy NOT NULL column would reject.
+      await client.query(`
+        ALTER TABLE vs_search_stats ALTER COLUMN query DROP NOT NULL
+      `);
+      await client.query(`
+        UPDATE vs_search_stats
+          SET query_hash = query, query = NULL
+        WHERE query_hash IS NULL AND query ~ '^[0-9a-f]{64}$'
+      `);
+      await client.query(`
+        DELETE FROM vs_search_stats WHERE query_hash IS NULL
+      `);
     },
   },
 

@@ -13,6 +13,14 @@ import {
 } from "./request-principal.js";
 
 /**
+ * Scope a static-token service principal must carry before the gateway-
+ * asserted `X-User`/`X-Groups` headers are honoured (Req 3.4). Without it the
+ * headers are ignored and the caller stays a plain service context — asserting
+ * an end-user identity on behalf of others is a privilege, not a default.
+ */
+export const ASSERT_IDENTITY_SCOPE = "search.assert-identity";
+
+/**
  * Build a principal from asserted headers, falling back to the service context
  * when nothing is asserted. Shared by the static-token and token-session paths,
  * which have identical trust characteristics.
@@ -193,18 +201,34 @@ export function createAuthMiddleware(
       return;
     }
 
-    if ((mode === "token" || mode === "token_or_oidc") && apiToken !== null && safeCompare(bearerToken, apiToken)) {
-      const asserted = readAssertedIdentity(req);
-      const base = asserted.userId !== undefined || asserted.userGroups !== undefined
-        ? { ...asserted, source: "asserted" as const }
-        : SERVICE_PRINCIPAL;
-      setPrincipal(req, normalizePrincipal({
-        ...base,
-        ...(servicePrincipal.scopes?.length ? { scopes: servicePrincipal.scopes } : {}),
-        tenantId: tenantIsolationEnabled
-          ? servicePrincipal.tenantId
-          : defaultTenantId,
-      }));
+    if (
+      (mode === "token" || mode === "token_or_oidc") &&
+      apiToken !== null &&
+      safeCompare(bearerToken, apiToken)
+    ) {
+      // Req 3.4: asserted identity headers are only trusted from a static
+      // token whose configured scopes include search.assert-identity.
+      const mayAssert =
+        servicePrincipal.scopes?.includes(ASSERT_IDENTITY_SCOPE) === true;
+      const asserted = mayAssert
+        ? readAssertedIdentity(req)
+        : { userId: undefined, userGroups: undefined };
+      const base =
+        asserted.userId !== undefined || asserted.userGroups !== undefined
+          ? { ...asserted, source: "asserted" as const }
+          : SERVICE_PRINCIPAL;
+      setPrincipal(
+        req,
+        normalizePrincipal({
+          ...base,
+          ...(servicePrincipal.scopes?.length
+            ? { scopes: servicePrincipal.scopes }
+            : {}),
+          tenantId: tenantIsolationEnabled
+            ? servicePrincipal.tenantId
+            : defaultTenantId,
+        }),
+      );
       return next();
     }
 

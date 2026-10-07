@@ -608,6 +608,98 @@ describe("search handler reranking", () => {
   });
 });
 
+// ─── MIN_RERANK_SCORE / abstention tests (task 6.10, Requirement 4.8) ────────
+
+describe("search handler MIN_RERANK_SCORE abstention", () => {
+  function threeResults(): SearchResult[] {
+    return [
+      {
+        id: "a",
+        score: 0.9,
+        content: "doc A",
+        metadata: {},
+        reference: "a",
+        created: new Date(),
+        modified: new Date(),
+      },
+      {
+        id: "b",
+        score: 0.8,
+        content: "doc B",
+        metadata: {},
+        reference: "b",
+        created: new Date(),
+        modified: new Date(),
+      },
+      {
+        id: "c",
+        score: 0.7,
+        content: "doc C",
+        metadata: {},
+        reference: "c",
+        created: new Date(),
+        modified: new Date(),
+      },
+    ];
+  }
+
+  function handlerWith(minRerankScore?: number | null) {
+    return createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
+      createMockPostgresClient({ search: { ok: true, result: threeResults() } }),
+      logger,
+      minRerankScore === undefined ? {} : { minRerankScore },
+    );
+  }
+
+  it("filters below-threshold hits and reports the abstention signal", async () => {
+    const handler = handlerWith(0.75);
+    const res = mockRes();
+    await handler(mockReq("q") as never, res as never, vi.fn());
+    expect(res.statusCode).toBe(200);
+    const body = res.body as {
+      results: SearchResult[];
+      abstention?: Record<string, unknown>;
+    };
+    expect(body.results.map((r) => r.id)).toEqual(["a", "b"]);
+    expect(body.abstention).toEqual({
+      threshold: 0.75,
+      score_kind: "retrieval",
+      candidates: 3,
+      kept: 2,
+      abstain: false,
+    });
+  });
+
+  it("abstains with an empty result list when all hits fall below", async () => {
+    const handler = handlerWith(0.95);
+    const res = mockRes();
+    await handler(mockReq("q") as never, res as never, vi.fn());
+    const body = res.body as {
+      results: SearchResult[];
+      abstention?: { abstain: boolean; kept: number };
+    };
+    expect(body.results).toEqual([]);
+    expect(body.abstention?.abstain).toBe(true);
+    expect(body.abstention?.kept).toBe(0);
+  });
+
+  it("emits no abstention field when the threshold is unset", async () => {
+    for (const options of [undefined, null] as const) {
+      const handler = handlerWith(options);
+      const res = mockRes();
+      await handler(mockReq("q") as never, res as never, vi.fn());
+      const body = res.body as Record<string, unknown>;
+      expect((body["results"] as SearchResult[]).map((r) => r.id)).toEqual([
+        "a",
+        "b",
+        "c",
+      ]);
+      expect(body).not.toHaveProperty("abstention");
+    }
+  });
+});
+
 // ─── Hybrid flag tests ────────────────────────────────────────────────────────
 
 describe("search handler hybrid flag", () => {

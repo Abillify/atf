@@ -512,3 +512,59 @@ export function groupResultsV2(
   out.sort((a, b) => b.score - a.score);
   return out;
 }
+
+// ─── MIN_RERANK_SCORE / abstention (platform-hardening task 6.10) ────────────
+
+/**
+ * Abstention signal emitted alongside the results when a relevance threshold
+ * (`MIN_RERANK_SCORE`, Requirement 4.8) is configured. Consumers (agents,
+ * answer pipelines) use `abstain` to withhold an answer instead of answering
+ * from irrelevant evidence.
+ */
+export interface AbstentionSignal {
+  /** The configured threshold the results were filtered against. */
+  threshold: number;
+  /** Which score the threshold was applied to. */
+  score_kind: "rerank" | "retrieval";
+  /** Candidates that entered the filter (before). */
+  candidates: number;
+  /** Results that met the threshold (after). */
+  kept: number;
+  /** True when NO result met the threshold — the caller should abstain. */
+  abstain: boolean;
+}
+
+export interface MinScoreOutcome<T> {
+  results: T[];
+  /** Present only when a threshold was configured (enabled). */
+  abstention?: AbstentionSignal;
+}
+
+/**
+ * Filter final search results to `score >= minScore` and derive the
+ * abstention signal (Requirement 4.8). `minScore` null/undefined disables
+ * filtering entirely and emits no signal, so default deployments are
+ * unchanged. `reranked` names the score kind the threshold applies to:
+ * the cross-encoder score when reranking was actually applied, the
+ * retrieval score otherwise. Inputs are never mutated.
+ */
+export function applyMinScore<T extends { score: number }>(
+  results: T[],
+  minScore: number | null | undefined,
+  reranked: boolean,
+): MinScoreOutcome<T> {
+  if (minScore === null || minScore === undefined) {
+    return { results };
+  }
+  const kept = results.filter((r) => r.score >= minScore);
+  return {
+    results: kept,
+    abstention: {
+      threshold: minScore,
+      score_kind: reranked ? "rerank" : "retrieval",
+      candidates: results.length,
+      kept: kept.length,
+      abstain: kept.length === 0,
+    },
+  };
+}

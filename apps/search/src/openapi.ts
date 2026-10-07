@@ -33,6 +33,41 @@ const booleanHeader = (
 
 // ─── Shared schema components ─────────────────────────────────────────────────
 
+/**
+ * MIN_RERANK_SCORE abstention signal (task 6.10, Requirement 4.8). Present
+ * only when a relevance threshold is configured; `abstain: true` means no
+ * result reached the threshold.
+ */
+const abstentionSchema = {
+  type: "object",
+  required: ["threshold", "score_kind", "candidates", "kept", "abstain"],
+  properties: {
+    threshold: {
+      type: "number",
+      description: "The configured MIN_RERANK_SCORE threshold.",
+    },
+    score_kind: {
+      type: "string",
+      enum: ["rerank", "retrieval"],
+      description:
+        "Which score the threshold was compared against: reranker score when " +
+        "reranking was applied, retrieval score otherwise.",
+    },
+    candidates: {
+      type: "integer",
+      description: "Number of results before the threshold filter.",
+    },
+    kept: {
+      type: "integer",
+      description: "Number of results at or above the threshold.",
+    },
+    abstain: {
+      type: "boolean",
+      description: "True when no result reached the threshold.",
+    },
+  },
+};
+
 const searchResultSchema = {
   type: "object",
   required: [
@@ -191,6 +226,40 @@ const revisionErrorSchema = {
 };
 
 /**
+ * Per-store erasure outcome as reported by `POST /v1/erasure` — mirrors
+ * `ErasureResponse` from `@atf/erasure-contract`.
+ */
+const erasureResponseSchema = {
+  type: "object",
+  required: ["requestId", "service", "results"],
+  properties: {
+    requestId: { type: "string", format: "uuid" },
+    service: { type: "string", description: 'Always `"search"` here.' },
+    results: {
+      type: "array",
+      items: {
+        type: "object",
+        required: ["store", "status", "erased"],
+        properties: {
+          store: {
+            type: "string",
+            description:
+              "One of `search.documents`, `search.stats`, `search.invocation_ledger`.",
+          },
+          status: { type: "string", enum: ["ok", "failed", "not_configured"] },
+          erased: {
+            type: "integer",
+            minimum: 0,
+            description: "Rows removed (or counted, for dryRun).",
+          },
+          error: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+/**
  * A documented revision error response: the description names the possible
  * `code` values and `x-error-codes` lists them for tooling.
  */
@@ -231,6 +300,12 @@ export function buildOpenApiSpec(serverUrl: string) {
       { name: "Ingest", description: "Add or update documents" },
       { name: "Delete", description: "Remove documents" },
       {
+        name: "Erasure",
+        description:
+          "Subject-related erasure (DSAR): idempotent, service-authenticated " +
+          "deletion of a subject's or tenant's data across Search stores",
+      },
+      {
         name: "Query",
         description:
           "Read-only lookups: list/read documents, folders, and summaries",
@@ -253,8 +328,10 @@ export function buildOpenApiSpec(serverUrl: string) {
       },
       schemas: {
         SearchResult: searchResultSchema,
+        Abstention: abstentionSchema,
         Error: errorSchema,
         RevisionError: revisionErrorSchema,
+        ErasureResponse: erasureResponseSchema,
       },
     },
     security: [{ BearerToken: [] }],
@@ -410,7 +487,8 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "X-Valid-At",
               in: "header",
-              description: "RFC 3339 instant with explicit timezone. With include-all=false selects one as-of version per logical document; with true keeps every version effective by this instant.",
+              description:
+                "RFC 3339 instant with explicit timezone. With include-all=false selects one as-of version per logical document; with true keeps every version effective by this instant.",
               schema: { type: "string", format: "date-time" },
             },
             booleanHeader(
@@ -497,6 +575,11 @@ export function buildOpenApiSpec(serverUrl: string) {
                         description:
                           "Query embedding (opt-in via X-Include-Query-Vector).",
                       },
+                      abstention: {
+                        $ref: "#/components/schemas/Abstention",
+                        description:
+                          "MIN_RERANK_SCORE abstention signal (only when a threshold is configured).",
+                      },
                     },
                   },
                 },
@@ -529,42 +612,180 @@ export function buildOpenApiSpec(serverUrl: string) {
           tags: ["Search"],
           operationId: "evaluateRetrieval",
           summary: "Evaluate bounded retrieval qrels",
-          description: "Evaluates an in-memory, tenant- and exact body.collection-ACL-scoped golden set with production search defaults; X-Collection is ignored. Supports a version label, deterministic dataset provenance hash and optional release thresholds; no qrels or query text are persisted.",
+          description:
+            "Evaluates an in-memory, tenant- and exact body.collection-ACL-scoped golden set with production search defaults; X-Collection is ignored. Supports a version label, deterministic dataset provenance hash and optional release thresholds; no qrels or query text are persisted.",
           requestBody: {
             required: true,
-            content: { "application/json": { schema: {
-              type: "object", required: ["collection", "queries"],
-              properties: {
-                collection: { type: "string" }, k: { type: "integer", minimum: 1, maximum: 100, default: 10, description: "Legacy compatible primary cutoff" },
-                cutoffs: { type: "array", items: { type: "integer", minimum: 1, maximum: 100 }, default: [10, 20, 50], description: "Metrics cutoffs; retrieval runs once to the maximum" },
-                dataset_version: { type: "string", maxLength: 128 },
-                hybrid: { type: "boolean" }, include_all_versions: { type: "boolean", default: false },
-                valid_at: { type: "string", format: "date-time", description: "Optional RFC 3339 as-of instant with explicit timezone" },
-                candidate_multiplier: { type: "integer", minimum: 1, maximum: 20 },
-                deadline_ms: { type: "integer", minimum: 1, maximum: 300000, default: 60000 },
-                concurrency: { type: "integer", minimum: 1, maximum: 8, default: 4 },
-                baseline: { type: "object", minProperties: 1, additionalProperties: false, properties: { min_recall_at_k: { type: "number", minimum: 0, maximum: 1 }, min_mrr: { type: "number", minimum: 0, maximum: 1 }, min_ndcg_at_k: { type: "number", minimum: 0, maximum: 1 } } },
-                queries: { type: "array", minItems: 1, maxItems: 100, items: { type: "object", required: ["id", "query", "qrels"], properties: { id: { type: "string", maxLength: 256 }, query: { type: "string", maxLength: 8192 }, qrels: { type: "array", minItems: 1, maxItems: 100, items: { type: "object", required: ["reference"], properties: { reference: { type: "string", maxLength: 2048 }, relevance: { type: "number", minimum: 0 } } } } } } },
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["collection", "queries"],
+                  properties: {
+                    collection: { type: "string" },
+                    k: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 100,
+                      default: 10,
+                      description: "Legacy compatible primary cutoff",
+                    },
+                    cutoffs: {
+                      type: "array",
+                      items: { type: "integer", minimum: 1, maximum: 100 },
+                      default: [10, 20, 50],
+                      description:
+                        "Metrics cutoffs; retrieval runs once to the maximum",
+                    },
+                    dataset_version: { type: "string", maxLength: 128 },
+                    hybrid: { type: "boolean" },
+                    include_all_versions: { type: "boolean", default: false },
+                    valid_at: {
+                      type: "string",
+                      format: "date-time",
+                      description:
+                        "Optional RFC 3339 as-of instant with explicit timezone",
+                    },
+                    candidate_multiplier: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 20,
+                    },
+                    deadline_ms: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 300000,
+                      default: 60000,
+                    },
+                    concurrency: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 8,
+                      default: 4,
+                    },
+                    baseline: {
+                      type: "object",
+                      minProperties: 1,
+                      additionalProperties: false,
+                      properties: {
+                        min_recall_at_k: {
+                          type: "number",
+                          minimum: 0,
+                          maximum: 1,
+                        },
+                        min_mrr: { type: "number", minimum: 0, maximum: 1 },
+                        min_ndcg_at_k: {
+                          type: "number",
+                          minimum: 0,
+                          maximum: 1,
+                        },
+                      },
+                    },
+                    queries: {
+                      type: "array",
+                      minItems: 1,
+                      maxItems: 100,
+                      items: {
+                        type: "object",
+                        required: ["id", "query", "qrels"],
+                        properties: {
+                          id: { type: "string", maxLength: 256 },
+                          query: { type: "string", maxLength: 8192 },
+                          qrels: {
+                            type: "array",
+                            minItems: 1,
+                            maxItems: 100,
+                            items: {
+                              type: "object",
+                              required: ["reference"],
+                              properties: {
+                                reference: { type: "string", maxLength: 2048 },
+                                relevance: { type: "number", minimum: 0 },
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
               },
-            } } },
+            },
           },
           responses: {
             "200": {
-              description: "Metrics, effective retrieval parameters, deterministic dataset provenance hash and optional release-gate result",
-              content: { "application/json": { schema: {
-                type: "object", required: ["status", "collection", "parameters", "dataset", "metrics"],
-                properties: {
-                  status: { type: "string", enum: ["ok"] },
-                  collection: { type: "string" },
-                  parameters: { type: "object", required: ["k", "hybrid", "include_all_versions", "valid_at", "candidate_multiplier"], properties: { k: { type: "integer" }, hybrid: { type: "boolean" }, include_all_versions: { type: "boolean" }, valid_at: { type: ["string", "null"], format: "date-time" }, candidate_multiplier: { type: "integer" } } },
-                  dataset: { type: "object", description: "Client version label plus server-computed SHA-256 over the canonical bounded qrels input", required: ["version", "hash"], properties: { version: { type: ["string", "null"] }, hash: { type: "string", pattern: "^[a-f0-9]{64}$" } } },
-                  metrics: { type: "object", required: ["recall_at_k", "mrr", "ndcg_at_k", "evaluated_queries", "skipped_queries"] },
-                  release_gate: { type: "object", properties: { passed: { type: "boolean" }, thresholds: { type: "object" } } },
+              description:
+                "Metrics, effective retrieval parameters, deterministic dataset provenance hash and optional release-gate result",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    required: [
+                      "status",
+                      "collection",
+                      "parameters",
+                      "dataset",
+                      "metrics",
+                    ],
+                    properties: {
+                      status: { type: "string", enum: ["ok"] },
+                      collection: { type: "string" },
+                      parameters: {
+                        type: "object",
+                        required: [
+                          "k",
+                          "hybrid",
+                          "include_all_versions",
+                          "valid_at",
+                          "candidate_multiplier",
+                        ],
+                        properties: {
+                          k: { type: "integer" },
+                          hybrid: { type: "boolean" },
+                          include_all_versions: { type: "boolean" },
+                          valid_at: {
+                            type: ["string", "null"],
+                            format: "date-time",
+                          },
+                          candidate_multiplier: { type: "integer" },
+                        },
+                      },
+                      dataset: {
+                        type: "object",
+                        description:
+                          "Client version label plus server-computed SHA-256 over the canonical bounded qrels input",
+                        required: ["version", "hash"],
+                        properties: {
+                          version: { type: ["string", "null"] },
+                          hash: { type: "string", pattern: "^[a-f0-9]{64}$" },
+                        },
+                      },
+                      metrics: {
+                        type: "object",
+                        required: [
+                          "recall_at_k",
+                          "mrr",
+                          "ndcg_at_k",
+                          "evaluated_queries",
+                          "skipped_queries",
+                        ],
+                      },
+                      release_gate: {
+                        type: "object",
+                        properties: {
+                          passed: { type: "boolean" },
+                          thresholds: { type: "object" },
+                        },
+                      },
+                    },
+                  },
                 },
-              } } },
+              },
             },
             "400": { description: "Invalid or oversized evaluation" },
-            "403": { description: "Tenant, scope or exact body collection denied" },
+            "403": {
+              description: "Tenant, scope or exact body collection denied",
+            },
             "408": { description: "Evaluation deadline exceeded" },
             "502": { description: "Embedding or retrieval failure" },
           },
@@ -644,7 +865,8 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "X-Valid-From",
               in: "header",
-              description: "Optional business-validity start. Must be RFC 3339 date-time with an explicit timezone.",
+              description:
+                "Optional business-validity start. Must be RFC 3339 date-time with an explicit timezone.",
               schema: { type: "string", format: "date-time" },
             },
             {
@@ -705,22 +927,42 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "X-Document-Structure",
               in: "header",
-              description: "Enable automatic summary/page/figure/table extraction. Default: auto.",
-              schema: { type: "string", enum: ["auto", "off"], default: "auto" },
+              description:
+                "Enable automatic summary/page/figure/table extraction. Default: auto.",
+              schema: {
+                type: "string",
+                enum: ["auto", "off"],
+                default: "auto",
+              },
             },
             {
               name: "X-Summary-Mode",
               in: "header",
-              description: "Select embedded/generated summary precedence. `generate` permits generation but still requires X-Summarize=true and a configured SUMMARY_MODEL.",
-              schema: { type: "string", enum: ["auto", "generate", "embedded", "off"], default: "auto" },
+              description:
+                "Select embedded/generated summary precedence. `generate` permits generation but still requires X-Summarize=true and a configured SUMMARY_MODEL.",
+              schema: {
+                type: "string",
+                enum: ["auto", "generate", "embedded", "off"],
+                default: "auto",
+              },
             },
-            booleanHeader("X-Page-Markers", "Extract ## Seite/Page markers (default true in auto mode)."),
-            booleanHeader("X-Figure-Chunks", "Create independent image-description chunks (default true in auto mode)."),
-            booleanHeader("X-Normalize-Tables", "Convert HTML tables, including row/column spans, to Markdown (default true in auto mode)."),
+            booleanHeader(
+              "X-Page-Markers",
+              "Extract ## Seite/Page markers (default true in auto mode).",
+            ),
+            booleanHeader(
+              "X-Figure-Chunks",
+              "Create independent image-description chunks (default true in auto mode).",
+            ),
+            booleanHeader(
+              "X-Normalize-Tables",
+              "Convert HTML tables, including row/column spans, to Markdown (default true in auto mode).",
+            ),
             {
               name: "X-Extract-Contract",
               in: "header",
-              description: "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; when present it must be a v1 marker-grammar id — an incompatible major is rejected with HTTP 400.",
+              description:
+                "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; when present it must be a v1 marker-grammar id — an incompatible major is rejected with HTTP 400.",
               schema: { type: "string" },
             },
             {
@@ -808,7 +1050,8 @@ export function buildOpenApiSpec(serverUrl: string) {
               name: "X-Reference",
               in: "header",
               required: true,
-              description: "Document identity. Validated before the conversion is paid for.",
+              description:
+                "Document identity. Validated before the conversion is paid for.",
               schema: { type: "string" },
             },
             {
@@ -823,15 +1066,23 @@ export function buildOpenApiSpec(serverUrl: string) {
             required: true,
             description: "The raw document, sent with its own Content-Type.",
             content: {
-              "application/pdf": { schema: { type: "string", format: "binary" } },
-              "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+              "application/pdf": {
                 schema: { type: "string", format: "binary" },
               },
-              "application/msword": { schema: { type: "string", format: "binary" } },
-              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                {
+                  schema: { type: "string", format: "binary" },
+                },
+              "application/msword": {
                 schema: { type: "string", format: "binary" },
               },
-              "application/vnd.ms-excel": { schema: { type: "string", format: "binary" } },
+              "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":
+                {
+                  schema: { type: "string", format: "binary" },
+                },
+              "application/vnd.ms-excel": {
+                schema: { type: "string", format: "binary" },
+              },
               "image/png": { schema: { type: "string", format: "binary" } },
               "image/jpeg": { schema: { type: "string", format: "binary" } },
               "image/gif": { schema: { type: "string", format: "binary" } },
@@ -852,7 +1103,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                 },
               },
             },
-            "400": { description: "Missing X-Reference, empty body, or invalid headers" },
+            "400": {
+              description:
+                "Missing X-Reference, empty body, or invalid headers",
+            },
             "401": { description: "Unauthorized" },
             "404": { description: "CONVERTER_URL is not configured" },
             "413": { description: "Upload exceeds CONVERTER_UPLOAD_LIMIT" },
@@ -860,7 +1114,10 @@ export function buildOpenApiSpec(serverUrl: string) {
             "422": { description: "The document exceeds Extract's page limit" },
             "429": { description: "Rate limit exceeded" },
             "502": { description: "Extract or the upload/job call failed" },
-            "504": { description: "Extract did not respond within CONVERTER_TIMEOUT_MS" },
+            "504": {
+              description:
+                "Extract did not respond within CONVERTER_TIMEOUT_MS",
+            },
           },
         },
       },
@@ -891,7 +1148,12 @@ export function buildOpenApiSpec(serverUrl: string) {
                       tags: { type: "array", items: { type: "string" } },
                       metadata: { type: "object" },
                       version: { type: "string" },
-                      valid_from: { type: ["string", "null"], format: "date-time", description: "Per-document value overrides X-Valid-From; null explicitly uses the created-time fallback." },
+                      valid_from: {
+                        type: ["string", "null"],
+                        format: "date-time",
+                        description:
+                          "Per-document value overrides X-Valid-From; null explicitly uses the created-time fallback.",
+                      },
                       allowed_users: {
                         type: "array",
                         items: { type: "string" },
@@ -908,7 +1170,13 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
           parameters: [
             { name: "X-Collection", in: "header", schema: { type: "string" } },
-            { name: "X-Valid-From", in: "header", description: "Shared RFC 3339 validity start; per-document valid_from overrides it.", schema: { type: "string", format: "date-time" } },
+            {
+              name: "X-Valid-From",
+              in: "header",
+              description:
+                "Shared RFC 3339 validity start; per-document valid_from overrides it.",
+              schema: { type: "string", format: "date-time" },
+            },
             {
               name: "X-Version-Mode",
               in: "header",
@@ -929,15 +1197,38 @@ export function buildOpenApiSpec(serverUrl: string) {
               "X-Semantic-Chunking",
               "Use semantic chunking for all documents in the batch.",
             ),
-            { name: "X-Document-Structure", in: "header", schema: { type: "string", enum: ["auto", "off"], default: "auto" } },
-            { name: "X-Summary-Mode", in: "header", schema: { type: "string", enum: ["auto", "generate", "embedded", "off"], default: "auto" } },
+            {
+              name: "X-Document-Structure",
+              in: "header",
+              schema: {
+                type: "string",
+                enum: ["auto", "off"],
+                default: "auto",
+              },
+            },
+            {
+              name: "X-Summary-Mode",
+              in: "header",
+              schema: {
+                type: "string",
+                enum: ["auto", "generate", "embedded", "off"],
+                default: "auto",
+              },
+            },
             booleanHeader("X-Page-Markers", "Extract Markdown page markers."),
-            booleanHeader("X-Figure-Chunks", "Create independent figure-description chunks."),
-            booleanHeader("X-Normalize-Tables", "Convert HTML tables to Markdown."),
+            booleanHeader(
+              "X-Figure-Chunks",
+              "Create independent figure-description chunks.",
+            ),
+            booleanHeader(
+              "X-Normalize-Tables",
+              "Convert HTML tables to Markdown.",
+            ),
             {
               name: "X-Extract-Contract",
               in: "header",
-              description: "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; an incompatible major is rejected with HTTP 400.",
+              description:
+                "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; an incompatible major is rejected with HTTP 400.",
               schema: { type: "string" },
             },
           ],
@@ -986,21 +1277,50 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
           parameters: [
             { name: "X-Collection", in: "header", schema: { type: "string" } },
-            { name: "X-Valid-From", in: "header", description: "Shared RFC 3339 validity start; per-document valid_from overrides it.", schema: { type: "string", format: "date-time" } },
+            {
+              name: "X-Valid-From",
+              in: "header",
+              description:
+                "Shared RFC 3339 validity start; per-document valid_from overrides it.",
+              schema: { type: "string", format: "date-time" },
+            },
             {
               name: "X-Version-Mode",
               in: "header",
               schema: { type: "string", enum: ["replace", "version"] },
             },
-            { name: "X-Document-Structure", in: "header", schema: { type: "string", enum: ["auto", "off"], default: "auto" } },
-            { name: "X-Summary-Mode", in: "header", schema: { type: "string", enum: ["auto", "generate", "embedded", "off"], default: "auto" } },
+            {
+              name: "X-Document-Structure",
+              in: "header",
+              schema: {
+                type: "string",
+                enum: ["auto", "off"],
+                default: "auto",
+              },
+            },
+            {
+              name: "X-Summary-Mode",
+              in: "header",
+              schema: {
+                type: "string",
+                enum: ["auto", "generate", "embedded", "off"],
+                default: "auto",
+              },
+            },
             booleanHeader("X-Page-Markers", "Extract Markdown page markers."),
-            booleanHeader("X-Figure-Chunks", "Create independent figure-description chunks."),
-            booleanHeader("X-Normalize-Tables", "Convert HTML tables to Markdown."),
+            booleanHeader(
+              "X-Figure-Chunks",
+              "Create independent figure-description chunks.",
+            ),
+            booleanHeader(
+              "X-Normalize-Tables",
+              "Convert HTML tables to Markdown.",
+            ),
             {
               name: "X-Extract-Contract",
               in: "header",
-              description: "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; an incompatible major is rejected with HTTP 400.",
+              description:
+                "Producer's extract-contract id (e.g. atf-extract/1.1.0). Optional; an incompatible major is rejected with HTTP 400.",
               schema: { type: "string" },
             },
           ],
@@ -1033,14 +1353,34 @@ export function buildOpenApiSpec(serverUrl: string) {
           operationId: "putDocumentAsset",
           summary: "Store or replace an original figure image",
           parameters: [
-            { name: "assetId", in: "path", required: true, schema: { type: "string", pattern: "^[a-f0-9]{64}$" } },
-            { name: "X-Collection", in: "header", schema: { type: "string", default: "documents" } },
-            { name: "X-Document-Reference", in: "header", required: true, schema: { type: "string" } },
-            { name: "X-Figure-Id", in: "header", required: true, schema: { type: "string" } },
+            {
+              name: "assetId",
+              in: "path",
+              required: true,
+              schema: { type: "string", pattern: "^[a-f0-9]{64}$" },
+            },
+            {
+              name: "X-Collection",
+              in: "header",
+              schema: { type: "string", default: "documents" },
+            },
+            {
+              name: "X-Document-Reference",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Figure-Id",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
           requestBody: {
             required: true,
-            description: "Raw image bytes, maximum 20 MiB. assetId must equal SHA-256(document reference + newline + figure ID).",
+            description:
+              "Raw image bytes, maximum 20 MiB. assetId must equal SHA-256(document reference + newline + figure ID).",
             content: {
               "image/png": { schema: { type: "string", format: "binary" } },
               "image/jpeg": { schema: { type: "string", format: "binary" } },
@@ -1060,16 +1400,32 @@ export function buildOpenApiSpec(serverUrl: string) {
         get: {
           tags: ["Query"],
           operationId: "getDocumentAsset",
-          summary: "Fetch an original figure image when its text document is visible",
+          summary:
+            "Fetch an original figure image when its text document is visible",
           parameters: [
-            { name: "assetId", in: "path", required: true, schema: { type: "string", pattern: "^[a-f0-9]{64}$" } },
-            { name: "collection", in: "query", schema: { type: "string", default: "documents" } },
+            {
+              name: "assetId",
+              in: "path",
+              required: true,
+              schema: { type: "string", pattern: "^[a-f0-9]{64}$" },
+            },
+            {
+              name: "collection",
+              in: "query",
+              schema: { type: "string", default: "documents" },
+            },
             { name: "X-Collection", in: "header", schema: { type: "string" } },
           ],
           responses: {
-            "200": { description: "Original image bytes with Content-Type, ETag and private Cache-Control headers" },
+            "200": {
+              description:
+                "Original image bytes with Content-Type, ETag and private Cache-Control headers",
+            },
             "304": { description: "ETag not modified" },
-            "404": { description: "Asset absent or associated text document not visible" },
+            "404": {
+              description:
+                "Asset absent or associated text document not visible",
+            },
           },
         },
       },
@@ -1121,6 +1477,123 @@ export function buildOpenApiSpec(serverUrl: string) {
         },
       },
 
+      // ── Erasure (DSAR, Requirement 2.5) ──────────────────────────────────
+      "/v1/erasure": {
+        post: {
+          tags: ["Erasure"],
+          operationId: "eraseSubjectData",
+          summary: "Erase subject, reference, or tenant data (DSAR)",
+          description:
+            "Removes documents identified by the request scope — a data subject " +
+            "(allowed_users ACL or the configurable subject metadata field), " +
+            "explicit references (full document cascade), or an entire tenant — " +
+            "plus the subject's or tenant's rows in the search-stats buffer. " +
+            "Requires the `vectorsearch.erasure` scope. Idempotent over " +
+            "`requestId`: a repeated request with the same payload returns the " +
+            "stored result; the same `requestId` with a different payload is " +
+            "rejected with 409. Per-store results are reported honestly: 200 " +
+            "when every store succeeded, 207 when some failed, 502 when all " +
+            "failed.",
+          parameters: [
+            {
+              name: "X-Collection",
+              in: "header",
+              description:
+                "Restrict the erasure to this collection. Without it, every " +
+                "collection visible to the credential is erased.",
+              schema: { type: "string" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  required: ["requestId", "tenantId", "scope"],
+                  properties: {
+                    requestId: {
+                      type: "string",
+                      format: "uuid",
+                      description: "Idempotency key for this erasure request.",
+                    },
+                    tenantId: { type: "string", minLength: 1 },
+                    subject: {
+                      type: "object",
+                      description:
+                        "Identifiers of the data subject. Required (at least " +
+                        "one) for scope=subject.",
+                      properties: {
+                        userId: { type: "string" },
+                        email: { type: "string", format: "email" },
+                        externalIds: {
+                          type: "array",
+                          items: { type: "string" },
+                        },
+                      },
+                    },
+                    scope: {
+                      type: "string",
+                      enum: ["subject", "tenant", "reference"],
+                    },
+                    references: {
+                      type: "array",
+                      items: { type: "string" },
+                      description:
+                        "Document references. Required (at least one) for " +
+                        "scope=reference.",
+                    },
+                    dryRun: {
+                      type: "boolean",
+                      default: false,
+                      description:
+                        "Count what would be erased without deleting.",
+                    },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Every store succeeded (or replay of a done request)",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErasureResponse" },
+                },
+              },
+            },
+            "207": {
+              description: "Some stores failed — per-store results included",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErasureResponse" },
+                },
+              },
+            },
+            "400": { description: "Invalid erasure request" },
+            "401": { description: "Unauthorized" },
+            "403": {
+              description:
+                "Missing vectorsearch.erasure scope or tenant mismatch",
+            },
+            "409": {
+              description:
+                "requestId reused with a different payload, or still in flight",
+            },
+            "502": {
+              description: "Every store failed",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ErasureResponse" },
+                },
+              },
+            },
+          },
+        },
+      },
+
       // ── Query (read-only) ────────────────────────────────────────────────
       "/documents": {
         get: {
@@ -1139,13 +1612,19 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "path_prefix",
               in: "query",
-              description: 'Restrict to documents beneath this folder, e.g. "/Unterlagen Teil 1".',
+              description:
+                'Restrict to documents beneath this folder, e.g. "/Unterlagen Teil 1".',
               schema: { type: "string" },
             },
             {
               name: "limit",
               in: "query",
-              schema: { type: "integer", minimum: 1, maximum: 1000, default: 100 },
+              schema: {
+                type: "integer",
+                minimum: 1,
+                maximum: 1000,
+                default: 100,
+              },
             },
             {
               name: "offset",
@@ -1175,7 +1654,8 @@ export function buildOpenApiSpec(serverUrl: string) {
               name: "reference",
               in: "query",
               required: true,
-              description: "Document reference/path (base_ref) or any chunk reference.",
+              description:
+                "Document reference/path (base_ref) or any chunk reference.",
               schema: { type: "string" },
             },
             {
@@ -1186,7 +1666,12 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "max_chars",
               in: "query",
-              schema: { type: "integer", minimum: 1000, maximum: 2000000, default: 200000 },
+              schema: {
+                type: "integer",
+                minimum: 1000,
+                maximum: 2000000,
+                default: 200000,
+              },
             },
             {
               name: "offset",
@@ -1216,7 +1701,8 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "path_prefix",
               in: "query",
-              description: 'Folder whose documents to read, e.g. "/Unterlagen Teil 1".',
+              description:
+                'Folder whose documents to read, e.g. "/Unterlagen Teil 1".',
               schema: { type: "string" },
             },
             {
@@ -1227,12 +1713,22 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "limit",
               in: "query",
-              schema: { type: "integer", minimum: 1, maximum: 200, default: 20 },
+              schema: {
+                type: "integer",
+                minimum: 1,
+                maximum: 200,
+                default: 20,
+              },
             },
             {
               name: "max_chars",
               in: "query",
-              schema: { type: "integer", minimum: 1000, maximum: 2000000, default: 200000 },
+              schema: {
+                type: "integer",
+                minimum: 1000,
+                maximum: 2000000,
+                default: 200000,
+              },
             },
           ],
           responses: {
@@ -1261,7 +1757,8 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "path_prefix",
               in: "query",
-              description: 'Folder to list, e.g. "/Unterlagen Teil 1". Omit or "/" for the top level.',
+              description:
+                'Folder to list, e.g. "/Unterlagen Teil 1". Omit or "/" for the top level.',
               schema: { type: "string" },
             },
             {
@@ -1294,7 +1791,8 @@ export function buildOpenApiSpec(serverUrl: string) {
               name: "reference",
               in: "query",
               required: true,
-              description: "Document reference/path (base_ref) or any chunk reference.",
+              description:
+                "Document reference/path (base_ref) or any chunk reference.",
               schema: { type: "string" },
             },
             {
@@ -1335,7 +1833,12 @@ export function buildOpenApiSpec(serverUrl: string) {
             {
               name: "limit",
               in: "query",
-              schema: { type: "integer", minimum: 1, maximum: 1000, default: 100 },
+              schema: {
+                type: "integer",
+                minimum: 1,
+                maximum: 1000,
+                default: 100,
+              },
             },
             {
               name: "offset",
@@ -1654,12 +2157,37 @@ export function buildOpenApiSpec(serverUrl: string) {
           tags: ["MCP"],
           operationId: "mcp2026Post",
           summary: "Stateless MCP 2026 tool discovery and invocation",
-          description: "MCP 2026-07-28 stateless HTTP transport. All requests require Bearer authentication, MCP-Protocol-Version, a matching body protocol-version meta field and Mcp-Method; tools/call additionally requires Mcp-Name. Transaction tokens may be supplied in X-Transaction-Token or params._meta[transaction/token]. Errors are JSON-RPC errors: HeaderMismatch (-32020), UnsupportedProtocolVersion (-32022), transaction failures (-32001), access denied (-32003), deadline exceeded (-32008), invalid arguments (-32602), unknown tool (-32601), internal error (-32603).",
+          description:
+            "MCP 2026-07-28 stateless HTTP transport. All requests require Bearer authentication, MCP-Protocol-Version, a matching body protocol-version meta field and Mcp-Method; tools/call additionally requires Mcp-Name. Transaction tokens may be supplied in X-Transaction-Token or params._meta[transaction/token]. Errors are JSON-RPC errors: HeaderMismatch (-32020), UnsupportedProtocolVersion (-32022), transaction failures (-32001), access denied (-32003), deadline exceeded (-32008), invalid arguments (-32602), unknown tool (-32601), internal error (-32603).",
           parameters: [
-            { name: "MCP-Protocol-Version", in: "header", required: true, schema: { type: "string", const: "2026-07-28" } },
-            { name: "Mcp-Method", in: "header", required: true, schema: { type: "string", enum: ["server/discover", "tools/list", "tools/call"] } },
-            { name: "Mcp-Name", in: "header", description: "Required for tools/call and equal to params.name.", schema: { type: "string" } },
-            { name: "X-Transaction-Token", in: "header", description: "Optional for discovery; required for protected calls when transaction enforcement is required.", schema: { type: "string" } },
+            {
+              name: "MCP-Protocol-Version",
+              in: "header",
+              required: true,
+              schema: { type: "string", const: "2026-07-28" },
+            },
+            {
+              name: "Mcp-Method",
+              in: "header",
+              required: true,
+              schema: {
+                type: "string",
+                enum: ["server/discover", "tools/list", "tools/call"],
+              },
+            },
+            {
+              name: "Mcp-Name",
+              in: "header",
+              description: "Required for tools/call and equal to params.name.",
+              schema: { type: "string" },
+            },
+            {
+              name: "X-Transaction-Token",
+              in: "header",
+              description:
+                "Optional for discovery; required for protected calls when transaction enforcement is required.",
+              schema: { type: "string" },
+            },
           ],
           requestBody: {
             required: true,
@@ -1676,17 +2204,42 @@ export function buildOpenApiSpec(serverUrl: string) {
                     _meta: {
                       type: "object",
                       required: ["io.modelcontextprotocol/protocolVersion"],
-                      properties: { "io.modelcontextprotocol/protocolVersion": { const: "2026-07-28" } },
+                      properties: {
+                        "io.modelcontextprotocol/protocolVersion": {
+                          const: "2026-07-28",
+                        },
+                      },
                     },
                   },
                 },
               },
             },
           },
-          responses: { "200": { description: "JSON-RPC complete result" }, "400": { description: "Header, protocol, validation or transaction request failure" }, "401": { description: "Authentication failure" }, "403": { description: "Authorization failure" }, "408": { description: "Deadline exceeded" }, "404": { description: "Tool not found" }, "500": { description: "Internal JSON-RPC failure" } },
+          responses: {
+            "200": { description: "JSON-RPC complete result" },
+            "400": {
+              description:
+                "Header, protocol, validation or transaction request failure",
+            },
+            "401": { description: "Authentication failure" },
+            "403": { description: "Authorization failure" },
+            "408": { description: "Deadline exceeded" },
+            "404": { description: "Tool not found" },
+            "500": { description: "Internal JSON-RPC failure" },
+          },
         },
-        get: { tags: ["MCP"], operationId: "mcp2026Get", summary: "Not supported by stateless MCP", responses: { "405": { description: "Method not allowed" } } },
-        delete: { tags: ["MCP"], operationId: "mcp2026Delete", summary: "Not supported by stateless MCP", responses: { "405": { description: "Method not allowed" } } },
+        get: {
+          tags: ["MCP"],
+          operationId: "mcp2026Get",
+          summary: "Not supported by stateless MCP",
+          responses: { "405": { description: "Method not allowed" } },
+        },
+        delete: {
+          tags: ["MCP"],
+          operationId: "mcp2026Delete",
+          summary: "Not supported by stateless MCP",
+          responses: { "405": { description: "Method not allowed" } },
+        },
       },
 
       // ── v2 revisions (resumable, idempotent handover; Requirements 5.1–5.11) ──
@@ -1701,8 +2254,19 @@ export function buildOpenApiSpec(serverUrl: string) {
             "document versus replace. The revision is authorized against the caller's tenant, " +
             "collection ACL and row ACL, like /ingest.",
           parameters: [
-            { name: "ref", in: "path", required: true, description: "URL-encoded document reference.", schema: { type: "string" } },
-            { name: "Idempotency-Key", in: "header", required: false, schema: { type: "string" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              description: "URL-encoded document reference.",
+              schema: { type: "string" },
+            },
+            {
+              name: "Idempotency-Key",
+              in: "header",
+              required: false,
+              schema: { type: "string" },
+            },
             {
               name: "X-Source-Id",
               in: "header",
@@ -1727,23 +2291,51 @@ export function buildOpenApiSpec(serverUrl: string) {
               name: "X-Allowed-Groups",
               in: "header",
               required: false,
-              description: "Comma-separated groups who may read the document's units (see X-Allowed-Users).",
+              description:
+                "Comma-separated groups who may read the document's units (see X-Allowed-Users).",
               schema: { type: "string" },
             },
           ],
-          requestBody: { required: false, content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
+          },
           responses: {
-            "201": { description: "Revision created", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
-            "200": { description: "Existing revision returned for a repeated Idempotency-Key", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "201": {
+              description: "Revision created",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
+            "200": {
+              description:
+                "Existing revision returned for a repeated Idempotency-Key",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
             "401": { description: "Unauthenticated" },
             "403": { description: "Not authorized for the tenant/collection" },
             "409": revisionError(
               "The Idempotency-Key was already used for a revision of a different document.",
               ["IDEMPOTENCY_KEY_REUSED"],
             ),
-            "500": revisionError("The revision could not be created.", ["REVISION_CREATE_FAILED"]),
+            "500": revisionError("The revision could not be created.", [
+              "REVISION_CREATE_FAILED",
+            ]),
             "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
-            "503": revisionError("Database unreachable; retry with the same Idempotency-Key.", REVISION_503),
+            "503": revisionError(
+              "Database unreachable; retry with the same Idempotency-Key.",
+              REVISION_503,
+            ),
           },
         },
       },
@@ -1759,13 +2351,33 @@ export function buildOpenApiSpec(serverUrl: string) {
             "the revision status and the commit state (a commit answered with 202 shows as " +
             "pending until its staged batches are processed) (Requirement 5.6).",
           parameters: [
-            { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "rev",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
           responses: {
-            "200": { description: "Revision status", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "200": {
+              description: "Revision status",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
             "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
-            "409": revisionError("The revision belongs to a different document reference.", ["REVISION_REFERENCE_MISMATCH"]),
+            "409": revisionError(
+              "The revision belongs to a different document reference.",
+              ["REVISION_REFERENCE_MISMATCH"],
+            ),
             "503": revisionError("Database unreachable; retry.", REVISION_503),
           },
         },
@@ -1774,12 +2386,23 @@ export function buildOpenApiSpec(serverUrl: string) {
           operationId: "deleteRevisionByRev",
           summary: "Abort an uncommitted revision by id",
           parameters: [
-            { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "rev",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
           responses: {
             "200": {
-              description: "Aborted; the revision's staged data is cleaned up with it.",
+              description:
+                "Aborted; the revision's staged data is cleaned up with it.",
               content: {
                 "application/json": {
                   schema: {
@@ -1811,21 +2434,53 @@ export function buildOpenApiSpec(serverUrl: string) {
             "a different digest is a **409**. Records are validated through the contract, then " +
             "staged durably before being acknowledged (Requirements 5.2, 5.3).",
           parameters: [
-            { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            { name: "rev", in: "path", required: true, schema: { type: "string" } },
-            { name: "seq", in: "path", required: true, schema: { type: "integer", minimum: 0 } },
-            { name: "Content-Digest", in: "header", required: true, schema: { type: "string" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "rev",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "seq",
+              in: "path",
+              required: true,
+              schema: { type: "integer", minimum: 0 },
+            },
+            {
+              name: "Content-Digest",
+              in: "header",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
           requestBody: {
             required: true,
-            description: "The batch as NDJSON contract records; bounded by REVISION_BATCH_BODY_LIMIT.",
+            description:
+              "The batch as NDJSON contract records; bounded by REVISION_BATCH_BODY_LIMIT.",
             content: { "application/x-ndjson": { schema: { type: "string" } } },
           },
           responses: {
-            "200": { description: "Batch staged, or a no-op repeat", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "200": {
+              description: "Batch staged, or a no-op repeat",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
             "400": revisionError(
               "Missing/invalid Content-Digest, digest does not match the body, or an invalid X-Extract-Contract header.",
-              ["INVALID_CONTENT_DIGEST", "CONTENT_DIGEST_MISMATCH", "INVALID_EXTRACT_CONTRACT"],
+              [
+                "INVALID_CONTENT_DIGEST",
+                "CONTENT_DIGEST_MISMATCH",
+                "INVALID_EXTRACT_CONTRACT",
+              ],
             ),
             "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
             "409": revisionError(
@@ -1846,7 +2501,10 @@ export function buildOpenApiSpec(serverUrl: string) {
               ["BATCH_VALIDATION_FAILED", "INCOMPATIBLE_EXTRACT_CONTRACT"],
             ),
             "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
-            "503": revisionError("Database unreachable; retry the same seq and digest.", REVISION_503),
+            "503": revisionError(
+              "Database unreachable; retry the same seq and digest.",
+              REVISION_503,
+            ),
           },
         },
       },
@@ -1855,19 +2513,47 @@ export function buildOpenApiSpec(serverUrl: string) {
           tags: ["Revisions v2"],
           operationId: "commitSegment",
           summary: "Commit a segment",
-          description: "Idempotent. Under progressive visibility the segment's pages become searchable at commit.",
+          description:
+            "Idempotent. Under progressive visibility the segment's pages become searchable at commit.",
           parameters: [
-            { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            { name: "rev", in: "path", required: true, schema: { type: "string" } },
-            { name: "n", in: "path", required: true, schema: { type: "integer" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "rev",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "n",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
           ],
           responses: {
-            "200": { description: "Committed", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "200": {
+              description: "Committed",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
             "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
             "409": revisionError(
               "Missing batches (the body lists `missingRanges`), a segment without pages, a closed " +
                 "revision, or a revision of a different document reference.",
-              ["SEGMENT_MISSING_BATCHES", "SEGMENT_NO_PAGES", "REVISION_CLOSED", "REVISION_REFERENCE_MISMATCH"],
+              [
+                "SEGMENT_MISSING_BATCHES",
+                "SEGMENT_NO_PAGES",
+                "REVISION_CLOSED",
+                "REVISION_REFERENCE_MISMATCH",
+              ],
             ),
             "502": revisionError("Database error.", ["POSTGRES_SQL_ERROR"]),
             "503": revisionError(
@@ -1891,16 +2577,37 @@ export function buildOpenApiSpec(serverUrl: string) {
             "(`pending: true`, `isLatest: false`); the previous revision stays visible until the " +
             "worker finishes the switch. Repeat the call or poll the revision status to observe it.",
           parameters: [
-            { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "rev",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
           responses: {
-            "200": { description: "Committed and visible", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "200": {
+              description: "Committed and visible",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
             "202": {
               description:
                 "Commit accepted and durable, switch pending: staged batches are still being " +
                 "processed (`pending: true`, `isLatest: false`). The previous revision stays visible.",
-              content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
             },
             "404": revisionError("No such revision.", ["REVISION_NOT_FOUND"]),
             "409": revisionError(
@@ -1929,10 +2636,21 @@ export function buildOpenApiSpec(serverUrl: string) {
           tags: ["Revisions v2"],
           operationId: "heartbeatRevision",
           summary: "Extend the revision TTL",
-          description: "A paused job heartbeats to keep an uncommitted revision from being TTL-swept (Requirement 5.10).",
+          description:
+            "A paused job heartbeats to keep an uncommitted revision from being TTL-swept (Requirement 5.10).",
           parameters: [
-            { name: "ref", in: "path", required: true, schema: { type: "string" } },
-            { name: "rev", in: "path", required: true, schema: { type: "string" } },
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "rev",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
           responses: {
             "200": {
@@ -1985,7 +2703,13 @@ export function buildOpenApiSpec(serverUrl: string) {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["sourceId", "phase", "reference", "documentKey", "sourceSha256"],
+                  required: [
+                    "sourceId",
+                    "phase",
+                    "reference",
+                    "documentKey",
+                    "sourceSha256",
+                  ],
                   properties: {
                     sourceId: { type: "string" },
                     phase: { type: "string", enum: ["source", "content"] },
@@ -1995,7 +2719,11 @@ export function buildOpenApiSpec(serverUrl: string) {
                     mimeType: { type: "string" },
                     sourceSha256: { type: "string", pattern: "^[0-9a-f]{64}$" },
                     textHash: { type: "string", pattern: "^[0-9a-f]{64}$" },
-                    minhash: { type: "array", items: { type: "integer" }, maxItems: 512 },
+                    minhash: {
+                      type: "array",
+                      items: { type: "integer" },
+                      maxItems: 512,
+                    },
                     messageId: { type: "string" },
                     allowedUsers: { type: "array", items: { type: "string" } },
                     allowedGroups: { type: "array", items: { type: "string" } },
@@ -2004,10 +2732,23 @@ export function buildOpenApiSpec(serverUrl: string) {
                       properties: {
                         label: { type: "string" },
                         date: { type: "string" },
-                        source: { type: "string", enum: ["explicit", "page_label", "page_date", "llm", "source_modified"] },
+                        source: {
+                          type: "string",
+                          enum: [
+                            "explicit",
+                            "page_label",
+                            "page_date",
+                            "llm",
+                            "source_modified",
+                          ],
+                        },
                       },
                     },
-                    dedup: { type: "string", enum: ["auto", "exact", "off"], default: "auto" },
+                    dedup: {
+                      type: "string",
+                      enum: ["auto", "exact", "off"],
+                      default: "auto",
+                    },
                   },
                 },
               },
@@ -2022,7 +2763,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                     type: "object",
                     required: ["decision", "canonicalReference"],
                     properties: {
-                      decision: { type: "string", enum: ["new", "new_version", "duplicate"] },
+                      decision: {
+                        type: "string",
+                        enum: ["new", "new_version", "duplicate"],
+                      },
                       canonicalReference: { type: "string" },
                       duplicateOf: {
                         type: "object",
@@ -2031,7 +2775,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                           sourceId: { type: "string" },
                           filename: { type: "string" },
                           revisionId: { type: "string" },
-                          match: { type: "string", enum: ["sha256", "text", "similar"] },
+                          match: {
+                            type: "string",
+                            enum: ["sha256", "text", "similar"],
+                          },
                           similarity: { type: "number" },
                         },
                       },
@@ -2040,7 +2787,9 @@ export function buildOpenApiSpec(serverUrl: string) {
                 },
               },
             },
-            "400": { description: "Invalid request (`INVALID_IDENTIFY_REQUEST`)" },
+            "400": {
+              description: "Invalid request (`INVALID_IDENTIFY_REQUEST`)",
+            },
             "401": { description: "Unauthenticated" },
             "403": { description: "Not authorized for the tenant/collection" },
           },
@@ -2055,7 +2804,14 @@ export function buildOpenApiSpec(serverUrl: string) {
             "The files a document was ingested from — indexed ones and those skipped as duplicates of it " +
             "(e.g. the DOCX export of an indexed PDF) — oldest first, with version and match details. " +
             "Only sources whose row ACL admits the caller are listed.",
-          parameters: [{ name: "ref", in: "path", required: true, schema: { type: "string" } }],
+          parameters: [
+            {
+              name: "ref",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
           responses: {
             "200": {
               description: "The document's sources",
@@ -2065,7 +2821,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                     type: "object",
                     properties: {
                       reference: { type: "string" },
-                      sources: { type: "array", items: { type: "object", additionalProperties: true } },
+                      sources: {
+                        type: "array",
+                        items: { type: "object", additionalProperties: true },
+                      },
                     },
                   },
                 },
@@ -2083,18 +2842,43 @@ export function buildOpenApiSpec(serverUrl: string) {
         put: {
           tags: ["Assets v2"],
           operationId: "putV2Asset",
-          summary: "Upload an asset, idempotent by checksum, bound to a revision",
+          summary:
+            "Upload an asset, idempotent by checksum, bound to a revision",
           description:
             "Idempotent by the asset checksum. The asset is bound to the `revision` and is " +
             "cleaned up with it. Stored through the configured AssetStore backend (postgres BYTEA " +
             "or filesystem); `thumb`/`preview` variants are derived server-side.",
           parameters: [
-            { name: "assetId", in: "path", required: true, schema: { type: "string" } },
-            { name: "revision", in: "query", required: true, schema: { type: "string" } },
+            {
+              name: "assetId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "revision",
+              in: "query",
+              required: true,
+              schema: { type: "string" },
+            },
           ],
-          requestBody: { required: true, content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+          requestBody: {
+            required: true,
+            content: {
+              "application/octet-stream": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
           responses: {
-            "201": { description: "Stored", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+            "201": {
+              description: "Stored",
+              content: {
+                "application/json": {
+                  schema: { type: "object", additionalProperties: true },
+                },
+              },
+            },
             "200": { description: "Already present with the same checksum" },
             "403": { description: "Not authorized for the revision" },
           },
@@ -2103,20 +2887,48 @@ export function buildOpenApiSpec(serverUrl: string) {
           tags: ["Assets v2"],
           operationId: "headV2Asset",
           summary: "Check asset existence",
-          parameters: [{ name: "assetId", in: "path", required: true, schema: { type: "string" } }],
-          responses: { "200": { description: "Present" }, "404": { description: "Absent" } },
+          parameters: [
+            {
+              name: "assetId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": { description: "Present" },
+            "404": { description: "Absent" },
+          },
         },
         get: {
           tags: ["Assets v2"],
           operationId: "getV2Asset",
           summary: "Fetch an asset (optionally a variant)",
-          description: "ACL-checked against the asset's revision (Requirement 14.5).",
+          description:
+            "ACL-checked against the asset's revision (Requirement 14.5).",
           parameters: [
-            { name: "assetId", in: "path", required: true, schema: { type: "string" } },
-            { name: "variant", in: "query", required: false, schema: { type: "string", enum: ["thumb", "preview", "full"] } },
+            {
+              name: "assetId",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+            {
+              name: "variant",
+              in: "query",
+              required: false,
+              schema: { type: "string", enum: ["thumb", "preview", "full"] },
+            },
           ],
           responses: {
-            "200": { description: "The asset bytes", content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } } },
+            "200": {
+              description: "The asset bytes",
+              content: {
+                "application/octet-stream": {
+                  schema: { type: "string", format: "binary" },
+                },
+              },
+            },
             "403": { description: "Not authorized" },
             "404": { description: "No such asset or variant" },
           },
@@ -2151,19 +2963,34 @@ export function buildOpenApiSpec(serverUrl: string) {
                   required: ["query"],
                   properties: {
                     query: { type: "string", example: "Maske WE01 Anmeldung" },
-                    limit: { type: "integer", minimum: 1, maximum: 100, default: 10 },
+                    limit: {
+                      type: "integer",
+                      minimum: 1,
+                      maximum: 100,
+                      default: 10,
+                    },
                     granularity: {
                       type: "string",
                       enum: ["chunk", "section", "page", "document"],
                     },
                     expand: {
                       type: "string",
-                      enum: ["none", "neighbors", "section", "page", "document"],
+                      enum: [
+                        "none",
+                        "neighbors",
+                        "section",
+                        "page",
+                        "document",
+                      ],
                       description:
                         "Small-to-big expansion. `document` returns the hit's whole document in reading " +
                         "order — for an e-mail the whole thread chronologically (default budget 50000).",
                     },
-                    budget_chars: { type: "integer", minimum: 1, default: 4000 },
+                    budget_chars: {
+                      type: "integer",
+                      minimum: 1,
+                      default: 4000,
+                    },
                     include_assets: {
                       type: "string",
                       enum: ["none", "refs", "thumbnails"],
@@ -2195,7 +3022,8 @@ export function buildOpenApiSpec(serverUrl: string) {
                       type: "object",
                       properties: {
                         pages: {
-                          description: "[page], [start, end], or { start, end }",
+                          description:
+                            "[page], [start, end], or { start, end }",
                           oneOf: [
                             { type: "array", items: { type: "integer" } },
                             {
@@ -2209,10 +3037,20 @@ export function buildOpenApiSpec(serverUrl: string) {
                         },
                         unit_type: {
                           type: "string",
-                          enum: ["chunk", "table", "figure", "section", "page", "document"],
+                          enum: [
+                            "chunk",
+                            "table",
+                            "figure",
+                            "section",
+                            "page",
+                            "document",
+                          ],
                         },
                         figure_kind: { type: "string" },
-                        section_prefix: { type: "array", items: { type: "string" } },
+                        section_prefix: {
+                          type: "array",
+                          items: { type: "string" },
+                        },
                         identifier: { type: "string" },
                       },
                     },
@@ -2240,7 +3078,10 @@ export function buildOpenApiSpec(serverUrl: string) {
                             reference: { type: "string" },
                             base_ref: { type: "string" },
                             title: { type: "string" },
-                            section_path: { type: "array", items: { type: "string" } },
+                            section_path: {
+                              type: "array",
+                              items: { type: "string" },
+                            },
                             pages: {
                               type: "object",
                               nullable: true,
@@ -2264,13 +3105,19 @@ export function buildOpenApiSpec(serverUrl: string) {
                                 type: "object",
                                 properties: {
                                   asset_id: { type: "string" },
-                                  relation: { type: "string", enum: ["hit", "referenced"] },
+                                  relation: {
+                                    type: "string",
+                                    enum: ["hit", "referenced"],
+                                  },
                                   figure_id: { type: "string" },
                                   kind: { type: "string" },
                                   figure_kind: { type: "string" },
                                   caption: { type: "string" },
                                   page: { type: "integer" },
-                                  bbox: { type: "array", items: { type: "number" } },
+                                  bbox: {
+                                    type: "array",
+                                    items: { type: "number" },
+                                  },
                                   thumb_url: { type: "string" },
                                   url: { type: "string" },
                                 },
@@ -2289,31 +3136,48 @@ export function buildOpenApiSpec(serverUrl: string) {
                             revision_state: {
                               type: "string",
                               enum: ["partial"],
-                              description: "Present when the hit comes from a still-growing progressive revision.",
+                              description:
+                                "Present when the hit comes from a still-growing progressive revision.",
                             },
                             pages_available: {
                               type: "string",
-                              description: "Committed page ranges of a partial revision, e.g. `1–2750`.",
+                              description:
+                                "Committed page ranges of a partial revision, e.g. `1–2750`.",
                             },
                             group: {
                               type: "object",
-                              description: "Present when `group_by` merged several hits into this one.",
+                              description:
+                                "Present when `group_by` merged several hits into this one.",
                               properties: {
-                                by: { type: "string", enum: ["document", "section"] },
+                                by: {
+                                  type: "string",
+                                  enum: ["document", "section"],
+                                },
                                 key: { type: "string" },
                                 count: { type: "integer" },
-                                unit_ids: { type: "array", items: { type: "string" } },
+                                unit_ids: {
+                                  type: "array",
+                                  items: { type: "string" },
+                                },
                               },
                             },
                           },
                         },
+                      },
+                      abstention: {
+                        $ref: "#/components/schemas/Abstention",
+                        description:
+                          "MIN_RERANK_SCORE abstention signal (only when a threshold is configured).",
                       },
                     },
                   },
                 },
               },
             },
-            "400": { description: "Invalid parameters or filters, or an invalid collection name (INVALID_COLLECTION_NAME)" },
+            "400": {
+              description:
+                "Invalid parameters or filters, or an invalid collection name (INVALID_COLLECTION_NAME)",
+            },
             "401": { description: "Unauthorized" },
             "404": { description: "Collection not found" },
             "502": { description: "Embedding or search backend failure" },

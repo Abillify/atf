@@ -20,7 +20,8 @@
  * each produced a *plausible* result set.
  */
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { setDocumentAclDefault } from "../src/acl-default.js";
 import {
   SqlParams,
   buildDenseQuery,
@@ -29,10 +30,12 @@ import {
   buildHybridQuery,
   candidatePoolSize,
   CursorNotSupportedError,
+  AccessScopeRequiredError,
   buildAccessSql,
+  type LexicalRanker,
 } from "../src/query-builder.js";
 import type { SearchCursor, SearchFilter } from "../src/postgres-client.js";
-import type { AccessScope } from "../src/access-scope.js";
+import { operatorScope, type AccessScope } from "../src/access-scope.js";
 import { UNIT_FILTER_V2, type UnitFilterV2 } from "../src/metadata.js";
 
 const aclScope = (userId: string | undefined, userGroups: string[]): AccessScope => ({
@@ -43,6 +46,16 @@ const aclScope = (userId: string | undefined, userGroups: string[]): AccessScope
   scopes: [],
   service: false,
 });
+
+/** Tenant-gebundener Service-Scope: buildAccessSql liefert nur das Tenant-Prädikat. */
+const serviceScope: AccessScope = {
+  principal: { userId: undefined, userGroups: undefined, tenantId: "tenant-a", source: "service" },
+  userId: undefined,
+  userGroups: [],
+  tenantId: "tenant-a",
+  scopes: [],
+  service: true,
+};
 
 const TABLE = "documents";
 const VEC_TYPE = "vector(768)";
@@ -106,7 +119,12 @@ describe("ACL SQL", () => {
   it("includes public rows and isolates two users and their groups", () => {
     const alice = new SqlParams();
     const aliceSql = buildAccessSql(alice, {
-      principal: { userId: "alice", userGroups: ["legal"], tenantId: "tenant-a", source: "jwt" },
+      principal: {
+        userId: "alice",
+        userGroups: ["legal"],
+        tenantId: "tenant-a",
+        source: "jwt",
+      },
       userId: "alice",
       userGroups: ["legal"],
       tenantId: "tenant-a",
@@ -114,7 +132,12 @@ describe("ACL SQL", () => {
     });
     const bob = new SqlParams();
     const bobSql = buildAccessSql(bob, {
-      principal: { userId: "bob", userGroups: ["finance"], tenantId: "tenant-b", source: "jwt" },
+      principal: {
+        userId: "bob",
+        userGroups: ["finance"],
+        tenantId: "tenant-b",
+        source: "jwt",
+      },
       userId: "bob",
       userGroups: ["finance"],
       tenantId: "tenant-b",
@@ -126,6 +149,44 @@ describe("ACL SQL", () => {
     expect(alice.values).toEqual(["tenant-a", "alice", ["legal"]]);
     expect(bob.values).toEqual(["tenant-b", "bob", ["finance"]]);
     expect(alice.values).not.toEqual(bob.values);
+  });
+
+  /**
+   * Req 3.2: DOCUMENT_ACL_DEFAULT=deny removes the empty-ACL (public rows)
+   * disjunct for end users — only service/bypass principals (handled above)
+   * still see such rows.
+   */
+  describe("DOCUMENT_ACL_DEFAULT=deny", () => {
+    afterEach(() => setDocumentAclDefault("allow"));
+
+    it("drops the public-rows disjunct but keeps explicit user/group matches", () => {
+      setDocumentAclDefault("deny");
+      const params = new SqlParams();
+      const sql = buildAccessSql(params, aclScope("alice", ["staff"]));
+      expect(sql).toContain("tenant_id = $1");
+      expect(sql).not.toContain("cardinality(allowed_users)");
+      expect(sql).toContain("allowed_users @>");
+      expect(sql).toContain("allowed_groups &&");
+      expect(params.values).toEqual(["tenant-a", "alice", ["staff"]]);
+    });
+
+    it("fails closed for an end-user scope without any identity", () => {
+      setDocumentAclDefault("deny");
+      const params = new SqlParams();
+      const sql = buildAccessSql(params, aclScope(undefined, []));
+      expect(sql).toContain("tenant_id = $1");
+      expect(sql).toContain("AND FALSE");
+      expect(sql).not.toContain("AND ()");
+      expect(params.values).toEqual(["tenant-a"]);
+    });
+
+    it("still lets service principals through untouched", () => {
+      setDocumentAclDefault("deny");
+      const params = new SqlParams();
+      const sql = buildAccessSql(params, serviceScope);
+      expect(sql).toBe(" AND tenant_id = $1");
+      expect(sql).not.toContain("FALSE");
+    });
   });
 });
 
@@ -172,21 +233,61 @@ describe("candidatePoolSize", () => {
 describe("buildDenseQuery", () => {
   it("orders by similarity with a deterministic tie-break", () => {
     const { sql } = buildDenseQuery(
-      TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
     );
-    expect(flat(sql)).toContain("ORDER BY vector_similarity DESC, id ASC");
+    // Sorts by the RAW distance ASC (mathematically identical to
+    // vector_similarity DESC) so the planner can use the HNSW index —
+    // the similarity expression is not index-order-compatible.
+    expect(flat(sql)).toContain(
+      `ORDER BY (vector <=> $1::${VEC_TYPE}) ASC, id ASC`,
+    );
+    expect(flat(sql)).toContain(
+      `1 - (vector <=> $1::${VEC_TYPE}) AS vector_similarity`,
+    );
   });
 
   it("restricts to the latest version unless all versions are requested", () => {
-    const latest = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON);
+    const latest = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
     expect(latest.sql).toContain("is_latest = TRUE");
-    const all = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, true, 0, VECTOR_JSON);
+    const all = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      true,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
     expect(all.sql).not.toContain("is_latest = TRUE");
   });
 
   it("parameterises the metadata filter instead of interpolating it", () => {
     const { sql, params } = buildDenseQuery(
-      TABLE, VEC_TYPE, 10, { tenant: "acme" }, false, 0, VECTOR_JSON,
+      TABLE,
+      VEC_TYPE,
+      10,
+      { tenant: "acme" },
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
     );
     expect(sql).toContain("metadata @>");
     expect(params).toContain(JSON.stringify({ tenant: "acme" }));
@@ -195,24 +296,47 @@ describe("buildDenseQuery", () => {
   });
 
   it("omits the filter clause entirely for an empty filter object", () => {
-    const { sql } = buildDenseQuery(TABLE, VEC_TYPE, 10, {}, false, 0, VECTOR_JSON);
+    const { sql } = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      {},
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
     expect(sql).not.toContain("metadata @>");
   });
 
   describe("row-level ACL predicate", () => {
     it("is absent for a service context (no identity)", () => {
       const { sql } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, undefined, undefined,
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        serviceScope,
       );
       expect(sql).not.toContain("allowed_users @>");
       expect(sql).not.toContain("allowed_groups");
+      // The tenant predicate still applies — a service scope is tenant-bound.
+      expect(sql).toContain("tenant_id =");
     });
 
     it("matches the user against allowed_users", () => {
       const { sql, params } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, aclScope("alice", []),
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        aclScope("alice", []),
       );
       expect(sql).toContain("allowed_users @>");
       expect(params).toContain("alice");
@@ -220,8 +344,14 @@ describe("buildDenseQuery", () => {
 
     it("ORs user and group membership rather than requiring both", () => {
       const { sql } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, aclScope("alice", ["staff", "legal"]), undefined,
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        aclScope("alice", ["staff", "legal"]),
       );
       const f = flat(sql);
       expect(f).toContain("allowed_users @>");
@@ -234,20 +364,74 @@ describe("buildDenseQuery", () => {
 
     it("matches groups alone when only groups are known", () => {
       const { sql, params } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, aclScope(undefined, ["staff"]), undefined,
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        aclScope(undefined, ["staff"]),
       );
       expect(sql).toContain("allowed_groups &&");
       expect(sql).not.toContain("allowed_users @>");
       expect(params).toContainEqual(["staff"]);
     });
 
-    it("ignores an empty group list", () => {
-      const { sql } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, undefined, [],
+    it("refuses to build without an explicit scope (Req 3.1)", () => {
+      expect(() =>
+        buildDenseQuery(
+          TABLE,
+          VEC_TYPE,
+          10,
+          undefined,
+          false,
+          0,
+          VECTOR_JSON,
+          undefined as unknown as AccessScope,
+        ),
+      ).toThrow(AccessScopeRequiredError);
+      expect(() =>
+        buildDenseQuery(
+          TABLE,
+          VEC_TYPE,
+          10,
+          undefined,
+          false,
+          0,
+          VECTOR_JSON,
+          undefined as unknown as AccessScope,
+        ),
+      ).toThrow(/ACCESS_SCOPE_REQUIRED/);
+    });
+
+    it("drops the tenant predicate only for an explicit cross-tenant operator scope", () => {
+      const { sql, params } = buildDenseQuery(
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        operatorScope(),
       );
-      expect(sql).not.toContain("allowed_groups");
+      expect(sql).not.toContain("tenant_id");
+      expect(sql).not.toContain("allowed_users");
+      expect(params).not.toContain("tenant-a");
+      // With a tenant the operator scope is restricted to it again.
+      const scoped = buildDenseQuery(
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        operatorScope("tenant-x"),
+      );
+      expect(scoped.sql).toContain("tenant_id =");
+      expect(scoped.params).toContain("tenant-x");
     });
   });
 
@@ -259,29 +443,46 @@ describe("buildDenseQuery", () => {
      */
     it("compares the score first, then the numeric id", () => {
       const { sql, params } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, undefined, undefined, rankedCursor,
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        serviceScope,
+        undefined,
+        rankedCursor,
       );
       const f = flat(sql);
       // Score comparison present, using the same expression as the ORDER BY.
-      expect(f).toContain("(1 - (vector <=> $1::vector(768))) < $2::float8");
-      expect(f).toContain("(1 - (vector <=> $1::vector(768))) = $2::float8");
+      // ($2 is the tenant bind of the mandatory scope; the cursor follows at $3/$4.)
+      expect(f).toContain("(1 - (vector <=> $1::vector(768))) < $3::float8");
+      expect(f).toContain("(1 - (vector <=> $1::vector(768))) = $3::float8");
       // Tie-break on the BIGSERIAL id, compared NUMERICALLY so it matches
       // `ORDER BY ... id ASC` (a text compare would order 10 before 9).
-      expect(f).toContain("id > $3::bigint");
+      expect(f).toContain("id > $4::bigint");
       // `created` is deliberately NOT in the predicate: it round-trips through a
       // JS Date at millisecond precision while PostgreSQL stores microseconds,
       // so the boundary row satisfied `created > cursor.created` and came back
       // again on every page. Verified against real pgvector.
       expect(f).not.toContain("timestamptz");
-      expect(params[1]).toBe(0.83);
-      expect(params[2]).toBe("42");
+      expect(params[2]).toBe(0.83);
+      expect(params[3]).toBe("42");
     });
 
     it("falls back to (created, id) for a legacy cursor without a score", () => {
       const { sql } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-        undefined, undefined, undefined, legacyCursor,
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        serviceScope,
+        undefined,
+        legacyCursor,
       );
       const where = flat(sql).slice(flat(sql).indexOf("WHERE"));
       expect(where).toContain("created > ");
@@ -291,7 +492,14 @@ describe("buildDenseQuery", () => {
 
     it("adds no cursor predicate when no cursor is given", () => {
       const { sql } = buildDenseQuery(
-        TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
+        TABLE,
+        VEC_TYPE,
+        10,
+        undefined,
+        false,
+        0,
+        VECTOR_JSON,
+        serviceScope,
       );
       expect(sql).not.toContain("timestamptz");
     });
@@ -299,9 +507,19 @@ describe("buildDenseQuery", () => {
 
   it("escapes the path prefix LIKE pattern so literal % is matched verbatim", () => {
     const { sql, params } = buildDenseQuery(
-      TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON,
-      undefined, undefined, undefined, undefined, "/Akte 100%/%",
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+      undefined,
+      undefined,
+      "/Akte 100%/%",
     );
+    // (after scope: tags, cursor, then pathLike.)
     expect(sql).toContain("base_ref LIKE");
     expect(sql).toContain("ESCAPE '\\'");
     expect(params).toContain("/Akte 100%/%");
@@ -309,7 +527,15 @@ describe("buildDenseQuery", () => {
 
   it("parameterises tags as a text array", () => {
     const { sql, params } = buildDenseQuery(
-      TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON, ["urgent"],
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+      ["urgent"],
     );
     expect(sql).toContain("tags @>");
     expect(params).toContainEqual(["urgent"]);
@@ -323,8 +549,19 @@ describe("buildDenseQuery", () => {
 describe("buildBinaryDenseQuery", () => {
   const build = (limit: number, offset: number, cursor?: SearchCursor) =>
     buildBinaryDenseQuery(
-      TABLE, VEC_TYPE, 768, limit, undefined, false, offset, VECTOR_JSON,
-      "101010", 4, undefined, undefined, undefined, cursor,
+      TABLE,
+      VEC_TYPE,
+      768,
+      limit,
+      undefined,
+      false,
+      offset,
+      VECTOR_JSON,
+      "101010",
+      4,
+      serviceScope,
+      undefined,
+      cursor,
     );
 
   it("sizes the Hamming candidate pool from limit + offset", () => {
@@ -368,8 +605,35 @@ describe("buildBinaryDenseQuery", () => {
 describe("buildFtsQuery", () => {
   const build = (cursor?: SearchCursor, baseRef?: string) =>
     buildFtsQuery(
-      TABLE, "german", 10, undefined, false, 0, "mietvertrag",
-      undefined, undefined, undefined, cursor, baseRef,
+      TABLE,
+      "german",
+      10,
+      undefined,
+      false,
+      0,
+      "mietvertrag",
+      serviceScope,
+      undefined,
+      cursor,
+      baseRef,
+    );
+  const buildLexical = (lexical: LexicalRanker) =>
+    buildFtsQuery(
+      TABLE,
+      "german",
+      10,
+      undefined,
+      false,
+      0,
+      "mietvertrag",
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      lexical,
     );
 
   /**
@@ -381,13 +645,63 @@ describe("buildFtsQuery", () => {
     expect(flat(build().sql)).toContain("ORDER BY text_score DESC, id ASC");
   });
 
-  it("uses the ts_rank expression in the cursor predicate", () => {
+  it("uses the ts_rank_cd expression in the cursor predicate", () => {
     const f = flat(build(rankedCursor).sql);
-    expect(f).toContain("ts_rank(ts_search, websearch_to_tsquery('german', $1)) < $2::float8");
+    // $2 is the tenant bind of the mandatory scope; the cursor score is $3.
+    expect(f).toContain(
+      "ts_rank_cd(ts_search, websearch_to_tsquery('german', $1), 32) < $3::float8",
+    );
   });
 
   it("returns only rows that actually match the query", () => {
     expect(build().sql).toContain("ts_search @@ websearch_to_tsquery");
+  });
+
+  // FTS_RANKER (task 6.9, Requirement 4.7): the lexical list ranker is
+  // configurable; bm25 only with a detected extension, else ts_rank_cd.
+  describe("lexical ranker (FTS_RANKER)", () => {
+    it("defaults to ts_rank_cd with length normalisation (32)", () => {
+      const f = flat(build().sql);
+      expect(f).toContain(
+        "ts_rank_cd(ts_search, websearch_to_tsquery('german', $1), 32) AS text_score",
+      );
+      expect(f).toContain("ts_search @@ websearch_to_tsquery('german', $1)");
+    });
+
+    it("keeps the legacy ts_rank expression for ranker ts_rank", () => {
+      const f = flat(buildLexical({ ranker: "ts_rank", bm25Engine: null }).sql);
+      expect(f).toContain(
+        "ts_rank(ts_search, websearch_to_tsquery('german', $1)) AS text_score",
+      );
+      expect(f).not.toContain("ts_rank_cd");
+    });
+
+    it("uses paradedb.score and the ||| operator for bm25 via pg_search", () => {
+      const f = flat(
+        buildLexical({ ranker: "bm25", bm25Engine: "pg_search" }).sql,
+      );
+      expect(f).toContain("paradedb.score(id) AS text_score");
+      expect(f).toContain("content ||| $1");
+      expect(f).not.toContain("ts_rank");
+    });
+
+    it("uses bm25_score for bm25 via vchord_bm25", () => {
+      const f = flat(
+        buildLexical({ ranker: "bm25", bm25Engine: "vchord_bm25" }).sql,
+      );
+      expect(f).toContain("bm25_score(id) AS text_score");
+      expect(f).toContain("content ||| $1");
+      expect(f).not.toContain("ts_rank");
+    });
+
+    it("falls back to ts_rank_cd when bm25 is requested but no extension was detected", () => {
+      const f = flat(buildLexical({ ranker: "bm25", bm25Engine: null }).sql);
+      expect(f).toContain(
+        "ts_rank_cd(ts_search, websearch_to_tsquery('german', $1), 32) AS text_score",
+      );
+      expect(f).not.toContain("paradedb");
+      expect(f).not.toContain("|||");
+    });
   });
 
   describe("base_ref branch", () => {
@@ -420,12 +734,33 @@ describe("buildHybridQuery", () => {
     offset: number,
     cursor?: SearchCursor,
     sparse = false,
+    lexical?: LexicalRanker,
   ) =>
     buildHybridQuery(
-      TABLE, VEC_TYPE, 60, "german", limit, undefined, false, 4, offset,
-      sparse, sparse ? 30000 : null, VECTOR_JSON, "mietvertrag",
-      sparse ? "{1:0.5}" : undefined, undefined, null,
-      undefined, undefined, undefined, cursor,
+      TABLE,
+      VEC_TYPE,
+      60,
+      "german",
+      limit,
+      undefined,
+      false,
+      4,
+      offset,
+      sparse,
+      sparse ? 30000 : null,
+      VECTOR_JSON,
+      "mietvertrag",
+      sparse ? "{1:0.5}" : undefined,
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      cursor,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      lexical,
     );
 
   /**
@@ -461,12 +796,28 @@ describe("buildHybridQuery", () => {
 
   it("fuses dense and text ranks with the configured k", () => {
     const f = flat(build(10, 0).sql);
-    expect(f).toContain("1.0 / (60 + COALESCE(v.vrank, 1000))");
-    expect(f).toContain("1.0 / (60 + COALESCE(t.trank, 1000))");
+    // Req 4.4 (RRF_MISSING_ZERO default true): a missing list contributes 0,
+    // not the legacy 1/(k+1000) pseudo-rank — the NULL rank propagates and the
+    // whole term is COALESCEd to 0.
+    expect(f).toContain("COALESCE((1.0 / (60 + v.vrank)), 0)");
+    expect(f).toContain("COALESCE((1.0 / (60 + t.trank)), 0)");
+    expect(f).not.toContain("COALESCE(v.vrank, 1000)");
+    expect(f).not.toContain("COALESCE(t.trank, 1000)");
   });
 
   it("keeps documents found by only one branch (full outer join)", () => {
     expect(build(10, 0).sql).toContain("FULL OUTER JOIN");
+  });
+
+  // SQL-Snapshot (task 6.7): pin the exact emitted SQL for the DEFAULT
+  // weights (dense+fts and dense+fts+sparse). Any unintended change to the
+  // RRF formula — weight rendering, k handling, missing-zero semantics, join
+  // shape — now fails loudly here instead of silently shifting ranking in
+  // production. The property test (rrf-monotonicity.property.test.ts) covers
+  // the numeric behaviour; this snapshot covers the SQL shape.
+  it("snapshots the fused-score SQL for the default weights", () => {
+    expect(flat(build(10, 0).sql)).toMatchSnapshot();
+    expect(flat(build(10, 0, undefined, true).sql)).toMatchSnapshot();
   });
 
   it("omits the sparse branch when sparse search is off", () => {
@@ -478,31 +829,96 @@ describe("buildHybridQuery", () => {
   it("adds the sparse branch and its rank contribution when enabled", () => {
     const { sql } = build(10, 0, undefined, true);
     expect(sql).toContain("sparse_vector");
-    expect(flat(sql)).toContain("1.0 / (60 + COALESCE(spr.sprrank, 1000))");
+    expect(flat(sql)).toContain("COALESCE((1.0 / (60 + spr.sprrank)), 0)");
+  });
+
+  // Req 4.3: the sparse list must FULL OUTER JOIN into the fusion. A LEFT JOIN
+  // silently dropped documents found ONLY by sparse — they never got a chance
+  // at the fused score. The join key is the id coalesced over the preceding
+  // lists (vec, txt).
+  it("full-outer-joins the sparse list so sparse-only hits survive (Req 4.3)", () => {
+    const { sql } = build(10, 0, undefined, true);
+    expect(sql).toContain(
+      "FULL OUTER JOIN spr_ranked spr ON spr.id = COALESCE(v.id, t.id)",
+    );
+    expect(sql).not.toContain("LEFT JOIN spr_ranked");
+  });
+
+  // FTS_RANKER (task 6.9, Requirement 4.7): the txt CTE ranks with
+  // ts_rank_cd + length normalisation by default; bm25 only with a detected
+  // engine. The identifier lexical branch stays ts_rank on ts_ident — it is
+  // an identifier list, not the lexical list.
+  it("ranks the txt CTE with ts_rank_cd and length normalisation by default", () => {
+    const f = flat(build(10, 0).sql);
+    expect(f).toContain(
+      "ts_rank_cd(ts_search, websearch_to_tsquery('german', $2), 32) AS tscore",
+    );
+    expect(f).toContain("ts_search @@ websearch_to_tsquery('german', $2)");
+  });
+
+  it("ranks the txt CTE with paradedb.score for bm25 via pg_search", () => {
+    const f = flat(
+      build(10, 0, undefined, false, {
+        ranker: "bm25",
+        bm25Engine: "pg_search",
+      }).sql,
+    );
+    expect(f).toContain("paradedb.score(id) AS tscore");
+    expect(f).toContain("content ||| $2");
+  });
+
+  it("falls back to ts_rank_cd in the txt CTE when bm25 has no engine", () => {
+    const f = flat(
+      build(10, 0, undefined, false, { ranker: "bm25", bm25Engine: null }).sql,
+    );
+    expect(f).toContain(
+      "ts_rank_cd(ts_search, websearch_to_tsquery('german', $2), 32) AS tscore",
+    );
+    expect(f).not.toContain("paradedb");
   });
 
   // ── Identifier RRF list (task 3.4, Requirement 12.3) ──────────────────────
 
-  const buildWithOpts = (opts: Parameters<typeof buildHybridQuery>[24]) =>
+  const buildWithOpts = (opts: Parameters<typeof buildHybridQuery>[22]) =>
     buildHybridQuery(
-      TABLE, VEC_TYPE, 60, "german", 10, undefined, false, 4, 0,
-      false, null, VECTOR_JSON, "mietvertrag",
-      undefined, undefined, null,
-      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      TABLE,
+      VEC_TYPE,
+      60,
+      "german",
+      10,
+      undefined,
+      false,
+      4,
+      0,
+      false,
+      null,
+      VECTOR_JSON,
+      "mietvertrag",
+      undefined,
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
       opts,
     );
 
-  it("emits identical SQL to the pre-3.4 fusion when no identifier and default weights", () => {
-    // Regression guard: a no-identifier, default-weight call must rank exactly
-    // as before. The bare unweighted reciprocal-rank terms are unchanged and no
-    // identifier CTE/join/term is added.
+  it("emits no identifier branch and bare unit weights at defaults", () => {
+    // Regression guard: a no-identifier, default-weight call adds no
+    // identifier CTE/join/term and renders no multiplier for weight 1.0. The
+    // per-term shape is the Req 4.4 missing-zero form (COALESCE(term, 0)),
+    // which is the intentional new default — see the legacy test below for
+    // the pre-4.4 form restored via missingZero=false.
     const f = flat(build(10, 0).sql);
-    expect(f).toContain("1.0 / (60 + COALESCE(v.vrank, 1000))");
-    expect(f).toContain("1.0 / (60 + COALESCE(t.trank, 1000))");
+    expect(f).toContain("COALESCE((1.0 / (60 + v.vrank)), 0)");
+    expect(f).toContain("COALESCE((1.0 / (60 + t.trank)), 0)");
     expect(f).not.toContain("ident_ranked");
     expect(f).not.toContain("COALESCE(v.id, t.id, i.id)");
     // No multiplier is rendered for a weight of 1.0.
-    expect(f).not.toMatch(/\d \* \(1\.0 \/ \(60 \+ COALESCE\(v\.vrank/);
+    expect(f).not.toMatch(/\d \* \(1\.0 \/ \(60 \+ v\.vrank/);
   });
 
   it("includes the identifier RRF branch when the query resolved to unit ids", () => {
@@ -514,7 +930,7 @@ describe("buildHybridQuery", () => {
     expect(f).toContain("WITH ORDINALITY");
     // Third list fused via FULL OUTER JOIN and its reciprocal-rank term.
     expect(f).toContain("FULL OUTER JOIN ident_ranked i");
-    expect(f).toContain("1.0 / (60 + COALESCE(i.identrank, 1000))");
+    expect(f).toContain("COALESCE((1.0 / (60 + i.identrank)), 0)");
     // Fused key now coalesces all three list ids.
     expect(f).toContain("COALESCE(v.id, t.id, i.id) AS id");
   });
@@ -539,9 +955,87 @@ describe("buildHybridQuery", () => {
         identifierUnitIds: ["unit-a"],
       }).sql,
     );
-    expect(f).toContain("2 * (1.0 / (60 + COALESCE(v.vrank, 1000)))");
-    expect(f).toContain("0.5 * (1.0 / (60 + COALESCE(t.trank, 1000)))");
-    expect(f).toContain("3 * (1.0 / (60 + COALESCE(i.identrank, 1000)))");
+    expect(f).toContain("COALESCE((2 * (1.0 / (60 + v.vrank))), 0)");
+    expect(f).toContain("COALESCE((0.5 * (1.0 / (60 + t.trank))), 0)");
+    expect(f).toContain("COALESCE((3 * (1.0 / (60 + i.identrank))), 0)");
+  });
+
+  // Req 4.3: the sparse list gets its own configurable weight too.
+  it("applies RRF_WEIGHT_SPARSE to the sparse reciprocal-rank term", () => {
+    const { sql } = buildHybridQuery(
+      TABLE,
+      VEC_TYPE,
+      60,
+      "german",
+      10,
+      undefined,
+      false,
+      4,
+      0,
+      true,
+      30000,
+      VECTOR_JSON,
+      "mietvertrag",
+      "{1:0.5}",
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { weightSparse: 2.5 },
+    );
+    expect(flat(sql)).toContain(
+      "COALESCE((2.5 * (1.0 / (60 + spr.sprrank))), 0)",
+    );
+  });
+
+  // Req 4.4: the flag must restore the legacy behaviour verbatim when false.
+  it("restores the legacy 1/(k+1000) pseudo-rank when missingZero is false", () => {
+    const f = flat(
+      buildHybridQuery(
+        TABLE,
+        VEC_TYPE,
+        60,
+        "german",
+        10,
+        undefined,
+        false,
+        4,
+        0,
+        true,
+        30000,
+        VECTOR_JSON,
+        "mietvertrag",
+        "{1:0.5}",
+        undefined,
+        null,
+        serviceScope,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        { missingZero: false },
+      ).sql,
+    );
+    expect(f).toContain("(1.0 / (60 + COALESCE(v.vrank, 1000)))");
+    expect(f).toContain("(1.0 / (60 + COALESCE(t.trank, 1000)))");
+    expect(f).toContain("(1.0 / (60 + COALESCE(spr.sprrank, 1000)))");
+    expect(f).not.toContain("COALESCE((1.0 / (60 + v.vrank)), 0)");
+  });
+
+  // Req 4.5: weight literals must never reach the SQL in exponential notation
+  // (JS toString() switches to 1e-7 below 1e-6).
+  it("renders tiny weights as plain decimals, never exponents (Req 4.5)", () => {
+    const f = flat(
+      buildWithOpts({ weightDense: 1e-7, weightFts: 0.000001 }).sql,
+    );
+    expect(f).toContain("0.0000001 * (1.0 / (60 + v.vrank))");
+    expect(f).toContain("0.000001 * (1.0 / (60 + t.trank))");
+    expect(f).not.toMatch(/1e-\d/);
   });
 
   it("adds the lexical ts_ident branch when an identifier tsquery is given (Req 12.1)", () => {
@@ -566,7 +1060,7 @@ describe("buildHybridQuery", () => {
     expect(f).toContain("UNION ALL");
     expect(f).toContain("MIN(identrank)");
     // One identifier term only, however many sources matched.
-    expect(f.match(/COALESCE\(i\.identrank, 1000\)/g)).toHaveLength(1);
+    expect(f.match(/60 \+ i\.identrank/g)).toHaveLength(1);
   });
   it("omits the lexical branch for an empty/blank tsquery", () => {
     for (const q of [null, "", "   "]) {
@@ -579,8 +1073,8 @@ describe("buildHybridQuery", () => {
     const f = flat(
       buildWithOpts({ weightDense: 1, weightFts: 1, identifierUnitIds: [] }).sql,
     );
-    expect(f).toContain("1.0 / (60 + COALESCE(v.vrank, 1000))");
-    expect(f).not.toContain("1 * (1.0 / (60 + COALESCE(v.vrank");
+    expect(f).toContain("COALESCE((1.0 / (60 + v.vrank)), 0)");
+    expect(f).not.toContain("1 * (1.0 / (60 + v.vrank");
   });
 });
 
@@ -602,33 +1096,267 @@ describe("temporal version scope", () => {
   const validAt = "2026-03-01T00:00:00.000Z";
 
   it("implements the four include_all_versions/valid_at combinations with bind parameters", () => {
-    const latest = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON);
+    const latest = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
     expect(latest.sql).toContain("is_latest = TRUE");
 
-    const all = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, true, 0, VECTOR_JSON);
+    const all = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      true,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
     expect(all.sql).not.toContain("is_latest = TRUE");
-    expect(all.sql).not.toContain("valid_from, \"documents\".created) <=");
+    expect(all.sql).not.toContain('valid_from, "documents".created) <=');
 
-    const allAsOf = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, true, 0, VECTOR_JSON, undefined, undefined, undefined, undefined, undefined, validAt);
-    expect(allAsOf.sql).toContain("COALESCE(\"documents\".valid_from, \"documents\".created) <=");
+    const allAsOf = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      true,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+    );
+    expect(allAsOf.sql).toContain(
+      'COALESCE("documents".valid_from, "documents".created) <=',
+    );
     expect(allAsOf.sql).not.toContain(validAt);
     expect(allAsOf.params).toContain(validAt);
 
-    const oneAsOf = buildDenseQuery(TABLE, VEC_TYPE, 10, undefined, false, 0, VECTOR_JSON, undefined, undefined, undefined, undefined, undefined, validAt);
-    expect(oneAsOf.sql).toContain("FROM \"documents\" tv");
-    expect(oneAsOf.sql).toContain("ORDER BY COALESCE(tv.valid_from, tv.created) DESC, tv.created DESC, tv.id DESC");
+    const oneAsOf = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+    );
+    expect(oneAsOf.sql).toContain('FROM "documents" tv');
+    expect(oneAsOf.sql).toContain(
+      "ORDER BY COALESCE(tv.valid_from, tv.created) DESC, tv.created DESC, tv.id DESC",
+    );
     expect(oneAsOf.params.filter((value) => value === validAt)).toHaveLength(1);
   });
 
   it("applies the same temporal predicate before binary, FTS and hybrid candidate limits", () => {
-    const binary = buildBinaryDenseQuery(TABLE, VEC_TYPE, 768, 10, undefined, false, 0, VECTOR_JSON, "01", 4, undefined, undefined, undefined, undefined, undefined, validAt);
-    const fts = buildFtsQuery(TABLE, "simple", 10, undefined, false, 0, "query", undefined, undefined, undefined, undefined, undefined, undefined, validAt);
-    const hybrid = buildHybridQuery(TABLE, VEC_TYPE, 60, "simple", 10, undefined, false, 4, 0, false, null, VECTOR_JSON, "query", undefined, undefined, null, undefined, undefined, undefined, undefined, undefined, validAt);
+    const binary = buildBinaryDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      768,
+      10,
+      undefined,
+      false,
+      0,
+      VECTOR_JSON,
+      "01",
+      4,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+    );
+    const fts = buildFtsQuery(
+      TABLE,
+      "simple",
+      10,
+      undefined,
+      false,
+      0,
+      "query",
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+    );
+    const hybrid = buildHybridQuery(
+      TABLE,
+      VEC_TYPE,
+      60,
+      "simple",
+      10,
+      undefined,
+      false,
+      4,
+      0,
+      false,
+      null,
+      VECTOR_JSON,
+      "query",
+      undefined,
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+    );
     for (const built of [binary, fts, hybrid]) {
       expect(built.sql).toContain("COALESCE(");
       expect(built.sql).toContain("valid_from");
       expect(built.params).toContain(validAt);
     }
+  });
+
+  // Requirement 4.6: with validAt/includeAllVersions the temporal visibility
+  // is computed once per query as a shared `visible` CTE and reused by every
+  // rank list instead of repeating the correlated predicate per list.
+  it("computes temporal visibility once as a shared visible CTE for validAt", () => {
+    const { sql, params } = buildHybridQuery(
+      TABLE,
+      VEC_TYPE,
+      60,
+      "simple",
+      10,
+      undefined,
+      false,
+      4,
+      0,
+      false,
+      null,
+      VECTOR_JSON,
+      "query",
+      undefined,
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+    );
+    const f = flat(sql);
+    // The CTE appears exactly once and carries the temporal predicate.
+    expect(f.match(/visible AS \(/g)).toHaveLength(1);
+    expect(f).toContain('visible AS ( SELECT id FROM "documents" WHERE TRUE');
+    expect(f).toContain(
+      'COALESCE("documents".valid_from, "documents".created) <=',
+    );
+    // Both rank lists (vec, txt) filter through the CTE instead of repeating it.
+    expect(f.match(/id IN \(SELECT id FROM visible\)/g)).toHaveLength(2);
+    // The correlated version subquery now occurs exactly once (was per list).
+    expect(f.match(/FROM "documents" tv/g)).toHaveLength(1);
+    // validAt is bound exactly once.
+    expect(params.filter((value) => value === validAt)).toHaveLength(1);
+  });
+
+  it("reuses the visible CTE in the sparse and identifier lists too", () => {
+    const { sql } = buildHybridQuery(
+      TABLE,
+      VEC_TYPE,
+      60,
+      "simple",
+      10,
+      undefined,
+      false,
+      4,
+      0,
+      true,
+      30000,
+      VECTOR_JSON,
+      "query",
+      "{1:0.5}",
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      validAt,
+      undefined,
+      { identifierUnitIds: ["unit-a"] },
+    );
+    const f = flat(sql);
+    expect(f.match(/visible AS \(/g)).toHaveLength(1);
+    // dense vec, txt, sparse spr, identifier list all filter via the CTE.
+    expect((f.match(/id IN \(SELECT id FROM visible\)/g)?.length ?? 0)).toBeGreaterThanOrEqual(4);
+    expect(f).toContain("spr AS ( SELECT id, (sparse_vector <#>");
+    expect(f).toContain("WITH ORDINALITY");
+  });
+
+  it("uses the visible CTE for includeAllVersions without validAt as well", () => {
+    const { sql } = buildHybridQuery(
+      TABLE,
+      VEC_TYPE,
+      60,
+      "simple",
+      10,
+      undefined,
+      true,
+      4,
+      0,
+      false,
+      null,
+      VECTOR_JSON,
+      "query",
+      undefined,
+      undefined,
+      null,
+      serviceScope,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+    );
+    const f = flat(sql);
+    expect(f.match(/visible AS \(/g)).toHaveLength(1);
+    expect(f).toContain("id IN (SELECT id FROM visible)");
+    // All-versions view: no latest-only gate anywhere.
+    expect(f).not.toContain("is_latest = TRUE");
+  });
+
+  it("keeps the default latest path inline (no visible CTE) for the partial index", () => {
+    const { sql } = buildHybridQuery(
+      TABLE,
+      VEC_TYPE,
+      60,
+      "simple",
+      10,
+      undefined,
+      false,
+      4,
+      0,
+      false,
+      null,
+      VECTOR_JSON,
+      "query",
+      undefined,
+      undefined,
+      null,
+      serviceScope,
+    );
+    const f = flat(sql);
+    expect(f).not.toContain("visible AS (");
+    expect(f).not.toContain("id IN (SELECT id FROM visible)");
+    // Inline latest gate preserved in every rank list (partial HNSW index).
+    expect((f.match(/is_latest = TRUE/g)?.length ?? 0)).toBeGreaterThanOrEqual(2);
   });
 });
 
@@ -678,7 +1406,6 @@ describe("buildTemporalFilterSql — revision visibility (task 1.13)", () => {
       false,
       0,
       VECTOR_JSON,
-      undefined,
       aclScope("u1", ["g1"]),
       undefined,
       undefined,
@@ -704,7 +1431,16 @@ describe("v2 unit-column filter (UNIT_FILTER_V2)", () => {
   };
 
   const denseWith = (unit: UnitFilterV2) =>
-    buildDenseQuery(TABLE, VEC_TYPE, 10, withUnit(unit), false, 0, VECTOR_JSON);
+    buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      withUnit(unit),
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
 
   it("filters unit_type as a parameterised equality on the real column", () => {
     const { sql, params } = denseWith({ unitType: "figure" });
@@ -753,8 +1489,23 @@ describe("v2 unit-column filter (UNIT_FILTER_V2)", () => {
 
   it("applies the unit filter in every hybrid CTE (vec + txt)", () => {
     const { sql } = buildHybridQuery(
-      TABLE, VEC_TYPE, 60, "german", 10, withUnit({ unitType: "table" }),
-      false, 4, 0, false, null, VECTOR_JSON, "kosten", undefined, undefined, null,
+      TABLE,
+      VEC_TYPE,
+      60,
+      "german",
+      10,
+      withUnit({ unitType: "table" }),
+      false,
+      4,
+      0,
+      false,
+      null,
+      VECTOR_JSON,
+      "kosten",
+      undefined,
+      undefined,
+      null,
+      serviceScope,
     );
     // The predicate must appear in both the dense and the fts candidate CTEs so
     // neither list can smuggle in a filtered-out unit type.
@@ -767,7 +1518,16 @@ describe("v2 unit-column filter (UNIT_FILTER_V2)", () => {
     (filter as SearchFilter & { [UNIT_FILTER_V2]?: UnitFilterV2 })[UNIT_FILTER_V2] = {
       unitType: "figure",
     };
-    const { sql, params } = buildDenseQuery(TABLE, VEC_TYPE, 10, filter, false, 0, VECTOR_JSON);
+    const { sql, params } = buildDenseQuery(
+      TABLE,
+      VEC_TYPE,
+      10,
+      filter,
+      false,
+      0,
+      VECTOR_JSON,
+      serviceScope,
+    );
     expect(sql).toContain("metadata @>");
     expect(sql).toContain("unit_type = $");
     expect(params).toContain("figure");

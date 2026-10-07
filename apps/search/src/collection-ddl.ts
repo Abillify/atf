@@ -285,7 +285,8 @@ async function ensureStatsTablesLocked(client: PoolClient): Promise<void> {
       id            BIGSERIAL PRIMARY KEY,
       tenant_id     TEXT NOT NULL,
       collection    TEXT NOT NULL,
-      query         TEXT NOT NULL,
+      query         TEXT,
+      query_hash    TEXT,
       timestamp     TIMESTAMPTZ DEFAULT NOW(),
       duration_ms   INTEGER NOT NULL,
       results_count INTEGER NOT NULL,
@@ -300,16 +301,42 @@ async function ensureStatsTablesLocked(client: PoolClient): Promise<void> {
   // Legacy statistics cannot be assigned to a tenant safely. They are
   // best-effort telemetry, so discard only unmapped rows before hardening both
   // schemas rather than exposing them through DEFAULT_TENANT_ID.
-  await client.query(`ALTER TABLE vs_ingest_stats ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
-  await client.query(`ALTER TABLE vs_search_stats ADD COLUMN IF NOT EXISTS tenant_id TEXT`);
-  await client.query(`DELETE FROM vs_ingest_stats WHERE tenant_id IS NULL OR btrim(tenant_id) = ''`);
-  await client.query(`DELETE FROM vs_search_stats WHERE tenant_id IS NULL OR btrim(tenant_id) = ''`);
-  await client.query(`ALTER TABLE vs_ingest_stats ALTER COLUMN tenant_id SET NOT NULL`);
-  await client.query(`ALTER TABLE vs_search_stats ALTER COLUMN tenant_id SET NOT NULL`);
+  await client.query(
+    `ALTER TABLE vs_ingest_stats ADD COLUMN IF NOT EXISTS tenant_id TEXT`,
+  );
+  await client.query(
+    `ALTER TABLE vs_search_stats ADD COLUMN IF NOT EXISTS tenant_id TEXT`,
+  );
+  // Requirement 2.6: statistics are keyed by query_hash (SHA-256/HMAC); the
+  // raw query column is nullable and written only when STATS_STORE_RAW_QUERY
+  // is enabled. Global migration 9 backfills/clears legacy rows; this ALTER
+  // keeps lazily created or pre-migration databases schema-current.
+  await client.query(
+    `ALTER TABLE vs_search_stats ADD COLUMN IF NOT EXISTS query_hash TEXT`,
+  );
+  await client.query(
+    `ALTER TABLE vs_search_stats ALTER COLUMN query DROP NOT NULL`,
+  );
+  await client.query(
+    `DELETE FROM vs_ingest_stats WHERE tenant_id IS NULL OR btrim(tenant_id) = ''`,
+  );
+  await client.query(
+    `DELETE FROM vs_search_stats WHERE tenant_id IS NULL OR btrim(tenant_id) = ''`,
+  );
+  await client.query(
+    `ALTER TABLE vs_ingest_stats ALTER COLUMN tenant_id SET NOT NULL`,
+  );
+  await client.query(
+    `ALTER TABLE vs_search_stats ALTER COLUMN tenant_id SET NOT NULL`,
+  );
   // Future writes must always supply the authenticated tenant explicitly. A
   // legacy database default would silently collapse omitted tenants together.
-  await client.query(`ALTER TABLE vs_ingest_stats ALTER COLUMN tenant_id DROP DEFAULT`);
-  await client.query(`ALTER TABLE vs_search_stats ALTER COLUMN tenant_id DROP DEFAULT`);
+  await client.query(
+    `ALTER TABLE vs_ingest_stats ALTER COLUMN tenant_id DROP DEFAULT`,
+  );
+  await client.query(
+    `ALTER TABLE vs_search_stats ALTER COLUMN tenant_id DROP DEFAULT`,
+  );
   await client.query(`
     CREATE INDEX IF NOT EXISTS idx_vs_ingest_stats_tenant_ts
       ON vs_ingest_stats(tenant_id, timestamp DESC)

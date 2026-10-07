@@ -38,10 +38,12 @@ delivered — not the truth, completeness, or trustworthiness of the source.
 
 ## Data minimisation
 
-Search statistics store SHA-256 query hashes only. The column is still named `query` for
-backwards compatibility; its content is not plaintext. Raw queries, qrels, and evidence content
-must not be copied into operator logs, metric labels, or tickets. Bound statistics retention with
-`STATS_RETENTION_DAYS`.
+Search statistics store their query digest in `vs_search_stats.query_hash`: HMAC-SHA-256 with
+`STATS_QUERY_PEPPER` when configured, plain SHA-256 otherwise. The legacy `query` column is
+written only when `STATS_STORE_RAW_QUERY=true` and stays `NULL` by default; global migration 9
+moves already-hashed legacy rows into `query_hash` and deletes rows that may still carry raw
+query text. Raw queries, qrels, and evidence content must not be copied into operator logs,
+metric labels, or tickets. Bound statistics retention with `STATS_RETENTION_DAYS`.
 
 ## Retrieval quality and versions
 

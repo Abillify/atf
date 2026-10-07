@@ -2617,7 +2617,7 @@ document.getElementById('batch-ingest-btn').addEventListener('click', async () =
               return [
                 '<span class="coll-mono">' + escapeHtml(fmtTs(s.timestamp)) + '</span>',
                 escapeHtml(s.collection),
-                '<span style="word-break:break-word">' + escapeHtml(s.query) + '</span>',
+                '<span style="word-break:break-all">' + escapeHtml(s.query || (s.query_hash ? s.query_hash.slice(0, 16) + '\u2026' : '')) + '</span>',
                 s.duration_ms,
                 s.results_count,
                 s.hybrid_search ? '✓' : '—',

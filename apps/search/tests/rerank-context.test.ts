@@ -4,6 +4,7 @@
 import { describe, expect, it } from "vitest";
 import pino from "pino";
 import {
+  applyMinScore,
   buildRerankDocument,
   diversifyResults,
   groupResultsBySection,
@@ -418,5 +419,71 @@ describe("fitRerankInputs", () => {
     const input = [result({ content: "z".repeat(10_000) })];
     const fitted = await fitRerankInputs(input, failing, 100);
     expect(fitted[0]).toBe(input[0]);
+  });
+});
+
+// ─── applyMinScore (task 6.10, Requirement 4.8) ──────────────────────────────
+
+describe("applyMinScore", () => {
+  it("passes results through untouched when the threshold is null", () => {
+    const input = [result({ score: 0.1 }), result({ score: 0.9 })];
+    const outcome = applyMinScore(input, null, false);
+    expect(outcome.results).toBe(input);
+    expect(outcome.abstention).toBeUndefined();
+  });
+
+  it("passes results through untouched when the threshold is undefined", () => {
+    const input = [result({ score: 0.1 })];
+    const outcome = applyMinScore(input, undefined, true);
+    expect(outcome.results).toBe(input);
+    expect(outcome.abstention).toBeUndefined();
+  });
+
+  it("keeps results at or above the threshold and reports kept counts", () => {
+    const input = [
+      result({ id: "a", score: 0.9 }),
+      result({ id: "b", score: 0.75 }),
+      result({ id: "c", score: 0.74 }),
+    ];
+    const outcome = applyMinScore(input, 0.75, false);
+    expect(outcome.results.map((r) => r.id)).toEqual(["a", "b"]);
+    expect(outcome.abstention).toEqual({
+      threshold: 0.75,
+      score_kind: "retrieval",
+      candidates: 3,
+      kept: 2,
+      abstain: false,
+    });
+  });
+
+  it("abstains when every result falls below the threshold", () => {
+    const input = [result({ score: 0.5 }), result({ score: 0.4 })];
+    const outcome = applyMinScore(input, 0.6, false);
+    expect(outcome.results).toEqual([]);
+    expect(outcome.abstention?.abstain).toBe(true);
+    expect(outcome.abstention?.kept).toBe(0);
+    expect(outcome.abstention?.candidates).toBe(2);
+  });
+
+  it("reports score_kind rerank only when reranking was applied", () => {
+    const input = [result({ score: 0.9 })];
+    expect(
+      applyMinScore(input, 0.5, true).abstention?.score_kind,
+    ).toBe("rerank");
+    expect(
+      applyMinScore(input, 0.5, false).abstention?.score_kind,
+    ).toBe("retrieval");
+  });
+
+  it("emits an abstention signal for an empty candidate list", () => {
+    const outcome = applyMinScore([], 0.5, false);
+    expect(outcome.results).toEqual([]);
+    expect(outcome.abstention).toEqual({
+      threshold: 0.5,
+      score_kind: "retrieval",
+      candidates: 0,
+      kept: 0,
+      abstain: true,
+    });
   });
 });

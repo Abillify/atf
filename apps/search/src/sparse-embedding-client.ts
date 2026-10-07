@@ -38,10 +38,18 @@ export interface SparseVector {
   dim: number;
 }
 
-/** Format a SparseVector as a pgvector sparsevec literal: `{1:0.5,45:1.2}/30522` */
+/**
+ * Format a SparseVector as a pgvector sparsevec literal: `{1:0.5,45:1.2}/30522`.
+ *
+ * `SparseVector.indices` are 0-based (array positions of the dense source);
+ * pgvector `sparsevec` literals use 1-based indices, so the conversion
+ * happens here at the database boundary.
+ */
 export function sparseVectorToPg(sv: SparseVector): string {
   if (sv.indices.length === 0) return `{}/${sv.dim}`;
-  const pairs = sv.indices.map((idx, i) => `${idx}:${sv.values[i]}`).join(",");
+  const pairs = sv.indices
+    .map((idx, i) => `${idx + 1}:${sv.values[i]}`)
+    .join(",");
   return `{${pairs}}/${sv.dim}`;
 }
 

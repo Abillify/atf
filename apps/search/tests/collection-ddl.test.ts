@@ -114,9 +114,34 @@ describe("collection DDL", () => {
     expect(step).toBeDefined();
   });
 
-  it("targets the highest global migration step, so a database at 7 still records 8", () => {
-    expect(GLOBAL_SCHEMA_VERSION).toBe(8);
-    expect(Math.max(...GLOBAL_MIGRATIONS.map((s) => s.toVersion))).toBe(GLOBAL_SCHEMA_VERSION);
+  it("targets the highest global migration step, so a database at 8 still records 9", () => {
+    expect(GLOBAL_SCHEMA_VERSION).toBe(9);
+    expect(Math.max(...GLOBAL_MIGRATIONS.map((s) => s.toVersion))).toBe(
+      GLOBAL_SCHEMA_VERSION,
+    );
+  });
+
+  it("keeps the schema-9 stats query_hash step (Requirement 2.6)", async () => {
+    const step = GLOBAL_MIGRATIONS.find((s) => s.toVersion === 9);
+    expect(step).toBeDefined();
+    if (!step) throw new Error("global schema 9 migration missing");
+    const queries: string[] = [];
+    await step.up({
+      query: async (sql: string) => {
+        queries.push(sql);
+        return { rows: [] };
+      },
+      getTransactionStatus: () => "T",
+    } as never);
+    const all = queries.join("\n");
+    // Additive hash column, backfill of already-hashed legacy rows, deletion
+    // of rows that may still carry raw query text, nullable raw column.
+    expect(all).toContain("ADD COLUMN IF NOT EXISTS query_hash TEXT");
+    expect(all).toContain("SET query_hash = query, query = NULL");
+    expect(all).toContain(
+      "DELETE FROM vs_search_stats WHERE query_hash IS NULL",
+    );
+    expect(all).toContain("ALTER COLUMN query DROP NOT NULL");
   });
 
   it("keeps the schema-8 document identity step", async () => {
@@ -324,12 +349,24 @@ describe("collection DDL", () => {
 
     await ensureStatsTables(client as never);
 
+    // Requirement 2.6: the hash column exists on lazily created/pre-migration
+    // databases too, and the raw query column is nullable (opt-in storage).
+    const all = queries.join(" ");
+    expect(all).toContain(
+      "ALTER TABLE vs_search_stats ADD COLUMN IF NOT EXISTS query_hash TEXT",
+    );
+    expect(all).toContain(
+      "ALTER TABLE vs_search_stats ALTER COLUMN query DROP NOT NULL",
+    );
+
     for (const table of ["vs_ingest_stats", "vs_search_stats"]) {
       const deleteIndex = queries.findIndex((sql) =>
         sql.includes(`DELETE FROM ${table} WHERE tenant_id IS NULL`),
       );
       const notNullIndex = queries.findIndex((sql) =>
-        sql.includes(`ALTER TABLE ${table} ALTER COLUMN tenant_id SET NOT NULL`),
+        sql.includes(
+          `ALTER TABLE ${table} ALTER COLUMN tenant_id SET NOT NULL`,
+        ),
       );
       expect(deleteIndex).toBeGreaterThan(-1);
       expect(notNullIndex).toBeGreaterThan(deleteIndex);

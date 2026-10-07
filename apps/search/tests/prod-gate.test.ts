@@ -23,17 +23,21 @@ function cfg(over: Partial<Config> = {}): Config {
     apiToken: null,
     monitorToken: null,
     oidc: null,
-    apiOidcIssuers: [{
-      issuer: "https://id.example.com",
-      audience: "vectorsearch",
-      tenantClaim: "tenant_id",
-      scopesClaim: "scope",
-    }],
+    apiOidcIssuers: [
+      {
+        issuer: "https://id.example.com",
+        audience: "vectorsearch",
+        tenantClaim: "tenant_id",
+        scopesClaim: "scope",
+      },
+    ],
     authnMode: "oidc",
     authzEnabled: true,
     tenantIsolationEnabled: true,
     defaultTenantId: "default",
     aclRequireIdentity: true,
+    aclRequireIdentityWaiver: "",
+    documentAclDefault: "deny",
     exposeErrorDetail: false,
     rateLimit: 120,
     trustProxy: true,
@@ -218,18 +222,63 @@ describe("JWT issuer pinning", () => {
 
 describe("access control findings", () => {
   /**
-   * Deliberately a warning, never fatal: a service-to-service ingest legitimately
-   * has no end user, so forcing this on would break correct deployments. But an
-   * operator relying on per-user ACLs has to know that an identity-less request
-   * still sees everything.
+   * Req 3.3: in production a disabled identity requirement is fatal unless the
+   * operator records an explicit waiver. Outside production it stays a warning
+   * because a service-to-service ingest legitimately has no end user.
    */
-  it("warns about a disabled identity requirement without making it fatal", () => {
+  it("refuses a disabled identity requirement in production without a waiver", () => {
     const report = checkProductionReadiness(
       cfg({ aclRequireIdentity: false }),
       "production",
     );
-    expect(report.fatal.some((m) => m.includes("ACL_REQUIRE_IDENTITY"))).toBe(false);
-    expect(report.warnings.some((m) => m.includes("ACL_REQUIRE_IDENTITY"))).toBe(true);
+    expect(report.fatal.some((m) => m.includes("ACL_REQUIRE_IDENTITY"))).toBe(
+      true,
+    );
+    expect(
+      report.warnings.some((m) => m.includes("ACL_REQUIRE_IDENTITY")),
+    ).toBe(false);
+  });
+
+  it("accepts a documented waiver, downgrading the finding to a warning", () => {
+    const report = checkProductionReadiness(
+      cfg({
+        aclRequireIdentity: false,
+        aclRequireIdentityWaiver: "TICKET-4711",
+      }),
+      "production",
+    );
+    expect(report.fatal.some((m) => m.includes("ACL_REQUIRE_IDENTITY"))).toBe(
+      false,
+    );
+    const warning = report.warnings.find((m) =>
+      m.includes("ACL_REQUIRE_IDENTITY"),
+    );
+    expect(warning).toBeDefined();
+    expect(warning).toContain("TICKET-4711");
+  });
+
+  it("warns but does not refuse outside production", () => {
+    const report = checkProductionReadiness(
+      cfg({ aclRequireIdentity: false }),
+      "development",
+    );
+    expect(report.fatal).toEqual([]);
+    expect(
+      report.warnings.some((m) => m.includes("ACL_REQUIRE_IDENTITY")),
+    ).toBe(true);
+  });
+
+  it("warns about the permissive DOCUMENT_ACL_DEFAULT in production", () => {
+    expect(
+      warns(cfg({ documentAclDefault: "allow" })).some((m) =>
+        m.includes("DOCUMENT_ACL_DEFAULT"),
+      ),
+    ).toBe(true);
+    expect(
+      warns(cfg({ documentAclDefault: "deny" })).some((m) =>
+        m.includes("DOCUMENT_ACL_DEFAULT"),
+      ),
+    ).toBe(false);
   });
 });
 

@@ -260,6 +260,7 @@ describe("auth middleware · principal resolution", () => {
       apiToken?: string | null;
       jwtVerifier?: JwtVerifier | null;
       tenantIsolationEnabled?: boolean;
+      servicePrincipalScopes?: string[];
     } = {},
   ): Promise<{ req: Request; res: ReturnType<typeof mkRes>; called: boolean }> {
     const req = mkReq(headers);
@@ -269,7 +270,9 @@ describe("auth middleware · principal resolution", () => {
       undefined,
       null,
       opts.jwtVerifier ?? null,
-      undefined,
+      opts.servicePrincipalScopes
+        ? { scopes: opts.servicePrincipalScopes, tenantId: undefined }
+        : undefined,
       { tenantIsolationEnabled: opts.tenantIsolationEnabled },
     );
     return new Promise((resolve) => {
@@ -337,21 +340,48 @@ describe("auth middleware · principal resolution", () => {
     expect(getPrincipal(req).tenantId).toBeUndefined();
   });
 
-  it("honours asserted headers for a static-token caller in single-tenant mode", async () => {
+  /**
+   * Req 3.4: asserting an end-user identity via X-User/X-Groups is a
+   * privilege — the static token's configured scopes must include
+   * search.assert-identity before the headers are trusted.
+   */
+  it("honours asserted headers only for a static-token caller holding search.assert-identity", async () => {
     const { req } = await run(
       {
         authorization: `Bearer ${TOKEN}`,
         "x-user": "alice",
         "x-groups": "staff,legal",
       },
-      { tenantIsolationEnabled: false },
+      {
+        tenantIsolationEnabled: false,
+        servicePrincipalScopes: ["vectorsearch.read", "search.assert-identity"],
+      },
     );
     expect(getPrincipal(req)).toEqual({
       userId: "alice",
       userGroups: ["staff", "legal"],
       tenantId: "default",
       source: "asserted",
+      scopes: ["vectorsearch.read", "search.assert-identity"],
     });
+  });
+
+  it("ignores asserted headers for a static token without search.assert-identity", async () => {
+    const { req } = await run(
+      {
+        authorization: `Bearer ${TOKEN}`,
+        "x-user": "alice",
+        "x-groups": "staff,legal",
+      },
+      {
+        tenantIsolationEnabled: false,
+        servicePrincipalScopes: ["vectorsearch.read"],
+      },
+    );
+    const principal = getPrincipal(req);
+    expect(principal.source).toBe("service");
+    expect(principal.userId).toBeUndefined();
+    expect(principal.userGroups).toBeUndefined();
   });
 
   it("rejects an unknown bearer instead of falling through to a principal", async () => {

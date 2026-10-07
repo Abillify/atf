@@ -284,6 +284,37 @@ describe("shapeHitV2 · design §7.2 field coverage", () => {
 		expect(hit.evidence?.block_ids).toEqual(["ev-b"]);
 	});
 
+	it("mirrors figure_id/asset_id/modality from metadata for v2 units without chunk evidence", () => {
+    // v2 batch-worker rows keep figure coordinates in metadata only (no
+    // legacy `chunk` column), so the pipeline evidence lacks them.
+    const r = {
+      ...fig(),
+      metadata: { ...fig().metadata, modality: "image" },
+      evidence: { reference: "d#u1", root_document_id: "d" },
+    } as unknown as SearchResult;
+    const hit = shapeHitV2(r, {
+      collection: "docs",
+      includeAssets: "none",
+      figureInfo: new Map(),
+    });
+    expect(hit.evidence?.figure_id).toBe("f1");
+    expect(hit.evidence?.asset_id).toBe("a1");
+    expect(hit.evidence?.modality).toBe("image");
+  });
+
+  it("prefers existing evidence figure fields over metadata", () => {
+    const r = {
+      ...fig(),
+      metadata: { ...fig().metadata, figure_id: "meta-fig" },
+    } as unknown as SearchResult;
+    const hit = shapeHitV2(r, {
+      collection: "docs",
+      includeAssets: "none",
+      figureInfo: new Map(),
+    });
+    expect(hit.evidence?.figure_id).toBe("f1");
+  });
+
 	it("surfaces revision_state / pages_available for a partial revision", () => {
 		const r = {
 			...chunkWithRefs(),

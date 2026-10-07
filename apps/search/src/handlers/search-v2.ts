@@ -75,10 +75,11 @@ import {
 } from "../metadata.js";
 import { rerankResultsWithStatus } from "./search.js";
 import {
-	diversifyResults,
-	fitRerankInputs,
-	groupResultsV2,
-	type GroupByMode,
+  applyMinScore,
+  diversifyResults,
+  fitRerankInputs,
+  groupResultsV2,
+  type GroupByMode,
 } from "../rerank-context.js";
 import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
 import {
@@ -100,17 +101,23 @@ import {
 } from "../search-v2-response.js";
 
 export interface SearchV2HandlerOptions {
-	rerankerClient?: RerankerClient | null;
-	candidateMultiplier?: number;
-	hybridSearch?: boolean;
-	sparseClient?: SparseEmbeddingClient | null;
-	queryCache?: QueryEmbeddingCache | null;
-	/**
-	 * Optional tokenizer (token-counter.ts). When present, the rerank inputs are
-	 * trimmed to RERANK_MAX_TOKENS measured tokens (Requirement 13.2) instead of
-	 * relying on the chars/4 heuristic alone.
-	 */
-	tokenCounter?: TokenCounter | null;
+  rerankerClient?: RerankerClient | null;
+  candidateMultiplier?: number;
+  hybridSearch?: boolean;
+  sparseClient?: SparseEmbeddingClient | null;
+  queryCache?: QueryEmbeddingCache | null;
+  /**
+   * Optional tokenizer (token-counter.ts). When present, the rerank inputs are
+   * trimmed to RERANK_MAX_TOKENS measured tokens (Requirement 13.2) instead of
+   * relying on the chars/4 heuristic alone.
+   */
+  tokenCounter?: TokenCounter | null;
+  /**
+   * MIN_RERANK_SCORE (Requirement 4.8): relevance threshold applied to the
+   * final ranking; the response then carries an `abstention` signal.
+   * null / undefined = disabled (no filtering, no field).
+   */
+  minRerankScore?: number | null;
 }
 
 const GRANULARITIES: readonly Granularity[] = [
@@ -336,293 +343,316 @@ export function createSearchV2Handler(
 	const hybridDefault = options.hybridSearch ?? true;
 	const sparseClient = options.sparseClient ?? null;
 	const queryCache = options.queryCache ?? null;
+	const minRerankScore = options.minRerankScore ?? null;
 
 	return async (req, res, next) => {
 		const log: Logger = (req as { log?: Logger }).log ?? logger;
 		try {
-			const body = (req.body ?? {}) as Record<string, unknown>;
-			if (typeof body !== "object" || Array.isArray(body)) {
-				res.status(400).json({ error: "Request body must be a JSON object" });
-				return;
-			}
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      if (typeof body !== "object" || Array.isArray(body)) {
+        res.status(400).json({ error: "Request body must be a JSON object" });
+        return;
+      }
 
-			let query: string;
-			let limit: number;
-			let granularity: Granularity | undefined;
-			let expandMode: ExpandMode | null | undefined;
-			let budgetChars: number;
-			let includeAssets: IncludeAssets;
-			let unitFilter: UnitFilterV2;
-			let identifier: string | undefined;
-			let groupBy: GroupByMode;
-			try {
-				query = requireString(body.query, "query");
-				limit = parseLimit(body.limit);
-				granularity = parseGranularity(body.granularity);
-				budgetChars = parseBudget(
-					body.budget_chars,
-					defaultBudgetCharsFor(
-						parseExpandMode(typeof body.expand === "string" ? body.expand : undefined) ?? undefined,
-					),
-				);
-				includeAssets = parseIncludeAssets(body.include_assets);
-				groupBy = parseGroupBy(body.group_by);
-				if (
-					body.identifier_search !== undefined &&
-					typeof body.identifier_search !== "boolean"
-				) {
-					throw new BadRequest("identifier_search must be a boolean");
-				}
-				expandMode = parseExpandMode(
-					typeof body.expand === "string" ? body.expand : undefined,
-				);
-				if (expandMode === null) {
-					throw new BadRequest(
-						"expand must be one of: none, neighbors, section, page, document",
-					);
-				}
-				const parsed = parseFilters(body.filters);
-				unitFilter = parsed.unit;
-				identifier = parsed.identifier;
-			} catch (err) {
-				if (err instanceof BadRequest) {
-					res.status(400).json({ error: err.message });
-					return;
-				}
-				// normalizeFilterV2 throws MetadataValidationError → 400 too.
-				res.status(400).json({ error: (err as Error).message });
-				return;
-			}
+      let query: string;
+      let limit: number;
+      let granularity: Granularity | undefined;
+      let expandMode: ExpandMode | null | undefined;
+      let budgetChars: number;
+      let includeAssets: IncludeAssets;
+      let unitFilter: UnitFilterV2;
+      let identifier: string | undefined;
+      let groupBy: GroupByMode;
+      try {
+        query = requireString(body.query, "query");
+        limit = parseLimit(body.limit);
+        granularity = parseGranularity(body.granularity);
+        budgetChars = parseBudget(
+          body.budget_chars,
+          defaultBudgetCharsFor(
+            parseExpandMode(
+              typeof body.expand === "string" ? body.expand : undefined,
+            ) ?? undefined,
+          ),
+        );
+        includeAssets = parseIncludeAssets(body.include_assets);
+        groupBy = parseGroupBy(body.group_by);
+        if (
+          body.identifier_search !== undefined &&
+          typeof body.identifier_search !== "boolean"
+        ) {
+          throw new BadRequest("identifier_search must be a boolean");
+        }
+        expandMode = parseExpandMode(
+          typeof body.expand === "string" ? body.expand : undefined,
+        );
+        if (expandMode === null) {
+          throw new BadRequest(
+            "expand must be one of: none, neighbors, section, page, document",
+          );
+        }
+        const parsed = parseFilters(body.filters);
+        unitFilter = parsed.unit;
+        identifier = parsed.identifier;
+      } catch (err) {
+        if (err instanceof BadRequest) {
+          res.status(400).json({ error: err.message });
+          return;
+        }
+        // normalizeFilterV2 throws MetadataValidationError → 400 too.
+        res.status(400).json({ error: (err as Error).message });
+        return;
+      }
 
-			// granularity restricts the returned unit level. When set, it is applied
-			// as a unit_type filter (chunk|section|page|document are unit types); an
-			// explicit filters.unit_type takes precedence if both are given.
-			if (granularity && unitFilter.unitType === undefined) {
-				unitFilter.unitType = granularity;
-			}
+      // granularity restricts the returned unit level. When set, it is applied
+      // as a unit_type filter (chunk|section|page|document are unit types); an
+      // explicit filters.unit_type takes precedence if both are given.
+      if (granularity && unitFilter.unitType === undefined) {
+        unitFilter.unitType = granularity;
+      }
 
-			const collection = readHeader(req, "x-collection") || "documents";
-			const rerankRequested = body.rerank === true;
-			// The identifier RRF list (Req 12.3) is ON for v2 by default; the v1
-			// /search handler never enables it (Req 13.7). `identifier_search:
-			// false` opts out. Only the hybrid path fuses it (dense-only has no
-			// list fusion).
-			const identifierList = body.identifier_search !== false;
-			const hybridRequested =
-				typeof body.hybrid === "boolean" ? body.hybrid : hybridDefault;
+      const collection = readHeader(req, "x-collection") || "documents";
+      const rerankRequested = body.rerank === true;
+      // The identifier RRF list (Req 12.3) is ON for v2 by default; the v1
+      // /search handler never enables it (Req 13.7). `identifier_search:
+      // false` opts out. Only the hybrid path fuses it (dense-only has no
+      // list fusion).
+      const identifierList = body.identifier_search !== false;
+      const hybridRequested =
+        typeof body.hybrid === "boolean" ? body.hybrid : hybridDefault;
 
-			const metadata: Metadata =
-				(res.locals as { metadata?: Metadata }).metadata ?? {};
-			let filter: SearchFilter | undefined;
-			try {
-				filter = buildFilter(metadata, body, unitFilter);
-			} catch (err) {
-				res.status(400).json({ error: (err as Error).message });
-				return;
-			}
+      const metadata: Metadata =
+        (res.locals as { metadata?: Metadata }).metadata ?? {};
+      let filter: SearchFilter | undefined;
+      try {
+        filter = buildFilter(metadata, body, unitFilter);
+      } catch (err) {
+        res.status(400).json({ error: (err as Error).message });
+        return;
+      }
 
-			// 1. Query analysis: fold an explicit identifier into the query text (so
-			//    the dense embedding and FTS see it) AND pass it explicitly to the
-			//    identifier list, so it resolves even when it does not match a
-			//    recognizer class (e.g. lower-case "we-01/a").
-			const searchQuery = identifier ? `${query} ${identifier}` : query;
-			const embedText = prepareFtsContent(searchQuery);
+      // 1. Query analysis: fold an explicit identifier into the query text (so
+      //    the dense embedding and FTS see it) AND pass it explicitly to the
+      //    identifier list, so it resolves even when it does not match a
+      //    recognizer class (e.g. lower-case "we-01/a").
+      const searchQuery = identifier ? `${query} ${identifier}` : query;
+      const embedText = prepareFtsContent(searchQuery);
 
-			// 2. Embed the query (reusing the shared cache when configured).
-			let vector: number[] = [];
-			try {
-				if (queryCache) {
-					vector = await queryCache.getOrEmbed(embedText, async () => {
-						const r = await embeddingClient.embed(embedText);
-						if (!r.ok) throw new Error(r.error.message);
-						return r.result.vector;
-					});
-				} else {
-					const r = await embeddingClient.embed(embedText);
-					if (!r.ok) {
-						res
-							.status(502)
-							.json({ error: `Embedding failed: ${r.error.message}` });
-						return;
-					}
-					vector = r.result.vector;
-				}
-			} catch (err) {
-				log.warn({ err }, "v2 embedding failed");
-				res
-					.status(502)
-					.json({ error: `Embedding failed: ${(err as Error).message}` });
-				return;
-			}
+      // 2. Embed the query (reusing the shared cache when configured).
+      let vector: number[] = [];
+      try {
+        if (queryCache) {
+          vector = await queryCache.getOrEmbed(embedText, async () => {
+            const r = await embeddingClient.embed(embedText);
+            if (!r.ok) throw new Error(r.error.message);
+            return r.result.vector;
+          });
+        } else {
+          const r = await embeddingClient.embed(embedText);
+          if (!r.ok) {
+            res
+              .status(502)
+              .json({ error: `Embedding failed: ${r.error.message}` });
+            return;
+          }
+          vector = r.result.vector;
+        }
+      } catch (err) {
+        log.warn({ err }, "v2 embedding failed");
+        res
+          .status(502)
+          .json({ error: `Embedding failed: ${(err as Error).message}` });
+        return;
+      }
 
-			// Sparse branch (optional, mirrors v1).
-			let sparseVec = undefined;
-			if (sparseClient !== null && hybridRequested) {
-				const sparseRes = await sparseClient.embedSparse(embedText);
-				if (sparseRes.ok) sparseVec = sparseRes.result;
-				else
-					log.warn(
-						{ error: sparseRes.error },
-						"v2 sparse embedding failed; skipping",
-					);
-			}
+      // Sparse branch (optional, mirrors v1).
+      let sparseVec = undefined;
+      if (sparseClient !== null && hybridRequested) {
+        const sparseRes = await sparseClient.embedSparse(embedText);
+        if (sparseRes.ok) sparseVec = sparseRes.result;
+        else
+          log.warn(
+            { error: sparseRes.error },
+            "v2 sparse embedding failed; skipping",
+          );
+      }
 
-			const scope = accessScopeForRequest(req);
-			const { userId, userGroups } = getPrincipal(req);
-			log.info(
-				{
-					query,
-					limit,
-					collection,
-					hybrid: hybridRequested,
-					granularity,
-					expand: expandMode,
-					includeAssets,
-					groupBy,
-					identifierList,
-					userId,
-					userGroups,
-				},
-				"Incoming v2 search query",
-			);
+      const scope = accessScopeForRequest(req);
+      const { userId, userGroups } = getPrincipal(req);
+      log.info(
+        {
+          query,
+          limit,
+          collection,
+          hybrid: hybridRequested,
+          granularity,
+          expand: expandMode,
+          includeAssets,
+          groupBy,
+          identifierList,
+          userId,
+          userGroups,
+        },
+        "Incoming v2 search query",
+      );
 
-			// Over-fetch when reranking / diversifying so the final window can be
-			// filled after collapse (same heuristic as v1).
-			const rerankActive = rerankRequested && rerankerClient !== null;
-			const fetchLimit = Math.min(
-				limit * Math.max(1, candidateMultiplier),
-				500,
-			);
+      // Over-fetch when reranking / diversifying so the final window can be
+      // filled after collapse (same heuristic as v1).
+      const rerankActive = rerankRequested && rerankerClient !== null;
+      const fetchLimit = Math.min(
+        limit * Math.max(1, candidateMultiplier),
+        500,
+      );
 
-			// 2. Candidates — dense + ts_de + identifier RRF, tenant/ACL/temporal +
-			//    the v2 unit filters. Reuses the exact same search path as v1.
-			const searchResult = await postgresClient.search(
-				searchQuery,
-				vector,
-				fetchLimit,
-				collection,
-				scope,
-				filter,
-				hybridRequested,
-				false, // includeAllVersions
-				0, // offset
-				candidateMultiplier,
-				sparseVec,
-				undefined, // tags
-				undefined, // cursor
-				false, // ftsOnly
-				undefined, // baseRef
-				undefined, // pathPrefix
-				undefined, // timeoutMs
-				undefined, // signal
-				undefined, // onPlan
-				undefined, // validAt
-				{
-					identifierList,
-					...(identifier ? { identifiers: [identifier] } : {}),
-				},
-			);
-			if (!searchResult.ok) {
-				const status =
-					searchResult.error.code === "INVALID_COLLECTION_NAME"
-						? 400
-						: searchResult.error.code === "COLLECTION_NOT_FOUND"
-							? 404
-							: 502;
-				log.warn({ error: searchResult.error }, "v2 search failed");
-				res.status(status).json({ error: searchResult.error.message });
-				return;
-			}
+      // 2. Candidates — dense + ts_de + identifier RRF, tenant/ACL/temporal +
+      //    the v2 unit filters. Reuses the exact same search path as v1.
+      const searchResult = await postgresClient.search(
+        searchQuery,
+        vector,
+        fetchLimit,
+        collection,
+        scope,
+        filter,
+        hybridRequested,
+        false, // includeAllVersions
+        0, // offset
+        candidateMultiplier,
+        sparseVec,
+        undefined, // tags
+        undefined, // cursor
+        false, // ftsOnly
+        undefined, // baseRef
+        undefined, // pathPrefix
+        undefined, // timeoutMs
+        undefined, // signal
+        undefined, // onPlan
+        undefined, // validAt
+        {
+          identifierList,
+          ...(identifier ? { identifiers: [identifier] } : {}),
+        },
+      );
+      if (!searchResult.ok) {
+        const status =
+          searchResult.error.code === "INVALID_COLLECTION_NAME"
+            ? 400
+            : searchResult.error.code === "COLLECTION_NOT_FOUND"
+              ? 404
+              : 502;
+        log.warn({ error: searchResult.error }, "v2 search failed");
+        res.status(status).json({ error: searchResult.error.message });
+        return;
+      }
 
-			let results: SearchResult[] = searchResult.result;
+      let results: SearchResult[] = searchResult.result;
 
-			// 3. Rerank with context (task 3.5) — reuses rerankResultsWithStatus.
-			//    With a tokenizer the inputs are trimmed to the real 1024-token
-			//    budget first; the reranked (possibly trimmed) copies are mapped
-			//    back to the untrimmed originals by id.
-			if (rerankActive && rerankerClient !== null && results.length > 1) {
-				const fitted = await fitRerankInputs(results, options.tokenCounter);
-				const outcome = await rerankResultsWithStatus(
-					rerankerClient,
-					query,
-					fitted,
-					log,
-				);
-				results = restoreOriginalContent(outcome.results, results);
-			}
+      // 3. Rerank with context (task 3.5) — reuses rerankResultsWithStatus.
+      //    With a tokenizer the inputs are trimmed to the real 1024-token
+      //    budget first; the reranked (possibly trimmed) copies are mapped
+      //    back to the untrimmed originals by id.
+      let rerankApplied = false;
+      if (rerankActive && rerankerClient !== null && results.length > 1) {
+        const fitted = await fitRerankInputs(results, options.tokenCounter);
+        const outcome = await rerankResultsWithStatus(
+          rerankerClient,
+          query,
+          fitted,
+          log,
+        );
+        results = restoreOriginalContent(outcome.results, results);
+        rerankApplied = outcome.applied;
+      }
 
-			// 4. Diversify (task 3.5): collapse same table/figure + cap per section.
-			//    With group_by the per-section cap is lifted: the group merges all
-			//    of a section's (or document's) hits instead of dropping them.
-			results = diversifyResults(
-				results,
-				groupBy === "none" ? {} : { perSectionCap: 0 },
-			);
-			// 4b. group_by (Req 13.6): merge per document / section, best score,
-			//     content in document order. A document's group (an e-mail
-			//     thread) is resolved first so `document` merges a thread.
-			if (groupBy === "document" || expandMode === "document") {
-				results = await attachDocumentGroups({
-					postgresClient,
-					collection,
-					scope,
-					results,
-					logger: log,
-				});
-			}
-			results = groupResultsV2(results, groupBy);
-			results = results.slice(0, limit);
+      // 4. Diversify (task 3.5): collapse same table/figure + cap per section.
+      //    With group_by the per-section cap is lifted: the group merges all
+      //    of a section's (or document's) hits instead of dropping them.
+      results = diversifyResults(
+        results,
+        groupBy === "none" ? {} : { perSectionCap: 0 },
+      );
+      // 4b. group_by (Req 13.6): merge per document / section, best score,
+      //     content in document order. A document's group (an e-mail
+      //     thread) is resolved first so `document` merges a thread.
+      if (groupBy === "document" || expandMode === "document") {
+        results = await attachDocumentGroups({
+          postgresClient,
+          collection,
+          scope,
+          results,
+          logger: log,
+        });
+      }
+      results = groupResultsV2(results, groupBy);
+      results = results.slice(0, limit);
 
-			// 5. Small-to-big expansion (task 3.6) — reuses attachExpansions.
-			let expanded =
-				results as import("./expand-results.js").ExpandedSearchResult[];
-			if (expandMode !== undefined) {
-				expanded = await attachExpansions({
-					postgresClient,
-					collection,
-					scope,
-					mode: expandMode,
-					budgetChars,
-					includeAllVersions: false,
-					results,
-					logger: log,
-				});
-			}
+      // 4c. MIN_RERANK_SCORE / abstention (task 6.10, Requirement 4.8): filter
+      //     the final ranking to the configured relevance threshold (reranker
+      //     score when reranking was applied, retrieval score otherwise) and
+      //     report an abstention signal when nothing qualifies. Applied after
+      //     grouping/slicing so the limit is not consumed by dropped hits.
+      const minScoreOutcome = applyMinScore(
+        results,
+        minRerankScore,
+        rerankApplied,
+      );
+      results = minScoreOutcome.results;
 
-			// 6. Attach assets (Requirement 13.5): resolve the REFERENCED figures once
-			//    (batched by base_ref) so each hit's assets carry figure_kind/caption/
-			//    page/bbox, then shape the v2 response. Skipped entirely for
-			//    include_assets=none (no figure lookup, no assets field).
-			const figureInfo = new Map<string, FigureUnitInfo>();
-			if (includeAssets !== "none") {
-				await resolveReferencedFigures(
-					postgresClient,
-					collection,
-					scope,
-					expanded,
-					figureInfo,
-					log,
-				);
-			}
+      // 5. Small-to-big expansion (task 3.6) — reuses attachExpansions.
+      let expanded =
+        results as import("./expand-results.js").ExpandedSearchResult[];
+      if (expandMode !== undefined) {
+        expanded = await attachExpansions({
+          postgresClient,
+          collection,
+          scope,
+          mode: expandMode,
+          budgetChars,
+          includeAllVersions: false,
+          results,
+          logger: log,
+        });
+      }
 
-			const hits: SearchHitV2[] = expanded.map((r) =>
-				shapeHitV2(r, { collection, includeAssets, figureInfo }),
-			);
+      // 6. Attach assets (Requirement 13.5): resolve the REFERENCED figures once
+      //    (batched by base_ref) so each hit's assets carry figure_kind/caption/
+      //    page/bbox, then shape the v2 response. Skipped entirely for
+      //    include_assets=none (no figure lookup, no assets field).
+      const figureInfo = new Map<string, FigureUnitInfo>();
+      if (includeAssets !== "none") {
+        await resolveReferencedFigures(
+          postgresClient,
+          collection,
+          scope,
+          expanded,
+          figureInfo,
+          log,
+        );
+      }
 
-			if (scope.tenantId) {
-				postgresClient.recordSearchStat({
-					tenantId: scope.tenantId,
-					collection,
-					query,
-					durationMs: 0,
-					resultsCount: hits.length,
-					hybridSearch: hybridRequested,
-					reranked: rerankActive,
-				});
-			}
+      const hits: SearchHitV2[] = expanded.map((r) =>
+        shapeHitV2(r, { collection, includeAssets, figureInfo }),
+      );
 
-			res.status(200).json({ results: hits });
-		} catch (err) {
+      if (scope.tenantId) {
+        postgresClient.recordSearchStat({
+          tenantId: scope.tenantId,
+          collection,
+          query,
+          durationMs: 0,
+          resultsCount: hits.length,
+          hybridSearch: hybridRequested,
+          reranked: rerankActive,
+        });
+      }
+
+      res
+        .status(200)
+        .json(
+          minScoreOutcome.abstention
+            ? { results: hits, abstention: minScoreOutcome.abstention }
+            : { results: hits },
+        );
+    } catch (err) {
 			next(err);
 		}
 	};

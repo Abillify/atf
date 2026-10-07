@@ -48,8 +48,13 @@ export interface PendingIngestStat {
 export interface PendingSearchStat {
   tenant_id: string;
   collection: string;
-  /** SHA-256 of the query; raw search terms are never persisted in statistics. */
-  query: string;
+  /**
+   * Raw query text — persisted ONLY when STATS_STORE_RAW_QUERY=true
+   * (Requirement 2.6); null otherwise so the column stays empty.
+   */
+  query: string | null;
+  /** SHA-256 or HMAC-SHA-256 (with STATS_QUERY_PEPPER) of the query. */
+  query_hash: string;
   duration_ms: number;
   results_count: number;
   hybrid_search: boolean;
@@ -146,21 +151,22 @@ export function createStatsBuffer(
       if (searchRows.length > 0) {
         const values: unknown[] = [];
         const placeholders = searchRows.map((r, i) => {
-          const base = i * 7;
+          const base = i * 8;
           values.push(
             r.tenant_id,
             r.collection,
             r.query,
+            r.query_hash,
             r.duration_ms,
             r.results_count,
             r.hybrid_search,
             r.reranked,
           );
-          return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7})`;
+          return `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`;
         });
         await client.query(
           `INSERT INTO vs_search_stats
-             (tenant_id, collection, query, duration_ms, results_count, hybrid_search, reranked)
+             (tenant_id, collection, query, query_hash, duration_ms, results_count, hybrid_search, reranked)
            VALUES ${placeholders.join(", ")}`,
           values,
         );

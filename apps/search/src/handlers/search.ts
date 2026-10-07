@@ -23,6 +23,7 @@ import { FILTER_V2, normalizeFilterV2, type Metadata } from "../metadata.js";
 import type { QueryEmbeddingCache } from "../query-cache.js";
 import { runAsyncRerankStream } from "./search-async-rerank.js";
 import {
+  applyMinScore,
   buildRerankDocument,
   diversifyResults,
   documentGroupKey,
@@ -52,6 +53,12 @@ export interface SearchHandlerOptions {
   sparseClient?: SparseEmbeddingClient | null;
   /** LRU cache for query embeddings. null / undefined = no caching. */
   queryCache?: QueryEmbeddingCache | null;
+  /**
+   * MIN_RERANK_SCORE (Requirement 4.8): relevance threshold applied to the
+   * final ranking; the response then carries an `abstention` signal.
+   * null / undefined = disabled (no filtering, no field).
+   */
+  minRerankScore?: number | null;
 }
 
 // ─── Header parsers ───────────────────────────────────────────────────────────
@@ -118,6 +125,7 @@ export function createSearchHandler(
   const hydeClient = options.hydeClient ?? null;
   const sparseClient = options.sparseClient ?? null;
   const queryCache = options.queryCache ?? null;
+  const minRerankScore = options.minRerankScore ?? null;
 
   return async (req, res, next) => {
     const log: Logger = (req as { log?: Logger }).log ?? logger;
@@ -259,7 +267,9 @@ export function createSearchHandler(
       try {
         validAt = parseRfc3339DateTime(readHeader(req, "x-valid-at"));
       } catch (error) {
-        res.status(400).json({ error: `X-Valid-At ${(error as Error).message}` });
+        res
+          .status(400)
+          .json({ error: `X-Valid-At ${(error as Error).message}` });
         return;
       }
 
@@ -310,18 +320,22 @@ export function createSearchHandler(
       );
       if (expandMode === null) {
         res.status(400).json({
-          error: "X-Expand must be one of: neighbors, section, page, document (or none)",
+          error:
+            "X-Expand must be one of: neighbors, section, page, document (or none)",
         });
         return;
       }
-      const budgetCharsParsed = parseBudgetChars(readHeader(req, "x-budget-chars"));
+      const budgetCharsParsed = parseBudgetChars(
+        readHeader(req, "x-budget-chars"),
+      );
       if (budgetCharsParsed === null) {
         res.status(400).json({
           error: "X-Budget-Chars must be a positive integer",
         });
         return;
       }
-      const expandBudgetChars = budgetCharsParsed ?? defaultBudgetCharsFor(expandMode);
+      const expandBudgetChars =
+        budgetCharsParsed ?? defaultBudgetCharsFor(expandMode);
 
       // 9. X-Hyde: use HyDE query expansion if a hydeClient is configured
       const hydeHeader = parseBooleanHeader(readHeader(req, "x-hyde"));
@@ -494,7 +508,9 @@ export function createSearchHandler(
         try {
           const filterV2 = normalizeFilterV2(JSON.parse(xFilterV2Str));
           filter = { ...(filter ?? {}) };
-          (filter as SearchFilter & { [FILTER_V2]?: typeof filterV2 })[FILTER_V2] = filterV2;
+          (filter as SearchFilter & { [FILTER_V2]?: typeof filterV2 })[
+            FILTER_V2
+          ] = filterV2;
         } catch (err) {
           const message = err instanceof Error ? err.message : "Invalid filter";
           res.status(400).json({ error: `Invalid X-Filter-V2: ${message}` });
@@ -580,23 +596,45 @@ export function createSearchHandler(
             filter,
             tags: tagsFilter,
           }),
-          usage: usage ? {
-            inputTokens: usage.inputTokens,
-            outputTokens: usage.outputTokens,
-            cost: usage.cost,
-            modelCosts: usage.modelCosts,
-          } : undefined,
+          usage: usage
+            ? {
+                inputTokens: usage.inputTokens,
+                outputTokens: usage.outputTokens,
+                cost: usage.cost,
+                modelCosts: usage.modelCosts,
+              }
+            : undefined,
         });
         return;
       }
 
+      let rerankApplied = false;
       if (
         rerankMode === "sync" &&
         rerankerClient !== null &&
         results.length > 1
       ) {
-        results = await rerankResults(rerankerClient, body, results, log);
+        const outcome = await rerankResultsWithStatus(
+          rerankerClient,
+          body,
+          results,
+          log,
+        );
+        results = outcome.results;
+        rerankApplied = outcome.applied;
       }
+
+      // MIN_RERANK_SCORE / abstention (task 6.10, Requirement 4.8): filter the
+      // final ranking to the configured relevance threshold (reranker score
+      // when reranking was applied, retrieval score otherwise) and report an
+      // abstention signal when nothing qualifies. Unset = no-op, no field.
+      const minScoreOutcome = applyMinScore(
+        results,
+        minRerankScore,
+        rerankApplied,
+      );
+      results = minScoreOutcome.results;
+      const abstention = minScoreOutcome.abstention;
 
       // Resolve document groups (e-mail threads) so grouping merges a thread
       // and document expansion reads the whole thread.
@@ -686,6 +724,7 @@ export function createSearchHandler(
       if (nextCursor) response["next_cursor"] = nextCursor;
       if (hydeExpanded) response["hyde_query"] = hydeExpanded;
       if (includeQueryVector) response["query_vector"] = vector;
+      if (abstention) response["abstention"] = abstention;
 
       // Record search stats after reranking so the `reranked` flag is accurate.
       postgresClient.recordSearchStat({
@@ -722,12 +761,14 @@ export function createSearchHandler(
           filter,
           tags: tagsFilter,
         }),
-        usage: usage ? {
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          cost: usage.cost,
-          modelCosts: usage.modelCosts,
-        } : undefined,
+        usage: usage
+          ? {
+              inputTokens: usage.inputTokens,
+              outputTokens: usage.outputTokens,
+              cost: usage.cost,
+              modelCosts: usage.modelCosts,
+            }
+          : undefined,
       });
 
       if (usage) {
