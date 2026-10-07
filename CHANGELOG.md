@@ -17,6 +17,114 @@ releases:
   time rather than mid-execution.
 
 ## [Unreleased]
+
+Platform-Härtung, Phase 1 (Fundament), Phase 3 (Audit-Integrität) und Phase 4
+(Compliance/DSAR). Phase 1 bringt zwei neue interne Contract-/Sicherheitspakete, ohne dass
+sich ein Service geändert verhält; die Migration der Services folgt in den nächsten Phasen.
+Phase 3 härtet die Audit-Kette gegen Abzweigung, Genesis-Neustart nach Ausfall und
+nachträgliche Veränderung, und schreibt Regulierte_Aktionen nur noch nach durablem
+Audit-Erfolg fort. Phase 4 macht DSAR-Löschungen über alle Stores vollständig, idempotent
+und ehrlich: Search, Extract und Gate melden je-Store-Teilergebnisse über den
+Erasure-Contract, die Runtime verteilt als Orchestrator und stellt einen signierten
+Erasure_Receipt aus; ein Outpost-MirrorDelete löst den vollständigen Search-Cascade aus.
+### Added
+- **`@atf/security-kit`** (`packages/security-kit`, privat). Gemeinsame Sicherheitsbausteine:
+  `safeEqual`/`safeEqualBytes` (SHA-256-Digest-Vergleich, timing-sicher), striktes
+  Base64URL (Padding- und Bit-Prüfung, auch als `@atf/security-kit/browser` für Control),
+  `EgressGuard` (Sperrtabelle inkl. 198.18/15, 192.0.0/24, 64:ff9b::/96, 2002::/16,
+  IPv4-mapped/compatible, NAT64 und 6to4; DNS-Pinning über `lookup`, Redirect-Revalidierung,
+  `maxBytes`, `timeoutMs`, `allowPrivateHosts`), JWT-/OIDC-Modul (feste Algorithmen,
+  Multi-Issuer-Routing über unverifiziertes `iss`, Discovery mit Single-Flight,
+  Positiv-Cache aus `Cache-Control` mit 5-min-Untergrenze, Negativ-Cache 30 s exponentiell
+  bis 5 min), Rate-Limit-Kern (GCRA mit Memory-Backend inkl. Eviction und Redis-Backend
+  über atomares Lua, konfigurierbarer Fail-Mode) sowie Prod_Gate-Regelbausteine mit
+  gemeinsamem Reporter (Services behalten ihre eigene `prod-gate.ts`). Tests laufen unter
+  Bun und Node (`test:node`).
+- **`@atf/erasure-contract`** (`packages/erasure-contract`, privat). Normativer
+  DSAR-Vertrag über Service-Grenzen: `ErasureRequestSchema` (idempotent über `requestId`,
+  Scopes `subject`/`tenant`/`reference` mit Querschnittsprüfen), `ErasureStoreResultSchema`
+  (`ok`/`failed`/`not_configured`, nicht-negative Zähler), `ErasureResponseSchema` und der
+  signierbare `ErasureReceiptPayloadSchema` (Subjekt nur als `sha256(tenantId|identifier)`,
+  kanonisches JSON mit rekursiv sortierten Keys als Signatur-Bytes; Signaturalgorithmus im
+  Envelope, nicht im Payload).
+- **Audit-Ketten-Integrität** (`@atf/runtime`, Req 1.1–1.3). Tip-Lesen, ID-Vergabe
+  (`nextval`), Hash-Berechnung und INSERT laufen in einer Transaktion unter
+  `pg_advisory_xact_lock(hashtext('atf:audit_log'))`; der Tip-Cache ist entfallen, die Kette
+  wird ausschließlich aus dem persistierten Zustand fortgeschrieben. Genesis kommt nur bei
+  nachweislich leerer Tabelle zum Einsatz — ein Lese- oder Schreibfehler wird geworfen statt
+  die Kette still neu bei Genesis zu starten; ein Tip ohne Hash (beschädigte Kette) wird
+  abgelehnt.
+- **`recordRequired` / Regulierte_Aktionen** (`@atf/runtime`, Req 1.4–1.5). Neue
+  `AuditLog.recordRequired()` löst erst nach durablem Schreibvorgang auf und wirft bei
+  Fehler. `compliance/regulated-actions.ts` listet die regulierten Aktionen
+  (`flows.publish`/`rollback`/`delete`, `approvals.resolve`, `dsar.self_erasure`,
+  `compliance.forget`, `tenant.delete`, `api_key.create`/`revoke`, `byok.set`); deren Routen
+  beantworten einen Audit-Fehler mit `503 AUDIT_UNAVAILABLE` und melden den Erfolg nicht als
+  abgeschlossen.
+- **Append-only `audit_log`** (`@atf/runtime`, Migration 42/43, Req 1.1/1.5). Trigger
+  `audit_log_immutable` blockiert UPDATE/DELETE (Retention ausschließlich über
+  `audit_log_purge(before_at)` als SECURITY-DEFINER-Funktion mit Vorab-Anker); Migration 42
+  legt die Tabelle `audit_anchors` an, Migration 43 entzieht `aiperator_app` und
+  `aiperator_operator` UPDATE/DELETE auf `audit_log` (auch in `rls-onboarding.ts`, dort
+  tabellenexistenz-gesichert).
+- **Anker, Metrik und Health** (`@atf/runtime`, Req 1.8–1.9). Prod_Gate warnt in Produktion
+  ohne `AUDIT_ANCHOR_FILE`; die Metrik `aiperator_audit_write_failures_total` zählt
+  fehlgeschlagene durable Schreibvorgänge (Hook in `createAuditLog`); `/health/ready` zeigt
+  einen `audit`-Hinweis bei Schreibfehlern (nie 503); der Shutdown lässt die Schreib-Warteschlange
+  in einem Grace-Fenster ablaufen und zählt nicht abgearbeitete Writes auf die Metrik.
+- **DSAR-Löschung in Search** (`@atf/search`, Req 2.5–2.6, Tasks 4.2–4.5). Der
+  Löschpfad über alle Tabellen ist aus `deleteRevisionCascade` extrahiert
+  (`deleteDocumentCascade`) und auf Reference-, Metadaten-Delete und Revisions-Abort
+  umgestellt; die Cache-Invalidierung erfolgt nach COMMIT. `POST /v1/erasure`
+  (Scopes `subject`/`reference`/`tenant`) löscht inkl. Statistiken und
+  Idempotenz-Ledger (Migration `GLOBAL_SCHEMA_VERSION = 9`,
+  `vs_search_stats.query_hash`, `STATS_STORE_RAW_QUERY`); Property-Tests
+  (Property 3) belegen die Vollständigkeit über alle Search-Tabellen.
+- **DSAR-Löschung in Extract** (`@atf/extract`, Req 2.7, Task 4.6).
+  `POST /v1/erasure` (Scope `extract.erasure`) für Jobs, Upload-Sessions,
+  Seitenbilder und verwaiste Quell-Blobs mit Ledger
+  (`extract.erasure_ledger`, DDL v4); der Aufruf löst die Search-Kaskade mit
+  demselben `requestId` aus und meldet sie als Teilergebnis `search.documents`
+  zurück — ohne Search-Ziel `not_configured`, nie Erfolg durch Weglassen.
+  `DELETE /v2/documents` meldet das Ergebnis des Search-Cascade.
+- **Audit-Redaction und Erasure im Gate** (`@atf/gate`, Req 2.8, Task 4.7).
+  Audit-Events werden über `audit.redact` (Pfade und Extra-Keys) geschwärzt,
+  `POST /v1/erasure` (Scope `gate.erasure`) löscht im persistenten Sink
+  idempotent über das Erasure-Ledger mit Tombstones; Fingerprint über
+  kanonisches JSON aus `@atf/erasure-contract`.
+- **Erasure-Orchestrator** (`@atf/runtime`, Req 2.9–2.12, Tasks 4.8–4.13).
+  `compliance/erasure-orchestrator.ts` verteilt DSAR-Löschungen parallel an alle
+  konfigurierten Stores (lokale `RetentionService`-Ziele plus
+  `ERASURE_TARGETS` = `[{service, url, tokenEnv}]`) mit Timeout, drei
+  Versuchen und exponentiellem Backoff; Operationen und Je-Store-Teilergebnisse
+  liegen in `erasure_requests` (Migration 44) und sind idempotent über
+  `requestId` — ein Wiederholungsaufruf replayt das gespeicherte Ergebnis.
+  Retry (`POST /admin/compliance/erasures/:id/retry`) läuft nur die
+  fehlgeschlagenen Stores erneut. Die DSAR-Antwort (`DELETE /v1/me/data`)
+  ist ehrlich: HTTP 200 nur bei Vollerfolg, 207 `ERASURE_PARTIAL` bei
+  Teilergebnis, 502 bei Gesamtausfall; der Erfolgstext erscheint nur bei
+  Vollerfolg (Property 4).
+- **Erasure_Receipt** (`@atf/runtime`, Req 2.11, Tasks 4.11–4.12). Jeder
+  abgeschlossene Löschvorgang erhält einen signierten Beleg über das
+  kanonische JSON des Payloads (Ed25519 über `ERASURE_RECEIPT_SIGNING_KEY`,
+  Fallback HMAC über `AUDIT_ANCHOR_SECRET` mit `alg`-Hinweis im Envelope);
+  das Subjekt erscheint ausschließlich als `sha256(tenantId|identifier)`.
+  `GET /v1/me/data/erasures/{id}` liefert den Beleg nur an das betroffene
+  Subjekt desselben Tenants. Property 5: `verify(sign(receipt)) = true`,
+  jede Bit-Änderung an Payload oder Signatur ergibt `false`.
+- **Systemtest Erasure** (`integration/system/erasure.test.ts`, Task 4.13).
+  Der echte Orchestrator fährt gegen Contract-konforme Stub-Server für
+  Search, Extract und Gate (Verteilung, Je-Store-Ergebnis, Idempotenz,
+  Teilfailure→partial→Retry, Receipt-Verifikation); live env-gated
+  (`OUTPOST_IT_*`) zusätzlich Outpost-MirrorDelete → Extract → Search und die
+  Extract-Kaskade `POST /v1/erasure` mit `search.documents`-Teilergebnis.
+### Changed
+- CI-Job `contracts` läuft jetzt zusätzlich `security-kit` und `erasure-contract`;
+  Supply-Chain-Inventare (`THIRD_PARTY_NOTICES.md`, `sbom.cdx.json`) neu generiert.
+- Regulierte Aktionen (Flows, Tenants, Approvals, Compliance/DSAR) auditiert die Runtime über
+  `recordRequired` statt best-effort `record()`; bei Audit-Unverfügbarkeit antworten sie mit
+  `503 AUDIT_UNAVAILABLE` (`AUDIT_UNAVAILABLE` ist ein neuer Fehlercode).
+
 ## [0.13.2] — 2026-10-05
 Hardens the LLM tool loop for local models: the `maxToolSteps` budget ends with an answer
 round, retries continue from the recorded tool results, and tool calls written as plain text
