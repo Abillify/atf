@@ -1,0 +1,50 @@
+# Retrieval evaluation — ablation-dense
+
+Generated: 2026-10-07T04:12:44.689Z
+
+Fixture `1.2.0` — 4 documents, 120 questions (mode: live, endpoint: v1, collection: `golden`).
+
+## Retrieval metrics
+
+| Metric | @5 | @10 |
+| --- | --- | --- |
+| Page Recall | 36.7% | 47.5% |
+| Figure Recall | 56.4% | 69.2% |
+| MRR | 0.4363 | 0.4561 |
+| nDCG | 0.2181 | 0.2531 |
+| Figure-Hit-Rate | 56.4% | 69.2% |
+
+## Latency
+
+| Metric | Value |
+| --- | --- |
+| p50 | 4.6 ms |
+| p95 | 6.7 ms |
+| samples | 120 |
+
+## Extraction-quality metrics
+
+> **Pending extraction metrics.** No produced extraction output was supplied (`--extractions`), so table-cell accuracy, label-coverage and BPMN node/edge recall are 0. These require a live Extract run over the golden documents; feed the captured output back offline to score them (see `scripts/eval/README.md`).
+
+| Metric | Value | Detail |
+| --- | --- | --- |
+| Table-cell accuracy | 0.0% | 0/112 cells, 22 tables |
+| Label-coverage | 0.0% | 0/84 labels, 28 figures |
+| BPMN node recall | 0.0% | 0/80 nodes, 20 diagrams |
+| BPMN edge recall | 0.0% | 0/60 edges, 20 diagrams |
+
+## Coverage
+
+| Category | Count |
+| --- | --- |
+| questions (bpmn) | 30 |
+| questions (docx) | 40 |
+| questions (plan) | 20 |
+| questions (ui_mask) | 30 |
+| page questions | 120 |
+| figure questions | 78 |
+| table-cell questions | 22 |
+| table annotations | 22 |
+| label annotations | 28 |
+| BPMN annotations | 20 |
+

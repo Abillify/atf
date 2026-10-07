@@ -21,7 +21,13 @@ import { parseGoldenSet } from "../golden-set.ts";
 // figure labels, BPMN nodes/edges) for the Phase-2 extraction-quality metrics
 // (task T2.10, requirement 18.3). Backward-compatible with 1.0.0 readers — the
 // `extraction` field is optional.
-const VERSION = "1.1.0";
+// 1.2.0: figure ids now use the extract-contract v1 shape `p<page>-f<n>`.
+// The contract parser (packages/extract-contract/src/v1/parse.ts) rewrites
+// every other id to a synthetic `p<page>-f<ordinal>`, so ids like `fig-wms-1`
+// could never match the figure ids Search stores — figure recall was always
+// zero. Annotating with the contract shape keeps golden and indexed ids
+// aligned.
+const VERSION = "1.2.0";
 
 interface DocSpec {
 	id: string;
@@ -90,6 +96,18 @@ function pickPage(seed: number, total: number): number {
 	return (((x % total) + total) % total) + 1;
 }
 
+// Contract-compliant figure id: `p<page>-f<n>` with a per-document, per-page
+// ordinal (the only shape extract-contract v1 preserves verbatim). Each
+// question gets its own figure, so the id embeds the page the figure markup
+// is emitted on and the ordinal disambiguates figures sharing a page.
+const figureOrdinals = new Map<string, number>();
+function figureId(docId: string, page: number): string {
+	const key = `${docId}:${page}`;
+	const ordinal = (figureOrdinals.get(key) ?? 0) + 1;
+	figureOrdinals.set(key, ordinal);
+	return `p${page}-f${ordinal}`;
+}
+
 const questions: QSpec[] = [];
 
 // WMS spec: 40 questions — mix of page lookups, requirement tables (cells),
@@ -148,14 +166,14 @@ for (let i = 0; i < 12; i++) {
 for (let i = 0; i < 8; i++) {
 	const page = pickPage(200 + i, WMS.pages);
 	questions.push({
-		document: "wms-spec",
-		question: `Welche Feldliste zeigt die Abbildung der Maske M-${i + 1}?`,
-		pages: [page],
-		figures: [`fig-wms-${i + 1}`],
-		extraction: {
-			expectedLabels: [`Feld ${i + 1}a`, `Feld ${i + 1}b`, "Speichern"],
-		},
-	});
+    document: "wms-spec",
+    question: `Welche Feldliste zeigt die Abbildung der Maske M-${i + 1}?`,
+    pages: [page],
+    figures: [figureId(WMS.id, page)],
+    extraction: {
+      expectedLabels: [`Feld ${i + 1}a`, `Feld ${i + 1}b`, "Speichern"],
+    },
+  });
 }
 
 // BPMN document: 30 questions — process/figure heavy.
@@ -174,11 +192,11 @@ const bpmnTopics = [
 bpmnTopics.forEach((question, index) => {
 	const page = pickPage(300 + index, BPMN.pages);
 	questions.push({
-		document: "process-bpmn",
-		question,
-		pages: [page],
-		figures: [`fig-bpmn-${(index % 6) + 1}`],
-	});
+    document: "process-bpmn",
+    question,
+    pages: [page],
+    figures: [figureId(BPMN.id, page)],
+  });
 });
 for (let i = 0; i < 20; i++) {
 	const page = pickPage(400 + i, BPMN.pages);
@@ -196,12 +214,12 @@ for (let i = 0; i < 20; i++) {
 		{ from: `n${i}-gw`, to: `n${i}-end` },
 	];
 	questions.push({
-		document: "process-bpmn",
-		question: `Welche Knoten und Kanten enthält das Teildiagramm ${i + 1} des Prozesses?`,
-		pages: [page],
-		figures: [`fig-bpmn-${(i % 6) + 1}`],
-		extraction: { expectedNodes: nodes, expectedEdges: edges },
-	});
+    document: "process-bpmn",
+    question: `Welche Knoten und Kanten enthält das Teildiagramm ${i + 1} des Prozesses?`,
+    pages: [page],
+    figures: [figureId(BPMN.id, page)],
+    extraction: { expectedNodes: nodes, expectedEdges: edges },
+  });
 }
 
 // UI masks: 30 questions — figure and field heavy.
@@ -220,23 +238,23 @@ const maskTopics = [
 maskTopics.forEach((question, index) => {
 	const page = pickPage(500 + index, MASKS.pages);
 	questions.push({
-		document: "ui-masks",
-		question,
-		pages: [page],
-		figures: [`fig-mask-${(index % 10) + 1}`],
-	});
+    document: "ui-masks",
+    question,
+    pages: [page],
+    figures: [figureId(MASKS.id, page)],
+  });
 });
 for (let i = 0; i < 20; i++) {
 	const page = pickPage(600 + i, MASKS.pages);
 	questions.push({
-		document: "ui-masks",
-		question: `Welches Feldlabel trägt das Eingabefeld ${i + 1} auf dem Screenshot?`,
-		pages: [page],
-		figures: [`fig-mask-${(i % 10) + 1}`],
-		extraction: {
-			expectedLabels: [`Eingabefeld ${i + 1}`, "Abbrechen", "Übernehmen"],
-		},
-	});
+    document: "ui-masks",
+    question: `Welches Feldlabel trägt das Eingabefeld ${i + 1} auf dem Screenshot?`,
+    pages: [page],
+    figures: [figureId(MASKS.id, page)],
+    extraction: {
+      expectedLabels: [`Eingabefeld ${i + 1}`, "Abbrechen", "Übernehmen"],
+    },
+  });
 }
 
 // Plan set: 20 questions — drawing/figure heavy + title-block cells.
@@ -255,11 +273,11 @@ const planTopics = [
 planTopics.forEach((question, index) => {
 	const page = pickPage(700 + index, PLAN.pages);
 	questions.push({
-		document: "plan-set",
-		question,
-		pages: [page],
-		figures: [`fig-plan-${(index % 6) + 1}`],
-	});
+    document: "plan-set",
+    question,
+    pages: [page],
+    figures: [figureId(PLAN.id, page)],
+  });
 });
 for (let i = 0; i < 10; i++) {
 	const page = pickPage(800 + i, PLAN.pages);

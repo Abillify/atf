@@ -1,0 +1,174 @@
+# Eval stack for the retrieval baseline (task 6.11, requirements 4.9/4.10).
+#
+# Search + Extract + real TEI-CPU embedding (bge-small) + a real TEI-CPU
+# cross-encoder reranker + a deterministic HyDE chat mock. Unlike the
+# quickstart stack (deploy/examples/compose.yaml), which runs a constant-vector
+# mock and can only prove the plumbing, this stack produces MEANINGFUL retrieval
+# metrics: the vectors come from a real model, so Recall/MRR/nDCG measure
+# retrieval quality and regressions are real regressions.
+#
+# The corpus is generated deterministically by scripts/eval/golden-set/build-corpus.ts
+# and ingested through the v1 /ingest endpoint (scripts/eval/ingest-corpus.ts);
+# the contextual-header ablation ingests the same corpus through the v2 revision
+# API, which is the only path that runs the batch worker — and only the batch
+# worker applies the contextual embedding header (task 3.3).
+#
+# Usage (from the repository root):
+#   docker compose -f scripts/eval/compose.eval.yaml up --build -d --wait
+#   bun run scripts/eval/golden-set/build-corpus.ts
+#   bun run scripts/eval/ingest-corpus.ts --collection golden
+#   bun run scripts/eval/retrieval.ts --collection golden --label baseline \
+#     --out scripts/eval/baseline/retrieval --thresholds scripts/eval/baseline/thresholds.json
+#   docker compose -f scripts/eval/compose.eval.yaml down --volumes
+name: atf-eval
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.1-pg18
+    environment:
+      POSTGRES_DB: atf_eval
+      POSTGRES_USER: atf
+      POSTGRES_PASSWORD: atf-eval-only
+      PGDATA: /pg/18/data
+    volumes:
+      - postgres-data:/pg
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atf -d atf_eval"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+  # Real embedding model on CPU (design §Eval: bge-small via TEI). 384 dimensions,
+  # multilingual-capable for the German golden set. The HF cache is a named volume
+  # so repeated runs do not re-download the weights.
+  embedding:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    # TEI's default client batch size (32) is below the ingest batch Search
+    # sends for the golden corpus, which would fail with 422.
+    command:
+      [
+        "--model-id",
+        "BAAI/bge-small-en-v1.5",
+        "--max-client-batch-size",
+        "512",
+      ]
+    volumes:
+      - hf-cache:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+
+  # Real cross-encoder for the Hybrid+Rerank ablation (TEI native /rerank).
+  rerank:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+    command:
+      [
+        "--model-id",
+        "BAAI/bge-reranker-base",
+        "--max-client-batch-size",
+        "512",
+      ]
+    volumes:
+      - hf-cache:/data
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:80/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 120
+
+  # Deterministic stand-in for a chat model: HyDE needs SOME hypothetical-document
+  # generator; a fixed sentence frame around the query keeps the ablation
+  # reproducible. Quality of the expansion is deliberately NOT measured here.
+  hyde-mock:
+    image: python:3.13-alpine
+    command: ["python", "/mock/echo-mock.py"]
+    volumes:
+      - ./echo-mock.py:/mock/echo-mock.py:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request;urllib.request.urlopen('http://127.0.0.1:8080/health')"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  search:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: search
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      POSTGRES_URL: postgres://atf:atf-eval-only@postgres:5432/atf_eval
+      EMBED_URL: http://embedding:80/embed
+      EMBED_MODEL: BAAI/bge-small-en-v1.5
+      EMBED_MODEL_REVISION: eval
+      EMBED_INPUT_FIELD: inputs
+      EMBED_EXPECTED_DIMENSION: "384"
+      RERANK_URL: http://rerank:80/rerank
+      RERANK_MODEL: BAAI/bge-reranker-base
+      RERANK_ENDPOINT: rerank
+      HYDE_URL: http://hyde-mock:8080/v1/chat/completions
+      HYDE_MODEL: echo-hyde
+      # The golden set is German; the default `simple` stemmer would leave every
+      # inflected word unstemmed and skew the fts/hybrid ablations.
+      FTS_LANGUAGE: german
+      # The contextual-header ablation ingests through the v2 revision API,
+      # which is processed by the batch worker.
+      BATCH_WORKER: "true"
+      BATCH_WORKER_INTERVAL_MS: "500"
+      AUTHN_MODE: disabled
+      AUTHZ_ENABLED: "false"
+      TENANT_ISOLATION_ENABLED: "false"
+      ACL_REQUIRE_IDENTITY: "false"
+      TRANSACTION_ENFORCEMENT: off
+      CONVERTER_URL: http://extract:3000
+    ports:
+      - "${ATF_EVAL_SEARCH_PORT:-3012}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedding:
+        condition: service_healthy
+      rerank:
+        condition: service_healthy
+      hyde-mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+  # Part of the stack per design §Eval; the Markdown corpus ingests without it,
+  # but the binary conversion path (POST /ingest-file) stays exercised by the
+  # stack being complete.
+  extract:
+    build:
+      context: ../..
+      dockerfile: deploy/examples/Dockerfile
+      target: extract
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      VISION_URL: http://hyde-mock:8080
+      VISION_MODEL: echo-hyde
+      MAX_PAGES: "60"
+      TEMP_DIR: /tmp/atf-extract
+      AUTHN_MODE: disabled
+      AUTHZ_ENABLED: "false"
+      TENANT_ISOLATION_ENABLED: "false"
+      CALLBACK_ALLOWED_HOSTS: 127.0.0.1,localhost
+    depends_on:
+      hyde-mock:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+
+volumes:
+  postgres-data:
+  hf-cache:

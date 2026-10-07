@@ -1,19 +1,26 @@
 # Retrieval evaluation — baseline
 
-Generated: 2026-09-27T06:17:39.939Z
+Generated: 2026-10-07T04:33:24.071Z
 
-Fixture `1.1.0` — 4 documents, 120 questions (mode: offline, collection: `golden`).
-
-> **Pending baseline.** No search hits were observed, so every metric is 0. Regenerate against a live Search instance that has the golden documents indexed (see `scripts/eval/README.md`) to record the real Ist-Stand.
+Fixture `1.2.0` — 4 documents, 120 questions (mode: live, endpoint: v1, collection: `golden`).
 
 ## Retrieval metrics
 
 | Metric | @5 | @10 |
 | --- | --- | --- |
-| Page Recall | 0.0% | 0.0% |
-| Figure Recall | 0.0% | 0.0% |
-| MRR | 0.0000 | 0.0000 |
-| Figure-Hit-Rate | 0.0% | 0.0% |
+| Page Recall | 90.0% | 100.0% |
+| Figure Recall | 100.0% | 100.0% |
+| MRR | 0.9058 | 0.9058 |
+| nDCG | 0.6256 | 0.6602 |
+| Figure-Hit-Rate | 100.0% | 100.0% |
+
+## Latency
+
+| Metric | Value |
+| --- | --- |
+| p50 | 4.8 ms |
+| p95 | 7.6 ms |
+| samples | 120 |
 
 ## Extraction-quality metrics
 

@@ -104,6 +104,10 @@ All flags of `retrieval.ts`:
 | `--extractions <path>` | — | produced extraction output for the extraction-quality metrics |
 | `--min-page-recall <0–1>` | — | release gate: exit non-zero when Page Recall at the largest `--k` is below the floor |
 | `--min-figure-recall <0–1>` | — | release gate: exit non-zero when Figure Recall at the largest `--k` is below the floor |
+| `--search-mode dense\|hybrid\|fts` | server default | retrieval-mode ablation: `X-Search-Mode` on v1, mapped to the `hybrid` body flag on v2 |
+| `--rerank` | off | cross-encoder reranking (`X-Rerank: true` / v2 body `rerank`) |
+| `--hyde` | off | HyDE query expansion (`X-Hyde: true`, v1 endpoint only) |
+| `--thresholds <path>` | — | regression gate: JSON file of floors, exit non-zero when any is missed (see below) |
 
 `SEARCH_BASE_URL` and `SEARCH_TOKEN` are environment fallbacks: an explicit
 `--base-url` / `--token` always wins. Prefer the environment variable for the
@@ -161,14 +165,102 @@ bun run eval:retrieval -- --collection <name> \
 Optional release gates fail the process when a floor is not met:
 `--min-page-recall 0.7 --min-figure-recall 0.5`.
 
+## The eval stack (task 6.11)
+
+`compose.eval.yaml` is the eval-only stack: Search + Extract + a **real**
+TEI-CPU embedding model (`BAAI/bge-small-en-v1.5`, 384 dims) + a **real**
+TEI-CPU cross-encoder reranker (`BAAI/bge-reranker-base`) + a deterministic
+HyDE chat mock (`echo-mock.py`) + Postgres/pgvector. Unlike the quickstart
+stack (`deploy/examples/compose.yaml`), whose constant-vector mock can only
+prove plumbing, the vectors here come from a real model, so Recall/MRR/nDCG
+measure retrieval quality and a regression is a real regression.
+
+```bash
+# from the repository root
+docker compose -f scripts/eval/compose.eval.yaml up --build -d --wait
+bun run scripts/eval/golden-set/build-corpus.ts
+bun run scripts/eval/ingest-corpus.ts --collection golden \
+  --base-url http://127.0.0.1:3012
+bun run scripts/eval/retrieval.ts --collection golden \
+  --base-url http://127.0.0.1:3012 --label baseline \
+  --out scripts/eval/baseline/retrieval \
+  --thresholds scripts/eval/baseline/thresholds.json
+docker compose -f scripts/eval/compose.eval.yaml down --volumes
+```
+
+`golden-set/build-corpus.ts` writes the **deterministic** Markdown corpus
+(gitignored — always regenerate, never edit) that matches the fixture's page
+and figure annotations; `ingest-corpus.ts` indexes it through v1 `POST /ingest`
+(with chunking, so page/figure evidence is produced) or, with `--v2`, through
+the v2 revision API — the only path that runs the batch worker, which is what
+applies the contextual embedding header (task 3.3). Collection names may only
+contain letters, digits and underscores (`golden_ctx`, not `golden-ctx`).
+
+The CI job `eval` in `.github/workflows/ci.yml` runs exactly this stack, the
+baseline plus the four ablations below, gates on `thresholds.json`, and uploads
+the reports as artifacts (into `reports/`, never into the tree, so the
+committed baseline stays stable).
+
+## Thresholds (`baseline/thresholds.json`)
+
+`--thresholds <path>` reads a JSON object of floors and exits non-zero when the
+run misses any of them (checked at the largest `--k`):
+
+| Key | Type | Compared against |
+| --- | --- | --- |
+| `page_recall` | 0–1 | Page Recall at the largest `--k` |
+| `figure_recall` | 0–1 | Figure Recall at the largest `--k` |
+| `mrr` | 0–1 | MRR at the largest `--k` |
+| `ndcg` | 0–1 | nDCG at the largest `--k` |
+| `p50_latency_ms` | ms | p50 query latency (must not exceed) |
+| `p95_latency_ms` | ms | p95 query latency (must not exceed) |
+
+The committed floors sit safely below the measured warm baseline; the latency
+floors are generous because CI runs on shared CPU (a cold Search under TEI
+contention can show p50 in the tens of ms while warm it is ~5 ms).
+
+## Ablations (requirements 4.9/4.10)
+
+Each ablation isolates one pipeline stage against the same golden corpus:
+
+```bash
+base=http://127.0.0.1:3012
+bun run scripts/eval/retrieval.ts --collection golden --base-url "$base" \
+  --search-mode dense --label ablation-dense --out scripts/eval/baseline/retrieval
+bun run scripts/eval/retrieval.ts --collection golden --base-url "$base" \
+  --rerank --label ablation-rerank --out scripts/eval/baseline/retrieval
+bun run scripts/eval/retrieval.ts --collection golden --base-url "$base" \
+  --hyde --label ablation-hyde --out scripts/eval/baseline/retrieval
+# contextual header: ingest via the v2 revision API (batch worker applies the
+# header), then query the same collection through v2
+bun run scripts/eval/ingest-corpus.ts --v2 --collection golden_ctx --base-url "$base"
+bun run scripts/eval/retrieval.ts --v2 --collection golden_ctx --base-url "$base" \
+  --label ablation-ctx-header --out scripts/eval/baseline/retrieval
+```
+
+Measured on the local stack (TEI-CPU, warm; `baseline/retrieval.ablation-*.md`):
+
+| Konfiguration | page@5 | page@10 | MRR@10 | nDCG@10 | fig@5 | fig-MRR | p50/p95 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline (v1 hybrid) | 0.900 | 1.000 | 0.906 | 0.660 | 1.000 | 0.859 | 4.8 / 7.6 |
+| dense only | – | 0.475 | 0.456 | – | 0.564 | – | 4.6 / 6.7 |
+| + rerank | – | 1.000 | 0.906 | – | 1.000 | – | 8.3 / 16.1 |
+| + HyDE | – | 1.000 | 0.899 | – | 1.000 | – | 37.1 / 66.2 |
+| contextual header (v2) | 0.992 | 1.000 | 0.993 | 0.994 | 1.000 | 0.968 | 5.6 / 7.4 |
+
+Reading: dense-only collapses (the synthetic corpus is deliberately lexical-heavy);
+hybrid recovers it fully. Rerank and HyDE leave quality ~equal on this fixture
+and cost latency (HyDE dominates: ~7× p50). The contextual-header variant is
+the quality winner — nearly every expected page lands in the top 5 — which is
+why it is the shape the v2 pipeline keeps.
+
 ## The committed baseline
 
-`baseline/retrieval.baseline.{json,md}` is the Ist-Stand reference. It currently
-ships as a **pending skeleton** (`"pending": true`, all metrics 0, and an
-`extraction` block whose expected-item counts are fixed but produced values are
-0) because it must be recorded against a live Search/Extract instance that has
-the golden documents indexed.
-Regenerate it once the golden documents are ingested:
+`baseline/retrieval.baseline.{json,md}` is the Ist-Stand reference, recorded
+against the compose.eval.yaml stack above (real bge-small vectors, German FTS)
+with the golden corpus ingested. The extraction block still ships pending
+(produced values 0) until a live Extract run over the golden documents feeds
+`--extractions`. Regenerate with:
 
 ```bash
 # 1) capture a live run

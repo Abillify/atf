@@ -153,20 +153,42 @@ export function normalizeV2Hit(hit: SearchHitV2): SearchHit {
 // ─── CLI parsing ───────────────────────────────────────────────────────────────
 
 interface Args {
-	fixture: string;
-	collection: string;
-	baseUrl: string;
-	token?: string;
-	cutoffs: number[];
-	out: string;
-	label: string;
-	/** Target `POST /v2/search` (task 3.7) instead of the v1 `POST /search`. */
-	v2: boolean;
-	responses?: string;
-	capture?: string;
-	extractions?: string;
-	minPageRecall?: number;
-	minFigureRecall?: number;
+  fixture: string;
+  collection: string;
+  baseUrl: string;
+  token?: string;
+  cutoffs: number[];
+  out: string;
+  label: string;
+  /** Target `POST /v2/search` (task 3.7) instead of the v1 `POST /search`. */
+  v2: boolean;
+  responses?: string;
+  capture?: string;
+  extractions?: string;
+  minPageRecall?: number;
+  minFigureRecall?: number;
+  /**
+   * Retrieval-mode ablation (task 6.11, requirement 4.10): `dense`, `hybrid`
+   * or `fts`. Sent as `X-Search-Mode` on v1; mapped to the `hybrid` body flag
+   * on v2 (`dense` → `hybrid:false`, which is the closest v2 equivalent).
+   */
+  searchMode?: "dense" | "hybrid" | "fts";
+  /** Enable cross/bi-encoder reranking (`X-Rerank: true` / v2 body `rerank`). */
+  rerank: boolean;
+  /** Enable HyDE query expansion (`X-Hyde: true`; v1 endpoint only). */
+  hyde: boolean;
+  /** Threshold file (task 6.11): regression below any floor fails the run. */
+  thresholds?: string;
+}
+
+/** The retrieval-quality floors a thresholds file can carry (all 0–1). */
+interface Thresholds {
+  page_recall?: number;
+  figure_recall?: number;
+  mrr?: number;
+  ndcg?: number;
+  p50_latency_ms?: number;
+  p95_latency_ms?: number;
 }
 
 /**
@@ -214,24 +236,36 @@ function parseArgs(argv: string[]): Args {
 		return value;
 	};
 	return {
-		fixture: get("--fixture") ?? DEFAULT_FIXTURE,
-		collection: get("--collection") ?? "documents",
-		baseUrl: (
-			get("--base-url") ??
-			process.env.SEARCH_BASE_URL ??
-			"http://127.0.0.1:3002"
-		).replace(/\/$/, ""),
-		token: get("--token") ?? process.env.SEARCH_TOKEN,
-		cutoffs: [...new Set(cutoffs)].sort((a, b) => a - b),
-		out: get("--out") ?? "reports/retrieval",
-		label: get("--label") ?? "run",
-		v2: has("--v2"),
-		responses: get("--responses"),
-		capture: get("--capture"),
-		extractions: get("--extractions"),
-		minPageRecall: num("--min-page-recall"),
-		minFigureRecall: num("--min-figure-recall"),
-	};
+    fixture: get("--fixture") ?? DEFAULT_FIXTURE,
+    collection: get("--collection") ?? "documents",
+    baseUrl: (
+      get("--base-url") ??
+      process.env.SEARCH_BASE_URL ??
+      "http://127.0.0.1:3002"
+    ).replace(/\/$/, ""),
+    token: get("--token") ?? process.env.SEARCH_TOKEN,
+    cutoffs: [...new Set(cutoffs)].sort((a, b) => a - b),
+    out: get("--out") ?? "reports/retrieval",
+    label: get("--label") ?? "run",
+    v2: has("--v2"),
+    responses: get("--responses"),
+    capture: get("--capture"),
+    extractions: get("--extractions"),
+    minPageRecall: num("--min-page-recall"),
+    minFigureRecall: num("--min-figure-recall"),
+    searchMode: searchModeFlag(get("--search-mode")),
+    rerank: has("--rerank"),
+    hyde: has("--hyde"),
+    thresholds: get("--thresholds"),
+  };
+}
+
+function searchModeFlag(
+  raw: string | undefined,
+): "dense" | "hybrid" | "fts" | undefined {
+  if (raw === undefined) return undefined;
+  if (raw === "dense" || raw === "hybrid" || raw === "fts") return raw;
+  throw new Error("--search-mode must be one of: dense, hybrid, fts");
 }
 
 // ─── Reference derivation from a hit ───────────────────────────────────────────
@@ -247,14 +281,29 @@ function hitPageRefs(hit: SearchHit): string[] {
 	return refs;
 }
 
+/**
+ * Strip the v1 figure-unit suffix from a hit's base reference. v1 Search keys
+ * figure units by `<document reference>/figures/<figure id>` and writes that
+ * value into `base_ref` (ingest-jobs chunk points), while the golden set
+ * annotates figures against the DOCUMENT reference. v2 does not add the suffix
+ * (the batch worker writes the document reference), so stripping is a no-op
+ * there. PURE.
+ */
+export function documentBaseRef(base: string, figureId: string): string {
+	const suffix = `/figures/${figureId}`;
+	return base.endsWith(suffix) ? base.slice(0, -suffix.length) : base;
+}
+
 /** Figure references a hit covers: its figure when the evidence is an image. */
 function hitFigureRefs(hit: SearchHit): string[] {
-	const base = hit.base_ref ?? hit.reference;
-	const evidence = hit.evidence;
-	if (evidence?.modality === "image" && evidence.figure_id) {
-		return [figureRef(base, evidence.figure_id)];
-	}
-	return [];
+  const evidence = hit.evidence;
+  if (evidence?.modality === "image" && evidence.figure_id) {
+    const base = hit.base_ref ?? hit.reference;
+    return [
+      figureRef(documentBaseRef(base, evidence.figure_id), evidence.figure_id),
+    ];
+  }
+  return [];
 }
 
 function toRankedHits(hits: SearchHit[]): RankedHit[] {
@@ -292,29 +341,34 @@ async function runSearch(
 
 /** v1 `POST /search`: text/plain body, `X-Collection` / `X-Max-Results` headers. */
 async function runSearchV1(
-	args: Args,
-	question: string,
-	maxResults: number,
+  args: Args,
+  question: string,
+  maxResults: number,
 ): Promise<SearchHit[]> {
-	const headers: Record<string, string> = {
-		"Content-Type": "text/plain",
-		"X-Collection": args.collection,
-		"X-Max-Results": String(maxResults),
-	};
-	if (args.token) headers.Authorization = `Bearer ${args.token}`;
-	const response = await fetch(`${args.baseUrl}/search`, {
-		method: "POST",
-		headers,
-		body: question,
-	});
-	if (!response.ok) {
-		const detail = await response.text().catch(() => "");
-		throw new Error(
-			`Search ${response.status} for "${question}": ${detail.slice(0, 200)}`,
-		);
-	}
-	const payload = (await response.json()) as { results?: SearchHit[] };
-	return Array.isArray(payload.results) ? payload.results : [];
+  const headers: Record<string, string> = {
+    "Content-Type": "text/plain",
+    "X-Collection": args.collection,
+    "X-Max-Results": String(maxResults),
+  };
+  if (args.token) headers.Authorization = `Bearer ${args.token}`;
+  // Ablation knobs (task 6.11): the Search API validates X-Search-Mode and
+  // takes precedence over the legacy X-Hybrid header.
+  if (args.searchMode !== undefined) headers["X-Search-Mode"] = args.searchMode;
+  if (args.rerank) headers["X-Rerank"] = "true";
+  if (args.hyde) headers["X-Hyde"] = "true";
+  const response = await fetch(`${args.baseUrl}/search`, {
+    method: "POST",
+    headers,
+    body: question,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(
+      `Search ${response.status} for "${question}": ${detail.slice(0, 200)}`,
+    );
+  }
+  const payload = (await response.json()) as { results?: SearchHit[] };
+  return Array.isArray(payload.results) ? payload.results : [];
 }
 
 /**
@@ -333,15 +387,25 @@ async function runSearchV2(
 		"X-Collection": args.collection,
 	};
 	if (args.token) headers.Authorization = `Bearer ${args.token}`;
+	if (args.hyde) {
+    throw new Error(
+      "--hyde is only supported against the v1 /search endpoint (HyDE is wired to v1 only)",
+    );
+  }
+  const body: Record<string, unknown> = {
+    query: question,
+    limit: maxResults,
+    include_assets: "refs",
+  };
+  // v2 has no fts-only mode; `dense` maps to hybrid:false, `hybrid`/`fts`
+  // both run the hybrid pipeline (the closest v2 equivalents).
+  if (args.searchMode !== undefined) body.hybrid = args.searchMode !== "dense";
+  if (args.rerank) body.rerank = true;
 	const response = await fetch(`${args.baseUrl}/v2/search`, {
-		method: "POST",
-		headers,
-		body: JSON.stringify({
-			query: question,
-			limit: maxResults,
-			include_assets: "refs",
-		}),
-	});
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
 	if (!response.ok) {
 		const detail = await response.text().catch(() => "");
 		throw new Error(
@@ -356,46 +420,55 @@ async function runSearchV2(
 // ─── Report shaping ────────────────────────────────────────────────────────────
 
 interface Report {
-	label: string;
-	generated_at: string;
-	fixture: {
-		version: string;
-		path: string;
-		documents: number;
-		questions: number;
-	};
-	parameters: {
-		collection: string;
-		base_url: string;
-		cutoffs: number[];
-		mode: "live" | "offline";
-		/** Which endpoint the run targeted: v1 `/search` or v2 `/v2/search` (task 3.7). */
-		endpoint: "v1" | "v2";
-	};
-	/** True when no hits were observed at all — a skeleton awaiting a live run. */
-	pending: boolean;
-	metrics: {
-		page: Record<string, ReturnType<typeof pageMetrics>>;
-		figure: Record<string, ReturnType<typeof figureMetrics>>;
-		mrr: Record<string, number>;
-		figure_hit_rate: Record<string, ReturnType<typeof figureHitRate>>;
-	};
-	/**
-	 * Extraction-quality metrics (task T2.10, requirement 18.3). Scored offline
-	 * against the golden set's ground-truth annotations when a `--extractions`
-	 * capture is supplied; otherwise `extraction.pending` is true and the metrics
-	 * are 0 (no produced output to score).
-	 */
-	extraction: ExtractionMetrics;
-	coverage: {
-		by_kind: Record<string, number>;
-		page_questions: number;
-		figure_questions: number;
-		cell_questions: number;
-		table_annotations: number;
-		label_annotations: number;
-		bpmn_annotations: number;
-	};
+  label: string;
+  generated_at: string;
+  fixture: {
+    version: string;
+    path: string;
+    documents: number;
+    questions: number;
+  };
+  parameters: {
+    collection: string;
+    base_url: string;
+    cutoffs: number[];
+    mode: "live" | "offline";
+    /** Which endpoint the run targeted: v1 `/search` or v2 `/v2/search` (task 3.7). */
+    endpoint: "v1" | "v2";
+    /** Ablation configuration of this run (task 6.11, requirement 4.10). */
+    search_mode?: "dense" | "hybrid" | "fts";
+    rerank?: boolean;
+    hyde?: boolean;
+  };
+  /**
+   * Query latency percentiles in milliseconds (requirement 4.10). Measured
+   * client-side around the search call in live mode; absent offline.
+   */
+  latency?: { p50_ms: number; p95_ms: number; samples: number };
+  /** True when no hits were observed at all — a skeleton awaiting a live run. */
+  pending: boolean;
+  metrics: {
+    page: Record<string, ReturnType<typeof pageMetrics>>;
+    figure: Record<string, ReturnType<typeof figureMetrics>>;
+    mrr: Record<string, number>;
+    figure_hit_rate: Record<string, ReturnType<typeof figureHitRate>>;
+  };
+  /**
+   * Extraction-quality metrics (task T2.10, requirement 18.3). Scored offline
+   * against the golden set's ground-truth annotations when a `--extractions`
+   * capture is supplied; otherwise `extraction.pending` is true and the metrics
+   * are 0 (no produced output to score).
+   */
+  extraction: ExtractionMetrics;
+  coverage: {
+    by_kind: Record<string, number>;
+    page_questions: number;
+    figure_questions: number;
+    cell_questions: number;
+    table_annotations: number;
+    label_annotations: number;
+    bpmn_annotations: number;
+  };
 }
 
 /**
@@ -440,65 +513,88 @@ function buildExtractionCases(
 	return cases;
 }
 
+/** Percentile (nearest-rank) over an unsorted sample. PURE. */
+export function percentile(values: readonly number[], q: number): number {
+	if (values.length === 0) return 0;
+	const sorted = [...values].sort((a, b) => a - b);
+	const rank = Math.max(1, Math.ceil(q * sorted.length));
+	return sorted[rank - 1] ?? 0;
+}
+
 function buildReport(
-	args: Args,
-	set: GoldenSet,
-	cases: EvalCase[],
-	extractionCases: ExtractionCase[],
-	mode: "live" | "offline",
+  args: Args,
+  set: GoldenSet,
+  cases: EvalCase[],
+  extractionCases: ExtractionCase[],
+  mode: "live" | "offline",
+  latenciesMs: number[] = [],
 ): Report {
-	const page: Record<string, ReturnType<typeof pageMetrics>> = {};
-	const figure: Record<string, ReturnType<typeof figureMetrics>> = {};
-	const mrr: Record<string, number> = {};
-	const hitRate: Record<string, ReturnType<typeof figureHitRate>> = {};
-	for (const k of args.cutoffs) {
-		page[String(k)] = pageMetrics(cases, k);
-		figure[String(k)] = figureMetrics(cases, k);
-		mrr[String(k)] = overallMrr(cases, k);
-		hitRate[String(k)] = figureHitRate(cases, k);
-	}
-	const byKind: Record<string, number> = {};
-	const docKind = new Map(set.documents.map((d) => [d.id, d.kind]));
-	for (const q of set.questions) {
-		const kind = docKind.get(q.document) ?? "unknown";
-		byKind[kind] = (byKind[kind] ?? 0) + 1;
-	}
-	const totalHits = cases.reduce((sum, c) => sum + c.hits.length, 0);
-	const extraction = aggregateExtractionMetrics(extractionCases);
-	const annotationCoverage = extractionCoverage(set);
-	return {
-		label: args.label,
-		pending: totalHits === 0,
-		generated_at: new Date().toISOString(),
-		fixture: {
-			version: set.version,
-			path: args.fixture,
-			documents: set.documents.length,
-			questions: set.questions.length,
-		},
-		parameters: {
-			collection: args.collection,
-			base_url: args.baseUrl,
-			cutoffs: args.cutoffs,
-			mode,
-			endpoint: args.v2 ? "v2" : "v1",
-		},
-		metrics: { page, figure, mrr, figure_hit_rate: hitRate },
-		extraction,
-		coverage: {
-			by_kind: byKind,
-			page_questions: set.questions.filter((q) => q.expectedPages.length > 0)
-				.length,
-			figure_questions: set.questions.filter(
-				(q) => q.expectedFigures.length > 0,
-			).length,
-			cell_questions: set.questions.filter((q) => q.expectedCells.length > 0)
-				.length,
-			table_annotations: annotationCoverage.table,
-			label_annotations: annotationCoverage.label,
-			bpmn_annotations: annotationCoverage.bpmn,
-		},
-	};
+  const page: Record<string, ReturnType<typeof pageMetrics>> = {};
+  const figure: Record<string, ReturnType<typeof figureMetrics>> = {};
+  const mrr: Record<string, number> = {};
+  const hitRate: Record<string, ReturnType<typeof figureHitRate>> = {};
+  for (const k of args.cutoffs) {
+    page[String(k)] = pageMetrics(cases, k);
+    figure[String(k)] = figureMetrics(cases, k);
+    mrr[String(k)] = overallMrr(cases, k);
+    hitRate[String(k)] = figureHitRate(cases, k);
+  }
+  const byKind: Record<string, number> = {};
+  const docKind = new Map(set.documents.map((d) => [d.id, d.kind]));
+  for (const q of set.questions) {
+    const kind = docKind.get(q.document) ?? "unknown";
+    byKind[kind] = (byKind[kind] ?? 0) + 1;
+  }
+  const totalHits = cases.reduce((sum, c) => sum + c.hits.length, 0);
+  const extraction = aggregateExtractionMetrics(extractionCases);
+  const annotationCoverage = extractionCoverage(set);
+  return {
+    label: args.label,
+    pending: totalHits === 0,
+    generated_at: new Date().toISOString(),
+    fixture: {
+      version: set.version,
+      path: args.fixture,
+      documents: set.documents.length,
+      questions: set.questions.length,
+    },
+    parameters: {
+      collection: args.collection,
+      base_url: args.baseUrl,
+      cutoffs: args.cutoffs,
+      mode,
+      endpoint: args.v2 ? "v2" : "v1",
+      ...(args.searchMode !== undefined
+        ? { search_mode: args.searchMode }
+        : {}),
+      ...(args.rerank ? { rerank: true } : {}),
+      ...(args.hyde ? { hyde: true } : {}),
+    },
+    ...(latenciesMs.length > 0
+      ? {
+          latency: {
+            p50_ms: Math.round(percentile(latenciesMs, 0.5) * 10) / 10,
+            p95_ms: Math.round(percentile(latenciesMs, 0.95) * 10) / 10,
+            samples: latenciesMs.length,
+          },
+        }
+      : {}),
+    metrics: { page, figure, mrr, figure_hit_rate: hitRate },
+    extraction,
+    coverage: {
+      by_kind: byKind,
+      page_questions: set.questions.filter((q) => q.expectedPages.length > 0)
+        .length,
+      figure_questions: set.questions.filter(
+        (q) => q.expectedFigures.length > 0,
+      ).length,
+      cell_questions: set.questions.filter((q) => q.expectedCells.length > 0)
+        .length,
+      table_annotations: annotationCoverage.table,
+      label_annotations: annotationCoverage.label,
+      bpmn_annotations: annotationCoverage.bpmn,
+    },
+  };
 }
 
 function pct(value: number): string {
@@ -544,11 +640,26 @@ export function renderMarkdown(report: Report): string {
 	const hitRow = cutoffs.map((k) =>
 		pct(report.metrics.figure_hit_rate[String(k)]?.rate ?? 0),
 	);
+	const ndcgRow = cutoffs.map((k) =>
+    (report.metrics.page[String(k)]?.ndcgAtK ?? 0).toFixed(4),
+  );
 	lines.push(`| Page Recall | ${pageRow.join(" | ")} |`);
 	lines.push(`| Figure Recall | ${figureRow.join(" | ")} |`);
 	lines.push(`| MRR | ${mrrRow.join(" | ")} |`);
+	lines.push(`| nDCG | ${ndcgRow.join(" | ")} |`);
 	lines.push(`| Figure-Hit-Rate | ${hitRow.join(" | ")} |`);
 	lines.push("");
+	const latency = report.latency;
+  if (latency !== undefined) {
+    lines.push("## Latency");
+    lines.push("");
+    lines.push("| Metric | Value |");
+    lines.push("| --- | --- |");
+    lines.push(`| p50 | ${latency.p50_ms.toFixed(1)} ms |`);
+    lines.push(`| p95 | ${latency.p95_ms.toFixed(1)} ms |`);
+    lines.push(`| samples | ${latency.samples} |`);
+    lines.push("");
+  }
 	lines.push("## Extraction-quality metrics");
 	lines.push("");
 	const ex = report.extraction;
@@ -623,6 +734,7 @@ async function main(): Promise<void> {
 
 	const cases: EvalCase[] = [];
 	const captured: Record<string, SearchHit[]> = {};
+	const latenciesMs: number[] = [];
 	for (const question of set.questions) {
 		const reference = docByRef.get(question.document);
 		if (reference === undefined) {
@@ -633,7 +745,9 @@ async function main(): Promise<void> {
 		if (responsesByQuestion) {
 			hits = responsesByQuestion[question.id] ?? [];
 		} else {
+			const startedAt = performance.now();
 			hits = await runSearch(args, question.question, maxCutoff);
+			latenciesMs.push(performance.now() - startedAt);
 			if (args.capture) captured[question.id] = hits;
 		}
 		const expected = expectedRefs(question, reference);
@@ -654,7 +768,14 @@ async function main(): Promise<void> {
 	}
 
 	const extractionCases = buildExtractionCases(set, producedExtractions);
-	const report = buildReport(args, set, cases, extractionCases, mode);
+	const report = buildReport(
+    args,
+    set,
+    cases,
+    extractionCases,
+    mode,
+    latenciesMs,
+  );
 	const outBase = resolve(ROOT, `${args.out}.${args.label}`);
 	await mkdir(dirname(outBase), { recursive: true });
 	await Bun.write(`${outBase}.json`, `${JSON.stringify(report, null, 2)}\n`);
@@ -682,6 +803,68 @@ async function main(): Promise<void> {
 			failed = true;
 		}
 	}
+	if (args.thresholds !== undefined) {
+    const file = Bun.file(args.thresholds);
+    if (!(await file.exists())) {
+      throw new Error(`Thresholds file not found: ${args.thresholds}`);
+    }
+    const thresholds = (await file.json()) as Thresholds;
+    const pageValue = report.metrics.page[String(maxCutoff)]?.recallAtK ?? 0;
+    const figureValue =
+      report.metrics.figure[String(maxCutoff)]?.recallAtK ?? 0;
+    const mrrValue = report.metrics.mrr[String(maxCutoff)] ?? 0;
+    const ndcgValue = report.metrics.page[String(maxCutoff)]?.ndcgAtK ?? 0;
+    const p50 = report.latency?.p50_ms ?? 0;
+    const p95 = report.latency?.p95_ms ?? 0;
+    if (
+      thresholds.page_recall !== undefined &&
+      pageValue < thresholds.page_recall
+    ) {
+      console.error(
+        `Page Recall@${maxCutoff} ${pct(pageValue)} < threshold ${pct(thresholds.page_recall)}`,
+      );
+      failed = true;
+    }
+    if (
+      thresholds.figure_recall !== undefined &&
+      figureValue < thresholds.figure_recall
+    ) {
+      console.error(
+        `Figure Recall@${maxCutoff} ${pct(figureValue)} < threshold ${pct(thresholds.figure_recall)}`,
+      );
+      failed = true;
+    }
+    if (thresholds.mrr !== undefined && mrrValue < thresholds.mrr) {
+      console.error(
+        `MRR@${maxCutoff} ${mrrValue.toFixed(4)} < threshold ${thresholds.mrr.toFixed(4)}`,
+      );
+      failed = true;
+    }
+    if (thresholds.ndcg !== undefined && ndcgValue < thresholds.ndcg) {
+      console.error(
+        `nDCG@${maxCutoff} ${ndcgValue.toFixed(4)} < threshold ${thresholds.ndcg.toFixed(4)}`,
+      );
+      failed = true;
+    }
+    if (
+      thresholds.p50_latency_ms !== undefined &&
+      (report.latency === undefined || p50 > thresholds.p50_latency_ms)
+    ) {
+      console.error(
+        `p50 latency ${p50.toFixed(1)}ms > threshold ${thresholds.p50_latency_ms}ms`,
+      );
+      failed = true;
+    }
+    if (
+      thresholds.p95_latency_ms !== undefined &&
+      (report.latency === undefined || p95 > thresholds.p95_latency_ms)
+    ) {
+      console.error(
+        `p95 latency ${p95.toFixed(1)}ms > threshold ${thresholds.p95_latency_ms}ms`,
+      );
+      failed = true;
+    }
+  }
 	if (failed) process.exit(1);
 }
 

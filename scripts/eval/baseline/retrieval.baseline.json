@@ -1,69 +1,75 @@
 {
   "label": "baseline",
-  "pending": true,
-  "generated_at": "2026-09-27T06:17:39.939Z",
+  "pending": false,
+  "generated_at": "2026-10-07T04:33:24.071Z",
   "fixture": {
-    "version": "1.1.0",
+    "version": "1.2.0",
     "path": "scripts/eval/golden-set/golden-set.v1.json",
     "documents": 4,
     "questions": 120
   },
   "parameters": {
     "collection": "golden",
-    "base_url": "http://127.0.0.1:3002",
+    "base_url": "http://127.0.0.1:3012",
     "cutoffs": [
       5,
       10
     ],
-    "mode": "offline"
+    "mode": "live",
+    "endpoint": "v1"
+  },
+  "latency": {
+    "p50_ms": 4.8,
+    "p95_ms": 7.6,
+    "samples": 120
   },
   "metrics": {
     "page": {
       "5": {
-        "recallAtK": 0,
-        "mrr": 0,
-        "ndcgAtK": 0,
+        "recallAtK": 0.9,
+        "mrr": 0.535277777778,
+        "ndcgAtK": 0.625591880309,
         "evaluatedQueries": 120,
         "skippedQueries": 0
       },
       "10": {
-        "recallAtK": 0,
-        "mrr": 0,
-        "ndcgAtK": 0,
+        "recallAtK": 1,
+        "mrr": 0.550935846561,
+        "ndcgAtK": 0.660222654391,
         "evaluatedQueries": 120,
         "skippedQueries": 0
       }
     },
     "figure": {
       "5": {
-        "recallAtK": 0,
-        "mrr": 0,
-        "ndcgAtK": 0,
+        "recallAtK": 1,
+        "mrr": 0.859188034188,
+        "ndcgAtK": 0.894079059197,
         "evaluatedQueries": 78,
         "skippedQueries": 42
       },
       "10": {
-        "recallAtK": 0,
-        "mrr": 0,
-        "ndcgAtK": 0,
+        "recallAtK": 1,
+        "mrr": 0.859188034188,
+        "ndcgAtK": 0.894079059197,
         "evaluatedQueries": 78,
         "skippedQueries": 42
       }
     },
     "mrr": {
-      "5": 0,
-      "10": 0
+      "5": 0.905833333333,
+      "10": 0.905833333333
     },
     "figure_hit_rate": {
       "5": {
-        "rate": 0,
+        "rate": 1,
         "figureQuestions": 78,
-        "hits": 0
+        "hits": 78
       },
       "10": {
-        "rate": 0,
+        "rate": 1,
         "figureQuestions": 78,
-        "hits": 0
+        "hits": 78
       }
     }
   },

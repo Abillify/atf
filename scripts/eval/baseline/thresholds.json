@@ -1,0 +1,8 @@
+{
+  "page_recall": 0.95,
+  "figure_recall": 0.95,
+  "mrr": 0.85,
+  "ndcg": 0.6,
+  "p50_latency_ms": 150,
+  "p95_latency_ms": 500
+}

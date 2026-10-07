@@ -343,3 +343,85 @@ jobs:
         run: |
           docker compose --env-file deploy/examples/.env.example \
             -f deploy/examples/compose.yaml down --volumes
+
+  # Retrieval eval against REAL models (task 6.11, requirements 4.9/4.10): the
+  # quickstart compose stack only proves plumbing (constant-vector mock), so
+  # this job runs scripts/eval/compose.eval.yaml — Search, Extract, TEI-CPU
+  # embedding (bge-small), TEI-CPU cross-encoder rerank and a deterministic
+  # HyDE mock — ingests the deterministic golden corpus and gates the baseline
+  # against scripts/eval/baseline/thresholds.json. Reports land in artifacts,
+  # never in the tree, so the committed baseline stays stable.
+  eval:
+    name: Retrieval eval (real models)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - run: bun install --frozen-lockfile
+
+      - name: Eval harness tests and types
+        run: |
+          bun run eval:test
+          bun run eval:typecheck
+
+      - name: Start the eval stack
+        run: >-
+          docker compose -f scripts/eval/compose.eval.yaml up --build -d --wait
+          --wait-timeout 600
+
+      - name: Build and ingest the golden corpus
+        run: |
+          set -euo pipefail
+          bun run scripts/eval/golden-set/build-corpus.ts
+          bun run scripts/eval/ingest-corpus.ts --collection golden \
+            --base-url http://127.0.0.1:3012
+
+      - name: Baseline run with thresholds gate
+        run: >-
+          bun run scripts/eval/retrieval.ts --collection golden
+          --base-url http://127.0.0.1:3012 --k 5,10 --label baseline
+          --out reports/eval/retrieval
+          --thresholds scripts/eval/baseline/thresholds.json
+
+      - name: Ablations (dense, rerank, hyde)
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:3012
+          bun run scripts/eval/retrieval.ts --collection golden --base-url "$base" \
+            --search-mode dense --label ablation-dense --out reports/eval/retrieval
+          bun run scripts/eval/retrieval.ts --collection golden --base-url "$base" \
+            --rerank --label ablation-rerank --out reports/eval/retrieval
+          bun run scripts/eval/retrieval.ts --collection golden --base-url "$base" \
+            --hyde --label ablation-hyde --out reports/eval/retrieval
+
+      - name: Contextual-header ablation (v2 revision ingest)
+        run: |
+          set -euo pipefail
+          base=http://127.0.0.1:3012
+          bun run scripts/eval/ingest-corpus.ts --v2 --collection golden_ctx \
+            --base-url "$base"
+          bun run scripts/eval/retrieval.ts --v2 --collection golden_ctx \
+            --base-url "$base" --label ablation-ctx-header \
+            --out reports/eval/retrieval
+
+      - name: Upload eval reports
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        if: always()
+        with:
+          name: eval-reports-${{ github.sha }}
+          path: reports/eval/
+          retention-days: 30
+
+      - name: Logs on failure
+        if: failure()
+        run: >-
+          docker compose -f scripts/eval/compose.eval.yaml logs --no-color
+          --tail 200
+
+      - name: Tear down
+        if: always()
+        run: >-
+          docker compose -f scripts/eval/compose.eval.yaml down --volumes

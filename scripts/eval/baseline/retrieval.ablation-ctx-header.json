@@ -1,0 +1,114 @@
+{
+  "label": "ablation-ctx-header",
+  "pending": false,
+  "generated_at": "2026-10-07T04:33:41.383Z",
+  "fixture": {
+    "version": "1.2.0",
+    "path": "scripts/eval/golden-set/golden-set.v1.json",
+    "documents": 4,
+    "questions": 120
+  },
+  "parameters": {
+    "collection": "golden_ctx",
+    "base_url": "http://127.0.0.1:3012",
+    "cutoffs": [
+      5,
+      10
+    ],
+    "mode": "live",
+    "endpoint": "v2"
+  },
+  "latency": {
+    "p50_ms": 5.6,
+    "p95_ms": 7.4,
+    "samples": 120
+  },
+  "metrics": {
+    "page": {
+      "5": {
+        "recallAtK": 0.991666666667,
+        "mrr": 0.991666666667,
+        "ndcgAtK": 0.991666666667,
+        "evaluatedQueries": 120,
+        "skippedQueries": 0
+      },
+      "10": {
+        "recallAtK": 1,
+        "mrr": 0.992857142857,
+        "ndcgAtK": 0.994444444444,
+        "evaluatedQueries": 120,
+        "skippedQueries": 0
+      }
+    },
+    "figure": {
+      "5": {
+        "recallAtK": 1,
+        "mrr": 0.967948717949,
+        "ndcgAtK": 0.97634165087,
+        "evaluatedQueries": 78,
+        "skippedQueries": 42
+      },
+      "10": {
+        "recallAtK": 1,
+        "mrr": 0.967948717949,
+        "ndcgAtK": 0.97634165087,
+        "evaluatedQueries": 78,
+        "skippedQueries": 42
+      }
+    },
+    "mrr": {
+      "5": 0.991666666667,
+      "10": 0.992857142857
+    },
+    "figure_hit_rate": {
+      "5": {
+        "rate": 1,
+        "figureQuestions": 78,
+        "hits": 78
+      },
+      "10": {
+        "rate": 1,
+        "figureQuestions": 78,
+        "hits": 78
+      }
+    }
+  },
+  "extraction": {
+    "tableCell": {
+      "accuracy": 0,
+      "cases": 22,
+      "expectedCells": 112,
+      "matchedCells": 0
+    },
+    "label": {
+      "coverage": 0,
+      "cases": 28,
+      "expectedLabels": 84,
+      "coveredLabels": 0
+    },
+    "bpmn": {
+      "nodeRecall": 0,
+      "edgeRecall": 0,
+      "cases": 20,
+      "expectedNodes": 80,
+      "recoveredNodes": 0,
+      "expectedEdges": 60,
+      "recoveredEdges": 0
+    },
+    "pending": true
+  },
+  "coverage": {
+    "by_kind": {
+      "docx": 40,
+      "bpmn": 30,
+      "ui_mask": 30,
+      "plan": 20
+    },
+    "page_questions": 120,
+    "figure_questions": 78,
+    "cell_questions": 22,
+    "table_annotations": 22,
+    "label_annotations": 28,
+    "bpmn_annotations": 20
+  }
+}

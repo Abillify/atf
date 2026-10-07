@@ -1,0 +1,115 @@
+{
+  "label": "ablation-dense",
+  "pending": false,
+  "generated_at": "2026-10-07T04:12:44.689Z",
+  "fixture": {
+    "version": "1.2.0",
+    "path": "scripts/eval/golden-set/golden-set.v1.json",
+    "documents": 4,
+    "questions": 120
+  },
+  "parameters": {
+    "collection": "golden",
+    "base_url": "http://127.0.0.1:3012",
+    "cutoffs": [
+      5,
+      10
+    ],
+    "mode": "live",
+    "endpoint": "v1",
+    "search_mode": "dense"
+  },
+  "latency": {
+    "p50_ms": 4.6,
+    "p95_ms": 6.7,
+    "samples": 120
+  },
+  "metrics": {
+    "page": {
+      "5": {
+        "recallAtK": 0.366666666667,
+        "mrr": 0.169861111111,
+        "ndcgAtK": 0.218058848529,
+        "evaluatedQueries": 120,
+        "skippedQueries": 0
+      },
+      "10": {
+        "recallAtK": 0.475,
+        "mrr": 0.184325396825,
+        "ndcgAtK": 0.253089221932,
+        "evaluatedQueries": 120,
+        "skippedQueries": 0
+      }
+    },
+    "figure": {
+      "5": {
+        "recallAtK": 0.564102564103,
+        "mrr": 0.470726495726,
+        "ndcgAtK": 0.493612907709,
+        "evaluatedQueries": 78,
+        "skippedQueries": 42
+      },
+      "10": {
+        "recallAtK": 0.692307692308,
+        "mrr": 0.488008750509,
+        "ndcgAtK": 0.53526552087,
+        "evaluatedQueries": 78,
+        "skippedQueries": 42
+      }
+    },
+    "mrr": {
+      "5": 0.43625,
+      "10": 0.456127645503
+    },
+    "figure_hit_rate": {
+      "5": {
+        "rate": 0.564102564103,
+        "figureQuestions": 78,
+        "hits": 44
+      },
+      "10": {
+        "rate": 0.692307692308,
+        "figureQuestions": 78,
+        "hits": 54
+      }
+    }
+  },
+  "extraction": {
+    "tableCell": {
+      "accuracy": 0,
+      "cases": 22,
+      "expectedCells": 112,
+      "matchedCells": 0
+    },
+    "label": {
+      "coverage": 0,
+      "cases": 28,
+      "expectedLabels": 84,
+      "coveredLabels": 0
+    },
+    "bpmn": {
+      "nodeRecall": 0,
+      "edgeRecall": 0,
+      "cases": 20,
+      "expectedNodes": 80,
+      "recoveredNodes": 0,
+      "expectedEdges": 60,
+      "recoveredEdges": 0
+    },
+    "pending": true
+  },
+  "coverage": {
+    "by_kind": {
+      "docx": 40,
+      "bpmn": 30,
+      "ui_mask": 30,
+      "plan": 20
+    },
+    "page_questions": 120,
+    "figure_questions": 78,
+    "cell_questions": 22,
+    "table_annotations": 22,
+    "label_annotations": 28,
+    "bpmn_annotations": 20
+  }
+}
