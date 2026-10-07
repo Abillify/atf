@@ -27,6 +27,7 @@ import { createStreamableRouter } from "./mcp/streamable.ts";
 import { createStateless2026Router } from "./mcp/stateless-2026.ts";
 import { createWellKnownRouter } from "./auth/well-known.ts";
 import { createRateLimitStore } from "./server/rate-limit-store.ts";
+import { createErasureRouter } from "./server/erasure-routes.ts";
 import { createIdentityRateLimiter } from "./server/identity-rate-limit.ts";
 import { createMetricsAuthMiddleware } from "./server/metrics-auth.ts";
 import { installRequestTracker } from "./server/request-tracker.ts";
@@ -104,8 +105,13 @@ export async function buildApp(
       memoryMaxEntries: transactionConfig.memoryMaxEntries,
     },
   );
-  const transactionFabric = new TransactionFabric(transactionConfig, transactionLedger);
-  const hasWebhooks = config.tools.some((tool) => tool.type === "webhook" && tool.enabled);
+  const transactionFabric = new TransactionFabric(
+    transactionConfig,
+    transactionLedger,
+  );
+  const hasWebhooks = config.tools.some(
+    (tool) => tool.type === "webhook" && tool.enabled,
+  );
   const webhookReplayStore = hasWebhooks
     ? await createWebhookReplayStore(transactionRedisUrl, resolveEnvironment())
     : undefined;
@@ -113,16 +119,21 @@ export async function buildApp(
 
   // MQTT manager (lazy — only connects when an mqtt tool subscribes). Always
   // available so mqtt-type tools can resolve their broker.
-  const mqtt = (overrides.mqtt as unknown as MqttManager) ?? new MqttManager(config.mqtt);
+  const mqtt =
+    (overrides.mqtt as unknown as MqttManager) ?? new MqttManager(config.mqtt);
 
-  const registry = new ToolRegistry(config.tools, {
-    db,
-    bus,
-    mqtt,
-    outboundAllowedHosts: config.server.outbound.allowedHosts,
-    authorizationEnabled: config.authorization.enabled,
-    webhookReplayStore,
-  }, config.schemaCompatibility.mode);
+  const registry = new ToolRegistry(
+    config.tools,
+    {
+      db,
+      bus,
+      mqtt,
+      outboundAllowedHosts: config.server.outbound.allowedHosts,
+      authorizationEnabled: config.authorization.enabled,
+      webhookReplayStore,
+    },
+    config.schemaCompatibility.mode,
+  );
 
   let promptProvider: SystemPromptProvider | undefined;
   const promptProviders: SystemPromptProvider[] = [];
@@ -132,13 +143,18 @@ export async function buildApp(
 
     const targetsFor = (access: "read" | "write") => ({
       definitions: () => registry.realDefinitions(access),
-      get: (n: string) => (registry.accessOf(n) === access ? registry.getReal(n) : undefined),
+      get: (n: string) =>
+        registry.accessOf(n) === access ? registry.getReal(n) : undefined,
     });
 
-    const routers: Array<{ executor: ToolExecutor; access: "read" | "write" }> = [];
+    const routers: Array<{ executor: ToolExecutor; access: "read" | "write" }> =
+      [];
 
-    const readPrompt = new SystemPromptProvider(router.systemPrompt, db, bus, (n) =>
-      registry.getReal(n),
+    const readPrompt = new SystemPromptProvider(
+      router.systemPrompt,
+      db,
+      bus,
+      (n) => registry.getReal(n),
     );
     promptProvider = readPrompt;
     promptProviders.push(readPrompt);
@@ -156,8 +172,11 @@ export async function buildApp(
     });
 
     if (registry.realDefinitions("write").length > 0) {
-      const writePrompt = new SystemPromptProvider(router.write.systemPrompt, db, bus, (n) =>
-        registry.getReal(n),
+      const writePrompt = new SystemPromptProvider(
+        router.write.systemPrompt,
+        db,
+        bus,
+        (n) => registry.getReal(n),
       );
       promptProviders.push(writePrompt);
       routers.push({
@@ -192,10 +211,14 @@ export async function buildApp(
       }
     }
     if (sources.length > 0) {
-      const reuseRouterProviders = !config.instructions && config.router?.enabled === true;
+      const reuseRouterProviders =
+        !config.instructions && config.router?.enabled === true;
       const providers = reuseRouterProviders
         ? promptProviders
-        : sources.map((s) => new SystemPromptProvider(s, db, bus, (n) => registry.getReal(n)));
+        : sources.map(
+            (s) =>
+              new SystemPromptProvider(s, db, bus, (n) => registry.getReal(n)),
+          );
       if (!reuseRouterProviders) {
         instructionProviders.push(...providers);
         await Promise.all(providers.map((p) => p.start()));
@@ -252,7 +275,9 @@ export async function buildApp(
   // ── DNS-rebinding protection ───────────────────────────────────────────────
   // Reject requests whose Host header hostname is not in the allow-list.
   if (config.server.allowedHosts.length > 0) {
-    const allowed = new Set(config.server.allowedHosts.map((h) => h.toLowerCase()));
+    const allowed = new Set(
+      config.server.allowedHosts.map((h) => h.toLowerCase()),
+    );
     app.use((req: Request, res: Response, next: NextFunction) => {
       const host = (req.headers.host ?? "").split(":")[0]?.toLowerCase();
       if (host && !allowed.has(host)) {
@@ -273,7 +298,12 @@ export async function buildApp(
         credentials: true,
         // MCP session id is exchanged via a custom response header.
         exposedHeaders: ["Mcp-Session-Id"],
-        allowedHeaders: ["Authorization", "Content-Type", "Mcp-Session-Id", "Accept"],
+        allowedHeaders: [
+          "Authorization",
+          "Content-Type",
+          "Mcp-Session-Id",
+          "Accept",
+        ],
       }),
     );
   }
@@ -289,7 +319,26 @@ export async function buildApp(
   // ── OAuth protected-resource metadata (RFC 9728, never rate-limited) ────────
   // Lets MCP clients (e.g. an IDE) discover which authorization server(s) to
   // run an OIDC/OAuth login against before presenting a bearer token.
-  app.use(createWellKnownRouter({ serverConfig: config.server, authConfig: config.auth }));
+  app.use(
+    createWellKnownRouter({
+      serverConfig: config.server,
+      authConfig: config.auth,
+    }),
+  );
+
+  // ── Subject erasure (DSAR) for the persistent audit sink (Req 2.8) ──────────
+  // Service-auth endpoint on the shared erasure contract; idempotent over
+  // requestId via the transaction ledger. Mounted before rate limiting so an
+  // orchestrator retry loop is not throttled by client limits.
+  app.use(
+    createErasureRouter({
+      audit,
+      ledger: transactionLedger,
+      authenticator,
+      tenantIsolationEnabled: config.tenantIsolation.enabled,
+      authorizationEnabled: config.authorization.enabled,
+    }),
+  );
 
   // ── Rate limiting ─────────────────────────────────────────────────────────────
   if (config.server.rateLimit.enabled) {
@@ -311,7 +360,9 @@ export async function buildApp(
   // calls after authentication. Useful in multi-tenant deployments where many
   // callers share one egress IP. Disabled by default; in-memory unless
   // `store.type: redis` is configured (optional, for HA deployments).
-  const identityRateLimiter = await createIdentityRateLimiter(config.server.rateLimit.perIdentity);
+  const identityRateLimiter = await createIdentityRateLimiter(
+    config.server.rateLimit.perIdentity,
+  );
 
   // ── Inbound webhook receivers ─────────────────────────────────────────────────
   const webhooks = registry.webhookExecutors();
@@ -395,7 +446,9 @@ export async function buildApp(
     db,
     registry,
     promptProvider,
-    ...(buildInstructions !== undefined ? { instructions: buildInstructions } : {}),
+    ...(buildInstructions !== undefined
+      ? { instructions: buildInstructions }
+      : {}),
     activeRequests: requestTracker.activeRequests,
     drain: requestTracker.drain,
     async shutdown() {

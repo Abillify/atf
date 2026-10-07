@@ -1021,7 +1021,13 @@ export const MonitoringConfigSchema = z.object({
     (val) => {
       if (!val || typeof val !== "object") return val;
       const v = val as Record<string, unknown>;
-      const required = ["issuer", "clientId", "clientSecret", "redirectUri", "sessionSecret"];
+      const required = [
+        "issuer",
+        "clientId",
+        "clientSecret",
+        "redirectUri",
+        "sessionSecret",
+      ];
       if (required.every((k) => !v[k])) return undefined;
       return val;
     },
@@ -1054,9 +1060,11 @@ export const MonitoringConfigSchema = z.object({
     })
     .default({ enabled: false, allowWrite: false }),
   /**
-   * Persistent, append-only audit log. When enabled, every monitor event (or
-   * the subset listed in `events`) is written as one JSON object per line to
-   * `file`, giving a durable record beyond the in-memory ring buffer.
+   * Persistent audit log. When enabled, every monitor event (or the subset
+   * listed in `events`) is written as one JSON object per line to `file`,
+   * giving a durable record beyond the in-memory ring buffer. Subject-related
+   * erasure (`POST /v1/erasure`) rewrites the file unless `appendOnly` commits
+   * it to retention.
    */
   audit: z
     .object({
@@ -1065,8 +1073,36 @@ export const MonitoringConfigSchema = z.object({
       file: z.string().optional(),
       /** Optional whitelist of event types to record; omit to record all. */
       events: z.array(z.string()).optional(),
+      /**
+       * Sink-level redaction applied to every event right before it is
+       * persisted — the second layer behind the MonitorBus choke point. The
+       * bus redacts by key name, so positional array VALUES (e.g. SQL bind
+       * parameters in `meta.query.bindings`) survive it and can still carry
+       * personal data under a non-sensitive name. `paths` replaces the value
+       * at a dotted `meta` path wholesale; `extraKeys` extends the denylist
+       * for this sink only.
+       */
+      redact: z
+        .object({
+          enabled: boolish.default(true),
+          /** Dotted `meta` paths replaced wholesale, e.g. `query.bindings`. */
+          paths: z.array(z.string()).default(["query.bindings"]),
+          /** Extra key fragments redacted in addition to the bus-level denylist. */
+          extraKeys: z.array(z.string()).default([]),
+        })
+        .default({ enabled: true, paths: ["query.bindings"], extraKeys: [] }),
+      /**
+       * Compliance escape hatch: when true the sink is committed to
+       * append-only retention and `POST /v1/erasure` honestly reports
+       * `not_configured` instead of rewriting the file.
+       */
+      appendOnly: boolish.default(false),
     })
-    .default({ enabled: false }),
+    .default({
+      enabled: false,
+      redact: { enabled: true, paths: ["query.bindings"], extraKeys: [] },
+      appendOnly: false,
+    }),
   /**
    * Optional multi-instance monitor bridge (see monitor/cluster-bridge.ts).
    * MCP sessions themselves still require sticky routing across instances -

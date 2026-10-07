@@ -129,7 +129,8 @@ export function canonicalKey(key: string): string {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
-function isSensitiveKey(key: string, fragments: string[]): boolean {
+/** True when a key contains one of the denylist fragments (canonicalised). */
+export function isSensitiveKey(key: string, fragments: string[]): boolean {
   const k = canonicalKey(key);
   return fragments.some((f) => {
     const cf = canonicalKey(f);
