@@ -1,1 +1,32 @@
-{"extends":"../../tsconfig.base.json","compilerOptions":{"types":["bun"],"paths":{"@atf/contract-adapter":["../../packages/contract-adapter/src/index.ts"],"@atf/transaction-contract":["../../packages/transaction-contract/src/index.ts"],"@atf/evidence-contract":["../../packages/evidence-contract/src/index.ts"],"@atf/identity-contract":["../../packages/identity-contract/src/index.ts"]}},"include":["*.ts","../../apps/control/src/contracts/jobs.ts","../../apps/runtime/src/routes/jobs.ts","../../apps/runtime/src/transaction/**/*.ts","../../apps/gate/src/mcp/evidence-contract.ts"]}
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "types": [
+      "bun"
+    ],
+    "paths": {
+      "@atf/contract-adapter": [
+        "../../packages/contract-adapter/src/index.ts"
+      ],
+      "@atf/transaction-contract": [
+        "../../packages/transaction-contract/src/index.ts"
+      ],
+      "@atf/evidence-contract": [
+        "../../packages/evidence-contract/src/index.ts"
+      ],
+      "@atf/identity-contract": [
+        "../../packages/identity-contract/src/index.ts"
+      ],
+      "@atf/erasure-contract": [
+        "../../packages/erasure-contract/src/index.ts"
+      ]
+    }
+  },
+  "include": [
+    "*.ts",
+    "../../apps/control/src/contracts/jobs.ts",
+    "../../apps/runtime/src/routes/jobs.ts",
+    "../../apps/runtime/src/transaction/**/*.ts",
+    "../../apps/gate/src/mcp/evidence-contract.ts"
+  ]
+}
