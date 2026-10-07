@@ -1408,6 +1408,87 @@ export const MIGRATIONS: readonly Migration[] = [
        ON CONFLICT (flow_id, draft_id) DO NOTHING`,
     ],
   },
+  {
+    version: 42,
+    name: "audit log immutability trigger and anchor table (Req 1.1/1.5)",
+    statements: [
+      // Durable in-database anchors: every retention purge records the last
+      // removed id/hash here BEFORE deleting, so chain verification can
+      // account for a purged prefix instead of reporting tampering (Req 1.5).
+      `CREATE TABLE IF NOT EXISTS audit_anchors (
+         id          BIGSERIAL PRIMARY KEY,
+         upto_id     BIGINT NOT NULL,
+         tip_hash    TEXT NOT NULL,
+         anchored_at TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      `CREATE INDEX IF NOT EXISTS audit_anchors_upto_idx
+         ON audit_anchors (upto_id DESC)`,
+      // Append-only enforcement: UPDATE/DELETE on audit_log abort unless the
+      // transaction-local GUC `atf.audit_retention` is set to 'on' — which
+      // only the SECURITY DEFINER purge function below is allowed to do.
+      `CREATE OR REPLACE FUNCTION audit_log_immutable() RETURNS trigger
+       LANGUAGE plpgsql AS $fn$
+       BEGIN
+         IF current_setting('atf.audit_retention', true) = 'on' THEN
+           RETURN OLD;
+         END IF;
+         RAISE EXCEPTION
+           'audit_log is append-only: % is not permitted (retention must go through audit_log_purge)',
+           TG_OP;
+       END
+       $fn$`,
+      `DROP TRIGGER IF EXISTS audit_log_immutable ON audit_log`,
+      `CREATE TRIGGER audit_log_immutable
+         BEFORE UPDATE OR DELETE ON audit_log
+         FOR EACH ROW EXECUTE FUNCTION audit_log_immutable()`,
+    ],
+  },
+  {
+    version: 43,
+    name: "audit_log_purge with pre-purge anchor and app-role revocations (Req 1.5)",
+    statements: [
+      // The ONLY sanctioned way to remove audit rows: anchors the chain tip
+      // first, then deletes. SECURITY DEFINER so the trigger's retention GUC
+      // can be set without granting DELETE on audit_log to anyone else.
+      `CREATE OR REPLACE FUNCTION audit_log_purge(before_at TIMESTAMPTZ)
+       RETURNS BIGINT
+       LANGUAGE plpgsql SECURITY DEFINER
+       SET search_path = public, pg_temp AS $fn$
+       DECLARE
+         last_row RECORD;
+         n BIGINT;
+       BEGIN
+         PERFORM set_config('atf.audit_retention', 'on', true);
+         -- Vorab-Anker: letzter entfernter Eintrag inkl. Hash, damit die
+         -- Kettenverifikation den Purge als legitimen Schnitt erkennt.
+         SELECT id, hash INTO last_row
+           FROM audit_log WHERE created_at < before_at ORDER BY id DESC LIMIT 1;
+         IF last_row IS NOT NULL THEN
+           INSERT INTO audit_anchors (upto_id, tip_hash)
+           VALUES (last_row.id, COALESCE(last_row.hash, ''));
+         END IF;
+         DELETE FROM audit_log WHERE created_at < before_at;
+         GET DIAGNOSTICS n = ROW_COUNT;
+         RETURN n;
+       END
+       $fn$`,
+      `REVOKE ALL ON FUNCTION audit_log_purge(TIMESTAMPTZ) FROM PUBLIC`,
+      // Rights revocation for the application role (roles are created by the
+      // RLS onboarding, which may run after migrations — guard on existence;
+      // rls-onboarding.ts repeats the same revocations after its blanket
+      // GRANT so the order of onboarding vs. migration does not matter).
+      `DO $do$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_app') THEN
+           EXECUTE 'REVOKE UPDATE, DELETE ON audit_log FROM aiperator_app';
+         END IF;
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_operator') THEN
+           EXECUTE 'REVOKE UPDATE, DELETE ON audit_log FROM aiperator_operator';
+         END IF;
+       END
+       $do$`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

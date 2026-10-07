@@ -61,6 +61,14 @@ export interface AuditQuery {
 export interface AuditLog {
   /** Records an entry (best-effort; never throws). */
   record(entry: AuditEntry): void;
+  /**
+   * Records an entry and resolves ONLY once it is durably persisted; throws
+   * when persisting fails. Required for Regulierte_Aktionen (flow publish,
+   * approvals, DSAR erasure, key rotation, tenant deletion, …) where the
+   * operation must not complete without its audit trail — the caller maps a
+   * rejection to HTTP 503 `AUDIT_UNAVAILABLE` (Req 1.4).
+   */
+  recordRequired(entry: AuditEntry): Promise<void>;
   /** Returns recent entries, newest first. */
   list(query?: AuditQuery): Promise<AuditRecord[]>;
   /**
@@ -85,6 +93,19 @@ export interface AuditLog {
    * the interface — the in-memory backend has nothing to flush.
    */
   flush?(): Promise<void>;
+  /**
+   * Number of best-effort `record()` writes queued but not yet settled
+   * (persisted or failed). Used by the shutdown flush to report how many
+   * entries were still unpersisted when the timeout hit (Req 1.6). Optional
+   * on the interface — backends without a write queue report nothing.
+   */
+  pendingWrites?(): number;
+  /**
+   * Number of failed durable writes since process start — the source for the
+   * `aiperator_audit_write_failures_total` metric and the readiness hint
+   * (Req 1.9). Optional on the interface.
+   */
+  writeFailures?(): number;
 }
 
 const DEFAULT_LIMIT = 100;
@@ -310,6 +331,11 @@ export class InMemoryAuditLog implements AuditLog {
   async getById(id: number): Promise<AuditRecord | undefined> {
     return this.entries.find((e) => e.id === id);
   }
+
+  /** The in-memory ring is written synchronously, so persisting cannot fail. */
+  async recordRequired(entry: AuditEntry): Promise<void> {
+    this.record(entry);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -347,67 +373,74 @@ function rowToRecord(r: AuditRow): AuditRecord {
 
 export class PostgresAuditLog implements AuditLog {
   private readonly mirror = new InMemoryAuditLog(1000);
+
   /**
-   * Cached tip hash so consecutive `record()` calls chain correctly without a
-   * read round-trip per write. Lazily initialised from the database on the
-   * first `record()` call (or explicit `primeTipHash()`), since a fresh
-   * process restart does not know the persisted chain's current tip.
+   * Invoked once per failed durable write (both best-effort `record()` and
+   * rejecting `recordRequired()`). Wired to the
+   * `aiperator_audit_write_failures_total` counter in bootstrap (Req 1.9).
    */
-  private tipHashPromise: Promise<string> | undefined;
+  onWriteFailure?: () => void;
+
+  /** Best-effort writes queued but not yet settled — see {@link AuditLog.pendingWrites}. */
+  private pending = 0;
+  /** Failed durable writes since process start — see {@link AuditLog.writeFailures}. */
+  private failures = 0;
 
   constructor(
     private readonly db: Database,
     private readonly logger?: Logger,
   ) {}
 
-  /** Loads the current chain tip from the database (last record's hash), or the genesis hash if empty. */
-  private async loadTipHash(): Promise<string> {
-    try {
-      const rows = await this.db.withOperator((db) =>
-        db.query<{ hash: string }>(
-          `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`,
-        ),
-      );
-      return rows[0]?.hash ?? AUDIT_CHAIN_GENESIS_HASH;
-    } catch {
-      return AUDIT_CHAIN_GENESIS_HASH;
-    }
+  pendingWrites(): number {
+    return this.pending;
   }
 
-  private tipHash(): Promise<string> {
-    if (this.tipHashPromise === undefined) {
-      this.tipHashPromise = this.loadTipHash();
-    }
-    return this.tipHashPromise;
+  writeFailures(): number {
+    return this.failures;
   }
 
   /**
-   * Serializes writes within this process: two concurrent `record()` calls
-   * (e.g. two admins publishing at once) must not both read the same tip hash
-   * before either writes — that would fork the chain (two records chained
-   * against the same `prevHash`). Chaining every write onto this promise
-   * guarantees in-process writes are strictly sequential. This does NOT
-   * protect against concurrent writes from a DIFFERENT replica/process — a
-   * multi-replica deployment needing that guarantee should route audit writes
-   * through a single writer or add a DB-side serialization point (e.g. an
-   * advisory lock around the insert), which is out of scope for this
-   * best-effort, never-throws-into-the-request-path log.
+   * Serializes writes within this process so two concurrent `record()` calls
+   * cannot interleave their queue entries. Cross-process serialization (two
+   * replicas) is provided by the transaction-level advisory lock in
+   * {@link writeChainEntry} — the in-process queue only keeps local ordering
+   * deterministic and is NOT the integrity mechanism.
    */
   private writeQueue: Promise<void> = Promise.resolve();
 
   record(entry: AuditEntry): void {
+    this.pending += 1;
     this.writeQueue = this.writeQueue
       .catch(() => {
         /* a prior failure must not block subsequent writes */
       })
       .then(() =>
-        this.recordAsync(entry).catch((err) => {
+        this.writeChainEntry(entry).catch((err) => {
+          this.failures += 1;
+          this.onWriteFailure?.();
           this.logger?.warn("Failed to persist audit entry", {
             action: entry.action,
             error: err instanceof Error ? err.message : String(err),
           });
         }),
-      );
+      )
+      .finally(() => {
+        this.pending -= 1;
+      });
+  }
+
+  /**
+   * Req 1.4: resolves only after the entry is durably persisted; throws on
+   * failure so the caller can abort a Regulierte_Aktion with 503.
+   */
+  async recordRequired(entry: AuditEntry): Promise<void> {
+    try {
+      await this.writeChainEntry(entry);
+    } catch (err) {
+      this.failures += 1;
+      this.onWriteFailure?.();
+      throw err;
+    }
   }
 
   /** Waits for every `record()` call issued so far to finish (success or logged failure). */
@@ -415,45 +448,98 @@ export class PostgresAuditLog implements AuditLog {
     await this.writeQueue;
   }
 
-  private async recordAsync(entry: AuditEntry): Promise<void> {
-    const prevHash = await this.tipHash();
-    // Reserve the id/timestamp from the mirror so the Postgres row and the
-    // in-memory fallback describe the exact same logical event; the DB
-    // sequence is the source of truth for `id` once persisted, but chaining
-    // needs a stable value BEFORE the insert returns it, so we compute the
-    // hash using the DB's nextval instead of guessing an id client-side.
-    const idRows = await this.db.query<{ id: number | string }>(
-      `SELECT nextval(pg_get_serial_sequence('audit_log', 'id')) AS id`,
-    );
-    const idRow = idRows[0];
-    if (idRow === undefined) {
-      // Unreachable: SELECT nextval(...) always returns exactly one row.
-      throw new Error("Failed to reserve audit log id from sequence.");
-    }
-    const id = Number(idRow.id);
-    const at = new Date().toISOString();
-    const base = { id, at, outcome: entry.outcome ?? "success", ...entry };
-    const hash = computeAuditHash(prevHash, base);
-
-    await this.db.query(
-      `INSERT INTO audit_log (id, actor, role, action, target, outcome, details, hash, prev_hash, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
-      [
-        id,
-        entry.actor,
-        entry.role ?? null,
-        entry.action,
-        entry.target ?? null,
-        entry.outcome ?? "success",
-        entry.details !== undefined ? JSON.stringify(entry.details) : null,
-        hash,
-        prevHash,
-        at,
-      ],
-    );
-    // Only advance the cached tip after a successful insert — a failed write
-    // must not desync the in-process tip from what is actually persisted.
-    this.tipHashPromise = Promise.resolve(hash);
+  /**
+   * Req 1.1: Tip-Lesen, ID-Vergabe, Hash-Berechnung und INSERT laufen in
+   * EINER Transaktion unter `pg_advisory_xact_lock`, sodass zwei Replicas
+   * niemals gegen denselben `prev_hash` schreiben. Der Tip-Cache ist
+   * entfallen — die Kette wird ausschließlich aus dem persistierten Zustand
+   * fortgeschrieben.
+   *
+   * Req 1.2/1.3: schlägt das Tip-Lesen fehl, schlägt der Schreibvorgang fehl
+   * (der Fehler wird geworfen, nicht auf Genesis zurückgesetzt); der
+   * Genesis-Hash kommt nur zum Einsatz, wenn die Tabelle nachweislich leer
+   * ist (NULL nach LIMIT-1-SELECT innerhalb derselben Transaktion).
+   */
+  private async writeChainEntry(entry: AuditEntry): Promise<void> {
+    const exec = async (db: Database): Promise<void> => {
+      await db.query("BEGIN");
+      try {
+        // Transaktionale Advisory-Lock: serialisiert alle Ketten-Schreiber
+        // über alle Replicas; wird beim COMMIT/ROLLBACK automatisch gelöst.
+        await db.query(
+          `SELECT pg_advisory_xact_lock(hashtext('atf:audit_log'))`,
+        );
+        const tipRows = await db.query<{ hash: string | null }>(
+          `SELECT hash FROM audit_log ORDER BY id DESC LIMIT 1`,
+        );
+        const tipRow = tipRows[0];
+        if (tipRows.length > 1 && tipRow === undefined) {
+          // Unreachable defensively: a LIMIT-1 query returns 0 or 1 rows.
+          throw new Error("Unexpected result reading the audit chain tip.");
+        }
+        // Genesis NUR bei nachweislich leerer Tabelle (0 Zeilen) — ein
+        // LeseFEHLGER wirft (kein catch) und verhindert so eine stille
+        // Genesis-Neukette nach einem Ausfall (Req 1.2/1.3).
+        let prevHash: string;
+        if (tipRow === undefined) {
+          prevHash = AUDIT_CHAIN_GENESIS_HASH;
+        } else if (tipRow.hash === null) {
+          // A stored row without a hash means the chain is corrupted — refuse
+          // to extend it rather than silently restarting from genesis.
+          throw new Error(
+            "Audit chain tip has no hash — refusing to extend a corrupted chain.",
+          );
+        } else {
+          prevHash = tipRow.hash;
+        }
+        const idRows = await db.query<{ id: number | string }>(
+          `SELECT nextval(pg_get_serial_sequence('audit_log', 'id')) AS id`,
+        );
+        const idRow = idRows[0];
+        if (idRow === undefined) {
+          // Unreachable: SELECT nextval(...) always returns exactly one row.
+          throw new Error("Failed to reserve audit log id from sequence.");
+        }
+        const id = Number(idRow.id);
+        const at = new Date().toISOString();
+        const base = { id, at, outcome: entry.outcome ?? "success", ...entry };
+        const hash = computeAuditHash(prevHash, base);
+        await db.query(
+          `INSERT INTO audit_log (id, actor, role, action, target, outcome, details, hash, prev_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10)`,
+          [
+            id,
+            entry.actor,
+            entry.role ?? null,
+            entry.action,
+            entry.target ?? null,
+            entry.outcome ?? "success",
+            entry.details !== undefined ? JSON.stringify(entry.details) : null,
+            hash,
+            prevHash,
+            at,
+          ],
+        );
+        await db.query("COMMIT");
+      } catch (err) {
+        try {
+          await db.query("ROLLBACK");
+        } catch {
+          /* der Rollback-Fehler darf den Originalfehler nicht überdecken */
+        }
+        throw err;
+      }
+    };
+    // Audit writes are operator-plane: run on the BYPASSRLS pool when one is
+    // configured, and pin a single connection there (withConnection) so
+    // BEGIN/…/COMMIT and the transaction-level advisory lock share one
+    // session. Without either (tests, simple drivers) fall back to the plain
+    // handle — the statement sequence is identical.
+    const runPinned = (db: Database): Promise<void> =>
+      db.withConnection !== undefined ? db.withConnection(exec) : exec(db);
+    await (this.db.withOperator !== undefined
+      ? this.db.withOperator((op) => runPinned(op))
+      : runPinned(this.db));
     this.mirror.record(entry);
   }
 
@@ -550,8 +636,18 @@ function parseDetails(v: unknown): Record<string, unknown> | undefined {
 }
 
 /** Builds the durable audit log when a database is present, else in-memory. */
-export function createAuditLog(db?: Database, logger?: Logger): AuditLog {
-  return db !== undefined
-    ? new PostgresAuditLog(db, logger)
-    : new InMemoryAuditLog();
+export function createAuditLog(
+  db?: Database,
+  logger?: Logger,
+  /**
+   * Invoked once per failed durable write on the Postgres backend — wired to
+   * the `aiperator_audit_write_failures_total` counter in bootstrap (Req 1.9).
+   * Ignored by the in-memory backend, whose writes cannot fail.
+   */
+  onWriteFailure?: () => void,
+): AuditLog {
+  if (db === undefined) return new InMemoryAuditLog();
+  const auditLog = new PostgresAuditLog(db, logger);
+  if (onWriteFailure !== undefined) auditLog.onWriteFailure = onWriteFailure;
+  return auditLog;
 }

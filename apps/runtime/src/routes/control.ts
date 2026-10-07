@@ -36,6 +36,10 @@ import {
 } from "../middleware/operator-rbac.js";
 import { verifyApprovalLinkToken } from "../graph/approval-link.js";
 import type { AuditLog } from "../observability/audit-log.js";
+import {
+  AUDIT_UNAVAILABLE_BODY,
+  AUDIT_UNAVAILABLE_STATUS,
+} from "../compliance/regulated-actions.js";
 
 export interface ControlRouterDeps {
   approvalGate?: ApprovalRegistry;
@@ -447,13 +451,29 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
         const prior = await approvalGate.getResolved(id);
         return ctx.html(renderResolvedState(prior), prior ? 200 : 404);
       }
-      auditLog?.record({
-        actor: by,
-        role: actor.role,
-        action: "approvals.resolve",
-        target: id,
-        details: { approved, via: "link" },
-      });
+      // Regulierte Aktion (Req 1.4): the decision is only presented as saved
+      // once it is durably audited — otherwise 503 (never a success without a
+      // trail, even though the approval itself is already consumed).
+      if (auditLog !== undefined) {
+        try {
+          await auditLog.recordRequired({
+            actor: by,
+            role: actor.role,
+            action: "approvals.resolve",
+            target: id,
+            details: { approved, via: "link" },
+          });
+        } catch {
+          return ctx.html(
+            approvalShell(
+              `<div class="tool">⚠️ Audit unavailable</div>` +
+                `<div class="note">The decision could not be recorded in the ` +
+                `audit trail and was therefore not confirmed. Please retry.</div>`,
+            ),
+            AUDIT_UNAVAILABLE_STATUS,
+          );
+        }
+      }
       return ctx.html(
         renderResolvedState({
           id,
@@ -519,16 +539,24 @@ export function createControlRouter(deps: ControlRouterDeps): Hono {
           404,
         );
       }
-      auditLog?.record({
-        actor: actor.name,
-        role: actor.role,
-        action: "approvals.resolve",
-        target: id,
-        details: {
-          approved: body.approved,
-          ...(body.reason !== undefined ? { reason: body.reason } : {}),
-        },
-      });
+      // Regulierte Aktion (Req 1.4): durable audit before reporting the
+      // decision as resolved.
+      if (auditLog !== undefined) {
+        try {
+          await auditLog.recordRequired({
+            actor: actor.name,
+            role: actor.role,
+            action: "approvals.resolve",
+            target: id,
+            details: {
+              approved: body.approved,
+              ...(body.reason !== undefined ? { reason: body.reason } : {}),
+            },
+          });
+        } catch {
+          return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+        }
+      }
       return ctx.json({ id, approved: body.approved, status: "resolved" });
     });
   }

@@ -388,5 +388,19 @@ export function checkProductionReadiness(
     }
   }
 
+  // Req 1.8 (platform-hardening): in production the audit chain must be
+  // externally anchored so a wholesale internally-consistent rebuild is
+  // detectable. Without AUDIT_ANCHOR_FILE the signed checkpoints live only in
+  // process memory and are lost on restart — warn (non-fatal, so existing
+  // deployments are not broken) when anchoring has no durable file target.
+  if (isProd && config.auditAnchorFile === undefined) {
+    warnings.push(
+      "AUDIT_ANCHOR_FILE is not set: signed audit-chain checkpoints are kept " +
+        "in memory only and lost on restart. Configure AUDIT_ANCHOR_FILE (with " +
+        "AUDIT_ANCHOR_SECRET) so external anchors survive restarts and a " +
+        "tampered chain rebuild stays detectable.",
+    );
+  }
+
   return { fatal, warnings };
 }

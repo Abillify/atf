@@ -54,6 +54,15 @@ export interface HealthDetail {
   database: DependencyCheck;
   redis: DependencyCheck;
   flows: DependencyCheck;
+  /**
+   * Audit-trail write health (Req 1.9, platform-hardening): `degraded` when
+   * durable audit writes have failed since process start. Informational only —
+   * it never flips readiness to 503, since the audit backend being briefly
+   * unhealthy is surfaced per-request (503 AUDIT_UNAVAILABLE on Regulierte
+   * Aktionen) and via `aiperator_audit_write_failures_total`, not by pulling
+   * the whole replica out of rotation. Present only when an audit log is wired.
+   */
+  audit?: DependencyCheck;
 }
 
 export interface ReadinessResponse {
@@ -175,6 +184,13 @@ export interface HealthRouterOptions {
   redisRequired?: boolean;
   /** Process start time used to compute uptime. Defaults to process.uptime(). */
   startTime?: number;
+  /**
+   * Audit log write-health source (Req 1.9). When provided, `/health/ready`
+   * reports an `audit` check: `degraded` with the failure count once durable
+   * audit writes have failed, `ok` otherwise. Duck-typed on purpose — the
+   * health module must not depend on the audit backend.
+   */
+  audit?: { writeFailures?(): number };
 }
 
 // ---------------------------------------------------------------------------
@@ -240,10 +256,23 @@ export function createHealthRouter(
     ]);
     const flowsCheck = checkFlows(flowRegistry);
 
+    // Req 1.9: audit write health as an informational (never 503) hint.
+    const auditFailures = options?.audit?.writeFailures?.() ?? 0;
+    const auditCheck: DependencyCheck | undefined =
+      options?.audit === undefined
+        ? undefined
+        : auditFailures > 0
+          ? {
+              status: "degraded",
+              reason: `${auditFailures} durable audit write(s) failed since process start (see aiperator_audit_write_failures_total).`,
+            }
+          : { status: "ok" };
+
     const checks: HealthDetail = {
       database: dbCheck,
       redis: redisCheck,
       flows: flowsCheck,
+      ...(auditCheck !== undefined ? { audit: auditCheck } : {}),
     };
 
     // A replica with no loaded flows cannot serve meaningful execution traffic.

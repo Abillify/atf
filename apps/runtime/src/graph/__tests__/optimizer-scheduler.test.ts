@@ -405,6 +405,9 @@ describe("OptimizerScheduler — audit log", () => {
         record: (entry) => {
           records.push({ action: entry.action, target: entry.target ?? "" });
         },
+        recordRequired: async (entry) => {
+          records.push({ action: entry.action, target: entry.target ?? "" });
+        },
         list: async () => [],
         verifyChain: async () => ({ valid: true, checked: 0 }),
       },
@@ -426,6 +429,9 @@ describe("OptimizerScheduler — audit log", () => {
       countSnapshots: TOO_FEW_SAMPLES,
       auditLog: {
         record: (e) => records.push(e),
+        recordRequired: async (e) => {
+          records.push(e);
+        },
         list: async () => [],
         verifyChain: async () => ({ valid: true, checked: 0 }),
       },

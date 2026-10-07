@@ -242,6 +242,7 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       {
         auditLog: auditLog ?? {
           record: () => {},
+          recordRequired: async () => {},
           list: async () => [],
           verifyChain: async () => ({ valid: true, checked: 0 }),
         },

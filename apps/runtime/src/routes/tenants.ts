@@ -33,6 +33,10 @@ import type { UsageMeter } from "../observability/billing.js";
 import { toStripeUsageRecord } from "../observability/billing.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import {
+  AUDIT_UNAVAILABLE_BODY,
+  AUDIT_UNAVAILABLE_STATUS,
+} from "../compliance/regulated-actions.js";
+import {
   isByokProvider,
   type TenantProviderKeyStore,
   type ByokResolver,
@@ -215,12 +219,19 @@ export function createTenantsRouter(deps: TenantsRouterDeps): Hono {
     const id = ctx.req.param("id");
     const ok = await tenantStore.deleteTenant(id);
     if (!ok) return notFound(ctx, id);
-    auditLog?.record({
-      actor: actor.name,
-      role: actor.role,
-      action: "tenant.delete",
-      target: id,
-    });
+    // Regulierte Aktion (Req 1.4): durable audit before reporting deletion.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: actor.name,
+          role: actor.role,
+          action: "tenant.delete",
+          target: id,
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
     return ctx.json({ id, deleted: true });
   });
 
@@ -281,13 +292,24 @@ export function createTenantsRouter(deps: TenantsRouterDeps): Hono {
 
     try {
       const key = await tenantStore.createApiKey(tenantId, name, expiresAt);
-      auditLog?.record({
-        actor: actor.name,
-        role: actor.role,
-        action: "api_key.create",
-        target: key.id,
-        details: { tenantId, ...(expiresAt !== undefined ? { expiresAt } : {}) },
-      });
+      // Regulierte Aktion (Req 1.4): a credential is only handed out once the
+      // creation is durably audited.
+      if (auditLog !== undefined) {
+        try {
+          await auditLog.recordRequired({
+            actor: actor.name,
+            role: actor.role,
+            action: "api_key.create",
+            target: key.id,
+            details: {
+              tenantId,
+              ...(expiresAt !== undefined ? { expiresAt } : {}),
+            },
+          });
+        } catch {
+          return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+        }
+      }
       return ctx.json({ key }, 201);
     } catch (err) {
       if (err instanceof TenantNotFoundError) return notFound(ctx, tenantId);
@@ -317,13 +339,20 @@ export function createTenantsRouter(deps: TenantsRouterDeps): Hono {
         },
         404,
       );
-    auditLog?.record({
-      actor: actor.name,
-      role: actor.role,
-      action: "api_key.revoke",
-      target: kid,
-      details: { tenantId: ctx.req.param("id") },
-    });
+    // Regulierte Aktion (Req 1.4): durable audit before reporting revocation.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: actor.name,
+          role: actor.role,
+          action: "api_key.revoke",
+          target: kid,
+          details: { tenantId: ctx.req.param("id") },
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
     return ctx.json({ id: kid, revoked: true });
   });
 
@@ -435,13 +464,20 @@ export function createTenantsRouter(deps: TenantsRouterDeps): Hono {
 
     await providerKeyStore.setKey(tenantId, provider, body.key.trim());
     byokResolver?.invalidate(tenantId);
-    auditLog?.record({
-      actor: actor.name,
-      role: actor.role,
-      action: "byok.set",
-      target: tenantId,
-      details: { provider },
-    });
+    // Regulierte Aktion (Req 1.4): durable audit before confirming the secret.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: actor.name,
+          role: actor.role,
+          action: "byok.set",
+          target: tenantId,
+          details: { provider },
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
     return ctx.json({ tenantId, provider, configured: true });
   });
 

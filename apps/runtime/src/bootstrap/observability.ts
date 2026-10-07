@@ -166,7 +166,16 @@ export function buildObservability(
   const tokenLimitEnforcer = new TokenLimitEnforcer(tokenLimitService);
 
   // ── Audit log ─────────────────────────────────────────────────────────────
-  const auditLog: AuditLog = createAuditLog(database, logger);
+  // Req 1.9 (platform-hardening): every failed durable audit write increments
+  // the write-failure counter (readiness surfaces it as `degraded`, Prod_Gate
+  // and alerting key off it) — a silently lost trail must be observable.
+  const auditLog: AuditLog = createAuditLog(
+    database,
+    logger,
+    () => {
+      metrics.recordCounter("aiperator_audit_write_failures_total", {});
+    },
+  );
 
   // ── Audit chain external anchoring (secret-gated) ──────────────────────────
   // Signs the chain tip periodically with an operator-held secret and stores it

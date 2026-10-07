@@ -156,7 +156,9 @@ describe("PostgresAuditLog", () => {
         if (/^SELECT nextval/i.test(trimmed)) return [{ id: 1 }] as unknown as T[];
         if (/^SELECT hash FROM/i.test(trimmed)) return [] as T[];
         if (/^INSERT/i.test(trimmed)) return [] as T[];
-        throw new Error("db down");
+        if (/^(BEGIN|COMMIT|ROLLBACK)$/i.test(trimmed)) return [] as T[];
+        if (/pg_advisory_xact_lock/i.test(trimmed)) return [] as T[];
+        throw new Error("db down"); // list()/reads fail
       },
       async close() {},
       async withOperator<T>(cb: (db: Database) => Promise<T>): Promise<T> {
@@ -166,10 +168,157 @@ describe("PostgresAuditLog", () => {
     const log = new PostgresAuditLog(db);
     log.record({ actor: "bob", action: "replay.run" });
     await log.flush?.();
+    expect(log.writeFailures()).toBe(0); // the write itself succeeded
     const list = await log.list();
     const firstRecord = list[0];
     if (firstRecord === undefined) throw new Error("expected a first record");
     expect(firstRecord.actor).toBe("bob"); // served from mirror
+  });
+
+  /**
+   * Fake Database with an in-memory row store: the tip SELECT reads the real
+   * stored tip, INSERT appends — enough to exercise the transactional chain
+   * write (Req 1.2/1.3) and inject tip-read failures.
+   */
+  function chainDb(opts: {
+    failTipRead?: () => boolean;
+    failInsert?: () => boolean;
+  } = {}): {
+    db: Database;
+    rows: { id: number; hash: string | null; prev_hash: string | null }[];
+    statements: string[];
+  } {
+    const rows: { id: number; hash: string | null; prev_hash: string | null }[] =
+      [];
+    const statements: string[] = [];
+    let nextId = 1;
+    const db: Database = {
+      async query<T = Record<string, unknown>>(
+        text: string,
+        params?: readonly unknown[],
+      ): Promise<T[]> {
+        const trimmed = text.trim();
+        statements.push(trimmed.split("\n")[0] ?? trimmed);
+        if (/^SELECT hash FROM/i.test(trimmed)) {
+          if (opts.failTipRead?.() === true) throw new Error("tip read failed");
+          const tip = rows[rows.length - 1];
+          return (tip === undefined ? [] : [{ hash: tip.hash }]) as unknown as T[];
+        }
+        if (/^SELECT nextval/i.test(trimmed)) {
+          return [{ id: nextId++ }] as unknown as T[];
+        }
+        if (/^INSERT/i.test(trimmed)) {
+          if (opts.failInsert?.() === true) throw new Error("insert failed");
+          const p = params ?? [];
+          rows.push({
+            id: Number(p[0]),
+            hash: String(p[7]),
+            prev_hash: String(p[8]),
+          });
+          return [] as T[];
+        }
+        return [] as T[];
+      },
+      async close() {},
+      async withOperator<T>(cb: (db: Database) => Promise<T>): Promise<T> {
+        return cb(this);
+      },
+    };
+    return { db, rows, statements };
+  }
+
+  it("recordRequired resolves only after the row is durably written (Req 1.4)", async () => {
+    const { db, rows } = chainDb();
+    const log = new PostgresAuditLog(db);
+    await log.recordRequired({ actor: "alice", action: "flows.publish" });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.prev_hash).toBe(AUDIT_CHAIN_GENESIS_HASH);
+    expect(log.writeFailures()).toBe(0);
+  });
+
+  it("recordRequired rejects when the insert fails (Req 1.4)", async () => {
+    const { db, rows } = chainDb({ failInsert: () => true });
+    const log = new PostgresAuditLog(db);
+    let failures = 0;
+    log.onWriteFailure = () => {
+      failures += 1;
+    };
+    expect(log.writeFailures()).toBe(0);
+    await expect(
+      log.recordRequired({ actor: "alice", action: "flows.publish" }),
+    ).rejects.toThrow("insert failed");
+    expect(rows).toHaveLength(0);
+    expect(log.writeFailures()).toBe(1);
+    expect(failures).toBe(1);
+  });
+
+  it("a failing tip read propagates instead of restarting the chain at genesis (Req 1.2/1.3)", async () => {
+    let tipBroken = true;
+    const { db, rows } = chainDb({ failTipRead: () => tipBroken });
+    const log = new PostgresAuditLog(db);
+    await expect(
+      log.recordRequired({ actor: "alice", action: "a1" }),
+    ).rejects.toThrow("tip read failed");
+    expect(rows).toHaveLength(0);
+    // Once the read recovers, the write must chain against the REAL tip —
+    // never silently restart at genesis after an outage.
+    tipBroken = false;
+    await log.recordRequired({ actor: "alice", action: "a2" });
+    await log.recordRequired({ actor: "alice", action: "a3" });
+    expect(rows).toHaveLength(2);
+    const [second, third] = rows;
+    expect(second?.prev_hash).toBe(AUDIT_CHAIN_GENESIS_HASH); // table was empty
+    expect(third?.prev_hash).toBe(second?.hash); // real chaining resumes
+  });
+
+  it("refuses to extend a tip row whose hash is NULL (corrupted chain)", async () => {
+    const { db, rows } = chainDb();
+    rows.push({ id: 0, hash: null, prev_hash: null }); // corrupted stored tip
+    const log = new PostgresAuditLog(db);
+    await expect(
+      log.recordRequired({ actor: "alice", action: "a1" }),
+    ).rejects.toThrow(/corrupted chain/i);
+    expect(rows).toHaveLength(1); // nothing appended
+  });
+
+  it("tracks pendingWrites and writeFailures for best-effort record() (Req 1.6/1.9)", async () => {
+    let release: (() => void) | undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const db: Database = {
+      async query<T = Record<string, unknown>>(text: string): Promise<T[]> {
+        const trimmed = text.trim();
+        if (/^INSERT/i.test(trimmed)) {
+          await gate; // hold the write open so `pending` stays visible
+          return [] as T[];
+        }
+        if (/^SELECT hash FROM/i.test(trimmed)) return [] as T[];
+        if (/^SELECT nextval/i.test(trimmed)) return [{ id: 1 }] as unknown as T[];
+        return [] as T[];
+      },
+      async close() {},
+      async withOperator<T>(cb: (db: Database) => Promise<T>): Promise<T> {
+        return cb(this);
+      },
+    };
+    const log = new PostgresAuditLog(db);
+    log.record({ actor: "a", action: "x" });
+    log.record({ actor: "a", action: "y" });
+    expect(log.pendingWrites()).toBeGreaterThan(0);
+    release?.();
+    await log.flush?.();
+    expect(log.pendingWrites()).toBe(0);
+    expect(log.writeFailures()).toBe(0);
+  });
+
+  it("counts a failed best-effort record() without throwing (Req 1.9)", async () => {
+    const { db } = chainDb({ failInsert: () => true });
+    const log = new PostgresAuditLog(db);
+    log.record({ actor: "a", action: "x" });
+    await log.flush?.();
+    expect(log.writeFailures()).toBe(1);
+    expect(log.pendingWrites()).toBe(0);
   });
 });
 

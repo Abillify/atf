@@ -187,6 +187,7 @@ describe("generateComplianceDossier", () => {
     // the dossier surfaces it rather than silently reporting valid:true.
     const auditLog = {
       record: () => {},
+      recordRequired: async () => {},
       list: async () => [],
       verifyChain: async () => ({
         valid: false,
@@ -325,6 +326,7 @@ describe("formatDossierAsMarkdown", () => {
   it("renders a tamper-detected chain distinctly from a verified one", async () => {
     const auditLog = {
       record: () => {},
+      recordRequired: async () => {},
       list: async () => [],
       verifyChain: async () => ({
         valid: false,

@@ -1348,6 +1348,9 @@ if (import.meta.main) {
         : {}),
       redisRequired: config.redisUrl !== undefined,
       probeTimeoutMs: config.healthProbeTimeoutMs,
+      // Req 1.9: surface failed durable audit writes as a degraded (never 503)
+      // readiness hint.
+      audit: auditLog,
     }),
   );
   app.route(
@@ -2450,6 +2453,38 @@ if (import.meta.main) {
       // the database connection, so a shutdown during an open batch window
       // does not silently drop the tail of the audit trail.
       () => executionStore?.flush?.(),
+      // Req 1.6 (platform-hardening): drain the audit write queue BEFORE the
+      // database closes. Best-effort `record()` entries are persisted in order;
+      // if the queue has not settled within the grace period, the still
+      // unpersisted count is reported through the write-failure metric and an
+      // error log — never dropped silently without a trace.
+      async () => {
+        const flush = auditLog.flush?.();
+        if (flush === undefined) return;
+        const graceMs = 5_000;
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const timedOut = await Promise.race([
+          flush.then(() => false),
+          new Promise<boolean>((resolve) => {
+            timer = setTimeout(() => resolve(true), graceMs);
+          }),
+        ]);
+        if (timer !== undefined) clearTimeout(timer);
+        if (timedOut) {
+          const pending = auditLog.pendingWrites?.() ?? 0;
+          if (pending > 0) {
+            metrics.recordCounter(
+              "aiperator_audit_write_failures_total",
+              {},
+              pending,
+            );
+          }
+          logger.error(
+            "Audit write queue did not drain before shutdown grace expired",
+            { graceMs, pending },
+          );
+        }
+      },
       () => database?.close(),
       () => tracer.shutdown(),
     ]) {

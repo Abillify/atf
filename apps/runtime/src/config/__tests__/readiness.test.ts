@@ -50,6 +50,34 @@ describe("checkProductionReadiness", () => {
     expect(fatal).toEqual([]);
   });
 
+  test("warns in production when AUDIT_ANCHOR_FILE is unset (Req 1.8)", () => {
+    const { warnings } = checkProductionReadiness(productionConfig());
+    expect(
+      warnings.some((w) => w.includes("AUDIT_ANCHOR_FILE is not set")),
+    ).toBe(true);
+  });
+
+  test("no anchor warning when AUDIT_ANCHOR_FILE is configured", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        auditAnchorFile: "/var/lib/aiperator/audit-anchors.jsonl",
+        auditAnchorSecret: "anchor-secret",
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("AUDIT_ANCHOR_FILE is not set")),
+    ).toBe(false);
+  });
+
+  test("no anchor warning outside production", () => {
+    const { warnings } = checkProductionReadiness(
+      baseConfig({ appEnv: "development" }),
+    );
+    expect(
+      warnings.some((w) => w.includes("AUDIT_ANCHOR_FILE is not set")),
+    ).toBe(false);
+  });
+
   test("rejects anonymous authentication with active tenant isolation", () => {
     const report = checkProductionReadiness(
       baseConfig({

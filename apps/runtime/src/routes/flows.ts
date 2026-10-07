@@ -39,6 +39,10 @@ import { Hono } from "hono";
 import type { FlowRegistry } from "../graph/flow-parser.js";
 import type { DraftInfo, FlowStore } from "../graph/flow-store.js";
 import {
+  AUDIT_UNAVAILABLE_BODY,
+  AUDIT_UNAVAILABLE_STATUS,
+} from "../compliance/regulated-actions.js";
+import {
   DEFAULT_DRAFT_ID,
   FlowStoreError,
   isValidDraftId,
@@ -2057,13 +2061,21 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     }
     const record = await store.publish(id, actor.name, { draftId });
     await dbSource?.refresh();
-    auditLog?.record({
-      actor: actor.name,
-      role: actor.role,
-      action: "flows.publish",
-      target: id,
-      details: { version: record.version, draftId },
-    });
+    // Regulierte Aktion (Req 1.4): the publish is only reported as successful
+    // once the audit entry is durably persisted — otherwise 503.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: actor.name,
+          role: actor.role,
+          action: "flows.publish",
+          target: id,
+          details: { version: record.version, draftId },
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
     return ctx.json({ record, validation });
   });
 
@@ -2088,12 +2100,19 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
         404,
       );
     }
-    auditLog?.record({
-      actor: actor.name,
-      role: actor.role,
-      action: "flows.delete",
-      target: id,
-    });
+    // Regulierte Aktion (Req 1.4): durable audit before reporting deletion.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: actor.name,
+          role: actor.role,
+          action: "flows.delete",
+          target: id,
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
     return ctx.json({ id, deleted: true });
   });
 
@@ -2658,13 +2677,20 @@ export function createFlowsRouter(deps: FlowsRouterDeps): Hono {
     try {
       const record = await store.rollback(id, body.version, actor.name);
       await dbSource?.refresh();
-      auditLog?.record({
-        actor: actor.name,
-        role: actor.role,
-        action: "flows.rollback",
-        target: id,
-        details: { toVersion: body.version, newVersion: record.version },
-      });
+      // Regulierte Aktion (Req 1.4): durable audit before reporting success.
+      if (auditLog !== undefined) {
+        try {
+          await auditLog.recordRequired({
+            actor: actor.name,
+            role: actor.role,
+            action: "flows.rollback",
+            target: id,
+            details: { toVersion: body.version, newVersion: record.version },
+          });
+        } catch {
+          return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+        }
+      }
       return ctx.json({ record });
     } catch (err) {
       if (err instanceof FlowStoreError) {

@@ -252,6 +252,20 @@ const RLS_SETUP_STATEMENTS: readonly string[] = [
   `GRANT SELECT ON ALL TABLES IN SCHEMA public TO aiperator_operator`,
   `ALTER DEFAULT PRIVILEGES FOR ROLE aiperator_app IN SCHEMA public
      GRANT SELECT ON TABLES TO aiperator_operator`,
+  // Req 1.5 (platform-hardening): audit_log is append-only. The blanket GRANT
+  // above would give both roles UPDATE/DELETE on it — take those back so the
+  // immutability trigger is backed by real privileges, not only a trigger.
+  // (Migration 43 repeats the revocations for databases onboarded before this
+  // change; both are idempotent and guarded, so the order does not matter.)
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'audit_log') THEN
+       EXECUTE 'REVOKE UPDATE, DELETE ON public.audit_log FROM aiperator_app';
+       EXECUTE 'REVOKE UPDATE, DELETE ON public.audit_log FROM aiperator_operator';
+     END IF;
+   END
+   $$`,
   `DO $$
    DECLARE
      worker_table TEXT;

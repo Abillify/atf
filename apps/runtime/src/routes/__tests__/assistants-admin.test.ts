@@ -78,6 +78,9 @@ function fakeAuditLog(): AuditLog & { entries: AuditEntry[] } {
     record: (entry: AuditEntry) => {
       entries.push(entry);
     },
+    recordRequired: async (entry: AuditEntry) => {
+      entries.push(entry);
+    },
     list: async () => [],
     verifyChain: async () => ({ valid: true, checked: 0 }),
   };
