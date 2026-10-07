@@ -16,21 +16,28 @@
  *   GET  /v1/me/data                    — export all data held for the calling identity
  *   DELETE /v1/me/data                  — erase all data for the calling identity (RTBF)
  *
+ * Erasure responses are honest per store (Req 2.10): every result carries
+ * `store`, `status` (`ok`/`failed`/`not_configured`) and the failure cause.
+ * The confirmation text is only used when no store reports `failed`; partial
+ * results answer HTTP 207 (`ERASURE_PARTIAL`), a total failure HTTP 502.
+ *
  * The forget body is `{ "tenantId"?: string, "userId"?: string }` — at least one
  * must be present (a blank subject would erase everything and is rejected 400).
  *
  * No `any` at module boundaries.
  */
 
+import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
+import type { ErasureRequest, ErasureStoreResult } from "@atf/erasure-contract";
 import type {
   RetentionService,
   ErasureSubject,
 } from "../observability/retention.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import type { JwtVerifier } from "../middleware/jwt-verifier.js";
-import { TOKEN_KEY } from "../middleware/auth.js";
+import { resolveTenantClaim, TOKEN_KEY } from "../middleware/auth.js";
 import type { AuthContext } from "../middleware/auth.js";
 import {
   createOperatorAuthorizer,
@@ -49,10 +56,32 @@ import {
   buildDataFlowMap,
   formatDataFlowMapAsMarkdown,
 } from "../compliance/data-flow-map.js";
+import {
+  AUDIT_UNAVAILABLE_BODY,
+  AUDIT_UNAVAILABLE_STATUS,
+} from "../compliance/regulated-actions.js";
+import {
+  aggregateStatus,
+  type ErasureOperationStatus,
+  type ErasureOrchestrator,
+} from "../compliance/erasure-orchestrator.js";
+import {
+  erasureSubjectHash,
+  ERASURE_RECEIPT_TYPE,
+} from "@atf/erasure-contract";
+import type { ErasureReceiptEnvelope } from "../compliance/erasure-receipt.js";
 import type { FlowRegistry } from "../graph/flow-parser.js";
 
 export interface ComplianceRouterDeps {
   retention: RetentionService;
+  /**
+   * Optional DSAR erasure orchestrator (Req 2.9). When present, operator
+   * erasures fan out to the remote `ERASURE_TARGETS` services as well and
+   * every operation is persisted in `erasure_requests` (idempotent, with a
+   * retry endpoint for failed stores). Without it the router keeps the
+   * local-only `RetentionService` behaviour.
+   */
+  erasureOrchestrator?: ErasureOrchestrator;
   authRequired?: boolean;
   operatorAuth?: OperatorAuthorizer;
   auditLog?: AuditLog;
@@ -121,6 +150,38 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       401,
     );
 
+  /**
+   * Map an aggregate erasure status to its honest HTTP code (Req 2.10):
+   * 200 when no store failed, 207 (`ERASURE_PARTIAL`) for a mixed outcome,
+   * 502 when every store failed.
+   */
+  const erasureHttpStatus = (
+    status: ErasureOperationStatus,
+  ): 200 | 207 | 502 =>
+    status === "complete" ? 200 : status === "partial" ? 207 : 502;
+
+  /**
+   * Turn a `RetentionService.forget` report into contract-shaped store
+   * results so local-only and orchestrated responses share one honest shape.
+   */
+  const resultsFromReport = (
+    report: { target: string; erased: number; error?: string }[],
+  ): ErasureStoreResult[] =>
+    report.map((entry) => ({
+      store: entry.target,
+      status: entry.error !== undefined ? "failed" : "ok",
+      erased: entry.erased,
+      ...(entry.error !== undefined ? { error: entry.error } : {}),
+    }));
+
+  /** Legacy report shape kept for existing consumers of the forget API. */
+  const legacyReport = (results: ErasureStoreResult[]) =>
+    results.map((r) => ({
+      target: r.store,
+      erased: r.erased,
+      ...(r.error !== undefined ? { error: r.error } : {}),
+    }));
+
   // ── Admin-plane endpoints ─────────────────────────────────────────────────
 
   router.get("/admin/compliance/status", async (ctx) => {
@@ -182,17 +243,127 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       );
     }
 
-    const report = await retention.forget(subject);
-    const erased = report.reduce((n, e) => n + e.erased, 0);
+    // Orchestrated path (Req 2.9/2.10): with a tenant in scope the erasure
+    // fans out to the remote ERASURE_TARGETS services as well and the
+    // operation is persisted for idempotent replay and the retry endpoint.
+    // Without a tenant the contract request cannot be built — fall back to
+    // the local-only retention sweep, which still reports honestly.
+    let requestId: string | undefined;
+    let results: ErasureStoreResult[];
+    let status: ErasureOperationStatus;
+    if (
+      deps.erasureOrchestrator !== undefined &&
+      subject.tenantId !== undefined
+    ) {
+      const request: ErasureRequest = {
+        requestId: randomUUID(),
+        tenantId: subject.tenantId,
+        scope: subject.userId === undefined ? "tenant" : "subject",
+        ...(subject.userId !== undefined
+          ? { subject: { userId: subject.userId, externalIds: [] } }
+          : {}),
+        dryRun: false,
+      };
+      const operation = await deps.erasureOrchestrator.execute(request);
+      requestId = operation.requestId;
+      results = operation.results;
+      status = operation.status;
+    } else {
+      results = resultsFromReport(await retention.forget(subject));
+      status = aggregateStatus(results);
+    }
+    const erased = results.reduce((n, r) => n + r.erased, 0);
+    // Regulierte Aktion (Req 1.4): an erasure is only reported once the
+    // execution is durably audited — the trail is the legal evidence.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: actor.name ?? "admin",
+          ...(actor.role !== undefined ? { role: actor.role } : {}),
+          action: "compliance.forget",
+          target: subject.tenantId ?? subject.userId,
+          outcome: status === "complete" ? "success" : "error",
+          details: {
+            subject,
+            erased,
+            status,
+            ...(requestId !== undefined ? { requestId } : {}),
+            report: legacyReport(results),
+          },
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
+    return ctx.json(
+      {
+        subject,
+        ...(requestId !== undefined ? { requestId } : {}),
+        status,
+        results,
+        report: legacyReport(results),
+        erased,
+        ...(status === "partial"
+          ? {
+              error: {
+                code: "ERASURE_PARTIAL",
+                message:
+                  "The erasure completed only partially — see the per-store results.",
+              },
+            }
+          : {}),
+      },
+      erasureHttpStatus(status),
+    );
+  });
+
+  // POST /admin/compliance/erasures/{id}/retry — re-run ONLY the stores that
+  // reported `failed` for a persisted erasure operation (Req 2.9). Stores that
+  // already succeeded are not touched; a fully successful operation replays
+  // its stored result unchanged.
+  router.post("/admin/compliance/erasures/:id/retry", async (ctx) => {
+    const actor = await guard(ctx);
+    if (actor === null) return unauthorized(ctx);
+    if (deps.erasureOrchestrator === undefined) {
+      return ctx.json(
+        {
+          error: {
+            message: "Erasure orchestrator is not configured.",
+            type: "invalid_request_error",
+            code: "erasure_not_configured",
+          },
+        },
+        400,
+      );
+    }
+    const requestId = ctx.req.param("id");
+    const operation = await deps.erasureOrchestrator.retry(requestId);
+    if (operation === null) {
+      return ctx.json(
+        {
+          error: {
+            message: `No erasure operation '${requestId}'.`,
+            type: "invalid_request_error",
+            code: "erasure_not_found",
+          },
+        },
+        404,
+      );
+    }
     auditLog?.record({
       actor: actor.name ?? "admin",
       ...(actor.role !== undefined ? { role: actor.role } : {}),
-      action: "compliance.forget",
-      target: subject.tenantId ?? subject.userId,
-      outcome: "success",
-      details: { subject, erased, report },
+      action: "compliance.erasure_retry",
+      target: operation.tenantId,
+      outcome: operation.status === "complete" ? "success" : "error",
+      details: { requestId, status: operation.status },
     });
-    return ctx.json({ subject, report, erased });
+    return ctx.json({
+      requestId: operation.requestId,
+      status: operation.status,
+      erased: operation.erased,
+      results: operation.results,
+    });
   });
 
   // ── GET /admin/compliance/dossier ────────────────────────────────────────
@@ -223,9 +394,8 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     if (deps.piiRecallDatasetPath !== undefined) {
       try {
         const { readFileSync } = await import("node:fs");
-        const { parsePiiRecallDataset, evaluatePiiRecall } = await import(
-          "../eval/pii-recall.js"
-        );
+        const { parsePiiRecallDataset, evaluatePiiRecall } =
+          await import("../eval/pii-recall.js");
         const raw: unknown = JSON.parse(
           readFileSync(deps.piiRecallDatasetPath, "utf-8"),
         );
@@ -248,11 +418,21 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
         },
         retention,
         policy: deps.policyLoader?.policy,
-        ...(deps.evalRunHistory !== undefined ? { evalRunHistory: deps.evalRunHistory } : {}),
-        ...(deps.redTeamEngine !== undefined ? { redTeamEngine: deps.redTeamEngine } : {}),
-        ...(deps.piiVaultPosture !== undefined ? { piiVaultPosture: deps.piiVaultPosture } : {}),
-        ...(deps.auditAnchor !== undefined ? { auditAnchor: deps.auditAnchor } : {}),
-        ...(deps.flowRegistry !== undefined ? { flows: deps.flowRegistry.list() } : {}),
+        ...(deps.evalRunHistory !== undefined
+          ? { evalRunHistory: deps.evalRunHistory }
+          : {}),
+        ...(deps.redTeamEngine !== undefined
+          ? { redTeamEngine: deps.redTeamEngine }
+          : {}),
+        ...(deps.piiVaultPosture !== undefined
+          ? { piiVaultPosture: deps.piiVaultPosture }
+          : {}),
+        ...(deps.auditAnchor !== undefined
+          ? { auditAnchor: deps.auditAnchor }
+          : {}),
+        ...(deps.flowRegistry !== undefined
+          ? { flows: deps.flowRegistry.list() }
+          : {}),
         ...(dlpEffectiveness !== undefined ? { dlpEffectiveness } : {}),
         dataFlowOptions: {
           ...(deps.providerRegions !== undefined
@@ -277,7 +457,11 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       ...(actor.role !== undefined ? { role: actor.role } : {}),
       action: "compliance.dossier.generate",
       outcome: "success",
-      details: { format, windowStart: dossier.windowStart, windowEnd: dossier.windowEnd },
+      details: {
+        format,
+        windowStart: dossier.windowStart,
+        windowEnd: dossier.windowEnd,
+      },
     });
 
     if (format === "markdown") {
@@ -385,8 +569,12 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
   const dsarRouter = new Hono<AuthContext>();
 
   /** Extracts the calling user's identity from their JWT. */
-  const resolveCallerSubject = (ctx: Context<AuthContext>): ErasureSubject | null => {
-    const token = ctx.get(TOKEN_KEY as keyof AuthContext["Variables"]) as string | undefined;
+  const resolveCallerSubject = (
+    ctx: Context<AuthContext>,
+  ): ErasureSubject | null => {
+    const token = ctx.get(TOKEN_KEY as keyof AuthContext["Variables"]) as
+      | string
+      | undefined;
     if (token === undefined || token === "") return null;
 
     const claims = jwtVerifier?.decodePayload(token) ?? null;
@@ -402,9 +590,13 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     const userId = email ?? sub;
     if (userId === undefined) return null;
 
+    // Same tenant-claim precedence as the auth middleware (tenant_id →
+    // client_id → tid) so the DSAR subject matches the authenticated tenant.
+    const tenantId = resolveTenantClaim(claims) ?? clientId;
+
     return {
       userId,
-      ...(clientId !== undefined ? { tenantId: clientId } : {}),
+      ...(tenantId !== undefined ? { tenantId } : {}),
     };
   };
 
@@ -413,7 +605,9 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
   // how long). Does NOT return the actual data rows — that requires a bespoke
   // export per store, which operators can implement via custom RetentionTargets.
   dsarRouter.get("/v1/me/data", async (ctx) => {
-    const subject = resolveCallerSubject(ctx as unknown as Context<AuthContext>);
+    const subject = resolveCallerSubject(
+      ctx as unknown as Context<AuthContext>,
+    );
     if (subject === null) {
       return ctx.json(
         {
@@ -446,13 +640,14 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
 
   // DELETE /v1/me/data — GDPR Art.17 right-to-erasure for the calling identity.
   dsarRouter.delete("/v1/me/data", async (ctx) => {
-    const subject = resolveCallerSubject(ctx as unknown as Context<AuthContext>);
+    const subject = resolveCallerSubject(
+      ctx as unknown as Context<AuthContext>,
+    );
     if (subject === null) {
       return ctx.json(
         {
           error: {
-            message:
-              "Cannot determine your identity from the provided token.",
+            message: "Cannot determine your identity from the provided token.",
             type: "authentication_error",
           },
         },
@@ -460,25 +655,170 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       );
     }
 
-    const report = await retention.forget(subject);
-    const erased = report.reduce((n, e) => n + e.erased, 0);
+    // Fan out through the orchestrator when configured (Req 2.9): remote
+    // ERASURE_TARGETS services participate and the operation is persisted
+    // for idempotent replay. Without a tenant claim the contract request
+    // cannot be built — degrade to the local-only sweep, still honest.
+    let requestId: string | undefined;
+    let results: ErasureStoreResult[];
+    let status: ErasureOperationStatus;
+    if (
+      deps.erasureOrchestrator !== undefined &&
+      subject.tenantId !== undefined
+    ) {
+      const request: ErasureRequest = {
+        requestId: randomUUID(),
+        tenantId: subject.tenantId,
+        scope: "subject",
+        subject: { userId: subject.userId ?? "", externalIds: [] },
+        dryRun: false,
+      };
+      const operation = await deps.erasureOrchestrator.execute(request);
+      requestId = operation.requestId;
+      results = operation.results;
+      status = operation.status;
+    } else {
+      results = resultsFromReport(await retention.forget(subject));
+      status = aggregateStatus(results);
+    }
+    const erased = results.reduce((n, r) => n + r.erased, 0);
 
-    // Record the self-service erasure in the operator audit log.
-    auditLog?.record({
-      actor: subject.userId ?? "user",
-      role: "user",
-      action: "dsar.self_erasure",
-      target: subject.userId ?? subject.tenantId,
-      outcome: "success",
-      details: { subject, erased, report },
-    });
+    // Regulierte Aktion (Req 1.4): record the self-service erasure durably
+    // in the operator audit log before confirming it to the data subject.
+    if (auditLog !== undefined) {
+      try {
+        await auditLog.recordRequired({
+          actor: subject.userId ?? "user",
+          role: "user",
+          action: "dsar.self_erasure",
+          target: subject.userId ?? subject.tenantId,
+          outcome: status === "complete" ? "success" : "error",
+          details: {
+            subject,
+            erased,
+            status,
+            ...(requestId !== undefined ? { requestId } : {}),
+            report: legacyReport(results),
+          },
+        });
+      } catch {
+        return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
+      }
+    }
 
-    return ctx.json({
-      message: "Your data has been erased across all applicable stores.",
-      subject: { userId: subject.userId, tenantId: subject.tenantId },
-      report,
-      erased,
-    });
+    // Req 2.10: the confirmation text is only honest when no store failed.
+    const message =
+      status === "complete"
+        ? "Your data has been erased across all applicable stores."
+        : status === "partial"
+          ? "Your data could only be erased partially — see the per-store results."
+          : "Your data could not be erased — see the per-store results.";
+
+    return ctx.json(
+      {
+        message,
+        requestId,
+        status,
+        subject: { userId: subject.userId, tenantId: subject.tenantId },
+        results,
+        report: legacyReport(results),
+        erased,
+        ...(status === "partial"
+          ? { error: { code: "ERASURE_PARTIAL", message } }
+          : {}),
+      },
+      erasureHttpStatus(status),
+    );
+  });
+
+  // GET /v1/me/data/erasures/{id} — the signed Erasure_Receipt for a DSAR the
+  // calling identity performed (Req 2.11). Only receipts whose tenant AND a
+  // subject hash derived from the caller's own identifiers match are
+  // returned; the receipt itself never contains cleartext personal data.
+  dsarRouter.get("/v1/me/data/erasures/:id", async (ctx) => {
+    const subject = resolveCallerSubject(
+      ctx as unknown as Context<AuthContext>,
+    );
+    if (subject === null) {
+      return ctx.json(
+        {
+          error: {
+            message: "Cannot determine your identity from the provided token.",
+            type: "authentication_error",
+          },
+        },
+        401,
+      );
+    }
+    if (
+      deps.erasureOrchestrator === undefined ||
+      subject.tenantId === undefined
+    ) {
+      return ctx.json(
+        {
+          error: {
+            code: "ERASURE_NOT_CONFIGURED",
+            message: "Erasure receipts are not available.",
+          },
+        },
+        400,
+      );
+    }
+    const operation = await deps.erasureOrchestrator.getByReceiptId(
+      ctx.req.param("id"),
+    );
+    const envelope = operation?.receipt as ErasureReceiptEnvelope | undefined;
+    if (
+      operation === undefined ||
+      envelope === undefined ||
+      envelope.typ !== ERASURE_RECEIPT_TYPE ||
+      envelope.payload.receiptId !== ctx.req.param("id")
+    ) {
+      return ctx.json(
+        {
+          error: {
+            code: "ERASURE_RECEIPT_NOT_FOUND",
+            message: "No such erasure receipt.",
+          },
+        },
+        404,
+      );
+    }
+    // Ownership: same tenant, and (for subject-scoped receipts) at least one
+    // hash of the caller's own identifiers appears in the receipt.
+    if (envelope.payload.tenantId !== subject.tenantId) {
+      return ctx.json(
+        {
+          error: {
+            code: "ERASURE_RECEIPT_NOT_FOUND",
+            message: "No such erasure receipt.",
+          },
+        },
+        404,
+      );
+    }
+    if (envelope.payload.scope !== "tenant") {
+      const callerHashes = new Set(
+        (subject.userId !== undefined ? [subject.userId] : []).map((id) =>
+          erasureSubjectHash(subject.tenantId as string, id),
+        ),
+      );
+      const owns = envelope.payload.subjectHashes.some((h) =>
+        callerHashes.has(h),
+      );
+      if (!owns) {
+        return ctx.json(
+          {
+            error: {
+              code: "ERASURE_RECEIPT_NOT_FOUND",
+              message: "No such erasure receipt.",
+            },
+          },
+          404,
+        );
+      }
+    }
+    return ctx.json({ receipt: envelope });
   });
 
   // Mount the DSAR router so its routes participate in the /v1/* auth gate.

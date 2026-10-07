@@ -178,6 +178,12 @@ export function loadConfig(): AppConfig {
     auditAnchorSecret: env.AUDIT_ANCHOR_SECRET,
     auditAnchorIntervalMs: env.AUDIT_ANCHOR_INTERVAL_MS,
     auditAnchorFile: env.AUDIT_ANCHOR_FILE,
+    ...(env.ERASURE_TARGETS !== undefined
+      ? { erasureTargets: env.ERASURE_TARGETS }
+      : {}),
+    ...(env.ERASURE_RECEIPT_SIGNING_KEY !== undefined
+      ? { erasureReceiptSigningKey: env.ERASURE_RECEIPT_SIGNING_KEY }
+      : {}),
     evidenceBundleSecret: env.EVIDENCE_BUNDLE_SECRET,
     piiRecallDataset: env.PII_RECALL_DATASET,
     sloAlertWebhookUrl: env.SLO_ALERT_WEBHOOK_URL,
@@ -233,16 +239,21 @@ export function loadConfig(): AppConfig {
     // Mandatory BYOK necessarily activates the resolver/store bootstrap.
     byokEnabled: env.BYOK_ENABLED || env.BYOK_MODE === "required",
     byokMode: env.BYOK_MODE,
-    complianceFailClosedUnknownRegion: env.COMPLIANCE_FAIL_CLOSED_UNKNOWN_REGION,
+    complianceFailClosedUnknownRegion:
+      env.COMPLIANCE_FAIL_CLOSED_UNKNOWN_REGION,
     byokEncryptionKey: env.BYOK_ENCRYPTION_KEY,
     byokCacheTtlSeconds: env.BYOK_CACHE_TTL_SECONDS,
     piiVaultEnabled: env.PII_VAULT_ENABLED,
     piiVaultEncryptionKey: env.PII_VAULT_ENCRYPTION_KEY,
     piiVaultTypes: env.PII_VAULT_TYPES
-      ? env.PII_VAULT_TYPES.split(",").map((s) => s.trim()).filter((s) => s !== "")
+      ? env.PII_VAULT_TYPES.split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== "")
       : undefined,
     piiDetectors: env.PII_DETECTORS
-      ? env.PII_DETECTORS.split(",").map((s) => s.trim()).filter((s) => s !== "")
+      ? env.PII_DETECTORS.split(",")
+          .map((s) => s.trim())
+          .filter((s) => s !== "")
       : undefined,
     piiNerModel: env.PII_NER_MODEL,
     piiNerConfidence: env.PII_NER_CONFIDENCE,

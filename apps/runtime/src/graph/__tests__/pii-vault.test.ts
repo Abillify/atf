@@ -193,7 +193,10 @@ function fakeDb(overrides: Partial<Database> = {}): Database {
   return {
     query: async () => [],
     close: async () => {},
-    withOperator: async <T>(cb: (db: Database) => Promise<T>) => cb(fakeDb()),
+    // The operator connection reuses the same overrides so tests that stub
+    // `query` see their stub on operator-pool statements too.
+    withOperator: async <T>(cb: (db: Database) => Promise<T>) =>
+      cb(fakeDb(overrides)),
     ...overrides,
   } as Database;
 }
@@ -288,6 +291,70 @@ describe("PostgresPiiVaultStore", () => {
     const erased = await store.eraseTenant("tenant-a");
     expect(usedOperator).toBe(true);
     expect(erased).toBe(2);
+  });
+
+  it("eraseTenant propagates DB errors instead of returning 0 (Req 2.1)", async () => {
+    const db = fakeDb({
+      query: async () => {
+        throw new Error("db down");
+      },
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    await expect(store.eraseTenant("tenant-a")).rejects.toThrow("db down");
+  });
+
+  it("purgeOlderThan propagates DB errors instead of returning 0 (Req 2.1)", async () => {
+    const db = fakeDb({
+      query: async () => {
+        throw new Error("db down");
+      },
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    await expect(
+      store.purgeOlderThan(new Date().toISOString()),
+    ).rejects.toThrow("db down");
+  });
+
+  it("eraseTenant clears the in-memory mirror even when the durable delete fails (Req 2.2)", async () => {
+    let failDelete = false;
+    const db = fakeDb({
+      query: (async (text: string) => {
+        const t = text.trim();
+        if (/^INSERT/i.test(t)) return [];
+        if (/^DELETE/i.test(t)) {
+          if (failDelete) throw new Error("db down");
+          return [{ token: "t1" }];
+        }
+        return [];
+      }) as Database["query"],
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    await store.put("exec-1", "tenant-a", [
+      { token: "t1", type: "email", value: "a@x.com" },
+    ]);
+    // Mirror hit before erasure.
+    expect(await store.resolve("exec-1", "t1")).toBe("a@x.com");
+    failDelete = true;
+    await expect(store.eraseTenant("tenant-a")).rejects.toThrow("db down");
+    // The mirror must be gone despite the failure — a same-process resolve()
+    // may never return the erased value again.
+    expect(await store.resolve("exec-1", "t1")).toBeUndefined();
+  });
+
+  it("purgeOlderThan clears the in-memory mirror even when the durable delete fails (Req 2.2)", async () => {
+    const db = fakeDb({
+      query: async () => {
+        throw new Error("db down");
+      },
+    });
+    const store = new PostgresPiiVaultStore(db, CIPHER);
+    await store.put("exec-1", undefined, [
+      { token: "t1", type: "email", value: "a@x.com" },
+    ]);
+    await expect(
+      store.purgeOlderThan(new Date(Date.now() + 1000).toISOString()),
+    ).rejects.toThrow("db down");
+    expect(await store.resolve("exec-1", "t1")).toBeUndefined();
   });
 });
 

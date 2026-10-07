@@ -210,9 +210,18 @@ export interface PiiVaultStore {
   resolve(executionId: string, token: string): Promise<string | undefined>;
   /** Deletes every entry for an execution (called when the run finishes streaming). */
   clear(executionId: string): Promise<number>;
-  /** Age-based purge — safety net for orphaned entries from a crashed/abandoned run. */
+  /**
+   * Age-based purge — safety net for orphaned entries from a crashed/abandoned
+   * run. Errors MUST propagate to the caller (Req 2.1): a retention sweep that
+   * silently returns `0` would report a completed purge that never happened.
+   */
   purgeOlderThan?(cutoffIso: string): Promise<number>;
-  /** Right-to-be-forgotten — deletes every entry for a tenant/user across all executions. */
+  /**
+   * Right-to-be-forgotten — deletes every entry for a tenant/user across all
+   * executions, including the in-memory mirror (Req 2.2). Errors MUST
+   * propagate to the caller (Req 2.1): a DSAR response may only claim success
+   * when the durable delete actually succeeded.
+   */
   eraseTenant?(tenantId: string): Promise<number>;
 }
 
@@ -386,38 +395,33 @@ export class PostgresPiiVaultStore implements PiiVaultStore {
   }
 
   async purgeOlderThan(cutoffIso: string): Promise<number> {
-    try {
-      const rows = await this.db.withOperator((db) =>
-        db.query<{ token: string }>(
-          `DELETE FROM pii_vault_entries WHERE created_at < $1 RETURNING token`,
-          [cutoffIso],
-        ),
-      );
-      return rows.length;
-    } catch (err) {
-      this.logger?.warn("PII vault age-purge failed", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return 0;
-    }
+    // Mirror first, then durable — and let DB errors propagate (Req 2.1):
+    // a sweep that swallowed the failure and returned `0` would report a
+    // completed purge that never happened. The mirror is always cleaned so a
+    // retry (or the next sweep) never resolves PII from this process while
+    // the durable rows are gone or being re-purged.
+    const mirrorPurged = await this.mirror.purgeOlderThan(cutoffIso);
+    const rows = await this.db.withOperator((db) =>
+      db.query<{ token: string }>(
+        `DELETE FROM pii_vault_entries WHERE created_at < $1 RETURNING token`,
+        [cutoffIso],
+      ),
+    );
+    return Math.max(rows.length, mirrorPurged);
   }
 
   async eraseTenant(tenantId: string): Promise<number> {
-    try {
-      const rows = await this.db.withOperator((db) =>
-        db.query<{ token: string }>(
-          `DELETE FROM pii_vault_entries WHERE tenant_id = $1 RETURNING token`,
-          [tenantId],
-        ),
-      );
-      return rows.length;
-    } catch (err) {
-      this.logger?.warn("PII vault tenant erasure failed", {
-        tenantId,
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return 0;
-    }
+    // See purgeOlderThan: mirror always cleaned (Req 2.2), DB errors
+    // propagate (Req 2.1) so the DSAR layer reports the store as failed
+    // instead of claiming a completed erasure.
+    const mirrorErased = await this.mirror.eraseTenant(tenantId);
+    const rows = await this.db.withOperator((db) =>
+      db.query<{ token: string }>(
+        `DELETE FROM pii_vault_entries WHERE tenant_id = $1 RETURNING token`,
+        [tenantId],
+      ),
+    );
+    return Math.max(rows.length, mirrorErased);
   }
 }
 

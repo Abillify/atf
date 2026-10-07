@@ -1489,6 +1489,33 @@ export const MIGRATIONS: readonly Migration[] = [
        $do$`,
     ],
   },
+  {
+    version: 44,
+    name: "erasure_requests for the DSAR orchestrator (Req 2.9-2.11)",
+    statements: [
+      // One row per DSAR/erasure operation. `request_id` is unique so a
+      // repeated request replays the stored result instead of erasing twice
+      // (idempotency, Req 2.9). `results` holds the per-store
+      // ErasureStoreResult array; `receipt` the signed Erasure_Receipt
+      // envelope once the operation completed (Req 2.11).
+      `CREATE TABLE IF NOT EXISTS erasure_requests (
+         id          BIGSERIAL PRIMARY KEY,
+         request_id  TEXT NOT NULL UNIQUE,
+         tenant_id   TEXT NOT NULL,
+         scope       TEXT NOT NULL,
+         subject     JSONB,
+         doc_references JSONB,
+         status      TEXT NOT NULL,
+         results     JSONB NOT NULL DEFAULT '[]'::jsonb,
+         store_groups   JSONB NOT NULL DEFAULT '[]'::jsonb,
+         receipt     JSONB,
+         created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+         updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      `CREATE INDEX IF NOT EXISTS erasure_requests_tenant_idx
+         ON erasure_requests (tenant_id, created_at DESC)`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

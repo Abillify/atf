@@ -83,6 +83,11 @@ import { createFlowsRouter } from "./routes/flows.js";
 import { createMcpRouter } from "./routes/mcp.js";
 import { createJobsRouter } from "./routes/jobs.js";
 import { createComplianceRouter } from "./routes/compliance.js";
+import { createErasureOrchestrator } from "./compliance/erasure-orchestrator.js";
+import {
+  ed25519ReceiptKey,
+  hmacReceiptKey,
+} from "./compliance/erasure-receipt.js";
 import { createTenantsRouter } from "./routes/tenants.js";
 import { createProviderKeysRouter } from "./routes/provider-keys.js";
 import { createProviderMonitoringRouter } from "./routes/provider-monitoring.js";
@@ -1933,10 +1938,29 @@ if (import.meta.main) {
   logger.info("Eval run history API enabled at /admin/eval/runs");
 
   if (retentionService !== undefined) {
+    // DSAR erasure orchestrator (Req 2.9): fans erasures out to the local
+    // retention targets plus the remote ERASURE_TARGETS services and
+    // persists every operation in erasure_requests (idempotent, retryable).
+    // Erasure_Receipt signing (Req 2.11): Ed25519 via
+    // ERASURE_RECEIPT_SIGNING_KEY, documented fallback is the audit-anchor
+    // HMAC secret — the algorithm is recorded in the envelope's `alg`.
+    const receiptKey =
+      ed25519ReceiptKey(config.erasureReceiptSigningKey) ??
+      hmacReceiptKey(config.auditAnchorSecret);
+    const erasureOrchestrator = createErasureOrchestrator({
+      retention: retentionService,
+      ...(config.erasureTargets !== undefined
+        ? { targets: config.erasureTargets }
+        : {}),
+      ...(database !== undefined ? { database } : {}),
+      ...(logger !== undefined ? { logger } : {}),
+      ...(receiptKey !== undefined ? { receiptKey } : {}),
+    });
     app.route(
       "/",
       createComplianceRouter({
         retention: retentionService,
+        erasureOrchestrator,
         authRequired: config.monitoringAuthRequired,
         operatorAuth,
         auditLog,
@@ -1959,14 +1983,17 @@ if (import.meta.main) {
           durable: piiVaultStore !== undefined && database !== undefined,
           detectors: config.piiDetectors ?? [],
           piiTypes:
-            config.piiVaultTypes !== undefined && config.piiVaultTypes.length > 0
+            config.piiVaultTypes !== undefined &&
+            config.piiVaultTypes.length > 0
               ? config.piiVaultTypes
               : "all",
           multimodalMode: config.piiVaultMultimodalMode ?? "off",
         },
       }),
     );
-    logger.info("Compliance API enabled at /admin/compliance/* (incl. dossier)");
+    logger.info(
+      "Compliance API enabled at /admin/compliance/* (incl. dossier)",
+    );
   }
 
   // ── Continuous Safety & Quality Autopilot ─────────────────────────────────

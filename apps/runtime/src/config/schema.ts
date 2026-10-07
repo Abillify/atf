@@ -25,6 +25,7 @@ import type {
 import type { LlmConfig } from "../types/flow.js";
 import type { LlmStreamFallbackPolicy } from "../llm-stream-fallback-policy.js";
 import { parseCurrency, type Currency } from "../util/currency.js";
+import type { ErasureTargetConfig } from "../compliance/erasure-targets.js";
 import { SECURE_DEFAULTS } from "./defaults.js";
 
 import type { ProviderInstance } from "./providers.js";
@@ -233,6 +234,17 @@ export interface AppConfig {
   auditAnchorIntervalMs?: number;
   /** Optional append-only JSONL file to persist anchors outside the audit DB. */
   auditAnchorFile?: string;
+  /**
+   * Remote `POST /v1/erasure` endpoints the DSAR orchestrator fans out to
+   * (Req 2.9). Parsed from the `ERASURE_TARGETS` JSON env variable.
+   */
+  erasureTargets?: ErasureTargetConfig[];
+  /**
+   * Ed25519 private key (PEM or raw 32-byte base64) used to sign
+   * Erasure_Receipts (Req 2.11). Falls back to an audit-anchor HMAC when
+   * unset — the algorithm is recorded in the receipt envelope either way.
+   */
+  erasureReceiptSigningKey?: string;
   /**
    * HMAC secret for signing Verifiable Evidence Bundles
    * (`GET /monitoring/explain/:executionId/bundle`). Falls back to
@@ -852,6 +864,46 @@ export const EnvSchema = z.object({
   AUDIT_ANCHOR_SECRET: z.string().min(16).optional(),
   AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().min(60_000).optional(),
   AUDIT_ANCHOR_FILE: z.string().optional(),
+  // Remote erasure targets for the DSAR orchestrator (Req 2.9): a JSON array
+  // of `{service, url, tokenEnv}` entries pointing at the `POST /v1/erasure`
+  // endpoints of Search/Extract/Gate. `tokenEnv` names an environment variable
+  // holding the service token, so secrets never live in this list.
+  ERASURE_TARGETS: z
+    .string()
+    .optional()
+    .transform((raw): ErasureTargetConfig[] | undefined => {
+      if (raw === undefined || raw.trim() === "") return undefined;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        if (!Array.isArray(parsed)) return undefined;
+        const out: ErasureTargetConfig[] = [];
+        for (const item of parsed) {
+          if (item === null || typeof item !== "object") continue;
+          const rec = item as Record<string, unknown>;
+          if (
+            typeof rec.service === "string" &&
+            rec.service.length > 0 &&
+            typeof rec.url === "string" &&
+            rec.url.length > 0 &&
+            typeof rec.tokenEnv === "string" &&
+            rec.tokenEnv.length > 0
+          ) {
+            out.push({
+              service: rec.service,
+              url: rec.url,
+              tokenEnv: rec.tokenEnv,
+            });
+          }
+        }
+        return out.length > 0 ? out : undefined;
+      } catch {
+        return undefined;
+      }
+    }),
+  // Ed25519 private key (PEM or raw 32-byte base64) signing Erasure_Receipts
+  // (Req 2.11). When absent the orchestrator falls back to an audit-anchor
+  // HMAC and records the algorithm in the receipt envelope.
+  ERASURE_RECEIPT_SIGNING_KEY: z.string().min(16).optional(),
   EVIDENCE_BUNDLE_SECRET: z.string().min(16).optional(),
   PII_RECALL_DATASET: z.string().optional(),
   SLO_ALERT_WEBHOOK_URL: z.string().url().optional(),
@@ -864,7 +916,9 @@ export const EnvSchema = z.object({
         const parsed: unknown = JSON.parse(raw);
         if (parsed === null || typeof parsed !== "object") return undefined;
         const out: Record<string, string> = {};
-        for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+        for (const [k, v] of Object.entries(
+          parsed as Record<string, unknown>,
+        )) {
           if (typeof v === "string") out[k] = v;
         }
         return Object.keys(out).length > 0 ? out : undefined;
@@ -878,7 +932,10 @@ export const EnvSchema = z.object({
     .transform((raw): string[] | undefined =>
       raw === undefined || raw.trim() === ""
         ? undefined
-        : raw.split(",").map((s) => s.trim()).filter((s) => s.length > 0),
+        : raw
+            .split(",")
+            .map((s) => s.trim())
+            .filter((s) => s.length > 0),
     ),
   CO2_GRID_CARBON_INTENSITY: z.coerce.number().min(0).max(2).optional(),
   CO2_ENERGY_FACTORS: z
@@ -930,7 +987,10 @@ export const EnvSchema = z.object({
   AUTHZ_ENABLED: z
     .string()
     .optional()
-    .transform((raw): boolean => raw === undefined || raw === "" || raw === "true" || raw === "1"),
+    .transform(
+      (raw): boolean =>
+        raw === undefined || raw === "" || raw === "true" || raw === "1",
+    ),
   TENANT_ISOLATION_ENABLED: z
     .string()
     .optional()
@@ -1173,13 +1233,23 @@ export const EnvSchema = z.object({
   /** API key / bearer token for the remote PII detection service. */
   PII_REMOTE_API_KEY: z.string().optional(),
   /** Per-request timeout for the remote PII detector in ms. Default: 3000. */
-  PII_REMOTE_TIMEOUT_MS: z.coerce.number().int().min(100).max(30_000).optional(),
+  PII_REMOTE_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(30_000)
+    .optional(),
   /** Language hint for the remote PII detector. Default: "de". */
   PII_REMOTE_LANGUAGE: z.string().optional(),
   /** Detector pipeline fail mode: "open" or "closed". Default: "open". */
   PII_DETECTOR_FAIL_MODE: z.enum(["open", "closed"]).optional(),
   /** Per-detector timeout in ms. Default: 5000. */
-  PII_DETECTOR_TIMEOUT_MS: z.coerce.number().int().min(100).max(60_000).optional(),
+  PII_DETECTOR_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(100)
+    .max(60_000)
+    .optional(),
   /** Multimodal (image/file) PII handling: "off" (default), "block", "redact", or "describe". */
   PII_VAULT_MULTIMODAL_MODE: z
     .enum(["off", "block", "redact", "describe"])
@@ -1246,35 +1316,30 @@ export const EnvSchema = z.object({
   EMBEDDING_MODEL: z
     .string()
     .optional()
-    .transform(
-      (
-        raw,
-        ctx,
-      ): EmbeddingConfig | undefined => {
-        if (raw === undefined || raw.trim() === "") return undefined;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(raw);
-        } catch {
+    .transform((raw, ctx): EmbeddingConfig | undefined => {
+      if (raw === undefined || raw.trim() === "") return undefined;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "EMBEDDING_MODEL must be a valid JSON object",
+        });
+        return z.NEVER;
+      }
+      const result = EmbeddingConfigSchema.safeParse(parsed);
+      if (!result.success) {
+        result.error.issues.forEach((issue) => {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
-            message: "EMBEDDING_MODEL must be a valid JSON object",
+            ...issue,
+            path: ["EMBEDDING_MODEL", ...issue.path],
           });
-          return z.NEVER;
-        }
-        const result = EmbeddingConfigSchema.safeParse(parsed);
-        if (!result.success) {
-          result.error.issues.forEach((issue) => {
-            ctx.addIssue({
-              ...issue,
-              path: ["EMBEDDING_MODEL", ...issue.path],
-            });
-          });
-          return z.NEVER;
-        }
-        return result.data;
-      },
-    ),
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
   EMBEDDING_FALLBACK_MODEL: z
     .string()
     .optional()
@@ -1329,12 +1394,7 @@ export const EnvSchema = z.object({
     // Keep a hard ceiling so a typo cannot create an effectively unbounded run.
     .max(21_600_000)
     .default(120000),
-  SSE_HEARTBEAT_MS: z.coerce
-    .number()
-    .int()
-    .min(0)
-    .max(120000)
-    .default(15000),
+  SSE_HEARTBEAT_MS: z.coerce.number().int().min(0).max(120000).default(15000),
   HEALTH_PROBE_TIMEOUT_MS: z.coerce
     .number()
     .int()
@@ -1423,11 +1483,7 @@ export const EnvSchema = z.object({
     .enum(["legacy", "report", "explicit", "disabled"])
     .default("legacy"),
   MAX_QUEUE_DEPTH: z.coerce.number().int().min(0).max(100000).default(100),
-  BUDGET_DAILY_PER_TENANT: z.coerce
-    .number()
-    .min(0)
-    .max(1_000_000)
-    .default(0),
+  BUDGET_DAILY_PER_TENANT: z.coerce.number().min(0).max(1_000_000).default(0),
   // Display currency for every cost figure in the system. Purely a label:
   // values are never converted; the pricing table is interpreted as
   // denominated in this currency. Unknown codes fall back to EUR.
@@ -1499,14 +1555,8 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
-  TOOL_OUTPUT_VALIDATOR_MODE: z
-    .enum(["flag", "redact"])
-    .default("redact"),
-  TOOL_OUTPUT_VALIDATOR_THRESHOLD: z.coerce
-    .number()
-    .min(0)
-    .max(1)
-    .default(0.7),
+  TOOL_OUTPUT_VALIDATOR_MODE: z.enum(["flag", "redact"]).default("redact"),
+  TOOL_OUTPUT_VALIDATOR_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
   APPROVAL_GATE_ENABLED: z
     .string()
     .optional()
@@ -1534,7 +1584,10 @@ export const EnvSchema = z.object({
     .transform((raw, ctx): string[] => {
       if (raw === undefined || raw.trim() === "") return [];
       const origins: string[] = [];
-      for (const value of raw.split(",").map((item) => item.trim()).filter(Boolean)) {
+      for (const value of raw
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean)) {
         try {
           const url = new URL(value);
           if (
@@ -1547,7 +1600,8 @@ export const EnvSchema = z.object({
         } catch {
           ctx.addIssue({
             code: z.ZodIssueCode.custom,
-            message: "APPROVAL_FRAME_ANCESTORS must be a comma-separated list of HTTP(S) origins without paths",
+            message:
+              "APPROVAL_FRAME_ANCESTORS must be a comma-separated list of HTTP(S) origins without paths",
           });
           return z.NEVER;
         }
@@ -1895,11 +1949,7 @@ export const EnvSchema = z.object({
     .min(1)
     .max(1000)
     .default(3.0),
-  COST_ANOMALY_MIN_ABSOLUTE: z.coerce
-    .number()
-    .min(0)
-    .max(1000)
-    .default(0.1),
+  COST_ANOMALY_MIN_ABSOLUTE: z.coerce.number().min(0).max(1000).default(0.1),
   COST_ANOMALY_COOLDOWN_MS: z.coerce
     .number()
     .int()
@@ -1955,8 +2005,18 @@ export const EnvSchema = z.object({
   // Comfortably above a typical EXECUTION_TIMEOUT_MS so a legitimately slow
   // (but alive) job is never mistaken for an orphan — mirrors the same
   // reasoning distributed-semaphore.ts's ttlMs documents for its own lease.
-  JOB_RECOVERY_LEASE_MS: z.coerce.number().int().min(30_000).max(3_600_000).default(300_000),
-  JOB_RECOVERY_SWEEP_INTERVAL_MS: z.coerce.number().int().min(5_000).max(600_000).default(60_000),
+  JOB_RECOVERY_LEASE_MS: z.coerce
+    .number()
+    .int()
+    .min(30_000)
+    .max(3_600_000)
+    .default(300_000),
+  JOB_RECOVERY_SWEEP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(5_000)
+    .max(600_000)
+    .default(60_000),
   RAG_ENABLED: z
     .string()
     .optional()
@@ -2057,8 +2117,18 @@ export const EnvSchema = z.object({
   ROCKETCHAT_BOT_USER_ID: z.string().min(1).max(256).optional(),
   ROCKETCHAT_BOT_AUTH_TOKEN: z.string().min(1).optional(),
   ROCKETCHAT_WEBHOOK_TOKEN: z.string().min(16).optional(),
-  ROCKETCHAT_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(10_000),
-  ROCKETCHAT_SWEEP_INTERVAL_MS: z.coerce.number().int().min(1_000).max(300_000).default(10_000),
+  ROCKETCHAT_TIMEOUT_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(10_000),
+  ROCKETCHAT_SWEEP_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(300_000)
+    .default(10_000),
   // -------------------------------------------------------------------------
   // Assistant code sandbox
   // -------------------------------------------------------------------------
