@@ -281,6 +281,39 @@ export interface UploadRow {
   updated_at: Date;
 }
 
+/** A job row selected by an erasure target filter (task 4.6). */
+export interface ErasureJobTargetRow {
+	id: string;
+	reference: string;
+	source_sha256: string;
+}
+
+/** The state machine of `extract.erasure_ledger` (same protocol as Search). */
+export type ErasureLedgerState =
+	| "pending"
+	| "running"
+	| "committed"
+	| "failed"
+	| "outcome_unknown"
+	| "compensated";
+
+/** A row of `extract.erasure_ledger`. */
+export interface ErasureLedgerRecord<Result = unknown> {
+	key: string;
+	fingerprint: string;
+	state: ErasureLedgerState;
+	result?: Result;
+	updatedAt: string;
+}
+
+/** Outcome of {@link ExtractStore.claimErasure} — mirrors Search's ClaimResult. */
+export type ErasureClaimResult<Result = unknown> =
+	| { kind: "claimed"; record: ErasureLedgerRecord<Result> }
+	| { kind: "replay"; record: ErasureLedgerRecord<Result> }
+	| { kind: "mismatch"; record: ErasureLedgerRecord<Result> }
+	| { kind: "in_flight"; record: ErasureLedgerRecord<Result> }
+	| { kind: "terminal"; record: ErasureLedgerRecord<Result> };
+
 /** One chunk append to a resumable upload session (requirement 4.14). */
 export interface UploadAppend {
   uploadId: string;

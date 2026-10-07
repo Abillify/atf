@@ -15,7 +15,10 @@
  * type, and a generated document that omitted it would be worse than no document.
  */
 
-import { EXTRACT_CONTRACT_ID, EXTRACT_CONTRACT_VERSION } from "@atf/extract-contract/v1";
+import {
+  EXTRACT_CONTRACT_ID,
+  EXTRACT_CONTRACT_VERSION,
+} from "@atf/extract-contract/v1";
 import { supportedMimeTypes } from "./formats.js";
 
 export interface OpenApiOptions {
@@ -33,9 +36,17 @@ export interface OpenApiOptions {
    * to delete in are both required. Mirrors `whoami.features.deleteByReference`.
    */
   deleteEnabled?: boolean;
+  /**
+   * True when `POST /v1/erasure` (task 4.6, requirements 2.7, 2.12) is
+   * mounted: it needs the store, which also holds the idempotency ledger.
+   * Without a Search target the cascade reports `not_configured`.
+   */
+  erasureEnabled?: boolean;
 }
 
-export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknown> {
+export function buildOpenApiSpec(
+  options: OpenApiOptions,
+): Record<string, unknown> {
   const documentContent = Object.fromEntries(
     supportedMimeTypes().map((mimeType) => [
       mimeType,
@@ -81,10 +92,41 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
       name: "X-Filename",
       in: "header",
       required: false,
-      description: "Filename for the raw-body form, where none is otherwise available.",
+      description:
+        "Filename for the raw-body form, where none is otherwise available.",
       schema: { type: "string" },
     },
   ];
+
+  const erasureResponseSchema = {
+    type: "object",
+    required: ["requestId", "service", "results"],
+    properties: {
+      requestId: { type: "string", format: "uuid" },
+      service: { type: "string", const: "extract" },
+      results: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["store", "status", "erased"],
+          properties: {
+            store: {
+              type: "string",
+              description:
+                "extract.jobs, extract.uploads, extract.sources, or a " +
+                "search.* store merged from the cascade.",
+            },
+            status: {
+              type: "string",
+              enum: ["ok", "failed", "not_configured"],
+            },
+            erased: { type: "integer", minimum: 0 },
+            error: { type: "string" },
+          },
+        },
+      },
+    },
+  };
 
   const errorSchema = {
     type: "object",
@@ -98,7 +140,8 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
       },
       errorId: {
         type: "string",
-        description: "Correlation id; the full message is in the service log under it.",
+        description:
+          "Correlation id; the full message is in the service log under it.",
       },
       detail: {
         type: "string",
@@ -117,7 +160,12 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "`?deep=1` forces a re-probe instead of using the cached result.",
         security: [],
         parameters: [
-          { name: "deep", in: "query", required: false, schema: { type: "boolean" } },
+          {
+            name: "deep",
+            in: "query",
+            required: false,
+            schema: { type: "boolean" },
+          },
         ],
         responses: {
           "200": { description: "Healthy" },
@@ -152,14 +200,24 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "can be rejected without transferring it.",
         responses: {
           "200": {
-            description: "The resolved principal and feature/limit advertisement",
+            description:
+              "The resolved principal and feature/limit advertisement",
             content: {
               "application/json": {
                 schema: {
                   type: "object",
-                  required: ["source", "scopes", "service", "features", "limits"],
+                  required: [
+                    "source",
+                    "scopes",
+                    "service",
+                    "features",
+                    "limits",
+                  ],
                   properties: {
-                    subject: { type: "string", description: "principal.userId, when any." },
+                    subject: {
+                      type: "string",
+                      description: "principal.userId, when any.",
+                    },
                     tenantId: { type: "string" },
                     source: {
                       type: "string",
@@ -167,7 +225,10 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                     },
                     issuer: { type: "string" },
                     audience: {
-                      oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+                      oneOf: [
+                        { type: "string" },
+                        { type: "array", items: { type: "string" } },
+                      ],
                     },
                     scopes: { type: "array", items: { type: "string" } },
                     service: {
@@ -260,7 +321,10 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "200": {
             description: "Conversion complete",
             headers: {
-              "X-Extract-Contract": { schema: { type: "string" }, description: "Contract id" },
+              "X-Extract-Contract": {
+                schema: { type: "string" },
+                description: "Contract id",
+              },
               "X-Page-Count": { schema: { type: "integer" } },
               "X-Figure-Count": { schema: { type: "integer" } },
               "X-Token-Usage": { schema: { type: "integer", minimum: 0 } },
@@ -272,7 +336,9 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               "X-Extract-Warnings": { schema: { type: "integer" } },
             },
             content: {
-              "application/json": { schema: { $ref: "#/components/schemas/ConvertResponse" } },
+              "application/json": {
+                schema: { $ref: "#/components/schemas/ConvertResponse" },
+              },
               "text/markdown": { schema: { type: "string" } },
               "text/event-stream": {
                 schema: {
@@ -300,13 +366,22 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               },
             },
           },
-          "400": { description: "Malformed request", content: { "application/json": { schema: errorSchema } } },
+          "400": {
+            description: "Malformed request",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "401": { description: "Unauthenticated" },
           "403": { description: "Missing the extract.convert scope" },
           "413": { description: "Upload exceeds MAX_UPLOAD_BYTES" },
-          "415": { description: "Unsupported or mismatched file type", content: { "application/json": { schema: errorSchema } } },
+          "415": {
+            description: "Unsupported or mismatched file type",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "422": { description: "Document exceeds MAX_PAGES" },
-          "502": { description: "The vision endpoint failed", content: { "application/json": { schema: errorSchema } } },
+          "502": {
+            description: "The vision endpoint failed",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "503": { description: "The conversion queue is full" },
         },
       },
@@ -342,16 +417,47 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             name: "X-Reference",
             in: "header",
             required: true,
-            description: "Row key in Search. Required, so two uploads named the same do not collide.",
+            description:
+              "Row key in Search. Required, so two uploads named the same do not collide.",
             schema: { type: "string" },
           },
           ...commonHeaders.slice(1),
-          { name: "X-Collection", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Source", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Link", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Tags", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Allowed-Users", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Allowed-Groups", in: "header", required: false, schema: { type: "string" } },
+          {
+            name: "X-Collection",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Source",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Link",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Tags",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Allowed-Users",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Allowed-Groups",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
           {
             name: "X-Version",
             in: "header",
@@ -379,18 +485,50 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               "document; `exact`: skip only byte/text-identical duplicates; `off`: never skip.",
             schema: { type: "string", enum: ["auto", "exact", "off"] },
           },
-          { name: "X-Valid-From", in: "header", required: false, description: "RFC 3339 validity start; timezone is required and the value is forwarded to Search.", schema: { type: "string", format: "date-time" } },
+          {
+            name: "X-Valid-From",
+            in: "header",
+            required: false,
+            description:
+              "RFC 3339 validity start; timezone is required and the value is forwarded to Search.",
+            schema: { type: "string", format: "date-time" },
+          },
           {
             name: "X-Version-Mode",
             in: "header",
             required: false,
             schema: { type: "string", enum: ["replace", "version"] },
           },
-          { name: "X-Metadata", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Fts-Language", in: "header", required: false, schema: { type: "string" } },
-          { name: "X-Chunk-Size", in: "header", required: false, schema: { type: "integer" } },
-          { name: "X-Chunk-Overlap", in: "header", required: false, schema: { type: "integer" } },
-          { name: "X-Semantic-Chunking", in: "header", required: false, schema: { type: "boolean" } },
+          {
+            name: "X-Metadata",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Fts-Language",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Chunk-Size",
+            in: "header",
+            required: false,
+            schema: { type: "integer" },
+          },
+          {
+            name: "X-Chunk-Overlap",
+            in: "header",
+            required: false,
+            schema: { type: "integer" },
+          },
+          {
+            name: "X-Semantic-Chunking",
+            in: "header",
+            required: false,
+            schema: { type: "boolean" },
+          },
         ],
         requestBody: uploadRequestBody,
         responses: {
@@ -404,7 +542,10 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                   type: "object",
                   properties: {
                     status: { type: "string", enum: ["ok", "skipped"] },
-                    reason: { type: "string", description: "`duplicate` when `status` is `skipped`." },
+                    reason: {
+                      type: "string",
+                      description: "`duplicate` when `status` is `skipped`.",
+                    },
                     reference: { type: "string" },
                     resolved_reference: {
                       type: "string",
@@ -414,12 +555,14 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                     },
                     duplicate_of: {
                       type: "object",
-                      description: "The indexed source a skipped upload duplicates.",
+                      description:
+                        "The indexed source a skipped upload duplicates.",
                       additionalProperties: true,
                     },
                     version: {
                       type: "object",
-                      description: "The version the document was ingested with, and where it came from.",
+                      description:
+                        "The version the document was ingested with, and where it came from.",
                       additionalProperties: true,
                     },
                     collection: { type: "string" },
@@ -428,8 +571,14 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                     figure_count: { type: "integer" },
                     assets_stored: { type: "integer" },
                     assets_failed: { type: "integer" },
-                    job_id: { type: "string", description: "Present on the v2 job path." },
-                    revision_id: { type: "string", description: "Present on the v2 job path." },
+                    job_id: {
+                      type: "string",
+                      description: "Present on the v2 job path.",
+                    },
+                    revision_id: {
+                      type: "string",
+                      description: "Present on the v2 job path.",
+                    },
                     warnings: { type: "array", items: { type: "string" } },
                   },
                 },
@@ -459,7 +608,9 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "400": { description: "Malformed request, or X-Reference missing" },
           "401": { description: "Unauthenticated" },
           "403": { description: "Missing the extract.ingest scope" },
-          "502": { description: "Search rejected the ingest, or the job failed" },
+          "502": {
+            description: "Search rejected the ingest, or the job failed",
+          },
           "503": { description: "The conversion queue is full" },
         },
       },
@@ -470,14 +621,16 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
     const uploadOffsetHeader = {
       "Upload-Offset": {
         schema: { type: "integer", minimum: 0 },
-        description: "The last confirmed byte offset — the point a resume must continue from.",
+        description:
+          "The last confirmed byte offset — the point a resume must continue from.",
       },
     };
 
     // ── Resumable, content-addressed source upload (Requirements 4.13, 4.14, 6.2)
     paths["/v2/uploads"] = {
       post: {
-        summary: "Open a resumable upload session, or pull a source_url in one shot",
+        summary:
+          "Open a resumable upload session, or pull a source_url in one shot",
         description:
           "A JSON body with `source_url` pulls the source in one request (SSRF-guarded by " +
           "`SOURCE_URL_ALLOWED_HOSTS`; hosts resolving to private, loopback, link-local, ULA, " +
@@ -487,12 +640,18 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "and offset 0. A `reference` is required (X-Reference header or `reference` field); " +
           "the whole-file sha256 may be declared here (`X-Checksum-Sha256`) or at complete time.",
         parameters: [
-          { name: "X-Reference", in: "header", required: false, schema: { type: "string" } },
+          {
+            name: "X-Reference",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
           {
             name: "X-Checksum-Sha256",
             in: "header",
             required: false,
-            description: "Expected whole-file sha256; a bare or `sha256:`-prefixed 64-char hex digest.",
+            description:
+              "Expected whole-file sha256; a bare or `sha256:`-prefixed 64-char hex digest.",
             schema: { type: "string" },
           },
         ],
@@ -504,9 +663,18 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                 type: "object",
                 properties: {
                   reference: { type: "string" },
-                  size: { type: "integer", minimum: 0, description: "Declared total size; rejected past MAX_UPLOAD_BYTES." },
+                  size: {
+                    type: "integer",
+                    minimum: 0,
+                    description:
+                      "Declared total size; rejected past MAX_UPLOAD_BYTES.",
+                  },
                   sha256: { type: "string" },
-                  source_url: { type: "string", format: "uri", description: "http(s) only; no credentials in the URL." },
+                  source_url: {
+                    type: "string",
+                    format: "uri",
+                    description: "http(s) only; no credentials in the URL.",
+                  },
                 },
               },
             },
@@ -515,14 +683,30 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
         responses: {
           "201": {
             description: "Session opened, or source_url pulled and stored.",
-            headers: { Location: { schema: { type: "string" }, description: "Session URL for a resumable open." } },
-            content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+            headers: {
+              Location: {
+                schema: { type: "string" },
+                description: "Session URL for a resumable open.",
+              },
+            },
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
           },
-          "400": { description: "Missing reference, bad digest, or a rejected source_url", content: { "application/json": { schema: errorSchema } } },
+          "400": {
+            description:
+              "Missing reference, bad digest, or a rejected source_url",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "401": { description: "Unauthenticated" },
           "403": { description: "Missing the extract.ingest scope" },
           "413": { description: "Declared size exceeds MAX_UPLOAD_BYTES" },
-          "502": { description: "The source_url pull failed", content: { "application/json": { schema: errorSchema } } },
+          "502": {
+            description: "The source_url pull failed",
+            content: { "application/json": { schema: errorSchema } },
+          },
         },
       },
     };
@@ -533,9 +717,23 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
         description:
           "Returns the last confirmed byte offset in `Upload-Offset` (and `Upload-Status`, " +
           "`Upload-Length`), so a client resuming after an abort knows exactly where to continue.",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
         responses: {
-          "200": { description: "Session state", headers: { ...uploadOffsetHeader, "Upload-Status": { schema: { type: "string" } }, "Upload-Length": { schema: { type: "integer" } } } },
+          "200": {
+            description: "Session state",
+            headers: {
+              ...uploadOffsetHeader,
+              "Upload-Status": { schema: { type: "string" } },
+              "Upload-Length": { schema: { type: "integer" } },
+            },
+          },
           "404": { description: "No such session" },
         },
       },
@@ -547,19 +745,49 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "its per-chunk sha256 (`X-Chunk-Checksum-Sha256`, optional) is verified, and only " +
           "then is the offset advanced. A crash before the advance leaves the chunk re-sendable.",
         parameters: [
-          { name: "id", in: "path", required: true, schema: { type: "string" } },
-          { name: "Upload-Offset", in: "header", required: true, schema: { type: "integer", minimum: 0 } },
-          { name: "X-Chunk-Checksum-Sha256", in: "header", required: false, schema: { type: "string" } },
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
+            name: "Upload-Offset",
+            in: "header",
+            required: true,
+            schema: { type: "integer", minimum: 0 },
+          },
+          {
+            name: "X-Chunk-Checksum-Sha256",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
         ],
         requestBody: {
           required: true,
-          content: { "application/octet-stream": { schema: { type: "string", format: "binary" } } },
+          content: {
+            "application/octet-stream": {
+              schema: { type: "string", format: "binary" },
+            },
+          },
         },
         responses: {
-          "204": { description: "Chunk confirmed", headers: uploadOffsetHeader },
-          "400": { description: "Missing/invalid Upload-Offset or a chunk checksum mismatch", content: { "application/json": { schema: errorSchema } } },
+          "204": {
+            description: "Chunk confirmed",
+            headers: uploadOffsetHeader,
+          },
+          "400": {
+            description:
+              "Missing/invalid Upload-Offset or a chunk checksum mismatch",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "404": { description: "No such session" },
-          "409": { description: "Upload-Offset does not match the confirmed offset", headers: uploadOffsetHeader, content: { "application/json": { schema: errorSchema } } },
+          "409": {
+            description: "Upload-Offset does not match the confirmed offset",
+            headers: uploadOffsetHeader,
+            content: { "application/json": { schema: errorSchema } },
+          },
         },
       },
     };
@@ -573,14 +801,37 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "returns the stored digest. A whole-file checksum mismatch reopens the session at " +
           "offset 0 so the client can re-send.",
         parameters: [
-          { name: "id", in: "path", required: true, schema: { type: "string" } },
-          { name: "X-Checksum-Sha256", in: "header", required: false, schema: { type: "string" } },
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+          {
+            name: "X-Checksum-Sha256",
+            in: "header",
+            required: false,
+            schema: { type: "string" },
+          },
         ],
         responses: {
-          "200": { description: "Stored", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
-          "400": { description: "Whole-file checksum mismatch (session reopened)", content: { "application/json": { schema: errorSchema } } },
+          "200": {
+            description: "Stored",
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
+          },
+          "400": {
+            description: "Whole-file checksum mismatch (session reopened)",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "404": { description: "No such session" },
-          "409": { description: "Session incomplete or inconsistent", content: { "application/json": { schema: errorSchema } } },
+          "409": {
+            description: "Session incomplete or inconsistent",
+            content: { "application/json": { schema: errorSchema } },
+          },
         },
       },
     };
@@ -608,11 +859,26 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "was ingested into, `version` the version it was ingested with.",
         requestBody: {
           required: true,
-          content: { "application/json": { schema: { type: "object", additionalProperties: true } } },
+          content: {
+            "application/json": {
+              schema: { type: "object", additionalProperties: true },
+            },
+          },
         },
         responses: {
-          "201": { description: "Job created", headers: { Location: { schema: { type: "string" } } }, content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
-          "400": { description: "Malformed request", content: { "application/json": { schema: errorSchema } } },
+          "201": {
+            description: "Job created",
+            headers: { Location: { schema: { type: "string" } } },
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
+          },
+          "400": {
+            description: "Malformed request",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "401": { description: "Unauthenticated" },
           "403": { description: "Missing the extract.ingest scope" },
         },
@@ -625,9 +891,23 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
         description:
           "Per-stage progress, warnings, accumulated cost, and a remaining-time estimate, plus " +
           "the paused reason when the job is `paused(reason=dependency|budget)`.",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
         responses: {
-          "200": { description: "Job state", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "200": {
+            description: "Job state",
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
+          },
           "404": { description: "No such job" },
         },
       },
@@ -637,18 +917,44 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
       post: {
         summary: `Job control: ${verb}`,
         description: note,
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
         responses: {
-          "200": { description: "Applied", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "200": {
+            description: "Applied",
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
+          },
           "404": { description: "No such job" },
-          "409": { description: "The job is not in a state that accepts this action", content: { "application/json": { schema: errorSchema } } },
+          "409": {
+            description: "The job is not in a state that accepts this action",
+            content: { "application/json": { schema: errorSchema } },
+          },
         },
       },
     });
 
-    paths["/v2/jobs/{id}/pause"] = jobAction("pause", "Pause a running job; a heartbeat keeps its revision TTL alive.");
-    paths["/v2/jobs/{id}/resume"] = jobAction("resume", "Resume a paused job at the first unfinished unit.");
-    paths["/v2/jobs/{id}/cancel"] = jobAction("cancel", "Cancel a job; already-committed segments remain.");
+    paths["/v2/jobs/{id}/pause"] = jobAction(
+      "pause",
+      "Pause a running job; a heartbeat keeps its revision TTL alive.",
+    );
+    paths["/v2/jobs/{id}/resume"] = jobAction(
+      "resume",
+      "Resume a paused job at the first unfinished unit.",
+    );
+    paths["/v2/jobs/{id}/cancel"] = jobAction(
+      "cancel",
+      "Cancel a job; already-committed segments remain.",
+    );
     paths["/v2/jobs/{id}/retry-failed"] = jobAction(
       "retry-failed",
       "Retry only the units marked failed, leaving completed units untouched (Requirement 4.10).",
@@ -665,9 +971,23 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "normalised `bbox`, `kind`, `caption`, `description`, `assetId`), plus the job's " +
           "`sourceSha256`. Crop bytes are not stored; a client renders them through " +
           "`POST /v2/render` with the figure's bbox.",
-        parameters: [{ name: "id", in: "path", required: true, schema: { type: "string" } }],
+        parameters: [
+          {
+            name: "id",
+            in: "path",
+            required: true,
+            schema: { type: "string" },
+          },
+        ],
         responses: {
-          "200": { description: "Figures", content: { "application/json": { schema: { type: "object", additionalProperties: true } } } },
+          "200": {
+            description: "Figures",
+            content: {
+              "application/json": {
+                schema: { type: "object", additionalProperties: true },
+              },
+            },
+          },
           "404": { description: "No such job" },
         },
       },
@@ -699,20 +1019,30 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                     pattern: "^[0-9a-f]{64}$",
                     description: "sha256 of the already-stored source.",
                   },
-                  page: { type: "integer", minimum: 1, description: "1-based page number." },
+                  page: {
+                    type: "integer",
+                    minimum: 1,
+                    description: "1-based page number.",
+                  },
                   bbox: {
                     type: "array",
                     items: { type: "number", minimum: 0, maximum: 1 },
                     minItems: 4,
                     maxItems: 4,
-                    description: "Optional normalised crop [x0,y0,x1,y1] in [0,1]; omitted renders the whole page.",
+                    description:
+                      "Optional normalised crop [x0,y0,x1,y1] in [0,1]; omitted renders the whole page.",
                   },
                   targetPixels: {
                     type: "integer",
                     minimum: 16,
-                    description: "Desired long-edge pixel count; clamped to RENDER_MAX_PIXELS.",
+                    description:
+                      "Desired long-edge pixel count; clamped to RENDER_MAX_PIXELS.",
                   },
-                  filename: { type: "string", description: "Optional filename hint for the source format." },
+                  filename: {
+                    type: "string",
+                    description:
+                      "Optional filename hint for the source format.",
+                  },
                 },
                 additionalProperties: false,
               },
@@ -721,19 +1051,30 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
         },
         responses: {
           "200": {
-            description: "The rendered PNG. Size/dpi are in the X-Render-* headers.",
+            description:
+              "The rendered PNG. Size/dpi are in the X-Render-* headers.",
             headers: {
               "X-Render-Width": { schema: { type: "integer" } },
               "X-Render-Height": { schema: { type: "integer" } },
               "X-Render-Dpi": { schema: { type: "integer" } },
-              "X-Render-Clamped": { schema: { type: "string", enum: ["0", "1"] } },
+              "X-Render-Clamped": {
+                schema: { type: "string", enum: ["0", "1"] },
+              },
             },
-            content: { "image/png": { schema: { type: "string", format: "binary" } } },
+            content: {
+              "image/png": { schema: { type: "string", format: "binary" } },
+            },
           },
-          "400": { description: "Malformed request or page out of range", content: { "application/json": { schema: errorSchema } } },
+          "400": {
+            description: "Malformed request or page out of range",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "401": { description: "Unauthenticated" },
           "403": { description: "Missing the extract.admin scope" },
-          "404": { description: "No stored source for the given sha256", content: { "application/json": { schema: errorSchema } } },
+          "404": {
+            description: "No stored source for the given sha256",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "429": { description: "Render rate limit exceeded" },
         },
       },
@@ -751,7 +1092,7 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
           "identity is forwarded to Search, which applies the caller's ACL: a caller can only " +
           "delete documents they could also read.\n\n" +
           "Idempotent for a client: `200` and `404` both mean the reference is gone afterwards; " +
-          "`404` distinguishes \"this collection never held it\" (`deleted` would be 0).",
+          '`404` distinguishes "this collection never held it" (`deleted` would be 0).',
         parameters: [
           {
             name: "reference",
@@ -786,11 +1127,110 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               },
             },
           },
-          "400": { description: "Invalid collection name or empty reference", content: { "application/json": { schema: errorSchema } } },
+          "400": {
+            description: "Invalid collection name or empty reference",
+            content: { "application/json": { schema: errorSchema } },
+          },
           "401": { description: "Unauthenticated" },
-          "403": { description: "Missing the extract.delete scope", content: { "application/json": { schema: errorSchema } } },
-          "404": { description: "The collection never held this reference", content: { "application/json": { schema: errorSchema } } },
-          "502": { description: "Search could not be reached or rejected the delete", content: { "application/json": { schema: errorSchema } } },
+          "403": {
+            description: "Missing the extract.delete scope",
+            content: { "application/json": { schema: errorSchema } },
+          },
+          "404": {
+            description: "The collection never held this reference",
+            content: { "application/json": { schema: errorSchema } },
+          },
+          "502": {
+            description: "Search could not be reached or rejected the delete",
+            content: { "application/json": { schema: errorSchema } },
+          },
+        },
+      },
+    };
+  }
+
+  if (options.erasureEnabled === true) {
+    paths["/v1/erasure"] = {
+      post: {
+        summary: "Erase subject data (DSAR, requirement 2.7)",
+        description:
+          "Removes subject-related data from Extract: jobs (with their staged page, " +
+          "figure, tile, and outbox rows via FK cascade), resumable upload sessions, " +
+          "and content-addressed source blobs that no remaining job references any more. " +
+          "Afterwards the Search cascade runs with the same `requestId`, so a retry " +
+          "stays idempotent on both sides (requirement 2.12).\n\n" +
+          "Idempotent over `requestId`: a repeat of a committed request replays the " +
+          "stored response; the same id with a different payload is rejected `409`. " +
+          "`dryRun` counts what would be removed and deletes nothing. A store result " +
+          "is honest: `failed` carries the error, `not_configured` marks a target this " +
+          "instance does not have — never a silent success.",
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: {
+                type: "object",
+                required: ["requestId", "tenantId", "scope"],
+                properties: {
+                  requestId: {
+                    type: "string",
+                    format: "uuid",
+                    description: "Idempotency key.",
+                  },
+                  tenantId: { type: "string", minLength: 1 },
+                  subject: {
+                    type: "object",
+                    properties: {
+                      userId: { type: "string" },
+                      email: { type: "string" },
+                      externalIds: { type: "array", items: { type: "string" } },
+                    },
+                    description:
+                      "Required for scope=subject: at least one identifier.",
+                  },
+                  scope: {
+                    type: "string",
+                    enum: ["subject", "tenant", "reference"],
+                  },
+                  references: {
+                    type: "array",
+                    items: { type: "string" },
+                    description: "Required for scope=reference.",
+                  },
+                  dryRun: { type: "boolean", default: false },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description:
+              "Every applicable store succeeded (or is not_configured).",
+            content: { "application/json": { schema: erasureResponseSchema } },
+          },
+          "207": {
+            description: "Some stores failed; the response lists each result.",
+            content: { "application/json": { schema: erasureResponseSchema } },
+          },
+          "400": {
+            description: "Invalid erasure request",
+            content: { "application/json": { schema: errorSchema } },
+          },
+          "401": { description: "Unauthenticated" },
+          "403": {
+            description: "Missing extract.erasure, or tenant mismatch",
+            content: { "application/json": { schema: errorSchema } },
+          },
+          "409": {
+            description:
+              "requestId reused with a different payload, or still in flight",
+            content: { "application/json": { schema: errorSchema } },
+          },
+          "502": {
+            description: "Every store failed",
+            content: { "application/json": { schema: errorSchema } },
+          },
         },
       },
     };
@@ -801,7 +1241,8 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
     info: {
       title: "ATF Extract",
       version: EXTRACT_CONTRACT_VERSION,
-      summary: "Document-to-Markdown extraction against the atf-extract contract",
+      summary:
+        "Document-to-Markdown extraction against the atf-extract contract",
       description:
         "Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into " +
         "the canonical Markdown defined by " +
@@ -837,7 +1278,14 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
         },
         Figure: {
           type: "object",
-          required: ["id", "page", "description", "bbox", "assetId", "mimeType"],
+          required: [
+            "id",
+            "page",
+            "description",
+            "bbox",
+            "assetId",
+            "mimeType",
+          ],
           properties: {
             id: {
               type: "string",
@@ -847,14 +1295,19 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             page: { type: "integer", minimum: 1 },
             description: {
               type: "string",
-              description: "Self-contained prose; the only retrievable text for the figure.",
+              description:
+                "Self-contained prose; the only retrievable text for the figure.",
             },
             bbox: { $ref: "#/components/schemas/BoundingBox" },
             assetId: {
               type: "string",
-              description: "sha256(reference \\n id) — the id Search stores the crop under.",
+              description:
+                "sha256(reference \\n id) — the id Search stores the crop under.",
             },
-            mimeType: { type: "string", enum: ["image/png", "image/jpeg", "image/webp", "image/gif"] },
+            mimeType: {
+              type: "string",
+              enum: ["image/png", "image/jpeg", "image/webp", "image/gif"],
+            },
             bytes: { type: "integer" },
             checksum: { type: "string" },
             dataBase64: {
@@ -870,16 +1323,28 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             page: { type: "integer", minimum: 1 },
             markdown: {
               type: "string",
-              description: "Body only; the page marker is added by the serializer.",
+              description:
+                "Body only; the page marker is added by the serializer.",
             },
             summary: { type: "string" },
-            figures: { type: "array", items: { $ref: "#/components/schemas/Figure" } },
+            figures: {
+              type: "array",
+              items: { $ref: "#/components/schemas/Figure" },
+            },
             warnings: { type: "array", items: { type: "string" } },
           },
         },
         ConvertResponse: {
           type: "object",
-          required: ["contract", "reference", "source", "pipeline", "pageCount", "pages", "markdown"],
+          required: [
+            "contract",
+            "reference",
+            "source",
+            "pipeline",
+            "pageCount",
+            "pages",
+            "markdown",
+          ],
           properties: {
             contract: { type: "string", examples: [EXTRACT_CONTRACT_ID] },
             reference: { type: "string" },
@@ -894,7 +1359,8 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                 bytes: { type: "integer" },
                 sha256: {
                   type: "string",
-                  description: "Checksum of the uploaded bytes; the only proof two ingests match.",
+                  description:
+                    "Checksum of the uploaded bytes; the only proof two ingests match.",
                 },
               },
             },
@@ -902,7 +1368,10 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
               type: "object",
               required: ["extractor", "ocr"],
               properties: {
-                extractor: { type: "string", examples: ["poppler", "libreoffice+poppler", "sharp"] },
+                extractor: {
+                  type: "string",
+                  examples: ["poppler", "libreoffice+poppler", "sharp"],
+                },
                 renderer: { type: "string" },
                 visionModel: { type: "string" },
                 ocr: {
@@ -915,10 +1384,18 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
             },
             pageCount: { type: "integer" },
             pageLabel: { type: "string", enum: ["Seite", "Page"] },
-            pages: { type: "array", items: { $ref: "#/components/schemas/Page" } },
+            pages: {
+              type: "array",
+              items: { $ref: "#/components/schemas/Page" },
+            },
             usage: {
               type: "object",
-              required: ["requests", "promptTokens", "completionTokens", "totalTokens"],
+              required: [
+                "requests",
+                "promptTokens",
+                "completionTokens",
+                "totalTokens",
+              ],
               properties: {
                 requests: { type: "integer", minimum: 0 },
                 promptTokens: { type: "integer", minimum: 0 },
@@ -949,7 +1426,10 @@ export function buildOpenApiSpec(options: OpenApiOptions): Record<string, unknow
                 },
               },
             },
-            markdown: { type: "string", description: "The serialized canonical document." },
+            markdown: {
+              type: "string",
+              description: "The serialized canonical document.",
+            },
             warnings: { type: "array", items: { type: "string" } },
           },
         },

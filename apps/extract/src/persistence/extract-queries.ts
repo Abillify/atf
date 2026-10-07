@@ -25,18 +25,18 @@
 
 import { EXTRACT_SCHEMA } from "./extract-ddl.js";
 import type {
-  Fence,
-  NewJob,
-  OperatorTransition,
-  StageUnit,
-  StageUpsert,
-  OutboxStatus,
+	Fence,
+	NewJob,
+	OperatorTransition,
+	OutboxStatus,
+	StageUnit,
+	StageUpsert,
 } from "./types.js";
 
 /** A parameterised statement ready to hand to `client.query(text, values)`. */
 export interface Query {
-  text: string;
-  values: unknown[];
+	text: string;
+	values: unknown[];
 }
 
 /**
@@ -51,16 +51,16 @@ const NO_LANE_CAP = 2_147_483_647;
 
 /** The mutable stage tables, keyed by the unit they checkpoint. */
 const STAGE_TABLE: Record<StageUnit, string> = {
-  page: "page_stages",
-  figure: "figure_stages",
-  tile: "tile_stages",
+	page: "page_stages",
+	figure: "figure_stages",
+	tile: "tile_stages",
 };
 
 /** The natural-key columns of each stage table, in order. */
 const STAGE_KEY_COLUMNS: Record<StageUnit, string[]> = {
-  page: ["job_id", "page", "stage"],
-  figure: ["job_id", "page", "figure_id", "stage"],
-  tile: ["job_id", "page", "tile_id", "stage"],
+	page: ["job_id", "page", "stage"],
+	figure: ["job_id", "page", "figure_id", "stage"],
+	tile: ["job_id", "page", "tile_id", "stage"],
 };
 
 /**
@@ -69,10 +69,10 @@ const STAGE_KEY_COLUMNS: Record<StageUnit, string[]> = {
  * i.e. an operator/API write).
  */
 function fenceWhere(values: unknown[], fence: Fence | undefined): string {
-  if (fence === undefined) return "";
-  values.push(fence.holder, fence.epoch);
-  const n = values.length;
-  return ` AND lease_holder = $${n - 1} AND lease_epoch = $${n}`;
+	if (fence === undefined) return "";
+	values.push(fence.holder, fence.epoch);
+	const n = values.length;
+	return ` AND lease_holder = $${n - 1} AND lease_epoch = $${n}`;
 }
 
 // ─── fencing ─────────────────────────────────────────────────────────────
@@ -84,54 +84,57 @@ function fenceWhere(values: unknown[], fence: Fence | undefined): string {
  * updates the job row (token settlement), so two such transactions serialise
  * instead of deadlocking on a share→update upgrade.
  */
-export function fenceCheckQuery(fence: Fence, lock: "share" | "update" = "share"): Query {
-  return {
-    text: `
+export function fenceCheckQuery(
+	fence: Fence,
+	lock: "share" | "update" = "share",
+): Query {
+	return {
+		text: `
       SELECT id FROM ${EXTRACT_SCHEMA}.jobs
        WHERE id = $1 AND lease_holder = $2 AND lease_epoch = $3
        ${lock === "update" ? "FOR NO KEY UPDATE" : "FOR SHARE"}`,
-    values: [fence.jobId, fence.holder, fence.epoch],
-  };
+		values: [fence.jobId, fence.holder, fence.epoch],
+	};
 }
 
 // ─── jobs ──────────────────────────────────────────────────────────────────
 
 /** Insert a new job row. Caller supplies the UUID so it can echo it back. */
 export function insertJobQuery(job: NewJob): Query {
-  return {
-    text: `
+	return {
+		text: `
       INSERT INTO ${EXTRACT_SCHEMA}.jobs
         (id, reference, status, config, pipeline_hash, prompt_hash, resume_policy,
          visibility, priority, token_budget, source_sha256, collection, callback_url,
          created_by_subject, created_by_tenant)
       VALUES ($1, $2, $3, $4::jsonb, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING *`,
-    values: [
-      job.id,
-      job.reference,
-      job.status ?? "queued",
-      JSON.stringify(job.config ?? {}),
-      job.pipeline_hash ?? null,
-      job.prompt_hash ?? null,
-      job.resume_policy ?? "pin",
-      job.visibility ?? "progressive",
-      job.priority ?? 0,
-      job.token_budget ?? null,
-      job.source_sha256,
-      job.collection ?? null,
-      job.callback_url ?? null,
-      job.created_by_subject ?? null,
-      job.created_by_tenant ?? null,
-    ],
-  };
+		values: [
+			job.id,
+			job.reference,
+			job.status ?? "queued",
+			JSON.stringify(job.config ?? {}),
+			job.pipeline_hash ?? null,
+			job.prompt_hash ?? null,
+			job.resume_policy ?? "pin",
+			job.visibility ?? "progressive",
+			job.priority ?? 0,
+			job.token_budget ?? null,
+			job.source_sha256,
+			job.collection ?? null,
+			job.callback_url ?? null,
+			job.created_by_subject ?? null,
+			job.created_by_tenant ?? null,
+		],
+	};
 }
 
 /** Fetch one job by id. */
 export function getJobQuery(id: string): Query {
-  return {
-    text: `SELECT * FROM ${EXTRACT_SCHEMA}.jobs WHERE id = $1`,
-    values: [id],
-  };
+	return {
+		text: `SELECT * FROM ${EXTRACT_SCHEMA}.jobs WHERE id = $1`,
+		values: [id],
+	};
 }
 
 /**
@@ -152,26 +155,29 @@ export function getJobQuery(id: string): Query {
  * already recorded (`config.email.messageId`, written when the job identified
  * its source). A failed job does not count: its message never reached Search.
  */
-export function knownEmailMessageIdsQuery(collection: string | null, messageIds: string[]): Query {
-  return {
-    text: `
+export function knownEmailMessageIdsQuery(
+	collection: string | null,
+	messageIds: string[],
+): Query {
+	return {
+		text: `
       SELECT DISTINCT config->'email'->>'messageId' AS message_id
         FROM ${EXTRACT_SCHEMA}.jobs
        WHERE collection IS NOT DISTINCT FROM $1
          AND config->'email'->>'messageId' = ANY($2::text[])
          AND status <> 'failed'`,
-    values: [collection, messageIds],
-  };
+		values: [collection, messageIds],
+	};
 }
 
 export function listJobsQuery(limit: number, offset: number): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.jobs
        ORDER BY created_at DESC, id DESC
        LIMIT $1 OFFSET $2`,
-    values: [limit, offset],
-  };
+		values: [limit, offset],
+	};
 }
 
 /**
@@ -186,18 +192,18 @@ export function listJobsQuery(limit: number, offset: number): Query {
  * so a delete from a named collection never cancels a default-collection job.
  */
 export function listActiveJobsByReferenceQuery(
-  reference: string,
-  collection: string,
-  includeNullCollection: boolean,
+	reference: string,
+	collection: string,
+	includeNullCollection: boolean,
 ): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.jobs
        WHERE reference = $1
          AND (collection = $2 OR ($3 AND collection IS NULL))
          AND status NOT IN ('completed', 'failed', 'cancelled')`,
-    values: [reference, collection, includeNullCollection],
-  };
+		values: [reference, collection, includeNullCollection],
+	};
 }
 
 /**
@@ -206,16 +212,20 @@ export function listActiveJobsByReferenceQuery(
  * knows the range to schedule over without re-probing the source, and so the
  * Job API's progress reads `done/N` rather than `done/0`.
  */
-export function setJobPageCountQuery(id: string, pageCount: number, fence?: Fence): Query {
-  const values: unknown[] = [id, pageCount];
-  return {
-    text: `
+export function setJobPageCountQuery(
+	id: string,
+	pageCount: number,
+	fence?: Fence,
+): Query {
+	const values: unknown[] = [id, pageCount];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET page_count = $2, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -224,16 +234,20 @@ export function setJobPageCountQuery(id: string, pageCount: number, fence?: Fenc
  * stages cannot lose each other's spend the way a read-modify-write would; the
  * budget ledger reads `token_budget - tokens_used` from the returned row.
  */
-export function consumeJobTokensQuery(id: string, tokens: number, fence?: Fence): Query {
-  const values: unknown[] = [id, tokens];
-  return {
-    text: `
+export function consumeJobTokensQuery(
+	id: string,
+	tokens: number,
+	fence?: Fence,
+): Query {
+	const values: unknown[] = [id, tokens];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET tokens_used = tokens_used + $2, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -246,32 +260,36 @@ export function consumeJobTokensQuery(id: string, tokens: number, fence?: Fence)
  * separately.
  */
 export function reserveJobTokensQuery(id: string, tokens: number): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET tokens_reserved = tokens_reserved + $2, updated_at = NOW()
        WHERE id = $1
          AND (token_budget IS NULL OR token_budget - tokens_used - tokens_reserved >= $2)
       RETURNING *`,
-    values: [id, tokens],
-  };
+		values: [id, tokens],
+	};
 }
 
 /**
  * Settle a reservation: release `reserved` and book the actual `used` spend.
  * Runs in the same transaction as the checkpoint write it pays for.
  */
-export function settleJobTokensQuery(id: string, reserved: number, used: number): Query {
-  return {
-    text: `
+export function settleJobTokensQuery(
+	id: string,
+	reserved: number,
+	used: number,
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET tokens_reserved = GREATEST(0, tokens_reserved - $2),
              tokens_used     = tokens_used + $3,
              updated_at      = NOW()
        WHERE id = $1
       RETURNING *`,
-    values: [id, reserved, used],
-  };
+		values: [id, reserved, used],
+	};
 }
 
 /**
@@ -281,20 +299,20 @@ export function settleJobTokensQuery(id: string, reserved: number, used: number)
  * only {@link pauseJobQuery} arms it.
  */
 export function updateJobStatusQuery(
-  id: string,
-  status: string,
-  pauseReason: string | null = null,
-  fence?: Fence,
+	id: string,
+	status: string,
+	pauseReason: string | null = null,
+	fence?: Fence,
 ): Query {
-  const values: unknown[] = [id, status, pauseReason];
-  return {
-    text: `
+	const values: unknown[] = [id, status, pauseReason];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET status = $2, pause_reason = $3, auto_resume = FALSE, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -305,15 +323,20 @@ export function updateJobStatusQuery(
  * counter in the same statement.
  */
 export function pauseJobQuery(
-  id: string,
-  reason: string,
-  autoResumeAt: Date | null,
-  configPatch: Record<string, unknown>,
-  fence?: Fence,
+	id: string,
+	reason: string,
+	autoResumeAt: Date | null,
+	configPatch: Record<string, unknown>,
+	fence?: Fence,
 ): Query {
-  const values: unknown[] = [id, reason, autoResumeAt, JSON.stringify(configPatch)];
-  return {
-    text: `
+	const values: unknown[] = [
+		id,
+		reason,
+		autoResumeAt,
+		JSON.stringify(configPatch),
+	];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET status          = 'paused',
              pause_reason    = $2,
@@ -323,8 +346,8 @@ export function pauseJobQuery(
              updated_at      = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -334,16 +357,20 @@ export function pauseJobQuery(
  * round-trip and keeps the job row authoritative). `null` clears it when a new
  * emit generation starts.
  */
-export function setJobRevisionQuery(id: string, revisionId: string | null, fence?: Fence): Query {
-  const values: unknown[] = [id, revisionId];
-  return {
-    text: `
+export function setJobRevisionQuery(
+	id: string,
+	revisionId: string | null,
+	fence?: Fence,
+): Query {
+	const values: unknown[] = [id, revisionId];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET revision_id = $2, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -352,16 +379,20 @@ export function setJobRevisionQuery(id: string, revisionId: string | null, fence
  * anything reference-derived (asset ids, revision) exists, i.e. before the
  * source is prepared.
  */
-export function setJobReferenceQuery(id: string, reference: string, fence?: Fence): Query {
-  const values: unknown[] = [id, reference];
-  return {
-    text: `
+export function setJobReferenceQuery(
+	id: string,
+	reference: string,
+	fence?: Fence,
+): Query {
+	const values: unknown[] = [id, reference];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET reference = $2, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -370,16 +401,16 @@ export function setJobReferenceQuery(id: string, reference: string, fence?: Fenc
  * Runs inside a fenced transaction together with the outbox reset.
  */
 export function bumpEmitGenerationQuery(id: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET emit_generation = emit_generation + 1,
              revision_id     = NULL,
              updated_at      = NOW()
        WHERE id = $1
       RETURNING *`,
-    values: [id],
-  };
+		values: [id],
+	};
 }
 
 /**
@@ -387,16 +418,20 @@ export function bumpEmitGenerationQuery(id: string): Query {
  * `reparse` to flag the parse-only path and by the budget ledger to record its
  * one-time warning marker, without disturbing the frozen snapshot fields.
  */
-export function patchJobConfigQuery(id: string, patch: Record<string, unknown>, fence?: Fence): Query {
-  const values: unknown[] = [id, JSON.stringify(patch)];
-  return {
-    text: `
+export function patchJobConfigQuery(
+	id: string,
+	patch: Record<string, unknown>,
+	fence?: Fence,
+): Query {
+	const values: unknown[] = [id, JSON.stringify(patch)];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET config = config || $2::jsonb, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -406,16 +441,20 @@ export function patchJobConfigQuery(id: string, patch: Record<string, unknown>, 
  * done in SQL (`warnings || $2`) so concurrent stage failures do not clobber
  * each other's warnings the way a read-modify-write would.
  */
-export function appendJobWarningQuery(id: string, warning: string, fence?: Fence): Query {
-  const values: unknown[] = [id, JSON.stringify([warning])];
-  return {
-    text: `
+export function appendJobWarningQuery(
+	id: string,
+	warning: string,
+	fence?: Fence,
+): Query {
+	const values: unknown[] = [id, JSON.stringify([warning])];
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET warnings = warnings || $2::jsonb, updated_at = NOW()
        WHERE id = $1${fenceWhere(values, fence)}
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /**
@@ -426,8 +465,8 @@ export function appendJobWarningQuery(id: string, warning: string, fence?: Fence
  * next fenced write with a lost lease and stops (requirement 4.5).
  */
 export function requeueJobQuery(id: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET status           = 'queued',
              pause_reason     = NULL,
@@ -440,8 +479,8 @@ export function requeueJobQuery(id: string): Query {
              updated_at       = NOW()
        WHERE id = $1
       RETURNING *`,
-    values: [id],
-  };
+		values: [id],
+	};
 }
 
 /**
@@ -452,9 +491,12 @@ export function requeueJobQuery(id: string): Query {
  * Bumping the epoch and clearing the holder makes a running worker's next
  * fenced write fail, so it cannot overwrite `cancelled`/`paused`.
  */
-export function operatorTransitionQuery(id: string, t: OperatorTransition): Query {
-  return {
-    text: `
+export function operatorTransitionQuery(
+	id: string,
+	t: OperatorTransition,
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET status           = $3,
              pause_reason     = $4,
@@ -469,15 +511,15 @@ export function operatorTransitionQuery(id: string, t: OperatorTransition): Quer
              updated_at       = NOW()
        WHERE id = $1 AND status = $2
       RETURNING *`,
-    values: [
-      id,
-      t.expectedStatus,
-      t.status,
-      t.pauseReason,
-      JSON.stringify(t.configPatch ?? {}),
-      t.resumePolicy ?? null,
-    ],
-  };
+		values: [
+			id,
+			t.expectedStatus,
+			t.status,
+			t.pauseReason,
+			JSON.stringify(t.configPatch ?? {}),
+			t.resumePolicy ?? null,
+		],
+	};
 }
 
 /**
@@ -516,13 +558,13 @@ export function operatorTransitionQuery(id: string, t: OperatorTransition): Quer
  * always go first and the tie-break on `id` keeps two same-instant jobs ordered.
  */
 export function claimNextJobQuery(
-  leaseHolder: string,
-  leaseSeconds: number,
-  largeJobPageThreshold: number = NO_LANE_CAP,
-  largeJobMaxConcurrency: number = NO_LANE_CAP,
+	leaseHolder: string,
+	leaseSeconds: number,
+	largeJobPageThreshold: number = NO_LANE_CAP,
+	largeJobMaxConcurrency: number = NO_LANE_CAP,
 ): Query {
-  return {
-    text: `
+	return {
+		text: `
       WITH large_lane AS (
         SELECT COUNT(*)::int AS active_large
           FROM ${EXTRACT_SCHEMA}.jobs
@@ -565,8 +607,13 @@ export function claimNextJobQuery(
         FROM next
        WHERE j.id = next.id
       RETURNING j.*`,
-    values: [leaseHolder, String(leaseSeconds), largeJobPageThreshold, largeJobMaxConcurrency],
-  };
+		values: [
+			leaseHolder,
+			String(leaseSeconds),
+			largeJobPageThreshold,
+			largeJobMaxConcurrency,
+		],
+	};
 }
 
 /**
@@ -575,17 +622,22 @@ export function claimNextJobQuery(
  * has already been superseded is a no-op (0 rows), which the caller reads as
  * "you lost the lease" (requirement 4.5).
  */
-export function heartbeatJobQuery(id: string, leaseHolder: string, epoch: number, leaseSeconds: number): Query {
-  return {
-    text: `
+export function heartbeatJobQuery(
+	id: string,
+	leaseHolder: string,
+	epoch: number,
+	leaseSeconds: number,
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.jobs
          SET lease_expires_at = NOW() + ($4 || ' seconds')::interval,
              heartbeat_at     = NOW(),
              updated_at       = NOW()
        WHERE id = $1 AND lease_holder = $2 AND lease_epoch = $3
       RETURNING *`,
-    values: [id, leaseHolder, epoch, String(leaseSeconds)],
-  };
+		values: [id, leaseHolder, epoch, String(leaseSeconds)],
+	};
 }
 
 // ─── *_stages ────────────────────────────────────────────────────────────
@@ -596,12 +648,12 @@ export function heartbeatJobQuery(id: string, leaseHolder: string, epoch: number
  * (requirement 4.3).
  */
 export function getStageQuery(unit: StageUnit, key: StageKey): Query {
-  const cols = STAGE_KEY_COLUMNS[unit];
-  const where = cols.map((c, i) => `${c} = $${i + 1}`).join(" AND ");
-  return {
-    text: `SELECT * FROM ${EXTRACT_SCHEMA}.${STAGE_TABLE[unit]} WHERE ${where}`,
-    values: keyValues(unit, key),
-  };
+	const cols = STAGE_KEY_COLUMNS[unit];
+	const where = cols.map((c, i) => `${c} = $${i + 1}`).join(" AND ");
+	return {
+		text: `SELECT * FROM ${EXTRACT_SCHEMA}.${STAGE_TABLE[unit]} WHERE ${where}`,
+		values: keyValues(unit, key),
+	};
 }
 
 /**
@@ -610,32 +662,32 @@ export function getStageQuery(unit: StageUnit, key: StageKey): Query {
  * records the new attempt count and outcome in place (requirement 4.2).
  */
 export function upsertStageQuery(unit: StageUnit, row: StageUpsert): Query {
-  const keyCols = STAGE_KEY_COLUMNS[unit];
-  const cols = [
-    ...keyCols,
-    "input_hash",
-    "status",
-    "output",
-    "attempts",
-    "next_attempt_at",
-    "error",
-  ];
-  const values = [
-    ...keyValues(unit, row),
-    row.input_hash,
-    row.status ?? "pending",
-    row.output === undefined ? null : JSON.stringify(row.output),
-    row.attempts ?? 0,
-    row.next_attempt_at ?? null,
-    row.error ?? null,
-  ];
-  const placeholders = cols.map((c, i) => {
-    const p = `$${i + 1}`;
-    return c === "output" ? `${p}::jsonb` : p;
-  });
-  const conflict = keyCols.join(", ");
-  return {
-    text: `
+	const keyCols = STAGE_KEY_COLUMNS[unit];
+	const cols = [
+		...keyCols,
+		"input_hash",
+		"status",
+		"output",
+		"attempts",
+		"next_attempt_at",
+		"error",
+	];
+	const values = [
+		...keyValues(unit, row),
+		row.input_hash,
+		row.status ?? "pending",
+		row.output === undefined ? null : JSON.stringify(row.output),
+		row.attempts ?? 0,
+		row.next_attempt_at ?? null,
+		row.error ?? null,
+	];
+	const placeholders = cols.map((c, i) => {
+		const p = `$${i + 1}`;
+		return c === "output" ? `${p}::jsonb` : p;
+	});
+	const conflict = keyCols.join(", ");
+	return {
+		text: `
       INSERT INTO ${EXTRACT_SCHEMA}.${STAGE_TABLE[unit]}
         (${cols.join(", ")})
       VALUES (${placeholders.join(", ")})
@@ -648,19 +700,23 @@ export function upsertStageQuery(unit: StageUnit, row: StageUpsert): Query {
         error           = EXCLUDED.error,
         updated_at      = NOW()
       RETURNING *`,
-    values,
-  };
+		values,
+	};
 }
 
 /** All stage rows for a job in a given status (worker backlog scan). */
-export function listStagesByStatusQuery(unit: StageUnit, jobId: string, status: string): Query {
-  return {
-    text: `
+export function listStagesByStatusQuery(
+	unit: StageUnit,
+	jobId: string,
+	status: string,
+): Query {
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.${STAGE_TABLE[unit]}
        WHERE job_id = $1 AND status = $2
        ORDER BY page`,
-    values: [jobId, status],
-  };
+		values: [jobId, status],
+	};
 }
 
 /**
@@ -669,19 +725,19 @@ export function listStagesByStatusQuery(unit: StageUnit, jobId: string, status: 
  * document in such windows so it never loads a 10 000-page result set.
  */
 export function listStagesWindowQuery(
-  unit: StageUnit,
-  jobId: string,
-  stage: string,
-  fromPage: number,
-  toPage: number,
+	unit: StageUnit,
+	jobId: string,
+	stage: string,
+	fromPage: number,
+	toPage: number,
 ): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.${STAGE_TABLE[unit]}
        WHERE job_id = $1 AND stage = $2 AND page >= $3 AND page <= $4
        ORDER BY page`,
-    values: [jobId, stage, fromPage, toPage],
-  };
+		values: [jobId, stage, fromPage, toPage],
+	};
 }
 
 /**
@@ -690,27 +746,35 @@ export function listStagesWindowQuery(
  * restart-stage). The output is dropped: these stages are deterministic and
  * rebuilt from the upstream checkpoints.
  */
-export function resetPageStagesFromQuery(jobId: string, stages: string[], fromPage: number): Query {
-  return {
-    text: `
+export function resetPageStagesFromQuery(
+	jobId: string,
+	stages: string[],
+	fromPage: number,
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.page_stages
          SET status = 'pending', output = NULL, next_attempt_at = NULL, error = NULL,
              updated_at = NOW()
        WHERE job_id = $1 AND stage = ANY($2::text[]) AND page >= $3`,
-    values: [jobId, stages, fromPage],
-  };
+		values: [jobId, stages, fromPage],
+	};
 }
 
 /** Reset the listed page stages of exactly the given pages to `pending`. */
-export function resetPageStagesForPagesQuery(jobId: string, stages: string[], pages: number[]): Query {
-  return {
-    text: `
+export function resetPageStagesForPagesQuery(
+	jobId: string,
+	stages: string[],
+	pages: number[],
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.page_stages
          SET status = 'pending', output = NULL, next_attempt_at = NULL, error = NULL,
              updated_at = NOW()
        WHERE job_id = $1 AND stage = ANY($2::text[]) AND page = ANY($3::int[])`,
-    values: [jobId, stages, pages],
-  };
+		values: [jobId, stages, pages],
+	};
 }
 
 /**
@@ -720,14 +784,14 @@ export function resetPageStagesForPagesQuery(jobId: string, stages: string[], pa
  * survived can still be re-parsed.
  */
 export function retryFailedStagesQuery(unit: StageUnit, jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.${STAGE_TABLE[unit]}
          SET status = 'pending', next_attempt_at = NOW(), error = NULL, updated_at = NOW()
        WHERE job_id = $1 AND status = 'failed'
       RETURNING page`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /**
@@ -752,21 +816,21 @@ export function retryFailedStagesQuery(unit: StageUnit, jobId: string): Query {
  * side of the wire.
  */
 export function nextRunnablePagesQuery(
-  jobId: string,
-  pageCount: number,
-  cursorStage: string,
-  limit: number,
-  now: Date,
+	jobId: string,
+	pageCount: number,
+	cursorStage: string,
+	limit: number,
+	now: Date,
 ): Query {
-  const backingOff = (table: string) => `
+	const backingOff = (table: string) => `
          AND NOT EXISTS (
                SELECT 1 FROM ${EXTRACT_SCHEMA}.${table} b
                 WHERE b.job_id = $1 AND b.page = gs.page
                   AND b.status = 'failed'
                   AND b.next_attempt_at IS NOT NULL
                   AND b.next_attempt_at > $5)`;
-  return {
-    text: `
+	return {
+		text: `
       SELECT gs.page AS page
         FROM generate_series(1, $2) AS gs(page)
         LEFT JOIN ${EXTRACT_SCHEMA}.page_stages ps
@@ -778,8 +842,8 @@ export function nextRunnablePagesQuery(
               OR (ps.status = 'failed' AND ps.next_attempt_at IS NOT NULL))${backingOff("page_stages")}${backingOff("figure_stages")}${backingOff("tile_stages")}
        ORDER BY gs.page
        LIMIT $4`,
-    values: [jobId, pageCount, cursorStage, limit, now],
-  };
+		values: [jobId, pageCount, cursorStage, limit, now],
+	};
 }
 
 /**
@@ -788,66 +852,76 @@ export function nextRunnablePagesQuery(
  * spinning, and a dependency pause uses it as the auto-resume instant.
  */
 export function earliestRetryAtQuery(jobId: string, now: Date): Query {
-  const part = (table: string) => `
+	const part = (table: string) => `
         SELECT MIN(next_attempt_at) AS at FROM ${EXTRACT_SCHEMA}.${table}
          WHERE job_id = $1 AND status = 'failed'
            AND next_attempt_at IS NOT NULL AND next_attempt_at > $2`;
-  return {
-    text: `
+	return {
+		text: `
       SELECT MIN(at) AS at FROM (${part("page_stages")}
         UNION ALL${part("figure_stages")}
         UNION ALL${part("tile_stages")}
       ) retries`,
-    values: [jobId, now],
-  };
+		values: [jobId, now],
+	};
 }
 
 /** Count pages whose cursor stage is finished (`done` or permanently `failed`). */
-export function finishedPageCountQuery(jobId: string, cursorStage: string): Query {
-  return {
-    text: `
+export function finishedPageCountQuery(
+	jobId: string,
+	cursorStage: string,
+): Query {
+	return {
+		text: `
       SELECT COUNT(*)::int AS count
         FROM ${EXTRACT_SCHEMA}.page_stages
        WHERE job_id = $1
          AND stage = $2
          AND (status = 'done'
               OR (status = 'failed' AND next_attempt_at IS NULL))`,
-    values: [jobId, cursorStage],
-  };
+		values: [jobId, cursorStage],
+	};
 }
 
 // ─── docpass_state ─────────────────────────────────────────────────────────
 
 /** Persist the streaming document-pass state after page N (requirement 4.7). */
-export function upsertDocpassStateQuery(jobId: string, page: number, state: unknown): Query {
-  return {
-    text: `
+export function upsertDocpassStateQuery(
+	jobId: string,
+	page: number,
+	state: unknown,
+): Query {
+	return {
+		text: `
       INSERT INTO ${EXTRACT_SCHEMA}.docpass_state (job_id, page, state)
       VALUES ($1, $2, $3::jsonb)
       ON CONFLICT (job_id, page) DO UPDATE SET
         state = EXCLUDED.state, updated_at = NOW()`,
-    values: [jobId, page, JSON.stringify(state ?? null)],
-  };
+		values: [jobId, page, JSON.stringify(state ?? null)],
+	};
 }
 
 /** The document-pass state of the last finished page, for resume. */
 export function latestDocpassStateQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.docpass_state
        WHERE job_id = $1
        ORDER BY page DESC
        LIMIT 1`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /** Drop the document-pass states of pages `>= fromPage` (downstream invalidation). */
-export function deleteDocpassStateFromQuery(jobId: string, fromPage: number): Query {
-  return {
-    text: `DELETE FROM ${EXTRACT_SCHEMA}.docpass_state WHERE job_id = $1 AND page >= $2`,
-    values: [jobId, fromPage],
-  };
+export function deleteDocpassStateFromQuery(
+	jobId: string,
+	fromPage: number,
+): Query {
+	return {
+		text: `DELETE FROM ${EXTRACT_SCHEMA}.docpass_state WHERE job_id = $1 AND page >= $2`,
+		values: [jobId, fromPage],
+	};
 }
 
 // ─── outboxes ────────────────────────────────────────────────────────────
@@ -862,16 +936,16 @@ export function deleteDocpassStateFromQuery(jobId: string, fromPage: number): Qu
  * the emitter sends the current content — never a stale one.
  */
 export function insertEmitOutboxQuery(row: {
-  job_id: string;
-  seq: number;
-  digest: string;
-  page_from: number;
-  page_to: number;
-  payload?: unknown;
-  payload_ref?: string | null;
+	job_id: string;
+	seq: number;
+	digest: string;
+	page_from: number;
+	page_to: number;
+	payload?: unknown;
+	payload_ref?: string | null;
 }): Query {
-  return {
-    text: `
+	return {
+		text: `
       INSERT INTO ${EXTRACT_SCHEMA}.emit_outbox
         (job_id, seq, digest, page_from, page_to, payload, payload_ref)
       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7)
@@ -886,16 +960,16 @@ export function insertEmitOutboxQuery(row: {
        WHERE emit_outbox.status <> 'acked'
          AND emit_outbox.digest IS DISTINCT FROM EXCLUDED.digest
       RETURNING *`,
-    values: [
-      row.job_id,
-      row.seq,
-      row.digest,
-      row.page_from,
-      row.page_to,
-      row.payload === undefined ? null : JSON.stringify(row.payload),
-      row.payload_ref ?? null,
-    ],
-  };
+		values: [
+			row.job_id,
+			row.seq,
+			row.digest,
+			row.page_from,
+			row.page_to,
+			row.payload === undefined ? null : JSON.stringify(row.payload),
+			row.payload_ref ?? null,
+		],
+	};
 }
 
 /**
@@ -909,39 +983,43 @@ export function insertEmitOutboxQuery(row: {
  * picks up. A row that does not exist (a skipped failed page) matches nothing.
  */
 export function updateEmitOutboxPayloadQuery(
-  jobId: string,
-  seq: number,
-  payload: unknown,
-  digest: string,
+	jobId: string,
+	seq: number,
+	payload: unknown,
+	digest: string,
 ): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.emit_outbox
          SET payload = $3::jsonb, digest = $4, updated_at = NOW()
        WHERE job_id = $1 AND seq = $2
       RETURNING *`,
-    values: [jobId, seq, JSON.stringify(payload ?? null), digest],
-  };
+		values: [jobId, seq, JSON.stringify(payload ?? null), digest],
+	};
 }
 
 /** Move an emit-outbox row to a new status (pending → sent → acked). */
-export function setEmitOutboxStatusQuery(jobId: string, seq: number, status: OutboxStatus): Query {
-  return {
-    text: `
+export function setEmitOutboxStatusQuery(
+	jobId: string,
+	seq: number,
+	status: OutboxStatus,
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.emit_outbox
          SET status = $3, updated_at = NOW()
        WHERE job_id = $1 AND seq = $2
       RETURNING *`,
-    values: [jobId, seq, status],
-  };
+		values: [jobId, seq, status],
+	};
 }
 
 /** One emit-outbox row (with its payload) by seq — the document pass's lookup. */
 export function getEmitOutboxQuery(jobId: string, seq: number): Query {
-  return {
-    text: `SELECT * FROM ${EXTRACT_SCHEMA}.emit_outbox WHERE job_id = $1 AND seq = $2`,
-    values: [jobId, seq],
-  };
+	return {
+		text: `SELECT * FROM ${EXTRACT_SCHEMA}.emit_outbox WHERE job_id = $1 AND seq = $2`,
+		values: [jobId, seq],
+	};
 }
 
 /**
@@ -951,46 +1029,53 @@ export function getEmitOutboxQuery(jobId: string, seq: number): Query {
  * holds every page record in memory.
  */
 export function emitOutboxMetaQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT job_id, seq, digest, page_from, page_to, status,
              NULL::jsonb AS payload, payload_ref, attempts, next_attempt_at, error,
              created_at, updated_at
         FROM ${EXTRACT_SCHEMA}.emit_outbox
        WHERE job_id = $1
        ORDER BY seq`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /** The emit-outbox rows (with payloads) of a seq window, for one batch. */
-export function emitOutboxRangeQuery(jobId: string, fromSeq: number, toSeq: number): Query {
-  return {
-    text: `
+export function emitOutboxRangeQuery(
+	jobId: string,
+	fromSeq: number,
+	toSeq: number,
+): Query {
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.emit_outbox
        WHERE job_id = $1 AND seq >= $2 AND seq <= $3
        ORDER BY seq`,
-    values: [jobId, fromSeq, toSeq],
-  };
+		values: [jobId, fromSeq, toSeq],
+	};
 }
 
 /** Move every emit-outbox row of a job back to `pending` (new emit generation). */
 export function resetEmitOutboxQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.emit_outbox
          SET status = 'pending', updated_at = NOW()
        WHERE job_id = $1`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /** Drop the emit-outbox rows of pages `>= fromSeq`; they are re-staged. */
-export function deleteEmitOutboxFromQuery(jobId: string, fromSeq: number): Query {
-  return {
-    text: `DELETE FROM ${EXTRACT_SCHEMA}.emit_outbox WHERE job_id = $1 AND seq >= $2`,
-    values: [jobId, fromSeq],
-  };
+export function deleteEmitOutboxFromQuery(
+	jobId: string,
+	fromSeq: number,
+): Query {
+	return {
+		text: `DELETE FROM ${EXTRACT_SCHEMA}.emit_outbox WHERE job_id = $1 AND seq >= $2`,
+		values: [jobId, fromSeq],
+	};
 }
 
 /**
@@ -998,15 +1083,15 @@ export function deleteEmitOutboxFromQuery(jobId: string, fromSeq: number): Query
  * legacy row without a page learns it on the next stage.
  */
 export function insertAssetOutboxQuery(row: {
-  job_id: string;
-  asset_id: string;
-  page?: number | null;
-  checksum?: string | null;
-  variant?: string | null;
-  mime_type?: string | null;
+	job_id: string;
+	asset_id: string;
+	page?: number | null;
+	checksum?: string | null;
+	variant?: string | null;
+	mime_type?: string | null;
 }): Query {
-  return {
-    text: `
+	return {
+		text: `
       INSERT INTO ${EXTRACT_SCHEMA}.asset_outbox
         (job_id, asset_id, checksum, variant, mime_type, page)
       VALUES ($1, $2, $3, $4, $5, $6)
@@ -1014,57 +1099,61 @@ export function insertAssetOutboxQuery(row: {
         page = EXCLUDED.page, updated_at = NOW()
        WHERE asset_outbox.page IS NULL AND EXCLUDED.page IS NOT NULL
       RETURNING *`,
-    values: [
-      row.job_id,
-      row.asset_id,
-      row.checksum ?? null,
-      row.variant ?? null,
-      row.mime_type ?? null,
-      row.page ?? null,
-    ],
-  };
+		values: [
+			row.job_id,
+			row.asset_id,
+			row.checksum ?? null,
+			row.variant ?? null,
+			row.mime_type ?? null,
+			row.page ?? null,
+		],
+	};
 }
 
 /** Move an asset-outbox row to a new status. */
-export function setAssetOutboxStatusQuery(jobId: string, assetId: string, status: OutboxStatus): Query {
-  return {
-    text: `
+export function setAssetOutboxStatusQuery(
+	jobId: string,
+	assetId: string,
+	status: OutboxStatus,
+): Query {
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.asset_outbox
          SET status = $3, updated_at = NOW()
        WHERE job_id = $1 AND asset_id = $2
       RETURNING *`,
-    values: [jobId, assetId, status],
-  };
+		values: [jobId, assetId, status],
+	};
 }
 
 /** Move every asset-outbox row of a job back to `pending` (new emit generation). */
 export function resetAssetOutboxQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.asset_outbox
          SET status = 'pending', updated_at = NOW()
        WHERE job_id = $1`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /** Drop every asset-outbox row of a job; the re-driven stages re-stage them. */
 export function deleteAssetOutboxQuery(jobId: string): Query {
-  return {
-    text: `DELETE FROM ${EXTRACT_SCHEMA}.asset_outbox WHERE job_id = $1`,
-    values: [jobId],
-  };
+	return {
+		text: `DELETE FROM ${EXTRACT_SCHEMA}.asset_outbox WHERE job_id = $1`,
+		values: [jobId],
+	};
 }
 
 /** Outbox rows still awaiting acknowledgement, for the resume reconciliation. */
 export function pendingEmitOutboxQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.emit_outbox
        WHERE job_id = $1 AND status <> 'acked'
        ORDER BY seq`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /**
@@ -1073,61 +1162,66 @@ export function pendingEmitOutboxQuery(jobId: string): Query {
  * on hot paths; this full read remains for small documents and diagnostics.
  */
 export function allEmitOutboxQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.emit_outbox
        WHERE job_id = $1
        ORDER BY seq`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 /** Every asset-outbox row for a job, in a stable order (asset_id). */
 export function allAssetOutboxQuery(jobId: string): Query {
-  return {
-    text: `
+	return {
+		text: `
       SELECT * FROM ${EXTRACT_SCHEMA}.asset_outbox
        WHERE job_id = $1
        ORDER BY asset_id`,
-    values: [jobId],
-  };
+		values: [jobId],
+	};
 }
 
 // ─── uploads ─────────────────────────────────────────────────────────────
 
 /** Open a resumable upload session. */
 export function insertUploadQuery(row: {
-  upload_id: string;
-  reference: string;
-  expected_sha256?: string | null;
-  size?: number | null;
+	upload_id: string;
+	reference: string;
+	expected_sha256?: string | null;
+	size?: number | null;
 }): Query {
-  return {
-    text: `
+	return {
+		text: `
       INSERT INTO ${EXTRACT_SCHEMA}.uploads (upload_id, reference, expected_sha256, size)
       VALUES ($1, $2, $3, $4)
       RETURNING *`,
-    values: [row.upload_id, row.reference, row.expected_sha256 ?? null, row.size ?? null],
-  };
+		values: [
+			row.upload_id,
+			row.reference,
+			row.expected_sha256 ?? null,
+			row.size ?? null,
+		],
+	};
 }
 
 /** Fetch an upload session (HEAD returns its confirmed offset). */
 export function getUploadQuery(uploadId: string): Query {
-  return {
-    text: `SELECT * FROM ${EXTRACT_SCHEMA}.uploads WHERE upload_id = $1`,
-    values: [uploadId],
-  };
+	return {
+		text: `SELECT * FROM ${EXTRACT_SCHEMA}.uploads WHERE upload_id = $1`,
+		values: [uploadId],
+	};
 }
 
 /** Advance the confirmed offset after a chunk is durably written. */
 export function updateUploadOffsetQuery(
-  uploadId: string,
-  receivedOffset: number,
-  status?: string,
-  sha256?: string,
+	uploadId: string,
+	receivedOffset: number,
+	status?: string,
+	sha256?: string,
 ): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.uploads
          SET received_offset = $2,
              status = COALESCE($3, status),
@@ -1135,8 +1229,8 @@ export function updateUploadOffsetQuery(
              updated_at = NOW()
        WHERE upload_id = $1
       RETURNING *`,
-    values: [uploadId, receivedOffset, status ?? null, sha256 ?? null],
-  };
+		values: [uploadId, receivedOffset, status ?? null, sha256 ?? null],
+	};
 }
 
 /**
@@ -1145,10 +1239,10 @@ export function updateUploadOffsetQuery(
  * on the row until this one commits or rolls back.
  */
 export function lockUploadForAppendQuery(uploadId: string): Query {
-  return {
-    text: `SELECT * FROM ${EXTRACT_SCHEMA}.uploads WHERE upload_id = $1 FOR UPDATE`,
-    values: [uploadId],
-  };
+	return {
+		text: `SELECT * FROM ${EXTRACT_SCHEMA}.uploads WHERE upload_id = $1 FOR UPDATE`,
+		values: [uploadId],
+	};
 }
 
 /**
@@ -1156,12 +1250,12 @@ export function lockUploadForAppendQuery(uploadId: string): Query {
  * the session is open (optimistic guard, used under the row lock).
  */
 export function advanceUploadOffsetQuery(
-  uploadId: string,
-  expectedOffset: number,
-  newOffset: number,
+	uploadId: string,
+	expectedOffset: number,
+	newOffset: number,
 ): Query {
-  return {
-    text: `
+	return {
+		text: `
       UPDATE ${EXTRACT_SCHEMA}.uploads
          SET received_offset = $3,
              updated_at = NOW()
@@ -1169,28 +1263,232 @@ export function advanceUploadOffsetQuery(
          AND received_offset = $2
          AND status = 'open'
       RETURNING *`,
-    values: [uploadId, expectedOffset, newOffset],
-  };
+		values: [uploadId, expectedOffset, newOffset],
+	};
+}
+
+// ─── erasure (task 4.6, requirements 2.7, 2.12) ──────────────────────────
+
+/**
+ * Which jobs an erasure request targets.
+ *
+ * `subject` matches the subject identifier against `created_by_subject`
+ * *within* the tenant — a subject id is only unique per tenant, so the tenant
+ * predicate is never optional here. `tenant` matches every job the tenant
+ * owns; `reference` matches by document reference regardless of owner (the
+ * caller has already been checked for the `extract.erasure` scope, and the
+ * Search cascade applies the ACL on the indexed side).
+ */
+export type ErasureJobTargetFilter =
+	| { scope: "subject"; tenantId: string; identifiers: string[] }
+	| { scope: "tenant"; tenantId: string }
+	| { scope: "reference"; references: string[] };
+
+function erasureJobWhere(filter: ErasureJobTargetFilter): {
+	where: string;
+	values: unknown[];
+} {
+	switch (filter.scope) {
+		case "subject":
+			return {
+				where: `created_by_tenant = $1 AND created_by_subject = ANY($2::text[])`,
+				values: [filter.tenantId, filter.identifiers],
+			};
+		case "tenant":
+			return { where: `created_by_tenant = $1`, values: [filter.tenantId] };
+		case "reference":
+			return {
+				where: `reference = ANY($1::text[])`,
+				values: [filter.references],
+			};
+	}
+}
+
+/** The job rows an erasure targets (ids for the FK cascade, digests for the source store). */
+export function erasureJobTargetsQuery(filter: ErasureJobTargetFilter): Query {
+	const { where, values } = erasureJobWhere(filter);
+	return {
+		text: `
+      SELECT id, reference, source_sha256
+        FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE ${where}`,
+		values,
+	};
+}
+
+/** Count of targeted jobs without fetching rows (dry-run). */
+export function erasureJobCountQuery(filter: ErasureJobTargetFilter): Query {
+	const { where, values } = erasureJobWhere(filter);
+	return {
+		text: `SELECT COUNT(*)::int AS n FROM ${EXTRACT_SCHEMA}.jobs WHERE ${where}`,
+		values,
+	};
+}
+
+/**
+ * Delete the targeted jobs; child rows (stages, outboxes) go with them via
+ * `ON DELETE CASCADE`. Returns the removed rows so the handler can count and
+ * collect digests.
+ */
+export function eraseJobsQuery(filter: ErasureJobTargetFilter): Query {
+	const { where, values } = erasureJobWhere(filter);
+	return {
+		text: `
+      DELETE FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE ${where}
+      RETURNING id, reference, source_sha256`,
+		values,
+	};
+}
+
+/** Delete upload sessions for the given references (sessions carry no tenant column). */
+export function eraseUploadsByReferencesQuery(references: string[]): Query {
+	return {
+		text: `
+      DELETE FROM ${EXTRACT_SCHEMA}.uploads
+       WHERE reference = ANY($1::text[])
+      RETURNING upload_id`,
+		values: [references],
+	};
+}
+
+/** Delete every upload session (tenant-scope erasure; see handler for the honesty note). */
+export function eraseAllUploadsQuery(): Query {
+	return {
+		text: `DELETE FROM ${EXTRACT_SCHEMA}.uploads RETURNING upload_id`,
+		values: [],
+	};
+}
+
+/** Count every upload session (tenant-scope dry-run). */
+export function countAllUploadsQuery(): Query {
+	return {
+		text: `SELECT COUNT(*)::int AS n FROM ${EXTRACT_SCHEMA}.uploads`,
+		values: [],
+	};
+}
+
+/** Upload sessions whose reference belongs to one of the given job references. */
+export function uploadsByReferencesQuery(references: string[]): Query {
+	return {
+		text: `
+      SELECT upload_id, reference
+        FROM ${EXTRACT_SCHEMA}.uploads
+       WHERE reference = ANY($1::text[])`,
+		values: [references],
+	};
+}
+
+/**
+ * How many job rows still reference each digest *after* the erasure deleted
+ * its jobs. A source blob may only be removed from the source store when this
+ * count is zero — two uploads of the same file share one content-addressed
+ * object, and deleting it while another job still points at it would corrupt
+ * that job's reproducibility.
+ */
+export function remainingSourceRefsQuery(digests: string[]): Query {
+	return {
+		text: `
+      SELECT source_sha256, COUNT(*)::int AS n
+        FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE source_sha256 = ANY($1::text[])
+       GROUP BY source_sha256`,
+		values: [digests],
+	};
+}
+
+/**
+ * Claim an erasure invocation (idempotency over `requestId`).
+ *
+ * Same protocol as Search's invocation ledger: insert a `pending` row, or
+ * re-claim an *expired* one (`expires_at <= now()`); `xmax = 0` distinguishes
+ * a fresh insert from a conflict-update. The caller inspects the returned row
+ * to decide claimed / replay / mismatch / in-flight / terminal.
+ */
+export function claimErasureLedgerQuery(
+	key: string,
+	fingerprint: string,
+	ttlMs: number,
+): Query {
+	return {
+		text: `
+      INSERT INTO ${EXTRACT_SCHEMA}.erasure_ledger
+             (key, fingerprint, state, updated_at, expires_at)
+      VALUES ($1, $2, 'pending', NOW(), NOW() + ($3 * interval '1 millisecond'))
+      ON CONFLICT (key) DO UPDATE
+         SET fingerprint = EXCLUDED.fingerprint,
+             state = 'pending',
+             result = NULL,
+             updated_at = NOW(),
+             expires_at = EXCLUDED.expires_at
+       WHERE ${EXTRACT_SCHEMA}.erasure_ledger.expires_at <= NOW()
+      RETURNING key, fingerprint, state, result, updated_at, (xmax = 0) AS inserted`,
+		values: [key, fingerprint, ttlMs],
+	};
+}
+
+/** Read the current ledger row for a key (after a conflict produced no row). */
+export function getErasureLedgerQuery(key: string): Query {
+	return {
+		text: `
+      SELECT key, fingerprint, state, result, updated_at, expires_at
+        FROM ${EXTRACT_SCHEMA}.erasure_ledger
+       WHERE key = $1`,
+		values: [key],
+	};
+}
+
+/**
+ * Move a claimed invocation to a new state. Only `pending`/`running` rows can
+ * advance, and only under the same fingerprint — a row already committed (or
+ * re-claimed by a different request shape) refuses the update.
+ */
+export function transitionErasureLedgerQuery(
+	key: string,
+	fingerprint: string,
+	state: string,
+	result: unknown,
+	ttlMs: number,
+): Query {
+	return {
+		text: `
+      UPDATE ${EXTRACT_SCHEMA}.erasure_ledger
+         SET state = $3,
+             result = $4::jsonb,
+             updated_at = NOW(),
+             expires_at = NOW() + ($5 * interval '1 millisecond')
+       WHERE key = $1
+         AND fingerprint = $2
+         AND state IN ('pending', 'running')
+      RETURNING key, state`,
+		values: [
+			key,
+			fingerprint,
+			state,
+			result === undefined ? null : JSON.stringify(result),
+			ttlMs,
+		],
+	};
 }
 
 // ─── key helpers ─────────────────────────────────────────────────────────
 
 /** The natural-key shape of a stage row, discriminated by unit. */
 export interface StageKey {
-  job_id: string;
-  page: number;
-  stage: string;
-  figure_id?: string;
-  tile_id?: string;
+	job_id: string;
+	page: number;
+	stage: string;
+	figure_id?: string;
+	tile_id?: string;
 }
 
 function keyValues(unit: StageUnit, key: StageKey): unknown[] {
-  switch (unit) {
-    case "page":
-      return [key.job_id, key.page, key.stage];
-    case "figure":
-      return [key.job_id, key.page, key.figure_id, key.stage];
-    case "tile":
-      return [key.job_id, key.page, key.tile_id, key.stage];
-  }
+	switch (unit) {
+		case "page":
+			return [key.job_id, key.page, key.stage];
+		case "figure":
+			return [key.job_id, key.page, key.figure_id, key.stage];
+		case "tile":
+			return [key.job_id, key.page, key.tile_id, key.stage];
+	}
 }

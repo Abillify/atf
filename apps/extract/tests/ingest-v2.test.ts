@@ -16,6 +16,7 @@
  * test needs no model, no poppler and no database.
  */
 
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -48,9 +49,35 @@ beforeEach(async () => {
   fakeStore = createFakeJobStore();
 });
 
+const cleanups: Array<() => void | Promise<void>> = [];
+
 afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
   await rm(storeDir, { recursive: true, force: true });
 });
+
+/**
+ * Mount `app` on one stable loopback URL for the duration of a test — supertest
+ * per-request ephemeral servers churn ports and let foreign local processes
+ * answer (see documents.test.ts for the full explanation).
+ */
+async function serve(app: express.Express): Promise<string> {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  cleanups.push(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test server did not bind to a TCP port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
 
 /**
  * A fake "run one job" that finds the single queued job and drives it to a
@@ -92,10 +119,10 @@ function fakeWorker(options: {
 }
 
 /** Mount the handler on a bare app, with the given inline-drive fake. */
-function buildApp(
+async function buildApp(
   runOneJob: (() => Promise<boolean>) | null,
   overrides: { syncPageLimit?: number; syncTimeoutMs?: number } = {},
-) {
+): Promise<string> {
   const handler = createIngestV2Handler({
     store: fakeStore,
     sourceStore,
@@ -108,24 +135,37 @@ function buildApp(
     syncTimeoutMs: overrides.syncTimeoutMs ?? 5_000,
   });
   const app = express();
-  app.post("/v1/ingest", createUploadMiddleware({ maxUploadBytes: 10_000_000 }), handler);
+  app.post(
+    "/v1/ingest",
+    createUploadMiddleware({ maxUploadBytes: 10_000_000 }),
+    handler,
+  );
   // Minimal error middleware mirroring the production one, so a thrown
   // validationError surfaces as a 400 with its code rather than a bare 500.
-  app.use((err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-    const e = err as { status?: number; code?: string; message?: string };
-    res.status(typeof e.status === "number" ? e.status : 500).json({
-      error: e.message ?? "error",
-      ...(e.code !== undefined ? { code: e.code } : {}),
-    });
-  });
-  return app;
+  app.use(
+    (
+      err: unknown,
+      _req: express.Request,
+      res: express.Response,
+      _next: express.NextFunction,
+    ) => {
+      const e = err as { status?: number; code?: string; message?: string };
+      res.status(typeof e.status === "number" ? e.status : 500).json({
+        error: e.message ?? "error",
+        ...(e.code !== undefined ? { code: e.code } : {}),
+      });
+    },
+  );
+  return serve(app);
 }
 
 describe("POST /v1/ingest · v2 wrapper", () => {
   it("stores the source, creates a job, and returns a synchronous completed result for a small document", async () => {
-    const app = buildApp(fakeWorker({ pageCount: 3, figureAssets: 2 }));
+    const baseUrl = await buildApp(
+      fakeWorker({ pageCount: 3, figureAssets: 2 }),
+    );
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/handbuch.pdf")
@@ -149,8 +189,8 @@ describe("POST /v1/ingest · v2 wrapper", () => {
   });
 
   it("honours an explicit collection", async () => {
-    const app = buildApp(fakeWorker());
-    const res = await request(app)
+    const baseUrl = await buildApp(fakeWorker());
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
@@ -162,8 +202,10 @@ describe("POST /v1/ingest · v2 wrapper", () => {
   });
 
   it("reports the acked figure crops as assets_stored and failed ones as assets_failed", async () => {
-    const app = buildApp(fakeWorker({ pageCount: 2, figureAssets: 3, failedFigures: 1 }));
-    const res = await request(app)
+    const baseUrl = await buildApp(
+      fakeWorker({ pageCount: 2, figureAssets: 3, failedFigures: 1 }),
+    );
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
@@ -176,8 +218,8 @@ describe("POST /v1/ingest · v2 wrapper", () => {
   });
 
   it("refuses a collection name Search would reject, before creating a job", async () => {
-    const app = buildApp(fakeWorker({ pageCount: 1 }));
-    const res = await request(app)
+    const baseUrl = await buildApp(fakeWorker({ pageCount: 1 }));
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a.pdf")
@@ -188,8 +230,8 @@ describe("POST /v1/ingest · v2 wrapper", () => {
   });
 
   it("requires X-Reference", async () => {
-    const app = buildApp(fakeWorker());
-    const res = await request(app)
+    const baseUrl = await buildApp(fakeWorker());
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .send(PDF);
@@ -201,7 +243,7 @@ describe("POST /v1/ingest · v2 wrapper", () => {
     // The fake advances the job past preparing with a page count above the sync
     // ceiling but leaves it non-terminal, so the handler stops waiting inline
     // and answers async with the job id to poll.
-    const app = buildApp(
+    const baseUrl = await buildApp(
       async () => {
         const claimed = await fakeStore.claimNextJob("w", 60);
         if (claimed === null) return false;
@@ -212,7 +254,7 @@ describe("POST /v1/ingest · v2 wrapper", () => {
       { syncPageLimit: 2 },
     );
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "big.pdf")
@@ -225,8 +267,10 @@ describe("POST /v1/ingest · v2 wrapper", () => {
   });
 
   it("returns 502 when the job ends in a failed state", async () => {
-    const app = buildApp(fakeWorker({ status: "failed", revisionId: null }));
-    const res = await request(app)
+    const baseUrl = await buildApp(
+      fakeWorker({ status: "failed", revisionId: null }),
+    );
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "a")
@@ -238,8 +282,8 @@ describe("POST /v1/ingest · v2 wrapper", () => {
 
 describe("POST /v1/ingest · identity headers and duplicates", () => {
   it("stores X-Version, X-Source-Modified and X-Dedup on the job", async () => {
-    const app = buildApp(fakeWorker());
-    const res = await request(app)
+    const baseUrl = await buildApp(fakeWorker());
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/v.pdf")
@@ -253,8 +297,8 @@ describe("POST /v1/ingest · identity headers and duplicates", () => {
   });
 
   it("stores X-Title, X-Tags, X-Metadata, X-Link and X-Source on the job (contract 2.2)", async () => {
-    const app = buildApp(fakeWorker());
-    const res = await request(app)
+    const baseUrl = await buildApp(fakeWorker());
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/attrs.pdf")
@@ -276,8 +320,8 @@ describe("POST /v1/ingest · identity headers and duplicates", () => {
   });
 
   it("rejects an X-Metadata that is not a JSON object", async () => {
-    const app = buildApp(fakeWorker());
-    const res = await request(app)
+    const baseUrl = await buildApp(fakeWorker());
+    const res = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/attrs.pdf")
@@ -287,15 +331,15 @@ describe("POST /v1/ingest · identity headers and duplicates", () => {
   });
 
   it("rejects a malformed X-Source-Modified or X-Dedup", async () => {
-    const app = buildApp(fakeWorker());
-    const bad = await request(app)
+    const baseUrl = await buildApp(fakeWorker());
+    const bad = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/v.pdf")
       .set("X-Source-Modified", "yesterday")
       .send(PDF);
     expect(bad.status).toBe(400);
-    const badDedup = await request(app)
+    const badDedup = await request(baseUrl)
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/v.pdf")
@@ -321,7 +365,7 @@ describe("POST /v1/ingest · identity headers and duplicates", () => {
       await fakeStore.setJobStatus(claimed.id, "completed");
       return true;
     };
-    const res = await request(buildApp(worker))
+    const res = await request(await buildApp(worker))
       .post("/v1/ingest")
       .set("Content-Type", "application/pdf")
       .set("X-Reference", "tests/dup.docx")

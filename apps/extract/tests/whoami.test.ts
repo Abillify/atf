@@ -14,6 +14,7 @@
  * test run, so there is no network dependency and no fixture to expire.
  */
 
+import { once } from "node:events";
 import { createServer, type Server } from "node:http";
 import { SignJWT, exportJWK, generateKeyPair, type CryptoKey } from "jose";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -30,15 +31,40 @@ import {
 
 const availableBinary = vi.fn(async () => ({ available: true, version: "stub" }));
 
-const cleanups: Array<() => void> = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: Array<() => void | Promise<void>> = [];
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-function app(
+/**
+ * Mount `app` on one stable loopback URL for the duration of a test — supertest
+ * per-request ephemeral servers churn ports and let foreign local processes
+ * answer (see documents.test.ts for the full explanation).
+ */
+async function serve(
+  app: ReturnType<typeof createApp>["app"],
+): Promise<string> {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  cleanups.push(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test server did not bind to a TCP port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function app(
   configOverrides: Record<string, string | undefined> = {},
   overrides: AppOverrides = {},
-) {
+): Promise<string> {
   const config = loadTestConfig(configOverrides);
   const created = createApp(config, {
     logger: testLogger,
@@ -48,7 +74,7 @@ function app(
     ...overrides,
   });
   cleanups.push(created.cleanup);
-  return created.app;
+  return serve(created.app);
 }
 
 // ── Local IdP ────────────────────────────────────────────────────────────────
@@ -118,13 +144,13 @@ describe("GET /v1/whoami", () => {
   const tokenEnv = { AUTHN_MODE: "token", API_TOKEN: token };
 
   it("refuses an unauthenticated request with WWW-Authenticate", async () => {
-    const response = await request(app(tokenEnv)).get("/v1/whoami");
+    const response = await request(await app(tokenEnv)).get("/v1/whoami");
     expect(response.status).toBe(401);
     expect(response.headers["www-authenticate"]).toMatch(/Bearer/);
   });
 
   it("refuses a wrong bearer token", async () => {
-    const response = await request(app(tokenEnv))
+    const response = await request(await app(tokenEnv))
       .get("/v1/whoami")
       .set("Authorization", `Bearer ${"x".repeat(40)}`);
     expect(response.status).toBe(401);
@@ -132,7 +158,10 @@ describe("GET /v1/whoami", () => {
 
   it("reports a static-token caller as a service principal", async () => {
     const response = await request(
-      app({ ...tokenEnv, API_SERVICE_SCOPES: "extract.ingest,extract.delete" }),
+      await app({
+        ...tokenEnv,
+        API_SERVICE_SCOPES: "extract.ingest,extract.delete",
+      }),
     )
       .get("/v1/whoami")
       .set("Authorization", `Bearer ${token}`);
@@ -144,7 +173,7 @@ describe("GET /v1/whoami", () => {
   });
 
   it("reports an asserted caller with the X-User identity", async () => {
-    const response = await request(app(tokenEnv))
+    const response = await request(await app(tokenEnv))
       .get("/v1/whoami")
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "anna@example.com")
@@ -162,11 +191,15 @@ describe("GET /v1/whoami", () => {
       tenant: "tenant-a",
     });
     const response = await request(
-      app({
+      await app({
         AUTHN_MODE: "oidc",
         TENANT_ISOLATION_ENABLED: "true",
         API_OIDC_ISSUERS: JSON.stringify([
-          { issuer: idp.issuer, audience: "atf-extract", tenantClaim: "tenant" },
+          {
+            issuer: idp.issuer,
+            audience: "atf-extract",
+            tenantClaim: "tenant",
+          },
         ]),
       }),
     )
@@ -184,7 +217,10 @@ describe("GET /v1/whoami", () => {
   it("advertises the mounted capabilities (full instance)", async () => {
     // store + searchClient → all features on
     const response = await request(
-      app({ AUTHN_MODE: "disabled" }, { store: createFakeJobStore(), searchClient: stubSearchClient() }),
+      await app(
+        { AUTHN_MODE: "disabled" },
+        { store: createFakeJobStore(), searchClient: stubSearchClient() },
+      ),
     ).get("/v1/whoami");
     expect(response.status).toBe(200);
     expect(response.body.source).toBe("anonymous");
@@ -197,7 +233,9 @@ describe("GET /v1/whoami", () => {
   });
 
   it("advertises no features on a bare instance", async () => {
-    const response = await request(app({ AUTHN_MODE: "disabled" })).get("/v1/whoami");
+    const response = await request(await app({ AUTHN_MODE: "disabled" })).get(
+      "/v1/whoami",
+    );
     expect(response.status).toBe(200);
     expect(response.body.features).toEqual({
       ingest: false,
@@ -209,7 +247,7 @@ describe("GET /v1/whoami", () => {
 
   it("reports maxUploadBytes from MAX_UPLOAD_BYTES", async () => {
     const response = await request(
-      app({ AUTHN_MODE: "disabled", MAX_UPLOAD_BYTES: "1048576" }),
+      await app({ AUTHN_MODE: "disabled", MAX_UPLOAD_BYTES: "1048576" }),
     ).get("/v1/whoami");
     expect(response.status).toBe(200);
     expect(response.body.limits.maxUploadBytes).toBe(1_048_576);
@@ -217,7 +255,9 @@ describe("GET /v1/whoami", () => {
 
   it("answers a shape the shared contract accepts", async () => {
     const { whoamiResponseSchema } = await import("@atf/extract-contract/v2");
-    const response = await request(app({ AUTHN_MODE: "disabled" })).get("/v1/whoami");
+    const response = await request(await app({ AUTHN_MODE: "disabled" })).get(
+      "/v1/whoami",
+    );
     expect(() => whoamiResponseSchema.parse(response.body)).not.toThrow();
   });
 });

@@ -33,16 +33,21 @@
  * can surface it, and the count of failures reaches the response.
  */
 
-import type { Logger } from "pino";
+import {
+  type ErasureRequest,
+  type ErasureResponse,
+  ErasureResponseSchema,
+} from "@atf/erasure-contract";
 import {
   assetPath,
   buildAssetHeaders,
   buildIngestHeaders,
   collectFigures,
   type ExtractedDocument,
+  encodeHeaderValue,
   type IngestHeaderOptions,
 } from "@atf/extract-contract/v1";
-import { encodeHeaderValue } from "@atf/extract-contract/v1";
+import type { Logger } from "pino";
 import { ingestFailed } from "./errors.js";
 import { injectTraceHeaders } from "./trace-context.js";
 
@@ -114,6 +119,25 @@ export interface SearchClient {
     identity?: { userId?: string; userGroups?: readonly string[] } | undefined;
     signal?: AbortSignal | undefined;
   }): Promise<DeleteByReferenceOutcome>;
+  /**
+   * Forward an erasure (DSAR) request to Search's `POST /v1/erasure`
+   * (task 4.6, requirements 2.7, 2.12).
+   *
+   * The request body is the shared `@atf/erasure-contract` request, sent with
+   * the same `requestId` so Search's own ledger keeps the cascade idempotent
+   * even when Extract retries. The acting identity is forwarded as
+   * `X-User`/`X-Groups` exactly like {@link deleteByReference}, so Search
+   * applies the caller's ACL. Search's per-store results (`search.*`) are
+   * returned as-is for the caller to merge into its own response.
+   *
+   * Throws {@link ingestFailed} when Search is unreachable or rejects — the
+   * caller reports the cascade as `failed` rather than pretending success.
+   */
+  erase(args: {
+    request: ErasureRequest;
+    identity?: { userId?: string; userGroups?: readonly string[] } | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<ErasureResponse>;
   /** Reachability probe for `/health`. Never throws. */
   probe(): Promise<{ available: boolean; error?: string }>;
 }
@@ -124,7 +148,8 @@ export function createSearchClient(
 ): SearchClient {
   function authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {};
-    if (config.token !== null) headers["authorization"] = `Bearer ${config.token}`;
+    if (config.token !== null)
+      headers["authorization"] = `Bearer ${config.token}`;
     injectTraceHeaders(headers);
     return headers;
   }
@@ -143,11 +168,16 @@ export function createSearchClient(
   ): Promise<Response> {
     const controller = new AbortController();
     const timeout =
-      config.timeoutMs > 0 ? setTimeout(() => controller.abort(), config.timeoutMs) : null;
+      config.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), config.timeoutMs)
+        : null;
     const onAbort = (): void => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      return await fetch(`${config.url}${path}`, { ...init, signal: controller.signal });
+      return await fetch(`${config.url}${path}`, {
+        ...init,
+        signal: controller.signal,
+      });
     } finally {
       if (timeout !== null) clearTimeout(timeout);
       signal?.removeEventListener("abort", onAbort);
@@ -169,7 +199,11 @@ export function createSearchClient(
     try {
       response = await request(
         "/ingest",
-        { method: "POST", headers: { ...headers, ...authHeaders() }, body: markdown },
+        {
+          method: "POST",
+          headers: { ...headers, ...authHeaders() },
+          body: markdown,
+        },
         signal,
       );
     } catch (error) {
@@ -189,7 +223,11 @@ export function createSearchClient(
 
     const ingest: unknown = await response.json().catch(() => ({}));
     logger.info(
-      { reference: document.reference, collection, pageCount: document.pageCount },
+      {
+        reference: document.reference,
+        collection,
+        pageCount: document.pageCount,
+      },
       "Document ingested into Search",
     );
 
@@ -214,7 +252,12 @@ export function createSearchClient(
     const assetsFailed = assets.length - assetsStored;
     if (assetsFailed > 0) {
       logger.warn(
-        { reference: document.reference, collection, assetsStored, assetsFailed },
+        {
+          reference: document.reference,
+          collection,
+          assetsStored,
+          assetsFailed,
+        },
         "Some figure crops could not be stored; descriptions remain indexed",
       );
     }
@@ -244,9 +287,13 @@ export function createSearchClient(
         {
           method: "PUT",
           headers: {
-            ...buildAssetHeaders(document, { id: figure.id, mimeType: crop.mimeType as never }, {
-              collection,
-            }),
+            ...buildAssetHeaders(
+              document,
+              { id: figure.id, mimeType: crop.mimeType as never },
+              {
+                collection,
+              },
+            ),
             ...authHeaders(),
           },
           body: crop.buffer as unknown as BodyInit,
@@ -255,7 +302,11 @@ export function createSearchClient(
       );
       if (response.ok) return { ...base, stored: true };
       const body = await response.text().catch(() => "");
-      return { ...base, stored: false, error: `HTTP ${response.status}: ${body.slice(0, 200)}` };
+      return {
+        ...base,
+        stored: false,
+        error: `HTTP ${response.status}: ${body.slice(0, 200)}`,
+      };
     } catch (error) {
       return {
         ...base,
@@ -289,7 +340,11 @@ export function createSearchClient(
 
     let response: Response;
     try {
-      response = await request("/delete", { method: "DELETE", headers }, signal);
+      response = await request(
+        "/delete",
+        { method: "DELETE", headers },
+        signal,
+      );
     } catch (error) {
       throw ingestFailed(
         `Search could not be reached for the delete: ${error instanceof Error ? error.message : String(error)}`,
@@ -305,27 +360,95 @@ export function createSearchClient(
       );
     }
 
-    const json = (await response.json().catch(() => ({}))) as { deleted?: unknown };
-    const deleted = typeof json.deleted === "number" && Number.isInteger(json.deleted)
-      ? json.deleted
-      : 0;
-    logger.info({ reference, collection, deleted }, "Document deleted from Search");
+    const json = (await response.json().catch(() => ({}))) as {
+      deleted?: unknown;
+    };
+    const deleted =
+      typeof json.deleted === "number" && Number.isInteger(json.deleted)
+        ? json.deleted
+        : 0;
+    logger.info(
+      { reference, collection, deleted },
+      "Document deleted from Search",
+    );
     return { deleted };
+  }
+
+  async function erase(args: {
+    request: ErasureRequest;
+    identity?: { userId?: string; userGroups?: readonly string[] } | undefined;
+    signal?: AbortSignal | undefined;
+  }): Promise<ErasureResponse> {
+    const { request: erasureRequest, identity, signal } = args;
+    const headers: Record<string, string> = {
+      ...authHeaders(),
+      "content-type": "application/json",
+    };
+    if (identity?.userId !== undefined && identity.userId !== "") {
+      headers["x-user"] = encodeHeaderValue(identity.userId);
+    }
+    if (identity?.userGroups !== undefined && identity.userGroups.length > 0) {
+      headers["x-groups"] = encodeHeaderValue(identity.userGroups.join(","));
+    }
+
+    let response: Response;
+    try {
+      response = await request(
+        "/v1/erasure",
+        { method: "POST", headers, body: JSON.stringify(erasureRequest) },
+        signal,
+      );
+    } catch (error) {
+      throw ingestFailed(
+        `Search could not be reached for the erasure: ${error instanceof Error ? error.message : String(error)}`,
+        { requestId: erasureRequest.requestId },
+      );
+    }
+
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      throw ingestFailed(
+        `Search rejected the erasure with HTTP ${response.status}: ${body.slice(0, 500)}`,
+        { requestId: erasureRequest.requestId, status: response.status },
+      );
+    }
+
+    const parsed = ErasureResponseSchema.safeParse(
+      await response.json().catch(() => ({})),
+    );
+    if (!parsed.success) {
+      throw ingestFailed("Search returned a malformed erasure response", {
+        requestId: erasureRequest.requestId,
+      });
+    }
+    logger.info(
+      {
+        requestId: erasureRequest.requestId,
+        results: parsed.data.results.length,
+      },
+      "Search erasure cascade completed",
+    );
+    return parsed.data;
   }
 
   async function probe(): Promise<{ available: boolean; error?: string }> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 5_000);
     try {
-      const response = await fetch(`${config.url}/health`, { signal: controller.signal });
+      const response = await fetch(`${config.url}/health`, {
+        signal: controller.signal,
+      });
       if (response.ok) return { available: true };
       return { available: false, error: `HTTP ${response.status}` };
     } catch (error) {
-      return { available: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        available: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     } finally {
       clearTimeout(timeout);
     }
   }
 
-  return { ingestDocument, deleteByReference, probe };
+  return { ingestDocument, deleteByReference, erase, probe };
 }

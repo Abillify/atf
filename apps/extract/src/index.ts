@@ -29,12 +29,14 @@
  * credential a full programmatic one.
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
+import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AsyncLocalStorage } from "node:async_hooks";
-import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import { EXTRACT_CONTRACT_ID as EXTRACT_CONTRACT_ID_V2 } from "@atf/extract-contract";
+import { EXTRACT_CONTRACT_ID } from "@atf/extract-contract/v1";
 import express, {
   type Express,
   type NextFunction,
@@ -45,71 +47,72 @@ import express, {
 } from "express";
 import pino, { type Logger } from "pino";
 import pinoHttp from "pino-http";
-import { EXTRACT_CONTRACT_ID } from "@atf/extract-contract/v1";
-import { EXTRACT_CONTRACT_ID as EXTRACT_CONTRACT_ID_V2 } from "@atf/extract-contract";
-
-import { loadConfig, type Config } from "./config.js";
-import { checkProductionReadiness } from "./prod-gate.js";
-import { toErrorBody } from "./errors.js";
-import { sanitizeHeaderValue } from "./header-utils.js";
-import { HttpMetrics } from "./http-metrics.js";
-import { createRateLimiter } from "./rate-limiter.js";
-import { traceContextStorage } from "./trace-context.js";
-import { createRequireIdentityMiddleware } from "./request-principal.js";
-import { createJwtVerifier } from "./jwt-verifier.js";
 import {
   createAuthMiddleware,
   createLoginHandler,
   createWebAuthMiddleware,
 } from "./auth.js";
 import { createRequireScope } from "./authorize.js";
+import { type Config, loadConfig } from "./config.js";
+import { toErrorBody } from "./errors.js";
+import { createConvertHandler } from "./handlers/convert.js";
+import { createDocumentsRouter } from "./handlers/documents.js";
+import { createErasureHandler } from "./handlers/erasure.js";
+import { createHealthHandler, type HealthProbe } from "./handlers/health.js";
+import { createIngestHandler } from "./handlers/ingest.js";
+import { createIngestV2Handler } from "./handlers/ingest-v2.js";
+import { createJobsRouter } from "./handlers/jobs.js";
+import { createRenderHandler } from "./handlers/render.js";
+import type { HostResolver, PinnedRequester } from "./handlers/source-url.js";
+import type { UploadOffsetCommitter } from "./handlers/upload-session-lock.js";
+import { createUploadsRouter } from "./handlers/uploads.js";
+import { createWhoamiHandler } from "./handlers/whoami.js";
+import { sanitizeHeaderValue } from "./header-utils.js";
+import { HttpMetrics } from "./http-metrics.js";
+import { createEmitter, type Emitter } from "./jobs/emitter.js";
+import { createJobEventBus, type JobEventBus } from "./jobs/events.js";
+import {
+  createJobRunner,
+  type JobRunnerDeps,
+  PIPELINE_REVISION,
+  type SourceIdentifier,
+} from "./jobs/job-runner.js";
+import { createPageAnalyzer } from "./jobs/page-analyzer.js";
+import { createPageRenderer } from "./jobs/page-renderer.js";
+import { buildSnapshot } from "./jobs/snapshot.js";
+import type { JobRunner } from "./jobs/worker.js";
+import { createJobWorker, type JobWorker } from "./jobs/worker.js";
+import { createJwtVerifier } from "./jwt-verifier.js";
 import { createOidcProvider, type OidcProvider } from "./oidc.js";
+import { buildOpenApiSpec } from "./openapi.js";
+import { createExtractStore, type ExtractStore } from "./persistence/index.js";
+import { createExtractor, type Extractor } from "./pipeline/extract.js";
+import { MARKDOWN_BLOCKS_VERSION } from "./pipeline/markdown-blocks.js";
+import type { BboxLayoutCapability } from "./pipeline/pdf.js";
+import { probeBboxLayout } from "./pipeline/pdf.js";
+import { checkProductionReadiness } from "./prod-gate.js";
+import { createWorkQueue, type WorkQueue } from "./queue.js";
+import { createRateLimiter } from "./rate-limiter.js";
+import { createRequireIdentityMiddleware } from "./request-principal.js";
+import { createRevisionClient } from "./revision-client.js";
+import { createSearchClient, type SearchClient } from "./search-client.js";
+import { createServerUrlResolver } from "./server-url.js";
+import {
+  createFilesystemSourceStore,
+  type SourceStore,
+} from "./source-store.js";
+import { createSummaryClient, type SummaryClient } from "./summary/client.js";
+import { summaryPromptSet } from "./summary/prompts.js";
+import { traceContextStorage } from "./trace-context.js";
 import {
   createRequireUiOperatorMiddleware,
   createUiMutationGuard,
   createUiPrincipalMiddleware,
 } from "./ui-auth.js";
-import { createServerUrlResolver } from "./server-url.js";
-import { createWorkQueue, type WorkQueue } from "./queue.js";
-import { createVisionClient, type VisionClient } from "./vision/client.js";
-import { createExtractor, type Extractor } from "./pipeline/extract.js";
-import { probeBboxLayout } from "./pipeline/pdf.js";
-import { createSearchClient, type SearchClient } from "./search-client.js";
-import { createUploadMiddleware } from "./upload.js";
-import { createConvertHandler } from "./handlers/convert.js";
-import { createIngestHandler } from "./handlers/ingest.js";
-import { createIngestV2Handler } from "./handlers/ingest-v2.js";
-import { createUploadsRouter } from "./handlers/uploads.js";
-import type { HostResolver, PinnedRequester } from "./handlers/source-url.js";
-import type { UploadOffsetCommitter } from "./handlers/upload-session-lock.js";
-import { createJobsRouter } from "./handlers/jobs.js";
-import { createDocumentsRouter } from "./handlers/documents.js";
-import { createRenderHandler } from "./handlers/render.js";
-import { createWhoamiHandler } from "./handlers/whoami.js";
-import { buildSnapshot } from "./jobs/snapshot.js";
-import { pass1PromptSet, pass2PromptSet } from "./vision/prompts.js";
-import { createSummaryClient, type SummaryClient } from "./summary/client.js";
-import { summaryPromptSet } from "./summary/prompts.js";
-import { createJobWorker, type JobWorker } from "./jobs/worker.js";
-import {
-  createJobRunner,
-  PIPELINE_REVISION,
-  type JobRunnerDeps,
-  type SourceIdentifier,
-} from "./jobs/job-runner.js";
-import type { JobRunner } from "./jobs/worker.js";
-import { createPageAnalyzer } from "./jobs/page-analyzer.js";
-import type { BboxLayoutCapability } from "./pipeline/pdf.js";
-import { MARKDOWN_BLOCKS_VERSION } from "./pipeline/markdown-blocks.js";
-import { createEmitter, type Emitter } from "./jobs/emitter.js";
-import { createRevisionClient } from "./revision-client.js";
-import { createPageRenderer } from "./jobs/page-renderer.js";
-import { createJobEventBus, type JobEventBus } from "./jobs/events.js";
-import { createExtractStore, type ExtractStore } from "./persistence/index.js";
-import { createFilesystemSourceStore, type SourceStore } from "./source-store.js";
-import { createHealthHandler, type HealthProbe } from "./handlers/health.js";
-import { buildOpenApiSpec } from "./openapi.js";
 import { getUiPageHtml } from "./ui-page.js";
+import { createUploadMiddleware } from "./upload.js";
+import { createVisionClient, type VisionClient } from "./vision/client.js";
+import { pass1PromptSet, pass2PromptSet } from "./vision/prompts.js";
 
 /** Seams for tests, which must not spawn converters or reach a model. */
 export interface AppOverrides {
@@ -208,10 +211,14 @@ export interface CreatedApp {
   worker: JobWorker | null;
 }
 
-export function createApp(config: Config, overrides: AppOverrides = {}): CreatedApp {
+export function createApp(
+  config: Config,
+  overrides: AppOverrides = {},
+): CreatedApp {
   const app = express();
   const logger =
-    overrides.logger ?? pino({ level: config.logLevel, base: { pid: process.pid } });
+    overrides.logger ??
+    pino({ level: config.logLevel, base: { pid: process.pid } });
   const metrics = overrides.metrics ?? new HttpMetrics();
 
   // ── Request logging ───────────────────────────────────────────────────────
@@ -436,6 +443,13 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
   const requireDelete = createRequireScope("extract.delete", {
     authzEnabled: config.authzEnabled,
   });
+  // Erasure is the DSAR permission (task 4.6, requirements 2.7, 2.12): it
+  // removes subject data across jobs, uploads, and source blobs, so it is a
+  // scope of its own — `extract.delete` deletes one document operationally,
+  // `extract.erasure` executes a compliance request.
+  const requireErasure = createRequireScope("extract.erasure", {
+    authzEnabled: config.authzEnabled,
+  });
   const requireMetrics = createRequireScope("extract.metrics", {
     authzEnabled: config.authzEnabled,
   });
@@ -609,6 +623,7 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
         ingestEnabled,
         v2Enabled: store !== null,
         deleteEnabled: store !== null && searchClient !== null,
+        erasureEnabled: store !== null,
       }),
     );
   });
@@ -752,6 +767,26 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
       );
     }
 
+    // ── DSAR erasure (task 4.6, requirements 2.7, 2.12) ─────────────────
+    // Subject-related deletion over jobs, upload sessions, and orphaned source
+    // blobs, followed by the Search cascade for the same request. Needs the
+    // store (the ledger lives there); a missing Search target is reported as
+    // `not_configured`, never as success-by-omission. Idempotent over
+    // `requestId`; service auth with the `extract.erasure` scope.
+    app.post(
+      "/v1/erasure",
+      rateLimiter.middleware,
+      authMiddleware,
+      requireErasure,
+      createErasureHandler({
+        store,
+        sourceStore,
+        searchClient,
+        logger,
+        tmpDir: config.sourceStore.tmpDir,
+      }),
+    );
+
     // ── v2 jobs ─────────────────────────────────────────────────────────────
     // Same auth chain. A GET is a status read (extract.admin); everything else
     // creates or mutates a job and is an ingest-class write (extract.ingest).
@@ -772,7 +807,8 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
     // the handler answers 200/404/403. Every other GET — the list, the figure
     // gallery — stays `extract.admin`, because listing other callers' jobs is
     // exactly what E3 must not grant.
-    const SINGLE_JOB_GET = /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    const SINGLE_JOB_GET =
+      /^\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
     const requireJobScope: RequestHandler = (req, res, next) => {
       if (req.method === "GET") {
         if (SINGLE_JOB_GET.test(req.path)) {
@@ -835,7 +871,9 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
       overrides.sourceIdentifier !== undefined
         ? overrides.sourceIdentifier
         : // A test that injects its own emitter talks to no real Search.
-          overrides.emitter === undefined && revisionClient !== null && identify !== undefined
+          overrides.emitter === undefined &&
+            revisionClient !== null &&
+            identify !== undefined
           ? { identify: (args) => identify.call(revisionClient, args) }
           : null;
     const emitter =
@@ -870,7 +908,11 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
     let bboxCapability: Promise<BboxLayoutCapability> | null = null;
     const bboxLayoutProbe =
       overrides.bboxLayoutProbe ??
-      (() => probeBboxLayout({ binDir: config.popplerBinDir, home: config.tempDir }));
+      (() =>
+        probeBboxLayout({
+          binDir: config.popplerBinDir,
+          home: config.tempDir,
+        }));
     const pageAnalyzer = createPageAnalyzer({
       config: {
         popplerBinDir: config.popplerBinDir,
@@ -912,7 +954,9 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
         renderMaxPixels: config.renderMaxPixels,
         textFastPath: config.textFastPath,
         textFastPathMaxInkRatio: config.textFastPathMaxInkRatio,
-        ...(config.summary !== null ? { summaryModel: config.summary.model } : {}),
+        ...(config.summary !== null
+          ? { summaryModel: config.summary.model }
+          : {}),
         // The budget estimate mirrors the summary output budget; a summary call
         // is far cheaper than a vision page, so it reuses the same guard shape.
         summaryTokenEstimate: config.summary?.maxTokens ?? 512,
@@ -1132,7 +1176,7 @@ export function createApp(config: Config, overrides: AppOverrides = {}): Created
 }
 
 async function main(): Promise<void> {
-  let config: Config;
+	let config: Config;
   try {
     config = loadConfig();
   } catch (err) {
@@ -1263,7 +1307,7 @@ const isMainModule =
   resolve(fileURLToPath(import.meta.url)) === resolve(process.argv[1]);
 
 if (isMainModule) {
-  main().catch((err: unknown) => {
+	main().catch((err: unknown) => {
     console.error("Fatal error:", err);
     process.exit(1);
   });

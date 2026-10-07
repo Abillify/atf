@@ -18,14 +18,18 @@
  * deterministically without sleeping.
  */
 
+import type { ErasureJobTargetFilter } from "../src/persistence/extract-queries.js";
 import type { ExtractStore } from "../src/persistence/index.js";
 import {
-  LeaseLostError,
   type AssetOutboxRow,
   type DocpassStateRow,
   type EmitOutboxRow,
+  type ErasureJobTargetRow,
+  type ErasureLedgerRecord,
+  type ErasureLedgerState,
   type Fence,
   type JobRow,
+  LeaseLostError,
   type NewJob,
   type PageStageRow,
   type StageStatus,
@@ -34,6 +38,12 @@ import {
 } from "../src/persistence/types.js";
 
 export interface FakeJobStore extends ExtractStore {
+  /** Seed an upload session row (the erasure surface; uploads have no real store here). */
+  seedUpload(uploadId: string, reference: string): void;
+  /** The remaining upload sessions, for assertions after an erasure. */
+  peekUploads(): Array<{ upload_id: string; reference: string }>;
+  /** Directly read a ledger record for assertions. */
+  peekErasureLedger(key: string): ErasureLedgerRecord | undefined;
   /** Advance the fake clock by `ms`, so leases can expire deterministically. */
   advance(ms: number): void;
   /** The fake clock's current instant. */
@@ -60,7 +70,7 @@ export interface FakeJobStore extends ExtractStore {
 const NO_LANE_CAP = 2_147_483_647;
 
 export function createFakeJobStore(): FakeJobStore {
-  let clock = Date.UTC(2026, 0, 1);
+	let clock = Date.UTC(2026, 0, 1);
   const jobs = new Map<string, JobRow>();
   // stage rows keyed by unit → natural-key string
   const stages: Record<StageUnit, Map<string, PageStageRow>> = {
@@ -73,8 +83,21 @@ export function createFakeJobStore(): FakeJobStore {
   // docpass_state rows keyed by `${jobId}|${page}`.
   const docpass = new Map<string, DocpassStateRow>();
   const faults = new Map<string, { error: Error; skip: number }>();
+  // Upload sessions and the erasure ledger (task 4.6): minimal models of the
+  // real tables, faithful to the claim/transition protocol including expiry.
+  const uploads = new Map<string, { upload_id: string; reference: string }>();
+  const erasureLedger = new Map<
+    string,
+    {
+      fingerprint: string;
+      state: ErasureLedgerState;
+      result?: unknown;
+      expiresAtMs: number;
+    }
+  >();
+  const ERASURE_TTL_MS = 86_400_000;
 
-  const now = (): Date => new Date(clock);
+	const now = (): Date => new Date(clock);
   const unsupported = () => {
     throw new Error("not implemented in the fake job store");
   };
@@ -94,7 +117,11 @@ export function createFakeJobStore(): FakeJobStore {
   function checkFence(fence: Fence | undefined): void {
     if (fence === undefined) return;
     const row = jobs.get(fence.jobId);
-    if (row === undefined || row.lease_holder !== fence.holder || Number(row.lease_epoch) !== fence.epoch) {
+    if (
+      row === undefined ||
+      row.lease_holder !== fence.holder ||
+      Number(row.lease_epoch) !== fence.epoch
+    ) {
       throw new LeaseLostError(fence);
     }
   }
@@ -103,13 +130,53 @@ export function createFakeJobStore(): FakeJobStore {
     return { ...row };
   }
 
-  function stageKey(unit: StageUnit, r: { job_id: string; page: number; stage: string; figure_id?: string; tile_id?: string }): string {
-    if (unit === "figure") return `${r.job_id}|${r.page}|${r.figure_id}|${r.stage}`;
+  /** The job rows an erasure filter targets (mirrors erasureJobWhere). */
+  function targetedJobs(filter: ErasureJobTargetFilter): JobRow[] {
+    switch (filter.scope) {
+      case "subject":
+        return [...jobs.values()].filter(
+          (j) =>
+            j.created_by_tenant === filter.tenantId &&
+            j.created_by_subject !== null &&
+            j.created_by_subject !== undefined &&
+            filter.identifiers.includes(j.created_by_subject),
+        );
+      case "tenant":
+        return [...jobs.values()].filter(
+          (j) => j.created_by_tenant === filter.tenantId,
+        );
+      case "reference":
+        return [...jobs.values()].filter((j) =>
+          filter.references.includes(j.reference),
+        );
+    }
+  }
+
+  function targetRow(job: JobRow): ErasureJobTargetRow {
+    return {
+      id: job.id,
+      reference: job.reference,
+      source_sha256: job.source_sha256,
+    };
+  }
+
+  function stageKey(
+    unit: StageUnit,
+    r: {
+      job_id: string;
+      page: number;
+      stage: string;
+      figure_id?: string;
+      tile_id?: string;
+    },
+  ): string {
+    if (unit === "figure")
+      return `${r.job_id}|${r.page}|${r.figure_id}|${r.stage}`;
     if (unit === "tile") return `${r.job_id}|${r.page}|${r.tile_id}|${r.stage}`;
     return `${r.job_id}|${r.page}|${r.stage}`;
   }
 
-  function upsert(unit: StageUnit, r: StageUpsert): PageStageRow {
+	function upsert(unit: StageUnit, r: StageUpsert): PageStageRow {
     const key = stageKey(unit, r);
     const existing = stages[unit].get(key);
     const t = now();
@@ -122,8 +189,11 @@ export function createFakeJobStore(): FakeJobStore {
       input_hash: r.input_hash,
       status: (r.status ?? "pending") as StageStatus,
       // Round-trip through JSON like the jsonb column does.
-      output: r.output === undefined || r.output === null ? null : JSON.parse(JSON.stringify(r.output)),
-      attempts: existing ? existing.attempts + 1 : r.attempts ?? 0,
+      output:
+        r.output === undefined || r.output === null
+          ? null
+          : JSON.parse(JSON.stringify(r.output)),
+      attempts: existing ? existing.attempts + 1 : (r.attempts ?? 0),
       next_attempt_at: r.next_attempt_at ?? null,
       error: r.error ?? null,
       created_at: existing?.created_at ?? t,
@@ -133,7 +203,11 @@ export function createFakeJobStore(): FakeJobStore {
     return copy(row);
   }
 
-  function updateJob(id: string, fence: Fence | undefined, patch: (row: JobRow) => void): JobRow | null {
+	function updateJob(
+    id: string,
+    fence: Fence | undefined,
+    patch: (row: JobRow) => void,
+  ): JobRow | null {
     const row = jobs.get(id);
     if (row === undefined) {
       if (fence !== undefined) throw new LeaseLostError(fence);
@@ -145,14 +219,14 @@ export function createFakeJobStore(): FakeJobStore {
     return copy(row);
   }
 
-  function revoke(row: JobRow): void {
+	function revoke(row: JobRow): void {
     row.lease_epoch = Number(row.lease_epoch) + 1;
     row.lease_holder = null;
     row.lease_expires_at = null;
     row.tokens_reserved = 0;
   }
 
-  function stageRowsOf(jobId: string): PageStageRow[] {
+	function stageRowsOf(jobId: string): PageStageRow[] {
     return [
       ...stages.page.values(),
       ...stages.figure.values(),
@@ -160,9 +234,18 @@ export function createFakeJobStore(): FakeJobStore {
     ].filter((s) => s.job_id === jobId);
   }
 
-  function resetPageStages(jobId: string, names: string[], match: (page: number) => boolean): void {
+	function resetPageStages(
+    jobId: string,
+    names: string[],
+    match: (page: number) => boolean,
+  ): void {
     for (const row of stages.page.values()) {
-      if (row.job_id !== jobId || !names.includes(row.stage) || !match(row.page)) continue;
+      if (
+        row.job_id !== jobId ||
+        !names.includes(row.stage) ||
+        !match(row.page)
+      )
+        continue;
       row.status = "pending";
       row.output = null;
       row.next_attempt_at = null;
@@ -171,20 +254,24 @@ export function createFakeJobStore(): FakeJobStore {
     }
   }
 
-  function bumpGeneration(jobId: string): void {
+	function bumpGeneration(jobId: string): void {
     const row = jobs.get(jobId);
     if (row === undefined) return;
     row.emit_generation = Number(row.emit_generation) + 1;
     row.revision_id = null;
-    for (const e of emitOutbox.values()) if (e.job_id === jobId) e.status = "pending";
-    for (const a of assetOutbox.values()) if (a.job_id === jobId) a.status = "pending";
+    for (const e of emitOutbox.values())
+      if (e.job_id === jobId) e.status = "pending";
+    for (const a of assetOutbox.values())
+      if (a.job_id === jobId) a.status = "pending";
   }
 
-  function emitRowsOf(jobId: string): EmitOutboxRow[] {
-    return [...emitOutbox.values()].filter((r) => r.job_id === jobId).sort((a, b) => a.seq - b.seq);
+	function emitRowsOf(jobId: string): EmitOutboxRow[] {
+    return [...emitOutbox.values()]
+      .filter((r) => r.job_id === jobId)
+      .sort((a, b) => a.seq - b.seq);
   }
 
-  const store: FakeJobStore = {
+	const store: FakeJobStore = {
     advance(ms) {
       clock += ms;
     },
@@ -196,9 +283,15 @@ export function createFakeJobStore(): FakeJobStore {
       return emitRowsOf(jobId).map(copy);
     },
     peekAssets(jobId) {
-      return [...assetOutbox.values()].filter((r) => r.job_id === jobId).map(copy);
+      return [...assetOutbox.values()]
+        .filter((r) => r.job_id === jobId)
+        .map(copy);
     },
-    failNext(method, error = new Error(`simulated crash in ${String(method)}`), skip = 0) {
+    failNext(
+      method,
+      error = new Error(`simulated crash in ${String(method)}`),
+      skip = 0,
+    ) {
       faults.set(String(method), { error, skip });
     },
 
@@ -255,7 +348,8 @@ export function createFakeJobStore(): FakeJobStore {
       for (const row of jobs.values()) {
         if (row.collection !== collection || row.status === "failed") continue;
         const email = (row.config as { email?: { messageId?: unknown } }).email;
-        if (typeof email?.messageId === "string" && wanted.has(email.messageId)) known.add(email.messageId);
+        if (typeof email?.messageId === "string" && wanted.has(email.messageId))
+          known.add(email.messageId);
       }
       return known;
     },
@@ -264,13 +358,18 @@ export function createFakeJobStore(): FakeJobStore {
       return [...jobs.values()]
         .sort(
           (a, b) =>
-            b.created_at.getTime() - a.created_at.getTime() || (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
+            b.created_at.getTime() - a.created_at.getTime() ||
+            (a.id < b.id ? 1 : a.id > b.id ? -1 : 0),
         )
         .slice(offset, offset + limit)
         .map(copy);
     },
 
-    async listActiveJobsByReference(reference, collection, includeNullCollection = false) {
+    async listActiveJobsByReference(
+      reference,
+      collection,
+      includeNullCollection = false,
+    ) {
       return [...jobs.values()]
         .filter(
           (row) =>
@@ -333,7 +432,10 @@ export function createFakeJobStore(): FakeJobStore {
       if (row === undefined) return null;
       if (
         row.token_budget !== null &&
-        Number(row.token_budget) - Number(row.tokens_used) - Number(row.tokens_reserved) < tokens
+        Number(row.token_budget) -
+          Number(row.tokens_used) -
+          Number(row.tokens_reserved) <
+          tokens
       ) {
         return null;
       }
@@ -344,7 +446,10 @@ export function createFakeJobStore(): FakeJobStore {
 
     async settleJobTokens(id, settlement, fence) {
       return updateJob(id, fence, (row) => {
-        row.tokens_reserved = Math.max(0, Number(row.tokens_reserved) - settlement.reserved);
+        row.tokens_reserved = Math.max(
+          0,
+          Number(row.tokens_reserved) - settlement.reserved,
+        );
         row.tokens_used = Number(row.tokens_used) + settlement.used;
       });
     },
@@ -403,9 +508,18 @@ export function createFakeJobStore(): FakeJobStore {
       }
       if (pages.size > 0) {
         const first = Math.min(...pages);
-        resetPageStages(id, [...downstream.cropStages, downstream.emitStage], (p) => pages.has(p));
-        resetPageStages(id, [downstream.emitStage, downstream.docpassStage], (p) => p >= first);
-        for (const [k, d] of docpass) if (d.job_id === id && d.page >= first) docpass.delete(k);
+        resetPageStages(
+          id,
+          [...downstream.cropStages, downstream.emitStage],
+          (p) => pages.has(p),
+        );
+        resetPageStages(
+          id,
+          [downstream.emitStage, downstream.docpassStage],
+          (p) => p >= first,
+        );
+        for (const [k, d] of docpass)
+          if (d.job_id === id && d.page >= first) docpass.delete(k);
         bumpGeneration(id);
       }
       row.status = "queued";
@@ -425,7 +539,9 @@ export function createFakeJobStore(): FakeJobStore {
     ) {
       const t = clock;
       const isWorking = (j: JobRow): boolean =>
-        ["preparing", "processing", "emitting", "committing"].includes(j.status);
+        ["preparing", "processing", "emitting", "committing"].includes(
+          j.status,
+        );
       const isLarge = (j: JobRow): boolean =>
         j.page_count !== null && j.page_count > largeJobPageThreshold;
       const activeLarge = [...jobs.values()].filter(
@@ -443,7 +559,9 @@ export function createFakeJobStore(): FakeJobStore {
         const runnable =
           (j.status === "queued" && due) ||
           (j.status === "paused" && j.auto_resume && due) ||
-          (isWorking(j) && j.lease_expires_at !== null && j.lease_expires_at.getTime() <= t);
+          (isWorking(j) &&
+            j.lease_expires_at !== null &&
+            j.lease_expires_at.getTime() <= t);
         if (!runnable) return false;
         if (isLarge(j) && largeLaneFull) return false;
         return true;
@@ -475,7 +593,8 @@ export function createFakeJobStore(): FakeJobStore {
       const row = jobs.get(id);
       if (row === undefined) return null;
       // Fencing: only the current holder+epoch may renew.
-      if (row.lease_holder !== leaseHolder || Number(row.lease_epoch) !== epoch) return null;
+      if (row.lease_holder !== leaseHolder || Number(row.lease_epoch) !== epoch)
+        return null;
       row.lease_expires_at = new Date(clock + leaseSeconds * 1000);
       row.heartbeat_at = now();
       row.updated_at = now();
@@ -501,7 +620,10 @@ export function createFakeJobStore(): FakeJobStore {
       if (settlement !== undefined) {
         const row = jobs.get(r.job_id);
         if (row !== undefined) {
-          row.tokens_reserved = Math.max(0, Number(row.tokens_reserved) - settlement.reserved);
+          row.tokens_reserved = Math.max(
+            0,
+            Number(row.tokens_reserved) - settlement.reserved,
+          );
           row.tokens_used = Number(row.tokens_used) + settlement.used;
           row.updated_at = now();
           job = copy(row);
@@ -519,25 +641,43 @@ export function createFakeJobStore(): FakeJobStore {
 
     async listStagesWindow(unit, jobId, stage, fromPage, toPage) {
       return [...stages[unit].values()]
-        .filter((s) => s.job_id === jobId && s.stage === stage && s.page >= fromPage && s.page <= toPage)
+        .filter(
+          (s) =>
+            s.job_id === jobId &&
+            s.stage === stage &&
+            s.page >= fromPage &&
+            s.page <= toPage,
+        )
         .sort((a, b) => a.page - b.page)
         .map(copy);
     },
 
-    async nextRunnablePages(jobId, pageCount, cursorStage, limit, when = now()) {
+    async nextRunnablePages(
+      jobId,
+      pageCount,
+      cursorStage,
+      limit,
+      when = now(),
+    ) {
       if (pageCount <= 0 || limit <= 0) return [];
       const t = when.getTime();
       // Pages with any unit inside a transient-failure backoff are not due.
       const backingOff = new Set<number>();
       for (const s of stageRowsOf(jobId)) {
-        if (s.status === "failed" && s.next_attempt_at !== null && s.next_attempt_at.getTime() > t) {
+        if (
+          s.status === "failed" &&
+          s.next_attempt_at !== null &&
+          s.next_attempt_at.getTime() > t
+        ) {
           backingOff.add(s.page);
         }
       }
       const out: number[] = [];
       for (let page = 1; page <= pageCount && out.length < limit; page++) {
         if (backingOff.has(page)) continue;
-        const row = stages.page.get(stageKey("page", { job_id: jobId, page, stage: cursorStage }));
+        const row = stages.page.get(
+          stageKey("page", { job_id: jobId, page, stage: cursorStage }),
+        );
         if (row === undefined) {
           out.push(page);
           continue;
@@ -546,7 +686,11 @@ export function createFakeJobStore(): FakeJobStore {
         // Permanently failed (no retry scheduled): finished, skip so it never
         // blocks the pages behind it.
         if (row.status === "failed" && row.next_attempt_at === null) continue;
-        if (row.status === "failed" || row.next_attempt_at === null || row.next_attempt_at.getTime() <= t) {
+        if (
+          row.status === "failed" ||
+          row.next_attempt_at === null ||
+          row.next_attempt_at.getTime() <= t
+        ) {
           out.push(page);
         }
       }
@@ -567,7 +711,10 @@ export function createFakeJobStore(): FakeJobStore {
       let count = 0;
       for (const row of stages.page.values()) {
         if (row.job_id !== jobId || row.stage !== cursorStage) continue;
-        if (row.status === "done" || (row.status === "failed" && row.next_attempt_at === null)) {
+        if (
+          row.status === "done" ||
+          (row.status === "failed" && row.next_attempt_at === null)
+        ) {
           count += 1;
         }
       }
@@ -577,15 +724,19 @@ export function createFakeJobStore(): FakeJobStore {
     async invalidateDownstream(jobId, inv, fence) {
       checkFence(fence);
       resetPageStages(jobId, inv.stages, (p) => p >= inv.fromPage);
-      for (const [k, d] of docpass) if (d.job_id === jobId && d.page >= inv.fromPage) docpass.delete(k);
-      for (const [k, e] of emitOutbox) if (e.job_id === jobId && e.seq >= inv.fromPage) emitOutbox.delete(k);
+      for (const [k, d] of docpass)
+        if (d.job_id === jobId && d.page >= inv.fromPage) docpass.delete(k);
+      for (const [k, e] of emitOutbox)
+        if (e.job_id === jobId && e.seq >= inv.fromPage) emitOutbox.delete(k);
       if (inv.deleteAssets) {
-        for (const [k, a] of assetOutbox) if (a.job_id === jobId) assetOutbox.delete(k);
+        for (const [k, a] of assetOutbox)
+          if (a.job_id === jobId) assetOutbox.delete(k);
       }
       bumpGeneration(jobId);
       const row = jobs.get(jobId);
       if (row === undefined) return null;
-      if (inv.configPatch !== undefined) row.config = { ...row.config, ...inv.configPatch };
+      if (inv.configPatch !== undefined)
+        row.config = { ...row.config, ...inv.configPatch };
       return copy(row);
     },
 
@@ -634,10 +785,14 @@ export function createFakeJobStore(): FakeJobStore {
       checkFence(fence);
       const k = `${row.job_id}|${row.seq}`;
       const existing = emitOutbox.get(k);
-      const payload = row.payload === undefined ? null : JSON.parse(JSON.stringify(row.payload));
+      const payload =
+        row.payload === undefined
+          ? null
+          : JSON.parse(JSON.stringify(row.payload));
       if (existing !== undefined) {
         // Upsert unless acked or unchanged.
-        if (existing.status === "acked" || existing.digest === row.digest) return null;
+        if (existing.status === "acked" || existing.digest === row.digest)
+          return null;
         existing.digest = row.digest;
         existing.payload = payload;
         existing.page_from = row.page_from;
@@ -702,7 +857,9 @@ export function createFakeJobStore(): FakeJobStore {
     },
 
     async pendingEmitBatches(jobId) {
-      return emitRowsOf(jobId).filter((r) => r.status !== "acked").map(copy);
+      return emitRowsOf(jobId)
+        .filter((r) => r.status !== "acked")
+        .map(copy);
     },
 
     async allEmitBatches(jobId) {
@@ -721,7 +878,10 @@ export function createFakeJobStore(): FakeJobStore {
       const k = `${row.job_id}|${row.asset_id}`;
       const existing = assetOutbox.get(k);
       if (existing !== undefined) {
-        if ((existing.page === undefined || existing.page === null) && row.page != null) {
+        if (
+          (existing.page === undefined || existing.page === null) &&
+          row.page != null
+        ) {
           existing.page = row.page;
           return copy(existing);
         }
@@ -766,8 +926,150 @@ export function createFakeJobStore(): FakeJobStore {
     getUpload: unsupported,
     updateUploadOffset: unsupported,
     advanceUploadOffset: unsupported,
+
+    // ── erasure (task 4.6) ────────────────────────────────────────────────
+    async erasureJobTargets(filter) {
+      return targetedJobs(filter).map(targetRow);
+    },
+    async erasureJobCount(filter) {
+      return targetedJobs(filter).length;
+    },
+    async eraseJobs(filter) {
+      trip("eraseJobs");
+      const targets = targetedJobs(filter);
+      for (const job of targets) {
+        jobs.delete(job.id);
+        // FK ON DELETE CASCADE for the stage/outbox tables.
+        for (const unit of Object.keys(stages) as StageUnit[]) {
+          for (const key of [...stages[unit].keys()]) {
+            if (key.startsWith(`${job.id}|`)) stages[unit].delete(key);
+          }
+        }
+        for (const key of [...emitOutbox.keys()]) {
+          if (emitOutbox.get(key)?.job_id === job.id) emitOutbox.delete(key);
+        }
+        for (const key of [...assetOutbox.keys()]) {
+          if (assetOutbox.get(key)?.job_id === job.id) assetOutbox.delete(key);
+        }
+        for (const key of [...docpass.keys()]) {
+          if (key.startsWith(`${job.id}|`)) docpass.delete(key);
+        }
+      }
+      return targets.map(targetRow);
+    },
+    async eraseUploadsByReferences(references) {
+      if (references.length === 0) return [];
+      const removed: string[] = [];
+      for (const [id, row] of [...uploads.entries()]) {
+        if (references.includes(row.reference)) {
+          uploads.delete(id);
+          removed.push(id);
+        }
+      }
+      return removed;
+    },
+    async eraseAllUploads() {
+      const removed = [...uploads.keys()];
+      uploads.clear();
+      return removed;
+    },
+    async countAllUploads() {
+      return uploads.size;
+    },
+    async uploadsByReferences(references) {
+      if (references.length === 0) return [];
+      return [...uploads.values()]
+        .filter((u) => references.includes(u.reference))
+        .map((u) => ({ ...u }));
+    },
+    async remainingSourceRefs(digests) {
+      if (digests.length === 0) return [];
+      const counts = new Map<string, number>();
+      for (const job of jobs.values()) {
+        if (digests.includes(job.source_sha256)) {
+          counts.set(
+            job.source_sha256,
+            (counts.get(job.source_sha256) ?? 0) + 1,
+          );
+        }
+      }
+      return [...counts.entries()].map(([source_sha256, n]) => ({
+        source_sha256,
+        n,
+      }));
+    },
+    async claimErasure(key, fingerprint) {
+      trip("claimErasure");
+      const existing = erasureLedger.get(key);
+      if (existing === undefined || existing.expiresAtMs <= clock) {
+        // INSERT / expired-row takeover — the claim wins.
+        erasureLedger.set(key, {
+          fingerprint,
+          state: "pending",
+          expiresAtMs: clock + ERASURE_TTL_MS,
+        });
+        return {
+          kind: "claimed",
+          record: {
+            key,
+            fingerprint,
+            state: "pending",
+            updatedAt: now().toISOString(),
+          },
+        };
+      }
+      if (existing.fingerprint !== fingerprint) {
+        return { kind: "mismatch", record: ledgerRecord(key, existing) };
+      }
+      if (existing.state === "committed") {
+        return { kind: "replay", record: ledgerRecord(key, existing) };
+      }
+      if (existing.state === "pending" || existing.state === "running") {
+        return { kind: "in_flight", record: ledgerRecord(key, existing) };
+      }
+      return { kind: "terminal", record: ledgerRecord(key, existing) };
+    },
+    async transitionErasure(key, fingerprint, state, result) {
+      trip("transitionErasure");
+      const existing = erasureLedger.get(key);
+      if (
+        existing === undefined ||
+        existing.fingerprint !== fingerprint ||
+        (existing.state !== "pending" && existing.state !== "running")
+      ) {
+        throw new Error("Erasure ledger transition conflict");
+      }
+      existing.state = state;
+      if (result !== undefined) existing.result = result;
+      existing.expiresAtMs = clock + ERASURE_TTL_MS;
+    },
+
+    seedUpload(uploadId, reference) {
+      uploads.set(uploadId, { upload_id: uploadId, reference });
+    },
+    peekUploads() {
+      return [...uploads.values()].map((u) => ({ ...u }));
+    },
+    peekErasureLedger(key) {
+      const row = erasureLedger.get(key);
+      return row === undefined ? undefined : ledgerRecord(key, row);
+    },
+
     withTransaction: unsupported,
     close: async () => {},
   };
   return store;
+}
+
+function ledgerRecord(
+  key: string,
+  row: { fingerprint: string; state: ErasureLedgerState; result?: unknown },
+): ErasureLedgerRecord {
+  return {
+    key,
+    fingerprint: row.fingerprint,
+    state: row.state,
+    ...(row.result !== undefined ? { result: row.result } : {}),
+    updatedAt: new Date().toISOString(),
+  };
 }

@@ -27,6 +27,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -45,7 +46,30 @@ const availableBinary = vi.fn(async () => ({ available: true, version: "stub" })
 let storeDir: string;
 let tmpUploadDir: string;
 let scratchParent: string;
-const cleanups: Array<() => void> = [];
+const cleanups: Array<() => void | Promise<void>> = [];
+
+/**
+ * Mount `app` on one stable loopback URL for the duration of a test — supertest
+ * per-request ephemeral servers churn ports and let foreign local processes
+ * answer (see documents.test.ts for the full explanation).
+ */
+async function serve(app: ReturnType<typeof createApp>["app"]): Promise<string> {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  cleanups.push(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test server did not bind to a TCP port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
 
 function toStream(buf: Buffer): Readable {
   return Readable.from([buf]);
@@ -67,10 +91,10 @@ async function storeSource(bytes: Buffer): Promise<Sha256Hex> {
   return stored.sha256;
 }
 
-function buildApp(
+async function buildApp(
   configOverrides: Record<string, string | undefined> = {},
   overrides: AppOverrides = {},
-) {
+): Promise<string> {
   const config = loadTestConfig({
     SOURCE_STORE_DIR: storeDir,
     UPLOAD_TMP_DIR: tmpUploadDir,
@@ -86,7 +110,7 @@ function buildApp(
     ...overrides,
   });
   cleanups.push(created.cleanup);
-  return created.app;
+  return serve(created.app);
 }
 
 beforeEach(async () => {
@@ -96,7 +120,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+  for (const cleanup of cleanups.splice(0)) await cleanup();
   vi.unstubAllGlobals();
   await rm(storeDir, { recursive: true, force: true });
   await rm(tmpUploadDir, { recursive: true, force: true });
@@ -105,10 +129,10 @@ afterEach(async () => {
 
 describe("POST /v2/render", () => {
   it("(a) renders a whole page from a stored source and returns PNG bytes + size", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(640, 480));
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1 })
       .expect(200);
@@ -126,10 +150,10 @@ describe("POST /v2/render", () => {
   });
 
   it("(a) renders a bbox region crop from a stored source", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(600, 400));
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1, bbox: [0.0, 0.0, 0.5, 0.5] })
       .expect(200);
@@ -141,10 +165,10 @@ describe("POST /v2/render", () => {
   });
 
   it("honours targetPixels by resizing the long edge", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(800, 400));
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1, targetPixels: 400 })
       .expect(200);
@@ -156,10 +180,10 @@ describe("POST /v2/render", () => {
   });
 
   it("(b) returns 404 for an unknown source", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const missing = createHash("sha256").update("nope").digest("hex");
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/render")
       .send({ source: missing, page: 1 })
       .expect(404);
@@ -169,10 +193,10 @@ describe("POST /v2/render", () => {
 
   it("(c) clamps an over-budget targetPixels to the pixel ceiling", async () => {
     // A tiny ceiling makes the clamp observable without a huge source image.
-    const app = buildApp({ RENDER_MAX_PIXELS: "10000" }); // 100×100 budget
+    const baseUrl = await buildApp({ RENDER_MAX_PIXELS: "10000" }); // 100×100 budget
     const source = await storeSource(await makePng(400, 400));
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1, targetPixels: 5000 })
       .expect(200);
@@ -185,36 +209,36 @@ describe("POST /v2/render", () => {
   });
 
   it("validates the request body and page range", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(100, 100));
 
-    await request(app).post("/v2/render").send({ page: 1 }).expect(400);
-    await request(app)
+    await request(baseUrl).post("/v2/render").send({ page: 1 }).expect(400);
+    await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 99 })
       .expect(400);
   });
 
   it("(d) applies the render rate limit", async () => {
-    const app = buildApp({ RENDER_RATE_LIMIT: "2" });
+    const baseUrl = await buildApp({ RENDER_RATE_LIMIT: "2" });
     const source = await storeSource(await makePng(64, 64));
 
-    await request(app).post("/v2/render").send({ source, page: 1 }).expect(200);
-    await request(app).post("/v2/render").send({ source, page: 1 }).expect(200);
-    const limited = await request(app).post("/v2/render").send({ source, page: 1 });
+    await request(baseUrl).post("/v2/render").send({ source, page: 1 }).expect(200);
+    await request(baseUrl).post("/v2/render").send({ source, page: 1 }).expect(200);
+    const limited = await request(baseUrl).post("/v2/render").send({ source, page: 1 });
     expect(limited.status).toBe(429);
     expect(limited.body.code).toBe("RATE_LIMITED");
   });
 
   it("(e) is deterministic: identical inputs yield byte-stable output", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(320, 240));
 
-    const first = await request(app)
+    const first = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1, bbox: [0.1, 0.1, 0.6, 0.7], targetPixels: 200 })
       .expect(200);
-    const second = await request(app)
+    const second = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1, bbox: [0.1, 0.1, 0.6, 0.7], targetPixels: 200 })
       .expect(200);
@@ -225,10 +249,10 @@ describe("POST /v2/render", () => {
 
 describe("POST /ui/render · console page preview", () => {
   it("renders through the cookie BFF for a same-origin request", async () => {
-    const app = buildApp({}, { store: createFakeJobStore() });
+    const baseUrl = await buildApp({}, { store: createFakeJobStore() });
     const source = await storeSource(await makePng(320, 200));
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/ui/render")
       .set("Sec-Fetch-Site", "same-origin")
       .send({ source, page: 1, targetPixels: 160 })
@@ -239,10 +263,10 @@ describe("POST /ui/render · console page preview", () => {
   });
 
   it("refuses a cross-origin request before rendering", async () => {
-    const app = buildApp({}, { store: createFakeJobStore() });
+    const baseUrl = await buildApp({}, { store: createFakeJobStore() });
     const source = await storeSource(await makePng(320, 200));
 
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/ui/render")
       .set("Origin", "https://attacker.example")
       .send({ source, page: 1 });
@@ -250,26 +274,26 @@ describe("POST /ui/render · console page preview", () => {
   });
 
   it("is not mounted without the v2 job store", async () => {
-    const app = buildApp();
-    const res = await request(app).post("/ui/render").set("Sec-Fetch-Site", "same-origin").send({});
+    const baseUrl = await buildApp();
+    const res = await request(baseUrl).post("/ui/render").set("Sec-Fetch-Site", "same-origin").send({});
     expect(res.status).toBe(404);
   });
 });
 
 describe("POST /v2/render · input hardening", () => {
   it("rejects a source that is not a lowercase 64-char hex sha256", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(64, 64));
     for (const bad of [source.toUpperCase(), "../../etc/passwd", "a".repeat(63), `${"a".repeat(63)}g`]) {
-      const res = await request(app).post("/v2/render").send({ source: bad, page: 1 });
+      const res = await request(baseUrl).post("/v2/render").send({ source: bad, page: 1 });
       expect(res.status, bad).toBe(400);
     }
   });
 
   it("never passes a path-bearing filename through; renders from the store", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const source = await storeSource(await makePng(64, 48));
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/render")
       .send({ source, page: 1, filename: "../../../../etc/passwd.png" })
       .expect(200);

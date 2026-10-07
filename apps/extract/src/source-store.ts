@@ -35,8 +35,8 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { pipeline } from "node:stream/promises";
 import type { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 /** A lowercase 64-character hex sha256. */
 export type Sha256Hex = string;
@@ -84,16 +84,24 @@ export interface SourceStore {
     source: Readable,
     options?: { expected?: Sha256Hex; maxBytes?: number },
   ): Promise<StoredSource>;
+  /**
+   * Remove a stored source (DSAR erasure, requirement 2.7). Returns true when
+   * a file was deleted, false when nothing was stored under the digest. The
+   * caller is responsible for only calling this once no job row references
+   * the digest any more — the store itself is content-addressed and has no
+   * idea of ownership.
+   */
+  remove?(sha256: Sha256Hex): Promise<boolean>;
 }
 
 /** Absolute path a digest maps to inside `root`, sharded by its first byte. */
 function pathForDigest(root: string, sha256: Sha256Hex): string {
-  return join(root, sha256.slice(0, 2), sha256);
+	return join(root, sha256.slice(0, 2), sha256);
 }
 
 /** Reject anything that is not a canonical lowercase hex sha256. */
 export function assertSha256Hex(value: string): Sha256Hex {
-  const lower = value.trim().toLowerCase();
+	const lower = value.trim().toLowerCase();
   if (!SHA256_HEX.test(lower)) {
     throw new Error(`Not a sha256 hex digest: "${value}"`);
   }
@@ -101,7 +109,9 @@ export function assertSha256Hex(value: string): Sha256Hex {
 }
 
 /** Hash a file already on disk, streaming so it never sits in memory whole. */
-export async function hashFile(path: string): Promise<{ sha256: Sha256Hex; size: number }> {
+export async function hashFile(
+  path: string,
+): Promise<{ sha256: Sha256Hex; size: number }> {
   const hash = createHash("sha256");
   let size = 0;
   const stream = createReadStream(path);
@@ -120,11 +130,11 @@ export async function hashFile(path: string): Promise<{ sha256: Sha256Hex; size:
  * store only owns the durable half.
  */
 export function createFilesystemSourceStore(dir: string): SourceStore {
-  async function ensureParent(target: string): Promise<void> {
+	async function ensureParent(target: string): Promise<void> {
     await mkdir(dirname(target), { recursive: true });
   }
 
-  async function fileSize(path: string): Promise<number | null> {
+	async function fileSize(path: string): Promise<number | null> {
     try {
       const info = await stat(path);
       return info.isFile() ? info.size : null;
@@ -133,9 +143,11 @@ export function createFilesystemSourceStore(dir: string): SourceStore {
     }
   }
 
-  const store: SourceStore = {
+	const store: SourceStore = {
     async has(sha256) {
-      return (await fileSize(pathForDigest(dir, assertSha256Hex(sha256)))) !== null;
+      return (
+        (await fileSize(pathForDigest(dir, assertSha256Hex(sha256)))) !== null
+      );
     },
 
     async locate(sha256) {
@@ -167,18 +179,29 @@ export function createFilesystemSourceStore(dir: string): SourceStore {
         // A cross-device rename (scratch and store on different mounts) fails
         // with EXDEV; fall back to a streamed copy, then drop the scratch file.
         if ((err as NodeJS.ErrnoException).code === "EXDEV") {
-          await pipeline(createReadStream(scratchPath), createWriteStream(target));
+          await pipeline(
+            createReadStream(scratchPath),
+            createWriteStream(target),
+          );
           await rm(scratchPath, { force: true });
         } else {
           throw err;
         }
       }
-      return { sha256: digest, path: target, size: actual.size, deduped: false };
+      return {
+        sha256: digest,
+        path: target,
+        size: actual.size,
+        deduped: false,
+      };
     },
 
     async putStream(source, options = {}) {
       await mkdir(dir, { recursive: true });
-      const scratch = join(dir, `.incoming-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+      const scratch = join(
+        dir,
+        `.incoming-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      );
       const hash = createHash("sha256");
       let size = 0;
       const max = options.maxBytes;
@@ -209,16 +232,29 @@ export function createFilesystemSourceStore(dir: string): SourceStore {
       }
 
       const digest = hash.digest("hex");
-      if (options.expected !== undefined && assertSha256Hex(options.expected) !== digest) {
+      if (
+        options.expected !== undefined &&
+        assertSha256Hex(options.expected) !== digest
+      ) {
         await rm(scratch, { force: true });
-        throw new SourceChecksumError(assertSha256Hex(options.expected), digest);
+        throw new SourceChecksumError(
+          assertSha256Hex(options.expected),
+          digest,
+        );
       }
 
       return store.commitFile(scratch, digest);
     },
+
+    async remove(sha256) {
+      const target = await store.locate(sha256);
+      if (target === null) return false;
+      await rm(target, { force: true });
+      return true;
+    },
   };
 
-  return store;
+	return store;
 }
 
 /** Raised when computed bytes do not match the declared sha256. */

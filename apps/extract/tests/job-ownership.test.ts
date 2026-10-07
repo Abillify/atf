@@ -14,6 +14,7 @@
  * list stays operator-only.
  */
 
+import { once } from "node:events";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import fc from "fast-check";
 import request from "supertest";
@@ -30,15 +31,40 @@ import {
 
 const availableBinary = vi.fn(async () => ({ available: true, version: "stub" }));
 
-const cleanups: Array<() => void> = [];
-afterEach(() => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+const cleanups: Array<() => void | Promise<void>> = [];
+
+/**
+ * Mount `app` on one stable loopback URL for the duration of a test — supertest
+ * per-request ephemeral servers churn ports and let foreign local processes
+ * answer (see documents.test.ts for the full explanation).
+ */
+async function serve(
+  app: ReturnType<typeof createApp>["app"],
+): Promise<string> {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  cleanups.push(async () => {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test server did not bind to a TCP port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+afterEach(async () => {
+  for (const cleanup of cleanups.splice(0)) await cleanup();
 });
 
-function buildApp(
+async function buildApp(
   configOverrides: Record<string, string | undefined> = {},
   overrides: AppOverrides = {},
-) {
+): Promise<string> {
   const config = loadTestConfig(configOverrides);
   const created = createApp(config, {
     logger: testLogger,
@@ -48,7 +74,7 @@ function buildApp(
     ...overrides,
   });
   cleanups.push(created.cleanup);
-  return created.app;
+  return serve(created.app);
 }
 
 // ── Property 39: Lesezugriff auf Jobs (E3) — the pure rule ─────────────────
@@ -161,8 +187,8 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("lets the originator read their own job with extract.ingest", async () => {
     const store = createFakeJobStore();
     const id = await seedJob(store, 1, { subject: "anna", tenant: "default" });
-    const app = buildApp(envFor("extract.ingest"), { store });
-    const res = await request(app)
+    const baseUrl = await buildApp(envFor("extract.ingest"), { store });
+    const res = await request(baseUrl)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "anna");
@@ -173,9 +199,9 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("answers a foreign job with the 404 of an unknown id", async () => {
     const store = createFakeJobStore();
     const id = await seedJob(store, 2, { subject: "bob", tenant: "default" });
-    const app = buildApp(envFor("extract.ingest"), { store });
+    const baseUrl = await buildApp(envFor("extract.ingest"), { store });
 
-    const foreign = await request(app)
+    const foreign = await request(baseUrl)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "mallory");
@@ -185,7 +211,7 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
     // same code, same message template. (The message echoes the *requested*
     // id, which the caller already has; nothing in the response reveals that
     // the row exists — requirement 8.14.)
-    const missing = await request(app)
+    const missing = await request(baseUrl)
       .get("/v2/jobs/00000000-0000-4000-8000-999999999999")
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "mallory");
@@ -201,9 +227,9 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("treats a different tenant as foreign even with the same subject", async () => {
     const store = createFakeJobStore();
     const id = await seedJob(store, 3, { subject: "anna", tenant: "tenant-a" });
-    const app = buildApp(envFor("extract.ingest"), { store });
+    const baseUrl = await buildApp(envFor("extract.ingest"), { store });
     // Same asserted user, but the job row carries another tenant.
-    const res = await request(app)
+    const res = await request(baseUrl)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "anna");
@@ -215,14 +241,14 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("keeps owner-less legacy jobs operator-only", async () => {
     const store = createFakeJobStore();
     const id = await seedJob(store, 4, { subject: null, tenant: null });
-    const ingestApp = buildApp(envFor("extract.ingest"), { store });
+    const ingestApp = await buildApp(envFor("extract.ingest"), { store });
     const asIngest = await request(ingestApp)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "anna");
     expect(asIngest.status).toBe(404);
 
-    const adminApp = buildApp(envFor("extract.admin"), { store });
+    const adminApp = await buildApp(envFor("extract.admin"), { store });
     const asAdmin = await request(adminApp)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`);
@@ -232,8 +258,8 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("answers 403 for a caller with neither admin nor ingest", async () => {
     const store = createFakeJobStore();
     const id = await seedJob(store, 5, { subject: "anna", tenant: "default" });
-    const app = buildApp(envFor("extract.convert"), { store });
-    const res = await request(app)
+    const baseUrl = await buildApp(envFor("extract.convert"), { store });
+    const res = await request(baseUrl)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "anna");
@@ -244,8 +270,8 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("keeps the job list behind extract.admin", async () => {
     const store = createFakeJobStore();
     await seedJob(store, 6, { subject: "anna", tenant: "default" });
-    const app = buildApp(envFor("extract.ingest"), { store });
-    const res = await request(app)
+    const baseUrl = await buildApp(envFor("extract.ingest"), { store });
+    const res = await request(baseUrl)
       .get("/v2/jobs")
       .set("Authorization", `Bearer ${token}`)
       .set("X-User", "anna");
@@ -267,12 +293,12 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
     const stored = await src.putStream(Readable.from([Buffer.from("%PDF-1.7\nbytes\n")]));
     try {
       const store = createFakeJobStore();
-      const app = buildApp(envFor("extract.ingest"), {
+      const baseUrl = await buildApp(envFor("extract.ingest"), {
         store,
         sourceStore: src,
         searchClient: stubSearchClient(),
       });
-      const res = await request(app)
+      const res = await request(baseUrl)
         .post("/v2/jobs")
         .set("Authorization", `Bearer ${token}`)
         .set("X-User", "carla")
@@ -282,7 +308,7 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
       expect(store.peek(res.body.jobId)?.created_by_tenant).toBe("default");
 
       // And carla can immediately read her own job back with ingest only.
-      const read = await request(app)
+      const read = await request(baseUrl)
         .get(`/v2/jobs/${res.body.jobId}`)
         .set("Authorization", `Bearer ${token}`)
         .set("X-User", "carla");
@@ -297,11 +323,11 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
     // createRequireScope; E3 must not turn that default into a 403.
     const store = createFakeJobStore();
     const id = await seedJob(store, 7, { subject: null, tenant: null });
-    const app = buildApp(
+    const baseUrl = await buildApp(
       { AUTHN_MODE: "token", AUTHZ_ENABLED: "true", API_TOKEN: token },
       { store },
     );
-    const res = await request(app)
+    const res = await request(baseUrl)
       .get(`/v2/jobs/${id}`)
       .set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(200);
@@ -310,11 +336,11 @@ describe("GET /v2/jobs/{id} · owner-scoped read", () => {
   it("skips the owner check entirely when authz is disabled", async () => {
     const store = createFakeJobStore();
     const id = await seedJob(store, 8, { subject: "bob", tenant: "default" });
-    const app = buildApp(
+    const baseUrl = await buildApp(
       { AUTHN_MODE: "disabled", AUTHZ_ENABLED: "false" },
       { store },
     );
-    const res = await request(app).get(`/v2/jobs/${id}`);
+    const res = await request(baseUrl).get(`/v2/jobs/${id}`);
     expect(res.status).toBe(200);
   });
 });

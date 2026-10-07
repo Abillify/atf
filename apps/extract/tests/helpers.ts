@@ -1,22 +1,22 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import pino from "pino";
 import {
-  EXTRACT_CONTRACT_ID,
   buildDocumentAssetId,
   buildFigureId,
-  serializeDocument,
-  sha256Hex,
+  EXTRACT_CONTRACT_ID,
   type ExtractedDocument,
   type ExtractedFigure,
   type ExtractedPage,
+  serializeDocument,
+  sha256Hex,
 } from "@atf/extract-contract/v1";
-import { loadConfig, type Config } from "../src/config.js";
+import pino from "pino";
+import { type Config, loadConfig } from "../src/config.js";
 import type { Extractor, ExtractResult } from "../src/pipeline/extract.js";
-import type { VisionClient } from "../src/vision/client.js";
-import type { SearchClient } from "../src/search-client.js";
 import type { FigureCrop } from "../src/pipeline/raster.js";
+import type { SearchClient } from "../src/search-client.js";
+import type { VisionClient } from "../src/vision/client.js";
 
 /** Silent logger, so a failing test's output is the assertion and not a log dump. */
 export const testLogger = pino({ level: "silent" });
@@ -38,7 +38,9 @@ export const BASE_ENV: Record<string, string> = {
  * otherwise one test's variables leak into the next and the failure appears in an
  * unrelated file.
  */
-export function loadTestConfig(overrides: Record<string, string | undefined> = {}): Config {
+export function loadTestConfig(
+  overrides: Record<string, string | undefined> = {},
+): Config {
   const saved = process.env;
   const next: Record<string, string> = { ...BASE_ENV };
   for (const [key, value] of Object.entries(overrides)) {
@@ -79,7 +81,10 @@ export function testFigure(
   };
 }
 
-export function testPage(page: number, overrides: Partial<ExtractedPage> = {}): ExtractedPage {
+export function testPage(
+  page: number,
+  overrides: Partial<ExtractedPage> = {},
+): ExtractedPage {
   return {
     page,
     markdown: `# Kapitel\n\nText auf Seite ${page}.`,
@@ -90,7 +95,9 @@ export function testPage(page: number, overrides: Partial<ExtractedPage> = {}): 
   };
 }
 
-export function testDocument(overrides: Partial<ExtractedDocument> = {}): ExtractedDocument {
+export function testDocument(
+  overrides: Partial<ExtractedDocument> = {},
+): ExtractedDocument {
   const pages = overrides.pages ?? [testPage(1), testPage(2)];
   return {
     contract: EXTRACT_CONTRACT_ID,
@@ -124,30 +131,37 @@ export const TINY_PNG = Buffer.from(
 );
 
 export function testCrop(): FigureCrop {
-  return { buffer: TINY_PNG, mimeType: "image/png", width: 1, height: 1 };
+	return { buffer: TINY_PNG, mimeType: "image/png", width: 1, height: 1 };
 }
 
 /** An extractor that returns a fixed document without touching a converter. */
-export function stubExtractor(options: {
-  document?: ExtractedDocument;
-  crops?: Map<string, FigureCrop>;
-  error?: Error;
-  onExtract?: (input: Parameters<Extractor["extract"]>[0]) => void;
-} = {}): Extractor {
+export function stubExtractor(
+  options: {
+    document?: ExtractedDocument;
+    crops?: Map<string, FigureCrop>;
+    error?: Error;
+    onExtract?: (input: Parameters<Extractor["extract"]>[0]) => void;
+  } = {},
+): Extractor {
   return {
     async extract(input) {
       options.onExtract?.(input);
       if (options.error !== undefined) throw options.error;
-      const document = options.document ?? testDocument({ reference: input.reference });
+      const document =
+        options.document ?? testDocument({ reference: input.reference });
       const result: ExtractResult = {
         document,
         markdown: serializeDocument(document),
         crops: options.crops ?? new Map(),
       };
       // Mirror the streaming contract so SSE tests exercise the real path.
-      await input.onPrepared?.({ pageCount: document.pageCount, extractionMs: 1 });
+      await input.onPrepared?.({
+        pageCount: document.pageCount,
+        extractionMs: 1,
+      });
       if (input.onPage !== undefined) {
-        for (const page of document.pages) await input.onPage(page, result.crops);
+        for (const page of document.pages)
+          await input.onPage(page, result.crops);
       }
       if (input.onProgress !== undefined) {
         let promptTokens = 0;
@@ -178,7 +192,7 @@ export function stubExtractor(options: {
 
 /** A vision client that never reaches the network. */
 export function stubVisionClient(available = true): VisionClient {
-  return {
+	return {
     async analyzePage() {
       return {
         raw: "<summary>S</summary><figures></figures><markdown>Text</markdown>",
@@ -198,7 +212,9 @@ export function stubVisionClient(available = true): VisionClient {
       };
     },
     async probe() {
-      return available ? { available: true } : { available: false, error: "stubbed as down" };
+      return available
+        ? { available: true }
+        : { available: false, error: "stubbed as down" };
     },
   };
 }
@@ -220,6 +236,11 @@ export interface RecordingSearchClient extends SearchClient {
     collection: string;
     identity: { userId?: string; userGroups?: readonly string[] } | undefined;
   }>;
+  /** Recorded `erase` calls, in order (task 4.6, requirement 2.12). */
+  eraseCalls: Array<{
+    request: import("@atf/erasure-contract").ErasureRequest;
+    identity: { userId?: string; userGroups?: readonly string[] } | undefined;
+  }>;
 }
 
 export function stubSearchClient(
@@ -230,13 +251,19 @@ export function stubSearchClient(
     deleteError?: Error;
     /** The `deleted` count `deleteByReference` reports (default 1). */
     deleted?: number;
+    /** Thrown by `erase` instead of `error` (task 4.6 cascade tests). */
+    eraseError?: Error;
+    /** The store results `erase` reports (default: one ok search.documents). */
+    eraseResults?: import("@atf/erasure-contract").ErasureStoreResult[];
   } = {},
 ): RecordingSearchClient {
   const calls: RecordingSearchClient["calls"] = [];
   const deleteCalls: RecordingSearchClient["deleteCalls"] = [];
+  const eraseCalls: RecordingSearchClient["eraseCalls"] = [];
   return {
     calls,
     deleteCalls,
+    eraseCalls,
     async ingestDocument(args) {
       if (options.error !== undefined) throw options.error;
       const collection = args.options?.collection ?? "documents";
@@ -267,6 +294,17 @@ export function stubSearchClient(
         identity: args.identity,
       });
       return { deleted: options.deleted ?? 1 };
+    },
+    async erase(args) {
+      if (options.eraseError !== undefined) throw options.eraseError;
+      eraseCalls.push({ request: args.request, identity: args.identity });
+      return {
+        requestId: args.request.requestId,
+        service: "search",
+        results: options.eraseResults ?? [
+          { store: "search.documents", status: "ok", erased: 3 },
+        ],
+      };
     },
     async probe() {
       return { available: true };

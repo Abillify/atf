@@ -42,7 +42,7 @@ export const EXTRACT_SCHEMA = "extract";
  * applies every step whose `toVersion` is greater than the recorded version,
  * in ascending order.
  */
-export const EXTRACT_SCHEMA_VERSION = 3;
+export const EXTRACT_SCHEMA_VERSION = 4;
 
 /**
  * Well-known advisory-lock key for the extract migration runner. Distinct from
@@ -437,21 +437,58 @@ async function addJobOwnership(client: MigrationClient): Promise<void> {
   `);
 }
 
+/**
+ * Task 4.6 (requirements 2.7, 2.12): the idempotency ledger for
+ * `POST /v1/erasure`.
+ *
+ * Mirrors Search's `vs_invocation_ledger` claim/transition protocol: a
+ * request's `requestId` is claimed with a fingerprint of its payload, a
+ * replay of the same payload returns the committed result, and a different
+ * payload under the same id is refused. Deleting twice must never double-
+ * count, and a crashed deletion must stay retryable — hence the
+ * `pending`/`running` states expire rather than block forever.
+ */
+async function addErasureLedger(client: MigrationClient): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${EXTRACT_SCHEMA}.erasure_ledger (
+      key TEXT PRIMARY KEY,
+      fingerprint TEXT NOT NULL,
+      state TEXT NOT NULL CHECK (state IN
+        ('pending', 'running', 'committed', 'failed', 'outcome_unknown', 'compensated')),
+      result JSONB,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+  await client.query(`
+    CREATE INDEX IF NOT EXISTS erasure_ledger_expires_idx
+      ON ${EXTRACT_SCHEMA}.erasure_ledger (expires_at)
+  `);
+}
+
 export const EXTRACT_MIGRATIONS: ExtractMigrationStep[] = [
   {
     toVersion: 1,
-    description: "Initial extract schema: jobs, *_stages, docpass_state, outboxes, uploads",
+    description:
+      "Initial extract schema: jobs, *_stages, docpass_state, outboxes, uploads",
     up: createInitialSchema,
   },
   {
     toVersion: 2,
-    description: "Resume hardening: token reservations, emit generation, auto-resume, asset page",
+    description:
+      "Resume hardening: token reservations, emit generation, auto-resume, asset page",
     up: addResumeHardening,
   },
   {
     toVersion: 3,
     description: "Job ownership: created_by_subject, created_by_tenant (E3)",
     up: addJobOwnership,
+  },
+  {
+    toVersion: 4,
+    description:
+      "Erasure ledger: erasure_ledger (task 4.6, requirements 2.7, 2.12)",
+    up: addErasureLedger,
   },
 ];
 

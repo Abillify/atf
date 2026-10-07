@@ -22,6 +22,7 @@
  * because content-addressing and the atomic commit are the point.
  */
 
+import { once } from "node:events";
 import { createHash } from "node:crypto";
 import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -160,12 +161,41 @@ const availableBinary = vi.fn(async () => ({ available: true, version: "stub" })
 let storeDir: string;
 let tmpUploadDir: string;
 
-const cleanups: Array<() => void> = [];
+const cleanups: Array<() => void | Promise<void>> = [];
 
-function buildApp(
+/**
+ * Mount `app` on one stable loopback URL for the duration of a test.
+ *
+ * Supertest creates — and closes — a fresh `http.Server` for every request
+ * when handed the Express function, which churns ephemeral ports; the OS can
+ * reissue a just-closed port to another local process and the next request is
+ * answered by *that* process (observed as foreign statuses like 426/501 that
+ * no assertion in this file can explain). High-volume tests share one
+ * listening socket instead — same pattern as documents.test.ts.
+ */
+async function serve(app: ReturnType<typeof createApp>["app"]): Promise<string> {
+  const server = app.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  cleanups.push(async () => {
+    // Keep-alive sockets would hold close() open indefinitely.
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => {
+      server.close(() => {
+        resolve();
+      });
+    });
+  });
+  const address = server.address();
+  if (address === null || typeof address === "string") {
+    throw new Error("test server did not bind to a TCP port");
+  }
+  return `http://127.0.0.1:${address.port}`;
+}
+
+async function buildApp(
   configOverrides: Record<string, string | undefined> = {},
   overrides: AppOverrides = {},
-) {
+): Promise<string> {
   const config = loadTestConfig({
     SOURCE_STORE_DIR: storeDir,
     UPLOAD_TMP_DIR: tmpUploadDir,
@@ -182,11 +212,14 @@ function buildApp(
     ...overrides,
     store,
     ...(store !== null
-      ? { uploadOffsetCommitter: overrides.uploadOffsetCommitter ?? inMemoryCommitter(store) }
+      ? {
+          uploadOffsetCommitter:
+            overrides.uploadOffsetCommitter ?? inMemoryCommitter(store),
+        }
       : {}),
   });
   cleanups.push(created.cleanup);
-  return created.app;
+  return serve(created.app);
 }
 
 beforeEach(async () => {
@@ -195,7 +228,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
-  for (const cleanup of cleanups.splice(0)) cleanup();
+  for (const cleanup of cleanups.splice(0)) await cleanup();
   vi.unstubAllGlobals();
   await rm(storeDir, { recursive: true, force: true });
   await rm(tmpUploadDir, { recursive: true, force: true });
@@ -245,19 +278,19 @@ describe("SourceStore (filesystem, content-addressed)", () => {
 
 describe("/ui/uploads · console upload path", () => {
   it("runs open → PATCH → HEAD → complete through the cookie BFF", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const whole = Buffer.from("console upload bytes");
     const chunkA = whole.subarray(0, 7);
     const chunkB = whole.subarray(7);
 
-    const open = await request(app)
+    const open = await request(baseUrl)
       .post("/ui/uploads")
       .set("Sec-Fetch-Site", "same-origin")
       .send({ reference: "ui/source.pdf", size: whole.length });
     expect(open.status).toBe(201);
     const id: string = open.body.upload_id;
 
-    const first = await request(app)
+    const first = await request(baseUrl)
       .patch(`/ui/uploads/${id}`)
       .set("Sec-Fetch-Site", "same-origin")
       .set("Content-Type", "application/offset+octet-stream")
@@ -266,11 +299,13 @@ describe("/ui/uploads · console upload path", () => {
       .send(chunkA);
     expect(first.status).toBe(204);
 
-    const head = await request(app).head(`/ui/uploads/${id}`).set("Sec-Fetch-Site", "same-origin");
+    const head = await request(baseUrl)
+      .head(`/ui/uploads/${id}`)
+      .set("Sec-Fetch-Site", "same-origin");
     expect(head.status).toBe(200);
     expect(head.headers["upload-offset"]).toBe(String(chunkA.length));
 
-    const second = await request(app)
+    const second = await request(baseUrl)
       .patch(`/ui/uploads/${id}`)
       .set("Sec-Fetch-Site", "same-origin")
       .set("Content-Type", "application/offset+octet-stream")
@@ -278,7 +313,7 @@ describe("/ui/uploads · console upload path", () => {
       .send(chunkB);
     expect(second.status).toBe(204);
 
-    const done = await request(app)
+    const done = await request(baseUrl)
       .post(`/ui/uploads/${id}/complete`)
       .set("Sec-Fetch-Site", "same-origin")
       .send({});
@@ -299,15 +334,15 @@ describe("/ui/uploads · console upload path", () => {
           : ({ ...row, size: row.size === null ? null : String(row.size), received_offset: String(row.received_offset) } as unknown as UploadRow);
       },
     } as ExtractStore;
-    const app = buildApp({}, { store: pgShaped });
+    const baseUrl = await buildApp({}, { store: pgShaped });
     const whole = Buffer.from("bigint shaped upload");
 
-    const open = await request(app)
+    const open = await request(baseUrl)
       .post("/ui/uploads")
       .set("Sec-Fetch-Site", "same-origin")
       .send({ reference: "ui/bigint.pdf", size: whole.length });
     const id: string = open.body.upload_id;
-    const patch = await request(app)
+    const patch = await request(baseUrl)
       .patch(`/ui/uploads/${id}`)
       .set("Sec-Fetch-Site", "same-origin")
       .set("Content-Type", "application/offset+octet-stream")
@@ -315,7 +350,7 @@ describe("/ui/uploads · console upload path", () => {
       .send(whole);
     expect(patch.status).toBe(204);
 
-    const done = await request(app)
+    const done = await request(baseUrl)
       .post(`/ui/uploads/${id}/complete`)
       .set("Sec-Fetch-Site", "same-origin")
       .send({});
@@ -323,7 +358,7 @@ describe("/ui/uploads · console upload path", () => {
     expect(done.body.sha256).toBe(sha256Hex(whole));
 
     // No digest was declared; a repeated complete still answers idempotently.
-    const again = await request(app)
+    const again = await request(baseUrl)
       .post(`/ui/uploads/${id}/complete`)
       .set("Sec-Fetch-Site", "same-origin")
       .send({});
@@ -332,8 +367,8 @@ describe("/ui/uploads · console upload path", () => {
   });
 
   it("refuses a cross-origin session open", async () => {
-    const app = buildApp();
-    const res = await request(app)
+    const baseUrl = await buildApp();
+    const res = await request(baseUrl)
       .post("/ui/uploads")
       .set("Origin", "https://attacker.example")
       .send({ reference: "ui/source.pdf" });
@@ -345,14 +380,14 @@ describe("/ui/uploads · console upload path", () => {
 
 describe("POST/PATCH/HEAD/complete · resumable upload", () => {
   it("resumes from the HEAD-reported offset after a mid-upload abort", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const whole = Buffer.from("0123456789abcdefghij"); // 20 bytes
     const wholeDigest = sha256Hex(whole);
     const chunkA = whole.subarray(0, 8);
     const chunkB = whole.subarray(8, 20);
 
     // Open a session, declaring the whole-file digest and size up front.
-    const open = await request(app)
+    const open = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/big.pdf")
       .send({ sha256: wholeDigest, size: whole.length });
@@ -362,7 +397,7 @@ describe("POST/PATCH/HEAD/complete · resumable upload", () => {
     const id: string = open.body.upload_id;
 
     // First chunk at offset 0.
-    const patchA = await request(app)
+    const patchA = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
@@ -372,13 +407,13 @@ describe("POST/PATCH/HEAD/complete · resumable upload", () => {
     expect(patchA.headers["upload-offset"]).toBe("8");
 
     // Simulate an abort: the client lost track and asks HEAD where to resume.
-    const head = await request(app).head(`/v2/uploads/${id}`);
+    const head = await request(baseUrl).head(`/v2/uploads/${id}`);
     expect(head.status).toBe(200);
     expect(head.headers["upload-offset"]).toBe("8");
     expect(head.headers["upload-status"]).toBe("open");
 
     // A wrong offset must not silently misplace bytes — it is a 409.
-    const wrongOffset = await request(app)
+    const wrongOffset = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
@@ -387,7 +422,7 @@ describe("POST/PATCH/HEAD/complete · resumable upload", () => {
     expect(wrongOffset.headers["upload-offset"]).toBe("8");
 
     // Resume at the confirmed offset.
-    const patchB = await request(app)
+    const patchB = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "8")
       .set("Content-Type", "application/octet-stream")
@@ -397,7 +432,9 @@ describe("POST/PATCH/HEAD/complete · resumable upload", () => {
     expect(patchB.headers["upload-offset"]).toBe("20");
 
     // Complete: the whole-file digest verifies and the source is stored.
-    const complete = await request(app).post(`/v2/uploads/${id}/complete`).send({});
+    const complete = await request(baseUrl)
+      .post(`/v2/uploads/${id}/complete`)
+      .send({});
     expect(complete.status).toBe(200);
     expect(complete.body.status).toBe("completed");
     expect(complete.body.sha256).toBe(wholeDigest);
@@ -410,22 +447,26 @@ describe("POST/PATCH/HEAD/complete · resumable upload", () => {
   });
 
   it("is idempotent: re-completing a finished session returns the same digest", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const whole = Buffer.from("idempotent-source");
     const digest = sha256Hex(whole);
-    const open = await request(app)
+    const open = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/x.pdf")
       .send({ sha256: digest, size: whole.length });
     const id: string = open.body.upload_id;
-    await request(app)
+    await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
       .send(whole);
-    const first = await request(app).post(`/v2/uploads/${id}/complete`).send({});
+    const first = await request(baseUrl)
+      .post(`/v2/uploads/${id}/complete`)
+      .send({});
     expect(first.status).toBe(200);
-    const second = await request(app).post(`/v2/uploads/${id}/complete`).send({});
+    const second = await request(baseUrl)
+      .post(`/v2/uploads/${id}/complete`)
+      .send({});
     expect(second.status).toBe(200);
     expect(second.body.sha256).toBe(digest);
   });
@@ -435,29 +476,32 @@ describe("POST/PATCH/HEAD/complete · resumable upload", () => {
 
 describe("checksum enforcement", () => {
   it("rejects a per-chunk checksum mismatch and leaves the offset unmoved", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const chunk = Buffer.from("this chunk is fine");
-    const open = await request(app)
+    const open = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/c.pdf")
       .send({});
     const id: string = open.body.upload_id;
 
-    const bad = await request(app)
+    const bad = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
-      .set("X-Chunk-Checksum-Sha256", sha256Hex(Buffer.from("a different chunk")))
+      .set(
+        "X-Chunk-Checksum-Sha256",
+        sha256Hex(Buffer.from("a different chunk")),
+      )
       .send(chunk);
     expect(bad.status).toBe(400);
     expect(bad.body.code).toBe("VALIDATION_FAILED");
 
     // The offset was rolled back to 0, so the client can re-send.
-    const head = await request(app).head(`/v2/uploads/${id}`);
+    const head = await request(baseUrl).head(`/v2/uploads/${id}`);
     expect(head.headers["upload-offset"]).toBe("0");
 
     // Re-sending with the right checksum succeeds at the same offset.
-    const good = await request(app)
+    const good = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
@@ -468,20 +512,22 @@ describe("checksum enforcement", () => {
   });
 
   it("refuses a whole-file checksum mismatch at complete time", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     const whole = Buffer.from("the actual bytes");
     const lie = sha256Hex(Buffer.from("not these bytes"));
-    const open = await request(app)
+    const open = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/m.pdf")
       .send({ sha256: lie, size: whole.length });
     const id: string = open.body.upload_id;
-    await request(app)
+    await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
       .send(whole);
-    const complete = await request(app).post(`/v2/uploads/${id}/complete`).send({});
+    const complete = await request(baseUrl)
+      .post(`/v2/uploads/${id}/complete`)
+      .send({});
     expect(complete.status).toBe(400);
     expect(complete.body.code).toBe("VALIDATION_FAILED");
     // The corrupted source was never committed to the store.
@@ -494,12 +540,12 @@ describe("checksum enforcement", () => {
 
 describe("source_url pull · SSRF protection", () => {
   it("refuses a link-local / metadata address regardless of allowlist", async () => {
-    const app = buildApp();
+    const baseUrl = await buildApp();
     for (const url of [
       "http://169.254.169.254/latest/meta-data/",
       "http://metadata.google.internal/computeMetadata/v1/",
     ]) {
-      const res = await request(app)
+      const res = await request(baseUrl)
         .post("/v2/uploads")
         .set("X-Reference", "tests/pull.pdf")
         .send({ source_url: url });
@@ -509,8 +555,10 @@ describe("source_url pull · SSRF protection", () => {
   });
 
   it("refuses a host outside SOURCE_URL_ALLOWED_HOSTS", async () => {
-    const app = buildApp({ SOURCE_URL_ALLOWED_HOSTS: "storage.example.com" });
-    const res = await request(app)
+    const baseUrl = await buildApp({
+      SOURCE_URL_ALLOWED_HOSTS: "storage.example.com",
+    });
+    const res = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
       .send({ source_url: "https://evil.example.net/doc.pdf" });
@@ -519,14 +567,14 @@ describe("source_url pull · SSRF protection", () => {
   });
 
   it("refuses a non-http(s) scheme and a URL with credentials", async () => {
-    const app = buildApp();
-    const scheme = await request(app)
+    const baseUrl = await buildApp();
+    const scheme = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
       .send({ source_url: "file:///etc/passwd" });
     expect(scheme.status).toBe(400);
 
-    const creds = await request(app)
+    const creds = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
       .send({ source_url: "https://user:pass@storage.example.com/doc.pdf" });
@@ -537,14 +585,17 @@ describe("source_url pull · SSRF protection", () => {
     const body = Buffer.from("%PDF-1.7\npulled source\n");
     const digest = sha256Hex(body);
     const calls: Array<{ url: string; address: string }> = [];
-    const app = buildApp(
+    const baseUrl = await buildApp(
       { SOURCE_URL_ALLOWED_HOSTS: "storage.example.com" },
       { sourceUrlRequest: fakeRequester(calls, () => okResponse(body)) },
     );
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
-      .send({ source_url: "https://storage.example.com/doc.pdf", sha256: digest });
+      .send({
+        source_url: "https://storage.example.com/doc.pdf",
+        sha256: digest,
+      });
     expect(res.status).toBe(201);
     expect(res.body.status).toBe("completed");
     expect(res.body.sha256).toBe(digest);
@@ -560,11 +611,11 @@ describe("source_url pull · SSRF protection", () => {
   it("rejects a pulled body whose sha256 does not match the declared one", async () => {
     const body = Buffer.from("pulled but wrong");
     const lie = sha256Hex(Buffer.from("expected something else"));
-    const app = buildApp(
+    const baseUrl = await buildApp(
       { SOURCE_URL_ALLOWED_HOSTS: "storage.example.com" },
       { sourceUrlRequest: fakeRequester([], () => okResponse(body)) },
     );
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
       .send({ source_url: "https://storage.example.com/doc.pdf", sha256: lie });
@@ -572,7 +623,14 @@ describe("source_url pull · SSRF protection", () => {
   });
   it("refuses literal private, loopback, CGNAT and mapped addresses", async () => {
     const calls: Array<{ url: string; address: string }> = [];
-    const app = buildApp({}, { sourceUrlRequest: fakeRequester(calls, () => okResponse(Buffer.from("x"))) });
+    const baseUrl = await buildApp(
+      {},
+      {
+        sourceUrlRequest: fakeRequester(calls, () =>
+          okResponse(Buffer.from("x")),
+        ),
+      },
+    );
     for (const url of [
       "http://127.0.0.1/doc.pdf",
       "http://10.1.2.3/doc.pdf",
@@ -586,7 +644,7 @@ describe("source_url pull · SSRF protection", () => {
       "http://[::ffff:127.0.0.1]/doc.pdf",
       "http://[::ffff:10.0.0.1]/doc.pdf",
     ]) {
-      const res = await request(app)
+      const res = await request(baseUrl)
         .post("/v2/uploads")
         .set("X-Reference", "tests/pull.pdf")
         .send({ source_url: url });
@@ -597,17 +655,19 @@ describe("source_url pull · SSRF protection", () => {
   });
   it("refuses an allowlisted host whose DNS answer contains a private address", async () => {
     const calls: Array<{ url: string; address: string }> = [];
-    const app = buildApp(
+    const baseUrl = await buildApp(
       { SOURCE_URL_ALLOWED_HOSTS: "storage.example.com" },
       {
         sourceUrlResolver: async () => [
           { address: "93.184.216.34", family: 4 },
           { address: "10.0.0.7", family: 4 },
         ],
-        sourceUrlRequest: fakeRequester(calls, () => okResponse(Buffer.from("x"))),
+        sourceUrlRequest: fakeRequester(calls, () =>
+          okResponse(Buffer.from("x")),
+        ),
       },
     );
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
       .send({ source_url: "https://storage.example.com/doc.pdf" });
@@ -621,16 +681,18 @@ describe("source_url pull · SSRF protection", () => {
       ["storage.example.com", "93.184.216.34"],
       ["cdn.example.com", "169.254.169.254"],
     ]);
-    const app = buildApp(
+    const baseUrl = await buildApp(
       {},
       {
-        sourceUrlResolver: async (host) => [{ address: answers.get(host) ?? "203.0.113.9", family: 4 }],
+        sourceUrlResolver: async (host) => [
+          { address: answers.get(host) ?? "203.0.113.9", family: 4 },
+        ],
         sourceUrlRequest: fakeRequester(calls, () =>
           redirectResponse("https://cdn.example.com/doc.pdf"),
         ),
       },
     );
-    const res = await request(app)
+    const res = await request(baseUrl)
       .post("/v2/uploads")
       .set("X-Reference", "tests/pull.pdf")
       .send({ source_url: "https://storage.example.com/doc.pdf" });
@@ -644,8 +706,11 @@ describe("source_url pull · SSRF protection", () => {
 });
 // ─── concurrent PATCH / checksum-before-write ────────────────────────────────
 describe("PATCH serialisation and checksum-before-write", () => {
-  async function openSession(app: ReturnType<typeof buildApp>): Promise<string> {
-    const open = await request(app).post("/v2/uploads").set("X-Reference", "tests/p.pdf").send({});
+  async function openSession(baseUrl: string): Promise<string> {
+    const open = await request(baseUrl)
+      .post("/v2/uploads")
+      .set("X-Reference", "tests/p.pdf")
+      .send({});
     expect(open.status).toBe(201);
     return open.body.upload_id as string;
   }
@@ -661,11 +726,14 @@ describe("PATCH serialisation and checksum-before-write", () => {
         await gate;
       },
     });
-    const app = buildApp({}, { store: memory, uploadOffsetCommitter: committer });
-    const id = await openSession(app);
+    const baseUrl = await buildApp(
+      {},
+      { store: memory, uploadOffsetCommitter: committer },
+    );
+    const id = await openSession(baseUrl);
     const chunk = Buffer.from("first chunk bytes");
     const patch = () =>
-      request(app)
+      request(baseUrl)
         .patch(`/v2/uploads/${id}`)
         .set("Upload-Offset", "0")
         .set("Content-Type", "application/octet-stream")
@@ -678,7 +746,7 @@ describe("PATCH serialisation and checksum-before-write", () => {
     expect(second.body.error).toMatch(/in progress/);
     unblock();
     expect((await first).status).toBe(204);
-    const head = await request(app).head(`/v2/uploads/${id}`);
+    const head = await request(baseUrl).head(`/v2/uploads/${id}`);
     expect(head.headers["upload-offset"]).toBe(String(chunk.length));
     // The session file holds the chunk exactly once.
     expect(await readFile(_sessionPath(tmpUploadDir, id))).toEqual(chunk);
@@ -687,9 +755,12 @@ describe("PATCH serialisation and checksum-before-write", () => {
   it("never writes a chunk with a bad checksum into the session file", async () => {
     const memory = inMemoryStore();
     const committer = inMemoryCommitter(memory);
-    const app = buildApp({}, { store: memory, uploadOffsetCommitter: committer });
-    const id = await openSession(app);
-    const bad = await request(app)
+    const baseUrl = await buildApp(
+      {},
+      { store: memory, uploadOffsetCommitter: committer },
+    );
+    const id = await openSession(baseUrl);
+    const bad = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
@@ -711,9 +782,12 @@ describe("PATCH serialisation and checksum-before-write", () => {
         await memory.updateUploadOffset(uploadId, 5);
       },
     });
-    const app = buildApp({}, { store: memory, uploadOffsetCommitter: committer });
-    const id = await openSession(app);
-    const res = await request(app)
+    const baseUrl = await buildApp(
+      {},
+      { store: memory, uploadOffsetCommitter: committer },
+    );
+    const id = await openSession(baseUrl);
+    const res = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
@@ -724,10 +798,10 @@ describe("PATCH serialisation and checksum-before-write", () => {
     expect((await stat(_sessionPath(tmpUploadDir, id))).size).toBe(0);
   });
   it("drops a torn tail left by a crashed append before appending", async () => {
-    const app = buildApp();
-    const id = await openSession(app);
+    const baseUrl = await buildApp();
+    const id = await openSession(baseUrl);
     const first = Buffer.from("AAAA");
-    await request(app)
+    await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "0")
       .set("Content-Type", "application/octet-stream")
@@ -736,7 +810,7 @@ describe("PATCH serialisation and checksum-before-write", () => {
     const { appendFile } = await import("node:fs/promises");
     await appendFile(_sessionPath(tmpUploadDir, id), "garbage");
     const second = Buffer.from("BBBB");
-    const res = await request(app)
+    const res = await request(baseUrl)
       .patch(`/v2/uploads/${id}`)
       .set("Upload-Offset", "4")
       .set("Content-Type", "application/octet-stream")
