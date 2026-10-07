@@ -1,0 +1,29 @@
+{
+	"name": "@atf/erasure-contract",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Cross-service erasure (DSAR) contract: request, per-store result, response and the signed Erasure_Receipt payload shared by runtime, search, extract and gate",
+	"author": "Abillify Technology GmbH <info@abillify.me>",
+	"license": "Elastic-2.0",
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"engines": {
+		"bun": ">=1.4.0 <2",
+		"node": ">=26 <27"
+	},
+	"scripts": {
+		"typecheck": "tsc --noEmit",
+		"test": "bun test",
+		"test:contracts": "bun test",
+		"build": "bun build ./src/index.ts --outdir ./dist --target bun"
+	},
+	"dependencies": {
+		"zod": "4.4.3"
+	},
+	"devDependencies": {
+		"@types/bun": "1.4.0",
+		"typescript": "7.0.2"
+	}
+}

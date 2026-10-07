@@ -174,7 +174,8 @@ jobs:
       - name: Contract package tests
         run: |
           for package in identity-contract transaction-contract evidence-contract \
-                         schema-compatibility contract-adapter extract-contract; do
+                         schema-compatibility contract-adapter extract-contract \
+                         security-kit erasure-contract; do
             bun run --filter "@atf/$package" test
           done
       - name: Cross-contract lifecycle
