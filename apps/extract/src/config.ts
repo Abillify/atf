@@ -361,6 +361,14 @@ export interface Config {
    * matters because strict servers reject unknown fields.
    */
   visionReasoningEffort: string | null; // VISION_REASONING_EFFORT
+  /**
+   * VISION_SUPPORTS_JSON_SCHEMA — capability flag: the provider enforces
+   * `response_format: json_schema` on chat completions (task 7.9, requirement
+   * 5.10). Fail-closed like the runtime's model-capability rules: off unless
+   * the operator states the backend supports it. A provider that rejects the
+   * field anyway is handled by the client's fallback, not by failed pages.
+   */
+  visionSupportsJsonSchema: boolean; // VISION_SUPPORTS_JSON_SCHEMA (default: false)
   /** VISION_INPUT_TOKEN_COST — USD per million input tokens, for reporting. */
   visionInputTokenCost: number; // VISION_INPUT_TOKEN_COST (default: 0.15)
   /** VISION_OUTPUT_TOKEN_COST — USD per million output tokens. */
@@ -465,8 +473,22 @@ export interface Config {
    * higher than the write-path `RATE_LIMIT`. 0 disables it.
    */
   renderRateLimit: number; // RENDER_RATE_LIMIT (default: 240, 0=disabled)
-  /** MAX_PAGES — refuse documents longer than this. 0 disables the limit. */
-  maxPages: number; // MAX_PAGES (default: 0, 0=unlimited)
+  /**
+   * MAX_PAGES — refuse documents longer than this. 0 disables the limit.
+   * The default is 500 (requirement 5.8): an unbounded upload occupies the
+   * converter and spends model tokens per page without ceiling, so the
+   * limit ships ON rather than off.
+   */
+  maxPages: number; // MAX_PAGES (default: 500, 0=unlimited)
+  /**
+   * VISION_BUDGET_PAGES_PER_DAY — vision pages a single tenant may spend
+   * across all of its jobs per UTC day (requirement 5.8). Enforced by
+   * `jobs/budget.ts` against a Postgres counter; a job that would cross the
+   * limit fails with `BUDGET_EXCEEDED` (design §Budget). 0 disables the
+   * daily cap — a warning in production, since the per-job token budget
+   * alone does not bound a tenant's aggregate daily spend.
+   */
+  visionBudgetPagesPerDay: number; // VISION_BUDGET_PAGES_PER_DAY (default: 0, 0=unlimited)
   /** TEMP_DIR — scratch space for rendered pages and converted PDFs. */
   tempDir: string; // TEMP_DIR (default: "/tmp/atf-extract")
   /** PAGE_LABEL — page-marker label emitted in the canonical Markdown. */
@@ -484,10 +506,125 @@ export interface Config {
    * retryable conversion failure (LibreOffice). 0 disables it.
    */
   subprocessTimeoutMs: number; // SUBPROCESS_TIMEOUT_MS (default: 120000, 0=disabled)
+  /**
+   * SUBPROCESS_MEMORY_LIMIT_MB — `prlimit --as` ceiling applied to each
+   * converter subprocess on Linux (requirement 5.5). 0 disables the wrapper.
+   *
+   * Deliberately off by default: `--as` caps *virtual* address space, which
+   * LibreOffice reserves far more generously than it uses, so a value tuned
+   * for one image breaks conversions on another. In a container the cgroup
+   * memory limit is the correct ceiling — set `mem_limit` there and leave
+   * this at 0. Configure it on bare-metal Linux, where no cgroup applies.
+   */
+  subprocessMemoryLimitMb: number; // SUBPROCESS_MEMORY_LIMIT_MB (default: 0, 0=disabled)
+  /**
+   * SUBPROCESS_CPU_LIMIT_S — `prlimit --cpu` ceiling in CPU-seconds, SIGKILL
+   * on breach (requirement 5.5). Unlike the wall-clock timeout this bounds
+   * cumulative CPU across all of the converter's threads, so a process that
+   * keeps yielding the CPU cannot stretch a spin indefinitely. It also bounds
+   * an orphan: the `libreoffice` launcher execs `soffice.bin`, and a
+   * wall-clock kill of the wrapper can leave the real process spinning — the
+   * inherited CPU ceiling ends it. The default is generous (well above any
+   * legitimate conversion) so it only ever catches runaways. 0 disables it.
+   */
+  subprocessCpuLimitSeconds: number; // SUBPROCESS_CPU_LIMIT_S (default: 900, 0=disabled)
+  /**
+   * CONVERTER_MODE — where the poppler/LibreOffice binaries execute
+   * (requirement 5.7). `isolated` routes every conversion through a
+   * newline-delimited JSON RPC over a Unix socket to the `extract-converter`
+   * sidecar container — no network access, read-only root filesystem,
+   * non-root, default (RuntimeDefault) seccomp profile — instead of spawning
+   * them in this container. The socket carries only the {command, args, home,
+   * timeoutMs} request and the stdout/stderr result; document bytes never
+   * cross it, because the input and output directories live on a volume both
+   * containers mount. `local` (the default) keeps the in-container spawns.
+   */
+  converterMode: "local" | "isolated"; // CONVERTER_MODE (default: local)
+  /**
+   * CONVERTER_SOCKET — filesystem path of the converter RPC socket when
+   * CONVERTER_MODE=isolated. The extract container mounts the directory
+   * containing it (connecting to a Unix socket needs write access to the
+   * mount point); the converter container creates the socket there.
+   */
+  converterSocket: string; // CONVERTER_SOCKET (default: /run/atf-converter/converter.sock)
+
+  // ── OCR fallback (requirement 5.11) ───────────────────────────────────────
+  /**
+   * OCR_FALLBACK — what happens to a scanned page (no text layer) when the
+   * vision endpoint is down. `off` (default) fails the page for a later retry,
+   * exactly as before. `tesseract` recognises the page text with Tesseract
+   * instead and records a warning on the page, so a VLM outage degrades to
+   * searchable OCR text rather than missing content. The binary must be
+   * present in the image (or in the converter sidecar); a failing Tesseract
+   * leaves the original vision failure in place.
+   */
+  ocrFallback: "off" | "tesseract"; // OCR_FALLBACK (default: off)
+  /** TESSERACT_BIN — binary used for the OCR fallback. */
+  tesseractBin: string; // TESSERACT_BIN (default: "tesseract")
+  /**
+   * OCR_LANG — Tesseract language(s), e.g. `deu` or `deu+eng`. The traineddata
+   * files for every listed language must be installed in the image.
+   */
+  ocrLang: string; // OCR_LANG (default: "deu")
+
+  // ── ZIP guard (requirement 5.1, 5.4) ──────────────────────────────────────
+  /**
+   * ZIP_MAX_ENTRIES — largest entry count a ZIP-based container (XLSX, VSDX,
+   * DOCX, PPTX, DOCX embeddings) may declare. Checked against the central
+   * directory before anything is inflated; a violation rejects the job with
+   * `DOCUMENT_TOO_COMPLEX`.
+   */
+  zipMaxEntries: number; // ZIP_MAX_ENTRIES (default: 10000)
+  /**
+   * ZIP_MAX_TOTAL_BYTES — largest sum of declared uncompressed sizes across
+   * all entries of one ZIP container.
+   */
+  zipMaxTotalBytes: number; // ZIP_MAX_TOTAL_BYTES (default: 536870912)
+  /**
+   * ZIP_MAX_ENTRY_BYTES — largest declared uncompressed size of a single ZIP
+   * entry.
+   */
+  zipMaxEntryBytes: number; // ZIP_MAX_ENTRY_BYTES (default: 209715200)
+  /**
+   * ZIP_MAX_RATIO — largest accepted compression ratio (uncompressed /
+   * compressed) of a single deflated entry. Normal document XML sits around
+   * 10–30:1; anything past this is a bomb, not a document.
+   */
+  zipMaxRatio: number; // ZIP_MAX_RATIO (default: 100)
+  /**
+   * MAX_EMBED_DEPTH — how deep an Outlook `.msg` may nest embedded messages
+   * before deeper ones are skipped with a warning (requirement 5.4).
+   */
+  maxEmbedDepth: number; // MAX_EMBED_DEPTH (default: 2)
+
+  // ── Parser isolation (requirement 5.2) ────────────────────────────────────
+  /**
+   * PARSE_ISOLATED — run the native parsers (BPMN, XLSX, DOCX, VSDX, e-mail)
+   * in a Worker thread with a heap ceiling so a pathological document cannot
+   * take the service down with it. When off — or when the sandbox fails to
+   * start — parsers run in-process.
+   */
+  parseIsolated: boolean; // PARSE_ISOLATED (default: true)
+  /**
+   * PARSE_MEMORY_LIMIT_MB — old-generation heap ceiling for the isolated
+   * parser thread (`resourceLimits.maxOldGenerationSizeMb`; enforced by the
+   * Node production runtime, ignored by Bun). A parse that exceeds it fails
+   * with `DOCUMENT_TOO_COMPLEX` instead of growing without bound.
+   */
+  parseMemoryLimitMb: number; // PARSE_MEMORY_LIMIT_MB (default: 512)
 
   // ── Limits ────────────────────────────────────────────────────────────────
   /** MAX_UPLOAD_BYTES — largest accepted upload. Default 50 MiB. */
   maxUploadBytes: number; // MAX_UPLOAD_BYTES (default: 52428800)
+  /**
+   * UPLOAD_MEMORY_THRESHOLD_BYTES — a multipart upload larger than this is
+   * spooled to a scratch file under `TEMP_DIR/uploads` instead of the heap
+   * (requirement 5.9), so a document waiting for a conversion slot does not
+   * also hold its bytes there. 0 spools every upload. The scratch file is
+   * removed when the request finishes; a startup sweep clears what a crashed
+   * process left behind.
+   */
+  uploadMemoryThresholdBytes: number; // UPLOAD_MEMORY_THRESHOLD_BYTES (default: 8388608)
   /** BODY_LIMIT — limit for JSON/text request bodies. */
   bodyLimit: string; // BODY_LIMIT (default: "1mb")
   /**
@@ -620,9 +757,11 @@ export function loadConfig(): Config {
       parsed < min ||
       (max !== undefined && parsed > max)
     ) {
-      const range = max !== undefined ? `between ${min} and ${max}` : `>= ${min}`;
+      const range =
+        max !== undefined ? `between ${min} and ${max}` : `>= ${min}`;
       throw new Error(
-        `${name} must be an integer ${range}` + (min === 0 ? " (or 0 to disable)" : ""),
+        `${name} must be an integer ${range}` +
+          (min === 0 ? " (or 0 to disable)" : ""),
       );
     }
     return parsed;
@@ -683,7 +822,10 @@ export function loadConfig(): Config {
    * default; an unrecognised kind is a startup error rather than a silent drop,
    * so a typo in FIGURE_PASS2_KINDS never quietly disables Pass 2 for a kind.
    */
-  function parseFigureKindsEnv(name: string, defaultVal: FigureKind[]): FigureKind[] {
+  function parseFigureKindsEnv(
+    name: string,
+    defaultVal: FigureKind[],
+  ): FigureKind[] {
     const raw = parseCsvEnv(name).map((value) => value.toLowerCase());
     if (raw.length === 0) return defaultVal;
     const valid = new Set<string>(figureKindSchema.options);
@@ -704,7 +846,9 @@ export function loadConfig(): Config {
     const parsed = raw.map((value) => {
       const n = Number.parseInt(value, 10);
       if (!Number.isInteger(n) || n < 1) {
-        throw new Error(`${name} must be a comma-separated list of positive integers`);
+        throw new Error(
+          `${name} must be a comma-separated list of positive integers`,
+        );
       }
       return n;
     });
@@ -729,10 +873,14 @@ export function loadConfig(): Config {
     if (!clientSecret) missing.push("OIDC_CLIENT_SECRET");
     if (!sessionSecret) missing.push("OIDC_SESSION_SECRET");
     if (missing.length > 0) {
-      throw new Error(`OIDC is enabled (OIDC_ISSUER set) but missing: ${missing.join(", ")}`);
+      throw new Error(
+        `OIDC is enabled (OIDC_ISSUER set) but missing: ${missing.join(", ")}`,
+      );
     }
     if ((sessionSecret as string).length < 16) {
-      throw new Error("OIDC_SESSION_SECRET must be at least 16 characters for HMAC signing");
+      throw new Error(
+        "OIDC_SESSION_SECRET must be at least 16 characters for HMAC signing",
+      );
     }
 
     return {
@@ -742,7 +890,9 @@ export function loadConfig(): Config {
       redirectUri: optionalString("OIDC_REDIRECT_URI"),
       scopes: optionalString("OIDC_SCOPES") ?? "openid profile email",
       sessionSecret: sessionSecret as string,
-      allowedEmails: parseCsvEnv("OIDC_ALLOWED_EMAILS").map((e) => e.toLowerCase()),
+      allowedEmails: parseCsvEnv("OIDC_ALLOWED_EMAILS").map((e) =>
+        e.toLowerCase(),
+      ),
       allowedEmailDomains: parseCsvEnv("OIDC_ALLOWED_EMAIL_DOMAINS").map((d) =>
         d.toLowerCase().replace(/^@/, ""),
       ),
@@ -764,14 +914,17 @@ export function loadConfig(): Config {
           `Expected format: '[{"issuer":"https://...","audience":"optional-client-id"}]'`,
       );
     }
-    if (!Array.isArray(parsed)) throw new Error("API_OIDC_ISSUERS must be a JSON array");
+    if (!Array.isArray(parsed))
+      throw new Error("API_OIDC_ISSUERS must be a JSON array");
     return parsed.map((entry: unknown, i: number) => {
       if (typeof entry !== "object" || entry === null || Array.isArray(entry)) {
         throw new Error(`API_OIDC_ISSUERS[${i}]: each entry must be an object`);
       }
       const e = entry as Record<string, unknown>;
       if (typeof e["issuer"] !== "string" || !e["issuer"].trim()) {
-        throw new Error(`API_OIDC_ISSUERS[${i}]: "issuer" must be a non-empty string`);
+        throw new Error(
+          `API_OIDC_ISSUERS[${i}]: "issuer" must be a non-empty string`,
+        );
       }
       for (const key of [
         "audience",
@@ -782,16 +935,28 @@ export function loadConfig(): Config {
         "clientIdClaim",
       ]) {
         if (e[key] !== undefined && typeof e[key] !== "string") {
-          throw new Error(`API_OIDC_ISSUERS[${i}]: "${key}" must be a string when present`);
+          throw new Error(
+            `API_OIDC_ISSUERS[${i}]: "${key}" must be a string when present`,
+          );
         }
       }
       return {
         issuer: (e["issuer"] as string).trim(),
-        ...(e["audience"] !== undefined ? { audience: e["audience"] as string } : {}),
-        ...(e["userClaim"] !== undefined ? { userClaim: e["userClaim"] as string } : {}),
-        ...(e["groupsClaim"] !== undefined ? { groupsClaim: e["groupsClaim"] as string } : {}),
-        ...(e["tenantClaim"] !== undefined ? { tenantClaim: e["tenantClaim"] as string } : {}),
-        ...(e["scopesClaim"] !== undefined ? { scopesClaim: e["scopesClaim"] as string } : {}),
+        ...(e["audience"] !== undefined
+          ? { audience: e["audience"] as string }
+          : {}),
+        ...(e["userClaim"] !== undefined
+          ? { userClaim: e["userClaim"] as string }
+          : {}),
+        ...(e["groupsClaim"] !== undefined
+          ? { groupsClaim: e["groupsClaim"] as string }
+          : {}),
+        ...(e["tenantClaim"] !== undefined
+          ? { tenantClaim: e["tenantClaim"] as string }
+          : {}),
+        ...(e["scopesClaim"] !== undefined
+          ? { scopesClaim: e["scopesClaim"] as string }
+          : {}),
         ...(e["clientIdClaim"] !== undefined
           ? { clientIdClaim: e["clientIdClaim"] as string }
           : {}),
@@ -810,7 +975,10 @@ export function loadConfig(): Config {
     return {
       url,
       poolMax: parseIntEnv("EXTRACT_DB_POOL_MAX", 10, { min: 1, max: 128 }),
-      statementTimeoutMs: parseNonNegIntEnv("EXTRACT_DB_STATEMENT_TIMEOUT_MS", 30_000),
+      statementTimeoutMs: parseNonNegIntEnv(
+        "EXTRACT_DB_STATEMENT_TIMEOUT_MS",
+        30_000,
+      ),
     };
   }
 
@@ -821,10 +989,17 @@ export function loadConfig(): Config {
    * worker would race itself out of its own lease.
    */
   function parseJobWorker(): JobWorkerConfig {
-    const leaseSeconds = parseIntEnv("JOB_LEASE_SECONDS", 60, { min: 5, max: 3600 });
-    const heartbeatIntervalMs = parseIntEnv("JOB_HEARTBEAT_INTERVAL_MS", 20_000, {
-      min: 1000,
+    const leaseSeconds = parseIntEnv("JOB_LEASE_SECONDS", 60, {
+      min: 5,
+      max: 3600,
     });
+    const heartbeatIntervalMs = parseIntEnv(
+      "JOB_HEARTBEAT_INTERVAL_MS",
+      20_000,
+      {
+        min: 1000,
+      },
+    );
     if (heartbeatIntervalMs >= leaseSeconds * 1000) {
       throw new Error(
         `JOB_HEARTBEAT_INTERVAL_MS (${heartbeatIntervalMs}) must be less than JOB_LEASE_SECONDS (${leaseSeconds}s) so a healthy worker keeps its own lease`,
@@ -834,8 +1009,13 @@ export function loadConfig(): Config {
       leaseSeconds,
       heartbeatIntervalMs,
       pollIntervalMs: parseIntEnv("JOB_POLL_INTERVAL_MS", 2000, { min: 100 }),
-      maxTransientWaitMs: parseNonNegIntEnv("JOB_MAX_TRANSIENT_WAIT_MS", 900_000),
-      visionTokenEstimate: parseIntEnv("VISION_TOKEN_ESTIMATE", 4096, { min: 1 }),
+      maxTransientWaitMs: parseNonNegIntEnv(
+        "JOB_MAX_TRANSIENT_WAIT_MS",
+        900_000,
+      ),
+      visionTokenEstimate: parseIntEnv("VISION_TOKEN_ESTIMATE", 4096, {
+        min: 1,
+      }),
     };
   }
 
@@ -848,8 +1028,13 @@ export function loadConfig(): Config {
    */
   function parseQueueLane(): QueueLaneConfig {
     return {
-      largeJobPageThreshold: parseIntEnv("LARGE_JOB_PAGE_THRESHOLD", 1000, { min: 1 }),
-      largeJobMaxConcurrency: parseIntEnv("LARGE_JOB_MAX_CONCURRENCY", 1, { min: 1, max: 1024 }),
+      largeJobPageThreshold: parseIntEnv("LARGE_JOB_PAGE_THRESHOLD", 1000, {
+        min: 1,
+      }),
+      largeJobMaxConcurrency: parseIntEnv("LARGE_JOB_MAX_CONCURRENCY", 1, {
+        min: 1,
+        max: 1024,
+      }),
     };
   }
 
@@ -860,8 +1045,14 @@ export function loadConfig(): Config {
    * commit could fire before its batch is even sent.
    */
   function parseEmitter(): EmitterConfig {
-    const emitBatchPages = parseIntEnv("EMIT_BATCH_PAGES", 20, { min: 1, max: 10_000 });
-    const segmentPages = parseIntEnv("SEGMENT_PAGES", 250, { min: 1, max: 100_000 });
+    const emitBatchPages = parseIntEnv("EMIT_BATCH_PAGES", 20, {
+      min: 1,
+      max: 10_000,
+    });
+    const segmentPages = parseIntEnv("SEGMENT_PAGES", 250, {
+      min: 1,
+      max: 100_000,
+    });
     if (segmentPages < emitBatchPages) {
       throw new Error(
         `SEGMENT_PAGES (${segmentPages}) must be >= EMIT_BATCH_PAGES (${emitBatchPages}) so a segment always contains whole batches`,
@@ -870,7 +1061,10 @@ export function loadConfig(): Config {
     return {
       emitBatchPages,
       segmentPages,
-      assetUploadConcurrency: parseIntEnv("ASSET_UPLOAD_CONCURRENCY", 4, { min: 1, max: 64 }),
+      assetUploadConcurrency: parseIntEnv("ASSET_UPLOAD_CONCURRENCY", 4, {
+        min: 1,
+        max: 64,
+      }),
       finalizePass: parseBoolEnv("FINALIZE_PASS", true),
     };
   }
@@ -890,9 +1084,13 @@ export function loadConfig(): Config {
 
   function parseSourceUrl(): SourceUrlConfig {
     return {
-      allowedHosts: parseCsvEnv("SOURCE_URL_ALLOWED_HOSTS").map((host) => host.toLowerCase()),
+      allowedHosts: parseCsvEnv("SOURCE_URL_ALLOWED_HOSTS").map((host) =>
+        host.toLowerCase(),
+      ),
       // 2 GiB, matching the MAX_UPLOAD_BYTES ceiling design §5 S0 allows.
-      maxBytes: parseIntEnv("SOURCE_URL_MAX_BYTES", 2_147_483_648, { min: 1024 }),
+      maxBytes: parseIntEnv("SOURCE_URL_MAX_BYTES", 2_147_483_648, {
+        min: 1024,
+      }),
       timeoutMs: parseNonNegIntEnv("SOURCE_URL_TIMEOUT_MS", 300_000),
     };
   }
@@ -933,7 +1131,10 @@ export function loadConfig(): Config {
       apiKey: optionalString("SUMMARY_API_KEY"),
       // 0 disables the timeout (slow local models / long chapter summaries).
       timeoutMs: parseNonNegIntEnv("SUMMARY_TIMEOUT_MS", 120_000),
-      temperature: parseFloatEnv("SUMMARY_TEMPERATURE", 0.1, { min: 0, max: 2 }),
+      temperature: parseFloatEnv("SUMMARY_TEMPERATURE", 0.1, {
+        min: 0,
+        max: 2,
+      }),
       maxTokens: parseIntEnv("SUMMARY_MAX_TOKENS", 512, { min: 1 }),
       maxRetries: parseNonNegIntEnv("SUMMARY_MAX_RETRIES", 3),
       reasoningEffort: optionalString("SUMMARY_REASONING_EFFORT"),
@@ -953,13 +1154,21 @@ export function loadConfig(): Config {
   // ── Vision model ────────────────────────────────────────────────────────────
   const visionApiKey = optionalString("VISION_API_KEY");
   const visionTimeoutMs = parseNonNegIntEnv("VISION_TIMEOUT_MS", 600_000);
-  const visionTemperature = parseFloatEnv("VISION_TEMPERATURE", 0.1, { min: 0, max: 2 });
+  const visionTemperature = parseFloatEnv("VISION_TEMPERATURE", 0.1, {
+    min: 0,
+    max: 2,
+  });
   const visionTopP = parseFloatEnv("VISION_TOP_P", 1, { min: 0, max: 1 });
-  const visionMaxTokenVariants = parseIntListEnv("VISION_MAX_TOKEN_VARIANTS", [
-    8192, 16_384, 32_768,
-  ]);
+  const visionMaxTokenVariants = parseIntListEnv(
+    "VISION_MAX_TOKEN_VARIANTS",
+    [8192, 16_384, 32_768],
+  );
   const visionMaxRetries = parseNonNegIntEnv("VISION_MAX_RETRIES", 3);
   const visionReasoningEffort = optionalString("VISION_REASONING_EFFORT");
+  const visionSupportsJsonSchema = parseBoolEnv(
+    "VISION_SUPPORTS_JSON_SCHEMA",
+    false,
+  );
   const visionInputTokenCost = parseFloatEnv("VISION_INPUT_TOKEN_COST", 0.15, {
     min: 0,
     max: 1_000,
@@ -980,22 +1189,45 @@ export function loadConfig(): Config {
     "chart",
     "table_image",
   ]);
-  const figurePass2MinArea = parseFloatEnv("FIGURE_PASS2_MIN_AREA", 0.02, { min: 0, max: 1 });
-  const labelCoverageMin = parseIntEnv("LABEL_COVERAGE_MIN", 60, { min: 0, max: 100 });
-  const tileTargetPixels = parseIntEnv("TILE_TARGET_PIXELS", 2000, { min: 256, max: 10_000 });
-  const tileOverlapFraction = parseFloatEnv("TILE_OVERLAP_FRACTION", 0.1, { min: 0, max: 0.5 });
-  const tileMaxPerPage = parseIntEnv("TILE_MAX_PER_PAGE", 16, { min: 1, max: 256 });
-  const textFastPath = parseBoolEnv("TEXT_FAST_PATH", true);
-  const textFastPathMaxInkRatio = parseFloatEnv("TEXT_FAST_PATH_MAX_INK_RATIO", 0.04, {
+  const figurePass2MinArea = parseFloatEnv("FIGURE_PASS2_MIN_AREA", 0.02, {
     min: 0,
     max: 1,
   });
+  const labelCoverageMin = parseIntEnv("LABEL_COVERAGE_MIN", 60, {
+    min: 0,
+    max: 100,
+  });
+  const tileTargetPixels = parseIntEnv("TILE_TARGET_PIXELS", 2000, {
+    min: 256,
+    max: 10_000,
+  });
+  const tileOverlapFraction = parseFloatEnv("TILE_OVERLAP_FRACTION", 0.1, {
+    min: 0,
+    max: 0.5,
+  });
+  const tileMaxPerPage = parseIntEnv("TILE_MAX_PER_PAGE", 16, {
+    min: 1,
+    max: 256,
+  });
+  const textFastPath = parseBoolEnv("TEXT_FAST_PATH", true);
+  const textFastPathMaxInkRatio = parseFloatEnv(
+    "TEXT_FAST_PATH_MAX_INK_RATIO",
+    0.04,
+    {
+      min: 0,
+      max: 1,
+    },
+  );
   const renderMaxPixels = parseIntEnv("RENDER_MAX_PIXELS", 40_000_000, {
     min: 1_000,
     max: 100_000_000,
   });
   const renderRateLimit = parseNonNegIntEnv("RENDER_RATE_LIMIT", 240);
-  const maxPages = parseNonNegIntEnv("MAX_PAGES", 0);
+  const maxPages = parseNonNegIntEnv("MAX_PAGES", 500);
+  const visionBudgetPagesPerDay = parseNonNegIntEnv(
+    "VISION_BUDGET_PAGES_PER_DAY",
+    0,
+  );
   const tempDir = optionalString("TEMP_DIR") ?? "/tmp/atf-extract";
   const pageLabelRaw = optionalString("PAGE_LABEL") ?? "Seite";
   const pageLabel = PAGE_LABELS.find(
@@ -1006,19 +1238,89 @@ export function loadConfig(): Config {
   }
   const libreofficeBin = optionalString("LIBREOFFICE_BIN") ?? "libreoffice";
   const popplerBinDir = optionalString("POPPLER_BIN_DIR");
-  const subprocessTimeoutMs = parseNonNegIntEnv("SUBPROCESS_TIMEOUT_MS", 120_000);
+  const subprocessTimeoutMs = parseNonNegIntEnv(
+    "SUBPROCESS_TIMEOUT_MS",
+    120_000,
+  );
+  const subprocessMemoryLimitMb = parseNonNegIntEnv(
+    "SUBPROCESS_MEMORY_LIMIT_MB",
+    0,
+  );
+  const subprocessCpuLimitSeconds = parseNonNegIntEnv(
+    "SUBPROCESS_CPU_LIMIT_S",
+    900,
+  );
+  const converterMode = parseEnumEnv(
+    "CONVERTER_MODE",
+    ["local", "isolated"] as const,
+    "local",
+  );
+  const converterSocket =
+    optionalString("CONVERTER_SOCKET") ?? "/run/atf-converter/converter.sock";
+
+  // ── OCR fallback (requirement 5.11) ───────────────────────────────────────
+  const ocrFallback = parseEnumEnv(
+    "OCR_FALLBACK",
+    ["off", "tesseract"] as const,
+    "off",
+  );
+  const tesseractBin = optionalString("TESSERACT_BIN") ?? "tesseract";
+  const ocrLang = optionalString("OCR_LANG") ?? "deu";
+
+  // ── ZIP guard (requirement 5.1, 5.4) ──────────────────────────────────────
+  const zipMaxEntries = parseIntEnv("ZIP_MAX_ENTRIES", 10_000, { min: 1 });
+  const zipMaxTotalBytes = parseIntEnv(
+    "ZIP_MAX_TOTAL_BYTES",
+    512 * 1024 * 1024,
+    {
+      min: 1024,
+    },
+  );
+  const zipMaxEntryBytes = parseIntEnv(
+    "ZIP_MAX_ENTRY_BYTES",
+    200 * 1024 * 1024,
+    {
+      min: 1024,
+    },
+  );
+  const zipMaxRatio = parseIntEnv("ZIP_MAX_RATIO", 100, { min: 1 });
+  const maxEmbedDepth = parseNonNegIntEnv("MAX_EMBED_DEPTH", 2);
+
+  // ── Parser isolation (requirement 5.2) ────────────────────────────────────
+  const parseIsolated = parseBoolEnv("PARSE_ISOLATED", true);
+  const parseMemoryLimitMb = parseIntEnv("PARSE_MEMORY_LIMIT_MB", 512, {
+    min: 32,
+  });
 
   // ── Limits ──────────────────────────────────────────────────────────────────
-  const maxUploadBytes = parseIntEnv("MAX_UPLOAD_BYTES", 52_428_800, { min: 1024 });
+  const maxUploadBytes = parseIntEnv("MAX_UPLOAD_BYTES", 52_428_800, {
+    min: 1024,
+  });
+  // Requirement 5.9: uploads above this are spooled to disk rather than held in
+  // the heap while they wait for a conversion slot. 0 spools everything; there
+  // is no fatal gate for it, because either setting is a valid operational
+  // choice — the value only trades a syscall per upload against heap pressure.
+  const uploadMemoryThresholdBytes = parseNonNegIntEnv(
+    "UPLOAD_MEMORY_THRESHOLD_BYTES",
+    8_388_608,
+  );
   const bodyLimit = process.env["BODY_LIMIT"] || "1mb";
-  const convertConcurrency = parseIntEnv("CONVERT_CONCURRENCY", 2, { min: 1, max: 64 });
-  const pageConcurrency = parseIntEnv("PAGE_CONCURRENCY", 4, { min: 1, max: 64 });
+  const convertConcurrency = parseIntEnv("CONVERT_CONCURRENCY", 2, {
+    min: 1,
+    max: 64,
+  });
+  const pageConcurrency = parseIntEnv("PAGE_CONCURRENCY", 4, {
+    min: 1,
+    max: 64,
+  });
   const queueMaxDepth = parseIntEnv("QUEUE_MAX_DEPTH", 32, { min: 1 });
   const rateLimit = parseNonNegIntEnv("RATE_LIMIT", 120);
   const callbackMaxRetries = parseNonNegIntEnv("CALLBACK_MAX_RETRIES", 3);
-  const callbackTimeoutMs = parseIntEnv("CALLBACK_TIMEOUT_MS", 30_000, { min: 1 });
-  const callbackAllowedHosts = parseCsvEnv("CALLBACK_ALLOWED_HOSTS").map((host) =>
-    host.toLowerCase(),
+  const callbackTimeoutMs = parseIntEnv("CALLBACK_TIMEOUT_MS", 30_000, {
+    min: 1,
+  });
+  const callbackAllowedHosts = parseCsvEnv("CALLBACK_ALLOWED_HOSTS").map(
+    (host) => host.toLowerCase(),
   );
 
   // ── Source store and resumable upload ────────────────────────────────────────
@@ -1046,10 +1348,13 @@ export function loadConfig(): Config {
   const defaultTenantId = optionalString("DEFAULT_TENANT_ID") ?? "default";
   const apiServiceScopes = [
     ...new Set(
-      parseCsvEnv("API_SERVICE_SCOPES").flatMap((scope) => scope.split(/[\s,]+/)).filter(Boolean),
+      parseCsvEnv("API_SERVICE_SCOPES")
+        .flatMap((scope) => scope.split(/[\s,]+/))
+        .filter(Boolean),
     ),
   ];
-  const apiServiceTenantId = optionalString("API_SERVICE_TENANT_ID") ?? undefined;
+  const apiServiceTenantId =
+    optionalString("API_SERVICE_TENANT_ID") ?? undefined;
   const trustProxy = parseBoolEnv("TRUST_PROXY", false);
   const exposeErrorDetail = parseBoolEnv("EXPOSE_ERROR_DETAIL", false);
   const oidc = parseOidcConfig();
@@ -1086,11 +1391,19 @@ export function loadConfig(): Config {
     ["disabled", "token", "oidc", "token_or_oidc"] as const,
     inferredAuthnMode,
   );
-  if ((authnMode === "token" || authnMode === "token_or_oidc") && apiToken === null) {
+  if (
+    (authnMode === "token" || authnMode === "token_or_oidc") &&
+    apiToken === null
+  ) {
     throw new Error(`API_TOKEN is required when AUTHN_MODE=${authnMode}`);
   }
-  if ((authnMode === "oidc" || authnMode === "token_or_oidc") && apiOidcIssuers.length === 0) {
-    throw new Error(`API_OIDC_ISSUERS is required when AUTHN_MODE=${authnMode}`);
+  if (
+    (authnMode === "oidc" || authnMode === "token_or_oidc") &&
+    apiOidcIssuers.length === 0
+  ) {
+    throw new Error(
+      `API_OIDC_ISSUERS is required when AUTHN_MODE=${authnMode}`,
+    );
   }
   if (tenantIsolationEnabled && authnMode === "disabled") {
     throw new Error(
@@ -1129,6 +1442,7 @@ export function loadConfig(): Config {
     visionMaxTokenVariants,
     visionMaxRetries,
     visionReasoningEffort,
+    visionSupportsJsonSchema,
     visionInputTokenCost,
     visionOutputTokenCost,
     renderDpi,
@@ -1144,12 +1458,28 @@ export function loadConfig(): Config {
     textFastPath,
     textFastPathMaxInkRatio,
     maxPages,
+    visionBudgetPagesPerDay,
     tempDir,
     pageLabel,
     libreofficeBin,
     popplerBinDir,
     subprocessTimeoutMs,
+    subprocessMemoryLimitMb,
+    subprocessCpuLimitSeconds,
+    converterMode,
+    converterSocket,
+    ocrFallback,
+    tesseractBin,
+    ocrLang,
+    zipMaxEntries,
+    zipMaxTotalBytes,
+    zipMaxEntryBytes,
+    zipMaxRatio,
+    maxEmbedDepth,
+    parseIsolated,
+    parseMemoryLimitMb,
     maxUploadBytes,
+    uploadMemoryThresholdBytes,
     bodyLimit,
     convertConcurrency,
     pageConcurrency,

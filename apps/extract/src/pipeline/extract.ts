@@ -62,6 +62,11 @@ import type { VisionClient } from "../vision/client.js";
 import { parseVisionPage } from "../vision/response.js";
 import { convertToPdf, officeExtensionFor } from "./office.js";
 import {
+  assertZipWithinLimits,
+  DEFAULT_ZIP_LIMITS,
+  type ZipLimits,
+} from "./native/zip-guard.js";
+import {
   extractPageText,
   readPageSize,
   readPdfInfo,
@@ -113,6 +118,12 @@ export interface ExtractorConfig {
   pageConcurrency: number;
   /** Wall-clock ceiling on each poppler/LibreOffice invocation; 0 disables. */
   subprocessTimeoutMs: number;
+  /**
+   * Pre-flight ceilings for ZIP containers (DOCX, XLSX, PPTX, VSDX), checked
+   * before the LibreOffice conversion inflates them (requirement 5.1).
+   * Defaults to {@link DEFAULT_ZIP_LIMITS}.
+   */
+  zipLimits?: ZipLimits;
   /** Recorded in the pipeline descriptor so an index can be audited later. */
   visionModel: string;
 }
@@ -209,7 +220,9 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
    */
   function subprocessOptions(signal: AbortSignal | undefined): RunOptions {
     return {
-      ...(config.subprocessTimeoutMs > 0 ? { timeoutMs: config.subprocessTimeoutMs } : {}),
+      // Passed through as configured: a 0 is a deliberate disable, which the
+      // production-readiness gate rejects (requirement 5.5).
+      timeoutMs: config.subprocessTimeoutMs,
       ...(signal !== undefined ? { signal } : {}),
     };
   }
@@ -230,6 +243,17 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       throw unsupportedMediaType(
         "E-mail (EML, MSG, mbox) is ingested through the job pipeline (POST /v2/jobs, or /v1/ingest with a database)",
         { filename: input.filename },
+      );
+    }
+
+    // Every ZIP container (DOCX, XLSX, PPTX, VSDX) is checked against the
+    // central directory BEFORE the conversion inflates it (requirement 5.1).
+    // Outside the try below on purpose: a limit violation is a 422 rejection,
+    // not a conversion failure, and no catch block may turn it into one.
+    if (format.family === "zip") {
+      assertZipWithinLimits(
+        input.buffer,
+        config.zipLimits ?? DEFAULT_ZIP_LIMITS,
       );
     }
 
@@ -269,7 +293,10 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
 
       await input.onPrepared?.({ pageCount, extractionMs });
 
-      const pageNumbers = Array.from({ length: pageCount }, (_, index) => index + 1);
+      const pageNumbers = Array.from(
+        { length: pageCount },
+        (_, index) => index + 1,
+      );
       const cumulativeUsage = {
         requests: 0,
         promptTokens: 0,
@@ -294,7 +321,8 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
           cumulativeUsage.promptTokens += outcome.usage.promptTokens;
           cumulativeUsage.completionTokens += outcome.usage.completionTokens;
           cumulativeUsage.totalTokens += outcome.usage.totalTokens;
-          if (input.onPage !== undefined) await input.onPage(outcome.page, outcome.crops);
+          if (input.onPage !== undefined)
+            await input.onPage(outcome.page, outcome.crops);
           await input.onProgress?.({
             page: outcome.page,
             crops: outcome.crops,
@@ -322,7 +350,9 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
       const document: ExtractedDocument = {
         contract: EXTRACT_CONTRACT_ID,
         reference: input.reference,
-        ...(input.title !== undefined ? { title: input.title } : { title: input.filename }),
+        ...(input.title !== undefined
+          ? { title: input.title }
+          : { title: input.filename }),
         source: {
           filename: input.filename,
           mimeType: format.mimeType,
@@ -343,20 +373,33 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         pageLabel: config.pageLabel,
         pages,
         usage: {
-          requests: outcomes.reduce((sum, outcome) => sum + outcome.usage.requests, 0),
-          promptTokens: outcomes.reduce((sum, outcome) => sum + outcome.usage.promptTokens, 0),
+          requests: outcomes.reduce(
+            (sum, outcome) => sum + outcome.usage.requests,
+            0,
+          ),
+          promptTokens: outcomes.reduce(
+            (sum, outcome) => sum + outcome.usage.promptTokens,
+            0,
+          ),
           completionTokens: outcomes.reduce(
             (sum, outcome) => sum + outcome.usage.completionTokens,
             0,
           ),
-          totalTokens: outcomes.reduce((sum, outcome) => sum + outcome.usage.totalTokens, 0),
+          totalTokens: outcomes.reduce(
+            (sum, outcome) => sum + outcome.usage.totalTokens,
+            0,
+          ),
         },
         timings: {
           totalMs: Date.now() - startedAt,
           extractionMs,
-          visionMs: outcomes.reduce((sum, outcome) => sum + outcome.visionMs, 0),
+          visionMs: outcomes.reduce(
+            (sum, outcome) => sum + outcome.visionMs,
+            0,
+          ),
           renderMs: outcomes.reduce(
-            (sum, outcome) => sum + Math.max(0, outcome.pageMs - outcome.visionMs),
+            (sum, outcome) =>
+              sum + Math.max(0, outcome.pageMs - outcome.visionMs),
             0,
           ),
           ...(outcomes[0] !== undefined
@@ -393,7 +436,10 @@ export function createExtractor(deps: ExtractorDeps): Extractor {
         );
       }
       for (const issue of issues) {
-        logger.warn({ reference: input.reference, issue }, "Extract contract warning");
+        logger.warn(
+          { reference: input.reference, issue },
+          "Extract contract warning",
+        );
       }
 
       const markdown = serializeDocument(document);

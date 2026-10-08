@@ -44,13 +44,16 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { Readable } from "node:stream";
 import type { Request, RequestHandler } from "express";
 import type { Logger } from "pino";
 import { validationError } from "../errors.js";
 import { readHeader, readListHeader } from "../header-utils.js";
 import { getPrincipal } from "../request-principal.js";
-import { readUpload, sanitizeFilename } from "../upload.js";
+import {
+  readUpload,
+  sanitizeFilename,
+  type UploadedDocument,
+} from "../upload.js";
 import { readMetadataHeader, resolveAcl } from "./ingest.js";
 import type { ExtractStore } from "../persistence/index.js";
 import type { SourceStore } from "../source-store.js";
@@ -185,18 +188,29 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
   } = deps;
 
   return (req, res, next) => {
-    void (async () => {
-      const upload = readUpload(req);
+    // Read outside the async block so the `finally` below can always release a
+    // spooled scratch file (requirement 5.9), whichever path the request took.
+    let upload: UploadedDocument;
+    try {
+      upload = readUpload(req);
+    } catch (error) {
+      next(error);
+      return;
+    }
 
+    void (async () => {
       // The reference is the document identity Search stores under; defaulting
       // it to a filename would make two uploads of "scan.pdf" collide.
       const reference = readHeader(req, "x-reference")?.trim();
       if (reference === undefined || reference === "") {
-        throw validationError("X-Reference is required for ingest and identifies the document");
+        throw validationError(
+          "X-Reference is required for ingest and identifies the document",
+        );
       }
 
       const titleRaw = readHeader(req, "x-title")?.trim();
-      const collection = readHeader(req, "x-collection")?.trim() || defaultCollection;
+      const collection =
+        readHeader(req, "x-collection")?.trim() || defaultCollection;
       // Search's naming rule. Checked here so a bad name is a 400 now, not a
       // job that fails at emit after every page went through the model.
       if (!COLLECTION_NAME.test(collection)) {
@@ -211,9 +225,15 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       // ── 1. store the source in the content-addressed store ────────────────
       // Idempotent by sha256, so a re-uploaded document dedupes for free and a
       // job can always re-render deterministically from the one durable copy.
-      const stored = await sourceStore.putStream(Readable.from(upload.buffer), {
-        maxBytes: upload.buffer.length,
+      //
+      // Streamed rather than buffered: this handler never needs the bytes in the
+      // heap, only their hash, so a spooled upload (requirement 5.9) goes
+      // disk-to-disk and the scratch file is released right here — the durable
+      // copy in the store is all the job worker reads from afterwards.
+      const stored = await sourceStore.putStream(upload.createReadStream(), {
+        maxBytes: upload.size,
       });
+      await upload.cleanup();
 
       // ── 2. create the v2 job ──────────────────────────────────────────────
       const id = randomUUID();
@@ -237,7 +257,10 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
           snapshot,
           source,
           // The revision the emitter opens carries the caller's narrowed ACL.
-          acl: { allowedUsers: acl.allowedUsers, allowedGroups: acl.allowedGroups },
+          acl: {
+            allowedUsers: acl.allowedUsers,
+            allowedGroups: acl.allowedGroups,
+          },
           ...(titleRaw !== undefined && titleRaw !== ""
             ? { title: sanitizeFilename(titleRaw) }
             : {}),
@@ -247,7 +270,10 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
         pipeline_hash: snapshot.pipelineHash,
         prompt_hash: snapshot.promptHash,
       });
-      logger.info({ jobId: id, reference, collection }, "v1/ingest created a v2 job");
+      logger.info(
+        { jobId: id, reference, collection },
+        "v1/ingest created a v2 job",
+      );
 
       // ── 3. drive the job inline for a small document ──────────────────────
       // Tick the worker until *this* job reaches a terminal state, the queue
@@ -295,21 +321,27 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
           { jobId: id, status: job.status, pageCount: job.page_count },
           "v1/ingest returning async job handle",
         );
-        res.status(202).location(`/v2/jobs/${id}`).json({
-          status: "accepted",
-          job_id: id,
-          reference,
-          collection,
-          page_count: job.page_count ?? undefined,
-          poll: `/v2/jobs/${id}`,
-        });
+        res
+          .status(202)
+          .location(`/v2/jobs/${id}`)
+          .json({
+            status: "accepted",
+            job_id: id,
+            reference,
+            collection,
+            page_count: job.page_count ?? undefined,
+            poll: `/v2/jobs/${id}`,
+          });
         return;
       }
 
       // ── 4b. terminal failure ──────────────────────────────────────────────
       if (job.status === "failed" || job.status === "cancelled") {
         metrics.recordDocument(source.mimeType, "error");
-        logger.warn({ jobId: id, status: job.status }, "v1/ingest job did not complete");
+        logger.warn(
+          { jobId: id, status: job.status },
+          "v1/ingest job did not complete",
+        );
         res.status(502).json({
           error: `Ingest job ${job.status}`,
           code: "INGEST_JOB_FAILED",
@@ -329,7 +361,12 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       if (identity?.decision === "duplicate") {
         metrics.recordDocument(source.mimeType, "ok");
         logger.info(
-          { reference, collection, jobId: id, duplicateOf: identity.duplicateOf },
+          {
+            reference,
+            collection,
+            jobId: id,
+            duplicateOf: identity.duplicateOf,
+          },
           "Document skipped as a duplicate",
         );
         res.status(200).json({
@@ -339,7 +376,9 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
           ...resolvedReference,
           collection,
           job_id: id,
-          ...(identity.duplicateOf !== undefined ? { duplicate_of: identity.duplicateOf } : {}),
+          ...(identity.duplicateOf !== undefined
+            ? { duplicate_of: identity.duplicateOf }
+            : {}),
           warnings: job.warnings,
         });
         return;
@@ -356,8 +395,12 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
       // the old response never reported).
       const figureAssets = assets.filter((a) => a.variant !== "page");
       const figureCount = figureAssets.length;
-      const assetsStored = figureAssets.filter((a) => a.status === "acked").length;
-      const assetsFailed = figureAssets.filter((a) => a.status === "failed").length;
+      const assetsStored = figureAssets.filter(
+        (a) => a.status === "acked",
+      ).length;
+      const assetsFailed = figureAssets.filter(
+        (a) => a.status === "failed",
+      ).length;
 
       logger.info(
         {
@@ -376,7 +419,9 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
         status: "ok",
         reference,
         ...resolvedReference,
-        ...(identity?.version !== undefined ? { version: identity.version } : {}),
+        ...(identity?.version !== undefined
+          ? { version: identity.version }
+          : {}),
         collection,
         page_count: job.page_count ?? 0,
         figure_count: figureCount,
@@ -386,13 +431,19 @@ export function createIngestV2Handler(deps: IngestV2HandlerDeps): RequestHandler
         ...(job.revision_id !== null ? { revision_id: job.revision_id } : {}),
         warnings: job.warnings,
       });
-    })().catch((error: unknown) => {
-      if (res.headersSent) {
-        if (!res.writableEnded) res.end();
-        return;
-      }
-      next(error);
-    });
+    })()
+      .catch((error: unknown) => {
+        if (res.headersSent) {
+          if (!res.writableEnded) res.end();
+          return;
+        }
+        next(error);
+      })
+      .finally(() => {
+        // Backstop for a failure before the store took the bytes over; the
+        // call is idempotent, so the normal path above already did it.
+        void upload.cleanup();
+      });
   };
 }
 

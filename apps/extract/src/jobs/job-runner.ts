@@ -70,6 +70,8 @@ import { Readable } from "node:stream";
 import { RevisionTransientError } from "../revision-client.js";
 import type { SourceStore } from "../source-store.js";
 import { resolveFormat } from "../formats.js";
+import { ExtractError } from "../errors.js";
+import type { OcrClient } from "../pipeline/ocr.js";
 import { quotedParentOf, withQuotedHistory } from "../pipeline/native/index.js";
 import { textFingerprint } from "./fingerprint.js";
 import {
@@ -95,7 +97,7 @@ import {
   type StageUnit,
 } from "../persistence/types.js";
 import type { StageKey } from "../persistence/extract-queries.js";
-import type { VisionClient } from "../vision/client.js";
+import type { VisionClient, VisionPageResult } from "../vision/client.js";
 import {
   parseVisionPage,
   parseTranscription,
@@ -128,7 +130,12 @@ import {
   stageOrderIndex,
   type PipelineSnapshot,
 } from "./snapshot.js";
-import { createDbBudgetLedger } from "./budget.js";
+import {
+  createDbBudgetLedger,
+  createTenantDailyPageBudget,
+  tenantDailyBudgetFailureMessage,
+  type TenantDailyPageBudget,
+} from "./budget.js";
 import {
   classifyRenderedPage,
   resolvePageSizePt,
@@ -281,6 +288,13 @@ export interface JobRunnerConfig {
    * auto-resume instant. Default 0: pause on the first transient stall.
    */
   maxTransientWaitMs?: number;
+  /**
+   * VISION_BUDGET_PAGES_PER_DAY (task 7.7, requirement 5.8): VLM pages the
+   * job's tenant may spend per UTC day across all its jobs. 0 (default when
+   * omitted) disables the cap. Only consulted for a job with an attributable
+   * tenant; over the cap the run fails with `BUDGET_EXCEEDED`.
+   */
+  visionBudgetPagesPerDay?: number;
 }
 
 export interface JobRunnerDeps {
@@ -336,6 +350,15 @@ export interface JobRunnerDeps {
    * listed in the e-mail's text.
    */
   sourceStore?: SourceStore | null;
+  /**
+   * The Tesseract OCR fallback (task 7.10, requirement 5.11). Optional: when
+   * absent or disabled (`OCR_FALLBACK=off`, the default), a VLM outage fails a
+   * scanned page for a later retry exactly as before. When enabled, the runner
+   * recognises the page image with Tesseract instead and records a warning on
+   * the page, so a model outage degrades to searchable OCR text rather than
+   * missing content.
+   */
+  ocr?: OcrClient | null;
   /** The wall clock used for backoff decisions; injectable for tests. */
   now?: () => Date;
   /**
@@ -558,6 +581,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   const sourceStore = deps.sourceStore ?? null;
   const analyzer = deps.analyzer ?? null;
   const metrics = deps.metrics ?? null;
+  const ocr = deps.ocr ?? null;
   const fastPathEnabled = config.textFastPath === true;
   const fastPathMaxInkRatio = config.textFastPathMaxInkRatio ?? 0.04;
   const clock = deps.now ?? (() => new Date());
@@ -663,13 +687,17 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     }
   }
 
-  async function runJob(ctx: JobRunContext, abort: AbortController): Promise<JobRunOutcome> {
+  async function runJob(
+    ctx: JobRunContext,
+    abort: AbortController,
+  ): Promise<JobRunOutcome> {
     const { lease } = ctx;
     let job = ctx.job;
     const fence = lease.fence;
     const cfg = job.config as Record<string, unknown>;
     const reparseRequested = cfg[REPARSE_FLAG] === true;
-    const reparseApplied = reparseRequested || cfg[REPARSE_APPLIED_FLAG] === true;
+    const reparseApplied =
+      reparseRequested || cfg[REPARSE_APPLIED_FLAG] === true;
     const policy = reusePolicyFor(ctx.resume);
 
     // resume_policy (requirement 4.12): continue reuses every finished
@@ -677,7 +705,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // restart stage; a reparse reuses the (re-parsed) model checkpoints so the
     // rebuilt downstream never calls a model for a unit that already has one.
     const reuse = (stage: string, _unit: StageUnit): boolean =>
-      policy.reuseDoneRegardlessOfHash(stage) || (reparseApplied && isModelStage(stage));
+      policy.reuseDoneRegardlessOfHash(stage) ||
+      (reparseApplied && isModelStage(stage));
     const recordStage = metrics?.recordStage;
     const stageRunner = createStageRunner({
       store,
@@ -701,7 +730,21 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         : {}),
     });
     const budget: BudgetLedger =
-      job.token_budget !== null ? createDbBudgetLedger(store, job.id, fence) : unlimitedBudget;
+      job.token_budget !== null
+        ? createDbBudgetLedger(store, job.id, fence)
+        : unlimitedBudget;
+    // The tenant/day axis (task 7.7, requirement 5.8): independent of the
+    // per-job token ledger above, this caps how many VLM pages the owning
+    // tenant may spend today across ALL its jobs. A job without a tenant is
+    // uncapped — there is no tenant to attribute the spend to.
+    const tenantBudget: TenantDailyPageBudget = createTenantDailyPageBudget(
+      store,
+      {
+        tenantId: job.created_by_tenant,
+        limit: config.visionBudgetPagesPerDay ?? 0,
+        now: clock,
+      },
+    );
 
     // The summary generator binds to this run's stage runner and budget ledger,
     // so each summary is a checkpointed, budget-gated stage. The stand key is
@@ -738,16 +781,23 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       identity = step.identity;
       if (identity.canonicalReference !== job.reference) {
         logger.info(
-          { jobId: job.id, requested: job.reference, canonical: identity.canonicalReference },
+          {
+            jobId: job.id,
+            requested: job.reference,
+            canonical: identity.canonicalReference,
+          },
           "Ingesting as a new revision of the document indexed under the canonical reference",
         );
-        job =
-          (await store.setJobReference(job.id, identity.canonicalReference, fence)) ??
-          { ...job, reference: identity.canonicalReference };
+        job = (await store.setJobReference(
+          job.id,
+          identity.canonicalReference,
+          fence,
+        )) ?? { ...job, reference: identity.canonicalReference };
       }
       await saveIdentity(job.id, identity);
     }
-    if (identity.decision === "duplicate") return finishDuplicate(job, identity);
+    if (identity.decision === "duplicate")
+      return finishDuplicate(job, identity);
 
     let prepared: PreparedSource;
     try {
@@ -758,7 +808,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       });
     } catch (err) {
       logger.error({ jobId: job.id, err }, "Job source preparation failed");
-      return { status: "failed", error: err instanceof Error ? err.message : String(err) };
+      return {
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+      };
     }
 
     // ── identify, content phase: the text fingerprint and the version, before
@@ -790,7 +843,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // Native records carry no model response; a reparse has nothing to do.
           await store.patchJobConfig(job.id, { [REPARSE_FLAG]: false }, fence);
         }
-        return await runNativeSource({ job, native: prepared.native, stageRunner, lease, cfg });
+        return await runNativeSource({
+          job,
+          native: prepared.native,
+          stageRunner,
+          lease,
+          cfg,
+        });
       } finally {
         await prepared.close();
       }
@@ -826,11 +885,17 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             fromPage: 1,
             stages: [CROPS_STAGE, EMITTED_STAGE, DOCPASS_STAGE],
             deleteAssets: true,
-            configPatch: { [REPARSE_FLAG]: false, [REPARSE_APPLIED_FLAG]: true },
+            configPatch: {
+              [REPARSE_FLAG]: false,
+              [REPARSE_APPLIED_FLAG]: true,
+            },
           },
           fence,
         );
-        logger.info({ jobId: job.id, reparsed }, "Reparse applied; downstream invalidated for rebuild");
+        logger.info(
+          { jobId: job.id, reparsed },
+          "Reparse applied; downstream invalidated for rebuild",
+        );
       }
 
       // ── restart-stage (requirement 4.12): recompute from the restart stage
@@ -853,7 +918,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             },
             fence,
           );
-          logger.info({ jobId: job.id, marker }, "restart-stage applied; downstream invalidated");
+          logger.info(
+            { jobId: job.id, marker },
+            "restart-stage applied; downstream invalidated",
+          );
         }
       }
 
@@ -867,6 +935,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         analyzer: preparedAnalyzer,
         stageRunner,
         budget,
+        tenantBudget,
         events,
         dedup,
         abort,
@@ -876,14 +945,25 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // ── embedded objects (a DOCX's Visio, Excel, BPMN …): each a child
       //    document with its native parser, grouped under this document by
       //    Search. Ids are stable, so a resume creates none twice.
-      if (prepared.embeddedSources !== undefined && prepared.embeddedSources.length > 0) {
-        await spawnAttachmentJobs(job, cfg, prepared.embeddedSources, undefined);
+      if (
+        prepared.embeddedSources !== undefined &&
+        prepared.embeddedSources.length > 0
+      ) {
+        await spawnAttachmentJobs(
+          job,
+          cfg,
+          prepared.embeddedSources,
+          undefined,
+        );
       }
 
       // ── version from the transcribed first page: a scan has no text layer,
       //    so the content phase could not read its version; the vision
       //    transcription of page 1 can.
-      if (identity.version === undefined || identity.version.source === "source_modified") {
+      if (
+        identity.version === undefined ||
+        identity.version.source === "source_modified"
+      ) {
         const firstPage = await firstPageText(job.id);
         if (firstPage !== "") {
           const version = await resolveVersion({
@@ -892,9 +972,16 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             llm: deps.summaryClient ?? null,
             signal: scope().signal,
             onTokens: (tokens) => consumeTokens(job.id, tokens),
-            onLlmError: (err) => logger.warn({ jobId: job.id, err }, "Version detection by the text model failed"),
+            onLlmError: (err) =>
+              logger.warn(
+                { jobId: job.id, err },
+                "Version detection by the text model failed",
+              ),
           });
-          if (version !== undefined && version.source !== identity.version?.source) {
+          if (
+            version !== undefined &&
+            version.source !== identity.version?.source
+          ) {
             identity = { ...identity, version };
             await saveIdentity(job.id, identity);
           }
@@ -918,7 +1005,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       if (emitOutcome.status !== "completed") return emitOutcome;
 
       if (reparseApplied) {
-        await store.patchJobConfig(job.id, { [REPARSE_APPLIED_FLAG]: false }, fence);
+        await store.patchJobConfig(
+          job.id,
+          { [REPARSE_APPLIED_FLAG]: false },
+          fence,
+        );
       }
       events.publish({ type: "done", jobId: job.id, status: "completed" });
       return { status: "completed" };
@@ -1887,22 +1978,43 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     analyzer: PreparedAnalyzer | null;
     stageRunner: StageRunner;
     budget: BudgetLedger;
+    tenantBudget: TenantDailyPageBudget;
     events: JobEventBus;
     dedup: DedupRegistry;
     abort: AbortController;
   }): Promise<JobRunOutcome> {
-    const { job, pageCount, prepared, stageRunner, budget, dedup, abort } = args;
+    const {
+      job,
+      pageCount,
+      prepared,
+      stageRunner,
+      budget,
+      tenantBudget,
+      dedup,
+      abort,
+    } = args;
     const concurrency = Math.max(1, config.pageConcurrency);
 
     // Cumulative usage lives as two numbers, not a per-page array.
-    const cumulative = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const cumulative = {
+      requests: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    };
     const stall = { since: null as number | null };
     let blindRounds = 0;
 
     for (;;) {
       assertLive();
       const now = clock();
-      const pages = await store.nextRunnablePages(job.id, pageCount, CURSOR_STAGE, concurrency, now);
+      const pages = await store.nextRunnablePages(
+        job.id,
+        pageCount,
+        CURSOR_STAGE,
+        concurrency,
+        now,
+      );
       if (pages.length === 0) {
         const finished = await store.finishedPageCount(job.id, CURSOR_STAGE);
         if (finished >= pageCount) break;
@@ -1919,12 +2031,20 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // once, so the other pages start no further model calls.
       const results = await Promise.allSettled(
         pages.map((page) =>
-          runPage({ job, page, pageCount, prepared, analyzer: args.analyzer, stageRunner, budget, dedup }).catch(
-            (err: unknown) => {
-              if (err instanceof LeaseLostError) abort.abort();
-              throw err;
-            },
-          ),
+          runPage({
+            job,
+            page,
+            pageCount,
+            prepared,
+            analyzer: args.analyzer,
+            stageRunner,
+            budget,
+            tenantBudget,
+            dedup,
+          }).catch((err: unknown) => {
+            if (err instanceof LeaseLostError) abort.abort();
+            throw err;
+          }),
         ),
       );
 
@@ -1933,6 +2053,20 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       for (const [index, result] of results.entries()) {
         const page = pages[index] ?? 0;
         if (result.status === "fulfilled") {
+          if (result.value.budgetExceeded === true) {
+            // The tenant's daily vision-page budget is exhausted (requirement
+            // 5.8). Design §Budget: the job FAILS rather than pauses — a
+            // paused(budget) job would suggest an operator could resume it
+            // today, but the counter only resets at the next UTC day. The
+            // worker records the cause (which names BUDGET_EXCEEDED) as a job
+            // warning and transitions to failed.
+            return {
+              status: "failed",
+              error: tenantDailyBudgetFailureMessage(
+                config.visionBudgetPagesPerDay ?? 0,
+              ),
+            };
+          }
           if (result.value.paused) {
             // Budget ran out before a model call: park the job. The checkpoint
             // was left untouched so a resume recomputes in place.
@@ -1957,14 +2091,20 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         } else {
           const reason: unknown = result.reason;
           if (reason instanceof LeaseLostError || abort.signal.aborted) {
-            throw reason instanceof LeaseLostError ? reason : new LeaseLostError(scope().fence);
+            throw reason instanceof LeaseLostError
+              ? reason
+              : new LeaseLostError(scope().fence);
           }
-          if (reason instanceof BudgetExhaustedError) return { status: "paused", reason: "budget" };
+          if (reason instanceof BudgetExhaustedError)
+            return { status: "paused", reason: "budget" };
           // A transient stage failure left a retryable checkpoint with backoff;
           // the scheduler skips the page until it is due. Anything else wrote
           // no backoff, so the loop backs off itself before the next window.
           if (!(reason instanceof TransientStageError)) untracked = true;
-          logger.warn({ jobId: job.id, page, err: reason }, "Page stage failed transiently");
+          logger.warn(
+            { jobId: job.id, page, err: reason },
+            "Page stage failed transiently",
+          );
         }
       }
 
@@ -1972,7 +2112,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         stall.since = null;
         blindRounds = 0;
       } else if (untracked) {
-        const retryAt = new Date(clock().getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF));
+        const retryAt = new Date(
+          clock().getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF),
+        );
         const paused = await waitOrPause(stall, retryAt, abort.signal, true);
         if (paused !== null) return paused;
       }
@@ -1985,9 +2127,21 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   interface PageResult {
     completed: boolean;
     paused: boolean;
+    /**
+     * True when this page's vision model call pushed the tenant over its
+     * daily page budget (task 7.7, requirement 5.8). The page's own
+     * checkpoint is persisted — only the JOB fails, so a later manual retry
+     * after the day rolls over reuses this page without a model call.
+     */
+    budgetExceeded?: boolean;
     record: PageRecord;
     assetIds: string[];
-    usage: { requests: number; promptTokens: number; completionTokens: number; totalTokens: number };
+    usage: {
+      requests: number;
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    };
   }
 
   /**
@@ -2003,12 +2157,27 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     analyzer: PreparedAnalyzer | null;
     stageRunner: StageRunner;
     budget: BudgetLedger;
+    tenantBudget: TenantDailyPageBudget;
     dedup: DedupRegistry;
   }): Promise<PageResult> {
-    const { job, page, pageCount, prepared, stageRunner, budget, dedup } = args;
+    const {
+      job,
+      page,
+      pageCount,
+      prepared,
+      stageRunner,
+      budget,
+      tenantBudget,
+      dedup,
+    } = args;
     const preparedAnalyzer = args.analyzer;
     const key = (stage: string): StageKey => ({ job_id: job.id, page, stage });
-    const empty: PageResult["usage"] = { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const empty: PageResult["usage"] = {
+      requests: 0,
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    };
 
     // Hold the rendered page image for the crop step; it is discarded when the
     // page finishes, so memory does not accumulate across pages.
@@ -2026,9 +2195,18 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     ]);
 
     // ── vision stage (render + model + parse, one checkpoint) ─────────────
+    // Set only when the page actually reached the vision model: a fast-path
+    // page, a render-hash dedup reuse, or a checkpoint replay runs no model
+    // call and must not be charged against the tenant's daily page budget
+    // (task 7.7, requirement 5.8). The closure flag is the reliable signal —
+    // the persisted checkpoint cannot tell a reuse copy from a fresh call.
+    let modelCalled = false;
     let visionParsed: VisionStageParsed;
     try {
-      const result = await stageRunner.runStage<VisionStageParsed | undefined, string>({
+      const result = await stageRunner.runStage<
+        VisionStageParsed | undefined,
+        string
+      >({
         unit: "page",
         key: key(VISION1_STAGE),
         // The input hash pins render DPI + model + page; a resume with the same
@@ -2060,7 +2238,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           const hash = await renderHash(rendered.image.buffer);
           const decision = dedup.register(page, hash);
           if (decision.kind === "duplicate") {
-            const reused = await reuseVisionFromPage(job, decision.sourcePage, page, rendered);
+            const reused = await reuseVisionFromPage(
+              job,
+              decision.sourcePage,
+              page,
+              rendered,
+            );
             if (reused !== null) {
               // A deterministic stage result: raw carried over so `reparse`
               // still works, tokensUsed 0 so the budget is not charged twice.
@@ -2087,7 +2270,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // The real page size in points (never pixels) and the ink outside
           // the S2 text blocks drive the class, which in turn gates the fast
           // path and the tiling stage.
-          const sizePt = resolvePageSizePt(rendered, analysis, config.renderDpi);
+          const sizePt = resolvePageSizePt(
+            rendered,
+            analysis,
+            config.renderDpi,
+          );
           const classification = await classifyRenderedPage({
             imageBuffer: rendered.image.buffer,
             rawText: rendered.rawText,
@@ -2104,7 +2291,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // fidelity check, incomplete coverage of the text layer, a table or
           // figure candidate) falls the page back to the vision path below.
           if (fastPathEnabled && analysis !== null) {
-            const fast = await tryFastPath(page, rendered, analysis, classification, sizePt);
+            const fast = await tryFastPath(
+              page,
+              rendered,
+              analysis,
+              classification,
+              sizePt,
+            );
             if (fast !== null) {
               return { raw: null, parsed: fast, tokensUsed: 0 };
             }
@@ -2117,16 +2310,76 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // / ineligible, or there was no S2 analysis). Count the route so the
           // "Anteil Fast-Path" share (requirement 18.1) reflects it.
           metrics?.recordFastPath("vision");
-          const response = await vision.analyzePage({
-            page,
-            pageCount,
-            rawText: rendered.rawText,
-            image: { buffer: rendered.image.buffer, mimeType: rendered.image.mimeType },
-            ...(headingCandidates !== undefined && headingCandidates.length > 0
-              ? { headingCandidates }
-              : {}),
-            ...(prev.context !== null ? { prevPage: prev.context } : {}),
-          });
+          modelCalled = true;
+          let response: VisionPageResult;
+          // Set when the Tesseract fallback produced this page's text (task
+          // 7.10); drives the warning and `usedOcr` on the checkpoint.
+          let ocrFallback = false;
+          try {
+            response = await vision.analyzePage({
+              page,
+              pageCount,
+              rawText: rendered.rawText,
+              image: {
+                buffer: rendered.image.buffer,
+                mimeType: rendered.image.mimeType,
+              },
+              ...(headingCandidates !== undefined &&
+              headingCandidates.length > 0
+                ? { headingCandidates }
+                : {}),
+              ...(prev.context !== null ? { prevPage: prev.context } : {}),
+            });
+          } catch (error) {
+            // ── Tesseract OCR fallback (task 7.10, requirement 5.11) ───────
+            // A VLM outage must not cost a scanned page its content: with
+            // OCR_FALLBACK=tesseract, recognise the rendered page image with
+            // Tesseract instead and record a warning on the page. The gate is
+            // deliberately narrow — only a vision outage (VISION_UNAVAILABLE,
+            // the code the client throws once its retries are exhausted) on a
+            // page the classifier called a `scan` (a text page keeps its text
+            // layer, a drawing needs the model) with the fallback enabled.
+            // Anything else, and a failing OCR run too, re-raises the original
+            // error unchanged so the stage's transient-retry semantics (and
+            // the backoff in the stage runner) stay exactly as before.
+            if (
+              ocr === null ||
+              !ocr.enabled ||
+              classification.class !== "scan" ||
+              !(error instanceof ExtractError) ||
+              error.code !== "VISION_UNAVAILABLE"
+            ) {
+              throw error;
+            }
+            logger.warn(
+              { jobId: job.id, page, err: errMessage(error) },
+              "Vision model unavailable; recognising the scanned page with Tesseract instead",
+            );
+            let text: string;
+            try {
+              text = await ocr.recognize(
+                rendered.image.buffer,
+                withRunSignal({}),
+              );
+            } catch (ocrError) {
+              logger.warn(
+                { jobId: job.id, page, err: errMessage(ocrError) },
+                "Tesseract OCR fallback failed; re-raising the vision error",
+              );
+              throw error;
+            }
+            ocrFallback = true;
+            // A synthetic response in the model's own tag format: `parseVisionPage`
+            // below reads it back verbatim, and a reparse of the checkpoint
+            // works exactly like one of a real response. No tokens were spent.
+            response = {
+              raw: `<markdown>\n${text}\n</markdown>`,
+              usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+              requests: 0,
+              truncated: false,
+              maxTokens: 0,
+            };
+          }
           const parsed = parseVisionPage(response.raw, page);
           // ── S4 deterministic refinement (task 2.4, requirement 8.2) ────
           // Snap each figure bbox to the ink + text blocks and pull the
@@ -2136,7 +2389,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           // analysis — and its output must be persisted so a resume reuses the
           // snapped bbox and regionText without recomputing. See the S4 note in
           // `refineFigures`.
-          const refined = await refineFigures(parsed.figures, rendered.image, analysis);
+          const refined = await refineFigures(
+            parsed.figures,
+            rendered.image,
+            analysis,
+          );
           const stageParsed: VisionStageParsed = {
             summary: parsed.summary,
             markdown: parsed.markdown,
@@ -2146,8 +2403,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
               continues: t.continues,
               continuationOf: t.continuationOf,
             })),
-            warnings: [...parsed.warnings, ...(response.truncated ? [TRUNCATION_WARNING] : [])],
-            usedOcr: rendered.usedOcr,
+            warnings: [
+              ...parsed.warnings,
+              ...(response.truncated ? [TRUNCATION_WARNING] : []),
+              ...(ocrFallback ? [OCR_FALLBACK_WARNING] : []),
+            ],
+            usedOcr: rendered.usedOcr || ocrFallback,
             usage: { requests: response.requests, ...response.usage },
             truncated: response.truncated,
             size: { wPt: sizePt.widthPt, hPt: sizePt.heightPt },
@@ -2158,9 +2419,32 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             prevPageContext: prev.context,
             prevPageContextHash: prev.hash,
           };
-          return { raw: response.raw, parsed: stageParsed, tokensUsed: response.usage.totalTokens };
+          return {
+            raw: response.raw,
+            parsed: stageParsed,
+            tokensUsed: response.usage.totalTokens,
+          };
         },
       });
+      // Tenant daily vision-page budget (task 7.7, requirement 5.8): charge
+      // exactly the pages that took a real model call. The check runs
+      // OUTSIDE runStage on purpose — a tenant-budget exhaustion is not a
+      // stage failure, and reporting it through the stage would either
+      // poison this page's checkpoint (permanent) or retry it pointlessly
+      // (transient). The page's own result stays persisted: after the day
+      // rolls over, a manual retry reuses it without a model call. The
+      // charge also covers a stage that failed permanently AFTER the model
+      // answered — the call spent real money even if its parse did not.
+      if (modelCalled && !(await tenantBudget.tryConsumePage())) {
+        return {
+          completed: false,
+          paused: false,
+          budgetExceeded: true,
+          record: emptyRecord(page),
+          assetIds: [],
+          usage: empty,
+        };
+      }
       // A reused/resumed checkpoint carries the source page's render hash;
       // re-register it so a *third* identical page still points at a source.
       if (result.parsed?.renderHash != null) {
@@ -2171,8 +2455,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         // not lose the document over one page: emit an empty page carrying the
         // failure warning and advance the cursor so the scheduler moves past it,
         // exactly as v1 did.
-        const warning = result.row.error ?? "Die Seite konnte nicht verarbeitet werden.";
-        const record: PageRecord = { ...emptyRecord(page), warnings: [warning] };
+        const warning =
+          result.row.error ?? "Die Seite konnte nicht verarbeitet werden.";
+        const record: PageRecord = {
+          ...emptyRecord(page),
+          warnings: [warning],
+        };
         await stageEmitRow(job, page, record);
         await stageRunner.runStage<{ page: number }, null>({
           unit: "page",
@@ -2180,12 +2468,24 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           inputHash: stageHash(["emit", job.source_sha256, page]),
           fn: async () => ({ raw: null, parsed: { page } }),
         });
-        return { completed: true, paused: false, record, assetIds: [], usage: empty };
+        return {
+          completed: true,
+          paused: false,
+          record,
+          assetIds: [],
+          usage: empty,
+        };
       }
       visionParsed = result.parsed;
     } catch (err) {
       if (err instanceof BudgetExhaustedError) {
-        return { completed: false, paused: true, record: emptyRecord(page), assetIds: [], usage: empty };
+        return {
+          completed: false,
+          paused: true,
+          record: emptyRecord(page),
+          assetIds: [],
+          usage: empty,
+        };
       }
       throw err;
     }
@@ -2198,7 +2498,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // Re-render is only possible while we still hold the page image (i.e. the
       // vision stage just ran). On a pure resume where vision was reused, the
       // page image is null; re-render it deterministically for the crops.
-      if (pageImage === null && visionParsed.figures.some((f) => isCroppable(f.bbox))) {
+      if (
+        pageImage === null &&
+        visionParsed.figures.some((f) => isCroppable(f.bbox))
+      ) {
         const rendered = await prepared.render(page);
         pageImage = rendered.image;
       }
@@ -2211,7 +2514,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       });
       assetIds.push(...staged);
       // A page image is always addressable as an asset even without figures.
-      await lease_guardStageAsset(args.job, page, pageAssetId(job.reference, page), "page");
+      await lease_guardStageAsset(
+        args.job,
+        page,
+        pageAssetId(job.reference, page),
+        "page",
+      );
       await args.stageRunner.runStage<{ assetIds: string[] }, null>({
         unit: "page",
         key: cropKey,
@@ -2219,7 +2527,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         fn: async () => ({ raw: null, parsed: { assetIds } }),
       });
     } else {
-      const parsed = (existingCrops.output as { parsed?: { assetIds?: string[] } } | null)?.parsed;
+      const parsed = (
+        existingCrops.output as { parsed?: { assetIds?: string[] } } | null
+      )?.parsed;
       if (parsed?.assetIds !== undefined) assetIds.push(...parsed.assetIds);
     }
 
@@ -2231,10 +2541,23 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // with no model call. A budget exhaustion pauses the job cleanly, exactly
     // like the page-budget path.
     try {
-      await runFigurePass2({ job, page, prepared, stageRunner, budget, visionParsed });
+      await runFigurePass2({
+        job,
+        page,
+        prepared,
+        stageRunner,
+        budget,
+        visionParsed,
+      });
     } catch (err) {
       if (err instanceof BudgetExhaustedError) {
-        return { completed: false, paused: true, record: emptyRecord(page), assetIds, usage: empty };
+        return {
+          completed: false,
+          paused: true,
+          record: emptyRecord(page),
+          assetIds,
+          usage: empty,
+        };
       }
       throw err;
     }
@@ -2246,11 +2569,24 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // is a single tile and is left untouched. Budget exhaustion pauses the job
     // cleanly, exactly like the figure Pass-2 path above.
     try {
-      const tileAssetIds = await runTilePass({ job, page, prepared, stageRunner, budget, visionParsed });
+      const tileAssetIds = await runTilePass({
+        job,
+        page,
+        prepared,
+        stageRunner,
+        budget,
+        visionParsed,
+      });
       assetIds.push(...tileAssetIds);
     } catch (err) {
       if (err instanceof BudgetExhaustedError) {
-        return { completed: false, paused: true, record: emptyRecord(page), assetIds, usage: empty };
+        return {
+          completed: false,
+          paused: true,
+          record: emptyRecord(page),
+          assetIds,
+          usage: empty,
+        };
       }
       throw err;
     }
@@ -2260,10 +2596,22 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     // the text-LLM is configured, it gets one as its own checkpointed,
     // budget-gated stage; without it the page simply carries none.
     try {
-      await runFastPathSummary({ job, page, stageRunner, budget, visionParsed });
+      await runFastPathSummary({
+        job,
+        page,
+        stageRunner,
+        budget,
+        visionParsed,
+      });
     } catch (err) {
       if (err instanceof BudgetExhaustedError) {
-        return { completed: false, paused: true, record: emptyRecord(page), assetIds, usage: empty };
+        return {
+          completed: false,
+          paused: true,
+          record: emptyRecord(page),
+          assetIds,
+          usage: empty,
+        };
       }
       throw err;
     }
@@ -2278,7 +2626,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       key: key(EMITTED_STAGE),
       // The block-model version is part of the emitted record's inputs: a new
       // Markdown → block mapping must not be mistaken for the staged record.
-      inputHash: stageHash(["emit", job.source_sha256, page, `blocks:${MARKDOWN_BLOCKS_VERSION}`]),
+      inputHash: stageHash([
+        "emit",
+        job.source_sha256,
+        page,
+        `blocks:${MARKDOWN_BLOCKS_VERSION}`,
+      ]),
       fn: async () => ({ raw: null, parsed: { page } }),
     });
 
@@ -3088,6 +3441,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
 const TRUNCATION_WARNING =
   "Die Modellantwort war auch beim größten Token-Budget abgeschnitten; der Seiteninhalt ist unvollständig.";
+
+/** Recorded on a page whose text came from the Tesseract fallback (task 7.10). */
+const OCR_FALLBACK_WARNING =
+  "Das Vision-Modell war nicht erreichbar; der Text dieser Seite wurde stattdessen mit Tesseract-OCR erkannt und ist möglicherweise unvollständig.";
 
 /** The parsed result of a checkpoint row, or undefined when it has none. */
 function parsedOfRow<T>(row: PageStageRow): T | undefined {

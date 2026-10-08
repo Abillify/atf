@@ -122,9 +122,9 @@ export function createPageAnalyzer(deps: PageAnalyzerDeps): PageAnalyzer {
 
   function runOptions(signal: AbortSignal | undefined): RunOptions {
     return {
-      ...(config.subprocessTimeoutMs > 0
-        ? { timeoutMs: config.subprocessTimeoutMs }
-        : {}),
+      // Passed through as configured: a 0 is a deliberate disable, which the
+      // production-readiness gate rejects (requirement 5.5).
+      timeoutMs: config.subprocessTimeoutMs,
       ...(signal !== undefined ? { signal } : {}),
     };
   }

@@ -42,7 +42,7 @@ export const EXTRACT_SCHEMA = "extract";
  * applies every step whose `toVersion` is greater than the recorded version,
  * in ascending order.
  */
-export const EXTRACT_SCHEMA_VERSION = 4;
+export const EXTRACT_SCHEMA_VERSION = 5;
 
 /**
  * Well-known advisory-lock key for the extract migration runner. Distinct from
@@ -466,6 +466,29 @@ async function addErasureLedger(client: MigrationClient): Promise<void> {
   `);
 }
 
+/**
+ * Task 7.7 (requirement 5.8): the per-tenant daily vision-page counter.
+ *
+ * One row per (tenant, UTC day); the spend is a single atomic upsert
+ * (`INSERT … ON CONFLICT DO UPDATE … RETURNING`), so concurrent page stages
+ * — across jobs and worker instances — cannot together pass a daily cap the
+ * budget only covers once, mirroring the job token reservation. Counting
+ * VLM pages rather than tokens is what the requirement names
+ * (`VISION_BUDGET_PAGES_PER_DAY`); the per-job token budget stays the
+ * separate, finer axis.
+ */
+async function addVisionDailyBudget(client: MigrationClient): Promise<void> {
+  await client.query(`
+    CREATE TABLE IF NOT EXISTS ${EXTRACT_SCHEMA}.vision_daily_usage (
+      tenant_id TEXT NOT NULL,
+      day DATE NOT NULL,
+      pages_used INTEGER NOT NULL DEFAULT 0,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      PRIMARY KEY (tenant_id, day)
+    )
+  `);
+}
+
 export const EXTRACT_MIGRATIONS: ExtractMigrationStep[] = [
   {
     toVersion: 1,
@@ -489,6 +512,12 @@ export const EXTRACT_MIGRATIONS: ExtractMigrationStep[] = [
     description:
       "Erasure ledger: erasure_ledger (task 4.6, requirements 2.7, 2.12)",
     up: addErasureLedger,
+  },
+  {
+    toVersion: 5,
+    description:
+      "Vision daily budget: vision_daily_usage (task 7.7, requirement 5.8)",
+    up: addVisionDailyBudget,
   },
 ];
 

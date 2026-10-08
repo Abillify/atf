@@ -52,6 +52,9 @@ import {
   type ParsedVsdx,
   readXlsx,
   type DocxHeadingHints,
+  assertZipWithinLimits,
+  DEFAULT_ZIP_LIMITS,
+  type ZipLimits,
 } from "../pipeline/native/index.js";
 import {
   extractDocumentText,
@@ -62,6 +65,10 @@ import {
   type PdfPageSize,
   type PopplerTools,
 } from "../pipeline/pdf.js";
+import {
+  createDirectIsolatedRunner,
+  type IsolatedRunner,
+} from "../pipeline/isolate.js";
 import type { RunOptions } from "../pipeline/exec.js";
 import {
   adaptiveRenderDpi,
@@ -145,6 +152,14 @@ export interface PageRendererConfig {
   popplerBinDir: string | null;
   /** Wall-clock ceiling on each poppler/LibreOffice invocation; 0 disables. */
   subprocessTimeoutMs: number;
+  /**
+   * ZIP-container ceilings enforced before any native reader inflates an
+   * OOXML package (ZIP_MAX_*, requirement 5.1). Defaults to
+   * {@link DEFAULT_ZIP_LIMITS} so a stub config stays valid.
+   */
+  zipLimits?: ZipLimits;
+  /** MAX_EMBED_DEPTH — nesting ceiling for embedded `.msg` messages (requirement 5.4). */
+  maxEmbedDepth?: number;
 }
 
 /** Either a PDF on disk or a single normalised image. */
@@ -258,6 +273,12 @@ export interface PageRendererDeps {
   sourceStore: SourceStore;
   logger: Logger;
   pdfOps?: PdfOps;
+  /**
+   * Runs the native parsers off the main thread (requirement 5.2). Defaults
+   * to a direct in-process runner so a stub setup stays valid; the server
+   * wires the Worker-backed one from PARSE_ISOLATED.
+   */
+  isolated?: IsolatedRunner;
 }
 
 /** The page-renderer surface: prepare a source, then render its pages. */
@@ -277,10 +298,14 @@ export interface PageRenderer {
 export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
   const { config, sourceStore, logger } = deps;
   const pdfOps = deps.pdfOps ?? defaultPdfOps;
+  const isolated = deps.isolated ?? createDirectIsolatedRunner();
+  const zipLimits = config.zipLimits ?? DEFAULT_ZIP_LIMITS;
 
   function subprocessOptions(signal: AbortSignal | undefined): RunOptions {
     return {
-      ...(config.subprocessTimeoutMs > 0 ? { timeoutMs: config.subprocessTimeoutMs } : {}),
+      // Passed through as configured: a 0 is a deliberate disable, which the
+      // production-readiness gate rejects (requirement 5.5).
+      timeoutMs: config.subprocessTimeoutMs,
       ...(signal !== undefined ? { signal } : {}),
     };
   }
@@ -329,9 +354,12 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
   }): Promise<PreparedSource> {
     const sourcePath = await sourceStore.locate(args.sourceSha256);
     if (sourcePath === null) {
-      throw conversionFailed("The job's source is not present in the source store", {
-        sourceSha256: args.sourceSha256,
-      });
+      throw conversionFailed(
+        "The job's source is not present in the source store",
+        {
+          sourceSha256: args.sourceSha256,
+        },
+      );
     }
 
     const buffer = await readFile(sourcePath);
@@ -347,9 +375,16 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       // An mbox export with several messages: an index page, and every
       // message a child document of its own.
       const isMsg = format.mimeType === "application/vnd.ms-outlook";
-      const messages = isMsg ? [buffer] : splitMbox(buffer);
+      const messages = isMsg
+        ? [buffer]
+        : await isolated.run({ kind: "mbox-split", buffer }, () =>
+            splitMbox(buffer),
+          );
       if (messages.length > 1) {
-        const mbox = buildMboxRecords(messages);
+        const mbox = await isolated.run(
+          { kind: "mbox-records", messages },
+          () => buildMboxRecords(messages),
+        );
         return nativeOnlyPrepared(
           format,
           {
@@ -363,7 +398,15 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
           null,
         );
       }
-      const built = isMsg ? buildEmailRecords(buffer, parseMsg(buffer)) : buildEmailRecords(buffer);
+      const built = await isolated.run(
+        isMsg
+          ? { kind: "email", buffer, msgMaxEmbedDepth: config.maxEmbedDepth }
+          : { kind: "email", buffer },
+        () =>
+          isMsg
+            ? buildEmailRecords(buffer, parseMsg(buffer, config.maxEmbedDepth))
+            : buildEmailRecords(buffer),
+      );
       return nativeOnlyPrepared(
         format,
         {
@@ -374,7 +417,9 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
           title: built.title,
           attachments: built.attachments,
           text: built.text,
-          ...(built.quotedHistory !== undefined ? { quotedHistory: built.quotedHistory } : {}),
+          ...(built.quotedHistory !== undefined
+            ? { quotedHistory: built.quotedHistory }
+            : {}),
         },
         null,
       );
@@ -382,19 +427,32 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
 
     // ── BPMN: parse natively, no render, no model (requirement 10.1) ──────
     if (format.kind === "bpmn") {
-      const native = buildBpmnRecords(reference, buffer);
+      const native = await isolated.run(
+        { kind: "bpmn", reference, buffer },
+        () => buildBpmnRecords(reference, buffer),
+      );
       return nativeOnlyPrepared(format, native, null);
     }
 
     // ── XLSX: read cells/merges/values natively; render only when the
     //    workbook embeds a chart or image (requirement 10.2) ───────────────
-    if (format.mimeType === "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet") {
-      const parsed = await readXlsx(buffer);
+    if (
+      format.mimeType ===
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    ) {
+      const parsed = await isolated.run(
+        { kind: "xlsx", buffer, limits: zipLimits },
+        () => readXlsx(buffer, zipLimits),
+      );
       if (!parsed.needsRender) {
         const built = buildXlsxRecords(reference, parsed);
         return nativeOnlyPrepared(
           format,
-          { records: built.records, nativeAssets: [], warnings: built.warnings },
+          {
+            records: built.records,
+            nativeAssets: [],
+            warnings: built.warnings,
+          },
           null,
         );
       }
@@ -408,17 +466,28 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
 
     // ── DOCX: read authoritative heading levels from the styles; the render
     //    path is unchanged (requirement 10.3) ──────────────────────────────
-    const docxHeadingHints: DocxHeadingHints | null =
+    const isDocx =
       format.mimeType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-        ? buildDocxHeadingHints(buffer)
-        : null;
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+    const docxHeadingHints: DocxHeadingHints | null = isDocx
+      ? await isolated.run(
+          { kind: "docx-headings", buffer, limits: zipLimits },
+          () => buildDocxHeadingHints(buffer, zipLimits),
+        )
+      : null;
     // Embedded objects (Visio, Excel, BPMN …) become child documents with
     // their native parsers; the render only sees their preview picture.
-    const embedded =
-      docxHeadingHints !== null ? extractDocxEmbeddings(buffer) : { sources: [], warnings: [] };
+    const embedded = isDocx
+      ? await isolated.run(
+          { kind: "docx-embeddings", buffer, limits: zipLimits },
+          () => extractDocxEmbeddings(buffer, zipLimits),
+        )
+      : { sources: [], warnings: [] };
     if (embedded.warnings.length > 0) {
-      logger.info({ reference, warnings: embedded.warnings }, "DOCX embedded objects read with warnings");
+      logger.info(
+        { reference, warnings: embedded.warnings },
+        "DOCX embedded objects read with warnings",
+      );
     }
 
     // ── VSDX: read shape texts and the connector graph natively, but STILL
@@ -426,11 +495,28 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     //    requirement 10.4 — "zusätzlich LibreOffice → PDF für das Bild"). The
     //    native structure rides alongside the render as `vsdxStructure`. ─────
     const vsdxStructure: ParsedVsdx | null =
-      format.kind === "visio" ? parseVsdx(buffer) : null;
+      format.kind === "visio"
+        ? await isolated.run({ kind: "vsdx", buffer, limits: zipLimits }, () =>
+            parseVsdx(buffer, zipLimits),
+          )
+        : null;
     if (vsdxStructure !== null && vsdxStructure.warnings.length > 0) {
       logger.info(
         { reference, warnings: vsdxStructure.warnings },
         "VSDX native structure parsed with warnings; rendering continues",
+      );
+    }
+
+    // ── PPTX: no native reader, so the ZIP guard (requirement 5.1) runs here,
+    //    before the LibreOffice conversion inflates the package. XLSX, DOCX
+    //    and VSDX are guarded inside their native readers above. ────────────
+    if (format.kind === "presentation") {
+      await isolated.run(
+        { kind: "zip-guard", buffer, limits: zipLimits },
+        () => {
+          assertZipWithinLimits(buffer, zipLimits);
+          return null;
+        },
       );
     }
 
@@ -449,7 +535,12 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
         const page = await normalizeImageToPage(buffer);
         pageSource = {
           kind: "image",
-          image: { buffer: page.buffer, mimeType: page.mimeType, width: page.width, height: page.height },
+          image: {
+            buffer: page.buffer,
+            mimeType: page.mimeType,
+            width: page.width,
+            height: page.height,
+          },
         };
         pageCount = 1;
       } else {
@@ -461,16 +552,26 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
           // Word/Excel/PowerPoint/Visio → PDF via LibreOffice (design §10.4).
           pdfPath = await convertToPdf(
             { buffer, extension: officeExtensionFor(format) },
-            { binary: config.libreofficeBin, workDir, ...subprocessOptions(args.signal) },
+            {
+              binary: config.libreofficeBin,
+              workDir,
+              ...subprocessOptions(args.signal),
+            },
           );
         } else {
           throw unsupportedMediaType(`No render path for ${format.label}`, {
             filename: args.filename,
           });
         }
-        const info = await pdfOps.readPdfInfo(pdfPath, tools, subprocessOptions(args.signal));
+        const info = await pdfOps.readPdfInfo(
+          pdfPath,
+          tools,
+          subprocessOptions(args.signal),
+        );
         if (info.pageCount < 1) {
-          throw conversionFailed("The document reports no pages", { filename: args.filename });
+          throw conversionFailed("The document reports no pages", {
+            filename: args.filename,
+          });
         }
         pageSource = { kind: "pdf", pdfPath };
         pageCount = info.pageCount;
@@ -483,16 +584,29 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
     async function renderPdfPage(
       page: number,
       signal: AbortSignal | undefined,
-    ): Promise<{ image: PageImage; sizePt: { widthPt: number; heightPt: number }; dpi: number }> {
-      if (pageSource.kind !== "pdf") throw new Error("renderPdfPage on a non-PDF source");
+    ): Promise<{
+      image: PageImage;
+      sizePt: { widthPt: number; heightPt: number };
+      dpi: number;
+    }> {
+      if (pageSource.kind !== "pdf")
+        throw new Error("renderPdfPage on a non-PDF source");
       const runOptions = subprocessOptions(signal);
       let pageSize: PdfPageSize | null = null;
       try {
-        pageSize = await pdfOps.readPageSize(pageSource.pdfPath, page, tools, runOptions);
+        pageSize = await pdfOps.readPageSize(
+          pageSource.pdfPath,
+          page,
+          tools,
+          runOptions,
+        );
       } catch {
         pageSize = null;
       }
-      const dpi = pageSize !== null ? adaptiveRenderDpi(pageSize, config.renderDpi) : config.renderDpi;
+      const dpi =
+        pageSize !== null
+          ? adaptiveRenderDpi(pageSize, config.renderDpi)
+          : config.renderDpi;
       const rendered = await pdfOps.renderPage(
         pageSource.pdfPath,
         page,
@@ -502,13 +616,21 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
         runOptions,
       );
       const size = await pdfOps.imageSize(rendered.buffer);
-      const image: PageImage = { buffer: rendered.buffer, mimeType: "image/png", width: size.width, height: size.height };
+      const image: PageImage = {
+        buffer: rendered.buffer,
+        mimeType: "image/png",
+        width: size.width,
+        height: size.height,
+      };
       // The physical page size in points: pdfinfo's page box when known, else
       // the pixels converted back at the DPI actually used for this render.
       const sizePt =
         pageSize !== null && pageSize.widthPt > 0 && pageSize.heightPt > 0
           ? { widthPt: pageSize.widthPt, heightPt: pageSize.heightPt }
-          : { widthPt: (size.width * 72) / dpi, heightPt: (size.height * 72) / dpi };
+          : {
+              widthPt: (size.width * 72) / dpi,
+              heightPt: (size.height * 72) / dpi,
+            };
       return { image, sizePt, dpi };
     }
 
@@ -518,7 +640,9 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
       native: null,
       docxHeadingHints,
       vsdxStructure,
-      ...(embedded.sources.length > 0 ? { embeddedSources: embedded.sources } : {}),
+      ...(embedded.sources.length > 0
+        ? { embeddedSources: embedded.sources }
+        : {}),
       pdfPath: pageSource.kind === "pdf" ? pageSource.pdfPath : null,
       home: workDir,
 

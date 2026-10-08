@@ -48,6 +48,13 @@ import {
   type PromptHeadingCandidate,
   type PrevPageContext,
 } from "./prompts.js";
+import {
+  PAGE_RESPONSE_FORMAT,
+  pageJsonToTagText,
+  parsePageJson,
+  pass2ResponseFormat,
+  type ResponseFormat,
+} from "./schema.js";
 
 export interface VisionClientConfig {
   /** Base URL; `/v1/chat/completions` is appended. */
@@ -63,6 +70,14 @@ export interface VisionClientConfig {
   /** Transient-failure retries per budget. */
   visionMaxRetries: number;
   visionReasoningEffort: string | null;
+  /**
+   * Capability flag: the provider enforces `response_format: json_schema`
+   * (task 7.9, requirement 5.10). Fail-closed — off unless the operator says
+   * the backend supports it, mirroring the runtime's model-capability rules.
+   * When a request carrying the field is rejected anyway, the client drops it
+   * for the rest of the process and continues unstructured.
+   */
+  visionSupportsJsonSchema: boolean;
 }
 
 export interface VisionUsage {
@@ -188,6 +203,20 @@ function sleep(ms: number): Promise<void> {
 /** A failure worth retrying in place, as opposed to a permanent rejection. */
 class TransientVisionFailure extends Error {}
 
+/**
+ * The provider refused the `response_format: json_schema` field itself
+ * (task 7.9). Carries the response body so the fallback log shows what the
+ * server actually complained about.
+ */
+class StructuredOutputRejected extends Error {
+  readonly body: string;
+
+  constructor(body: string) {
+    super("The vision provider rejected the structured-output request format");
+    this.body = body;
+  }
+}
+
 /** The model stopped because it ran out of output budget. */
 class TruncatedVisionResponse extends Error {
   readonly partial: string;
@@ -206,7 +235,15 @@ export function createVisionClient(
 ): VisionClient {
   const endpoint = `${config.visionUrl.replace(/\/+$/, "")}/v1/chat/completions`;
   const budgets =
-    config.visionMaxTokenVariants.length > 0 ? config.visionMaxTokenVariants : [8192];
+    config.visionMaxTokenVariants.length > 0
+      ? config.visionMaxTokenVariants
+      : [8192];
+
+  // Capability state (task 7.9). Starts from the operator's flag; a provider
+  // that rejects the field despite the flag flips this off for the rest of the
+  // process, so one mis-declared capability costs one wasted request per pass
+  // rather than failing every page.
+  let schemaAccepted = config.visionSupportsJsonSchema;
 
   function headers(): Record<string, string> {
     const result: Record<string, string> = {
@@ -220,8 +257,16 @@ export function createVisionClient(
     return result;
   }
 
-  /** Build a chat-completion body from a ready messages array. */
-  function buildBody(messages: ChatMessage[], maxTokens: number): Record<string, unknown> {
+  /**
+   * Build a chat-completion body from a ready messages array. `responseFormat`
+   * is only included when the schema capability is still on; a provider that
+   * rejects it is handled by {@link requestOnce}, which retries without it.
+   */
+  function buildBody(
+    messages: ChatMessage[],
+    maxTokens: number,
+    responseFormat: ResponseFormat | undefined,
+  ): Record<string, unknown> {
     return {
       model: config.visionModel,
       messages,
@@ -231,7 +276,16 @@ export function createVisionClient(
       // Only sent when configured: strict servers reject unknown fields, so an
       // unconditional chat_template_kwargs breaks every request against them.
       ...(config.visionReasoningEffort !== null
-        ? { chat_template_kwargs: { reasoning_effort: config.visionReasoningEffort } }
+        ? {
+            chat_template_kwargs: {
+              reasoning_effort: config.visionReasoningEffort,
+            },
+          }
+        : {}),
+      // Same reasoning: `response_format` rides only on the capability flag,
+      // and requestOnce drops it for the process if the server rejects it.
+      ...(responseFormat !== undefined && schemaAccepted
+        ? { response_format: responseFormat }
         : {}),
     };
   }
@@ -274,9 +328,12 @@ export function createVisionClient(
       // Defensive: the runner gates on FIGURE_PASS2_KINDS, so a kind with no
       // prompt should never reach here. Fail loudly rather than send a request
       // with an empty system prompt.
-      throw visionUnavailable(`No Pass-2 prompt for figure kind "${input.kind}"`, {
-        page: input.page,
-      });
+      throw visionUnavailable(
+        `No Pass-2 prompt for figure kind "${input.kind}"`,
+        {
+          page: input.page,
+        },
+      );
     }
     return [
       { role: "system", content: system },
@@ -303,18 +360,68 @@ export function createVisionClient(
     ];
   }
 
-  /** One request. Throws TransientVisionFailure or TruncatedVisionResponse. */
+  /**
+   * One request, with the structured-output transport fallback layered over
+   * {@link sendOnce} and {@link parseCompletion}. Throws
+   * TransientVisionFailure or TruncatedVisionResponse.
+   */
   async function requestOnce(
     messages: ChatMessage[],
     maxTokens: number,
     ctx: { page: number; signal?: AbortSignal | undefined },
-  ): Promise<{ raw: string; usage: VisionUsage }> {
+    responseFormat?: ResponseFormat | undefined,
+  ): Promise<{ raw: string; usage: VisionUsage; extraRequests: number }> {
+    try {
+      const response = await sendOnce(messages, maxTokens, ctx, responseFormat);
+      const parsed = await parseCompletion(response, ctx, responseFormat);
+      return { ...parsed, extraRequests: 0 };
+    } catch (error) {
+      // Transport-level fallback (task 7.9): the provider rejected the
+      // response_format field itself — a 4xx naming it, which is exactly how
+      // vLLM and llama.cpp answer an unsupported structured-output request
+      // despite the operator's capability flag. Drop the field for the whole
+      // process and retry once without it; the existing tag/JSON parsers
+      // handle the unstructured answer as before.
+      if (
+        responseFormat !== undefined &&
+        schemaAccepted &&
+        error instanceof StructuredOutputRejected
+      ) {
+        schemaAccepted = false;
+        logger.warn(
+          { page: ctx.page, rejected: error.body.slice(0, 300) },
+          "Vision provider rejected response_format json_schema; falling back to unstructured requests",
+        );
+        const retry = await requestOnce(messages, maxTokens, ctx, undefined);
+        // The rejected attempt was paid for too, so it counts as an extra.
+        return { ...retry, extraRequests: retry.extraRequests + 1 };
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * The HTTP exchange itself: build the body, send it with the timeout and
+   * abort wiring, and hand the raw response back. Split out so the
+   * structured-output fallback can retry the whole exchange without the
+   * `response_format` field.
+   */
+  async function sendOnce(
+    messages: ChatMessage[],
+    maxTokens: number,
+    ctx: { page: number; signal?: AbortSignal | undefined },
+    responseFormat: ResponseFormat | undefined,
+  ): Promise<Response> {
     const controller = new AbortController();
     const timeout =
       config.visionTimeoutMs > 0
-        ? setTimeout(() => controller.abort(new Error("timeout")), config.visionTimeoutMs)
+        ? setTimeout(
+            () => controller.abort(new Error("timeout")),
+            config.visionTimeoutMs,
+          )
         : null;
-    const onExternalAbort = (): void => controller.abort(new Error("client disconnected"));
+    const onExternalAbort = (): void =>
+      controller.abort(new Error("client disconnected"));
     ctx.signal?.addEventListener("abort", onExternalAbort, { once: true });
 
     let response: Response;
@@ -322,14 +429,16 @@ export function createVisionClient(
       response = await fetch(endpoint, {
         method: "POST",
         headers: headers(),
-        body: JSON.stringify(buildBody(messages, maxTokens)),
+        body: JSON.stringify(buildBody(messages, maxTokens, responseFormat)),
         signal: controller.signal,
       });
     } catch (error) {
       // A client disconnect is not the model's fault and must not be retried;
       // everything else at this layer is a network condition and is.
       if (ctx.signal?.aborted === true) {
-        throw visionUnavailable("The request was aborted by the client", { page: ctx.page });
+        throw visionUnavailable("The request was aborted by the client", {
+          page: ctx.page,
+        });
       }
       throw new TransientVisionFailure(
         error instanceof Error ? error.message : String(error),
@@ -339,16 +448,46 @@ export function createVisionClient(
       ctx.signal?.removeEventListener("abort", onExternalAbort);
     }
 
+    return response;
+  }
+
+  /** Translate an HTTP response into a raw completion or a typed failure. */
+  async function parseCompletion(
+    response: Response,
+    ctx: { page: number; signal?: AbortSignal | undefined },
+    responseFormat: ResponseFormat | undefined,
+  ): Promise<{ raw: string; usage: VisionUsage }> {
     if (!response.ok) {
       const body = await response.text().catch(() => "");
+      // Transport-level fallback (task 7.9): a 4xx that names the structured-
+      // output field is the provider saying it cannot do json_schema, however
+      // the capability flag was set. Signal that distinctly — requestOnce
+      // retries once without the field and turns the capability off for the
+      // process. A 4xx that does not mention it (bad model name, refused
+      // image) is the ordinary permanent failure below.
+      if (
+        responseFormat !== undefined &&
+        schemaAccepted &&
+        response.status < 500 &&
+        response.status !== 408 &&
+        response.status !== 429 &&
+        /response_format|json_schema|structured output/i.test(body)
+      ) {
+        throw new StructuredOutputRejected(body);
+      }
       // 4xx other than 408/429 means the request itself is wrong — a bad model
       // name, an unsupported field, an image the server refuses. Retrying is
       // pointless and hides the real message.
       const retryable =
-        response.status >= 500 || response.status === 408 || response.status === 429;
+        response.status >= 500 ||
+        response.status === 408 ||
+        response.status === 429;
       const message = `The vision endpoint returned HTTP ${response.status}: ${body.slice(0, 500)}`;
       if (retryable) throw new TransientVisionFailure(message);
-      throw visionUnavailable(message, { page: ctx.page, status: response.status });
+      throw visionUnavailable(message, {
+        page: ctx.page,
+        status: response.status,
+      });
     }
 
     let payload: ChatResponse;
@@ -367,7 +506,10 @@ export function createVisionClient(
     };
 
     const choice = payload.choices?.[0];
-    const content = typeof choice?.message?.content === "string" ? choice.message.content : "";
+    const content =
+      typeof choice?.message?.content === "string"
+        ? choice.message.content
+        : "";
 
     if (choice?.finish_reason === "length") {
       throw new TruncatedVisionResponse(content, usage);
@@ -375,7 +517,9 @@ export function createVisionClient(
     if (content.trim() === "") {
       // An empty completion with a normal finish reason is a server-side hiccup
       // often enough to be worth one more try.
-      throw new TransientVisionFailure("The vision endpoint returned no content");
+      throw new TransientVisionFailure(
+        "The vision endpoint returned no content",
+      );
     }
 
     return { raw: content, usage };
@@ -390,8 +534,13 @@ export function createVisionClient(
   async function runWithEscalation(
     messages: ChatMessage[],
     ctx: { page: number; signal?: AbortSignal | undefined; what: string },
+    responseFormat?: ResponseFormat | undefined,
   ): Promise<VisionPageResult> {
-    const usageTotal: VisionUsage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const usageTotal: VisionUsage = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+    };
     let requests = 0;
     let lastTransient: Error | null = null;
     let lastTruncation: TruncatedVisionResponse | null = null;
@@ -407,13 +556,28 @@ export function createVisionClient(
       // a truncation is not evidence that the endpoint is unhealthy.
       for (let attempt = 0; attempt <= config.visionMaxRetries; attempt++) {
         if (ctx.signal?.aborted === true) {
-          throw visionUnavailable("The request was aborted by the client", { page: ctx.page });
+          throw visionUnavailable("The request was aborted by the client", {
+            page: ctx.page,
+          });
         }
         requests++;
         try {
-          const result = await requestOnce(messages, maxTokens, ctx);
+          const result = await requestOnce(
+            messages,
+            maxTokens,
+            ctx,
+            responseFormat,
+          );
+          // A structured-output rejection costs one extra request, reported here.
+          requests += result.extraRequests;
           addUsage(result.usage);
-          return { raw: result.raw, usage: usageTotal, requests, truncated: false, maxTokens };
+          return {
+            raw: result.raw,
+            usage: usageTotal,
+            requests,
+            truncated: false,
+            maxTokens,
+          };
         } catch (error) {
           if (error instanceof TruncatedVisionResponse) {
             addUsage(error.usage);
@@ -435,7 +599,13 @@ export function createVisionClient(
             if (attempt < config.visionMaxRetries) {
               const delay = backoffDelay(attempt);
               logger.warn(
-                { page: ctx.page, what: ctx.what, attempt: attempt + 1, delayMs: Math.round(delay), err: error.message },
+                {
+                  page: ctx.page,
+                  what: ctx.what,
+                  attempt: attempt + 1,
+                  delayMs: Math.round(delay),
+                  err: error.message,
+                },
                 "Vision request failed; retrying",
               );
               await sleep(delay);
@@ -474,20 +644,46 @@ export function createVisionClient(
     );
   }
 
-  async function analyzePage(input: AnalyzePageInput): Promise<VisionPageResult> {
-    return runWithEscalation(pageMessages(input), {
-      page: input.page,
-      signal: input.signal,
-      what: "page",
-    });
+  async function analyzePage(
+    input: AnalyzePageInput,
+  ): Promise<VisionPageResult> {
+    const result = await runWithEscalation(
+      pageMessages(input),
+      {
+        page: input.page,
+        signal: input.signal,
+        what: "page",
+      },
+      PAGE_RESPONSE_FORMAT,
+    );
+    // Payload-level fallback (task 7.9): a schema-conforming response is
+    // re-rendered into the tag format so parseVisionPage — placeholder
+    // rewriting, renumbering, table detection — consumes it unchanged. A
+    // response that is not conforming JSON passes through untouched and the
+    // tag parser does what it has always done. The transport changed, the
+    // pipeline did not.
+    if (!schemaAccepted) return result;
+    const structured = parsePageJson(result.raw);
+    return structured === null
+      ? result
+      : { ...result, raw: pageJsonToTagText(structured) };
   }
 
-  async function analyzeFigure(input: AnalyzeFigureInput): Promise<VisionFigureResult> {
-    return runWithEscalation(figureMessages(input), {
-      page: input.page,
-      signal: input.signal,
-      what: `figure ${input.figureId} (${input.kind})`,
-    });
+  async function analyzeFigure(
+    input: AnalyzeFigureInput,
+  ): Promise<VisionFigureResult> {
+    // No payload conversion here: the per-kind Pass-2 parsers in response.ts
+    // already expect a JSON object, so a schema-conforming response flows
+    // straight into parseTranscription.
+    return runWithEscalation(
+      figureMessages(input),
+      {
+        page: input.page,
+        signal: input.signal,
+        what: `figure ${input.figureId} (${input.kind})`,
+      },
+      pass2ResponseFormat(input.kind),
+    );
   }
 
   async function probe(): Promise<{ available: boolean; error?: string }> {
@@ -496,14 +692,20 @@ export function createVisionClient(
     try {
       // The models listing is the cheapest endpoint every OpenAI-compatible
       // server exposes; a chat completion would spend tokens on a health check.
-      const response = await fetch(`${config.visionUrl.replace(/\/+$/, "")}/v1/models`, {
-        headers: headers(),
-        signal: controller.signal,
-      });
+      const response = await fetch(
+        `${config.visionUrl.replace(/\/+$/, "")}/v1/models`,
+        {
+          headers: headers(),
+          signal: controller.signal,
+        },
+      );
       if (response.ok) return { available: true };
       return { available: false, error: `HTTP ${response.status}` };
     } catch (error) {
-      return { available: false, error: error instanceof Error ? error.message : String(error) };
+      return {
+        available: false,
+        error: error instanceof Error ? error.message : String(error),
+      };
     } finally {
       clearTimeout(timeout);
     }

@@ -17,6 +17,7 @@ const CONFIG: VisionClientConfig = {
   visionMaxTokenVariants: [100, 200, 400],
   visionMaxRetries: 2,
   visionReasoningEffort: null,
+  visionSupportsJsonSchema: false,
 };
 
 const PAGE = {
@@ -238,6 +239,145 @@ describe("createVisionClient", () => {
     await expect(
       createVisionClient(CONFIG, testLogger).analyzePage({ ...PAGE, signal: controller.signal }),
     ).rejects.toMatchObject({ code: "VISION_UNAVAILABLE" });
+  });
+
+  describe("structured output (response_format json_schema)", () => {
+    const WITH_SCHEMA: VisionClientConfig = {
+      ...CONFIG,
+      visionSupportsJsonSchema: true,
+    };
+
+    /** The parsed request body of call number n. */
+    function bodyOf(
+      fetchMock: ReturnType<typeof vi.fn>,
+      n = 0,
+    ): Record<string, unknown> {
+      return JSON.parse(
+        String((fetchMock.mock.calls[n] as [string, RequestInit])[1].body),
+      );
+    }
+
+    it("sends no response_format while the capability flag is off", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(completion("<markdown>ok</markdown>"));
+      vi.stubGlobal("fetch", fetchMock);
+      await createVisionClient(CONFIG, testLogger).analyzePage(PAGE);
+      expect(bodyOf(fetchMock)).not.toHaveProperty("response_format");
+    });
+
+    it("sends the page schema when the flag is on", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(completion("<markdown>ok</markdown>"));
+      vi.stubGlobal("fetch", fetchMock);
+      await createVisionClient(WITH_SCHEMA, testLogger).analyzePage(PAGE);
+      expect(bodyOf(fetchMock)).toMatchObject({
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: "page_extraction", strict: false },
+        },
+      });
+    });
+
+    it("sends the per-kind Pass-2 schema matching the figure kind", async () => {
+      // A Response body is single-use, so each call needs a fresh one.
+      const fetchMock = vi.fn(async () => completion('{"format":"process"}'));
+      vi.stubGlobal("fetch", fetchMock);
+      const client = createVisionClient(WITH_SCHEMA, testLogger);
+      const figure = {
+        page: 1,
+        figureId: "p1-f1",
+        kind: "bpmn",
+        regionText: "",
+        image: { buffer: TINY_PNG, mimeType: "image/png" },
+      };
+      await client.analyzeFigure(figure);
+      expect(bodyOf(fetchMock, 0)).toMatchObject({
+        response_format: { json_schema: { name: "process_transcription" } },
+      });
+      await client.analyzeFigure({ ...figure, kind: "chart" });
+      expect(bodyOf(fetchMock, 1)).toMatchObject({
+        response_format: { json_schema: { name: "data_transcription" } },
+      });
+    });
+
+    it("re-renders a conforming JSON page into the tag format", async () => {
+      const json = JSON.stringify({
+        summary: "Eine Seite.",
+        figures: [{ id: "1", kind: "chart", description: "Ein Diagramm." }],
+        markdown: "Text mit ![figure_1](x)",
+      });
+      const fetchMock = vi.fn().mockResolvedValue(completion(json));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const result = await createVisionClient(
+        WITH_SCHEMA,
+        testLogger,
+      ).analyzePage(PAGE);
+
+      expect(result.raw).toContain("<summary>Eine Seite.</summary>");
+      expect(result.raw).toContain(
+        '<figure id="1" kind="chart">Ein Diagramm.</figure>',
+      );
+      expect(result.raw).toContain(
+        "<markdown>Text mit ![figure_1](x)</markdown>",
+      );
+    });
+
+    it("passes a non-conforming response through to the tag parser untouched", async () => {
+      // The provider accepted the field but the model answered in tags anyway
+      // (or produced broken JSON): the existing parser must still get its raw.
+      const raw =
+        "<summary>s</summary><figures>None</figures><markdown>m</markdown>";
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue(completion(raw)));
+      const result = await createVisionClient(
+        WITH_SCHEMA,
+        testLogger,
+      ).analyzePage(PAGE);
+      expect(result.raw).toBe(raw);
+    });
+
+    it("drops the field process-wide when the provider rejects it, and counts both requests", async () => {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(
+          new Response(
+            '{"error":"BadRequest: response_format json_schema unsupported"}',
+            {
+              status: 400,
+            },
+          ),
+        )
+        .mockResolvedValueOnce(completion("<markdown>ok</markdown>"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const client = createVisionClient(WITH_SCHEMA, testLogger);
+      const result = await client.analyzePage(PAGE);
+
+      expect(result.raw).toBe("<markdown>ok</markdown>");
+      // The rejected attempt was paid for too.
+      expect(result.requests).toBe(2);
+      expect(bodyOf(fetchMock, 0)).toHaveProperty("response_format");
+      expect(bodyOf(fetchMock, 1)).not.toHaveProperty("response_format");
+
+      // And the next page does not probe the capability again.
+      fetchMock.mockResolvedValue(completion("<markdown>noch eine</markdown>"));
+      await client.analyzePage(PAGE);
+      expect(bodyOf(fetchMock, 2)).not.toHaveProperty("response_format");
+    });
+
+    it("still fails permanently on a 400 that does not name the field", async () => {
+      // A bad model name must not be mistaken for a capability rejection.
+      const fetchMock = vi.fn(
+        async () => new Response('{"error":"unknown model"}', { status: 400 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      await expect(
+        createVisionClient(WITH_SCHEMA, testLogger).analyzePage(PAGE),
+      ).rejects.toMatchObject({ code: "VISION_UNAVAILABLE" });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
   });
 
   describe("probe", () => {

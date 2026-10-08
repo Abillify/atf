@@ -33,7 +33,8 @@
  */
 
 import type { Transcription } from "@atf/extract-contract/v2";
-import { XMLParser } from "fast-xml-parser";
+import { documentTooComplex } from "../../errors.js";
+import { hasDoctypeDeclaration, safeXmlParser } from "../safe-xml.js";
 
 /** The flow-node element names BPMN 2.0 defines, mapped to a compact node type. */
 const NODE_TYPES: Readonly<Record<string, string>> = {
@@ -59,14 +60,14 @@ const NODE_TYPES: Readonly<Record<string, string>> = {
 	boundaryEvent: "boundaryEvent",
 };
 
-const parser = new XMLParser({
-	ignoreAttributes: false,
-	attributeNamePrefix: "@_",
-	parseAttributeValue: false,
-	parseTagValue: false,
-	trimValues: true,
-	// Strip `bpmn:`/`bpmn2:`/… prefixes so element lookups are prefix-agnostic.
-	removeNSPrefix: true,
+const parser = safeXmlParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  parseAttributeValue: false,
+  parseTagValue: false,
+  trimValues: true,
+  // Strip `bpmn:`/`bpmn2:`/… prefixes so element lookups are prefix-agnostic.
+  removeNSPrefix: true,
 });
 
 /** A parsed BPMN document plus any tolerant-recovery warnings. */
@@ -235,10 +236,24 @@ function toSteps(nodes: ProcessNode[], edges: ProcessEdge[]): string[] {
 }
 
 /**
- * Parse a BPMN 2.0 XML document into a `process` transcription. Never throws —
- * an unparseable or non-BPMN input yields an empty process with a warning.
+ * Parse a BPMN 2.0 XML document into a `process` transcription. An
+ * unparseable or non-BPMN input yields an empty process with a warning.
+ *
+ * The one rejection: a document with a DOCTYPE declaration throws
+ * `ExtractError("DOCUMENT_TOO_COMPLEX")` (requirement 5.3). Entity processing
+ * is off in the parser, so a DOCTYPE can do nothing — but legitimate BPMN
+ * never carries one, and refusing it keeps the attack surface closed even if
+ * a future parser change re-enables entities.
  */
 export function parseBpmn(xml: string): ParsedBpmn {
+	if (hasDoctypeDeclaration(xml)) {
+    throw documentTooComplex(
+      "BPMN documents with a DOCTYPE declaration are rejected",
+      {
+        reason: "doctype",
+      },
+    );
+  }
 	const warnings: string[] = [];
 	let doc: Record<string, unknown>;
 	try {

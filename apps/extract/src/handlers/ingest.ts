@@ -36,7 +36,11 @@ import { validationError } from "../errors.js";
 import { readHeader, readListHeader, parseBooleanHeader } from "../header-utils.js";
 import { getPrincipal, runWithPrincipal, type RequestPrincipal } from "../request-principal.js";
 import { QueueSaturatedError, type WorkQueue } from "../queue.js";
-import { readUpload, sanitizeFilename } from "../upload.js";
+import {
+  readUpload,
+  sanitizeFilename,
+  type UploadedDocument,
+} from "../upload.js";
 import type { Extractor } from "../pipeline/extract.js";
 import type { SearchClient } from "../search-client.js";
 
@@ -218,7 +222,9 @@ function parseIntHeader(
   ) {
     const range =
       opts.max !== undefined ? `${opts.min}–${opts.max}` : `an integer ≥ ${opts.min ?? 0}`;
-    throw validationError(`${opts.name} must be ${opts.max !== undefined ? "an integer in " + range : range}`);
+    throw validationError(
+      `${opts.name} must be ${opts.max !== undefined ? `an integer in ${range}` : range}`,
+    );
   }
   return parsed;
 }
@@ -240,15 +246,25 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
   const { extractor, searchClient, queue, logger, metrics, defaultCollection } = deps;
 
   return (req, res, next) => {
-    void (async () => {
-      const upload = readUpload(req);
+    // Read outside the async block so the `finally` below can always release a
+    // spooled scratch file (requirement 5.9), whichever path the request took.
+    let upload: UploadedDocument;
+    try {
+      upload = readUpload(req);
+    } catch (error) {
+      next(error);
+      return;
+    }
 
+    void (async () => {
       // Unlike conversion, the reference is mandatory here: it is the row key
       // Search stores under, and defaulting it to a filename would make two
       // uploads of "scan.pdf" from different sources overwrite each other.
       const reference = readHeader(req, "x-reference")?.trim();
       if (reference === undefined || reference === "") {
-        throw validationError("X-Reference is required for ingest and identifies the document");
+        throw validationError(
+          "X-Reference is required for ingest and identifies the document",
+        );
       }
 
       const titleRaw = readHeader(req, "x-title")?.trim();
@@ -265,9 +281,12 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
       // already be gone by then.
       const outcome = await runWithPrincipal(principal, () =>
         queue.submit(async () => {
+          // Materialise *inside* the queue slot: a spooled upload (requirement
+          // 5.9) must not hold its bytes in the heap while it waits.
+          const buffer = await upload.readBuffer();
           try {
             const result = await extractor.extract({
-              buffer: upload.buffer,
+              buffer,
               filename: upload.filename,
               declaredMimeType: upload.declaredMimeType,
               reference,
@@ -287,7 +306,10 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
             });
             return { result, ingested };
           } catch (error) {
-            metrics.recordDocument(upload.declaredMimeType ?? "unknown", "error");
+            metrics.recordDocument(
+              upload.declaredMimeType ?? "unknown",
+              "error",
+            );
             throw error;
           }
         }),
@@ -325,23 +347,27 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
         warnings: outcome.result.document.warnings,
         search: outcome.ingested.ingest,
       });
-    })().catch((error: unknown) => {
-      if (error instanceof QueueSaturatedError) {
-        metrics.recordQueueRejection();
-        res.setHeader("Retry-After", "30");
-        res.status(503).json({
-          error: "The conversion queue is full; retry shortly",
-          code: "QUEUE_SATURATED",
-          retryable: true,
-        });
-        return;
-      }
-      if (res.headersSent) {
-        if (!res.writableEnded) res.end();
-        return;
-      }
-      next(error);
-    });
+    })()
+      .catch((error: unknown) => {
+        if (error instanceof QueueSaturatedError) {
+          metrics.recordQueueRejection();
+          res.setHeader("Retry-After", "30");
+          res.status(503).json({
+            error: "The conversion queue is full; retry shortly",
+            code: "QUEUE_SATURATED",
+            retryable: true,
+          });
+          return;
+        }
+        if (res.headersSent) {
+          if (!res.writableEnded) res.end();
+          return;
+        }
+        next(error);
+      })
+      .finally(() => {
+        void upload.cleanup();
+      });
   };
 }
 

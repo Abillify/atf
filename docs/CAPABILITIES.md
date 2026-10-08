@@ -143,9 +143,17 @@ callers that already hold Markdown.
   requires `SEARCH_URL`; `POST /ingest-file` in Search proxies the upload and requires
   `CONVERTER_URL`, indexing figure descriptions but not the images
   (`X-Figure-Assets: not-stored`).
-- **Bounded work.** `MAX_PAGES`, `MAX_UPLOAD_BYTES`, a decoded-pixel ceiling for images,
-  `CONVERT_CONCURRENCY`, `PAGE_CONCURRENCY`, and a queue that answers 503 with `Retry-After`
-  past `QUEUE_MAX_DEPTH`.
+- **Bounded work.** `MAX_PAGES` (default 500), `MAX_UPLOAD_BYTES`, a decoded-pixel ceiling for
+  images, `CONVERT_CONCURRENCY`, `PAGE_CONCURRENCY`, a queue that answers 503 with `Retry-After`
+  past `QUEUE_MAX_DEPTH`, a per-tenant daily vision-page budget (`VISION_BUDGET_PAGES_PER_DAY`,
+  `BUDGET_EXCEEDED`), and large uploads spooled to disk instead of the heap.
+- **Hostile-document hardening.** ZIP containers are checked against `ZIP_MAX_*` before they
+  are unpacked (`DOCUMENT_TOO_COMPLEX`), XML entity expansion is off, native parsers run in a
+  heap-limited Worker thread, LibreOffice starts with macros and linked-content updates
+  disabled, converter calls carry `prlimit` CPU and memory ceilings on Linux, and
+  `CONVERTER_MODE=isolated` moves poppler, LibreOffice and Tesseract into a separate
+  converter process. An optional Tesseract fallback (`OCR_FALLBACK`) keeps scanned pages
+  searchable while the vision model is down.
 - **Upload and callback hardening.** Uploads are type-sniffed rather than trusted, filenames
   never reach a process argument, converter subprocesses run without credentials in their
   environment, and callback targets refuse link-local and cloud metadata addresses

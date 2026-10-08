@@ -33,6 +33,8 @@ export type ExtractErrorCode =
   | "PAYLOAD_TOO_LARGE"
   /** Document has more pages than MAX_PAGES allows. */
   | "TOO_MANY_PAGES"
+  /** A ZIP container exceeds a ZIP_MAX_* limit (entry count, sizes, ratio). */
+  | "DOCUMENT_TOO_COMPLEX"
   /** A converter binary is missing from the image. */
   | "CONVERTER_UNAVAILABLE"
   /** A converter ran but failed or produced nothing usable. */
@@ -52,7 +54,46 @@ export type ExtractErrorCode =
   /** Fetching a caller-supplied `source_url` failed. */
   | "SOURCE_FETCH_FAILED"
   /** Client disconnected before the conversion finished. */
-  | "CLIENT_ABORTED";
+  | "CLIENT_ABORTED"
+  /**
+   * The tenant's daily vision-page budget (`VISION_BUDGET_PAGES_PER_DAY`,
+   * requirement 5.8) is exhausted. A retry is pointless today — the counter
+   * only resets at the next UTC day — so the code is deliberately not in the
+   * retryable set.
+   */
+  | "BUDGET_EXCEEDED";
+
+/** Every code in the taxonomy, in declaration order. */
+const ALL_CODES: readonly ExtractErrorCode[] = [
+  "VALIDATION_FAILED",
+  "UNSUPPORTED_MEDIA_TYPE",
+  "PAYLOAD_TOO_LARGE",
+  "TOO_MANY_PAGES",
+  "DOCUMENT_TOO_COMPLEX",
+  "CONVERTER_UNAVAILABLE",
+  "CONVERSION_FAILED",
+  "VISION_UNAVAILABLE",
+  "INGEST_FAILED",
+  "CONTRACT_VIOLATION",
+  "QUEUE_SATURATED",
+  "NOT_FOUND",
+  "CONFLICT",
+  "SOURCE_FETCH_FAILED",
+  "CLIENT_ABORTED",
+  "BUDGET_EXCEEDED",
+];
+
+/**
+ * True when `value` is a member of the code union. Used where a code arrives
+ * from an untrusted boundary — the converter RPC response — and must be
+ * validated before it is trusted as an `ExtractErrorCode`.
+ */
+export function isExtractErrorCode(value: unknown): value is ExtractErrorCode {
+  return (
+    typeof value === "string" &&
+    (ALL_CODES as readonly string[]).includes(value)
+  );
+}
 
 /** HTTP status each code maps to. */
 const STATUS_BY_CODE: Record<ExtractErrorCode, number> = {
@@ -60,6 +101,7 @@ const STATUS_BY_CODE: Record<ExtractErrorCode, number> = {
   UNSUPPORTED_MEDIA_TYPE: 415,
   PAYLOAD_TOO_LARGE: 413,
   TOO_MANY_PAGES: 422,
+  DOCUMENT_TOO_COMPLEX: 422,
   CONVERTER_UNAVAILABLE: 500,
   CONVERSION_FAILED: 500,
   VISION_UNAVAILABLE: 502,
@@ -70,6 +112,7 @@ const STATUS_BY_CODE: Record<ExtractErrorCode, number> = {
   CONFLICT: 409,
   SOURCE_FETCH_FAILED: 502,
   CLIENT_ABORTED: 499,
+  BUDGET_EXCEEDED: 429,
 };
 
 /**
@@ -157,6 +200,32 @@ export function sourceFetchFailed(
   context?: Record<string, unknown>,
 ): ExtractError {
   return new ExtractError("SOURCE_FETCH_FAILED", message, context);
+}
+
+/**
+ * A ZIP container (XLSX, VSDX, DOCX, PPTX, DOCX embeddings) whose declared
+ * entry count, total or single uncompressed size, or compression ratio exceeds
+ * a `ZIP_MAX_*` limit — a ZIP bomb, or a package no honest document is
+ * (requirement 5.1). Never retryable: the bytes do not change.
+ */
+export function documentTooComplex(
+  message: string,
+  context?: Record<string, unknown>,
+): ExtractError {
+  return new ExtractError("DOCUMENT_TOO_COMPLEX", message, context);
+}
+
+/**
+ * The tenant's daily vision-page budget is exhausted (requirement 5.8). The
+ * job fails with this code rather than pausing: waiting inside the same day
+ * changes nothing, and a `paused(budget)` job would suggest an operator can
+ * resume it today. Never retryable.
+ */
+export function budgetExceeded(
+  message: string,
+  context?: Record<string, unknown>,
+): ExtractError {
+  return new ExtractError("BUDGET_EXCEEDED", message, context);
 }
 
 /** True when the failure is the caller's to fix. */

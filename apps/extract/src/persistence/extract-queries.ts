@@ -272,6 +272,40 @@ export function reserveJobTokensQuery(id: string, tokens: number): Query {
 }
 
 /**
+ * Atomically add `pages` to a tenant's vision-page counter for one UTC day
+ * (task 7.7, requirement 5.8) and return the new total — or no row when the
+ * increment would cross `limit`. The comparison and the increment are one
+ * statement (`INSERT … ON CONFLICT DO UPDATE … WHERE … RETURNING`), so
+ * concurrent page stages across jobs and worker instances cannot together
+ * pass a daily cap the budget only covers once — the same argument as
+ * {@link reserveJobTokensQuery}, on the tenant/day axis instead of the job.
+ *
+ * The caller consumes ONE page at a time, so the fresh-row insert path (no
+ * existing row, hence no WHERE guard) can never exceed a positive limit.
+ * `limit` 0 means unlimited and is handled by the caller, which does not run
+ * this query at all.
+ */
+export function consumeVisionDailyPagesQuery(
+	tenantId: string,
+	day: string,
+	pages: number,
+	limit: number,
+): Query {
+	return {
+		text: `
+      INSERT INTO ${EXTRACT_SCHEMA}.vision_daily_usage
+             (tenant_id, day, pages_used, updated_at)
+      VALUES ($1, $2::date, $3, NOW())
+ ON CONFLICT (tenant_id, day) DO UPDATE
+         SET pages_used = ${EXTRACT_SCHEMA}.vision_daily_usage.pages_used + $3,
+             updated_at = NOW()
+       WHERE ${EXTRACT_SCHEMA}.vision_daily_usage.pages_used + $3 <= $4
+      RETURNING pages_used`,
+		values: [tenantId, day, pages, limit],
+	};
+}
+
+/**
  * Settle a reservation: release `reserved` and book the actual `used` spend.
  * Runs in the same transaction as the checkpoint write it pays for.
  */

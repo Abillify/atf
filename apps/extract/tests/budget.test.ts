@@ -19,6 +19,9 @@ import { describe, expect, it } from "vitest";
 import {
   BUDGET_WARN_MARKER,
   createDbBudgetLedger,
+  createTenantDailyPageBudget,
+  tenantDailyBudgetFailureMessage,
+  utcDayKey,
 } from "../src/jobs/budget.js";
 import { createFakeJobStore } from "./job-store-fake.js";
 
@@ -107,5 +110,128 @@ describe("createDbBudgetLedger · 80 % budget warning (requirement 6.6)", () => 
     const jobId = await seedBudgetedJob(store, null);
     const ledger = createDbBudgetLedger(store, jobId);
     expect(await ledger.remaining()).toBeNull();
+  });
+});
+
+// Task 7.7 (requirement 5.8): the per-tenant, per-UTC-day VLM page ledger.
+// Same fake store as above — the ledger's contract is the counter, the
+// refusal, and the sticky exhaustion, none of which need Postgres.
+describe("createTenantDailyPageBudget (task 7.7, requirement 5.8)", () => {
+  const DAY_1 = new Date("2026-02-03T10:00:00Z");
+  const DAY_2 = new Date("2026-02-04T00:00:01Z");
+
+  it("counts consumed pages against the tenant's UTC day", async () => {
+    const store = createFakeJobStore();
+    const ledger = createTenantDailyPageBudget(store, {
+      tenantId: "acme",
+      limit: 5,
+      now: () => DAY_1,
+    });
+
+    expect(await ledger.tryConsumePage()).toBe(true);
+    expect(await ledger.tryConsumePage()).toBe(true);
+    expect(ledger.isExhausted()).toBe(false);
+    expect(store.peekVisionDailyUsage("acme", utcDayKey(DAY_1))).toBe(2);
+    // A different day bucket is untouched — the counter is per UTC day.
+    expect(store.peekVisionDailyUsage("acme", utcDayKey(DAY_2))).toBe(0);
+  });
+
+  it("refuses the page that would cross the limit and sticks", async () => {
+    const store = createFakeJobStore();
+    const ledger = createTenantDailyPageBudget(store, {
+      tenantId: "acme",
+      limit: 2,
+      now: () => DAY_1,
+    });
+
+    expect(await ledger.tryConsumePage()).toBe(true);
+    expect(await ledger.tryConsumePage()).toBe(true);
+    // The third page would exceed 2: refused, counter unchanged, exhausted.
+    expect(await ledger.tryConsumePage()).toBe(false);
+    expect(ledger.isExhausted()).toBe(true);
+    expect(store.peekVisionDailyUsage("acme", utcDayKey(DAY_1))).toBe(2);
+    // Once exhausted the ledger short-circuits — no further store traffic.
+    expect(await ledger.tryConsumePage()).toBe(false);
+    expect(store.peekVisionDailyUsage("acme", utcDayKey(DAY_1))).toBe(2);
+  });
+
+  it("resets when the UTC day rolls over", async () => {
+    const store = createFakeJobStore();
+    let current = DAY_1;
+    const ledger = createTenantDailyPageBudget(store, {
+      tenantId: "acme",
+      limit: 1,
+      now: () => current,
+    });
+
+    expect(await ledger.tryConsumePage()).toBe(true);
+    expect(await ledger.tryConsumePage()).toBe(false);
+
+    // New UTC day: the exhausted flag belongs to the old bucket and must not
+    // carry over — the tenant gets its full allowance again.
+    current = DAY_2;
+    expect(ledger.isExhausted()).toBe(false);
+    expect(await ledger.tryConsumePage()).toBe(true);
+    expect(store.peekVisionDailyUsage("acme", utcDayKey(DAY_2))).toBe(1);
+  });
+
+  it("treats limit 0 as unlimited", async () => {
+    const store = createFakeJobStore();
+    const ledger = createTenantDailyPageBudget(store, {
+      tenantId: "acme",
+      limit: 0,
+      now: () => DAY_1,
+    });
+
+    for (let i = 0; i < 10; i++) {
+      expect(await ledger.tryConsumePage()).toBe(true);
+    }
+    expect(ledger.isExhausted()).toBe(false);
+    // The unlimited path never touches the store at all.
+    expect(store.peekVisionDailyUsage("acme", utcDayKey(DAY_1))).toBe(0);
+  });
+
+  it("exempts jobs with no attributable tenant", async () => {
+    const store = createFakeJobStore();
+    for (const tenantId of [null, undefined, ""]) {
+      const ledger = createTenantDailyPageBudget(store, {
+        tenantId,
+        limit: 1,
+        now: () => DAY_1,
+      });
+      expect(await ledger.tryConsumePage()).toBe(true);
+      expect(await ledger.tryConsumePage()).toBe(true);
+      expect(ledger.isExhausted()).toBe(false);
+    }
+  });
+
+  it("keeps tenants apart", async () => {
+    const store = createFakeJobStore();
+    const acme = createTenantDailyPageBudget(store, {
+      tenantId: "acme",
+      limit: 1,
+      now: () => DAY_1,
+    });
+    const globex = createTenantDailyPageBudget(store, {
+      tenantId: "globex",
+      limit: 1,
+      now: () => DAY_1,
+    });
+
+    expect(await acme.tryConsumePage()).toBe(true);
+    expect(await acme.tryConsumePage()).toBe(false);
+    // acme being out of budget says nothing about globex.
+    expect(await globex.tryConsumePage()).toBe(true);
+  });
+
+  it("names the error code and the configured limit in the failure text", () => {
+    const message = tenantDailyBudgetFailureMessage(3000);
+    expect(message).toContain("BUDGET_EXCEEDED");
+    expect(message).toContain("VISION_BUDGET_PAGES_PER_DAY=3000");
+  });
+
+  it("utcDayKey buckets by UTC calendar day", () => {
+    expect(utcDayKey(new Date("2026-02-03T23:59:59Z"))).toBe("2026-02-03");
+    expect(utcDayKey(new Date("2026-02-04T00:00:00Z"))).toBe("2026-02-04");
   });
 });

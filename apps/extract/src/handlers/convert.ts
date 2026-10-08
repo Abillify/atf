@@ -186,21 +186,32 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
     hooks: RunHooks = {},
   ): Promise<ExtractResult> {
     return queue.submit(async () => {
+      // Materialise *inside* the queue slot: an upload spooled to disk
+      // (requirement 5.9) must not occupy the heap while it waits behind other
+      // documents — that wait is exactly what the spool exists to survive.
+      const buffer = await parsed.upload.readBuffer();
       try {
         const result = await extractor.extract({
-          buffer: parsed.upload.buffer,
+          buffer,
           filename: parsed.upload.filename,
           declaredMimeType: parsed.upload.declaredMimeType,
           reference: parsed.reference,
           title: parsed.title,
           signal,
-          ...(hooks.onPrepared !== undefined ? { onPrepared: hooks.onPrepared } : {}),
-          ...(hooks.onProgress !== undefined ? { onProgress: hooks.onProgress } : {}),
+          ...(hooks.onPrepared !== undefined
+            ? { onPrepared: hooks.onPrepared }
+            : {}),
+          ...(hooks.onProgress !== undefined
+            ? { onProgress: hooks.onProgress }
+            : {}),
         });
         metrics.recordDocument(result.document.source.mimeType, "ok");
         return result;
       } catch (error) {
-        metrics.recordDocument(parsed.upload.declaredMimeType ?? "unknown", "error");
+        metrics.recordDocument(
+          parsed.upload.declaredMimeType ?? "unknown",
+          "error",
+        );
         throw error;
       }
     }, hooks.queue);
@@ -213,17 +224,26 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
     parsed: ConvertRequest,
   ): Promise<void> {
     const controller = abortOnDisconnect(req, res);
-    const result = await runConversion(parsed, controller.signal);
-    if (res.writableEnded) return;
+    try {
+      const result = await runConversion(parsed, controller.signal);
+      if (res.writableEnded) return;
 
-    const figureCount = collectFigures(result.document).length;
-    setResultHeaders(res, result.document, figureCount);
+      const figureCount = collectFigures(result.document).length;
+      setResultHeaders(res, result.document, figureCount);
 
-    if (wantsMarkdown(req)) {
-      res.status(200).type("text/markdown; charset=utf-8").send(result.markdown);
-      return;
+      if (wantsMarkdown(req)) {
+        res
+          .status(200)
+          .type("text/markdown; charset=utf-8")
+          .send(result.markdown);
+        return;
+      }
+      res
+        .status(200)
+        .json(buildConvertResponse(result, parsed.includeFigureData));
+    } finally {
+      await parsed.upload.cleanup();
     }
-    res.status(200).json(buildConvertResponse(result, parsed.includeFigureData));
   }
 
   // ── SSE ───────────────────────────────────────────────────────────────────
@@ -338,6 +358,7 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
     } finally {
       clearInterval(heartbeat);
       if (!res.writableEnded) res.end();
+      await parsed.upload.cleanup();
     }
   }
 
@@ -422,7 +443,11 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
           queue: {
             onQueued: (state) => {
               phase = "queued";
-              sendProgress({ type: "queued", position: state.position, total: state.depth });
+              sendProgress({
+                type: "queued",
+                position: state.position,
+                total: state.depth,
+              });
             },
           },
           onPrepared: ({ pageCount, extractionMs }) => {
@@ -440,7 +465,10 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
           onProgress: (progress) => {
             currentPage = progress.page.page;
             totalPages = progress.pageCount;
-            const remainingPages = Math.max(0, progress.pageCount - progress.page.page);
+            const remainingPages = Math.max(
+              0,
+              progress.pageCount - progress.page.page,
+            );
             void sendProgress({
               type: "progress",
               page: progress.page.page,
@@ -455,7 +483,9 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
               etaSeconds:
                 remainingPages === 0
                   ? null
-                  : Math.round((remainingPages * progress.timing.pageMs) / 1000),
+                  : Math.round(
+                      (remainingPages * progress.timing.pageMs) / 1000,
+                    ),
               elapsedMs: progress.timing.elapsedMs,
             });
           },
@@ -505,6 +535,9 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
         });
       } finally {
         if (heartbeat !== null) clearInterval(heartbeat);
+        // The response was long gone at 202, so this detached block — not the
+        // response lifecycle — is where the spooled upload's life ends.
+        await parsed.upload.cleanup();
       }
     })();
   }
@@ -529,6 +562,10 @@ export function createConvertHandler(deps: ConvertHandlerDeps): RequestHandler {
           : handleSync(req, res, parsed);
 
     run.catch((error: unknown) => {
+      // A failure before the mode handler reached its own `finally` — a bad
+      // callback URL, a saturated queue — still ends the spooled file's life.
+      // Idempotent, so the double call on paths that did clean up is a no-op.
+      void parsed.upload.cleanup();
       if (error instanceof QueueSaturatedError) {
         metrics.recordQueueRejection();
         res.setHeader("Retry-After", "30");

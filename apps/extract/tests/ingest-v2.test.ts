@@ -17,7 +17,8 @@
  */
 
 import { once } from "node:events";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import express from "express";
@@ -121,7 +122,11 @@ function fakeWorker(options: {
 /** Mount the handler on a bare app, with the given inline-drive fake. */
 async function buildApp(
   runOneJob: (() => Promise<boolean>) | null,
-  overrides: { syncPageLimit?: number; syncTimeoutMs?: number } = {},
+  overrides: {
+    syncPageLimit?: number;
+    syncTimeoutMs?: number;
+    uploadMemoryThresholdBytes?: number;
+  } = {},
 ): Promise<string> {
   const handler = createIngestV2Handler({
     store: fakeStore,
@@ -137,7 +142,12 @@ async function buildApp(
   const app = express();
   app.post(
     "/v1/ingest",
-    createUploadMiddleware({ maxUploadBytes: 10_000_000 }),
+    createUploadMiddleware({
+      maxUploadBytes: 10_000_000,
+      uploadMemoryThresholdBytes:
+        overrides.uploadMemoryThresholdBytes ?? 8_388_608,
+      tempDir: storeDir,
+    }),
     handler,
   );
   // Minimal error middleware mirroring the production one, so a thrown
@@ -215,6 +225,32 @@ describe("POST /v1/ingest · v2 wrapper", () => {
     expect(res.body.figure_count).toBe(4); // 3 acked + 1 failed
     expect(res.body.assets_stored).toBe(3);
     expect(res.body.assets_failed).toBe(1);
+  });
+
+  it("streams a spooled multipart upload into the source store and reaps the scratch file", async () => {
+    // Requirement 5.9: above the threshold the upload lives on disk, and this
+    // handler must hand it to the store disk-to-disk — the durable copy is all
+    // the job worker reads from, so the scratch file is gone once stored.
+    const large = Buffer.concat([PDF, Buffer.alloc(50_000, 0x42)]);
+    const baseUrl = await buildApp(fakeWorker({ pageCount: 1 }), {
+      uploadMemoryThresholdBytes: 1024,
+    });
+    const res = await request(baseUrl)
+      .post("/v1/ingest")
+      .set("X-Reference", "gross.pdf")
+      .attach("document", large, {
+        filename: "gross.pdf",
+        contentType: "application/pdf",
+      });
+    expect(res.status).toBe(200);
+
+    const sha256 = createHash("sha256").update(large).digest("hex");
+    const storedPath = await sourceStore.locate(sha256);
+    expect(storedPath).not.toBeNull();
+    expect(await readFile(storedPath ?? "")).toEqual(large);
+    await expect(
+      readdir(join(storeDir, "uploads")).then((names) => names.length),
+    ).resolves.toBe(0);
   });
 
   it("refuses a collection name Search would reject, before creating a job", async () => {

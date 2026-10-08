@@ -63,8 +63,8 @@
  * must be able to fall through to vision rather than fail the page.
  */
 
-import { XMLParser } from "fast-xml-parser";
 import type { BBox } from "@atf/extract-contract/v2";
+import { safeXmlParser } from "./safe-xml.js";
 
 /** A single word with its normalised bounding box. */
 export interface AnalyzedWord {
@@ -135,7 +135,7 @@ const HEADING_NUMBERING = /^(\d+(?:\.\d+)*)\s+\S/;
  * drop the leading-zero cases poppler occasionally emits. `<word>` text is the
  * element's `#text`.
  */
-const parser = new XMLParser({
+const parser = safeXmlParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   parseAttributeValue: false,

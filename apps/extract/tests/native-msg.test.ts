@@ -2,9 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 import { describe, expect, it } from "vitest";
 import { pageRecordSchema } from "@atf/extract-contract/v2";
-import { buildEmailRecords, parseEmail, parseMsg, readCfb } from "../src/pipeline/native/index.js";
+import {
+  buildEmailRecords,
+  DEFAULT_MAX_EMBED_DEPTH,
+  parseEmail,
+  parseMsg,
+  readCfb,
+} from "../src/pipeline/native/index.js";
 import { resolveFormat } from "../src/formats.js";
-import { msgBinary, msgProperties, msgString, writeCfb } from "./cfb-writer.js";
+import {
+  msgBinary,
+  msgProperties,
+  msgString,
+  writeCfb,
+  type CfbNode,
+} from "./cfb-writer.js";
 
 const PDF = Buffer.from(`%PDF-1.4\n${"y".repeat(6000)}\n%%EOF`);
 
@@ -126,5 +138,80 @@ describe("parseMsg", () => {
     expect(named.ok && named.format.mimeType).toBe("application/vnd.ms-outlook");
     const bare = resolveFormat({ buffer });
     expect(bare.ok && bare.format.kind).toBe("email");
+  });
+
+  it("bounds embedded-message nesting at MAX_EMBED_DEPTH (requirement 5.4)", () => {
+    // The default is the configured MAX_EMBED_DEPTH of 2, not the old
+    // hard-coded 4.
+    expect(DEFAULT_MAX_EMBED_DEPTH).toBe(2);
+
+    // level0 embeds level1 embeds level2 …, each as an ATTACH_EMBEDDED_MSG
+    // storage. An embedded message is handed on as an EML child, so the
+    // observable boundary is whether a level is parsed at all: at the depth
+    // limit it is skipped with a warning instead of recursed into.
+    const message = (name: string, embedded?: CfbNode[]): CfbNode[] => [
+      msgProperties(24, []),
+      msgString(0x0037, name),
+      msgString(0x1000, `Body ${name}`),
+      msgString(0x1035, `<${name}@example.com>`),
+      ...(embedded !== undefined
+        ? [
+            {
+              name: "__attach_version1.0_#00000000",
+              children: [
+                msgProperties(8, [{ id: 0x3705, long: 5 }]),
+                msgString(0x3707, `${name}-inner.msg`),
+                { name: "__substg1.0_3701000D", children: embedded },
+              ],
+            },
+          ]
+        : []),
+    ];
+    const nested = writeCfb([
+      msgProperties(32, []),
+      msgString(0x0037, "level0"),
+      msgString(0x1000, "Body level0"),
+      msgString(0x1035, "<level0@example.com>"),
+      {
+        name: "__attach_version1.0_#00000000",
+        children: [
+          msgProperties(8, [{ id: 0x3705, long: 5 }]),
+          msgString(0x3707, "level1-inner.msg"),
+          {
+            name: "__substg1.0_3701000D",
+            children: message("level1", message("level2", message("level3"))),
+          },
+        ],
+      },
+    ]);
+
+    // The first embedded message is parsed into an EML child.
+    const mail = parseMsg(nested);
+    expect(mail.attachments.map((a) => a.filename)).toEqual([
+      "level1-inner.eml",
+    ]);
+    const level1 = parseEmail(mail.attachments[0]?.content ?? new Uint8Array());
+    expect(level1.subject).toBe("level1");
+    expect(level1.text).toBe("Body level1");
+
+    // Depth 0: embedding is off entirely, and the skip is reported.
+    const flat = parseMsg(nested, 0);
+    expect(flat.attachments).toEqual([]);
+    expect(
+      flat.warnings.some(
+        (w) => w.includes("level1-inner.msg") && w.includes("skipped"),
+      ),
+    ).toBe(true);
+
+    // A pathological nesting far below the limit terminates without throwing;
+    // the recursion stops at the depth bound rather than following every level.
+    let deep: CfbNode[] = message("leaf");
+    for (let level = 0; level < 40; level += 1)
+      deep = message(`deep${level}`, deep);
+    const deepMail = parseMsg(writeCfb([msgProperties(32, []), ...deep]));
+    expect(deepMail.attachments).toHaveLength(1);
+    // The outermost wrapper is the last one wound; its child is followed once
+    // and the recursion stops at the bound, 38 levels deeper.
+    expect(deepMail.attachments[0]?.filename).toBe("deep39-inner.eml");
   });
 });

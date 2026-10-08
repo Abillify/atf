@@ -44,7 +44,9 @@
  */
 
 import { unzipSync, strFromU8 } from "fflate";
-import { XMLParser } from "fast-xml-parser";
+import { ExtractError } from "../../errors.js";
+import { safeXmlParser } from "../safe-xml.js";
+import { assertZipWithinLimits, type ZipLimits } from "./zip-guard.js";
 
 /** A cell in a native table: text plus optional merge spans (contract shape). */
 export interface XlsxCell {
@@ -74,14 +76,19 @@ export interface ParsedXlsx {
   warnings: string[];
 }
 
-const parser = new XMLParser({
+const parser = safeXmlParser({
   ignoreAttributes: false,
   attributeNamePrefix: "@_",
   parseAttributeValue: false,
   parseTagValue: false,
   trimValues: false,
   removeNSPrefix: true,
-  isArray: (name) => name === "sheet" || name === "row" || name === "c" || name === "mergeCell" || name === "si",
+  isArray: (name) =>
+    name === "sheet" ||
+    name === "row" ||
+    name === "c" ||
+    name === "mergeCell" ||
+    name === "si",
 });
 
 function asArray(value: unknown): unknown[] {
@@ -281,12 +288,22 @@ function readSheet(name: string, xml: string, sharedStrings: string[]): XlsxShee
 
 /**
  * Read an XLSX into native tables and decide whether it needs rendering
- * (requirement 10.2). Never throws.
+ * (requirement 10.2). Never throws — except for a ZIP-guard violation
+ * (`DOCUMENT_TOO_COMPLEX`, requirement 5.1), which is a rejection, not a
+ * warning: a bomb must fail the job, not degrade to an empty sheet set.
  */
-export async function readXlsx(buffer: Uint8Array): Promise<ParsedXlsx> {
+export async function readXlsx(
+  buffer: Uint8Array,
+  limits?: ZipLimits,
+): Promise<ParsedXlsx> {
   const warnings: string[] = [];
   let entries: Record<string, Uint8Array>;
   try {
+    // Checked before any inflation (requirement 5.1). A limit violation throws
+    // ExtractError, which the catch below re-throws instead of downgrading to
+    // a warning; a buffer that is not a ZIP at all throws fflate's own error,
+    // which keeps degrading to a warning as before.
+    assertZipWithinLimits(buffer, limits);
     entries = unzipSync(buffer, {
       filter: (file) =>
         file.name === "xl/workbook.xml" ||
@@ -297,6 +314,7 @@ export async function readXlsx(buffer: Uint8Array): Promise<ParsedXlsx> {
         /^xl\/media\//.test(file.name),
     });
   } catch (error) {
+    if (error instanceof ExtractError) throw error;
     warnings.push(
       `Das XLSX konnte nicht gelesen werden: ${error instanceof Error ? error.message : String(error)}`,
     );
@@ -330,8 +348,12 @@ export async function readXlsx(buffer: Uint8Array): Promise<ParsedXlsx> {
     // Resolve the worksheet part: prefer the r:id → target rel, else the Nth
     // worksheet part by name (a workbook without rels still resolves in order).
     const target = ref.rid !== undefined ? rels.get(ref.rid) : undefined;
-    const partName = target !== undefined ? normalizeXlPart(target) : `xl/worksheets/sheet${fallbackIndex}.xml`;
-    const bytes = entries[partName] ?? entries[`xl/worksheets/sheet${fallbackIndex}.xml`];
+    const partName =
+      target !== undefined
+        ? normalizeXlPart(target)
+        : `xl/worksheets/sheet${fallbackIndex}.xml`;
+    const bytes =
+      entries[partName] ?? entries[`xl/worksheets/sheet${fallbackIndex}.xml`];
     if (bytes === undefined) {
       warnings.push(`Arbeitsblatt „${ref.name}“ konnte nicht gelesen werden.`);
       continue;

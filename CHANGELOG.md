@@ -27,6 +27,11 @@ Audit-Erfolg fort. Phase 4 macht DSAR-Löschungen über alle Stores vollständig
 und ehrlich: Search, Extract und Gate melden je-Store-Teilergebnisse über den
 Erasure-Contract, die Runtime verteilt als Orchestrator und stellt einen signierten
 Erasure_Receipt aus; ein Outpost-MirrorDelete löst den vollständigen Search-Cascade aus.
+Phase 5 härtet Extract gegen feindselige Dokumente (ZIP-Guard, sicheres XML, Parser- und
+Converter-Isolation, Subprozess-Limits, gehärtetes LibreOffice-Profil) und begrenzt Kosten
+und Speicher (Tagesbudget für Vision-Seiten, `MAX_PAGES`-Default, Upload-Spill auf Platte);
+Phase 6 macht den Tenant-Scope in Search verpflichtend und stimmt das Retrieval ab, abgesichert
+durch ein CI-Qualitäts-Gate gegen echte Modelle.
 ### Added
 - **`@atf/security-kit`** (`packages/security-kit`, privat). Gemeinsame Sicherheitsbausteine:
   `safeEqual`/`safeEqualBytes` (SHA-256-Digest-Vergleich, timing-sicher), striktes
@@ -118,6 +123,55 @@ Erasure_Receipt aus; ein Outpost-MirrorDelete löst den vollständigen Search-Ca
   Teilfailure→partial→Retry, Receipt-Verifikation); live env-gated
   (`OUTPOST_IT_*`) zusätzlich Outpost-MirrorDelete → Extract → Search und die
   Extract-Kaskade `POST /v1/erasure` mit `search.documents`-Teilergebnis.
+- **ZIP-Guard** (`@atf/extract`). Jeder ZIP-basierte Container (XLSX, VSDX, DOCX, PPTX und
+  in DOCX eingebettete OOXML-Pakete) wird vor dem Entpacken allein anhand des
+  Central Directory geprüft: Eintragsanzahl (`ZIP_MAX_ENTRIES`, 10000), Summe
+  (`ZIP_MAX_TOTAL_BYTES`, 512 MiB) und größte unkomprimierte Größe (`ZIP_MAX_ENTRY_BYTES`,
+  200 MiB) sowie Kompressionsverhältnis je Eintrag (`ZIP_MAX_RATIO`, 100). Ein Verstoß lehnt
+  den Job mit dem neuen, nicht wiederholbaren Fehlercode `DOCUMENT_TOO_COMPLEX` (422) ab.
+- **Sicheres XML** (`@atf/extract`). Alle `fast-xml-parser`-Instanzen entstehen zentral in
+  `pipeline/safe-xml.ts` mit abgeschalteter Entity-Verarbeitung (XXE, Billion Laughs); die
+  fünf vordefinierten XML-Entities werden gezielt dekodiert, sodass `&` in Zellen und
+  Überschriften erhalten bleibt.
+- **Parser-Isolation** (`@atf/extract`). Die nativen Parser (BPMN, XLSX, DOCX, VSDX, E-Mail)
+  laufen in einem Worker-Thread mit Heap-Grenze (`PARSE_ISOLATED`, Default `true`;
+  `PARSE_MEMORY_LIMIT_MB`, Default 512, durchgesetzt unter Node, von Bun ignoriert). Ein
+  Überschreiten endet mit `DOCUMENT_TOO_COMPLEX` statt den Dienst mitzureißen; startet der
+  Worker nicht, folgt `child_process.fork` und zuletzt der In-Process-Aufruf mit Warnung.
+  `MAX_EMBED_DEPTH` (Default 2) begrenzt die Verschachtelung eingebetteter `.msg`-Nachrichten;
+  tiefere werden mit Warnung übersprungen.
+- **Isolierter Converter** (`@atf/extract`). `CONVERTER_MODE=isolated` leitet alle
+  poppler-/LibreOffice-/Tesseract-Aufrufe per zeilenweisem JSON-RPC über einen Unix-Socket
+  (`CONVERTER_SOCKET`, Default `/run/atf-converter/converter.sock`) an einen separaten
+  Converter-Prozess (`node dist/converter/server.js`, gedacht für einen Container ohne
+  Netzwerk, mit schreibgeschütztem Root-Dateisystem und ohne Root-Rechte). Über den Socket
+  gehen nur Kommandozeile und Ausgabe, nie Dokument-Bytes; Ein- und Ausgabeverzeichnisse
+  liegen auf einem gemeinsam gemounteten Volume unter demselben Pfad. Default bleibt `local`.
+  Der Build erzeugt dafür zusätzlich `dist/pipeline/isolate-entry.js` und
+  `dist/converter/server.js`.
+- **Subprozess-Limits und gehärtetes LibreOffice** (`@atf/extract`). Unter Linux mit
+  `prlimit` begrenzen `SUBPROCESS_MEMORY_LIMIT_MB` (`--as`, Default 0 = aus; im Container
+  das cgroup-Limit verwenden) und `SUBPROCESS_CPU_LIMIT_S` (`--cpu`, Default 900) jeden
+  Converter-Aufruf. Jedes private LibreOffice-Profil startet mit deaktivierten Makros,
+  blockierten Links aus nicht vertrauenswürdigen Quellen und ohne Aktualisierung verknüpfter
+  Inhalte.
+- **Tesseract-OCR-Fallback** (`@atf/extract`). Mit `OCR_FALLBACK=tesseract`
+  (`TESSERACT_BIN`, `OCR_LANG`, Default `deu`) erhält eine gescannte Seite bei Ausfall des
+  Vision-Modells OCR-Text mit Warnung an der Seite statt zu scheitern. Default `off`; Binary
+  und Traineddata müssen im Image bzw. im Converter vorhanden sein.
+- **Tagesbudget für Vision-Seiten** (`@atf/extract`, DDL v5). `VISION_BUDGET_PAGES_PER_DAY`
+  begrenzt die VLM-Seiten je Tenant und UTC-Tag über alle Jobs (atomarer Zähler in
+  `extract.vision_daily_usage`); ein Job, der die Grenze überschreiten würde, scheitert mit
+  dem neuen Fehlercode `BUDGET_EXCEEDED` (429, nicht wiederholbar). Default 0 = aus; Prod_Gate
+  warnt dann.
+- **Structured Output für Vision** (`@atf/extract`). Mit `VISION_SUPPORTS_JSON_SCHEMA=true`
+  sendet der Vision-Client `response_format: json_schema` für Seiten- und Pass-2-Anfragen;
+  lehnt der Provider das Feld ab oder ist die Antwort kein konformes JSON, greift der
+  bisherige Tag-Parser. Default `false`.
+- **Upload-Spill auf Platte** (`@atf/extract`). Multipart-Uploads oberhalb
+  `UPLOAD_MEMORY_THRESHOLD_BYTES` (Default 8 MiB, 0 = immer) werden unter `TEMP_DIR/uploads`
+  zwischengespeichert statt im Heap auf einen Konvertierungsplatz zu warten; ein Sweep beim
+  Start räumt Reste nach einem Absturz ab.
 - **Retrieval-Qualitäts-Gate** (CI, `scripts/eval`). Der neue CI-Job `eval` startet
   `scripts/eval/compose.eval.yaml` (Search, Extract, TEI-CPU-Embedding und Cross-Encoder-
   Rerank, deterministischer HyDE-Mock), ingestiert den deterministischen Golden-Korpus und
@@ -138,6 +192,19 @@ Erasure_Receipt aus; ein Outpost-MirrorDelete löst den vollständigen Search-Ca
   zeitliche Sichtbarkeits-CTE, `FTS_RANKER` (`ts_rank_cd` oder `bm25`) und
   `MIN_RERANK_SCORE` mit Enthaltungsfeld. Suchstatistiken speichern nur noch
   `query_hash` (HMAC mit `STATS_QUERY_PEPPER`); Rohanfragen nur mit `STATS_STORE_RAW_QUERY`.
+- **`MAX_PAGES`-Default 0 → 500** (`@atf/extract`). Ohne explizite Konfiguration lehnt der
+  synchrone v1-Konvertierungspfad Dokumente über 500 Seiten mit `TOO_MANY_PAGES` (422) ab.
+- **Prod_Gate Extract**: `SUBPROCESS_TIMEOUT_MS=0` verhindert jetzt den Start in Produktion;
+  `VISION_BUDGET_PAGES_PER_DAY=0` erzeugt eine Warnung.
+### Migration
+- Extract: Wer längere Dokumente verarbeitet, setzt `MAX_PAGES` explizit (0 = unbegrenzt).
+  Produktionskonfigurationen mit `SUBPROCESS_TIMEOUT_MS=0` müssen einen positiven Wert setzen.
+- Extract-DDL steigt auf Version 5 (`extract.vision_daily_usage`); die Migration läuft
+  automatisch beim ersten Datenbankzugriff (Advisory-Lock, eine Transaktion) und ist additiv.
+- Für `CONVERTER_MODE=isolated` muss neben Extract ein Converter-Prozess aus dem Extract-Build
+  mit demselben `CONVERTER_SOCKET` und demselben Scratch-Volume (`TEMP_DIR`) laufen; für
+  `OCR_FALLBACK=tesseract` muss `tesseract` samt Sprachdaten installiert sein. Das
+  Beispiel-Image `deploy/examples/Dockerfile` enthält Tesseract nicht.
 
 ## [0.13.2] — 2026-10-05
 Hardens the LLM tool loop for local models: the `maxToolSteps` budget ends with an answer

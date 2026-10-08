@@ -181,9 +181,23 @@ export function checkProductionReadiness(
         "without bound. Set a ceiling that matches your document corpus.",
     );
   }
+  if (config.visionBudgetPagesPerDay === 0) {
+    warnings.push(
+      "VISION_BUDGET_PAGES_PER_DAY is 0 — the per-tenant daily vision-page budget is " +
+        "disabled. The per-job token budget caps one job, but a tenant running many jobs " +
+        "has no ceiling on its aggregate daily model spend (requirement 5.8).",
+    );
+  }
   if (config.visionTimeoutMs === 0) {
     flag(
       "VISION_TIMEOUT_MS is 0 — a stalled model connection holds a conversion slot forever.",
+    );
+  }
+  if (config.subprocessTimeoutMs === 0) {
+    flag(
+      "SUBPROCESS_TIMEOUT_MS is 0 — a hung LibreOffice or poppler invocation holds a " +
+        "conversion slot and its job indefinitely. Requirement 5.5: a positive timeout " +
+        "is mandatory in production.",
     );
   }
 

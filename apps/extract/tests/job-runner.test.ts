@@ -49,6 +49,8 @@ import type {
 import type { VisionClient } from "../src/vision/client.js";
 import type { ResumeDecision } from "../src/jobs/snapshot.js";
 import type { JobRow } from "../src/persistence/types.js";
+import { visionUnavailable } from "../src/errors.js";
+import type { OcrClient } from "../src/pipeline/ocr.js";
 
 const REFERENCE = "tests/handbuch.pdf";
 const SOURCE_SHA = "a".repeat(64);
@@ -87,55 +89,59 @@ async function distinctPageImageAsync(page: number): Promise<PageImage> {
 
 /** A prepared source with `pageCount` pages, tracking peak in-flight renders. */
 function fakePrepared(options: {
-	pageCount: number;
-	failPages?: Set<number>;
-	onRender?: (page: number) => void;
-	onRelease?: (page: number) => void;
-	/** When set, every page renders THIS exact image (identical → dedup). */
-	identicalImage?: PageImage;
-	/** The page's text layer; defaults to `text <page>`. */
-	rawText?: (page: number) => string;
-	/** The physical page size the renderer reports, in points. */
-	sizePt?: { widthPt: number; heightPt: number };
+  pageCount: number;
+  failPages?: Set<number>;
+  onRender?: (page: number) => void;
+  onRelease?: (page: number) => void;
+  /** When set, every page renders THIS exact image (identical → dedup). */
+  identicalImage?: PageImage;
+  /** The page's text layer; defaults to `text <page>`. */
+  rawText?: (page: number) => string;
+  /** The physical page size the renderer reports, in points. */
+  sizePt?: { widthPt: number; heightPt: number };
+  /** Report the page as OCR-rendered (a scan: no text layer). */
+  usedOcr?: boolean;
 }): PreparedSource {
-	const failPages = options.failPages ?? new Set<number>();
-	return {
-		pageCount: options.pageCount,
-		native: null,
-		docxHeadingHints: null,
-		vsdxStructure: null,
-		pdfPath: null,
-		home: "",
-		format: {
-			mimeType: "application/pdf",
-			extensions: [".pdf"],
-			kind: "pdf",
-			family: "pdf",
-			label: "PDF",
-		},
-		async render(page) {
-			options.onRender?.(page);
-			if (failPages.has(page)) {
-				options.onRelease?.(page);
-				throw new Error(`boom on page ${page}`);
-			}
-			// Let a microtask settle so concurrent renders overlap observably.
-			await Promise.resolve();
-			options.onRelease?.(page);
-			const image =
-				options.identicalImage ?? (await distinctPageImageAsync(page));
-			return {
-				image,
-				rawText: options.rawText?.(page) ?? `text ${page}`,
-				usedOcr: false,
-				...(options.sizePt !== undefined ? { sizePt: options.sizePt } : {}),
-			};
-		},
-		async renderFigureCrop() {
-			return { buffer: TINY_PNG, mimeType: "image/png", width: 10, height: 10 };
-		},
-		async close() {},
-	};
+  const failPages = options.failPages ?? new Set<number>();
+  return {
+    pageCount: options.pageCount,
+    native: null,
+    docxHeadingHints: null,
+    vsdxStructure: null,
+    pdfPath: null,
+    home: "",
+    format: {
+      mimeType: "application/pdf",
+      extensions: [".pdf"],
+      kind: "pdf",
+      family: "pdf",
+      label: "PDF",
+    },
+    async render(page) {
+      options.onRender?.(page);
+      if (failPages.has(page)) {
+        options.onRelease?.(page);
+        throw new Error(`boom on page ${page}`);
+      }
+      // Let a microtask settle so concurrent renders overlap observably.
+      await Promise.resolve();
+      options.onRelease?.(page);
+      const image =
+        options.identicalImage ?? (await distinctPageImageAsync(page));
+      return {
+        image,
+        rawText:
+          options.rawText?.(page) ??
+          (options.usedOcr === true ? "" : `text ${page}`),
+        usedOcr: options.usedOcr ?? false,
+        ...(options.sizePt !== undefined ? { sizePt: options.sizePt } : {}),
+      };
+    },
+    async renderFigureCrop() {
+      return { buffer: TINY_PNG, mimeType: "image/png", width: 10, height: 10 };
+    },
+    async close() {},
+  };
 }
 
 /** A page renderer returning the given prepared source. */
@@ -2033,4 +2039,196 @@ describe("job-runner · tiling (S6, task 5.1)", () => {
 		);
 		expect(vision.tileCalls.length).toBeGreaterThan(1);
 	});
+});
+
+describe("job-runner · Tesseract OCR fallback (task 7.10, requirement 5.11)", () => {
+  /** A vision client whose every page call fails with a vision outage. */
+  function downVision(): VisionClient & { calls: number[] } {
+    const calls: number[] = [];
+    return {
+      calls,
+      async analyzePage(input) {
+        calls.push(input.page);
+        throw visionUnavailable(
+          "The vision endpoint failed after 3 attempt(s)",
+          {
+            page: input.page,
+          },
+        );
+      },
+      async analyzeFigure() {
+        throw visionUnavailable("The vision endpoint is down");
+      },
+      async probe() {
+        return { available: false };
+      },
+    };
+  }
+
+  /** A Tesseract stand-in recording how often it was asked to recognise. */
+  function fakeOcr(
+    options: { enabled?: boolean; text?: string; fail?: boolean } = {},
+  ) {
+    const calls: number[] = [];
+    return {
+      calls,
+      enabled: options.enabled ?? true,
+      async recognize(): Promise<string> {
+        calls.push(1);
+        if (options.fail === true) throw new Error("tesseract: not installed");
+        return options.text ?? "erkannter OCR-Seitentext";
+      },
+    };
+  }
+
+  function runnerWithOcr(
+    store: FakeJobStore,
+    prepared: PreparedSource,
+    vision: VisionClient,
+    ocr: ReturnType<typeof fakeOcr> | null,
+    events = createJobEventBus(),
+  ) {
+    return createJobRunner({
+      store,
+      vision,
+      renderer: fakeRenderer(prepared),
+      events,
+      config: {
+        pageConcurrency: 1,
+        visionTokenEstimate: 1000,
+        visionModel: "test-vlm",
+        renderDpi: 200,
+        figureDpi: 300,
+        figurePass2Kinds: [],
+        figurePass2MinArea: 0.02,
+        labelCoverageMin: 60,
+      },
+      ocr,
+      logger: testLogger,
+    });
+  }
+
+  it("delivers Tesseract text with a warning when the VLM is down on a scan", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = downVision();
+    const ocr = fakeOcr({ text: "Scannede Seite eins" });
+    const events = createJobEventBus();
+    const records: import("@atf/extract-contract/v2").PageRecord[] = [];
+    events.subscribe(job.id, (e) => {
+      if (e.type === "page") records.push(e.record);
+    });
+
+    const runner = runnerWithOcr(
+      store,
+      fakePrepared({ pageCount: 2, usedOcr: true }),
+      vision,
+      ocr,
+      events,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    // The document survives the outage instead of pausing on it.
+    expect(outcome).toEqual({ status: "completed" });
+
+    // The model was tried first (and failed); the fallback produced both pages.
+    expect(vision.calls.sort((a, b) => a - b)).toEqual([1, 2]);
+    expect(ocr.calls.length).toBe(2);
+
+    // Each page carries the recognised text and the warning the requirement
+    // asks for, and is flagged as OCR-derived.
+    expect(records.length).toBe(2);
+    for (const record of records) {
+      expect(record.class).toBe("scan");
+      expect(record.fidelity?.ocr).toBe(true);
+      expect(record.warnings.some((w) => /Tesseract/i.test(w))).toBe(true);
+      const paragraph = record.blocks.find((b) => b.type === "paragraph");
+      expect(paragraph?.type === "paragraph" ? paragraph.text : "").toContain(
+        "Scannede Seite eins",
+      );
+    }
+
+    // The vision1 checkpoint is a done page whose model produced no tokens:
+    // the fallback spent no model budget.
+    const checkpoint = await store.getStage("page", {
+      job_id: job.id,
+      page: 1,
+      stage: VISION1_STAGE,
+    });
+    expect(checkpoint?.status).toBe("done");
+    const parsed = (
+      checkpoint?.output as {
+        parsed?: { usage?: { totalTokens: number }; usedOcr?: boolean };
+      } | null
+    )?.parsed;
+    expect(parsed?.usage?.totalTokens).toBe(0);
+    expect(parsed?.usedOcr).toBe(true);
+  });
+
+  it("keeps the transient retry when the fallback is off", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = downVision();
+    const ocr = fakeOcr({ enabled: false });
+    const runner = runnerWithOcr(
+      store,
+      fakePrepared({ pageCount: 1, usedOcr: true }),
+      vision,
+      ocr,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    // Exactly the pre-task behaviour: a retryable page failure, no OCR run.
+    expect(outcome.status).toBe("paused");
+    if (outcome.status === "paused") expect(outcome.reason).toBe("dependency");
+    expect(vision.calls).toEqual([1]);
+    expect(ocr.calls.length).toBe(0);
+  });
+
+  it("does not OCR a text page when the VLM is down — its text layer stands", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = downVision();
+    const ocr = fakeOcr();
+    const runner = runnerWithOcr(
+      store,
+      // A page WITH a text layer classifies as `text`, not `scan`.
+      fakePrepared({ pageCount: 1 }),
+      vision,
+      ocr,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome.status).toBe("paused");
+    if (outcome.status === "paused") expect(outcome.reason).toBe("dependency");
+    expect(ocr.calls.length).toBe(0);
+  });
+
+  it("re-raises the vision error when the OCR fallback itself fails", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = downVision();
+    const ocr = fakeOcr({ fail: true });
+    const runner = runnerWithOcr(
+      store,
+      fakePrepared({ pageCount: 1, usedOcr: true }),
+      vision,
+      ocr,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    // The fallback was attempted; its failure does not replace the honest
+    // vision outage — the page keeps its retryable failure.
+    expect(ocr.calls.length).toBe(1);
+    expect(outcome.status).toBe("paused");
+    if (outcome.status === "paused") expect(outcome.reason).toBe("dependency");
+  });
 });

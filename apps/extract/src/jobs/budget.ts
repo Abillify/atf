@@ -112,3 +112,105 @@ export function createDbBudgetLedger(store: ExtractStore, jobId: string, fence?:
     },
   };
 }
+
+// ─── Tenant daily vision-page budget (task 7.7, requirement 5.8) ─────────────
+
+/**
+ * The second, independent budget axis: while the ledger above caps ONE job's
+ * token spend, this one caps how many VLM pages a TENANT may spend per UTC
+ * day across all of its jobs (`VISION_BUDGET_PAGES_PER_DAY`). Neither
+ * subsumes the other — a tenant running many small jobs exhausts neither
+ * per-job cap while its daily cost grows without bound.
+ *
+ * Only pages that actually reach the model are counted: a fast-path page, a
+ * render-hash dedup reuse, or a checkpoint replay on resume consumes no VLM
+ * page and is charged nothing. The counter lives in
+ * `extract.vision_daily_usage` and the increment is one atomic upsert, so
+ * concurrent pages — across jobs and worker instances — can never together
+ * cross the cap. A refusal marks the ledger exhausted locally — for that day
+ * only, so a page arriving after midnight is judged against the new bucket —
+ * and later pages of the same run stop calling the model at all.
+ *
+ * A job without a tenant (`created_by_tenant IS NULL`, e.g. created before
+ * ownership tracking or by an unauthenticated local dev) is not capped —
+ * there is no tenant to attribute the spend to.
+ */
+export interface TenantDailyPageBudget {
+  /**
+   * Book one VLM page for the tenant's current UTC day. Returns false when
+   * the daily cap is reached — the counter is then unchanged and the ledger
+   * is marked exhausted.
+   */
+  tryConsumePage(): Promise<boolean>;
+  /**
+   * True once a booking was refused for the current UTC day; later pages
+   * skip the model entirely. A new UTC day clears the flag.
+   */
+  isExhausted(): boolean;
+}
+
+/**
+ * The failure line recorded on a job whose tenant daily budget is exhausted
+ * (design §Budget: the job goes `failed`, not `paused` — waiting inside the
+ * same day changes nothing). Carries the error code so the job warning names
+ * `BUDGET_EXCEEDED` verbatim.
+ */
+export function tenantDailyBudgetFailureMessage(limit: number): string {
+  return (
+    `BUDGET_EXCEEDED: Das Tagesbudget des Tenants ist erschöpft ` +
+    `(VISION_BUDGET_PAGES_PER_DAY=${limit}); ab dem nächsten UTC-Tag kann erneut verarbeitet werden.`
+  );
+}
+
+/** The UTC day key (`YYYY-MM-DD`) the counter rows are bucketed by. */
+export function utcDayKey(instant: Date): string {
+  return instant.toISOString().slice(0, 10);
+}
+
+export function createTenantDailyPageBudget(
+  store: ExtractStore,
+  opts: {
+    tenantId: string | null | undefined;
+    limit: number;
+    now?: () => Date;
+  },
+): TenantDailyPageBudget {
+  const unlimited =
+    opts.limit <= 0 ||
+    opts.tenantId === null ||
+    opts.tenantId === undefined ||
+    opts.tenantId === "";
+  // The day the last refusal belonged to. Day-scoped rather than a plain
+  // boolean so a refusal at 23:59 does not also reject the first page after
+  // midnight, which is a fresh bucket with a fresh allowance.
+  let exhaustedDay: string | null = null;
+
+  if (unlimited) {
+    return {
+      async tryConsumePage() {
+        return true;
+      },
+      isExhausted: () => false,
+    };
+  }
+
+  const now = opts.now ?? ((): Date => new Date());
+  return {
+    async tryConsumePage() {
+      const day = utcDayKey(now());
+      if (exhaustedDay === day) return false;
+      const used = await store.consumeVisionDailyPages(
+        opts.tenantId as string,
+        day,
+        1,
+        opts.limit,
+      );
+      if (used === null) {
+        exhaustedDay = day;
+        return false;
+      }
+      return true;
+    },
+    isExhausted: () => exhaustedDay === utcDayKey(now()),
+  };
+}

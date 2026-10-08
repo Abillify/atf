@@ -23,6 +23,8 @@
  */
 
 import { unzipSync } from "fflate";
+import { ExtractError } from "../../errors.js";
+import { assertZipWithinLimits, type ZipLimits } from "./zip-guard.js";
 import { readCfb, type CfbEntry } from "./cfb.js";
 
 /** One embedded file, ready to become a child job. */
@@ -63,18 +65,30 @@ function baseName(path: string): string {
 	return path.split(/[\\/]/).pop()?.trim() ?? "";
 }
 
-/** The OOXML kind of a ZIP package, from its content types. */
-function ooxmlExtension(zip: Uint8Array): string | undefined {
+/**
+ * The OOXML kind of a ZIP package, from its content types. The ZIP guard runs
+ * first (requirement 5.1): an embedding that exceeds a limit — a PPTX with no
+ * native reader of its own, an XLSX whose child job would only reject later —
+ * is rejected here rather than passed on. A buffer that is not a package at
+ * all still yields `undefined` so the caller keeps its skip-with-warning path.
+ */
+function ooxmlExtension(zip: Uint8Array, limits?: ZipLimits): string | undefined {
+	let files: Record<string, Uint8Array>;
 	try {
-		const files = unzipSync(zip, { filter: (f) => f.name === "[Content_Types].xml" });
-		const types = new TextDecoder().decode(files["[Content_Types].xml"] ?? new Uint8Array());
-		if (types.includes("spreadsheetml")) return ".xlsx";
-		if (types.includes("wordprocessingml")) return ".docx";
-		if (types.includes("presentationml")) return ".pptx";
-		if (types.includes("ms-visio")) return ".vsdx";
-	} catch {
-		// not a readable package
-	}
+    assertZipWithinLimits(zip, limits);
+    files = unzipSync(zip, { filter: (f) => f.name === "[Content_Types].xml" });
+  } catch (error) {
+    if (error instanceof ExtractError) throw error;
+    // not a readable package
+    return undefined;
+  }
+  const types = new TextDecoder().decode(
+    files["[Content_Types].xml"] ?? new Uint8Array(),
+  );
+  if (types.includes("spreadsheetml")) return ".xlsx";
+  if (types.includes("wordprocessingml")) return ".docx";
+  if (types.includes("presentationml")) return ".pptx";
+  if (types.includes("ms-visio")) return ".vsdx";
 	return undefined;
 }
 
@@ -106,48 +120,92 @@ function unwrapOle10Native(bytes: Uint8Array): { filename: string; data: Uint8Ar
 	return { filename, data: buf.subarray(o, o + dataLen) };
 }
 
-function fromOle(bin: Uint8Array, partName: string): EmbeddedSource | null {
-	const root: CfbEntry | null = readCfb(bin);
-	if (root === null) return null;
-	const stem = baseName(partName).replace(/\.[^.]+$/, "");
-	const native = root.child("\u0001Ole10Native");
-	if (native !== undefined) {
-		const unwrapped = unwrapOle10Native(native.read());
-		if (unwrapped === null) return null;
-		const ext = extensionOf(unwrapped.filename);
-		const mimeType = BY_EXTENSION[ext];
-		if (mimeType === undefined) return null;
-		return { filename: unwrapped.filename, mimeType, content: unwrapped.data, inline: false };
-	}
-	const pkg = root.child("Package");
-	if (pkg !== undefined) {
-		const data = pkg.read();
-		const ext = ooxmlExtension(data);
-		if (ext === undefined) return null;
-		const mimeType = OOXML_TYPES[ext];
-		if (mimeType === undefined) return null;
-		return { filename: `${stem}${ext}`, mimeType, content: data, inline: false };
-	}
-	if (root.child("WordDocument") !== undefined) {
-		return { filename: `${stem}.doc`, mimeType: "application/msword", content: bin, inline: false };
-	}
-	if (root.child("Workbook") !== undefined || root.child("Book") !== undefined) {
-		return { filename: `${stem}.xls`, mimeType: "application/vnd.ms-excel", content: bin, inline: false };
-	}
-	return null;
+function fromOle(
+  bin: Uint8Array,
+  partName: string,
+  limits?: ZipLimits,
+): EmbeddedSource | null {
+  const root: CfbEntry | null = readCfb(bin);
+  if (root === null) return null;
+  const stem = baseName(partName).replace(/\.[^.]+$/, "");
+  const native = root.child("\u0001Ole10Native");
+  if (native !== undefined) {
+    const unwrapped = unwrapOle10Native(native.read());
+    if (unwrapped === null) return null;
+    const ext = extensionOf(unwrapped.filename);
+    const mimeType = BY_EXTENSION[ext];
+    if (mimeType === undefined) return null;
+    return {
+      filename: unwrapped.filename,
+      mimeType,
+      content: unwrapped.data,
+      inline: false,
+    };
+  }
+  const pkg = root.child("Package");
+  if (pkg !== undefined) {
+    const data = pkg.read();
+    const ext = ooxmlExtension(data, limits);
+    if (ext === undefined) return null;
+    const mimeType = OOXML_TYPES[ext];
+    if (mimeType === undefined) return null;
+    return {
+      filename: `${stem}${ext}`,
+      mimeType,
+      content: data,
+      inline: false,
+    };
+  }
+  if (root.child("WordDocument") !== undefined) {
+    return {
+      filename: `${stem}.doc`,
+      mimeType: "application/msword",
+      content: bin,
+      inline: false,
+    };
+  }
+  if (
+    root.child("Workbook") !== undefined ||
+    root.child("Book") !== undefined
+  ) {
+    return {
+      filename: `${stem}.xls`,
+      mimeType: "application/vnd.ms-excel",
+      content: bin,
+      inline: false,
+    };
+  }
+  return null;
 }
 
-/** The embedded files of a DOCX, in part-name order, with warnings for skipped ones. */
-export function extractDocxEmbeddings(buffer: Uint8Array): { sources: EmbeddedSource[]; warnings: string[] } {
+/**
+ * The embedded files of a DOCX, in part-name order, with warnings for skipped
+ * ones. A ZIP-guard violation (`DOCUMENT_TOO_COMPLEX`, requirement 5.1) — in
+ * the outer package or in an OOXML embedding, which has no native reader of
+ * its own for PPTX — rejects instead of degrading to a warning.
+ */
+export function extractDocxEmbeddings(
+	buffer: Uint8Array,
+	limits?: ZipLimits,
+): { sources: EmbeddedSource[]; warnings: string[] } {
 	const warnings: string[] = [];
 	let parts: Record<string, Uint8Array>;
 	try {
-		parts = unzipSync(buffer, {
-			filter: (f) => f.name.startsWith("word/embeddings/") && f.originalSize <= MAX_EMBEDDING_BYTES,
-		});
-	} catch {
-		return { sources: [], warnings: ["the DOCX package could not be read for embedded objects"] };
-	}
+    // Checked before any inflation (requirement 5.1); a limit violation
+    // throws ExtractError and is re-thrown below, never downgraded.
+    assertZipWithinLimits(buffer, limits);
+    parts = unzipSync(buffer, {
+      filter: (f) =>
+        f.name.startsWith("word/embeddings/") &&
+        f.originalSize <= MAX_EMBEDDING_BYTES,
+    });
+  } catch (error) {
+    if (error instanceof ExtractError) throw error;
+    return {
+      sources: [],
+      warnings: ["the DOCX package could not be read for embedded objects"],
+    };
+  }
 	const sources: EmbeddedSource[] = [];
 	for (const name of Object.keys(parts).sort()) {
 		const data = parts[name];
@@ -155,11 +213,20 @@ export function extractDocxEmbeddings(buffer: Uint8Array): { sources: EmbeddedSo
 		const ext = extensionOf(name);
 		const ooxml = OOXML_TYPES[ext];
 		if (ooxml !== undefined) {
-			sources.push({ filename: baseName(name), mimeType: ooxml, content: data, inline: false });
-			continue;
-		}
+      // A raw OOXML embedding (an embedded PPTX has no native reader of its
+      // own; the child job would only guard it later) is checked here so a
+      // bomb never becomes a child job (requirement 5.1).
+      assertZipWithinLimits(data, limits);
+      sources.push({
+        filename: baseName(name),
+        mimeType: ooxml,
+        content: data,
+        inline: false,
+      });
+      continue;
+    }
 		if (ext === ".bin") {
-			const source = fromOle(data, name);
+			const source = fromOle(data, name, limits);
 			if (source !== null) sources.push(source);
 			else warnings.push(`Embedded object ${baseName(name)} has no readable content; only its preview is indexed`);
 			continue;

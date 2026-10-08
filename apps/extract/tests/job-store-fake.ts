@@ -59,6 +59,8 @@ export interface FakeJobStore extends ExtractStore {
    * `method` throws `error` BEFORE it has any effect (a crash between writes).
    */
   failNext(method: keyof ExtractStore, error?: Error, skip?: number): void;
+  /** The tenant daily vision-page counter for one UTC day (task 7.7). */
+  peekVisionDailyUsage(tenantId: string, day: string): number;
 }
 
 /**
@@ -70,7 +72,7 @@ export interface FakeJobStore extends ExtractStore {
 const NO_LANE_CAP = 2_147_483_647;
 
 export function createFakeJobStore(): FakeJobStore {
-	let clock = Date.UTC(2026, 0, 1);
+  let clock = Date.UTC(2026, 0, 1);
   const jobs = new Map<string, JobRow>();
   // stage rows keyed by unit → natural-key string
   const stages: Record<StageUnit, Map<string, PageStageRow>> = {
@@ -82,6 +84,8 @@ export function createFakeJobStore(): FakeJobStore {
   const assetOutbox = new Map<string, AssetOutboxRow>();
   // docpass_state rows keyed by `${jobId}|${page}`.
   const docpass = new Map<string, DocpassStateRow>();
+  // Tenant daily vision-page counters keyed by `${tenantId}|${day}` (task 7.7).
+  const visionDailyUsage = new Map<string, number>();
   const faults = new Map<string, { error: Error; skip: number }>();
   // Upload sessions and the erasure ledger (task 4.6): minimal models of the
   // real tables, faithful to the claim/transition protocol including expiry.
@@ -97,7 +101,7 @@ export function createFakeJobStore(): FakeJobStore {
   >();
   const ERASURE_TTL_MS = 86_400_000;
 
-	const now = (): Date => new Date(clock);
+  const now = (): Date => new Date(clock);
   const unsupported = () => {
     throw new Error("not implemented in the fake job store");
   };
@@ -176,7 +180,7 @@ export function createFakeJobStore(): FakeJobStore {
     return `${r.job_id}|${r.page}|${r.stage}`;
   }
 
-	function upsert(unit: StageUnit, r: StageUpsert): PageStageRow {
+  function upsert(unit: StageUnit, r: StageUpsert): PageStageRow {
     const key = stageKey(unit, r);
     const existing = stages[unit].get(key);
     const t = now();
@@ -203,7 +207,7 @@ export function createFakeJobStore(): FakeJobStore {
     return copy(row);
   }
 
-	function updateJob(
+  function updateJob(
     id: string,
     fence: Fence | undefined,
     patch: (row: JobRow) => void,
@@ -219,14 +223,14 @@ export function createFakeJobStore(): FakeJobStore {
     return copy(row);
   }
 
-	function revoke(row: JobRow): void {
+  function revoke(row: JobRow): void {
     row.lease_epoch = Number(row.lease_epoch) + 1;
     row.lease_holder = null;
     row.lease_expires_at = null;
     row.tokens_reserved = 0;
   }
 
-	function stageRowsOf(jobId: string): PageStageRow[] {
+  function stageRowsOf(jobId: string): PageStageRow[] {
     return [
       ...stages.page.values(),
       ...stages.figure.values(),
@@ -234,7 +238,7 @@ export function createFakeJobStore(): FakeJobStore {
     ].filter((s) => s.job_id === jobId);
   }
 
-	function resetPageStages(
+  function resetPageStages(
     jobId: string,
     names: string[],
     match: (page: number) => boolean,
@@ -254,7 +258,7 @@ export function createFakeJobStore(): FakeJobStore {
     }
   }
 
-	function bumpGeneration(jobId: string): void {
+  function bumpGeneration(jobId: string): void {
     const row = jobs.get(jobId);
     if (row === undefined) return;
     row.emit_generation = Number(row.emit_generation) + 1;
@@ -265,13 +269,13 @@ export function createFakeJobStore(): FakeJobStore {
       if (a.job_id === jobId) a.status = "pending";
   }
 
-	function emitRowsOf(jobId: string): EmitOutboxRow[] {
+  function emitRowsOf(jobId: string): EmitOutboxRow[] {
     return [...emitOutbox.values()]
       .filter((r) => r.job_id === jobId)
       .sort((a, b) => a.seq - b.seq);
   }
 
-	const store: FakeJobStore = {
+  const store: FakeJobStore = {
     advance(ms) {
       clock += ms;
     },
@@ -452,6 +456,17 @@ export function createFakeJobStore(): FakeJobStore {
         );
         row.tokens_used = Number(row.tokens_used) + settlement.used;
       });
+    },
+
+    async consumeVisionDailyPages(tenantId, day, pages, limit) {
+      // Mirrors the SQL upsert: the increment lands only when the new total
+      // stays within `limit`; a refusal leaves the counter unchanged.
+      const key = `${tenantId}|${day}`;
+      const current = visionDailyUsage.get(key) ?? 0;
+      if (current + pages > limit) return null;
+      const next = current + pages;
+      visionDailyUsage.set(key, next);
+      return next;
     },
 
     async patchJobConfig(id, patch, fence) {
@@ -1053,6 +1068,9 @@ export function createFakeJobStore(): FakeJobStore {
     peekErasureLedger(key) {
       const row = erasureLedger.get(key);
       return row === undefined ? undefined : ledgerRecord(key, row);
+    },
+    peekVisionDailyUsage(tenantId, day) {
+      return visionDailyUsage.get(`${tenantId}|${day}`) ?? 0;
     },
 
     withTransaction: unsupported,

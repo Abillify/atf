@@ -27,8 +27,10 @@
  * no model, no rendering.
  */
 
-import { XMLParser } from "fast-xml-parser";
 import { strFromU8, unzipSync } from "fflate";
+import { ExtractError } from "../../errors.js";
+import { safeXmlParser } from "../safe-xml.js";
+import { assertZipWithinLimits, type ZipLimits } from "./zip-guard.js";
 
 /** A heading paragraph with its authoritative level from the DOCX styles. */
 export interface DocxHeading {
@@ -47,16 +49,16 @@ export interface ParsedDocxHeadings {
 	warnings: string[];
 }
 
-const parser = new XMLParser({
-	ignoreAttributes: false,
-	attributeNamePrefix: "@_",
-	parseAttributeValue: false,
-	parseTagValue: false,
-	// Do NOT trim: a run's text may carry a significant leading/trailing space
-	// (`<w:t xml:space="preserve">Maske </w:t>`) that separates two runs of one
-	// heading. `paragraphText` normalises whitespace on the concatenated result.
-	trimValues: false,
-	removeNSPrefix: true,
+const parser = safeXmlParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  parseAttributeValue: false,
+  parseTagValue: false,
+  // Do NOT trim: a run's text may carry a significant leading/trailing space
+  // (`<w:t xml:space="preserve">Maske </w:t>`) that separates two runs of one
+  // heading. `paragraphText` normalises whitespace on the concatenated result.
+  trimValues: false,
+  removeNSPrefix: true,
 });
 
 function asArray(value: unknown): unknown[] {
@@ -214,44 +216,52 @@ function parseDocumentHeadings(
  * Read heading levels from a DOCX's `word/styles.xml` and `word/document.xml`
  * (requirement 10.3). Never throws — a DOCX that is not a ZIP, or is missing
  * either part, yields an empty result with a warning, so the outline simply
- * falls back to its font-size heuristic.
+ * falls back to its font-size heuristic — except for a ZIP-guard violation
+ * (`DOCUMENT_TOO_COMPLEX`, requirement 5.1), which rejects instead.
  */
-export function parseDocxHeadings(buffer: Uint8Array): ParsedDocxHeadings {
-	const warnings: string[] = [];
-	let entries: Record<string, Uint8Array>;
-	try {
-		// Only the two parts we need; skip the rest to keep memory bounded.
-		entries = unzipSync(buffer, {
-			filter: (file) =>
-				file.name === "word/styles.xml" || file.name === "word/document.xml",
-		});
-	} catch (error) {
-		warnings.push(
-			`Das DOCX konnte nicht entpackt werden: ${error instanceof Error ? error.message : String(error)}`,
-		);
-		return { headings: [], styleLevels: {}, warnings };
-	}
+export function parseDocxHeadings(
+  buffer: Uint8Array,
+  limits?: ZipLimits,
+): ParsedDocxHeadings {
+  const warnings: string[] = [];
+  let entries: Record<string, Uint8Array>;
+  try {
+    // Checked before any inflation (requirement 5.1); a limit violation
+    // throws ExtractError and is re-thrown below, never downgraded.
+    assertZipWithinLimits(buffer, limits);
+    // Only the two parts we need; skip the rest to keep memory bounded.
+    entries = unzipSync(buffer, {
+      filter: (file) =>
+        file.name === "word/styles.xml" || file.name === "word/document.xml",
+    });
+  } catch (error) {
+    if (error instanceof ExtractError) throw error;
+    warnings.push(
+      `Das DOCX konnte nicht entpackt werden: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { headings: [], styleLevels: {}, warnings };
+  }
 
-	const stylesBytes = entries["word/styles.xml"];
-	const documentBytes = entries["word/document.xml"];
-	if (documentBytes === undefined) {
-		warnings.push(
-			"word/document.xml fehlt im DOCX; keine Überschriftenebenen.",
-		);
-		return { headings: [], styleLevels: {}, warnings };
-	}
+  const stylesBytes = entries["word/styles.xml"];
+  const documentBytes = entries["word/document.xml"];
+  if (documentBytes === undefined) {
+    warnings.push(
+      "word/document.xml fehlt im DOCX; keine Überschriftenebenen.",
+    );
+    return { headings: [], styleLevels: {}, warnings };
+  }
 
-	const levels =
-		stylesBytes !== undefined
-			? parseStyleLevels(strFromU8(stylesBytes))
-			: { byId: new Map<string, number>(), byName: new Map<string, number>() };
-	if (stylesBytes === undefined) {
-		warnings.push("word/styles.xml fehlt im DOCX; Ebenen nur aus Stilnamen.");
-	}
+  const levels =
+    stylesBytes !== undefined
+      ? parseStyleLevels(strFromU8(stylesBytes))
+      : { byId: new Map<string, number>(), byName: new Map<string, number>() };
+  if (stylesBytes === undefined) {
+    warnings.push("word/styles.xml fehlt im DOCX; Ebenen nur aus Stilnamen.");
+  }
 
-	const headings = parseDocumentHeadings(strFromU8(documentBytes), levels);
-	const styleLevels: Record<string, number> = {};
-	for (const [id, level] of levels.byId) styleLevels[id] = level;
+  const headings = parseDocumentHeadings(strFromU8(documentBytes), levels);
+  const styleLevels: Record<string, number> = {};
+  for (const [id, level] of levels.byId) styleLevels[id] = level;
 
-	return { headings, styleLevels, warnings };
+  return { headings, styleLevels, warnings };
 }

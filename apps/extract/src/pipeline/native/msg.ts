@@ -70,7 +70,14 @@ const PT_BINARY = 0x0102;
 const PT_OBJECT = 0x000d;
 
 const ATTACH_EMBEDDED_MSG = 5;
-const MAX_EMBED_DEPTH = 4;
+
+/**
+ * How deep an Outlook `.msg` may nest embedded messages before deeper ones
+ * are skipped with a warning (MAX_EMBED_DEPTH, requirement 5.4). A nesting
+ * bomb — an .msg containing itself recursively — would otherwise recurse
+ * until the stack or memory gives out.
+ */
+export const DEFAULT_MAX_EMBED_DEPTH = 2;
 
 /** Windows code page → WHATWG encoding label. */
 function codepageLabel(cp: number | undefined): string | undefined {
@@ -87,61 +94,79 @@ function codepageLabel(cp: number | undefined): string | undefined {
 
 /** The MAPI properties of one storage (message, recipient or attachment). */
 class PropertyBag {
-	private readonly fixed = new Map<number, { type: number; value: Buffer }>();
-	constructor(
-		private readonly storage: CfbEntry,
-		headerSize: number,
-		private readonly charset: () => string | undefined,
-	) {
-		const stream = storage.child("__properties_version1.0");
-		if (stream === undefined) return;
-		const bytes = Buffer.from(stream.read());
-		for (let o = headerSize; o + 16 <= bytes.length; o += 16) {
-			const tag = bytes.readUInt32LE(o);
-			this.fixed.set(tag >>> 16, { type: tag & 0xffff, value: bytes.subarray(o + 8, o + 16) });
-		}
-	}
+  private readonly fixed = new Map<number, { type: number; value: Buffer }>();
+  private readonly storage: CfbEntry;
+  private readonly charset: () => string | undefined;
+  constructor(
+    storage: CfbEntry,
+    headerSize: number,
+    charset: () => string | undefined,
+  ) {
+    // Plain assignments, not parameter properties: the isolate child
+    // (requirement 5.2) loads this file under Node's type-stripping,
+    // which rejects `private readonly x` in a constructor signature.
+    this.storage = storage;
+    this.charset = charset;
+    const stream = storage.child("__properties_version1.0");
+    if (stream === undefined) return;
+    const bytes = Buffer.from(stream.read());
+    for (let o = headerSize; o + 16 <= bytes.length; o += 16) {
+      const tag = bytes.readUInt32LE(o);
+      this.fixed.set(tag >>> 16, {
+        type: tag & 0xffff,
+        value: bytes.subarray(o + 8, o + 16),
+      });
+    }
+  }
 
-	private stream(id: number, type: number): CfbEntry | undefined {
-		const tag = `${id.toString(16).padStart(4, "0")}${type.toString(16).padStart(4, "0")}`.toUpperCase();
-		return this.storage.child(`__substg1.0_${tag}`);
-	}
+  private stream(id: number, type: number): CfbEntry | undefined {
+    const tag =
+      `${id.toString(16).padStart(4, "0")}${type.toString(16).padStart(4, "0")}`.toUpperCase();
+    return this.storage.child(`__substg1.0_${tag}`);
+  }
 
-	string(id: number): string | undefined {
-		const unicode = this.stream(id, PT_UNICODE);
-		if (unicode !== undefined) {
-			const text = Buffer.from(unicode.read()).toString("utf16le").replace(/\0+$/, "");
-			return text === "" ? undefined : text;
-		}
-		const ansi = this.stream(id, PT_STRING8);
-		if (ansi !== undefined) {
-			const text = decodeCharset(ansi.read(), this.charset() ?? "windows-1252").replace(/\0+$/, "");
-			return text === "" ? undefined : text;
-		}
-		return undefined;
-	}
+  string(id: number): string | undefined {
+    const unicode = this.stream(id, PT_UNICODE);
+    if (unicode !== undefined) {
+      const text = Buffer.from(unicode.read())
+        .toString("utf16le")
+        .replace(/\0+$/, "");
+      return text === "" ? undefined : text;
+    }
+    const ansi = this.stream(id, PT_STRING8);
+    if (ansi !== undefined) {
+      const text = decodeCharset(
+        ansi.read(),
+        this.charset() ?? "windows-1252",
+      ).replace(/\0+$/, "");
+      return text === "" ? undefined : text;
+    }
+    return undefined;
+  }
 
-	binary(id: number): Uint8Array | undefined {
-		return this.stream(id, PT_BINARY)?.read();
-	}
+  binary(id: number): Uint8Array | undefined {
+    return this.stream(id, PT_BINARY)?.read();
+  }
 
-	object(id: number): CfbEntry | undefined {
-		return this.stream(id, PT_OBJECT);
-	}
+  object(id: number): CfbEntry | undefined {
+    return this.stream(id, PT_OBJECT);
+  }
 
-	long(id: number): number | undefined {
-		const p = this.fixed.get(id);
-		return p !== undefined && p.type === PT_LONG ? p.value.readInt32LE(0) : undefined;
-	}
+  long(id: number): number | undefined {
+    const p = this.fixed.get(id);
+    return p !== undefined && p.type === PT_LONG
+      ? p.value.readInt32LE(0)
+      : undefined;
+  }
 
-	time(id: number): string | undefined {
-		const p = this.fixed.get(id);
-		if (p === undefined || p.type !== PT_SYSTIME) return undefined;
-		const ticks = p.value.readBigUInt64LE(0);
-		if (ticks === 0n) return undefined;
-		const ms = Number(ticks / 10_000n) - 11_644_473_600_000;
-		return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
-	}
+  time(id: number): string | undefined {
+    const p = this.fixed.get(id);
+    if (p === undefined || p.type !== PT_SYSTIME) return undefined;
+    const ticks = p.value.readBigUInt64LE(0);
+    if (ticks === 0n) return undefined;
+    const ms = Number(ticks / 10_000n) - 11_644_473_600_000;
+    return Number.isFinite(ms) ? new Date(ms).toISOString() : undefined;
+  }
 }
 
 /** Is this buffer an Outlook `.msg`? (A CFB with a root properties stream and `__substg1.0_` streams.) */
@@ -157,80 +182,133 @@ function isMessageStorage(storage: CfbEntry): boolean {
 	);
 }
 
-/** Parse an Outlook `.msg`. Never throws; a malformed file yields warnings and an empty message. */
-export function parseMsg(buffer: Uint8Array): ParsedEmail {
+/**
+ * Parse an Outlook `.msg`. Never throws; a malformed file yields warnings and
+ * an empty message. `maxEmbedDepth` bounds the nesting of embedded messages
+ * (MAX_EMBED_DEPTH, requirement 5.4); deeper ones are skipped with a warning.
+ */
+export function parseMsg(
+	buffer: Uint8Array,
+	maxEmbedDepth: number = DEFAULT_MAX_EMBED_DEPTH,
+): ParsedEmail {
 	const root = readCfb(buffer);
 	if (root === null || !isMessageStorage(root)) {
 		return emptyMessage(["not a readable Outlook .msg (CFB) file"]);
 	}
-	return parseMessage(root, 32, 0);
+	return parseMessage(root, 32, 0, maxEmbedDepth);
 }
 
 function emptyMessage(warnings: string[]): ParsedEmail {
 	return { messageId: null, inReplyTo: [], references: [], to: [], cc: [], text: "", fromHtml: false, attachments: [], warnings };
 }
 
-function parseMessage(storage: CfbEntry, headerSize: number, depth: number): ParsedEmail {
-	const warnings: string[] = [];
-	let charset: string | undefined;
-	const props = new PropertyBag(storage, headerSize, () => charset);
-	charset = codepageLabel(props.long(PR_INTERNET_CPID) ?? props.long(PR_MESSAGE_CODEPAGE));
+function parseMessage(
+  storage: CfbEntry,
+  headerSize: number,
+  depth: number,
+  maxEmbedDepth: number,
+): ParsedEmail {
+  const warnings: string[] = [];
+  let charset: string | undefined;
+  const props = new PropertyBag(storage, headerSize, () => charset);
+  charset = codepageLabel(
+    props.long(PR_INTERNET_CPID) ?? props.long(PR_MESSAGE_CODEPAGE),
+  );
 
-	// 1. The original transport headers, when the message was received.
-	const transport = props.string(PR_TRANSPORT_MESSAGE_HEADERS);
-	const headers = transport !== undefined ? parseEmail(new TextEncoder().encode(`${transport.trimEnd()}\r\n\r\n`)) : undefined;
+  // 1. The original transport headers, when the message was received.
+  const transport = props.string(PR_TRANSPORT_MESSAGE_HEADERS);
+  const headers =
+    transport !== undefined
+      ? parseEmail(new TextEncoder().encode(`${transport.trimEnd()}\r\n\r\n`))
+      : undefined;
 
-	// 2. MAPI properties as the fallback.
-	const recipients = readRecipients(storage, () => charset);
-	const senderAddress = props.string(PR_SENDER_SMTP_ADDRESS) ?? smtpOnly(props.string(PR_SENDER_EMAIL_ADDRESS));
-	const senderName = props.string(PR_SENDER_NAME);
-	const from: EmailMailbox | undefined =
-		headers?.from ??
-		(senderAddress !== undefined
-			? { address: senderAddress.toLowerCase(), ...(senderName !== undefined && senderName !== senderAddress ? { name: senderName } : {}) }
-			: undefined);
+  // 2. MAPI properties as the fallback.
+  const recipients = readRecipients(storage, () => charset);
+  const senderAddress =
+    props.string(PR_SENDER_SMTP_ADDRESS) ??
+    smtpOnly(props.string(PR_SENDER_EMAIL_ADDRESS));
+  const senderName = props.string(PR_SENDER_NAME);
+  const from: EmailMailbox | undefined =
+    headers?.from ??
+    (senderAddress !== undefined
+      ? {
+          address: senderAddress.toLowerCase(),
+          ...(senderName !== undefined && senderName !== senderAddress
+            ? { name: senderName }
+            : {}),
+        }
+      : undefined);
 
-	const messageIdProp = props.string(PR_INTERNET_MESSAGE_ID);
-	const messageId = headers?.messageId ?? (messageIdProp !== undefined ? (parseMessageIds(messageIdProp)[0] ?? messageIdProp.replace(/[<>\s]/g, "")) : null);
-	if (messageId === null) warnings.push("the message has no Message-ID; threading falls back to its subject");
+  const messageIdProp = props.string(PR_INTERNET_MESSAGE_ID);
+  const messageId =
+    headers?.messageId ??
+    (messageIdProp !== undefined
+      ? (parseMessageIds(messageIdProp)[0] ??
+        messageIdProp.replace(/[<>\s]/g, ""))
+      : null);
+  if (messageId === null)
+    warnings.push(
+      "the message has no Message-ID; threading falls back to its subject",
+    );
 
-	const conversation = props.binary(PR_CONVERSATION_INDEX);
-	const rootFromIndex =
-		conversation !== undefined && conversation.length >= 22 ? threadIndexRootOf(Buffer.from(conversation).toString("base64")) : undefined;
+  const conversation = props.binary(PR_CONVERSATION_INDEX);
+  const rootFromIndex =
+    conversation !== undefined && conversation.length >= 22
+      ? threadIndexRootOf(Buffer.from(conversation).toString("base64"))
+      : undefined;
 
-	const subject = props.string(PR_SUBJECT) ?? headers?.subject;
-	const date = headers?.date ?? props.time(PR_CLIENT_SUBMIT_TIME) ?? props.time(PR_MESSAGE_DELIVERY_TIME);
+  const subject = props.string(PR_SUBJECT) ?? headers?.subject;
+  const date =
+    headers?.date ??
+    props.time(PR_CLIENT_SUBMIT_TIME) ??
+    props.time(PR_MESSAGE_DELIVERY_TIME);
 
-	// Body: plain text, else HTML converted.
-	let text = (props.string(PR_BODY) ?? "").replace(/\r\n?/g, "\n").trim();
-	let fromHtml = false;
-	if (text === "") {
-		const html = props.binary(PR_HTML);
-		const htmlText = html !== undefined ? decodeCharset(html, charset) : props.string(PR_HTML);
-		if (htmlText !== undefined && htmlText.trim() !== "") {
-			text = htmlToText(htmlText);
-			fromHtml = true;
-		}
-	}
+  // Body: plain text, else HTML converted.
+  let text = (props.string(PR_BODY) ?? "").replace(/\r\n?/g, "\n").trim();
+  let fromHtml = false;
+  if (text === "") {
+    const html = props.binary(PR_HTML);
+    const htmlText =
+      html !== undefined ? decodeCharset(html, charset) : props.string(PR_HTML);
+    if (htmlText !== undefined && htmlText.trim() !== "") {
+      text = htmlToText(htmlText);
+      fromHtml = true;
+    }
+  }
 
-	const attachments = readAttachments(storage, () => charset, depth, warnings);
-	const threadRoot = headers?.threadIndexRoot ?? rootFromIndex;
+  const attachments = readAttachments(
+    storage,
+    () => charset,
+    depth,
+    warnings,
+    maxEmbedDepth,
+  );
+  const threadRoot = headers?.threadIndexRoot ?? rootFromIndex;
 
-	return {
-		messageId,
-		inReplyTo: headers?.inReplyTo.length ? headers.inReplyTo : parseMessageIds(props.string(PR_IN_REPLY_TO_ID)),
-		references: headers?.references.length ? headers.references : parseMessageIds(props.string(PR_INTERNET_REFERENCES)),
-		...(threadRoot !== undefined ? { threadIndexRoot: threadRoot } : {}),
-		...(subject !== undefined && subject.trim() !== "" ? { subject: subject.replace(/\s+/g, " ").trim() } : {}),
-		...(from !== undefined ? { from } : {}),
-		to: headers?.to.length ? headers.to : recipients.to,
-		cc: headers?.cc.length ? headers.cc : recipients.cc,
-		...(date !== undefined ? { date } : {}),
-		text,
-		fromHtml,
-		attachments,
-		warnings: [...(headers?.warnings.filter((w) => !w.includes("Message-ID")) ?? []), ...warnings],
-	};
+  return {
+    messageId,
+    inReplyTo: headers?.inReplyTo.length
+      ? headers.inReplyTo
+      : parseMessageIds(props.string(PR_IN_REPLY_TO_ID)),
+    references: headers?.references.length
+      ? headers.references
+      : parseMessageIds(props.string(PR_INTERNET_REFERENCES)),
+    ...(threadRoot !== undefined ? { threadIndexRoot: threadRoot } : {}),
+    ...(subject !== undefined && subject.trim() !== ""
+      ? { subject: subject.replace(/\s+/g, " ").trim() }
+      : {}),
+    ...(from !== undefined ? { from } : {}),
+    to: headers?.to.length ? headers.to : recipients.to,
+    cc: headers?.cc.length ? headers.cc : recipients.cc,
+    ...(date !== undefined ? { date } : {}),
+    text,
+    fromHtml,
+    attachments,
+    warnings: [
+      ...(headers?.warnings.filter((w) => !w.includes("Message-ID")) ?? []),
+      ...warnings,
+    ],
+  };
 }
 
 /** An Exchange `/O=…/CN=…` address is not an SMTP address. */
@@ -257,40 +335,58 @@ function readRecipients(storage: CfbEntry, charset: () => string | undefined): {
 }
 
 function readAttachments(
-	storage: CfbEntry,
-	charset: () => string | undefined,
-	depth: number,
-	warnings: string[],
+  storage: CfbEntry,
+  charset: () => string | undefined,
+  depth: number,
+  warnings: string[],
+  maxEmbedDepth: number,
 ): EmailAttachment[] {
-	const out: EmailAttachment[] = [];
-	for (const child of storage.children) {
-		if (child.type !== "storage" || !child.name.toLowerCase().startsWith("__attach_version1.0_")) continue;
-		const props = new PropertyBag(child, 8, charset);
-		const method = props.long(PR_ATTACH_METHOD);
-		const filename = props.string(PR_ATTACH_LONG_FILENAME) ?? props.string(PR_ATTACH_FILENAME);
-		if (method === ATTACH_EMBEDDED_MSG) {
-			const embedded = props.object(PR_ATTACH_DATA);
-			if (embedded === undefined || depth >= MAX_EMBED_DEPTH) {
-				warnings.push(`embedded message ${filename ?? ""} skipped`.trim());
-				continue;
-			}
-			const inner = parseMessage(embedded, 24, depth + 1);
-			const base = (filename ?? inner.subject ?? "Nachricht").replace(/\.msg$/i, "").replace(/[\\/]/g, "_");
-			out.push({ filename: `${base}.eml`, mimeType: "message/rfc822", content: toEml(inner), inline: false });
-			continue;
-		}
-		const data = props.binary(PR_ATTACH_DATA);
-		if (data === undefined || data.length === 0) continue;
-		const contentId = props.string(PR_ATTACH_CONTENT_ID);
-		out.push({
-			filename: (filename ?? `attachment-${out.length + 1}.bin`).replace(/[\\/]/g, "_"),
-			mimeType: (props.string(PR_ATTACH_MIME_TAG) ?? "application/octet-stream").toLowerCase(),
-			content: data,
-			inline: contentId !== undefined,
-			...(contentId !== undefined ? { contentId } : {}),
-		});
-	}
-	return out;
+  const out: EmailAttachment[] = [];
+  for (const child of storage.children) {
+    if (
+      child.type !== "storage" ||
+      !child.name.toLowerCase().startsWith("__attach_version1.0_")
+    )
+      continue;
+    const props = new PropertyBag(child, 8, charset);
+    const method = props.long(PR_ATTACH_METHOD);
+    const filename =
+      props.string(PR_ATTACH_LONG_FILENAME) ?? props.string(PR_ATTACH_FILENAME);
+    if (method === ATTACH_EMBEDDED_MSG) {
+      const embedded = props.object(PR_ATTACH_DATA);
+      if (embedded === undefined || depth >= maxEmbedDepth) {
+        warnings.push(`embedded message ${filename ?? ""} skipped`.trim());
+        continue;
+      }
+      const inner = parseMessage(embedded, 24, depth + 1, maxEmbedDepth);
+      const base = (filename ?? inner.subject ?? "Nachricht")
+        .replace(/\.msg$/i, "")
+        .replace(/[\\/]/g, "_");
+      out.push({
+        filename: `${base}.eml`,
+        mimeType: "message/rfc822",
+        content: toEml(inner),
+        inline: false,
+      });
+      continue;
+    }
+    const data = props.binary(PR_ATTACH_DATA);
+    if (data === undefined || data.length === 0) continue;
+    const contentId = props.string(PR_ATTACH_CONTENT_ID);
+    out.push({
+      filename: (filename ?? `attachment-${out.length + 1}.bin`).replace(
+        /[\\/]/g,
+        "_",
+      ),
+      mimeType: (
+        props.string(PR_ATTACH_MIME_TAG) ?? "application/octet-stream"
+      ).toLowerCase(),
+      content: data,
+      inline: contentId !== undefined,
+      ...(contentId !== undefined ? { contentId } : {}),
+    });
+  }
+  return out;
 }
 
 /** Encode a header value as an RFC 2047 word when it is not plain ASCII. */

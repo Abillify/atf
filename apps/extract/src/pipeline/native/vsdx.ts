@@ -62,16 +62,18 @@
 
 import type { Transcription } from "@atf/extract-contract/v2";
 import { strFromU8, unzipSync } from "fflate";
-import { XMLParser } from "fast-xml-parser";
+import { ExtractError } from "../../errors.js";
+import { safeXmlParser } from "../safe-xml.js";
+import { assertZipWithinLimits, type ZipLimits } from "./zip-guard.js";
 
-const parser = new XMLParser({
-	ignoreAttributes: false,
-	attributeNamePrefix: "@_",
-	parseAttributeValue: false,
-	parseTagValue: false,
-	trimValues: false,
-	// Strip `r:`/`v:`… prefixes so element and attribute lookups are prefix-agnostic.
-	removeNSPrefix: true,
+const parser = safeXmlParser({
+  ignoreAttributes: false,
+  attributeNamePrefix: "@_",
+  parseAttributeValue: false,
+  parseTagValue: false,
+  trimValues: false,
+  // Strip `r:`/`v:`… prefixes so element and attribute lookups are prefix-agnostic.
+  removeNSPrefix: true,
 });
 
 /** A node in a Visio page graph: a shape id, its (optional) text label. */
@@ -482,83 +484,87 @@ function normalizePagePart(target: string): string {
  * an empty result with a warning, and the caller still renders the drawing via
  * LibreOffice for the picture.
  */
-export function parseVsdx(buffer: Uint8Array): ParsedVsdx {
-	const warnings: string[] = [];
-	let entries: Record<string, Uint8Array>;
-	try {
-		entries = unzipSync(buffer, {
-			filter: (file) =>
-				file.name === "visio/pages/pages.xml" ||
-				file.name === "visio/pages/_rels/pages.xml.rels" ||
-				/^visio\/pages\/page\d+\.xml$/.test(file.name),
-		});
-	} catch (error) {
-		warnings.push(
-			`Das VSDX konnte nicht gelesen werden: ${error instanceof Error ? error.message : String(error)}`,
-		);
-		return { pages: [], warnings };
-	}
+export function parseVsdx(buffer: Uint8Array, limits?: ZipLimits): ParsedVsdx {
+  const warnings: string[] = [];
+  let entries: Record<string, Uint8Array>;
+  try {
+    // Checked before any inflation (requirement 5.1); a limit violation
+    // throws ExtractError and is re-thrown below, never downgraded.
+    assertZipWithinLimits(buffer, limits);
+    entries = unzipSync(buffer, {
+      filter: (file) =>
+        file.name === "visio/pages/pages.xml" ||
+        file.name === "visio/pages/_rels/pages.xml.rels" ||
+        /^visio\/pages\/page\d+\.xml$/.test(file.name),
+    });
+  } catch (error) {
+    if (error instanceof ExtractError) throw error;
+    warnings.push(
+      `Das VSDX konnte nicht gelesen werden: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return { pages: [], warnings };
+  }
 
-	const indexBytes = entries["visio/pages/pages.xml"];
-	// Resolve page parts via the index + rels when present; otherwise fall back
-	// to every `pageN.xml` in numeric order, so a package without a clean index
-	// still yields its pages.
-	const rels = readPageRels(
-		entries["visio/pages/_rels/pages.xml.rels"] !== undefined
-			? strFromU8(entries["visio/pages/_rels/pages.xml.rels"])
-			: undefined,
-	);
-	const index = readPageIndex(
-		indexBytes !== undefined ? strFromU8(indexBytes) : undefined,
-	);
+  const indexBytes = entries["visio/pages/pages.xml"];
+  // Resolve page parts via the index + rels when present; otherwise fall back
+  // to every `pageN.xml` in numeric order, so a package without a clean index
+  // still yields its pages.
+  const rels = readPageRels(
+    entries["visio/pages/_rels/pages.xml.rels"] !== undefined
+      ? strFromU8(entries["visio/pages/_rels/pages.xml.rels"])
+      : undefined,
+  );
+  const index = readPageIndex(
+    indexBytes !== undefined ? strFromU8(indexBytes) : undefined,
+  );
 
-	const partOrder: { name: string; part: string }[] = [];
-	if (index.length > 0) {
-		let fallback = 0;
-		for (const entry of index) {
-			fallback += 1;
-			const target = entry.rid !== undefined ? rels.get(entry.rid) : undefined;
-			const part =
-				target !== undefined
-					? normalizePagePart(target)
-					: `visio/pages/page${fallback}.xml`;
-			partOrder.push({ name: entry.name, part });
-		}
-	} else {
-		// No index: take the `pageN.xml` parts in numeric order.
-		const pageParts = Object.keys(entries)
-			.filter((n) => /^visio\/pages\/page\d+\.xml$/.test(n))
-			.sort((a, b) => pageNumber(a) - pageNumber(b));
-		pageParts.forEach((part, i) => {
-			partOrder.push({ name: `Seite ${i + 1}`, part });
-		});
-	}
+  const partOrder: { name: string; part: string }[] = [];
+  if (index.length > 0) {
+    let fallback = 0;
+    for (const entry of index) {
+      fallback += 1;
+      const target = entry.rid !== undefined ? rels.get(entry.rid) : undefined;
+      const part =
+        target !== undefined
+          ? normalizePagePart(target)
+          : `visio/pages/page${fallback}.xml`;
+      partOrder.push({ name: entry.name, part });
+    }
+  } else {
+    // No index: take the `pageN.xml` parts in numeric order.
+    const pageParts = Object.keys(entries)
+      .filter((n) => /^visio\/pages\/page\d+\.xml$/.test(n))
+      .sort((a, b) => pageNumber(a) - pageNumber(b));
+    pageParts.forEach((part, i) => {
+      partOrder.push({ name: `Seite ${i + 1}`, part });
+    });
+  }
 
-	if (partOrder.length === 0) {
-		warnings.push("Keine Visio-Seiten im VSDX gefunden.");
-		return { pages: [], warnings };
-	}
+  if (partOrder.length === 0) {
+    warnings.push("Keine Visio-Seiten im VSDX gefunden.");
+    return { pages: [], warnings };
+  }
 
-	const pages: VsdxPage[] = [];
-	for (const { name, part } of partOrder) {
-		const bytes = entries[part];
-		if (bytes === undefined) {
-			warnings.push(`Visio-Seite „${name}“ konnte nicht gelesen werden.`);
-			continue;
-		}
-		const page = parsePage(name, strFromU8(bytes));
-		if (page === null) {
-			warnings.push(`Visio-Seite „${name}“ konnte nicht geparst werden.`);
-			continue;
-		}
-		pages.push(page);
-	}
+  const pages: VsdxPage[] = [];
+  for (const { name, part } of partOrder) {
+    const bytes = entries[part];
+    if (bytes === undefined) {
+      warnings.push(`Visio-Seite „${name}“ konnte nicht gelesen werden.`);
+      continue;
+    }
+    const page = parsePage(name, strFromU8(bytes));
+    if (page === null) {
+      warnings.push(`Visio-Seite „${name}“ konnte nicht geparst werden.`);
+      continue;
+    }
+    pages.push(page);
+  }
 
-	if (pages.length === 0) {
-		warnings.push("Das VSDX enthält keine lesbaren Visio-Seiten.");
-	}
+  if (pages.length === 0) {
+    warnings.push("Das VSDX enthält keine lesbaren Visio-Seiten.");
+  }
 
-	return { pages, warnings };
+  return { pages, warnings };
 }
 
 /** Numeric part of a `visio/pages/pageN.xml` part name, for ordering. */

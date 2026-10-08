@@ -156,6 +156,12 @@ cut from a separately rendered, higher-resolution page.
 It is the one application that needs external binaries: `poppler-utils` for PDF access and
 `libreoffice` for office formats. That is precisely why it is a separate service rather than part
 of Search — those dependencies have no business in the container that serves the query path.
+The same reasoning applies one level down: with `CONVERTER_MODE=isolated` those binaries run in
+a separate converter process (`dist/converter/server.js`) reached over a Unix socket, so the
+code that parses attacker-controlled bytes does not share a process with the API tokens and
+database credentials. Only command lines and output cross the socket; documents stay on a
+shared scratch volume. Extract's own native parsers (BPMN, XLSX, DOCX, VSDX, e-mail) run in a
+heap-limited Worker thread for the same reason.
 Beyond wording and rendering, poppler also supplies page *geometry*: the deterministic page
 analysis (S2) runs `pdftotext -bbox-layout` to read every word, line and block with coordinates,
 normalises each box to `[0,1]`, and derives numbered-heading candidates and a font-size proxy from

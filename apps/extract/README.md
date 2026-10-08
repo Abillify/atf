@@ -451,6 +451,25 @@ Other properties worth knowing:
   one.
 - **The ingest ACL can only narrow.** `X-Allowed-Users` / `X-Allowed-Groups` are
   intersected with the caller's own identity, never passed through.
+- **ZIP containers are checked before they are unpacked.** XLSX, VSDX, DOCX, PPTX and
+  OOXML packages embedded in a DOCX must pass the `ZIP_MAX_*` limits, read from the
+  central directory alone; a violation is `DOCUMENT_TOO_COMPLEX` (422), never retried.
+- **XML entities are not expanded.** Every XML parser is built in
+  `src/pipeline/safe-xml.ts` with entity processing off (XXE, Billion Laughs); only the
+  five predefined entities are decoded.
+- **Native parsers run in a Worker thread** with a heap ceiling (`PARSE_ISOLATED`,
+  `PARSE_MEMORY_LIMIT_MB`), so a pathological document fails its parse instead of the
+  service. If the Worker cannot start, a forked child and then an in-process call with a
+  warning take over.
+- **LibreOffice runs with a hardened profile.** Macros are disabled, links from untrusted
+  locations are blocked and linked content is never updated on load.
+- **Converter binaries can run in a separate process.** With `CONVERTER_MODE=isolated`
+  every poppler/LibreOffice/Tesseract call goes as newline-delimited JSON over the Unix
+  socket `CONVERTER_SOCKET` to `node dist/converter/server.js`, intended for a container
+  without network, with a read-only root filesystem and a non-root user. Only the command
+  line and its output cross the socket; documents stay on a scratch volume that both
+  processes mount at the same path (`TEMP_DIR`). The socket has no authentication of its
+  own: only the two processes may be able to reach its directory.
 
 `checkProductionReadiness` refuses to start in production with any of the
 permissive development defaults. Run with `NODE_ENV=development` to accept them
@@ -469,12 +488,34 @@ worth deciding deliberately:
 | `RENDER_DPI` | 200 | Below it small table text stops being legible; above it image cost grows without better transcription |
 | `FIGURE_DPI` | 300 | Must be ≥ `RENDER_DPI`; a crop coarser than the model's input is never wanted |
 | `VISION_MAX_TOKEN_VARIANTS` | 8192,16384,32768 | The truncation escalation ladder |
-| `MAX_PAGES` | 0 (unlimited) | Production requires a ceiling: tokens are spent per page |
+| `MAX_PAGES` | 500 | Tokens are spent per page; the ceiling ships on (0 = unlimited) |
+| `VISION_BUDGET_PAGES_PER_DAY` | 0 (unlimited) | Caps a tenant's VLM pages per UTC day across all its jobs; over the cap the job fails with `BUDGET_EXCEEDED` |
 | `CONVERT_CONCURRENCY` | 2 | Each conversion holds a LibreOffice process and page buffers |
 | `PAGE_CONCURRENCY` | 4 | Pages of one document in flight against the model |
 | `QUEUE_MAX_DEPTH` | 32 | Beyond it uploads get 503 with `Retry-After`, which a caller can act on |
 | `CALLBACK_ALLOWED_HOSTS` | (empty) | Empty allows public hosts only; list internal receivers explicitly |
-| `SUBPROCESS_TIMEOUT_MS` | 120000 | Turns a hung poppler/LibreOffice call into a warning or retryable failure; 0 disables |
+| `SUBPROCESS_TIMEOUT_MS` | 120000 | Turns a hung poppler/LibreOffice call into a warning or retryable failure; 0 disables, which the production gate refuses |
+| `SUBPROCESS_MEMORY_LIMIT_MB` | 0 (off) | `prlimit --as` per converter call on Linux; in a container use the cgroup memory limit instead |
+| `SUBPROCESS_CPU_LIMIT_S` | 900 | `prlimit --cpu` per converter call on Linux, SIGKILL on breach; 0 disables |
+| `UPLOAD_MEMORY_THRESHOLD_BYTES` | 8388608 | Larger multipart uploads are spooled to `TEMP_DIR/uploads` instead of the heap; 0 spools every upload |
+| `VISION_SUPPORTS_JSON_SCHEMA` | false | Sends `response_format: json_schema`; a provider that rejects it falls back to the tag format |
+
+Hardening against hostile documents (see [Security](#security)):
+
+| Variable | Default | Why it matters |
+| --- | --- | --- |
+| `ZIP_MAX_ENTRIES` | 10000 | Entry count a ZIP-based container may declare |
+| `ZIP_MAX_TOTAL_BYTES` | 536870912 | Sum of declared uncompressed sizes (512 MiB) |
+| `ZIP_MAX_ENTRY_BYTES` | 209715200 | Largest declared uncompressed entry (200 MiB) |
+| `ZIP_MAX_RATIO` | 100 | Largest compression ratio of one deflated entry |
+| `MAX_EMBED_DEPTH` | 2 | Nesting depth of embedded `.msg` messages; deeper ones are skipped with a warning |
+| `PARSE_ISOLATED` | true | Native parsers run in a Worker thread with a heap ceiling |
+| `PARSE_MEMORY_LIMIT_MB` | 512 | Heap ceiling of that thread (enforced by Node, ignored by Bun); a breach fails with `DOCUMENT_TOO_COMPLEX` |
+| `CONVERTER_MODE` | local | `isolated` forwards every poppler/LibreOffice/Tesseract call to a separate converter process |
+| `CONVERTER_SOCKET` | `/run/atf-converter/converter.sock` | Unix socket of that converter; both processes need the directory |
+| `OCR_FALLBACK` | off | `tesseract` gives a scanned page OCR text (with a page warning) while the vision model is down |
+| `TESSERACT_BIN` | tesseract | Binary for the OCR fallback; not part of `deploy/examples/Dockerfile` |
+| `OCR_LANG` | deu | Tesseract language(s), e.g. `deu+eng`; the traineddata must be installed |
 
 The v2 groups. Worker, lane, emitter and source-store values are validated at startup even
 without a database, so a bad value fails early:

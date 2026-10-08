@@ -87,7 +87,13 @@ import { createOidcProvider, type OidcProvider } from "./oidc.js";
 import { buildOpenApiSpec } from "./openapi.js";
 import { createExtractStore, type ExtractStore } from "./persistence/index.js";
 import { createExtractor, type Extractor } from "./pipeline/extract.js";
+import {
+  configureConverterTransport,
+  configureSubprocessLimits,
+} from "./pipeline/exec.js";
+import { createIsolatedRunner } from "./pipeline/isolate.js";
 import { MARKDOWN_BLOCKS_VERSION } from "./pipeline/markdown-blocks.js";
+import { createOcrClient } from "./pipeline/ocr.js";
 import type { BboxLayoutCapability } from "./pipeline/pdf.js";
 import { probeBboxLayout } from "./pipeline/pdf.js";
 import { checkProductionReadiness } from "./prod-gate.js";
@@ -110,7 +116,7 @@ import {
   createUiPrincipalMiddleware,
 } from "./ui-auth.js";
 import { getUiPageHtml } from "./ui-page.js";
-import { createUploadMiddleware } from "./upload.js";
+import { createUploadMiddleware, sweepUploadScratch } from "./upload.js";
 import { createVisionClient, type VisionClient } from "./vision/client.js";
 import { pass1PromptSet, pass2PromptSet } from "./vision/prompts.js";
 
@@ -317,6 +323,7 @@ export function createApp(
         visionMaxTokenVariants: config.visionMaxTokenVariants,
         visionMaxRetries: config.visionMaxRetries,
         visionReasoningEffort: config.visionReasoningEffort,
+        visionSupportsJsonSchema: config.visionSupportsJsonSchema,
       },
       logger,
     );
@@ -352,6 +359,12 @@ export function createApp(
         popplerBinDir: config.popplerBinDir,
         pageConcurrency: config.pageConcurrency,
         subprocessTimeoutMs: config.subprocessTimeoutMs,
+        zipLimits: {
+          maxEntries: config.zipMaxEntries,
+          maxTotalBytes: config.zipMaxTotalBytes,
+          maxEntryBytes: config.zipMaxEntryBytes,
+          maxRatio: config.zipMaxRatio,
+        },
         visionModel: config.visionModel,
       },
       logger,
@@ -477,6 +490,8 @@ export function createApp(
 
   const upload = createUploadMiddleware({
     maxUploadBytes: config.maxUploadBytes,
+    uploadMemoryThresholdBytes: config.uploadMemoryThresholdBytes,
+    tempDir: config.tempDir,
   });
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -519,6 +534,16 @@ export function createApp(
     overrides.sourceStore ??
     createFilesystemSourceStore(config.sourceStore.dir);
 
+  // The native parsers run in a Worker thread with a heap ceiling so a
+  // pathological document cannot take the service down with it (requirement
+  // 5.2): the main thread keeps serving /health and lease heartbeats while a
+  // parse runs. One runner serves both page renderers below.
+  const isolatedRunner = createIsolatedRunner({
+    enabled: config.parseIsolated,
+    maxOldGenerationSizeMb: config.parseMemoryLimitMb,
+    logger,
+  });
+
   // The page renderer for on-demand rendering (`POST /v2/render`, task 3.8). It
   // is stateless beyond a per-request prepared source, so it is built once and
   // shared. It resolves the source from the store, converts office→PDF and
@@ -533,9 +558,17 @@ export function createApp(
       libreofficeBin: config.libreofficeBin,
       popplerBinDir: config.popplerBinDir,
       subprocessTimeoutMs: config.subprocessTimeoutMs,
+      zipLimits: {
+        maxEntries: config.zipMaxEntries,
+        maxTotalBytes: config.zipMaxTotalBytes,
+        maxEntryBytes: config.zipMaxEntryBytes,
+        maxRatio: config.zipMaxRatio,
+      },
+      maxEmbedDepth: config.maxEmbedDepth,
     },
     sourceStore,
     logger,
+    isolated: isolatedRunner,
   });
   const renderHandler = createRenderHandler({
     sourceStore,
@@ -844,9 +877,17 @@ export function createApp(
         libreofficeBin: config.libreofficeBin,
         popplerBinDir: config.popplerBinDir,
         subprocessTimeoutMs: config.subprocessTimeoutMs,
+        zipLimits: {
+          maxEntries: config.zipMaxEntries,
+          maxTotalBytes: config.zipMaxTotalBytes,
+          maxEntryBytes: config.zipMaxEntryBytes,
+          maxRatio: config.zipMaxRatio,
+        },
+        maxEmbedDepth: config.maxEmbedDepth,
       },
       sourceStore,
       logger,
+      isolated: isolatedRunner,
     });
     // The emitter streams the staged outbox to Search's revision API and
     // reconciles on resume (task 1.12). It is only built when a Search target is
@@ -963,9 +1004,16 @@ export function createApp(
         // JOB_MAX_TRANSIENT_WAIT_MS (requirement 4.8): retry a dependency outage
         // in place with backoff before pausing on dependency with auto-resume.
         maxTransientWaitMs: config.jobWorker.maxTransientWaitMs,
+        // VISION_BUDGET_PAGES_PER_DAY (task 7.7, requirement 5.8): the tenant
+        // daily VLM-page cap; 0 disables it (the prod gate warns about that).
+        visionBudgetPagesPerDay: config.visionBudgetPagesPerDay,
       },
       emitter,
       identifier: sourceIdentifier,
+      // OCR_FALLBACK=tesseract (task 7.10, requirement 5.11): on a VLM outage,
+      // a scanned page's text comes from Tesseract with a warning instead of
+      // failing the page for a retry. Disabled (the default) unless configured.
+      ocr: createOcrClient(config),
       // E-mail attachments are stored here and ingested as jobs of their own.
       sourceStore,
       summaryClient,
@@ -1176,7 +1224,7 @@ export function createApp(
 }
 
 async function main(): Promise<void> {
-	let config: Config;
+  let config: Config;
   try {
     config = loadConfig();
   } catch (err) {
@@ -1214,12 +1262,42 @@ async function main(): Promise<void> {
     "Production-readiness gate passed",
   );
 
-  // Fail here rather than on the first upload if the scratch directory is not
+  // Kernel-level memory/CPU ceilings for converter subprocesses (requirement
+  // 5.5). Applied process-wide here rather than in `createApp` so the settings
+  // are a startup concern and the test harness, which builds apps directly,
+  // keeps the inert default. On non-Linux platforms, or where `prlimit` is
+  // absent, this is a no-op and the container's cgroup limits apply instead.
+  configureSubprocessLimits({
+    memoryLimitMb: config.subprocessMemoryLimitMb,
+    cpuLimitSeconds: config.subprocessCpuLimitSeconds,
+  });
+
+  // Requirement 5.7: with CONVERTER_MODE=isolated, the converter binaries run
+  // in the extract-converter sidecar (no network, read-only root FS, seccomp)
+  // and every call is forwarded over the Unix socket. The scratch directory
+  // must exist at the same absolute path in both containers — the compose
+  // contract mounts it from one volume — because the request carries paths,
+  // not bytes. In isolated mode the binaries are not this container's
+  // problem, so its own scratch directory is still created (the LibreOffice
+  // profiles and pdftoppm prefixes are written here before the call crosses
+  // the socket), but a failure to reach the sidecar surfaces as
+  // CONVERTER_UNAVAILABLE on the first conversion rather than at boot.
+  configureConverterTransport({
+    mode: config.converterMode,
+    socketPath: config.converterSocket,
+  });
+  if (config.converterMode === "isolated") {
+    logger.info(
+      { socket: config.converterSocket },
+      "converter mode is isolated: conversions run in the extract-converter sidecar",
+    );
+  }
+
+  // Fail here rather than on the first upload if a required directory is not
   // writable — a read-only filesystem is a common hardening default.
   try {
     await mkdir(config.tempDir, { recursive: true });
-    // The source store and upload scratch are on (possibly separate) volumes;
-    // fail here rather than on the first upload if either is not writable.
+    // The source store and upload scratch are on (possibly separate) volumes.
     await mkdir(config.sourceStore.dir, { recursive: true });
     await mkdir(config.sourceStore.tmpDir, { recursive: true });
   } catch (err) {
@@ -1229,6 +1307,11 @@ async function main(): Promise<void> {
     );
     process.exit(1);
   }
+
+  // Nothing can have spooled an upload before this point, so this is the only
+  // moment a scratch file left by a crashed previous process can be reaped
+  // safely (requirement 5.9).
+  await sweepUploadScratch(config.tempDir, logger);
 
   // Probe the poppler `-bbox-layout` capability once at startup and log it, so
   // the deterministic page analysis (S2, requirement 7.1) requirement is

@@ -49,6 +49,7 @@ import {
 } from "./docx-headings.js";
 import type { ParsedVsdx, VsdxPage } from "./vsdx.js";
 import type { ParsedXlsx, XlsxCell } from "./xlsx.js";
+import type { ZipLimits } from "./zip-guard.js";
 
 export type { ParsedBpmn } from "./bpmn.js";
 export { parseBpmn } from "./bpmn.js";
@@ -373,21 +374,29 @@ export function normalizeHeadingKey(text: string): string {
  * The render path is unchanged; these hints AUGMENT the outline built during
  * the document pass.
  */
-export function buildDocxHeadingHints(buffer: Uint8Array): DocxHeadingHints {
-	const parsed: ParsedDocxHeadings = parseDocxHeadings(buffer);
-	const levelByText = new Map<string, number>();
-	for (const heading of parsed.headings) {
-		levelByText.set(normalizeHeadingKey(heading.text), heading.level);
-	}
-	return { levelByText, headings: parsed.headings, warnings: parsed.warnings };
+export function buildDocxHeadingHints(
+  buffer: Uint8Array,
+  limits?: ZipLimits,
+): DocxHeadingHints {
+  const parsed: ParsedDocxHeadings = parseDocxHeadings(buffer, limits);
+  const levelByText = new Map<string, number>();
+  for (const heading of parsed.headings) {
+    levelByText.set(normalizeHeadingKey(heading.text), heading.level);
+  }
+  return { levelByText, headings: parsed.headings, warnings: parsed.warnings };
 }
 
 // ─── E-mail (EML) ─────────────────────────────────────────────────────────
 
 export type { EmailAttachment, EmailMailbox, ParsedEmail } from "./eml.js";
 export { htmlToText, parseEmail, splitMbox, stripQuotedReply } from "./eml.js";
-export { looksLikeMsg, parseMsg } from "./msg.js";
+export { DEFAULT_MAX_EMBED_DEPTH, looksLikeMsg, parseMsg } from "./msg.js";
 export { extractDocxEmbeddings, type EmbeddedSource } from "./docx-embeddings.js";
+export {
+  assertZipWithinLimits,
+  DEFAULT_ZIP_LIMITS,
+  type ZipLimits,
+} from "./zip-guard.js";
 export { readCfb, type CfbEntry } from "./cfb.js";
 
 /** The records of an mbox with several messages: an index page plus the messages as child documents. */

@@ -12,8 +12,8 @@
     "test": "node node_modules/vitest/vitest.mjs run",
     "typecheck": "tsc --noEmit",
     "coverage:check": "node scripts/check-coverage.mjs",
-    "build": "bun build ./src/index.ts --outdir ./dist --target bun",
-    "build:node": "bun build ./src/index.ts --outdir ./dist-node --target node --external sharp"
+    "build": "bun build ./src/index.ts ./src/pipeline/isolate-entry.ts ./src/converter/server.ts --outdir ./dist --target bun",
+    "build:node": "bun build ./src/index.ts ./src/pipeline/isolate-entry.ts ./src/converter/server.ts --outdir ./dist-node --target node --external sharp"
   },
   "engines": {
     "bun": ">=1.4.0 <2",

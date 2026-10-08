@@ -137,9 +137,37 @@ describe("checkProductionReadiness", () => {
       expect(report.fatal.join(" ")).toContain("VISION_TIMEOUT_MS is 0");
     });
 
+    it("refuses a disabled subprocess timeout (requirement 5.5)", () => {
+      const report = checkProductionReadiness(
+        prodConfig({ SUBPROCESS_TIMEOUT_MS: "0" }),
+      );
+      expect(report.fatal.join(" ")).toContain("SUBPROCESS_TIMEOUT_MS is 0");
+    });
+
     it("refuses disabled throttling and explains the cost", () => {
       const report = checkProductionReadiness(prodConfig({ RATE_LIMIT: "0" }));
       expect(report.fatal.join(" ")).toContain("spends model tokens");
+    });
+
+    // Task 7.7 (requirement 5.8): the daily tenant cap is a warning, not a
+    // fatal — the per-job token budget still caps one job, so disabling the
+    // daily axis is a risk call, not a broken deployment (design §Prod-Gate).
+    it("warns when the per-tenant daily vision budget is disabled", () => {
+      const report = checkProductionReadiness(prodConfig());
+      expect(report.warnings.join(" ")).toContain(
+        "VISION_BUDGET_PAGES_PER_DAY is 0",
+      );
+      expect(report.fatal).toEqual([]);
+    });
+
+    it("stays quiet once a daily vision budget is configured", () => {
+      const report = checkProductionReadiness(
+        prodConfig({ VISION_BUDGET_PAGES_PER_DAY: "5000" }),
+      );
+      expect(report.warnings.join(" ")).not.toContain(
+        "VISION_BUDGET_PAGES_PER_DAY",
+      );
+      expect(report.fatal).toEqual([]);
     });
   });
 
