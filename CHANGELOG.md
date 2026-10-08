@@ -118,12 +118,26 @@ Erasure_Receipt aus; ein Outpost-MirrorDelete löst den vollständigen Search-Ca
   Teilfailure→partial→Retry, Receipt-Verifikation); live env-gated
   (`OUTPOST_IT_*`) zusätzlich Outpost-MirrorDelete → Extract → Search und die
   Extract-Kaskade `POST /v1/erasure` mit `search.documents`-Teilergebnis.
+- **Retrieval-Qualitäts-Gate** (CI, `scripts/eval`). Der neue CI-Job `eval` startet
+  `scripts/eval/compose.eval.yaml` (Search, Extract, TEI-CPU-Embedding und Cross-Encoder-
+  Rerank, deterministischer HyDE-Mock), ingestiert den deterministischen Golden-Korpus und
+  scheitert bei Unterschreitung von `scripts/eval/baseline/thresholds.json`; Baseline und
+  Ablationen (dense, rerank, HyDE, Kontext-Header) liegen unter `scripts/eval/baseline/`.
 ### Changed
 - CI-Job `contracts` läuft jetzt zusätzlich `security-kit` und `erasure-contract`;
   Supply-Chain-Inventare (`THIRD_PARTY_NOTICES.md`, `sbom.cdx.json`) neu generiert.
 - Regulierte Aktionen (Flows, Tenants, Approvals, Compliance/DSAR) auditiert die Runtime über
   `recordRequired` statt best-effort `record()`; bei Audit-Unverfügbarkeit antworten sie mit
   `503 AUDIT_UNAVAILABLE` (`AUDIT_UNAVAILABLE` ist ein neuer Fehlercode).
+- **Verpflichtender Tenant-Scope und Retrieval-Abstimmung** (`@atf/search`). Jede
+  Zugriffs-SQL verlangt einen expliziten Scope (Operator-Pfade über `operatorScope()`);
+  `DOCUMENT_ACL_DEFAULT` (Default `allow`, Prod_Gate warnt) und `ACL_REQUIRE_IDENTITY` mit
+  Scope `search.assert-identity` für zugesicherte Identitäts-Header. HNSW mit iterativem Scan
+  (`HNSW_ITERATIVE_SCAN`, Default `relaxed_order`) und `ef_search` ≥ Kandidatenlimit,
+  Sparse-Fusion über FULL OUTER JOIN (`RRF_WEIGHT_SPARSE`, `RRF_MISSING_ZERO`), gemeinsame
+  zeitliche Sichtbarkeits-CTE, `FTS_RANKER` (`ts_rank_cd` oder `bm25`) und
+  `MIN_RERANK_SCORE` mit Enthaltungsfeld. Suchstatistiken speichern nur noch
+  `query_hash` (HMAC mit `STATS_QUERY_PEPPER`); Rohanfragen nur mit `STATS_STORE_RAW_QUERY`.
 
 ## [0.13.2] — 2026-10-05
 Hardens the LLM tool loop for local models: the `maxToolSteps` budget ends with an answer
