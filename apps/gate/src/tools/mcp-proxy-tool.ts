@@ -139,7 +139,7 @@ export class McpProxyToolExecutor implements ToolExecutor {
         return secureOutboundFetch(input, { ...init, signal: effectiveSignal }, this.allowedHosts);
       },
     });
-    const client = new Client({ name: "mcpgate-proxy", version: "0.13.2" }, { capabilities: {} });
+    const client = new Client({ name: "mcpgate-proxy", version: "0.14.0" }, { capabilities: {} });
 
     try {
       logger.debug("mcp proxy connect", {

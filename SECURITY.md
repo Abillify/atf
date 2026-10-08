@@ -46,7 +46,7 @@ an earlier one. This table will gain rows if that changes.
 | Version | Supported |
 | --- | --- |
 | `main` | Yes |
-| Tagged releases, including `v0.13.2` | Only through the next tag |
+| Tagged releases, including `v0.14.0` | Only through the next tag |
 
 ## Scope
 
