@@ -1,0 +1,44 @@
+# SPDX-License-Identifier: Elastic-2.0
+# SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+#
+# Configuration for cargo-deny (Requirement 10.6, Task 14.4).
+# Applies to the Rust part of Outpost Desktop (src-tauri).
+
+[graph]
+targets = [
+    { triple = "x86_64-pc-windows-msvc" },
+    { triple = "aarch64-apple-darwin" },
+    { triple = "x86_64-apple-darwin" },
+]
+
+[licenses]
+# Only explicitly approved licenses; unknown or copyleft licenses that
+# are not listed in allow are reported as errors by cargo-deny (default in
+# cargo-deny >= 0.16: unlisted licenses are rejected).
+confidence-threshold = 0.93
+allow = [
+    "Elastic-2.0",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
+    "MPL-2.0",
+]
+
+[[licenses.clarify]]
+name = "ring"
+expression = "MIT AND ISC AND OpenSSL"
+license-files = [{ path = "LICENSE", hash = 0xbd0eedfa }]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[advisories]
+# Treat yanked crates as errors as well.
+yanked = "deny"

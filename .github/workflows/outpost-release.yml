@@ -1,31 +1,39 @@
 # SPDX-License-Identifier: Elastic-2.0
 # SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 #
-# Release-Pipeline fuer den ATF Extract Outpost (Tasks 23.1-23.4).
+# Release pipeline for the ATF Extract Outpost (hardening Task 14.1 /
+# Requirements 10.1-10.2).
 #
-# Benoenigte Repository-Secrets fuer Signierung/Notarisierung (ohne diese
-# Secrets laufen die Jobs unsigniert; unsignierte Artefakte haben Retention
-# 1 Tag und werden nicht veroeffentlicht - Anforderungen 14.6-14.8):
-#   WINDOWS_CERT_BASE64        Authenticode-PFX (Base64), enthaelt das
-#                              Code-Signing-Zertifikat
-#   WINDOWS_CERT_PASSWORD      Passwort fuer das PFX
-#   APPLE_CERTIFICATE          Developer-ID-Application-P12 (Base64)
-#   APPLE_CERTIFICATE_PASSWORD Passwort fuer das P12
-#   APPLE_SIGNING_IDENTITY     z. B. "Developer ID Application: ..."
-#   APPLE_API_KEY_ID           App-Store-Connect-API-Key-ID (Notarisierung)
-#   APPLE_API_ISSUER           Issuer UUID (Notarisierung)
-#   APPLE_API_KEY_P8           Notarisierungs-P8 (Base64)
-#   MINISIGN_PRIVATE_KEY       Minisign-Secret-Key fuer Updater-Signaturen
-#                              (tauri signer sign -f key.pem); der zugehoerige
-#                              .pub-Schluessel muss als plugins.updater.pubkey
-#                              in tauri.conf.json hinterlegt sein (22.5/23.4)
+# All actions are pinned to commit SHAs (Requirement 10.1); permissions are
+# restricted to {} globally and set minimally per job. The guard job enforces
+# the same conditions as release.yml: exact SHA, ancestry to main, a
+# successful CI run on the SHA and version equality of the tag with all
+# Outpost packages (Requirement 10.2).
 #
-# Benoetigte Repository-Variable (deploymentspezifisch, nicht im Repository):
-#   OUTPOST_UPDATER_REPO       GitHub-Repository <owner>/<repo>, dessen Releases
-#                              den Updater-Feed latest.json hosten; Pflicht,
-#                              sobald MINISIGN_PRIVATE_KEY gesetzt ist. Der
-#                              Updater-Endpoint wird daraus beim Build in die
-#                              Tauri-Konfiguration injiziert.
+# Required repository secrets for signing/notarization (without these
+# secrets the jobs run unsigned; unsigned artifacts have a retention of
+# 1 day and are not published):
+#   WINDOWS_CERT_BASE64        Authenticode PFX (Base64) containing the
+#                              code-signing certificate
+#   WINDOWS_CERT_PASSWORD      Password for the PFX
+#   APPLE_CERTIFICATE          Developer ID Application P12 (Base64)
+#   APPLE_CERTIFICATE_PASSWORD Password for the P12
+#   APPLE_SIGNING_IDENTITY     e.g. "Developer ID Application: ..."
+#   APPLE_API_KEY_ID           App Store Connect API key ID (notarization)
+#   APPLE_API_ISSUER           Issuer UUID (notarization)
+#   APPLE_API_KEY_P8           Notarization P8 (Base64)
+#   MINISIGN_PRIVATE_KEY       Minisign secret key for updater signatures
+#                              (tauri signer sign -f key.pem); the matching
+#                              .pub key must be stored as plugins.updater.pubkey
+#                              in tauri.conf.json
+#   MINISIGN_PASSWORD          Password for the Minisign secret key
+#
+# Required repository variable (deployment specific, not in the repository):
+#   OUTPOST_UPDATER_REPO       GitHub repository <owner>/<repo> whose releases
+#                              host the updater feed latest.json; mandatory
+#                              as soon as MINISIGN_PRIVATE_KEY is set. The
+#                              updater endpoint is injected from it into the
+#                              Tauri configuration at build time.
 name: outpost-release
 
 on:
@@ -33,41 +41,122 @@ on:
     tags:
       - "outpost-v*"
 
-permissions:
-  contents: write
-  packages: write
-  id-token: write
+permissions: {}
 
 env:
   OUTPOST_UPDATER_REPO: ${{ vars.OUTPOST_UPDATER_REPO }}
+  BUN_VERSION: 1.4.0
+  NODE_VERSION: 26
 
 jobs:
+  guard:
+    name: Verify release tag, checkout, and CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.guard.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+
+      - id: guard
+        name: Enforce exact SHA, main ancestry, package version, and successful CI
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          version="$(bun -e 'console.log((await Bun.file("apps/outpost/package.json").json()).version)')"
+          test "$GITHUB_REF_NAME" = "outpost-v$version"
+          # Version equality across all Outpost packages (Requirement 10.2).
+          for manifest in packages/outpost-core/package.json apps/outpost-desktop/package.json; do
+            other="$(bun -e "console.log((await Bun.file(\"$manifest\").json()).version)")"
+            test "$other" = "$version" || {
+              echo "$manifest version $other != outpost version $version" >&2
+              exit 1
+            }
+          done
+
+          ci_ok=false
+          for attempt in $(seq 1 30); do
+            if test "$(gh api --method GET \
+              "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs" \
+              -f head_sha="$GITHUB_SHA" -f status=completed -f conclusion=success \
+              -f per_page=1 \
+              --jq ".workflow_runs | length")" -gt 0; then
+              ci_ok=true
+              break
+            fi
+            echo "Waiting for successful CI run for $GITHUB_SHA (attempt $attempt/30)"
+            sleep 20
+          done
+          test "$ci_ok" = true
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    needs: guard
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version: 26
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - run: bun install --frozen-lockfile
+      - run: bun run --filter @atf/outpost-core typecheck
+      - run: bun run --filter @atf/outpost-core test
       - run: bun run --filter @atf/outpost typecheck
       - run: bun run --filter @atf/outpost test
       - run: bun run --filter @atf/outpost-desktop typecheck
+      # cargo test compiles the Tauri core; the GTK/WebKit development
+      # packages are the official Tauri v2 prerequisites on Ubuntu.
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev
       - run: cargo fmt --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml -- --check
       - run: cargo test --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml
 
   docker:
     needs: test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-qemu-action@v3
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
       - name: Build local image checks
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/outpost/Dockerfile
@@ -80,14 +169,14 @@ jobs:
           size="$(docker image inspect atf-outpost:release-check --format '{{.Size}}')"
           test "$size" -le 157286400
           test "$(docker image inspect atf-outpost:release-check --format '{{.Config.User}}')" = "10001:10001"
-      - uses: docker/login-action@v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: Push multi-arch image
         id: image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: apps/outpost/Dockerfile
@@ -96,7 +185,7 @@ jobs:
           tags: ghcr.io/abillify/atf-outpost:${{ github.ref_name }},ghcr.io/abillify/atf-outpost:latest
           provenance: true
           sbom: true
-      - uses: sigstore/cosign-installer@v3
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
       - name: Sign image
         env:
           COSIGN_EXPERIMENTAL: "1"
@@ -105,22 +194,33 @@ jobs:
   windows:
     needs: test
     runs-on: windows-latest
+    permissions:
+      contents: read
+    env:
+      # Presence of the signing secrets as booleans so the if conditions
+      # work without the secrets context (actionlint compatible).
+      HAS_WINDOWS_CERT: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version: 26
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
       - run: bun install --frozen-lockfile
       - run: bun run --filter @atf/outpost build:sea
         env:
           SEA_TARGET: x86_64-pc-windows-msvc
-      # Sidecar VOR dem Bundling signieren, damit der signierte Sidecar in den
-      # NSIS-Installer gelangt (Anforderung 14.2).
+      # Sign the sidecar BEFORE bundling so the signed sidecar ends up in the
+      # NSIS installer.
       - name: Sign SEA sidecar (Authenticode)
-        if: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
+        if: env.HAS_WINDOWS_CERT == 'true'
         shell: pwsh
         env:
           WINDOWS_CERT_BASE64: ${{ secrets.WINDOWS_CERT_BASE64 }}
@@ -134,7 +234,7 @@ jobs:
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin" -Recurse -Filter signtool.exe |
             Where-Object { $_.FullName -like "*x64*" } |
             Sort-Object FullName -Descending | Select-Object -First 1
-          if (-not $signtool) { throw "signtool.exe nicht gefunden" }
+          if (-not $signtool) { throw "signtool.exe not found" }
           $sidecar = "apps\outpost-desktop\src-tauri\binaries\atf-outpost-x86_64-pc-windows-msvc.exe"
           & $signtool.FullName sign /fd SHA256 /sha1 (Get-ChildItem Cert:\CurrentUser\My -CodeSigning | Select-Object -First 1).Thumbprint /tr http://timestamp.digicert.com /td SHA256 $sidecar
           if ($LASTEXITCODE -ne 0) { throw "signtool sign fehlgeschlagen" }
@@ -142,6 +242,37 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "signtool verify fehlgeschlagen" }
           Remove-Item $pfx
       - run: bun run --filter @atf/outpost-desktop build
+      # Req 10.5: a release build with a signing key fails when the updater
+      # pubkey in tauri.conf.json is still a placeholder or no endpoint is set.
+      - name: Verify updater configuration
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            # Requirement 10.5: a signed build fails on a placeholder pubkey or
+            # empty effective endpoints. The build step injects the endpoint
+            # derived from vars.OUTPOST_UPDATER_REPO, so that counts as well.
+            if ! bun -e '
+              const conf = await Bun.file("apps/outpost-desktop/src-tauri/tauri.conf.json").json();
+              const updater = conf?.plugins?.updater ?? {};
+              const pubkey = String(updater.pubkey ?? "");
+              const endpoints = Array.isArray(updater.endpoints) ? updater.endpoints : [];
+              let ok = true;
+              if (pubkey === "" || pubkey.includes("REPLACE_WITH_MINISIGN_PUBLIC_KEY")) {
+                console.error("plugins.updater.pubkey is a placeholder; a real Minisign public key is required");
+                ok = false;
+              }
+              if (endpoints.length === 0 && !process.env.OUTPOST_UPDATER_REPO) {
+                console.error("plugins.updater.endpoints is empty and vars.OUTPOST_UPDATER_REPO is unset");
+                ok = false;
+              }
+              process.exit(ok ? 0 : 1);
+            '; then
+              exit 1
+            fi
+          fi
       - name: tauri build (NSIS)
         shell: bash
         env:
@@ -150,7 +281,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO fehlt" >&2; exit 1; }
+            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO is missing" >&2; exit 1; }
             endpoint="https://github.com/${OUTPOST_UPDATER_REPO}/releases/latest/download/latest.json"
             bunx tauri build --config "{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"endpoints\":[\"${endpoint}\"]}}}"
           else
@@ -158,7 +289,7 @@ jobs:
           fi
         working-directory: apps/outpost-desktop
       - name: Sign NSIS installer and verify (Authenticode)
-        if: ${{ secrets.WINDOWS_CERT_BASE64 != '' }}
+        if: env.HAS_WINDOWS_CERT == 'true'
         shell: pwsh
         env:
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
@@ -168,13 +299,13 @@ jobs:
             Where-Object { $_.FullName -like "*x64*" } |
             Sort-Object FullName -Descending | Select-Object -First 1
           $installer = Get-ChildItem "apps\outpost-desktop\src-tauri\target\release\bundle\nsis\*-setup.exe" | Select-Object -First 1
-          if (-not $installer) { throw "NSIS-Installer nicht gefunden" }
+          if (-not $installer) { throw "NSIS installer not found" }
           & $signtool.FullName sign /fd SHA256 /sha1 (Get-ChildItem Cert:\CurrentUser\My -CodeSigning | Select-Object -First 1).Thumbprint /tr http://timestamp.digicert.com /td SHA256 $installer.FullName
           if ($LASTEXITCODE -ne 0) { throw "signtool sign fehlgeschlagen" }
           & $signtool.FullName verify /pa $installer.FullName
           if ($LASTEXITCODE -ne 0) { throw "signtool verify fehlgeschlagen" }
-      # Unsignierte/CI-Artefakte: Retention 1 Tag (Anforderung 14.8).
-      - uses: actions/upload-artifact@v4
+      # Unsignierte/CI-Artefakte: Retention 1 Tag.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: outpost-windows
           path: apps/outpost-desktop/src-tauri/target/release/bundle/**
@@ -182,6 +313,12 @@ jobs:
 
   macos:
     needs: test
+    permissions:
+      contents: read
+    env:
+      # Presence of the signing secrets as booleans so the if conditions
+      # work without the secrets context (actionlint compatible).
+      HAS_APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE != '' }}
     strategy:
       matrix:
         include:
@@ -193,20 +330,25 @@ jobs:
             rust_target: x86_64-apple-darwin
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          bun-version: 1.4.0
-      - uses: actions/setup-node@v4
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
-          node-version: 26
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
           architecture: ${{ matrix.arch }}
       - run: bun install --frozen-lockfile
       - run: bun run --filter @atf/outpost build:sea
         env:
           SEA_TARGET: ${{ matrix.target }}
       - name: Import Apple Developer ID certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -221,9 +363,9 @@ jobs:
             -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
           security list-keychain -d user -s "$KEYCHAIN_PATH" login.keychain-db
           rm "$RUNNER_TEMP/apple.p12"
-      # Sidecar VOR dem Bundling mit Hardened Runtime signieren (14.3).
+      # Sign the sidecar with the hardened runtime BEFORE bundling.
       - name: Codesign SEA sidecar (hardened runtime)
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
         run: |
@@ -232,6 +374,37 @@ jobs:
             --entitlements apps/outpost-desktop/src-tauri/entitlements.plist \
             "apps/outpost-desktop/src-tauri/binaries/atf-outpost-${{ matrix.target }}"
       - run: bun run --filter @atf/outpost-desktop build
+      # Req 10.5: a release build with a signing key fails when the updater
+      # pubkey in tauri.conf.json is still a placeholder or no endpoint is set.
+      - name: Verify updater configuration
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.MINISIGN_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            # Requirement 10.5: a signed build fails on a placeholder pubkey or
+            # empty effective endpoints. The build step injects the endpoint
+            # derived from vars.OUTPOST_UPDATER_REPO, so that counts as well.
+            if ! bun -e '
+              const conf = await Bun.file("apps/outpost-desktop/src-tauri/tauri.conf.json").json();
+              const updater = conf?.plugins?.updater ?? {};
+              const pubkey = String(updater.pubkey ?? "");
+              const endpoints = Array.isArray(updater.endpoints) ? updater.endpoints : [];
+              let ok = true;
+              if (pubkey === "" || pubkey.includes("REPLACE_WITH_MINISIGN_PUBLIC_KEY")) {
+                console.error("plugins.updater.pubkey is a placeholder; a real Minisign public key is required");
+                ok = false;
+              }
+              if (endpoints.length === 0 && !process.env.OUTPOST_UPDATER_REPO) {
+                console.error("plugins.updater.endpoints is empty and vars.OUTPOST_UPDATER_REPO is unset");
+                ok = false;
+              }
+              process.exit(ok ? 0 : 1);
+            '; then
+              exit 1
+            fi
+          fi
       - name: tauri build (DMG)
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -242,7 +415,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
-            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO fehlt" >&2; exit 1; }
+            test -n "${OUTPOST_UPDATER_REPO:-}" || { echo "vars.OUTPOST_UPDATER_REPO is missing" >&2; exit 1; }
             endpoint="https://github.com/${OUTPOST_UPDATER_REPO}/releases/latest/download/latest.json"
             bunx tauri build --target "${{ matrix.rust_target }}" --config "{\"bundle\":{\"createUpdaterArtifacts\":true},\"plugins\":{\"updater\":{\"endpoints\":[\"${endpoint}\"]}}}"
           else
@@ -250,7 +423,7 @@ jobs:
           fi
         working-directory: apps/outpost-desktop
       - name: Notarize, staple and verify
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: env.HAS_APPLE_CERT == 'true'
         env:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
@@ -259,8 +432,8 @@ jobs:
         run: |
           set -euo pipefail
           BUNDLE="apps/outpost-desktop/src-tauri/target/${{ matrix.rust_target }}/release/bundle"
-          APP="$(ls -d "$BUNDLE"/macos/*.app | head -n 1)"
-          DMG="$(ls "$BUNDLE"/dmg/*.dmg | head -n 1)"
+          APP="$(find "$BUNDLE/macos" -maxdepth 1 -name '*.app' | head -n 1)"
+          DMG="$(find "$BUNDLE/dmg" -maxdepth 1 -name '*.dmg' | head -n 1)"
           echo "$APPLE_API_KEY_P8" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           xcrun notarytool submit "$DMG" \
             --key "$RUNNER_TEMP/AuthKey.p8" \
@@ -272,8 +445,8 @@ jobs:
           xcrun spctl -a -vv --type open "$APP" || true
           codesign --verify --deep --strict --verbose=2 "$APP"
           rm "$RUNNER_TEMP/AuthKey.p8"
-      # Unsignierte/CI-Artefakte: Retention 1 Tag (Anforderung 14.8).
-      - uses: actions/upload-artifact@v4
+      # Unsignierte/CI-Artefakte: Retention 1 Tag.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: outpost-macos-${{ matrix.arch }}
           path: |
@@ -282,28 +455,45 @@ jobs:
           retention-days: 1
 
   publish:
-    needs: [docker, windows, macos]
+    needs: [guard, docker, windows, macos]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      # Presence of the signing secret as a boolean so the if condition
+      # works without the secrets context (actionlint compatible).
+      HAS_MINISIGN: ${{ secrets.MINISIGN_PRIVATE_KEY != '' }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          bun-version: 1.4.0
-      - uses: actions/download-artifact@v4
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Re-assert release guard
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-list -n 1 "$GITHUB_REF_NAME")" = "$GITHUB_SHA"
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          test "$GITHUB_REF_NAME" = "outpost-v$(bun -e 'console.log((await Bun.file("apps/outpost/package.json").json()).version)')"
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           path: artifacts
       - run: find artifacts -type f ! -name '*.sig' -print0 | sort -z | xargs -0 sha256sum > SHA256SUMS
-      # Updater-Manifest latest.json mit den Minisign-Signaturen (.sig) der
-      # Installer je Plattform (Anforderungen 14.9, 14.10; Task 22.5 Updater).
+      # Updater manifest latest.json with the Minisign signatures (.sig) of
+      # the installers per platform (updater, Task 22.5).
       - name: Generate updater manifest latest.json
-        if: ${{ secrets.MINISIGN_PRIVATE_KEY != '' }}
+        if: env.HAS_MINISIGN == 'true'
         env:
           UPDATER_REPO: ${{ env.OUTPOST_UPDATER_REPO }}
           RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           bun run scripts/generate-updater-manifest.ts --dir artifacts --out latest.json
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           files: |
             SHA256SUMS

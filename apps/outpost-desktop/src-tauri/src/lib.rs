@@ -16,12 +16,12 @@ use tauri::{AppHandle, Manager, RunEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_notification::NotificationExt;
 
-/// Poll-Intervall fuer Status (Tray/Benachrichtigungen).
+/// Poll interval for the status (tray/notifications).
 const STATUS_POLL: Duration = Duration::from_secs(5);
 
-/// Control-API-Endpunkt des Sidecars fuer das WebView. Port und Token sind
-/// erst nach dem Sidecar-Start bekannt; das Frontend pollt diesen Command,
-/// bis er bereit ist (Ersetzung fuer window.__ATF_CONTROL_URL__/__ATF_CONTROL_TOKEN__).
+/// Control API endpoint of the sidecar for the WebView. Port and token are
+/// only known after the sidecar has started; the frontend polls this command
+/// until it is ready (replacement for window.__ATF_CONTROL_URL__/__ATF_CONTROL_TOKEN__).
 #[derive(serde::Serialize)]
 struct ControlInfo {
     url: String,
@@ -38,6 +38,24 @@ fn control_info(state: tauri::State<'_, Arc<Mutex<SidecarSupervisor>>>) -> Optio
     })
 }
 
+/// Determines the path of the sidecar program. The environment variable
+/// `ATF_OUTPOST_EXECUTABLE` is only honored in debug builds
+/// (Requirement 10.4): release builds only consider the bundled sidecar
+/// path, so no environment-variable attack can slip in a foreign process
+/// as the sidecar.
+fn sidecar_executable(
+    env_override: Option<String>,
+    default: impl FnOnce() -> Result<String, String>,
+) -> Result<String, String> {
+    #[cfg(debug_assertions)]
+    if let Some(path) = env_override {
+        return Ok(path);
+    }
+    #[cfg(not(debug_assertions))]
+    let _ = env_override;
+    default()
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -51,10 +69,11 @@ pub fn run() {
         .setup(|app| {
             tray::install(&app.handle()).map_err(std::io::Error::other)?;
             let token = create_ipc_token().map_err(std::io::Error::other)?;
-            let executable = match std::env::var("ATF_OUTPOST_EXECUTABLE") {
-                Ok(path) => path,
-                Err(_) => default_sidecar_path().map_err(std::io::Error::other)?,
-            };
+            let executable =
+                sidecar_executable(std::env::var("ATF_OUTPOST_EXECUTABLE").ok(), || {
+                    default_sidecar_path()
+                })
+                .map_err(std::io::Error::other)?;
             let mut supervisor = SidecarSupervisor::new(executable, token);
             // Einstellungen in `app_config_dir()`, State in `app_data_dir()` (13.9).
             let config_dir = app.path().app_config_dir().map_err(std::io::Error::other)?;
@@ -92,8 +111,8 @@ pub fn run() {
                     .blocking_show();
             });
             start_status_monitor(app.handle().clone(), Arc::clone(&state));
-            // Automatische Update-Pruefung beim Start; dieselbe Signatur-
-            // pruefung wie die manuelle Tray-Aktion (14.8, 14.10).
+            // Automatic update check at startup; same signature check as
+            // the manual tray action (14.8, 14.10).
             check_for_updates(app.handle(), false);
             app.manage(state);
             app.manage(bridge_host);
@@ -114,10 +133,10 @@ pub fn run() {
     });
 }
 
-/// Pollt `GET /status` und aktualisiert Tray-Icon/-Tooltip sowie
-/// Benachrichtigungen: „Erneut autorisieren" beim Uebergang in
-/// needs-authorization und Hinweis, wenn `failed > 0` gegenueber dem
-/// Vorwert steigt (Requirements 6.18, 11.6, 11.7).
+/// Polls `GET /status` and updates the tray icon/tooltip and
+/// notifications: "re-authorize" on the transition to
+/// needs-authorization, and a notice when `failed > 0` rises compared with
+/// the previous value (Requirements 6.18, 11.6, 11.7).
 fn start_status_monitor(app: AppHandle, supervisor: Arc<Mutex<SidecarSupervisor>>) {
     std::thread::spawn(move || {
         let mut previous: Option<control::Snapshot> = None;
@@ -164,11 +183,11 @@ fn start_status_monitor(app: AppHandle, supervisor: Arc<Mutex<SidecarSupervisor>
     });
 }
 
-/// Prueft den Updater; die Minisign-Signaturpruefung erfolgt im Plugin
-/// (`download_and_install`). Bei ungueltiger Signatur bricht das Plugin ab,
-/// das Update wird verworfen und als Fehlermeldung gezeigt (14.8, 14.10).
-/// Automatische Pruefung beim Start und manuelle Tray-Aktion nutzen
-/// denselben Pfad.
+/// Checks the updater; the Minisign signature check happens in the plugin
+/// (`download_and_install`). With an invalid signature the plugin aborts,
+/// the update is discarded and shown as an error message (14.8, 14.10).
+/// The automatic check at startup and the manual tray action use the same
+/// path.
 pub fn check_for_updates<R: tauri::Runtime>(app: &AppHandle<R>, manual: bool) {
     let app_clone = app.clone();
     tauri::async_runtime::spawn(async move {
@@ -227,4 +246,41 @@ pub fn check_for_updates<R: tauri::Runtime>(app: &AppHandle<R>, manual: bool) {
             Err(_) => {}
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::sidecar_executable;
+    #[test]
+    fn uses_default_path_without_environment_override() {
+        let executable = sidecar_executable(None, || Ok("/bundled/atf-outpost".to_string()))
+            .expect("default path");
+        assert_eq!(executable, "/bundled/atf-outpost");
+    }
+    #[test]
+    fn propagates_default_path_errors() {
+        let error = sidecar_executable(None, || Err("sidecar missing".to_string()))
+            .expect_err("default error");
+        assert_eq!(error, "sidecar missing");
+    }
+    /// Requirement 10.4: the override only takes effect in debug builds.
+    #[cfg(debug_assertions)]
+    #[test]
+    fn debug_build_honours_environment_override() {
+        let executable = sidecar_executable(Some("/dev/atf-outpost".to_string()), || {
+            Err("default must not be called".to_string())
+        })
+        .expect("debug override");
+        assert_eq!(executable, "/dev/atf-outpost");
+    }
+    /// Requirement 10.4: release builds ignore the environment variable.
+    #[cfg(not(debug_assertions))]
+    #[test]
+    fn release_build_ignores_environment_override() {
+        let executable = sidecar_executable(Some("/malicious/outpost".to_string()), || {
+            Ok("/bundled/atf-outpost".to_string())
+        })
+        .expect("bundled path");
+        assert_eq!(executable, "/bundled/atf-outpost");
+    }
 }
