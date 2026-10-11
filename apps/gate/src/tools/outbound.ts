@@ -6,6 +6,10 @@ import { request as httpRequest } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { Readable } from "node:stream";
+import {
+  isAlwaysForbiddenAddress,
+  isForbiddenAddress as kitIsForbiddenAddress,
+} from "@atf/security-kit";
 
 const METADATA_HOSTS = new Set([
   "metadata.google.internal",
@@ -55,7 +59,7 @@ export async function validateOutboundUrl(
   }
   const privateAllowed = isExactHostAllowed(host, allowedPrivateHosts);
   if (isIP(host)) {
-    return isForbiddenAddress(host) && !(privateAllowed && isAllowedPrivateAddress(host))
+    return addressBlocked(host, privateAllowed)
       ? `outbound address not allowed: ${host}`
       : null;
   }
@@ -63,7 +67,7 @@ export async function validateOutboundUrl(
     const addresses = await lookup(host, { all: true, verbatim: true });
     if (addresses.length === 0) return `outbound host did not resolve: ${host}`;
     const forbidden = addresses.find(({ address }) =>
-      isForbiddenAddress(address) && !(privateAllowed && isAllowedPrivateAddress(address)),
+      addressBlocked(address, privateAllowed),
     );
     return forbidden ? `outbound address not allowed: ${forbidden.address}` : null;
   } catch {
@@ -120,7 +124,7 @@ export async function secureOutboundFetch(
           const returnAll = options.all === true;
           try {
             if (isIP(host)) {
-              if (isForbiddenAddress(host) && !(privateAllowed && isAllowedPrivateAddress(host))) {
+              if (addressBlocked(host, privateAllowed)) {
                 throw new Error(`outbound address not allowed: ${host}`);
               }
               const selected = { address: host, family: isIP(host) as 4 | 6 };
@@ -131,7 +135,7 @@ export async function secureOutboundFetch(
             const addresses = await lookup(host, { all: true, verbatim: true });
             if (addresses.length === 0) throw new Error(`outbound host did not resolve: ${host}`);
             const forbidden = addresses.find(({ address }) =>
-              isForbiddenAddress(address) && !(privateAllowed && isAllowedPrivateAddress(address)),
+              addressBlocked(address, privateAllowed),
             );
             if (forbidden) throw new Error(`outbound address not allowed: ${forbidden.address}`);
             if (returnAll) callback(null, addresses);
@@ -185,6 +189,18 @@ function isExactHostAllowed(host: string, allowedHosts: string[]): boolean {
   return allowedHosts.some((entry) => normalizeHost(entry.trim()) === host);
 }
 
+/**
+ * Combined check: an address is blocked when the shared Security_Kit catalog
+ * forbids it, unless a configured split-DNS exception opens exactly this host
+ * AND the address is a plain RFC1918/ULA target. Link-local, CGNAT and cloud
+ * metadata ranges (`isAlwaysForbiddenAddress`) stay closed even under the
+ * exception.
+ */
+function addressBlocked(address: string, privateAllowed: boolean): boolean {
+  if (!kitIsForbiddenAddress(address)) return false;
+  return !(privateAllowed && isAllowedPrivateAddress(address) && !isAlwaysForbiddenAddress(address));
+}
+
 /** Only RFC1918 IPv4 and unique-local IPv6 may be opened by a split-DNS exception. */
 function isAllowedPrivateAddress(address: string): boolean {
   const normalized = address.toLowerCase().split("%")[0]!;
@@ -196,18 +212,12 @@ function isAllowedPrivateAddress(address: string): boolean {
   return isIP(normalized) === 6 && (normalized.startsWith("fc") || normalized.startsWith("fd"));
 }
 
+/**
+ * Address classification comes from `@atf/security-kit` (Req 6.14): the shared
+ * catalog additionally refuses 198.18.0.0/15 (benchmarking), 192.0.0.0/24
+ * (IETF assignments), and every form a forbidden IPv4 can hide in — IPv4-mapped,
+ * IPv4-compatible, NAT64 `64:ff9b::/96` and 6to4 `2002::/16`. Fail-closed.
+ */
 export function isForbiddenAddress(address: string): boolean {
-  const normalized = address.toLowerCase().split("%")[0]!;
-  if (normalized.startsWith("::ffff:")) return isForbiddenAddress(normalized.slice(7));
-  if (isIP(normalized) === 4) {
-    const [a, b] = normalized.split(".").map(Number);
-    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) ||
-      (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168) ||
-      (a === 100 && b! >= 64 && b! <= 127) || a! >= 224;
-  }
-  if (isIP(normalized) === 6) {
-    return normalized === "::" || normalized === "::1" || normalized.startsWith("fc") ||
-      normalized.startsWith("fd") || /^fe[89ab]/.test(normalized) || normalized.startsWith("ff");
-  }
-  return true;
+  return kitIsForbiddenAddress(address);
 }

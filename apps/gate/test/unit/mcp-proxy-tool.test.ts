@@ -1,12 +1,18 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
+import { TokenExchanger, type FetchLike } from "@atf/security-kit";
+import type { AuthContext } from "../../src/auth/context.ts";
+import type { McpProxyTool } from "../../src/config/schema.ts";
 import { McpProxyToolSchema } from "../../src/config/schema.ts";
+import { logger } from "../../src/logger.ts";
 import {
   hardPayloadLimitError,
   measureMcpPayloadBytes,
+  McpProxyToolExecutor,
 } from "../../src/tools/mcp-proxy-tool.ts";
+import type { ToolRuntime } from "../../src/tools/types.ts";
 
 const baseTool = {
   name: "downstream",
@@ -100,5 +106,179 @@ describe("MCP proxy payload limit schema", () => {
 
   test("keeps maxResponseBytes positive", () => {
     expect(() => McpProxyToolSchema.parse({ ...baseTool, maxResponseBytes: 0 })).toThrow();
+  });
+});
+
+// ── Req 6.13: RFC 8693 token exchange / deprecated forwardBearerToken ──────
+
+const exchangeConfig = {
+  tokenEndpoint: "https://idp.example.com/application/o/token/",
+  clientId: "atf-gate",
+  clientSecret: "s3cr3t",
+  clientSecretEnv: "MCP_DS_SECRET",
+  audience: "downstream-mcp",
+};
+
+/** Fetch stub returning one scripted JSON response and recording the bodies. */
+function stubTokenFetch(
+  response: { ok: boolean; status: number; json?: unknown },
+  bodies: URLSearchParams[],
+): FetchLike {
+  return async (_url, init) => {
+    bodies.push(new URLSearchParams(init?.body as string));
+    return {
+      ok: response.ok,
+      status: response.status,
+      json: async () => response.json ?? {},
+      text: async () => JSON.stringify(response.json ?? {}),
+    };
+  };
+}
+
+function authContext(rawToken: string): AuthContext {
+  return {
+    method: "oauth",
+    subject: "user-1",
+    username: "user-1",
+    scopes: [],
+    claims: {},
+    tenantId: "default",
+    headers: {},
+    rawToken,
+  };
+}
+
+/** Runtime whose allow-list refuses everything — keeps tests off the network. */
+const blockedRuntime = {
+  db: {},
+  bus: {},
+  outboundAllowedHosts: ["elsewhere.example"],
+} as unknown as ToolRuntime;
+
+function executorFor(
+  server: Record<string, unknown>,
+  exchanger?: TokenExchanger,
+  runtime: ToolRuntime = blockedRuntime,
+): McpProxyToolExecutor {
+  const cfg = McpProxyToolSchema.parse({
+    ...baseTool,
+    server: { url: "https://mcp.example.com", ...server },
+  }) as McpProxyTool;
+  return new McpProxyToolExecutor(cfg, runtime, exchanger);
+}
+
+describe("MCP proxy token exchange schema (Req 6.13)", () => {
+  test("parses a server tokenExchange block", () => {
+    const parsed = McpProxyToolSchema.parse({
+      ...baseTool,
+      server: {
+        url: "https://mcp.example.com",
+        tokenExchange: {
+          tokenEndpoint: "https://idp.example.com/token",
+          clientId: "atf-gate",
+          clientSecretEnv: "MCP_DOWNSTREAM_SECRET",
+          audience: "downstream-mcp",
+        },
+      },
+    });
+    expect(parsed.server.tokenExchange?.audience).toBe("downstream-mcp");
+    expect(parsed.server.tokenExchange?.clientSecret).toBeUndefined();
+  });
+
+  test("requires tokenEndpoint or issuer", () => {
+    expect(() =>
+      McpProxyToolSchema.parse({
+        ...baseTool,
+        server: {
+          url: "https://mcp.example.com",
+          tokenExchange: {
+            clientId: "atf-gate",
+            clientSecretEnv: "S",
+            audience: "a",
+          },
+        },
+      }),
+    ).toThrow(/tokenEndpoint or issuer/);
+  });
+});
+
+describe("MCP proxy executor token selection (Req 6.13)", () => {
+  test("a failed exchange fails the call closed — no fallback token", async () => {
+    const bodies: URLSearchParams[] = [];
+    const exchanger = new TokenExchanger(exchangeConfig, {
+      fetchImpl: stubTokenFetch(
+        { ok: false, status: 400, json: { error: "invalid_grant" } },
+        bodies,
+      ),
+    });
+    const executor = executorFor({ tokenExchange: exchangeConfig }, exchanger);
+
+    const result = await executor.execute({}, authContext("caller-login-token"));
+
+    expect(result.isError).toBe(true);
+    expect(result.meta).toMatchObject({ tokenExchangeFailed: true, transient: false });
+    expect(result.content[0]?.text).toContain("token exchange failed");
+    // The subject token went to the IdP and the call ended there — the
+    // downstream URL was never contacted (the allow-list would have blocked it).
+    expect(bodies[0]?.get("subject_token")).toBe("caller-login-token");
+  });
+
+  test("a successful exchange proceeds past token selection", async () => {
+    const bodies: URLSearchParams[] = [];
+    const exchanger = new TokenExchanger(exchangeConfig, {
+      fetchImpl: stubTokenFetch(
+        { ok: true, status: 200, json: { access_token: "minted", expires_in: 300 } },
+        bodies,
+      ),
+    });
+    const executor = executorFor({ tokenExchange: exchangeConfig }, exchanger);
+
+    const result = await executor.execute({}, authContext("caller-login-token"));
+
+    // The allow-list blocks the downstream call afterwards, proving the flow
+    // continued with the exchanged token instead of failing closed.
+    expect(result.meta).toMatchObject({ blocked: true });
+    expect(result.meta?.tokenExchangeFailed).toBeUndefined();
+  });
+
+  test("tokenExchange without a resolved secret refuses the call", async () => {
+    // AppConfig built directly (loader never ran): clientSecret stays unset,
+    // so no exchanger exists. Falling through to forward/static token would
+    // reintroduce the audience problem — the call must be refused instead.
+    const executor = executorFor({
+      tokenExchange: {
+        tokenEndpoint: exchangeConfig.tokenEndpoint,
+        clientId: exchangeConfig.clientId,
+        clientSecretEnv: exchangeConfig.clientSecretEnv,
+        audience: exchangeConfig.audience,
+      },
+    });
+
+    const result = await executor.execute({}, authContext("caller-login-token"));
+
+    expect(result.isError).toBe(true);
+    expect(result.meta).toMatchObject({ tokenExchangeFailed: true });
+    expect(result.content[0]?.text).toContain("client secret was never resolved");
+  });
+
+  test("deprecated forwardBearerToken warns once and forwards the raw token", async () => {
+    const warn = spyOn(logger, "warn").mockImplementation(() => {});
+    try {
+      const executor = executorFor({ forwardBearerToken: true });
+      const first = await executor.execute({}, authContext("caller-login-token"));
+      const second = await executor.execute({}, authContext("caller-login-token"));
+
+      // Blocked by the allow-list after token selection — the point is the
+      // deprecation warning, logged exactly once per executor.
+      expect(first.meta).toMatchObject({ blocked: true });
+      expect(second.meta).toMatchObject({ blocked: true });
+      const deprecations = warn.mock.calls.filter(([msg]) =>
+        String(msg).includes("deprecated forwardBearerToken"),
+      );
+      expect(deprecations).toHaveLength(1);
+      expect(deprecations[0]?.[1]).toMatchObject({ tool: "downstream" });
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

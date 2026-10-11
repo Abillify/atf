@@ -1,9 +1,20 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import { timingSafeEqual } from "node:crypto";
-import { createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import {
+  createDiscoveryClient,
+  createJwtVerifier,
+  safeEqual,
+  type DiscoveryClient,
+  type IssuerConfig,
+  type JwtVerifier,
+} from "@atf/security-kit";
+// The RFC 8693 `act`-claim parser lives in @atf/identity-contract (Req 11.3);
+// the gate no longer keeps its own copy.
+import { actorFromClaim } from "@atf/identity-contract";
+import type { JWTPayload } from "jose";
 import type {
+  AdditionalIssuer,
   AuthConfig,
   OAuthAuth,
   StaticToken,
@@ -16,52 +27,11 @@ import {
   type AuthContext,
 } from "./context.ts";
 
-/**
- * Extracts the acting party from a raw JWT `act` claim (RFC 8693), tolerating
- * arbitrary shapes. Returns undefined when no usable actor subject is present.
- * One level of nested `act` is followed into `parent`.
- */
-function actorFromClaim(actClaim: unknown): ActorContext | undefined {
-  if (actClaim === null || typeof actClaim !== "object") return undefined;
-  const record = actClaim as Record<string, unknown>;
-  const subject = record.sub;
-  if (typeof subject !== "string" || subject.length === 0) return undefined;
-  const issuer = typeof record.iss === "string" && record.iss.length > 0 ? record.iss : undefined;
-  let parent: { subject: string; issuer?: string } | undefined;
-  const parentClaim = record.act;
-  if (parentClaim !== null && typeof parentClaim === "object") {
-    const parentRecord = parentClaim as Record<string, unknown>;
-    if (typeof parentRecord.sub === "string" && parentRecord.sub.length > 0) {
-      parent = {
-        subject: parentRecord.sub,
-        ...(typeof parentRecord.iss === "string" && parentRecord.iss.length > 0
-          ? { issuer: parentRecord.iss }
-          : {}),
-      };
-    }
-  }
-  return {
-    subject,
-    ...(issuer !== undefined ? { issuer } : {}),
-    ...(parent !== undefined ? { parent } : {}),
-  };
-}
-
 export class AuthError extends Error {
   constructor(message: string, readonly status: number = 401) {
     super(message);
     this.name = "AuthError";
   }
-}
-
-function safeEqual(a: string, b: string): boolean {
-  const ab = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ab.length !== bb.length) {
-    timingSafeEqual(ab, ab);
-    return false;
-  }
-  return timingSafeEqual(ab, bb);
 }
 
 function extractScopes(value: unknown): string[] {
@@ -83,14 +53,23 @@ export function extractBearer(authorization: string | undefined): string | undef
   return match?.[1]?.trim() || undefined;
 }
 
-interface OAuthVerifier {
-  jwksUri?: string;
-  discoveryUrl?: string;
-  jwks?: ReturnType<typeof createRemoteJWKSet>;
-  issuer?: string;
-  audience?: string | string[];
-  algorithms: string[];
-  clockToleranceSec: number;
+/**
+ * Discovery for a configured `discoveryUrl` (which may differ from the
+ * standard `<issuer>/.well-known` location) via the Security_Kit client:
+ * single-flight, positive cache floored at 5 min, negative cache with
+ * exponential back-off (Req 6.10). The kit validates every document: exact
+ * issuer match and `jwks_uri` (Req 7.3 — HTTPS whenever discovery is HTTPS,
+ * host must be the issuer or discovery host), so no local wrapper is needed.
+ */
+function buildDiscoveryClient(target: AdditionalIssuer): DiscoveryClient {
+  return createDiscoveryClient(String(target.issuer), {
+    ...(target.discoveryUrl ? { discoveryUrl: target.discoveryUrl } : {}),
+    fetchImpl: (url, init) =>
+      fetch(url, {
+        ...(init?.headers ? { headers: init.headers } : {}),
+        signal: AbortSignal.timeout(10_000),
+      }),
+  });
 }
 
 const DEFAULT_TENANT_ISOLATION: TenantIsolationConfig = {
@@ -102,7 +81,7 @@ const DEFAULT_TENANT_ISOLATION: TenantIsolationConfig = {
 };
 
 export class Authenticator {
-  private readonly verifiers: OAuthVerifier[] = [];
+  private readonly jwtVerifier: JwtVerifier | undefined;
 
   get authConfig(): AuthConfig {
     return this.config;
@@ -117,18 +96,29 @@ export class Authenticator {
     private readonly tenantIsolation: TenantIsolationConfig = DEFAULT_TENANT_ISOLATION,
   ) {
     if ((config.mode === "oauth" || config.mode === "both") && config.oauth) {
-      const targets = [config.oauth, ...config.oauth.additionalIssuers];
-      for (const target of targets) {
-        this.verifiers.push({
-          ...(target.jwksUri ? { jwksUri: target.jwksUri } : {}),
-          ...(target.discoveryUrl ? { discoveryUrl: target.discoveryUrl } : {}),
-          ...(target.jwksUri ? { jwks: createRemoteJWKSet(new URL(target.jwksUri)) } : {}),
-          issuer: target.issuer,
-          audience: target.audience,
+      const targets: AdditionalIssuer[] = [
+        config.oauth,
+        ...config.oauth.additionalIssuers,
+      ];
+      const issuers: IssuerConfig[] = targets.map((target) => {
+        const audiences = Array.isArray(target.audience)
+          ? target.audience
+          : target.audience
+            ? [target.audience]
+            : [];
+        return {
+          // The config schema pins issuer and audience for every OAuth target.
+          issuer: String(target.issuer),
+          audiences,
           algorithms: target.algorithms,
           clockToleranceSec: target.clockToleranceSec,
-        });
-      }
+          ...(target.jwksUri ? { jwksUri: target.jwksUri } : {}),
+          ...(!target.jwksUri && target.discoveryUrl
+            ? { discovery: buildDiscoveryClient(target) }
+            : {}),
+        };
+      });
+      this.jwtVerifier = createJwtVerifier({ issuers });
     }
   }
 
@@ -140,7 +130,15 @@ export class Authenticator {
     const mode = this.config.mode;
 
     if (mode === "disabled") {
-      return this.context("disabled", "anonymous", "anonymous", [], {}, headers, "");
+      return this.context(
+        "disabled",
+        "anonymous",
+        "anonymous",
+        [],
+        {},
+        headers,
+        "",
+      );
     }
     if (!token) throw new AuthError("Missing bearer token");
 
@@ -149,19 +147,25 @@ export class Authenticator {
       if (ctx) return ctx;
       if (mode === "static") throw new AuthError("Invalid bearer token");
     }
-    if (mode === "oauth" || mode === "both") return this.verifyOAuth(token, headers);
+    if (mode === "oauth" || mode === "both")
+      return this.verifyOAuth(token, headers);
     throw new AuthError("Invalid bearer token");
   }
 
   private tenantId(claims: Record<string, unknown>): string {
     let verified: string | undefined;
     try {
-      verified = verifiedTenantClaim({ claims }, this.tenantIsolation.claimNames);
+      verified = verifiedTenantClaim(
+        { claims },
+        this.tenantIsolation.claimNames,
+      );
     } catch {
       throw new AuthError("Conflicting verified tenant claims", 401);
     }
-    if (!this.tenantIsolation.enabled) return this.tenantIsolation.defaultTenantId;
-    if (!verified) throw new AuthError("Verified tenant claim is required", 403);
+    if (!this.tenantIsolation.enabled)
+      return this.tenantIsolation.defaultTenantId;
+    if (!verified)
+      throw new AuthError("Verified tenant claim is required", 403);
     return verified;
   }
 
@@ -189,7 +193,10 @@ export class Authenticator {
     };
   }
 
-  private tryStatic(token: string, headers: Record<string, string>): AuthContext | undefined {
+  private tryStatic(
+    token: string,
+    headers: Record<string, string>,
+  ): AuthContext | undefined {
     const tokens: StaticToken[] = this.config.static?.tokens ?? [];
     for (const entry of tokens) {
       if (safeEqual(entry.token, token)) {
@@ -208,61 +215,39 @@ export class Authenticator {
     return undefined;
   }
 
-  private async verifierJwks(verifier: OAuthVerifier): Promise<ReturnType<typeof createRemoteJWKSet>> {
-    if (verifier.jwks) return verifier.jwks;
-    if (!verifier.discoveryUrl || !verifier.issuer) {
-      throw new Error("OAuth verifier has neither JWKS nor valid discovery configuration");
-    }
-    const response = await fetch(verifier.discoveryUrl, {
-      headers: { Accept: "application/json" },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) throw new Error(`OIDC discovery failed with HTTP ${response.status}`);
-    const metadata = (await response.json()) as { issuer?: unknown; jwks_uri?: unknown };
-    if (metadata.issuer !== verifier.issuer) {
-      throw new Error("OIDC discovery issuer does not exactly match configured issuer");
-    }
-    if (typeof metadata.jwks_uri !== "string") throw new Error("OIDC discovery has no jwks_uri");
-    const discovery = new URL(verifier.discoveryUrl);
-    const jwksUrl = new URL(metadata.jwks_uri);
-    if (discovery.protocol === "https:" && jwksUrl.protocol !== "https:") {
-      throw new Error("OIDC discovery returned a non-HTTPS jwks_uri");
-    }
-    verifier.jwks = createRemoteJWKSet(jwksUrl);
-    return verifier.jwks;
-  }
-
-  private async verifyOAuth(token: string, headers: Record<string, string>): Promise<AuthContext> {
+  private async verifyOAuth(
+    token: string,
+    headers: Record<string, string>,
+  ): Promise<AuthContext> {
     const oauth = this.config.oauth as OAuthAuth;
-    if (this.verifiers.length === 0) throw new AuthError("OAuth authentication is not configured", 500);
+    const verifier = this.jwtVerifier;
+    if (verifier === undefined)
+      throw new AuthError("OAuth authentication is not configured", 500);
 
-    let payload: JWTPayload | undefined;
-    let lastError: unknown;
-    for (const verifier of this.verifiers) {
-      try {
-        const result = await jwtVerify(token, await this.verifierJwks(verifier), {
-          issuer: verifier.issuer,
-          audience: verifier.audience,
-          algorithms: verifier.algorithms,
-          clockTolerance: verifier.clockToleranceSec,
-        });
-        payload = result.payload;
-        break;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    if (!payload) {
-      const detail = lastError instanceof Error ? lastError.message : String(lastError);
-      throw new AuthError(`Token verification failed: ${detail}`);
+    let payload: JWTPayload;
+    try {
+      // Security_Kit routes the token by its (unverified) `iss` claim to the
+      // matching issuer configuration (Req 6.10) and reports only coarse,
+      // generic reasons — jose internals never reach the client (Req 6.11).
+      ({ payload } = await verifier.verify(token));
+    } catch {
+      throw new AuthError("Token verification failed");
     }
 
-    const scopes = [...new Set([
-      ...extractScopes(payload[oauth.scopeClaim]),
-      ...mappedGroupScopes(payload[oauth.groupClaim], oauth.groupScopes),
-    ])];
-    const missing = oauth.requiredScopes.filter((scope) => !scopes.includes(scope));
-    if (missing.length > 0) throw new AuthError(`Missing required scope(s): ${missing.join(", ")}`, 403);
+    const scopes = [
+      ...new Set([
+        ...extractScopes(payload[oauth.scopeClaim]),
+        ...mappedGroupScopes(payload[oauth.groupClaim], oauth.groupScopes),
+      ]),
+    ];
+    const missing = oauth.requiredScopes.filter(
+      (scope) => !scopes.includes(scope),
+    );
+    if (missing.length > 0)
+      throw new AuthError(
+        `Missing required scope(s): ${missing.join(", ")}`,
+        403,
+      );
 
     // RFC 8693 actor (`act`): parse for audit, and gate on it when an actor
     // policy is configured. A token without delegation yields no actor.
@@ -271,7 +256,10 @@ export class Authenticator {
     const actor = actorFromClaim(payload[actorClaimName]);
     if (actorPolicy !== undefined) {
       if (actorPolicy.requireActor && actor === undefined) {
-        throw new AuthError("A delegated (on-behalf-of) token is required", 403);
+        throw new AuthError(
+          "A delegated (on-behalf-of) token is required",
+          403,
+        );
       }
       if (
         actor !== undefined &&
@@ -282,7 +270,9 @@ export class Authenticator {
       }
     }
 
-    const username = String(payload[oauth.usernameClaim] ?? payload.sub ?? "anonymous");
+    const username = String(
+      payload[oauth.usernameClaim] ?? payload.sub ?? "anonymous",
+    );
     return this.context(
       "oauth",
       String(payload.sub ?? username),

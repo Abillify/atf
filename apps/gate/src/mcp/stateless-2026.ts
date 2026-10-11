@@ -13,12 +13,14 @@ import type { ToolRegistry } from "../tools/registry.ts";
 import { validateArgs } from "../tools/validate.ts";
 import type { TransactionFabric } from "../transaction/fabric.ts";
 import { McpToolDispatcher, protocolToolResult } from "./server.ts";
+import type { ApprovalConsumptionStore } from "./approval-store.ts";
 import {
   APPROVAL_TOKEN_META_KEY,
   GovernancePolicy,
   approvalArgsFingerprint,
   approvalOwner,
   mintApprovalToken,
+  type GovernancePolicyRef,
 } from "./governance.ts";
 import { evidenceActionContractHash } from "./evidence-contract.ts";
 import { MemoryTaskStore, TaskCapacityError } from "./tasks.ts";
@@ -35,6 +37,10 @@ interface StatelessDeps {
   transactionFabric?: TransactionFabric;
   authorizationEnabled?: boolean;
   policies?: GovernanceConfig;
+  /** Shared compiled policy holder, hot-reloaded by `buildApp` (Req 6.3). */
+  policyRef?: GovernancePolicyRef;
+  /** Shared redeemed-JTI store for approval tokens (Req 6.1). */
+  approvalStore?: ApprovalConsumptionStore;
   resources: Array<Primitive & { uri: string; name: string; text: string }>;
   prompts: Array<Primitive & { name: string; message: string }>;
   skills: Array<Primitive & { name: string }>;
@@ -229,8 +235,12 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
     args: Record<string, unknown>,
     evidenceContractHash?: string,
   ): Promise<Record<string, unknown>> => {
-    if (!deps.policies) throw new Error("Approval policy is not configured");
-    const policy = new GovernancePolicy(deps.policies);
+    const policy = deps.policyRef
+      ? deps.policyRef.current
+      : deps.policies
+        ? new GovernancePolicy(deps.policies, deps.approvalStore)
+        : undefined;
+    if (!policy) throw new Error("Approval policy is not configured");
     const rule = policy.matchingRule(ctx, tool, deps.registry.accessOf(tool) ?? "read", args);
     const presentation = rule?.approval;
     let lookup: Record<string, unknown> = {};

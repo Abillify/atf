@@ -1,32 +1,22 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import type { Actor, GatePrincipalInput } from "@atf/identity-contract";
+
 /**
  * The acting party of a delegated (RFC 8693 on-behalf-of) token. The `subject`
- * stays the end user; this names the service that acted for them.
+ * stays the end user; this names the service that acted for them. The shape is
+ * the shared `Actor` from `@atf/identity-contract` (Req 11.3).
  */
-export interface ActorContext {
-  subject: string;
-  issuer?: string;
-  parent?: { subject: string; issuer?: string };
-}
+export type ActorContext = Actor;
 
-/** Request-scoped, verified security context supplied to every tool invocation. */
-export interface AuthContext {
-  method: "disabled" | "static" | "oauth";
-  subject: string;
-  username: string;
-  scopes: string[];
-  claims: Record<string, unknown>;
-  /**
-   * Acting party from the token's `act` claim (RFC 8693 delegation), when
-   * present. The subject above remains the end user; this identifies the
-   * service that acted on their behalf. Recorded for audit and, when an
-   * actor policy is configured, gated on.
-   */
-  actor?: ActorContext;
-  /** Canonical tenant authority derived only from verified claims/configuration. */
-  tenantId: string;
+/**
+ * Request-scoped, verified security context supplied to every tool invocation.
+ * The identity fields (method/subject/username/scopes/claims/tenantId/actor)
+ * come from `GatePrincipalInput` in `@atf/identity-contract` (Req 11.3); the
+ * Gate adds request-scoped transport fields on top.
+ */
+export interface AuthContext extends GatePrincipalInput {
   /** Verified claim aliases used to detect forbidden header-based tenant bindings. */
   tenantClaimNames?: string[];
   /** Non-authoritative request metadata. Never use headers for tenant/security decisions. */

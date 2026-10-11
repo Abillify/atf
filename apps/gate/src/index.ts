@@ -236,6 +236,9 @@ async function main() {
         void loadConfigAsync(dir)
           .then(({ config: fresh }) => {
             handle.registry.reload(fresh.tools, fresh.schemaCompatibility.mode);
+            // Governance rules are compiled once per config version; swap the
+            // compiled policy in place so open sessions use the new rules too.
+            handle.reloadPolicies(fresh.policies);
             logger.info(`config reloaded: ${handle.registry.size} tools`);
           })
           .catch((err) => {

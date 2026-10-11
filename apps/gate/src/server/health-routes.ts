@@ -13,12 +13,16 @@ interface HealthDependency {
   healthcheck?: () => Promise<unknown>;
 }
 
-export function installHealthRoutes(app: Express, dependencies: {
-  db: HealthDatabase;
-  toolCount: () => number;
-  transactionLedger: HealthDependency;
-  webhookReplayStore?: HealthDependency;
-}): void {
+export function installHealthRoutes(
+  app: Express,
+  dependencies: {
+    db: HealthDatabase;
+    toolCount: () => number;
+    transactionLedger: HealthDependency;
+    webhookReplayStore?: HealthDependency;
+    approvalStore?: HealthDependency;
+  },
+): void {
   app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
   app.get("/readyz", async (_req, res) => {
     const databases = dependencies.db.names();
@@ -29,7 +33,10 @@ export function installHealthRoutes(app: Express, dependencies: {
         await Promise.race([
           check,
           new Promise<never>((_, reject) => {
-            timer = setTimeout(() => reject(new Error(`${label} readiness timed out`)), timeoutMs);
+            timer = setTimeout(
+              () => reject(new Error(`${label} readiness timed out`)),
+              timeoutMs,
+            );
             timer.unref?.();
           }),
         ]);
@@ -39,12 +46,32 @@ export function installHealthRoutes(app: Express, dependencies: {
     };
     try {
       await Promise.all([
-        ...databases.map((name) => bounded(`database:${name}`, dependencies.db.healthcheck(name))),
+        ...databases.map((name) =>
+          bounded(`database:${name}`, dependencies.db.healthcheck(name)),
+        ),
         ...(dependencies.transactionLedger.healthcheck
-          ? [bounded("transaction-redis", dependencies.transactionLedger.healthcheck())]
+          ? [
+              bounded(
+                "transaction-redis",
+                dependencies.transactionLedger.healthcheck(),
+              ),
+            ]
           : []),
         ...(dependencies.webhookReplayStore?.healthcheck
-          ? [bounded("webhook-replay-redis", dependencies.webhookReplayStore.healthcheck())]
+          ? [
+              bounded(
+                "webhook-replay-redis",
+                dependencies.webhookReplayStore.healthcheck(),
+              ),
+            ]
+          : []),
+        ...(dependencies.approvalStore?.healthcheck
+          ? [
+              bounded(
+                "approval-redis",
+                dependencies.approvalStore.healthcheck(),
+              ),
+            ]
           : []),
       ]);
       res.json({
@@ -56,13 +83,22 @@ export function installHealthRoutes(app: Express, dependencies: {
           ...(dependencies.webhookReplayStore
             ? { webhookReplay: dependencies.webhookReplayStore.backing }
             : {}),
+          ...(dependencies.approvalStore
+            ? { approvalConsumption: dependencies.approvalStore.backing }
+            : {}),
         },
       });
     } catch (error) {
       logger.warn("readiness dependency check failed", {
         error: error instanceof Error ? error.message : String(error),
       });
-      res.status(503).json({ status: "unready", tools: dependencies.toolCount(), databases });
+      res
+        .status(503)
+        .json({
+          status: "unready",
+          tools: dependencies.toolCount(),
+          databases,
+        });
     }
   });
 }

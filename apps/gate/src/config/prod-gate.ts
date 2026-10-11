@@ -90,7 +90,9 @@ export function checkProductionReadiness(
   }
 
   if (config.auth.mode === "disabled") {
-    flag("auth.mode is 'disabled': every request receives an anonymous AuthContext.");
+    flag(
+      "auth.mode is 'disabled': every request receives an anonymous AuthContext.",
+    );
   }
 
   if (config.auth.mode === "static") {
@@ -135,7 +137,9 @@ export function checkProductionReadiness(
     }
     for (const [i, extra] of (oauth?.additionalIssuers ?? []).entries()) {
       if (extra.allowAnyIssuer) {
-        flag(`auth.oauth.additionalIssuers[${i}].allowAnyIssuer is enabled — pin its issuer.`);
+        flag(
+          `auth.oauth.additionalIssuers[${i}].allowAnyIssuer is enabled — pin its issuer.`,
+        );
       }
       if (extra.allowAnyAudience) {
         flag(
@@ -161,21 +165,29 @@ export function checkProductionReadiness(
   }
 
   if (!config.server.rateLimit.enabled) {
-    flag("server.rateLimit.enabled is false — the MCP and auth endpoints are unthrottled.");
+    flag(
+      "server.rateLimit.enabled is false — the MCP and auth endpoints are unthrottled.",
+    );
   }
 
+  // Req 6.8: an empty outbound allow-list is a production-gate error — not
+  // conditional on http/mcp tools being configured right now, because a tool
+  // added later would silently inherit an unrestricted egress surface.
+  // Database-only deployments name a reserved, never-resolving host (e.g.
+  // "outbound-disabled.invalid") to declare "no egress" explicitly.
   if (config.server.outbound.allowedHosts.length === 0) {
-    const hasOutboundTool = config.tools.some((t) => t.type === "http" || t.type === "mcp" || t.type === "taigaApi");
-    if (hasOutboundTool) {
-      if (isProd) fatal.push(
-        "server.outbound.allowedHosts is empty while http/mcp tools are configured — " +
-          "a non-empty outbound host allow-list is mandatory in production.",
+    if (isProd)
+      fatal.push(
+        "server.outbound.allowedHosts is empty — a non-empty outbound host " +
+          "allow-list is mandatory in production. List the hosts http/mcp tools " +
+          "may reach, or a reserved placeholder (e.g. outbound-disabled.invalid) " +
+          "if this deployment needs no outbound tools at all.",
       );
-      else warnings.push(
-        "server.outbound.allowedHosts is empty while http/mcp tools are configured — " +
-          "outbound requests are unrestricted by hostname. Set an allow-list before production.",
+    else
+      warnings.push(
+        "server.outbound.allowedHosts is empty — outbound requests are " +
+          "unrestricted by hostname. Set an allow-list before production.",
       );
-    }
   }
 
   // ── Inbound webhooks ──────────────────────────────────────────────────────
@@ -201,7 +213,9 @@ export function checkProductionReadiness(
     }
     const replay = tool.replayProtection;
     if (
-      !replay.timestampHeader || !replay.nonceHeader || replay.maxAgeSeconds <= 0 ||
+      !replay.timestampHeader ||
+      !replay.nonceHeader ||
+      replay.maxAgeSeconds <= 0 ||
       replay.cacheTtlSeconds < replay.maxAgeSeconds + replay.clockSkewSeconds
     ) {
       flag(
@@ -213,7 +227,10 @@ export function checkProductionReadiness(
 
   // ── Metrics ───────────────────────────────────────────────────────────────
 
-  if (config.server.metrics.enabled && config.server.metrics.allowUnauthenticated) {
+  if (
+    config.server.metrics.enabled &&
+    config.server.metrics.allowUnauthenticated
+  ) {
     flag(
       "server.metrics.allowUnauthenticated is enabled — the Prometheus endpoint exposes the tool " +
         "inventory and per-tool call/error counts to anyone who can reach it. Set " +
@@ -223,7 +240,11 @@ export function checkProductionReadiness(
 
   // ── Monitoring dashboard ──────────────────────────────────────────────────
 
-  if (config.monitoring.enabled && !config.monitoring.token && !config.monitoring.oidc) {
+  if (
+    config.monitoring.enabled &&
+    !config.monitoring.token &&
+    !config.monitoring.oidc
+  ) {
     flag(
       "monitoring is enabled without monitoring.token or monitoring.oidc — the dashboard (live " +
         "tool calls, arguments, results) is open to anyone who can reach the server.",
@@ -287,7 +308,10 @@ export function checkProductionReadiness(
       } else {
         const diagnostic = diagnoseSqlTenantBinding(tool.query);
         if (diagnostic.status !== "safe") {
-          const severity = config.tenantIsolation.sqlValidationMode === "strict" ? "fatal" : "warning";
+          const severity =
+            config.tenantIsolation.sqlValidationMode === "strict"
+              ? "fatal"
+              : "warning";
           const message =
             `database tool '${tool.name}' tenant SQL diagnostic ` +
             `[${diagnostic.status}]: ${diagnostic.reason}.`;
@@ -312,7 +336,10 @@ export function checkProductionReadiness(
           "slot indefinitely. Set a cap (default 30000).",
       );
     }
-    if (typeof db.connection === "string" && /(^|[:@/])(postgres|root|sa)(:|@)/i.test(db.connection)) {
+    if (
+      typeof db.connection === "string" &&
+      /(^|[:@/])(postgres|root|sa)(:|@)/i.test(db.connection)
+    ) {
       warnings.push(
         `databases.${name} appears to connect as a superuser/administrative role — use a ` +
           "least-privilege role scoped to the tables the tools actually need.",
@@ -327,6 +354,19 @@ export function checkProductionReadiness(
       "router.llm.forwardBearerToken is enabled — the caller's bearer token is sent to the LLM " +
         "endpoint. Only acceptable when the LLM host is inside the same trust boundary.",
     );
+  }
+
+  // ── MCP downstream auth (Req 6.13) ────────────────────────────────────────
+
+  for (const tool of config.tools) {
+    if (tool.type === "mcp" && tool.server.forwardBearerToken) {
+      flag(
+        `mcp tool '${tool.name}' uses the deprecated server.forwardBearerToken — the caller's ` +
+          "login token is forwarded to the downstream MCP server verbatim, which exposes the " +
+          "gateway's own audience (confused deputy). Migrate to server.tokenExchange " +
+          "(RFC 8693), which sends an audience-bound exchanged token instead.",
+      );
+    }
   }
 
   // ── Cluster / HA ──────────────────────────────────────────────────────────
@@ -355,11 +395,38 @@ export function checkProductionReadiness(
     );
   }
 
-  const transactionEnforcement = process.env.MCPGATE_TRANSACTION_ENFORCEMENT ?? "off";
-  const transactionRedis = process.env.MCPGATE_TRANSACTION_REDIS_URL
-    ?? (config.server.rateLimit.store.type === "redis" ? config.server.rateLimit.store.redisUrl : undefined)
-    ?? config.monitoring.cluster.redisUrl;
-  if (isProd && config.tools.some((tool) => tool.type === "webhook" && tool.enabled) && !transactionRedis) {
+  const transactionEnforcement =
+    process.env.MCPGATE_TRANSACTION_ENFORCEMENT ?? "off";
+  const transactionRedis =
+    process.env.MCPGATE_TRANSACTION_REDIS_URL ??
+    (config.server.rateLimit.store.type === "redis"
+      ? config.server.rateLimit.store.redisUrl
+      : undefined) ??
+    config.monitoring.cluster.redisUrl;
+  // Redeemed approval-token JTIs live in Redis when one is configured; the
+  // memory fallback is per-process, so more than one replica would let the
+  // same approval token be redeemed once per replica (Req 6.1).
+  const replicasRaw = process.env.MCPGATE_REPLICAS ?? "1";
+  const replicas = Number.parseInt(replicasRaw, 10);
+  if (Number.isNaN(replicas) || replicas < 1) {
+    warnings.push(
+      `MCPGATE_REPLICAS=${replicasRaw} is not a positive replica count — the value is ` +
+        "ignored for the approval-store check; set it to the actual replica count.",
+    );
+  }
+  if (!Number.isNaN(replicas) && replicas > 1 && !transactionRedis) {
+    const message =
+      `MCPGATE_REPLICAS=${replicas} without Redis: redeemed approval tokens are tracked in the ` +
+      "per-process memory map, so each replica would accept the same approval token once. " +
+      "Configure MCPGATE_TRANSACTION_REDIS_URL or an existing Redis-backed server store.";
+    if (isProd) fatal.push(message);
+    else warnings.push(message);
+  }
+  if (
+    isProd &&
+    config.tools.some((tool) => tool.type === "webhook" && tool.enabled) &&
+    !transactionRedis
+  ) {
     fatal.push(
       "Production webhooks require Redis-backed atomic replay protection; configure " +
         "MCPGATE_TRANSACTION_REDIS_URL or an existing Redis-backed server store.",

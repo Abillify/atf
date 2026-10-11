@@ -66,6 +66,33 @@ export const ServerConfigSchema = z.object({
    * Leave empty (default) to skip the check.
    */
   allowedHosts: z.array(z.string()).default([]),
+  /**
+   * Value for Express' `trust proxy` setting (Req 6.12). Determines how the
+   * real client IP is derived from `X-Forwarded-For`, which the per-IP rate
+   * limiter keys on.
+   *   - `false` / `0`: trust no proxy — direct exposure, `req.ip` is the socket
+   *     address (spoofable `X-Forwarded-For` headers are ignored).
+   *   - `1` (default): trust exactly one proxy hop, as before this was
+   *     configurable.
+   *   - `N`: trust the N outermost hops when behind a chain of N proxies.
+   *   - `true`: trust all hops — only safe when every upstream is trusted;
+   *     express-rate-limit warns about the permissive setting.
+   * Env override: `TRUST_PROXY` (same contract as the search app).
+   */
+  trustProxy: z
+    .preprocess(
+      (v) => {
+        if (typeof v === "string") {
+          const s = v.trim().toLowerCase();
+          if (["true", "yes", "on"].includes(s)) return true;
+          if (["false", "no", "off"].includes(s)) return false;
+          if (/^\d+$/.test(s)) return Number(s);
+        }
+        return v;
+      },
+      z.union([z.boolean(), z.coerce.number().int().nonnegative()]),
+    )
+    .default(1),
   /** CORS configuration for the MCP and monitoring endpoints. */
   cors: z
     .object({
@@ -114,6 +141,12 @@ export const ServerConfigSchema = z.object({
           enabled: boolish.default(false),
           windowMs: z.coerce.number().int().positive().default(60_000),
           max: z.coerce.number().int().positive().default(120),
+          /**
+           * What to do when the backing store (Redis) fails: `closed`
+           * (default) rejects requests — protection first; `open` lets them
+           * through — availability first. Ignored by the memory backend.
+           */
+          failMode: z.enum(["open", "closed"]).default("closed"),
           store: z
             .object({
               type: z.enum(["memory", "redis"]).default("memory"),
@@ -126,6 +159,7 @@ export const ServerConfigSchema = z.object({
           enabled: false,
           windowMs: 60_000,
           max: 120,
+          failMode: "closed",
           store: { type: "memory", prefix: "mcpgate:rl:identity:" },
         }),
     })
@@ -138,6 +172,7 @@ export const ServerConfigSchema = z.object({
         enabled: false,
         windowMs: 60_000,
         max: 120,
+        failMode: "closed",
         store: { type: "memory", prefix: "mcpgate:rl:identity:" },
       },
     }),
@@ -214,6 +249,19 @@ export const ServerConfigSchema = z.object({
       debounceMs: z.coerce.number().int().nonnegative().default(300),
     })
     .default({ enabled: false, debounceMs: 300 }),
+  /**
+   * Signing key for database-tool pagination cursors (Req 6.6). Cursors are
+   * HMAC-SHA256 over tool name + payload and bound to the caller's principal
+   * and argument fingerprint. When unset, a random per-process secret is used:
+   * cursors then survive only until the next restart and are not shared
+   * across instances. Set a stable secret (>= 16 chars) in production,
+   * especially behind a load balancer.
+   */
+  pagination: z
+    .object({
+      secret: z.string().min(16).optional(),
+    })
+    .default({}),
 });
 
 // ---------------------------------------------------------------------------
@@ -225,7 +273,7 @@ export const StaticTokenSchema = z.object({
   subject: z.string().optional(),
   username: z.string().optional(),
   scopes: z.array(z.string()).default([]),
-  claims: z.record(z.unknown()).default({}),
+  claims: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const StaticAuthSchema = z.object({
@@ -257,14 +305,14 @@ const OAuthVerificationTargetSchema = z
   .superRefine((target, ctx) => {
     if (!target.jwksUri && !target.discoveryUrl) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "Either jwksUri or discoveryUrl is required",
         path: ["jwksUri"],
       });
     }
     if (target.discoveryUrl && !target.issuer) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "issuer is required when discoveryUrl is configured",
         path: ["issuer"],
       });
@@ -298,7 +346,7 @@ export const OAuthAuthSchema = OAuthVerificationTargetSchema.and(
     usernameClaim: z.string().default("preferred_username"),
     scopeClaim: z.string().default("scope"),
     groupClaim: z.string().default("groups"),
-    groupScopes: z.record(z.array(z.string())).default({}),
+    groupScopes: z.record(z.string(), z.array(z.string())).default({}),
     requiredScopes: z.array(z.string()).default([]),
     additionalIssuers: z.array(AdditionalIssuerSchema).default([]),
     resource: z.string().url().optional(),
@@ -316,14 +364,14 @@ export const AuthConfigSchema = z
   .superRefine((cfg, ctx) => {
     if ((cfg.mode === "static" || cfg.mode === "both") && !cfg.static) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: `auth.mode '${cfg.mode}' requires an auth.static section`,
         path: ["static"],
       });
     }
     if ((cfg.mode === "oauth" || cfg.mode === "both") && !cfg.oauth) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: `auth.mode '${cfg.mode}' requires an auth.oauth section`,
         path: ["oauth"],
       });
@@ -341,7 +389,7 @@ export const AuthConfigSchema = z
       for (const { label, path, target } of targets) {
         if (!target.issuer) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: "custom",
             message: `${label}.issuer is required so the expected token issuer is pinned`,
             path: [...path, "issuer"],
           });
@@ -353,7 +401,7 @@ export const AuthConfigSchema = z
             : [];
         if (!audiences.some(Boolean)) {
           ctx.addIssue({
-            code: z.ZodIssueCode.custom,
+            code: "custom",
             message: `${label}.audience is required to prevent audience confusion`,
             path: [...path, "audience"],
           });
@@ -371,13 +419,16 @@ export const TenantIsolationConfigSchema = z
     enabled: boolish.default(false),
     defaultTenantId: z.string().trim().min(1).default("default"),
     /** Ordered verified JWT/static claim names accepted as tenant authority. */
-    claimNames: z.array(z.string().trim().min(1)).min(1).default(["tenant_id", "tenant", "tid", "client_id"]),
+    claimNames: z
+      .array(z.string().trim().min(1))
+      .min(1)
+      .default(["tenant_id", "tenant", "tid", "client_id"]),
     /** Databases whose connection is physically dedicated to one tenant. */
     isolatedDatabases: z.array(z.string().trim().min(1)).default([]),
     /** Semantic SQL tenant-binding diagnostics: report findings or fail readiness. */
     sqlValidationMode: z.enum(["report", "strict"]).default("report"),
   })
-  .default({
+  .prefault({
     enabled: false,
     defaultTenantId: "default",
     claimNames: ["tenant_id", "tenant", "tid", "client_id"],
@@ -390,7 +441,7 @@ export const TenantIsolationConfigSchema = z
 
 export const DatabaseConfigSchema = z.object({
   client: z.string().min(1),
-  connection: z.union([z.string(), z.record(z.unknown())]),
+  connection: z.union([z.string(), z.record(z.string(), z.unknown())]),
   pool: z
     .object({
       min: z.coerce.number().int().nonnegative().default(0),
@@ -422,7 +473,7 @@ export const DatabaseConfigSchema = z.object({
 export const InputSchemaSchema = z
   .object({
     type: z.literal("object").default("object"),
-    properties: z.record(z.unknown()).default({}),
+    properties: z.record(z.string(), z.unknown()).default({}),
     required: z.array(z.string()).default([]),
     additionalProperties: z.boolean().optional(),
   })
@@ -450,7 +501,7 @@ export const AnnotationsSchema = z.object({
 export const OutputSchemaSchema = z
   .object({
     type: z.literal("object").default("object"),
-    properties: z.record(z.unknown()).default({}),
+    properties: z.record(z.string(), z.unknown()).default({}),
     required: z.array(z.string()).default([]),
     additionalProperties: z.boolean().optional(),
   })
@@ -517,6 +568,18 @@ export const RedactRuleSchema = z.object({
   placeholder: z.string().default("***"),
 });
 
+/**
+ * A plain SQL column reference (`col`, `tbl.col`) with an optional `ASC`/`DESC`
+ * direction — accepted for `pagination.orderBy` entries. Deliberately rejects
+ * expressions, commas, comments, and semicolons so config can never smuggle
+ * arbitrary SQL into the generated `ORDER BY`.
+ */
+const ORDER_BY_ENTRY = /^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?(\s+(ASC|DESC))?$/i;
+/** Trailing `ASC`/`DESC` direction of an `orderBy` entry. */
+const ORDER_BY_DIRECTION = /\s+(ASC|DESC)$/i;
+/** A bare SQL identifier, accepted for `pagination.keyset` entries. */
+const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+
 export const DatabaseToolSchema = z.object({
   name: z.string().min(1),
   description: z.string().default(""),
@@ -527,7 +590,7 @@ export const DatabaseToolSchema = z.object({
   database: z.string().min(1),
   query: z.string().min(1).optional(),
   queryFile: z.string().min(1).optional(),
-  conditions: z.record(ConditionSchema).default({}),
+  conditions: z.record(z.string(), ConditionSchema).default({}),
   rowLimit: z.coerce.number().int().positive().default(1000),
   /**
    * Field-level redaction applied to each returned row after the query runs.
@@ -538,9 +601,12 @@ export const DatabaseToolSchema = z.object({
   redact: z.array(RedactRuleSchema).default([]),
   /**
    * Opt-in cursor-based pagination. When enabled, the tool advertises a
-   * `cursor` input parameter (an opaque offset token) and returns
-   * `meta.nextCursor` when more rows remain, instead of only truncating at
-   * `rowLimit`. Disabled by default to keep existing tool behaviour unchanged.
+   * `cursor` input parameter (an opaque, HMAC-signed token bound to tool,
+   * arguments and principal) and returns `meta.nextCursor` when more rows
+   * remain, instead of only truncating at `rowLimit`. Requires a stable
+   * `orderBy` (Req 6.6); the tool's SQL must not already page itself with a
+   * top-level `LIMIT`/`TOP`/`OFFSET`/`FETCH FIRST` (Req 6.5, enforced by the
+   * loader). Disabled by default to keep existing tool behaviour unchanged.
    */
   pagination: z
     .object({
@@ -549,10 +615,74 @@ export const DatabaseToolSchema = z.object({
       pageSize: z.coerce.number().int().positive().default(100),
       /** Upper bound for a caller-supplied `pageSize`. */
       maxPageSize: z.coerce.number().int().positive().default(1000),
+      /**
+       * Deterministic sort for paging, e.g. `["created_at DESC", "id"]`.
+       * Required when `enabled` is true — without a stable order, pages can
+       * skip or repeat rows (Req 6.6). Only plain column references with an
+       * optional `ASC`/`DESC` direction are accepted (no expressions).
+       */
+      orderBy: z.array(z.string().min(1)).min(1).optional(),
+      /**
+       * Optional keyset ("seek") pagination: the leading `orderBy` columns
+       * used for a `WHERE (a,b) > (:cursor)`-style comparison instead of an
+       * offset. Every entry must be a bare column that appears in `orderBy`.
+       */
+      keyset: z.array(z.string().min(1)).min(1).optional(),
     })
-    .refine((pagination) => pagination.pageSize <= pagination.maxPageSize, {
-      message: "pagination.pageSize must not exceed pagination.maxPageSize",
-      path: ["pageSize"],
+    .superRefine((pagination, ctx) => {
+      if (pagination.pageSize > pagination.maxPageSize) {
+        ctx.addIssue({
+          code: "custom",
+          message: "pagination.pageSize must not exceed pagination.maxPageSize",
+          path: ["pageSize"],
+        });
+      }
+      if (pagination.orderBy) {
+        for (const [i, entry] of pagination.orderBy.entries()) {
+          if (!ORDER_BY_ENTRY.test(entry)) {
+            ctx.addIssue({
+              code: "custom",
+              message:
+                "pagination.orderBy entries must be plain column references " +
+                "with an optional ASC/DESC direction (e.g. 'created_at DESC')",
+              path: ["orderBy", i],
+            });
+          }
+        }
+      }
+      if (pagination.enabled && !pagination.orderBy) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "pagination.orderBy is required when pagination.enabled is true — " +
+            "paging without a stable order can skip or repeat rows (Req 6.6)",
+          path: ["orderBy"],
+        });
+      }
+      if (pagination.keyset) {
+        const ordered = new Set(
+          (pagination.orderBy ?? []).map((e) =>
+            e.replace(ORDER_BY_DIRECTION, "").toLowerCase(),
+          ),
+        );
+        for (const [i, col] of pagination.keyset.entries()) {
+          if (!SQL_IDENTIFIER.test(col)) {
+            ctx.addIssue({
+              code: "custom",
+              message: "pagination.keyset entries must be plain column names",
+              path: ["keyset", i],
+            });
+            continue;
+          }
+          if (!ordered.has(col.toLowerCase())) {
+            ctx.addIssue({
+              code: "custom",
+              message: `pagination.keyset column '${col}' must appear in pagination.orderBy`,
+              path: ["keyset", i],
+            });
+          }
+        }
+      }
     })
     .default({ enabled: false, pageSize: 100, maxPageSize: 1000 }),
   /**
@@ -564,7 +694,11 @@ export const DatabaseToolSchema = z.object({
    */
   autoLimit: boolish.default(true),
   cache: CacheConfigSchema.optional(),
-  inputSchema: InputSchemaSchema.default({ type: "object", properties: {}, required: [] }),
+  inputSchema: InputSchemaSchema.default({
+    type: "object",
+    properties: {},
+    required: [],
+  }),
   outputSchema: OutputSchemaSchema.optional(),
   annotations: AnnotationsSchema.optional(),
   requiredScopes: z.array(z.string()).default([]),
@@ -591,7 +725,7 @@ export const HttpToolSchema = z.object({
        * substitution — no encoding). Environment variables (${VAR}) are
        * interpolated at config load time; identity tokens at request time.
        */
-      headers: z.record(z.string()).default({}),
+      headers: z.record(z.string(), z.string()).default({}),
       /**
        * Optional request body. May be any JSON-serialisable value; nested
        * string values containing :param.* / :ctx.* tokens are substituted.
@@ -608,9 +742,13 @@ export const HttpToolSchema = z.object({
    *   { type: "jsonPath", expression: "$.data" }   — extract by JSONPath
    *   { type: "field",    path: "result.items" }    — dot-notation field pick
    */
-  pipeline: z.array(z.record(z.unknown())).default([]),
+  pipeline: z.array(z.record(z.string(), z.unknown())).default([]),
   cache: CacheConfigSchema.optional(),
-  inputSchema: InputSchemaSchema.default({ type: "object", properties: {}, required: [] }),
+  inputSchema: InputSchemaSchema.default({
+    type: "object",
+    properties: {},
+    required: [],
+  }),
   outputSchema: OutputSchemaSchema.optional(),
   annotations: AnnotationsSchema.optional(),
   requiredScopes: z.array(z.string()).default([]),
@@ -662,8 +800,12 @@ export const InlineToolSchema = z.object({
   access: z.enum(["read", "write"]).default("read"),
   type: z.literal("inline"),
   handler: z.string().min(1),
-  options: z.record(z.unknown()).default({}),
-  inputSchema: InputSchemaSchema.default({ type: "object", properties: {}, required: [] }),
+  options: z.record(z.string(), z.unknown()).default({}),
+  inputSchema: InputSchemaSchema.default({
+    type: "object",
+    properties: {},
+    required: [],
+  }),
   outputSchema: OutputSchemaSchema.optional(),
   annotations: AnnotationsSchema.optional(),
   requiredScopes: z.array(z.string()).default([]),
@@ -706,9 +848,10 @@ export const WebhookReplayProtectionSchema = z
   .superRefine((value, ctx) => {
     if (value.cacheTtlSeconds < value.maxAgeSeconds + value.clockSkewSeconds) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["cacheTtlSeconds"],
-        message: "cacheTtlSeconds must cover maxAgeSeconds plus clockSkewSeconds",
+        message:
+          "cacheTtlSeconds must cover maxAgeSeconds plus clockSkewSeconds",
       });
     }
   });
@@ -743,6 +886,61 @@ export const WebhookToolSchema = z.object({
 // Tool: mcp — proxy calls to a downstream MCP server
 // ---------------------------------------------------------------------------
 
+/**
+ * Actor (agent) credentials for a delegation (on-behalf-of) token exchange.
+ * The gateway mints this token with `client_credentials` and sends it as
+ * RFC 8693 `actor_token`, so the downstream server sees the gateway as the
+ * acting party (`act` claim) while `sub` stays the caller.
+ */
+export const McpTokenExchangeActorConfigSchema = z.object({
+  grant: z.literal("client_credentials"),
+  /** Token endpoint issuing the actor token. Defaults to the exchange endpoint. */
+  tokenEndpoint: z.string().url().optional(),
+  clientId: z.string().min(1),
+  /** Name of the environment variable holding the actor client secret. */
+  clientSecretEnv: z.string().min(1),
+  /** Resolved from `clientSecretEnv` by the loader. Never set in config files. */
+  clientSecret: z.string().optional(),
+  clientAuth: z.enum(["client_secret_post", "client_secret_basic"]).optional(),
+  /** Scope requested for the actor token, if the IdP requires one. */
+  scope: z.string().min(1).optional(),
+  /** Optional audience for the actor token itself. */
+  audience: z.string().min(1).optional(),
+});
+
+/**
+ * RFC 8693 Token Exchange for a downstream MCP server: instead of forwarding
+ * the caller's login token verbatim, the gateway exchanges it for a token
+ * minted *for this server* (right audience, minimal scope, short lifetime).
+ * Mirrors the runtime's `tokenExchange` config; secrets arrive via
+ * `clientSecretEnv` references and are resolved fail-closed by the loader.
+ */
+export const McpTokenExchangeConfigSchema = z
+  .object({
+    /** Token endpoint performing the exchange. Required unless `issuer` is set. */
+    tokenEndpoint: z.string().url().optional(),
+    /** OIDC issuer whose discovery yields the token endpoint. */
+    issuer: z.string().url().optional(),
+    clientId: z.string().min(1),
+    /** Name of the environment variable holding the client secret. */
+    clientSecretEnv: z.string().min(1),
+    /** Resolved from `clientSecretEnv` by the loader. Never set in config files. */
+    clientSecret: z.string().optional(),
+    clientAuth: z.enum(["client_secret_post", "client_secret_basic"]).optional(),
+    /** Target provider's `client_id` (RFC 8693 `audience`). */
+    audience: z.string().min(1),
+    /** Space-delimited scopes to request, sent verbatim. */
+    scope: z.string().min(1).optional(),
+    /** `requested_token_type`. Optional; IdP default is access_token. */
+    requestedTokenType: z.string().min(1).optional(),
+    timeoutMs: z.coerce.number().int().min(1_000).max(60_000).optional(),
+    /** Actor for a delegation (OBO) exchange. Absent → impersonation. */
+    actor: McpTokenExchangeActorConfigSchema.optional(),
+  })
+  .refine((cfg) => cfg.tokenEndpoint !== undefined || cfg.issuer !== undefined, {
+    message: "tokenExchange requires either tokenEndpoint or issuer",
+  });
+
 export const McpServerConnectionSchema = z.object({
   /** Full URL of the downstream MCP server (Streamable HTTP endpoint). */
   url: z.string().url(),
@@ -751,8 +949,21 @@ export const McpServerConnectionSchema = z.object({
   /**
    * When true, the caller's own bearer token is forwarded to the downstream
    * server instead of the configured `token`.
+   *
+   * @deprecated Passthrough hands the downstream server a token minted for the
+   * gateway (confused deputy: wrong audience, replayable). Use
+   * {@link McpServerConnectionSchema.tokenExchange} so the downstream receives
+   * an audience-bound, minimally-scoped token. Kept for migration only; the
+   * production gate warns on every use and it is mutually exclusive with
+   * `tokenExchange`.
    */
   forwardBearerToken: boolish.default(false),
+  /**
+   * RFC 8693 Token Exchange for this server. When set, the caller's bearer is
+   * exchanged before every downstream call; a failed exchange fails the call
+   * (fail-closed — the un-exchanged token is never sent).
+   */
+  tokenExchange: McpTokenExchangeConfigSchema.optional(),
   timeoutMs: z.coerce.number().int().positive().default(30_000),
 });
 
@@ -772,9 +983,13 @@ export const McpProxyToolSchema = z.object({
    * name) and not part of the advertised `inputSchema` — callers cannot see
    * or change them.
    */
-  fixedParams: z.record(z.unknown()).default({}),
+  fixedParams: z.record(z.string(), z.unknown()).default({}),
   cache: CacheConfigSchema.optional(),
-  inputSchema: InputSchemaSchema.default({ type: "object", properties: {}, required: [] }),
+  inputSchema: InputSchemaSchema.default({
+    type: "object",
+    properties: {},
+    required: [],
+  }),
   outputSchema: OutputSchemaSchema.optional(),
   annotations: AnnotationsSchema.optional(),
   requiredScopes: z.array(z.string()).default([]),
@@ -906,7 +1121,7 @@ export const CompositeStepSchema = z.object({
    *   :steps.<id>.<path> a previous step's (JSON-parsed) output
    * A whole-string token preserves the resolved value's type.
    */
-  arguments: z.record(z.unknown()).default({}),
+  arguments: z.record(z.string(), z.unknown()).default({}),
   /**
    * Optional gate: a token (`:param.*` / `:ctx.*` / `:steps.<id>.*`) that must
    * resolve to a truthy value for the step to run. When falsy, the step is
@@ -1142,14 +1357,14 @@ export const LlmConfigSchema = z
   .superRefine((cfg, ctx) => {
     if (cfg.provider === "openai" && !cfg.baseUrl) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "llm.baseUrl is required when provider is 'openai'",
         path: ["baseUrl"],
       });
     }
     if (cfg.provider === "bedrock" && !cfg.region) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "llm.region is required when provider is 'bedrock'",
         path: ["region"],
       });
@@ -1171,21 +1386,23 @@ export const PromptSourceSchema = z
     if (s.tool) {
       if (s.query || s.database) {
         ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "prompt source with 'tool' must not also set 'query'/'database'",
+          code: "custom",
+          message:
+            "prompt source with 'tool' must not also set 'query'/'database'",
           path: ["tool"],
         });
       }
     } else if (!s.query || !s.database) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "prompt source needs either 'tool' or both 'query' and 'database'",
+        code: "custom",
+        message:
+          "prompt source needs either 'tool' or both 'query' and 'database'",
         path: ["query"],
       });
     }
     if (!s.name && !s.tool) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         message: "prompt source needs a 'name' (or a 'tool' to derive it from)",
         path: ["name"],
       });
@@ -1231,7 +1448,7 @@ export const RouterConfigSchema = z
       text: "",
       dynamic: { enabled: false, refreshMinutes: 15, sources: [] },
     }),
-    write: RouterWriteConfigSchema.default({}),
+    write: RouterWriteConfigSchema.prefault({}),
     interpretResults: boolish.default(false),
     /**
      * Cache routing decisions (prompt → chosen tool + arguments) so repeated
@@ -1242,7 +1459,7 @@ export const RouterConfigSchema = z
   })
   .superRefine((r, ctx) => {
     if (r.enabled && !r.llm) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Required", path: ["llm"] });
+      ctx.addIssue({ code: "custom", message: "Required", path: ["llm"] });
     }
   });
 
@@ -1262,9 +1479,9 @@ export const OpenApiImportSchema = z.object({
   /** Operations with these operationIds are skipped. */
   exclude: z.array(z.string()).optional(),
   /** Extra headers added to every generated tool (may use ${ENV} / :ctx.* tokens). */
-  headers: z.record(z.string()).default({}),
+  headers: z.record(z.string(), z.string()).default({}),
   /** Headers used only when fetching a remote spec URL (e.g. auth for the spec). */
-  specHeaders: z.record(z.string()).default({}),
+  specHeaders: z.record(z.string(), z.string()).default({}),
   /** Force the access class of generated tools; default infers from HTTP method. */
   access: z.enum(["read", "write"]).optional(),
   /** Whether generated tools are advertised to MCP clients. */
@@ -1300,7 +1517,7 @@ export const McpToolOverrideSchema = z.object({
    * advertised inputSchema (callers can no longer set them) and merged into
    * every call to the downstream tool.
    */
-  replaceParams: z.record(z.unknown()).default({}),
+  replaceParams: z.record(z.string(), z.unknown()).default({}),
 });
 
 export const McpServerImportSchema = z.object({
@@ -1352,7 +1569,7 @@ const ApprovalPresentationSchema = z.object({
   lookup: z
     .object({
       tool: z.string().min(1),
-      arguments: z.record(z.unknown()).default({}),
+      arguments: z.record(z.string(), z.unknown()).default({}),
     })
     .optional(),
 });
@@ -1366,7 +1583,7 @@ export const PolicyRuleSchema = z
         requiredScopes: z.array(z.string()).optional(),
         subjects: z.array(z.string()).optional(),
         groups: z.array(z.string()).optional(),
-        argumentEquals: z.record(z.unknown()).optional(),
+        argumentEquals: z.record(z.string(), z.unknown()).optional(),
       })
       .default({}),
     /**
@@ -1378,9 +1595,13 @@ export const PolicyRuleSchema = z
     approval: ApprovalPresentationSchema.optional(),
   })
   .superRefine((rule, ctx) => {
-  if (rule.approval && rule.effect !== "approval")
-    ctx.addIssue({ code: z.ZodIssueCode.custom, message: "approval presentation requires effect: approval", path: ["approval"] });
-});
+    if (rule.approval && rule.effect !== "approval")
+      ctx.addIssue({
+        code: "custom",
+        message: "approval presentation requires effect: approval",
+        path: ["approval"],
+      });
+  });
 export const GovernanceConfigSchema = z
   .object({
     defaultEffect: z.enum(["allow", "deny", "approval"]).default("allow"),
@@ -1444,7 +1665,7 @@ export const SchemaCompatibilityConfigSchema = z
   .default({ mode: "report" });
 
 export const AppConfigSchema = z.object({
-  server: ServerConfigSchema.default({}),
+  server: ServerConfigSchema.prefault({}),
   schemaCompatibility: SchemaCompatibilityConfigSchema,
   authorization: AuthorizationConfigSchema,
   tenantIsolation: TenantIsolationConfigSchema,
@@ -1455,11 +1676,14 @@ export const AppConfigSchema = z.object({
   apps: z.array(AppMetadataSchema).default([]),
   tasks: TasksConfigSchema,
   auth: AuthConfigSchema,
-  databases: z.record(DatabaseConfigSchema).default({}),
-  monitoring: MonitoringConfigSchema.default({}),
+  databases: z.record(z.string(), DatabaseConfigSchema).default({}),
+  monitoring: MonitoringConfigSchema.prefault({}),
   router: RouterConfigSchema.optional(),
   instructions: SystemPromptConfigSchema.optional(),
-  tracing: TracingConfigSchema.default({ enabled: false, serviceName: "mcpgate" }),
+  tracing: TracingConfigSchema.default({
+    enabled: false,
+    serviceName: "mcpgate",
+  }),
   /**
    * Global MQTT broker configuration.  Individual mqtt-type tools may
    * override this with a per-tool `broker` section, or reference it

@@ -10,6 +10,8 @@ import type { GovernanceConfig, ServerConfig } from "../config/schema.ts";
 import type { MonitorBus } from "../monitor/events.ts";
 import type { IdentityRateLimiter } from "../server/identity-rate-limit.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
+import type { ApprovalConsumptionStore } from "./approval-store.ts";
+import type { GovernancePolicyRef } from "./governance.ts";
 import { createMcpServer } from "./server.ts";
 import { SessionStore } from "./session-store.ts";
 import { logger, isDebugEnabled } from "../logger.ts";
@@ -27,6 +29,10 @@ export interface SseDeps {
   transactionFabric?: TransactionFabric;
   authorizationEnabled?: boolean;
   policies?: GovernanceConfig;
+  /** Shared compiled policy holder, hot-reloaded by `buildApp` (Req 6.3). */
+  policyRef?: GovernancePolicyRef;
+  /** Shared redeemed-JTI store for approval tokens (Req 6.1). */
+  approvalStore?: ApprovalConsumptionStore;
 }
 
 interface Session {
@@ -202,6 +208,8 @@ export function createSseRouter(deps: SseDeps): Router {
       transactionFabric: deps.transactionFabric,
       authorizationEnabled: deps.authorizationEnabled,
       policies: deps.policies,
+      policyRef: deps.policyRef,
+      approvalStore: deps.approvalStore,
     });
     try {
       await server.connect(transport);

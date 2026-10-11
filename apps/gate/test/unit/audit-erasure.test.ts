@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  mkdtempSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ErasureRequestSchema, type ErasureRequest } from "@atf/erasure-contract";
@@ -59,6 +65,25 @@ function parsedLines(file: string): Array<Record<string, unknown>> {
   );
 }
 
+/**
+ * Wait until the audit file contains at least `count` parsed lines. A fixed
+ * sleep is flaky under parallel test load (the sink flush can exceed it), so
+ * poll with a generous deadline instead.
+ */
+async function waitForParsedLines(
+  file: string,
+  count: number,
+  timeoutMs = 2000,
+): Promise<Array<Record<string, unknown>>> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const lines = existsSync(file) ? parsedLines(file) : [];
+    if (lines.length >= count) return lines;
+    if (Date.now() >= deadline) return lines;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 let sink: AuditSink | undefined;
 
 afterEach(async () => {
@@ -79,8 +104,7 @@ describe("AuditSink · sink-level redaction (Req 2.8)", () => {
         rowCount: 1,
       },
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const lines = parsedLines(sink["config"].file as string);
+    const lines = await waitForParsedLines(sink["config"].file as string, 1);
     expect(lines).toHaveLength(1);
     const meta = lines[0]?.meta as Record<string, Record<string, unknown>>;
     expect(meta.query?.bindings).toBe("[redacted]");
@@ -100,8 +124,8 @@ describe("AuditSink · sink-level redaction (Req 2.8)", () => {
       type: "tool_call",
       meta: { customer_note: "lives at Main Street 1", other: "keep" },
     });
-    await new Promise((resolve) => setTimeout(resolve, 20));
-    const meta = parsedLines(config.file as string)[0]?.meta as Record<string, unknown>;
+    const lines = await waitForParsedLines(config.file as string, 1);
+    const meta = lines[0]?.meta as Record<string, unknown>;
     expect(meta.customer_note).toBe("[redacted]");
     expect(meta.other).toBe("keep");
   });

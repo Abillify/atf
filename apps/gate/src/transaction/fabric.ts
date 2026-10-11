@@ -3,6 +3,11 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import {
+  TransactionEnvelopeConsumerV1Schema,
+  type TransactionBudget,
+  type TransactionEnvelopeConsumerV1,
+} from "@atf/transaction-contract";
 import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 import type { AuthContext } from "../auth/context.ts";
 import type { ToolResult } from "../tools/types.ts";
@@ -21,40 +26,12 @@ export type InvocationState =
   | "compensated";
 export type ReservationKind = "acquired" | "replay" | "conflict" | "in_flight" | "unknown";
 
-export interface TransactionBudget {
-  maxCostUsd?: number;
-  maxTokens?: number;
-  maxDurationMs?: number;
-  maxRetrievalDocuments?: number;
-  maxToolCalls?: number;
-}
-export interface TransactionEnvelope {
-  version: "v1";
-  iss: string;
-  aud: string | string[];
-  iat: number;
-  exp: number;
-  jti: string;
-  executionId: string;
-  invocationId: string;
-  userId?: string;
-  tenantId?: string;
-  agentId?: string;
-  sessionId?: string;
-  scopes: string[];
-  groups: string[];
-  purpose?: string;
-  policyVersion?: string;
-  decisionId?: string;
-  dataClassification?: string;
-  /** Preferred SHA-256 hash of the canonical Action Contract, when present. */
-  actionContractHash?: string;
-  /** Backward-compatible alias for actionContractHash. Conflicts fail closed. */
-  evidenceContractHash?: string;
-  budget: TransactionBudget;
-  delegationChain: unknown[];
-  trace: { traceId?: string; spanId?: string; traceparent?: string; deadlineAt?: string | number };
-}
+// The Transaction Envelope wire shape is defined once in
+// `@atf/transaction-contract` (Req 11.3). The gate consumes the consumer-side
+// variant: delegation hops stay opaque and `trace.deadlineAt` accepts both the
+// epoch-ms numbers and ISO strings the aiperator runtime mints.
+export type { TransactionBudget };
+export type TransactionEnvelope = TransactionEnvelopeConsumerV1;
 export interface TransactionContext {
   envelope: TransactionEnvelope;
   tool: string;
@@ -504,34 +481,13 @@ function errorResult(body: TransactionErrorBody, message: string): ToolResult {
     structuredContent: { error: body },
   };
 }
-function validateEnvelope(payload: Record<string, unknown>): TransactionEnvelope {
-  if (payload.version !== "v1") throw new Error("Envelope.version must be v1");
-  for (const key of ["iss", "jti", "executionId", "invocationId"])
-    if (typeof payload[key] !== "string" || payload[key] === "")
-      throw new Error(`Envelope.${key} is required`);
-  if (
-    (!Array.isArray(payload.aud) && typeof payload.aud !== "string") ||
-    typeof payload.iat !== "number" ||
-    typeof payload.exp !== "number"
-  )
-    throw new Error("Envelope aud/iat/exp are invalid");
-  if (!Array.isArray(payload.scopes) || !payload.scopes.every((v) => typeof v === "string"))
-    throw new Error("Envelope.scopes must be a string array");
-  if (
-    !Array.isArray(payload.groups) ||
-    !payload.groups.every((v) => typeof v === "string") ||
-    !Array.isArray(payload.delegationChain)
-  )
-    throw new Error("Envelope groups/delegationChain must be arrays");
-  if (
-    !payload.budget ||
-    typeof payload.budget !== "object" ||
-    !payload.trace ||
-    typeof payload.trace !== "object"
-  )
-    throw new Error("Envelope budget/trace are required");
+function validateEnvelope(
+  payload: Record<string, unknown>,
+): TransactionEnvelope {
   if (payload.evidencePackHash !== undefined) {
-    throw new Error("Envelope.evidencePackHash is not a Transaction Envelope claim");
+    throw new Error(
+      "Envelope.evidencePackHash is not a Transaction Envelope claim",
+    );
   }
   for (const key of ["actionContractHash", "evidenceContractHash"] as const) {
     const value = payload[key];
@@ -541,8 +497,17 @@ function validateEnvelope(payload: Record<string, unknown>): TransactionEnvelope
       payload[key] = canonicalSha256(value, `Envelope.${key}`);
     }
   }
-  effectiveActionContractHash(payload as unknown as TransactionEnvelope);
-  return payload as unknown as TransactionEnvelope;
+  const parsed = TransactionEnvelopeConsumerV1Schema.safeParse(payload);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    const path =
+      issue === undefined ? "" : `.${issue.path.map(String).join(".")}`;
+    throw new Error(
+      `Envelope${path} is invalid: ${issue?.message ?? "does not match the Transaction Envelope contract"}`,
+    );
+  }
+  effectiveActionContractHash(parsed.data);
+  return parsed.data;
 }
 function valuesAt(claims: Record<string, unknown>, names: string[]): string[] {
   return names.flatMap((name) => {

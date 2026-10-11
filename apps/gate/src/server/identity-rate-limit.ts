@@ -1,6 +1,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import {
+  createMemoryRateLimitBackend,
+  createRedisRateLimitBackend,
+  type FailMode,
+  type GcraConfig,
+  type RateLimitBackend,
+} from "@atf/security-kit";
 import type { ServerConfig } from "../config/schema.ts";
 import { logger } from "../logger.ts";
 
@@ -17,31 +24,23 @@ export interface IdentityRateLimiter {
 }
 
 /**
- * Fixed-window counter, one bucket per identity key. Cheap, dependency-free,
- * correct for a single instance. Buckets are lazily swept on access (no
- * background timer needed): once a bucket's window has elapsed, it resets on
- * the next check() for that key.
+ * Adapter from the Security_Kit GCRA backend to the gate's
+ * `IdentityRateLimiter` surface. The GCRA emission interval is
+ * `windowMs / max`, so `max` requests fit into `windowMs` on average while
+ * a full burst of `max` is still allowed instantly — a smooth, atomic
+ * replacement for the previous fixed-window counter (Req 6.9).
  */
-class MemoryIdentityRateLimiter implements IdentityRateLimiter {
-  private readonly buckets = new Map<string, { count: number; resetAt: number }>();
-
+class GcraIdentityRateLimiter implements IdentityRateLimiter {
   constructor(
-    private readonly windowMs: number,
-    private readonly max: number,
+    private readonly backend: RateLimitBackend,
+    private readonly config: GcraConfig,
   ) {}
 
   async check(key: string): Promise<RateLimitDecision> {
-    const now = Date.now();
-    const bucket = this.buckets.get(key);
-    if (!bucket || bucket.resetAt <= now) {
-      this.buckets.set(key, { count: 1, resetAt: now + this.windowMs });
-      return { allowed: true };
-    }
-    bucket.count++;
-    if (bucket.count > this.max) {
-      return { allowed: false, retryAfterMs: bucket.resetAt - now };
-    }
-    return { allowed: true };
+    const result = await this.backend.take(key, this.config, 1);
+    return result.allowed
+      ? { allowed: true }
+      : { allowed: false, retryAfterMs: result.retryAfterMs };
   }
 }
 
@@ -49,49 +48,34 @@ class MemoryIdentityRateLimiter implements IdentityRateLimiter {
 interface RedisLike {
   connect(): Promise<unknown>;
   sendCommand(args: string[]): Promise<unknown>;
+  eval(
+    script: string,
+    numKeys: number,
+    keys: string[],
+    args: (string | number)[],
+  ): Promise<unknown>;
   on?(event: string, listener: (err: Error) => void): void;
-}
-
-/**
- * Redis-backed fixed-window counter, shared across instances. Uses a single
- * INCR + (conditional) PEXPIRE per check — no separate script/library needed
- * beyond the same optional `redis` package used by the IP-based limiter.
- */
-class RedisIdentityRateLimiter implements IdentityRateLimiter {
-  constructor(
-    private readonly client: RedisLike,
-    private readonly windowMs: number,
-    private readonly max: number,
-    private readonly prefix: string,
-  ) {}
-
-  async check(key: string): Promise<RateLimitDecision> {
-    const redisKey = `${this.prefix}${key}`;
-    const count = Number(await this.client.sendCommand(["INCR", redisKey]));
-    if (count === 1) {
-      await this.client.sendCommand(["PEXPIRE", redisKey, String(this.windowMs)]);
-    }
-    if (count > this.max) {
-      const ttl = Number(await this.client.sendCommand(["PTTL", redisKey]));
-      return { allowed: false, retryAfterMs: ttl > 0 ? ttl : this.windowMs };
-    }
-    return { allowed: true };
-  }
-
-  async close(): Promise<void> {
-    await (this.client as unknown as { quit?: () => Promise<unknown> }).quit?.();
-  }
+  quit?(): Promise<unknown>;
 }
 
 /**
  * Build the per-identity rate limiter described by
  * `server.rateLimit.perIdentity`, or `undefined` when disabled. Independent
  * of (and additive to) the IP-based limiter in server/rate-limit-store.ts.
+ *
+ * Backed by the Security_Kit GCRA limiters (Req 6.9/11.2): the memory
+ * backend is atomic per process with bounded key growth; the Redis backend
+ * runs the whole check as one Lua script so replicas cannot consume the
+ * same cell. `failMode` decides what happens when Redis errors — `closed`
+ * (default) rejects, `open` lets traffic through.
  */
 export async function createIdentityRateLimiter(
   cfg: ServerConfig["rateLimit"]["perIdentity"],
 ): Promise<IdentityRateLimiter | undefined> {
   if (!cfg.enabled) return undefined;
+
+  const config: GcraConfig = { limit: cfg.max, burstMs: cfg.windowMs };
+  const failMode: FailMode = cfg.failMode;
 
   if (cfg.store.type === "redis") {
     if (!cfg.store.redisUrl) {
@@ -110,11 +94,37 @@ export async function createIdentityRateLimiter(
       );
     }
     const client = redisMod.createClient({ url: cfg.store.redisUrl });
-    client.on?.("error", (err: Error) => logger.error(`identity rate-limit redis error: ${err.message}`));
+    client.on?.("error", (err: Error) =>
+      logger.error(`identity rate-limit redis error: ${err.message}`),
+    );
     await client.connect();
-    logger.info(`per-identity rate limiting using shared redis store at ${cfg.store.redisUrl}`);
-    return new RedisIdentityRateLimiter(client, cfg.windowMs, cfg.max, cfg.store.prefix);
+    logger.info(
+      `per-identity rate limiting (GCRA, failMode=${failMode}) using shared redis store at ${cfg.store.redisUrl}`,
+    );
+    const backend = createRedisRateLimitBackend(client, {
+      // The configured prefix historically ends in ':'; the kit backend
+      // joins with ':' itself, so strip one to keep the old key shape.
+      keyPrefix: cfg.store.prefix.replace(/:$/, ""),
+      failMode,
+      onError: (err) =>
+        logger.error(
+          `identity rate-limit redis check failed (failMode=${failMode}): ${
+            err instanceof Error ? err.message : String(err)
+          }`,
+        ),
+    });
+    const limiter = new GcraIdentityRateLimiter(backend, config);
+    return {
+      check: (key) => limiter.check(key),
+      close: async () => {
+        await client.quit?.();
+      },
+    };
   }
 
-  return new MemoryIdentityRateLimiter(cfg.windowMs, cfg.max);
+  const limiter = new GcraIdentityRateLimiter(
+    createMemoryRateLimitBackend(),
+    config,
+  );
+  return { check: (key) => limiter.check(key) };
 }

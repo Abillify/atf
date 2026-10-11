@@ -2,14 +2,26 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type { Knex } from "knex";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { AuthContext } from "../auth/context.ts";
 import type { DatabaseTool, RedactRule } from "../config/schema.ts";
 import { compileQuery } from "../db/bindings.ts";
-import { evaluateConditions } from "../db/conditions.ts";
+import {
+  evaluateConditions,
+  privilegedConditionNames,
+} from "../db/conditions.ts";
+import {
+  hasTopLevelSqlKeywords,
+  TOP_LEVEL_AUTO_LIMIT_KEYWORDS,
+} from "../db/sql-tokens.ts";
 import { renderSqlTemplate } from "../db/template.ts";
 import { logger } from "../logger.ts";
 import { withSpan } from "../observability/tracing.ts";
+import {
+  argsFingerprint,
+  mintPaginationCursor,
+  verifyPaginationCursor,
+} from "./pagination-cursor.ts";
 import type { ToolDefinition, ToolExecutor, ToolResult, ToolRuntime } from "./types.ts";
 
 export const DEFAULT_DATABASE_OUTPUT_SCHEMA: Record<string, unknown> = {
@@ -93,10 +105,8 @@ export class DatabaseToolExecutor implements ToolExecutor {
     const tool = this.cfg.name;
     const db = this.runtime.db.get(this.cfg.database);
 
-    const conditions = this.runtime.authorizationEnabled === false
-      ? Object.fromEntries(Object.keys(this.cfg.conditions).map((name) => [name, true]))
-      : evaluateConditions(this.cfg.conditions, ctx);
-    const renderedSql = renderSqlTemplate(this.cfg.query ?? "", conditions);
+    const conditions = this.conditionMaps(ctx);
+    const renderedSql = renderSqlTemplate(this.cfg.query ?? "", conditions.sql);
     const { sql: compiledSql, bindings: compiledBindings } = compileQuery(
       renderedSql,
       args ?? {},
@@ -104,6 +114,7 @@ export class DatabaseToolExecutor implements ToolExecutor {
     );
 
     const paginationEnabled = this.cfg.pagination?.enabled && this.cfg.access !== "write";
+    const pagination = this.cfg.pagination;
     const pageSize = paginationEnabled
       ? parsePageSize(
           args?.pageSize,
@@ -111,13 +122,31 @@ export class DatabaseToolExecutor implements ToolExecutor {
           this.cfg.pagination?.maxPageSize ?? 1000,
         )
       : this.cfg.rowLimit;
-    const offset = paginationEnabled ? parseCursor(args?.cursor) : 0;
+    // Req 6.6: the cursor is HMAC-signed and bound to this tool, the caller's
+    // principal, and a fingerprint of the query arguments (the pagination
+    // knobs `cursor`/`pageSize` themselves are excluded so pages may vary
+    // them). A cursor from another tool, principal, or argument set is
+    // rejected as invalid.
+    const cursorFingerprint = paginationEnabled
+      ? argsFingerprint(withoutPaginationArgs(args ?? {}))
+      : "";
+    const cursor = paginationEnabled
+      ? this.readCursor(args?.cursor, cursorFingerprint, ctx)
+      : { offset: 0 };
     const effectiveLimit = pageSize;
 
     // Push the row cap into the database so we never materialise more rows than
     // needed. We fetch effectiveLimit+1 to detect truncation/more-pages without
     // an extra COUNT. Write tools are never wrapped: a LIMIT subquery around an
     // INSERT/UPDATE/DELETE (... RETURNING) statement is invalid SQL.
+    const window: PageWindow = paginationEnabled
+      ? {
+          offset: cursor.offset,
+          orderBySql: pagination?.orderBy?.join(", "),
+          keysetColumns: cursor.keysetValues ? pagination?.keyset : undefined,
+          keysetValues: cursor.keysetValues,
+        }
+      : {};
     const { sql, bindings } =
       (this.cfg.autoLimit || paginationEnabled) && this.cfg.access !== "write"
         ? applyAutoLimit(
@@ -125,7 +154,7 @@ export class DatabaseToolExecutor implements ToolExecutor {
             compiledBindings,
             effectiveLimit,
             this.runtime.db.clientName(this.cfg.database),
-            paginationEnabled ? offset : 0,
+            window,
           )
         : { sql: compiledSql, bindings: compiledBindings };
 
@@ -150,8 +179,11 @@ export class DatabaseToolExecutor implements ToolExecutor {
     const rows = extractRows(raw);
     const limited = rows.slice(0, effectiveLimit);
     const truncated = rows.length > effectiveLimit;
-    const redacted = applyRedaction(limited, this.cfg.redact, conditions);
-    const nextCursor = paginationEnabled && truncated ? String(offset + effectiveLimit) : undefined;
+    const redacted = applyRedaction(limited, this.cfg.redact, conditions.redact);
+    const nextCursor =
+      paginationEnabled && truncated
+        ? this.mintCursor(cursorFingerprint, ctx, cursor.offset + effectiveLimit, limited)
+        : undefined;
 
     // Compact JSON (no pretty-print) keeps the MCP payload small.
     const structured: Record<string, unknown> = {
@@ -216,12 +248,111 @@ export class DatabaseToolExecutor implements ToolExecutor {
     };
   }
 
+  /**
+   * Req 6.7 (ADR-0002): When business authorization is disabled
+   * (`authorizationEnabled=false`), privileged Conditions — those whose rules
+   * read the caller's `scopes` context (`containsAny`/`containsAll`) — MUST
+   * evaluate to `false`, never `true`: with authorization off there is no
+   * verified scope set, and `true` would open every `{{if:privileged}}` SQL
+   * branch (act-for-other-person, unmasked data, admin writes) to every
+   * caller. All other conditions are evaluated normally, and the maps always
+   * contain every declared condition name so template rendering never throws.
+   *
+   * Two maps, because fail-closed differs by use site:
+   * - `sql` (templates): privileged → `false` (privileged branch hidden).
+   * - `redact` (Redaction-Guards, `when`): a disabled guard would leak
+   *   unmasked data, so any condition that is not verifiably true keeps its
+   *   Redaction active (`applyRedaction` masks unless `conditions[when]` is
+   *   exactly `true`).
+   */
+  private conditionMaps(ctx: AuthContext): {
+    sql: Record<string, boolean>;
+    redact: Record<string, boolean>;
+  } {
+    const evaluated = evaluateConditions(this.cfg.conditions, ctx);
+    if (this.runtime.authorizationEnabled !== false) {
+      return { sql: evaluated, redact: evaluated };
+    }
+    const privileged = privilegedConditionNames(this.cfg.conditions);
+    const sql: Record<string, boolean> = {};
+    const redact: Record<string, boolean> = {};
+    for (const name of Object.keys(this.cfg.conditions)) {
+      // Privileged: fail closed for SQL branches ...
+      sql[name] = privileged.has(name) ? false : evaluated[name] === true;
+      // ... and for Redaction every guard stays active (fail closed): without
+      // verified identity, over-redacting is safe, skipping Redaction is not.
+      redact[name] = true;
+    }
+    return { sql, redact };
+  }
+
+  /**
+   * Verify an incoming cursor (Req 6.6). Missing/empty means the first page.
+   * In keyset mode the payload carries the last row's keyset values; in
+   * offset mode it carries the numeric offset.
+   */
+  private readCursor(
+    raw: unknown,
+    fingerprint: string,
+    ctx: AuthContext,
+  ): { offset: number; keysetValues?: unknown[] } {
+    if (raw === undefined || raw === null || raw === "") return { offset: 0 };
+    const secret = this.runtime.paginationCursorSecret ?? fallbackCursorSecret();
+    const payload = verifyPaginationCursor(
+      raw,
+      this.cfg.name,
+      fingerprint,
+      ctx.subject,
+      secret,
+    );
+    if (payload.k) {
+      if (typeof payload.o !== "string") throw new Error("Invalid pagination cursor");
+      let values: unknown;
+      try {
+        values = JSON.parse(payload.o);
+      } catch {
+        throw new Error("Invalid pagination cursor");
+      }
+      if (!Array.isArray(values) || values.length !== payload.k.length) {
+        throw new Error("Invalid pagination cursor");
+      }
+      return { offset: 0, keysetValues: values };
+    }
+    if (typeof payload.o !== "number" || !Number.isSafeInteger(payload.o) || payload.o < 0) {
+      throw new Error("Invalid pagination cursor");
+    }
+    return { offset: payload.o };
+  }
+
+  /** Mint the signed cursor for the next page (offset or keyset mode). */
+  private mintCursor(
+    fingerprint: string,
+    ctx: AuthContext,
+    nextOffset: number,
+    lastPageRows: unknown[],
+  ): string {
+    const secret = this.runtime.paginationCursorSecret ?? fallbackCursorSecret();
+    const keyset = this.cfg.pagination?.keyset;
+    if (keyset && keyset.length > 0) {
+      const last = lastPageRows[lastPageRows.length - 1] as Record<string, unknown> | undefined;
+      const values = keyset.map((col) => (last ? last[col] : undefined));
+      return mintPaginationCursor(
+        { o: JSON.stringify(values), fp: fingerprint, sub: ctx.subject, k: keyset },
+        this.cfg.name,
+        secret,
+      );
+    }
+    return mintPaginationCursor(
+      { o: nextOffset, fp: fingerprint, sub: ctx.subject },
+      this.cfg.name,
+      secret,
+    );
+  }
+
   /** Dry-run: compile the SQL + bindings without touching the database. */
   async explain(args: Record<string, unknown>, ctx: AuthContext): Promise<ToolResult> {
-    const conditions = this.runtime.authorizationEnabled === false
-      ? Object.fromEntries(Object.keys(this.cfg.conditions).map((name) => [name, true]))
-      : evaluateConditions(this.cfg.conditions, ctx);
-    const renderedSql = renderSqlTemplate(this.cfg.query ?? "", conditions);
+    const conditions = this.conditionMaps(ctx);
+    const renderedSql = renderSqlTemplate(this.cfg.query ?? "", conditions.sql);
     const { sql, bindings } = compileQuery(renderedSql, args ?? {}, ctx);
     const wouldAutoLimit = this.cfg.autoLimit && this.cfg.access !== "write";
     const text = JSON.stringify(
@@ -229,7 +360,7 @@ export class DatabaseToolExecutor implements ToolExecutor {
         database: this.cfg.database,
         sql,
         bindings,
-        conditions,
+        conditions: conditions.sql,
         autoLimit: wouldAutoLimit,
         rowLimit: this.cfg.rowLimit,
         pagination: this.cfg.pagination,
@@ -249,15 +380,31 @@ export class DatabaseToolExecutor implements ToolExecutor {
 // Pagination cursor
 // ---------------------------------------------------------------------------
 
-/** Parse an opaque cursor (currently a decimal offset) back into a number. */
-function parseCursor(raw: unknown): number {
-  if (raw === undefined || raw === null || raw === "") return 0;
-  if (typeof raw !== "string" || !/^\d+$/.test(raw)) {
-    throw new Error("Invalid pagination cursor");
+/**
+ * Process-wide fallback cursor secret used when `server.pagination.secret` is
+ * not configured. Random per process, so cursors survive neither a restart nor
+ * a second instance behind a load balancer — the configuration docs require a
+ * stable secret for production (Req 6.6).
+ */
+let processCursorSecret: string | undefined;
+function fallbackCursorSecret(): string {
+  processCursorSecret ??= randomBytes(32).toString("base64url");
+  return processCursorSecret;
+}
+
+/** The caller-facing pagination knobs that may change between pages. */
+const PAGINATION_ARG_KEYS = new Set(["cursor", "pageSize"]);
+function withoutPaginationArgs(args: Record<string, unknown>): Record<string, unknown> {
+  let stripped = false;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(args)) {
+    if (PAGINATION_ARG_KEYS.has(k)) {
+      stripped = true;
+      continue;
+    }
+    out[k] = v;
   }
-  const offset = Number(raw);
-  if (!Number.isSafeInteger(offset)) throw new Error("Invalid pagination cursor");
-  return offset;
+  return stripped ? out : args;
 }
 
 function parsePageSize(raw: unknown, fallback: number, maximum: number): number {
@@ -318,89 +465,129 @@ function applyRedaction(
 // rowLimit SQL pushdown
 // ---------------------------------------------------------------------------
 
+/** Extra paging window applied on top of the row cap (pagination only). */
+interface PageWindow {
+  /** Offset mode: rows to skip. */
+  offset?: number;
+  /** Validated `ORDER BY` list from `pagination.orderBy` (Req 6.6). */
+  orderBySql?: string;
+  /** Keyset mode: the key columns (validated identifiers, from config). */
+  keysetColumns?: readonly string[];
+  /** Keyset mode: the previous page's last-row values, bound as parameters. */
+  keysetValues?: unknown[];
+}
+
 /**
- * Wrap the compiled SQL in a dialect-appropriate LIMIT (+ optional OFFSET)
- * subquery so at most limit+1 rows are transferred from the database. The
- * extra +1 lets the executor detect truncation/more-pages without a separate
- * COUNT query.
+ * Wrap the compiled SQL in a dialect-appropriate LIMIT (+ optional OFFSET,
+ * ORDER BY and keyset predicate) subquery so at most limit+1 rows are
+ * transferred from the database. The extra +1 lets the executor detect
+ * truncation/more-pages without a separate COUNT query.
  *
  * The limit/offset are server-controlled, schema-validated non-negative
- * integers (never caller input directly - the caller's cursor is parsed to a
- * plain number first), so they are inlined as literals. This keeps the
- * caller's bind parameters — and their order — completely unchanged.
+ * integers (never caller input directly - the caller's cursor is verified and
+ * parsed to a plain number first), so they are inlined as literals. The
+ * `orderBy` list comes from config and is validated to plain column
+ * references; keyset values are bound as parameters. This keeps the caller's
+ * bind parameters — and their order — completely unchanged (wrapper
+ * parameters are appended after the inner query's).
  */
 function applyAutoLimit(
   sql: string,
   bindings: unknown[],
   rowLimit: number,
   client: string | undefined,
-  offset: number = 0,
+  window: PageWindow = {},
 ): { sql: string; bindings: unknown[] } {
   // Already has an outer LIMIT/TOP — let it pass through unchanged. Strip both
   // line and block comments first so a LIMIT mentioned only in a comment does
   // not suppress the cap (and a real LIMIT inside a comment is not missed).
-  if (hasTopLevelLimit(sql)) {
+  if (hasTopLevelSqlKeywords(sql, TOP_LEVEL_AUTO_LIMIT_KEYWORDS)) {
     return { sql, bindings };
   }
   // Guard: ensure clean integer literals regardless of upstream coercion.
   const cap = Math.max(1, Math.floor(rowLimit) + 1);
-  const off = Math.max(0, Math.floor(offset));
+  const off = Math.max(0, Math.floor(window.offset ?? 0));
+  const orderBy = window.orderBySql;
+  const keyset =
+    window.keysetColumns &&
+    window.keysetColumns.length > 0 &&
+    window.keysetValues
+      ? keysetPredicate(window.keysetColumns)
+      : undefined;
+  const keysetBindings = keyset ? (window.keysetValues ?? []) : [];
   switch ((client ?? "").toLowerCase()) {
     case "mssql":
-    case "tedious":
+    case "tedious": {
+      const order = orderBy
+        ? ` ORDER BY ${orderBy}`
+        : off > 0
+          ? " ORDER BY (SELECT NULL)"
+          : "";
+      if (keyset)
+        return {
+          sql: `SELECT TOP (${cap}) * FROM (${sql}) AS _mcpgate_q WHERE ${keyset}${order}`,
+          bindings: [...bindings, ...keysetBindings],
+        };
       return off > 0
         ? {
-            sql: `SELECT * FROM (${sql}) AS _mcpgate_q ORDER BY (SELECT NULL) OFFSET ${off} ROWS FETCH NEXT ${cap} ROWS ONLY`,
+            sql: `SELECT * FROM (${sql}) AS _mcpgate_q${order} OFFSET ${off} ROWS FETCH NEXT ${cap} ROWS ONLY`,
             bindings,
           }
-        : { sql: `SELECT TOP (${cap}) * FROM (${sql}) AS _mcpgate_q`, bindings };
+        : orderBy
+          ? {
+              sql: `SELECT TOP (${cap}) * FROM (${sql}) AS _mcpgate_q${order}`,
+              bindings,
+            }
+          : {
+              sql: `SELECT TOP (${cap}) * FROM (${sql}) AS _mcpgate_q`,
+              bindings,
+            };
+    }
     case "oracledb":
-    case "oracle":
-      return off > 0
-        ? { sql: `SELECT * FROM (${sql}) OFFSET ${off} ROWS FETCH NEXT ${cap} ROWS ONLY`, bindings }
-        : { sql: `SELECT * FROM (${sql}) WHERE ROWNUM <= ${cap}`, bindings };
-    default:
+    case "oracle": {
+      if (keyset)
+        return {
+          sql: `SELECT * FROM (SELECT * FROM (${sql}) WHERE ${keyset}${orderBy ? ` ORDER BY ${orderBy}` : ""}) WHERE ROWNUM <= ${cap}`,
+          bindings: [...bindings, ...keysetBindings],
+        };
+      if (off > 0)
+        return {
+          sql: `SELECT * FROM (${sql})${orderBy ? ` ORDER BY ${orderBy}` : ""} OFFSET ${off} ROWS FETCH NEXT ${cap} ROWS ONLY`,
+          bindings,
+        };
+      if (orderBy)
+        return {
+          sql: `SELECT * FROM (SELECT * FROM (${sql}) ORDER BY ${orderBy}) WHERE ROWNUM <= ${cap}`,
+          bindings,
+        };
+      return { sql: `SELECT * FROM (${sql}) WHERE ROWNUM <= ${cap}`, bindings };
+    }
+    default: {
       // pg, mysql2, sqlite3, better-sqlite3, …
       return {
-        sql: `SELECT * FROM (${sql}) AS _mcpgate_q LIMIT ${cap}${off > 0 ? ` OFFSET ${off}` : ""}`,
-        bindings,
+        sql: `SELECT * FROM (${sql}) AS _mcpgate_q${keyset ? ` WHERE ${keyset}` : ""}${orderBy ? ` ORDER BY ${orderBy}` : ""} LIMIT ${cap}${off > 0 ? ` OFFSET ${off}` : ""}`,
+        bindings: [...bindings, ...keysetBindings],
       };
+    }
   }
 }
 
 /**
- * Scan executable top-level SQL tokens. Comments, string literals, quoted
- * identifiers and nested parenthesized queries cannot suppress auto-limiting.
+ * Dialect-portable keyset ("seek") predicate for the ordered columns
+ * `[a, b, …]`, expanding `(a,b,…) > (:v1,:v2,…)` to its lexicographic form
+ * `(a > :v1) OR (a = :v1 AND b > :v2) OR …`, which every supported dialect
+ * understands. Keyset columns should be NOT NULL; NULL values compare unknown
+ * and exclude the row.
  */
-function hasTopLevelLimit(sql: string): boolean {
-  let depth = 0;
-  let i = 0;
-  const word = (start: number): string => {
-    let end = start;
-    while (end < sql.length && /[A-Za-z0-9_$]/.test(sql[end]!)) end++;
-    return sql.slice(start, end).toUpperCase();
-  };
-  while (i < sql.length) {
-    const ch = sql[i]!;
-    const next = sql[i + 1];
-    if (ch === "-" && next === "-") { i = sql.indexOf("\n", i + 2); if (i < 0) return false; continue; }
-    if (ch === "/" && next === "*") { const end = sql.indexOf("*/", i + 2); if (end < 0) return false; i = end + 2; continue; }
-    if (ch === "'" || ch === '"' || ch === "`") {
-      const quote = ch; i++;
-      while (i < sql.length) { if (sql[i] === quote) { if (sql[i + 1] === quote) { i += 2; continue; } i++; break; } i++; }
-      continue;
-    }
-    if (ch === "[") { i++; while (i < sql.length) { if (sql[i] === "]") { if (sql[i + 1] === "]") { i += 2; continue; } i++; break; } i++; } continue; }
-    if (ch === "(") { depth++; i++; continue; }
-    if (ch === ")") { depth = Math.max(0, depth - 1); i++; continue; }
-    if (depth === 0 && /[A-Za-z_]/.test(ch)) {
-      const token = word(i);
-      if (token === "LIMIT" || token === "TOP") return true;
-      i += token.length; continue;
-    }
-    i++;
+function keysetPredicate(columns: readonly string[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < columns.length; i++) {
+    const conds: string[] = [];
+    for (let j = 0; j < i; j++) conds.push(`${columns[j]} = ?`);
+    conds.push(`${columns[i]} > ?`);
+    parts.push(`(${conds.join(" AND ")})`);
   }
-  return false;
+  return `(${parts.join(" OR ")})`;
 }
 
 /** Normalise the various Knex driver return shapes into a plain row array. */

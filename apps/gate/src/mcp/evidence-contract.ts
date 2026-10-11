@@ -1,28 +1,29 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import { createHash } from "node:crypto";
+import {
+  EvidenceActionContractV1Schema,
+  EVIDENCE_ACTION_CONTRACT_HASH_META_KEY,
+  EVIDENCE_ACTION_CONTRACT_META_KEY,
+  EVIDENCE_ACTION_CONTRACTS_META_KEY,
+  EVIDENCE_CONTRACT_HASH_META_KEY,
+  EVIDENCE_PACK_HASH_META_KEY,
+  canonicalJson,
+  sha256Hex,
+} from "@atf/evidence-contract";
+import type { ZodIssue } from "zod";
 
-export const EVIDENCE_ACTION_CONTRACT_META_KEY = "evidence/actionContract";
-export const EVIDENCE_ACTION_CONTRACT_HASH_META_KEY = "evidence/actionContractHash";
-export const EVIDENCE_CONTRACT_HASH_META_KEY = "evidence/evidenceContractHash";
-export const EVIDENCE_PACK_HASH_META_KEY = "evidence/evidencePackHash";
-export const EVIDENCE_ACTION_CONTRACTS_META_KEY = "evidence/actionContracts";
-
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
+/**
+ * The wire metadata keys are defined once in `@atf/evidence-contract` (Req 11.3)
+ * and re-exported here so gate modules keep a single import surface.
+ */
+export {
+  EVIDENCE_ACTION_CONTRACT_HASH_META_KEY,
+  EVIDENCE_ACTION_CONTRACT_META_KEY,
+  EVIDENCE_ACTION_CONTRACTS_META_KEY,
+  EVIDENCE_CONTRACT_HASH_META_KEY,
+  EVIDENCE_PACK_HASH_META_KEY,
+};
 
 function record(value: unknown, label: string): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -37,19 +38,116 @@ function allowOnly(value: Record<string, unknown>, allowed: string[], label: str
   }
 }
 
-function nonEmptyString(value: unknown, label: string): string {
+function hash(value: unknown, label: string): string {
   if (typeof value !== "string" || value.trim() === "") {
     throw new Error(`${label} must be a non-empty string`);
   }
-  return value;
-}
-
-function hash(value: unknown, label: string): string {
-  const result = nonEmptyString(value, label);
-  if (!/^[a-f0-9]{64}$/iu.test(result)) {
+  if (!/^[a-f0-9]{64}$/iu.test(value)) {
     throw new Error(`${label} must be a SHA-256 hex digest`);
   }
-  return result.toLowerCase();
+  return value.toLowerCase();
+}
+
+/**
+ * Lower-cases SHA-256 hex strings at the contract's hash positions so the shared
+ * contract schema (lower-case only) keeps accepting the mixed-case encodings the
+ * gate has always tolerated on the wire. Runs on the freshly parsed JSON, after
+ * the canonical-string check, so the recomputed digest of `raw` is unaffected.
+ */
+function normalizeContractHashes(value: unknown): unknown {
+  if (value === null || typeof value !== "object" || Array.isArray(value))
+    return value;
+  const contract = value as Record<string, unknown>;
+  const action = contract.action;
+  if (action !== null && typeof action === "object" && !Array.isArray(action)) {
+    const entry = action as Record<string, unknown>;
+    if (typeof entry.argsHash === "string")
+      entry.argsHash = entry.argsHash.toLowerCase();
+  }
+  const evidence = contract.evidence;
+  if (
+    evidence !== null &&
+    typeof evidence === "object" &&
+    !Array.isArray(evidence)
+  ) {
+    const pack = evidence as Record<string, unknown>;
+    if (typeof pack.packId === "string")
+      pack.packId = pack.packId.toLowerCase();
+    if (Array.isArray(pack.items)) {
+      for (const item of pack.items) {
+        if (item === null || typeof item !== "object" || Array.isArray(item))
+          continue;
+        const entry = item as Record<string, unknown>;
+        for (const key of [
+          "evidenceId",
+          "snapshotHash",
+          "contentHash",
+        ] as const) {
+          const current = entry[key];
+          if (typeof current === "string") entry[key] = current.toLowerCase();
+        }
+      }
+    }
+  }
+  return contract;
+}
+
+/** Maps a contract-schema issue path onto the gate's stable wire error label. */
+function contractLabel(path: PropertyKey[]): string {
+  const [head, second, index, third] = path;
+  if (path.length === 0) return "Evidence action contract";
+  if (head === "schemaVersion") return "Evidence action contract schemaVersion";
+  if (head === "action") {
+    return second === undefined
+      ? "Evidence action contract action"
+      : `Evidence action contract action.${String(second)}`;
+  }
+  if (head === "evidence") {
+    if (second === undefined) return "Evidence action contract evidence";
+    if (second !== "items")
+      return `Evidence action contract evidence.${String(second)}`;
+    if (index === undefined) return "Evidence action contract evidence items";
+    if (third === undefined) return "Evidence action contract evidence item";
+    if (third === "evidenceId")
+      return "Evidence action contract evidence item ID";
+    if (third === "snapshotHash")
+      return "Evidence action contract snapshot hash";
+    if (third === "contentHash") return "Evidence action contract content hash";
+    if (third === "version") return "Evidence action contract evidence version";
+    if (third === "modifiedAt")
+      return "Evidence action contract evidence modifiedAt";
+    return `Evidence action contract evidence item.${String(third)}`;
+  }
+  return `Evidence action contract.${String(head)}`;
+}
+
+/** Translates a shared-schema violation into the gate's established error wording. */
+function contractIssueMessage(issue: ZodIssue): string {
+  if (issue.path[0] === "schemaVersion") {
+    return "Evidence action contract schemaVersion must be v1";
+  }
+  const label = contractLabel(issue.path);
+  switch (issue.code) {
+    case "unrecognized_keys": {
+      const [key] = issue.keys;
+      return `${label} contains unsupported field '${key ?? ""}'`;
+    }
+    case "custom":
+      return "Evidence action contract evidence items must be sorted and unique";
+    case "too_small":
+      return issue.path[issue.path.length - 1] === "items"
+        ? "Evidence action contract must bind at least one evidence item"
+        : `${label} must be a non-empty string`;
+    case "invalid_format":
+      return `${label} must be a SHA-256 hex digest`;
+    case "invalid_type":
+      if (issue.expected === "object") return `${label} must be an object`;
+      if (issue.expected === "array")
+        return "Evidence action contract must bind at least one evidence item";
+      return `${label} must be a non-empty string`;
+    default:
+      return `${label} is invalid`;
+  }
 }
 
 /**
@@ -154,59 +252,40 @@ export function evidenceActionContractHash(
   } catch {
     throw new Error("Evidence action contract must be valid JSON");
   }
-  if (stable(value) !== raw) {
+  if (canonicalJson(value) !== raw) {
     throw new Error("Evidence action contract must use canonical JSON");
   }
 
-  const contract = record(value, "Evidence action contract");
-  allowOnly(contract, ["schemaVersion", "action", "evidence"], "Evidence action contract");
-  if (contract.schemaVersion !== "v1") {
-    throw new Error("Evidence action contract schemaVersion must be v1");
-  }
-  const action = record(contract.action, "Evidence action contract action");
-  allowOnly(action, ["tool", "argsHash"], "Evidence action contract action");
-  if (nonEmptyString(action.tool, "Evidence action contract action.tool") !== tool) {
-    throw new Error("Evidence action contract tool does not match the requested tool");
-  }
-  if (hash(action.argsHash, "Evidence action contract action.argsHash") !== sha256(stable(args))) {
-    throw new Error("Evidence action contract arguments do not match the requested action");
+  const parsed = EvidenceActionContractV1Schema.safeParse(
+    normalizeContractHashes(value),
+  );
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    throw new Error(
+      issue === undefined
+        ? "Evidence action contract is invalid"
+        : contractIssueMessage(issue),
+    );
   }
 
-  const evidence = record(contract.evidence, "Evidence action contract evidence");
-  allowOnly(evidence, ["packId", "retrievedAt", "items"], "Evidence action contract evidence");
-  const evidencePackHash = hash(evidence.packId, "Evidence action contract evidence.packId");
-  if (declaredEvidencePackHash !== undefined && declaredEvidencePackHash !== evidencePackHash) {
+  if (parsed.data.action.tool !== tool) {
+    throw new Error(
+      "Evidence action contract tool does not match the requested tool",
+    );
+  }
+  if (parsed.data.action.argsHash !== sha256Hex(canonicalJson(args))) {
+    throw new Error(
+      "Evidence action contract arguments do not match the requested action",
+    );
+  }
+  if (
+    declaredEvidencePackHash !== undefined &&
+    declaredEvidencePackHash !== parsed.data.evidence.packId
+  ) {
     throw new Error("Evidence pack hash does not match the contract");
   }
-  nonEmptyString(evidence.retrievedAt, "Evidence action contract evidence.retrievedAt");
-  if (!Array.isArray(evidence.items) || evidence.items.length === 0) {
-    throw new Error("Evidence action contract must bind at least one evidence item");
-  }
-  const evidenceIds = new Set<string>();
-  let previousId: string | undefined;
-  for (const item of evidence.items) {
-    const entry = record(item, "Evidence action contract evidence item");
-    allowOnly(
-      entry,
-      ["evidenceId", "snapshotHash", "contentHash", "version", "modifiedAt", "dataClassification"],
-      "Evidence action contract evidence item",
-    );
-    const evidenceId = hash(entry.evidenceId, "Evidence action contract evidence item ID");
-    if (previousId !== undefined && previousId.localeCompare(evidenceId) >= 0) {
-      throw new Error("Evidence action contract evidence items must be sorted and unique");
-    }
-    previousId = evidenceId;
-    evidenceIds.add(evidenceId);
-    hash(entry.snapshotHash, "Evidence action contract snapshot hash");
-    hash(entry.contentHash, "Evidence action contract content hash");
-    nonEmptyString(entry.version, "Evidence action contract evidence version");
-    nonEmptyString(entry.modifiedAt, "Evidence action contract evidence modifiedAt");
-  }
-  if (evidenceIds.size !== evidence.items.length) {
-    throw new Error("Evidence action contract evidence item IDs must be unique");
-  }
 
-  const computedHash = sha256(raw);
+  const computedHash = sha256Hex(raw);
   if (declaredHash !== undefined && declaredHash !== computedHash) {
     throw new Error("Evidence action contract hash does not match the contract");
   }

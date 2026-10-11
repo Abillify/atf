@@ -53,3 +53,25 @@ export function evaluateConditions(
   }
   return out;
 }
+
+/**
+ * Req 6.7 / ADR-0002: A condition is *privileged* when any of its rules reads
+ * the caller's verified `scopes` context (e.g. `context: scopes` with
+ * `containsAny: ["timesheets:admin"]`). Such conditions guard privileged SQL
+ * branches (act-for-other-person, unmasked data, admin writes). When business
+ * authorization is disabled there is no verified scope set, so these names
+ * must fail closed (`false`) instead of inheriting a blanket `true` —
+ * detection is structural (which context a rule reads), not name-based.
+ */
+export function privilegedConditionNames(
+  conditions: Record<string, Condition>,
+): ReadonlySet<string> {
+  const readsScopes = (rule: ConditionRule): boolean =>
+    rule.context === "scopes" || rule.context.startsWith("scopes.");
+  const names = new Set<string>();
+  for (const [name, cond] of Object.entries(conditions)) {
+    const rules = [...(cond.any ?? []), ...(cond.all ?? [])];
+    if (rules.some(readsScopes)) names.add(name);
+  }
+  return names;
+}

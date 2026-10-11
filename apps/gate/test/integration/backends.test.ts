@@ -3,6 +3,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Server } from "node:http";
+import { createConnection } from "node:net";
 import type { Express } from "express";
 import { AppConfigSchema } from "../../src/config/schema.ts";
 import { buildApp, type AppHandle } from "../../src/app.ts";
@@ -14,6 +15,36 @@ function listen(app: Express): Promise<{ server: Server; port: number }> {
     const server = app.listen(0, "127.0.0.1", () => {
       const addr = server.address();
       resolve({ server, port: typeof addr === "object" && addr ? addr.port : 0 });
+    });
+  });
+}
+
+/**
+ * Send GET /healthz over a raw socket with a controlled Host header — fetch()
+ * normalises or injects Host, so empty/missing variants need raw bytes.
+ * `host === null` omits the header entirely.
+ */
+function rawStatus(port: number, host: string | null): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const socket = createConnection({ host: "127.0.0.1", port }, () => {
+      const lines = ["GET /healthz HTTP/1.1"];
+      if (host !== null) lines.push(`Host: ${host}`);
+      lines.push("Connection: close", "", "");
+      socket.write(lines.join("\r\n"));
+    });
+    let data = "";
+    socket.on("data", (chunk) => {
+      data += chunk.toString("latin1");
+      const m = /^HTTP\/\d(?:\.\d)? (\d{3})/.exec(data);
+      if (m) {
+        socket.destroy();
+        resolve(Number(m[1]));
+      }
+    });
+    socket.on("error", reject);
+    socket.on("close", () => {
+      const m = /^HTTP\/\d(?:\.\d)? (\d{3})/.exec(data);
+      resolve(m ? Number(m[1]) : 0);
     });
   });
 }
@@ -176,6 +207,47 @@ describe("Edge middleware · allowedHosts and rate limiting", () => {
         headers: { host: "allowed.example" },
       });
       expect(allowed.status).toBe(200);
+    } finally {
+      server.close();
+      await handle.shutdown();
+    }
+  });
+
+  it("matches a bracketed IPv6 Host literal against allowedHosts (Req 6.12)", async () => {
+    // The old parser split "[::1]:3000" at the first colon → "[", so an IPv6
+    // literal never matched its own allow-list entry.
+    const config = baseConfig({
+      server: { port: 3000, allowedHosts: ["::1"] },
+      tools: [],
+    });
+    const handle = await buildApp(config, { db: new FakeDb() });
+    const { server, port } = await listen(handle.app);
+    try {
+      const ok = await fetch(`http://127.0.0.1:${port}/healthz`, {
+        headers: { host: "[::1]:3000" },
+      });
+      expect(ok.status).toBe(200);
+
+      const blocked = await fetch(`http://127.0.0.1:${port}/healthz`, {
+        headers: { host: "[2001:db8::1]:3000" },
+      });
+      expect(blocked.status).toBe(403);
+    } finally {
+      server.close();
+      await handle.shutdown();
+    }
+  });
+
+  it("rejects an empty Host header with 400, even without an allow-list (Req 6.12)", async () => {
+    const config = baseConfig({ server: { port: 3000 }, tools: [] });
+    const handle = await buildApp(config, { db: new FakeDb() });
+    const { server, port } = await listen(handle.app);
+    try {
+      // fetch() normalises/strips a blank Host, so send the request raw.
+      expect(await rawStatus(port, "")).toBe(400);
+      expect(await rawStatus(port, null)).toBe(400);
+      // Control: a normal Host still passes when no allow-list is configured.
+      expect(await rawStatus(port, "127.0.0.1")).toBe(200);
     } finally {
       server.close();
       await handle.shutdown();

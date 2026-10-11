@@ -70,6 +70,12 @@ export interface ToolRuntime {
   authorizationEnabled?: boolean;
   /** Shared atomic nonce store used by all webhook executors. */
   webhookReplayStore?: WebhookReplayStore;
+  /**
+   * HMAC key for database-tool pagination cursors (Req 6.6). Sourced from
+   * `server.pagination.secret`; when unset the wiring generates a random
+   * per-process key, so cursors do not survive restarts or cross instances.
+   */
+  paginationCursorSecret?: string;
 }
 
 /** Something that can fulfil one configured tool. */

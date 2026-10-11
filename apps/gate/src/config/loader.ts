@@ -14,6 +14,10 @@ import {
 } from "./schema.ts";
 import { expandOpenApiImports } from "./openapi.ts";
 import { expandMcpServerImports } from "./mcp-import.ts";
+import {
+  hasTopLevelSqlKeywords,
+  TOP_LEVEL_ROW_LIMIT_KEYWORDS,
+} from "../db/sql-tokens.ts";
 
 /**
  * Resolve the configuration directory.
@@ -290,6 +294,28 @@ function applySecurityModelFromEnv(merged: Record<string, unknown>): void {
   }
 }
 
+/**
+ * TRUST_PROXY env override (Req 6.12): same contract as the search app, plus
+ * a non-negative integer for trusted proxy-hop chains ("2"). Empty/unset
+ * leaves the YAML value (default: 1 hop) untouched.
+ */
+function applyTrustProxyFromEnv(merged: Record<string, unknown>): void {
+  const raw = process.env.TRUST_PROXY?.trim();
+  if (raw === undefined || raw === "") return;
+  const normalized = raw.toLowerCase();
+  let value: boolean | number;
+  if (["true", "yes", "on"].includes(normalized)) value = true;
+  else if (["false", "no", "off"].includes(normalized)) value = false;
+  else if (/^\d+$/.test(normalized)) value = Number(normalized);
+  else throw new Error("TRUST_PROXY must be true, false, or a hop count");
+  const server =
+    merged.server && typeof merged.server === "object" && !Array.isArray(merged.server)
+      ? (merged.server as Record<string, unknown>)
+      : {};
+  if (merged.server !== server) merged.server = server;
+  server.trustProxy = value;
+}
+
 function applySchemaCompatibilityFromEnv(merged: Record<string, unknown>): void {
   const mode = process.env.MCP_SCHEMA_COMPATIBILITY_MODE?.trim();
   if (mode === undefined) return;
@@ -389,6 +415,7 @@ function buildMerged(dir: string): Record<string, unknown> {
   applySecurityModelFromEnv(merged);
   applySchemaCompatibilityFromEnv(merged);
   applyAdditionalOidcIssuerFromEnv(merged);
+  applyTrustProxyFromEnv(merged);
 
   // Tools may be inlined in config or split across tools/*.yaml files.
   const fileTools = loadToolFiles(dir);
@@ -467,7 +494,21 @@ function finalize(merged: Record<string, unknown>, dir: string): { config: AppCo
     seen.add(tool.name);
     // Database tools need an actual query (inline or resolved from queryFile).
     if (tool.type === "database" && !tool.query) {
-      throw new Error(`Database tool '${tool.name}' must define 'query' or 'queryFile'`);
+      throw new Error(
+        `Database tool '${tool.name}' must define 'query' or 'queryFile'`,
+      );
+    }
+    // Req 6.5: a paginated tool must not page itself — a top-level
+    // LIMIT/TOP/OFFSET/FETCH in its SQL would conflict with the gate's own
+    // cursor windowing, so the configuration is rejected at load time.
+    if (tool.type === "database" && tool.pagination?.enabled && tool.query) {
+      if (hasTopLevelSqlKeywords(tool.query, TOP_LEVEL_ROW_LIMIT_KEYWORDS)) {
+        throw new Error(
+          `Database tool '${tool.name}' enables pagination but its SQL already contains a ` +
+            "top-level LIMIT, TOP, OFFSET or FETCH clause. Remove it from the query — the " +
+            "gate applies pagination itself (Req 6.5).",
+        );
+      }
     }
     if (
       result.data.tenantIsolation.enabled &&
@@ -496,9 +537,59 @@ function finalize(merged: Record<string, unknown>, dir: string): { config: AppCo
         );
       }
     }
+    // Req 6.13: token exchange and bearer passthrough are mutually exclusive —
+    // a server configured for both would make it ambiguous which credential
+    // reaches the downstream, and passthrough defeats the exchange entirely.
+    if (
+      tool.type === "mcp" &&
+      tool.server.tokenExchange &&
+      tool.server.forwardBearerToken
+    ) {
+      throw new Error(
+        `MCP tool '${tool.name}' sets both server.tokenExchange and server.forwardBearerToken. ` +
+          "Choose one: tokenExchange sends an audience-bound exchanged token, " +
+          "forwardBearerToken (deprecated) forwards the caller's login token verbatim.",
+      );
+    }
   }
 
+  resolveTokenExchangeSecrets(result.data.tools);
+
   return { config: result.data, dir };
+}
+
+/**
+ * Resolve every MCP tool's `server.tokenExchange.clientSecretEnv` (and any
+ * actor `clientSecretEnv`) to the concrete secret, mutating the parsed config
+ * in place so the executor reads a ready-to-use `clientSecret`. Fail-closed: a
+ * referenced variable that is unset or empty aborts startup — an exchange
+ * configured with a missing secret would fail every downstream call at
+ * runtime, which reads like an IdP outage instead of a deployment bug.
+ */
+function resolveTokenExchangeSecrets(tools: AppConfig["tools"]): void {
+  for (const tool of tools) {
+    if (tool.type !== "mcp") continue;
+    const exchange = tool.server.tokenExchange;
+    if (exchange === undefined) continue;
+    const secret = process.env[exchange.clientSecretEnv];
+    if (secret === undefined || secret === "") {
+      throw new Error(
+        `MCP tool '${tool.name}' server.tokenExchange.clientSecretEnv references ` +
+          `${exchange.clientSecretEnv}, which is unset or empty.`,
+      );
+    }
+    exchange.clientSecret = secret;
+    if (exchange.actor !== undefined) {
+      const actorSecret = process.env[exchange.actor.clientSecretEnv];
+      if (actorSecret === undefined || actorSecret === "") {
+        throw new Error(
+          `MCP tool '${tool.name}' server.tokenExchange.actor.clientSecretEnv references ` +
+            `${exchange.actor.clientSecretEnv}, which is unset or empty.`,
+        );
+      }
+      exchange.actor.clientSecret = actorSecret;
+    }
+  }
 }
 
 function isUrl(spec: string): boolean {

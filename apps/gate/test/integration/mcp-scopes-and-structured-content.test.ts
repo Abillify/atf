@@ -425,7 +425,9 @@ describe("MCP integration · transaction capability scope", () => {
   it("lists and calls the synthetic capability tool for every authenticated caller", async () => {
     const caller = dispatcher([]);
     expect(caller.listTools().map((tool) => tool.name)).toEqual([TRANSACTION_CAPABILITY_TOOL]);
-    expect(caller.preflight({ name: TRANSACTION_CAPABILITY_TOOL })).toBeUndefined();
+    expect(
+      await caller.preflight({ name: TRANSACTION_CAPABILITY_TOOL }),
+    ).toBeUndefined();
     const result = await caller.callTool({ name: TRANSACTION_CAPABILITY_TOOL });
     expect(result.isError).toBeFalsy();
     expect(result.structuredContent).toMatchObject({ version: "v1", enforcement: "optional" });

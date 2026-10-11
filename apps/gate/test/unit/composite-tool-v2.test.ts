@@ -80,13 +80,15 @@ describe("CompositeToolExecutor v2 · parallel groups", () => {
         { id: "b", tool: "fast", parallelGroup: "g1", arguments: {} },
       ],
     });
-    const start = Date.now();
-    const exec = new CompositeToolExecutor(cfg, (n) => (n === "slow" ? slow : fast));
+    const exec = new CompositeToolExecutor(cfg, (n) =>
+      n === "slow" ? slow : fast,
+    );
     await exec.execute({}, ctx);
-    const elapsed = Date.now() - start;
-    // "fast" finishes first even though declared second — proves concurrency.
-    expect(order[0]).toBe("fast");
-    expect(elapsed).toBeLessThan(40);
+    // Sequential execution would push "slow" first (declared first, 20 ms
+    // sleep); "fast" winning the race proves the group ran concurrently.
+    // No wall-clock bound is asserted — those flake under the parallel load
+    // of the full workspace test run.
+    expect(order).toEqual(["fast", "slow"]);
   });
 });
 

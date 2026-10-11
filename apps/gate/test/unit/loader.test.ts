@@ -118,6 +118,74 @@ describe("schema compatibility config", () => {
   });
 });
 
+describe("trust proxy config (Req 6.12)", () => {
+  it("defaults to trusting one proxy hop", () => {
+    const dir = makeConfigDir();
+    writeFileSync(join(dir, "config.yaml"), BASE);
+    expect(loadConfig(dir).config.server.trustProxy).toBe(1);
+  });
+
+  it("takes a boolean from TRUST_PROXY", () => {
+    const dir = makeConfigDir();
+    writeFileSync(join(dir, "config.yaml"), BASE);
+    process.env.TRUST_PROXY = "false";
+    try {
+      expect(loadConfig(dir).config.server.trustProxy).toBe(false);
+    } finally {
+      delete process.env.TRUST_PROXY;
+    }
+  });
+
+  it("takes a hop count from TRUST_PROXY", () => {
+    const dir = makeConfigDir();
+    writeFileSync(join(dir, "config.yaml"), BASE);
+    process.env.TRUST_PROXY = "2";
+    try {
+      expect(loadConfig(dir).config.server.trustProxy).toBe(2);
+    } finally {
+      delete process.env.TRUST_PROXY;
+    }
+  });
+
+  it("lets TRUST_PROXY override the YAML value", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      "server: { port: 3000, trustProxy: 3 }\n" +
+        BASE.slice(BASE.indexOf("auth:")),
+    );
+    process.env.TRUST_PROXY = "false";
+    try {
+      expect(loadConfig(dir).config.server.trustProxy).toBe(false);
+    } finally {
+      delete process.env.TRUST_PROXY;
+    }
+  });
+
+  it("rejects an invalid TRUST_PROXY", () => {
+    const dir = makeConfigDir();
+    writeFileSync(join(dir, "config.yaml"), BASE);
+    process.env.TRUST_PROXY = "sometimes";
+    try {
+      expect(() => loadConfig(dir)).toThrow(
+        /TRUST_PROXY must be true, false, or a hop count/,
+      );
+    } finally {
+      delete process.env.TRUST_PROXY;
+    }
+  });
+
+  it("accepts a YAML hop count or boolean string", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      "server: { port: 3000, trustProxy: '2' }\n" +
+        BASE.slice(BASE.indexOf("auth:")),
+    );
+    expect(loadConfig(dir).config.server.trustProxy).toBe(2);
+  });
+});
+
 describe("tenant SQL validation config", () => {
   it("defaults semantic SQL validation to report", () => {
     const dir = makeConfigDir();
@@ -158,5 +226,187 @@ describe("tenant SQL validation config", () => {
         "    query: \"select ':ctx.tenantId'\"\n",
     );
     expect(loadConfig(dir).config.tools).toHaveLength(1);
+  });
+});
+
+describe("database tool pagination config (Req 6.5 / 6.6)", () => {
+  it("rejects a paginated tool whose SQL already pages at top level", () => {
+    for (const sql of [
+      "select id from t LIMIT 10",
+      "select TOP 10 id from t",
+      "select id from t OFFSET 5 ROWS",
+      "select id from t fetch first 10 rows only",
+    ]) {
+      const dir = makeConfigDir();
+      writeFileSync(
+        join(dir, "config.yaml"),
+        BASE +
+          "\ntools:\n" +
+          `  - name: t\n    type: database\n    database: d\n    query: "${sql}"\n` +
+          "    pagination: { enabled: true, orderBy: [id] }\n",
+      );
+      expect(() => loadConfig(dir)).toThrow(
+        /already contains a top-level LIMIT/,
+      );
+    }
+  });
+
+  it("ignores LIMIT inside subqueries, strings and comments", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n" +
+        '    query: "select id from (select id from t limit 10) x -- limit me\\n"\n' +
+        "    pagination: { enabled: true, orderBy: [id] }\n",
+    );
+    expect(loadConfig(dir).config.tools).toHaveLength(1);
+  });
+
+  it("rejects pagination without orderBy (Req 6.6)", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
+        "    pagination: { enabled: true }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(
+      /orderBy is required when pagination\.enabled/,
+    );
+  });
+
+  it("rejects an orderBy entry that is not a plain column reference", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
+        "    pagination: { enabled: true, orderBy: ['lower(name); drop table x'] }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(/plain column references/);
+  });
+
+  it("rejects a keyset column missing from orderBy", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
+        "    pagination: { enabled: true, orderBy: [name], keyset: [id] }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(/must appear in pagination\.orderBy/);
+  });
+
+  it("accepts pagination with a valid orderBy and keyset", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
+        "    pagination: { enabled: true, orderBy: [created_at DESC, id], keyset: [id] }\n",
+    );
+    const tool = loadConfig(dir).config.tools.find((t) => t.name === "t");
+    expect(
+      (tool as { pagination?: { keyset?: string[] } }).pagination?.keyset,
+    ).toEqual(["id"]);
+  });
+});
+
+// ── Req 6.13: MCP token exchange config ─────────────────────────────────────
+
+const MCP_TOOL_BASE =
+  "\ntools:\n" +
+  "  - name: ds\n    type: mcp\n    targetTool: search\n" +
+  "    server:\n      url: https://mcp.example.com\n";
+
+const TOKEN_EXCHANGE_YAML =
+  "      tokenExchange:\n" +
+  "        tokenEndpoint: https://idp.example.com/token\n" +
+  "        clientId: atf-gate\n" +
+  "        clientSecretEnv: MCP_DS_SECRET\n" +
+  "        audience: downstream-mcp\n";
+
+describe("loadConfig — MCP token exchange (Req 6.13)", () => {
+  it("resolves clientSecretEnv (and actor) into clientSecret", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE + MCP_TOOL_BASE + TOKEN_EXCHANGE_YAML,
+    );
+    process.env.MCP_DS_SECRET = "resolved-secret";
+    try {
+      const tool = loadConfig(dir).config.tools.find((t) => t.name === "ds");
+      const exchange = (
+        tool as { server?: { tokenExchange?: { clientSecret?: string } } }
+      ).server?.tokenExchange;
+      expect(exchange?.clientSecret).toBe("resolved-secret");
+    } finally {
+      delete process.env.MCP_DS_SECRET;
+    }
+  });
+
+  it("aborts startup when the referenced secret env var is unset", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE + MCP_TOOL_BASE + TOKEN_EXCHANGE_YAML,
+    );
+    delete process.env.MCP_DS_SECRET;
+    expect(() => loadConfig(dir)).toThrow(
+      /MCP_DS_SECRET, which is unset or empty/,
+    );
+  });
+
+  it("rejects tokenExchange together with forwardBearerToken", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        MCP_TOOL_BASE +
+        "      forwardBearerToken: true\n" +
+        TOKEN_EXCHANGE_YAML,
+    );
+    process.env.MCP_DS_SECRET = "x";
+    try {
+      expect(() => loadConfig(dir)).toThrow(
+        /both server\.tokenExchange and server\.forwardBearerToken/,
+      );
+    } finally {
+      delete process.env.MCP_DS_SECRET;
+    }
+  });
+
+  it("resolves an actor clientSecretEnv too", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        MCP_TOOL_BASE +
+        TOKEN_EXCHANGE_YAML +
+        "        actor:\n" +
+        "          grant: client_credentials\n" +
+        "          clientId: atf-actor\n" +
+        "          clientSecretEnv: MCP_ACTOR_SECRET\n",
+    );
+    process.env.MCP_DS_SECRET = "ds-secret";
+    process.env.MCP_ACTOR_SECRET = "actor-secret";
+    try {
+      const tool = loadConfig(dir).config.tools.find((t) => t.name === "ds");
+      const actor = (
+        tool as {
+          server?: { tokenExchange?: { actor?: { clientSecret?: string } } };
+        }
+      ).server?.tokenExchange?.actor;
+      expect(actor?.clientSecret).toBe("actor-secret");
+    } finally {
+      delete process.env.MCP_DS_SECRET;
+      delete process.env.MCP_ACTOR_SECRET;
+    }
   });
 });

@@ -25,6 +25,7 @@ function goodConfig(over: Record<string, unknown> = {}): AppConfig {
       allowedHosts: ["mcpgate.internal"],
       metrics: { enabled: true, token: "a".repeat(40) },
       cors: { enabled: false, origins: [] },
+      outbound: { allowedHosts: ["api.example.com"] },
     },
     authorization: { enabled: true },
     tenantIsolation: {
@@ -199,7 +200,11 @@ describe("exposure findings", () => {
     // DNS-rebinding protection is meaningless behind a reverse proxy that
     // already pins Host, so forcing it in production would be wrong.
     const cfg = goodConfig({
-      server: { allowedHosts: [], metrics: { token: "x".repeat(40) } },
+      server: {
+        allowedHosts: [],
+        metrics: { token: "x".repeat(40) },
+        outbound: { allowedHosts: ["api.example.com"] },
+      },
     });
     const report = checkProductionReadiness(cfg, "production");
     expect(report.fatal.some((m) => m.includes("allowedHosts"))).toBe(false);
@@ -217,15 +222,34 @@ describe("exposure findings", () => {
     expect(fatalsIn(cfg).some((m) => m.includes("rateLimit.enabled is false"))).toBe(true);
   });
 
-  test("an empty outbound allow-list is fatal in production when an outbound tool exists", () => {
-    const withoutTools = goodConfig();
+  test("an empty outbound allow-list is fatal in production even without outbound tools", () => {
+    // Req 6.8 is unconditional: a tool added later must not silently inherit an
+    // unrestricted egress surface, so "no outbound" has to be declared
+    // explicitly (e.g. with a reserved never-resolving host).
+    const withoutTools = goodConfig({
+      server: {
+        allowedHosts: ["mcpgate.internal"],
+        metrics: { token: "a".repeat(40) },
+        outbound: { allowedHosts: [] },
+      },
+    });
     expect(
-      checkProductionReadiness(withoutTools, "production").warnings.some((m) =>
+      checkProductionReadiness(withoutTools, "production").fatal.some((m) =>
+        m.includes("outbound host allow-list"),
+      ),
+    ).toBe(true);
+    expect(
+      checkProductionReadiness(withoutTools, "development").warnings.some((m) =>
         m.includes("outbound.allowedHosts"),
       ),
-    ).toBe(false);
+    ).toBe(true);
 
     const withHttpTool = goodConfig({
+      server: {
+        allowedHosts: ["mcpgate.internal"],
+        metrics: { token: "a".repeat(40) },
+        outbound: { allowedHosts: [] },
+      },
       tools: [
         {
           name: "fetch_thing",
@@ -373,7 +397,11 @@ describe("webhook production contract", () => {
   const webhookServer = {
     allowedHosts: ["mcpgate.internal"],
     metrics: { enabled: true, token: "a".repeat(40) },
-    rateLimit: { enabled: true, store: { type: "redis", redisUrl: "redis://redis:6379" } },
+    outbound: { allowedHosts: ["api.example.com"] },
+    rateLimit: {
+      enabled: true,
+      store: { type: "redis", redisUrl: "redis://redis:6379" },
+    },
   };
 
   test("accepts a bounded HMAC webhook with a trusted tenant", () => {
@@ -490,5 +518,168 @@ describe("tenant SQL diagnostics", () => {
       tools: [databaseTool("SELECT ':ctx.tenantId' FROM orders")],
     });
     expect(checkProductionReadiness(config, "production").tenantSqlDiagnostics).toEqual([]);
+  });
+});
+
+describe("approval-store replica gate (Req 6.1)", () => {
+  const savedReplicas = process.env.MCPGATE_REPLICAS;
+  const savedTransactionRedis = process.env.MCPGATE_TRANSACTION_REDIS_URL;
+  const restore = (): void => {
+    if (savedReplicas === undefined) delete process.env.MCPGATE_REPLICAS;
+    else process.env.MCPGATE_REPLICAS = savedReplicas;
+    if (savedTransactionRedis === undefined)
+      delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    else process.env.MCPGATE_TRANSACTION_REDIS_URL = savedTransactionRedis;
+  };
+
+  test("more than one replica without Redis is fatal in production", () => {
+    process.env.MCPGATE_REPLICAS = "3";
+    delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    try {
+      const report = checkProductionReadiness(goodConfig(), "production");
+      expect(
+        report.fatal.some((message) =>
+          message.includes("MCPGATE_REPLICAS=3 without Redis"),
+        ),
+      ).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  test("the same finding is only a warning outside production", () => {
+    process.env.MCPGATE_REPLICAS = "3";
+    delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    try {
+      const report = checkProductionReadiness(goodConfig(), "development");
+      expect(report.fatal).toEqual([]);
+      // Not fatal by design — but also not silently ignored: the memory
+      // approval map diverging across replicas is surfaced as a warning too.
+      expect(
+        report.warnings.some((message) =>
+          message.includes("MCPGATE_REPLICAS=3 without Redis"),
+        ),
+      ).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a single replica without Redis passes", () => {
+    process.env.MCPGATE_REPLICAS = "1";
+    delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    try {
+      expect(
+        checkProductionReadiness(goodConfig(), "production").fatal,
+      ).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("multiple replicas with Redis pass", () => {
+    process.env.MCPGATE_REPLICAS = "3";
+    process.env.MCPGATE_TRANSACTION_REDIS_URL = "redis://redis.internal:6379";
+    try {
+      expect(
+        checkProductionReadiness(goodConfig(), "production").fatal,
+      ).toEqual([]);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a Redis-backed rate-limit store counts as Redis", () => {
+    process.env.MCPGATE_REPLICAS = "2";
+    delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    try {
+      const config = goodConfig({
+        server: {
+          allowedHosts: ["mcpgate.internal"],
+          metrics: { enabled: true, token: "a".repeat(40) },
+          cors: { enabled: false, origins: [] },
+          rateLimit: {
+            enabled: true,
+            store: { type: "redis", redisUrl: "redis://redis.internal:6379" },
+          },
+        },
+      });
+      const report = checkProductionReadiness(config, "production");
+      expect(
+        report.fatal.some((message) => message.includes("without Redis")),
+      ).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+
+  test("a non-numeric replica count is ignored with a warning", () => {
+    process.env.MCPGATE_REPLICAS = "many";
+    delete process.env.MCPGATE_TRANSACTION_REDIS_URL;
+    try {
+      const report = checkProductionReadiness(goodConfig(), "production");
+      expect(report.fatal).toEqual([]);
+      expect(
+        report.warnings.some((message) =>
+          message.includes(
+            "MCPGATE_REPLICAS=many is not a positive replica count",
+          ),
+        ),
+      ).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+});
+
+describe("deprecated mcp forwardBearerToken (Req 6.13)", () => {
+  const mcpTool = (server: Record<string, unknown>) => ({
+    tools: [
+      {
+        name: "ds",
+        type: "mcp",
+        server: { url: "https://mcp.example.com", ...server },
+        targetTool: "search",
+      },
+    ],
+  });
+
+  test("is fatal in production", () => {
+    const fatals = fatalsIn(goodConfig(mcpTool({ forwardBearerToken: true })));
+    expect(
+      fatals.some(
+        (m) =>
+          m.includes("deprecated server.forwardBearerToken") &&
+          m.includes("server.tokenExchange"),
+      ),
+    ).toBe(true);
+  });
+
+  test("is a warning outside production", () => {
+    const warnings = warningsIn(
+      goodConfig(mcpTool({ forwardBearerToken: true })),
+    );
+    expect(
+      warnings.some((m) => m.includes("deprecated server.forwardBearerToken")),
+    ).toBe(true);
+  });
+
+  test("tokenExchange instead does not trip the flag", () => {
+    const report = checkProductionReadiness(
+      goodConfig(
+        mcpTool({
+          tokenExchange: {
+            tokenEndpoint: "https://idp.example.com/token",
+            clientId: "atf-gate",
+            clientSecretEnv: "MCP_DS_SECRET",
+            audience: "downstream-mcp",
+          },
+        }),
+      ),
+      "production",
+    );
+    expect(report.fatal.some((m) => m.includes("forwardBearerToken"))).toBe(
+      false,
+    );
   });
 });

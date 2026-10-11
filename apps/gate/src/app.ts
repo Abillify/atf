@@ -6,12 +6,15 @@ import express, {
   type Express,
   type Request,
   type Response,
-  type NextFunction,
 } from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { Authenticator } from "./auth/authenticator.ts";
-import type { AppConfig, SystemPromptConfig } from "./config/schema.ts";
+import type {
+  AppConfig,
+  GovernanceConfig,
+  SystemPromptConfig,
+} from "./config/schema.ts";
 import { authDisplayReferences } from "./config/auth-references.ts";
 import { DatabaseManager, type DbProvider } from "./db/manager.ts";
 import { MqttManager, type MqttProvider } from "./mqtt/manager.ts";
@@ -32,12 +35,20 @@ import { createIdentityRateLimiter } from "./server/identity-rate-limit.ts";
 import { createMetricsAuthMiddleware } from "./server/metrics-auth.ts";
 import { installRequestTracker } from "./server/request-tracker.ts";
 import { installHealthRoutes } from "./server/health-routes.ts";
+import { createHostAllowListMiddleware } from "./server/host-header.ts";
 import { resolveRedactOptions } from "./observability/redact.ts";
 import { Metrics } from "./monitor/metrics.ts";
 import { AuditSink } from "./monitor/audit.ts";
 import { createMonitorClusterBridge, type MonitorClusterBridge } from "./monitor/cluster-bridge.ts";
 import { logger } from "./logger.ts";
+import { randomBytes } from "node:crypto";
 import { resolveEnvironment } from "./config/prod-gate.ts";
+import { createApprovalConsumptionStore } from "./mcp/approval-store.ts";
+import {
+  GovernancePolicy,
+  compilePolicy,
+  type GovernancePolicyRef,
+} from "./mcp/governance.ts";
 import { createWebhookReplayStore } from "./tools/webhook-replay-store.ts";
 import {
   TransactionFabric,
@@ -64,6 +75,12 @@ export interface AppHandle {
   activeRequests(): number;
   /** Wait for in-flight requests to finish (up to timeoutMs) before shutdown. */
   drain(timeoutMs?: number): Promise<void>;
+  /**
+   * Replace the compiled governance policy after a config hot-reload
+   * (Req 6.3): the new policy is compiled once and swapped in place, so open
+   * sessions and transports pick it up without a restart.
+   */
+  reloadPolicies(policies: GovernanceConfig): void;
   shutdown(): Promise<void>;
 }
 
@@ -115,6 +132,30 @@ export async function buildApp(
   const webhookReplayStore = hasWebhooks
     ? await createWebhookReplayStore(transactionRedisUrl, resolveEnvironment())
     : undefined;
+  // Redeemed approval-token JTIs (Req 6.1): Redis-backed when Redis is
+  // configured so a redemption holds across replicas, otherwise the
+  // expiring memory map (single-replica only — the prod gate enforces this).
+  const hasApprovalRules =
+    config.policies.defaultEffect === "approval" ||
+    config.policies.rules.some((rule) => rule.effect === "approval");
+  const approvalStore = hasApprovalRules
+    ? await createApprovalConsumptionStore(
+        transactionRedisUrl,
+        resolveEnvironment(),
+      )
+    : undefined;
+  // Governance is compiled exactly once per configuration version (Req 6.3):
+  // globs become RegExp, subject/group lists become Sets and the group
+  // predicate reads from the configured `oauth.groupClaim` (Req 6.2). The
+  // holder is swapped in place on hot-reload so open sessions never recompile.
+  const policyRef: GovernancePolicyRef = { current: undefined };
+  const rebuildGovernancePolicy = (policies: GovernanceConfig): void => {
+    policyRef.current = new GovernancePolicy(
+      compilePolicy(policies, { groupClaim: config.auth.oauth?.groupClaim }),
+      approvalStore,
+    );
+  };
+  rebuildGovernancePolicy(config.policies);
   const db = overrides.db ?? new DatabaseManager(config.databases);
 
   // MQTT manager (lazy — only connects when an mqtt tool subscribes). Always
@@ -131,6 +172,12 @@ export async function buildApp(
       outboundAllowedHosts: config.server.outbound.allowedHosts,
       authorizationEnabled: config.authorization.enabled,
       webhookReplayStore,
+      // Req 6.6: pagination cursors are HMAC-signed. Without a configured
+      // secret, use a random per-process key (cursors then survive neither a
+      // restart nor a second instance — the config docs say to set one).
+      paginationCursorSecret:
+        config.server.pagination.secret ??
+        randomBytes(32).toString("base64url"),
     },
     config.schemaCompatibility.mode,
   );
@@ -235,9 +282,10 @@ export async function buildApp(
 
   const app = express();
   app.disable("x-powered-by");
-  // Trust the first proxy hop so express-rate-limit sees the real client IP
+  // Trust-proxy depth is configurable (Req 6.12); the default of 1 hop keeps
+  // express-rate-limit seeing the real client IP behind a single reverse proxy
   // without the permissive `true` setting (which it rejects for safety).
-  app.set("trust proxy", 1);
+  app.set("trust proxy", config.server.trustProxy);
 
   // ── In-flight request tracking (for graceful shutdown draining) ─────────────
   const requestTracker = installRequestTracker(app);
@@ -273,21 +321,10 @@ export async function buildApp(
   }
 
   // ── DNS-rebinding protection ───────────────────────────────────────────────
-  // Reject requests whose Host header hostname is not in the allow-list.
-  if (config.server.allowedHosts.length > 0) {
-    const allowed = new Set(
-      config.server.allowedHosts.map((h) => h.toLowerCase()),
-    );
-    app.use((req: Request, res: Response, next: NextFunction) => {
-      const host = (req.headers.host ?? "").split(":")[0]?.toLowerCase();
-      if (host && !allowed.has(host)) {
-        logger.warn("rejected request: host not allowed", { host });
-        res.status(403).json({ error: "Host not allowed" });
-        return;
-      }
-      next();
-    });
-  }
+  // Always installed (Req 6.12): an empty/absent Host header is rejected with
+  // 400; when an allow-list is configured, hostnames outside it are rejected
+  // with 403. IPv6 literals ([::1]:3000) are parsed bracket-aware.
+  app.use(createHostAllowListMiddleware(config.server.allowedHosts));
 
   // ── CORS ────────────────────────────────────────────────────────────────────
   if (config.server.cors.enabled) {
@@ -314,6 +351,7 @@ export async function buildApp(
     toolCount: () => registry.size,
     transactionLedger,
     ...(webhookReplayStore !== undefined ? { webhookReplayStore } : {}),
+    ...(approvalStore !== undefined ? { approvalStore } : {}),
   });
 
   // ── OAuth protected-resource metadata (RFC 9728, never rate-limited) ────────
@@ -390,6 +428,8 @@ export async function buildApp(
     transactionFabric,
     authorizationEnabled: config.authorization.enabled,
     policies: config.policies,
+    policyRef,
+    ...(approvalStore !== undefined ? { approvalStore } : {}),
   });
   const streamableRouter = createStreamableRouter({
     serverConfig: config.server,
@@ -401,6 +441,8 @@ export async function buildApp(
     transactionFabric,
     authorizationEnabled: config.authorization.enabled,
     policies: config.policies,
+    policyRef,
+    ...(approvalStore !== undefined ? { approvalStore } : {}),
   });
   app.use(sseRouter);
   app.use(streamableRouter);
@@ -414,6 +456,8 @@ export async function buildApp(
         identityRateLimiter,
         transactionFabric,
         policies: config.policies,
+        policyRef,
+        ...(approvalStore !== undefined ? { approvalStore } : {}),
         resources: config.resources,
         prompts: config.prompts,
         skills: config.skills,
@@ -451,6 +495,9 @@ export async function buildApp(
       : {}),
     activeRequests: requestTracker.activeRequests,
     drain: requestTracker.drain,
+    reloadPolicies(policies: GovernanceConfig): void {
+      rebuildGovernancePolicy(policies);
+    },
     async shutdown() {
       for (const p of promptProviders) p.stop();
       for (const p of instructionProviders) p.stop();
@@ -463,6 +510,7 @@ export async function buildApp(
         identityRateLimiter?.close?.(),
         transactionLedger.close?.(),
         webhookReplayStore?.close?.(),
+        approvalStore?.close?.(),
         clusterBridge?.close(),
       ]);
     },

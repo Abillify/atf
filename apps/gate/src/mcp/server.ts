@@ -9,7 +9,12 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import type { AuthContext } from "../auth/context.ts";
 import type { GovernanceConfig, ServerConfig } from "../config/schema.ts";
-import { APPROVAL_TOKEN_META_KEY, GovernancePolicy } from "./governance.ts";
+import type { ApprovalConsumptionStore } from "./approval-store.ts";
+import {
+  APPROVAL_TOKEN_META_KEY,
+  GovernancePolicy,
+  type GovernancePolicyRef,
+} from "./governance.ts";
 import { evidenceActionContractHash } from "./evidence-contract.ts";
 import { logger } from "../logger.ts";
 import type { MonitorBus } from "../monitor/events.ts";
@@ -36,6 +41,19 @@ export interface McpServerDeps {
   transactionFabric?: TransactionFabric;
   authorizationEnabled?: boolean;
   policies?: GovernanceConfig;
+  /**
+   * Shared compiled policy holder (Req 6.3): `buildApp` compiles the policy
+   * set once per configuration version and hot-reload swaps it in place, so
+   * no request recompiles globs or rule lists. Falls back to compiling
+   * `policies` per dispatcher when absent (tests, auxiliary paths).
+   */
+  policyRef?: GovernancePolicyRef;
+  /**
+   * Shared redeemed-JTI store for approval tokens (Req 6.1). Redis-backed when
+   * Redis is configured so a redemption is honored across replicas; the policy
+   * falls back to the process-wide memory map when absent.
+   */
+  approvalStore?: ApprovalConsumptionStore;
 }
 
 export interface ToolCallInput {
@@ -173,6 +191,20 @@ export class McpToolDispatcher {
   }
 
   /**
+   * Resolve the governance policy for this dispatcher: the shared compiled
+   * instance from the hot-reloadable holder when wired (Req 6.3), otherwise
+   * a locally compiled one from `policies` (tests and auxiliary paths).
+   */
+  private policy(withStore = true): GovernancePolicy | undefined {
+    if (this.deps.authorizationEnabled === false) return undefined;
+    if (this.deps.policyRef) return this.deps.policyRef.current;
+    if (!this.deps.policies) return undefined;
+    return withStore
+      ? new GovernancePolicy(this.deps.policies, this.deps.approvalStore)
+      : new GovernancePolicy(this.deps.policies);
+  }
+
+  /**
    * Discovery has no call arguments, so this evaluates the same scope and
    * policy checks as a tool call using an empty argument object. Approval-only
    * tools remain discoverable because they are callable through the approval
@@ -180,25 +212,31 @@ export class McpToolDispatcher {
    */
   private isToolDiscoverable(tool: ToolDefinition): boolean {
     const requiredScopes = this.deps.registry.requiredScopesOf(tool.name);
-    if (!requiredScopes.every((scope) => this.context.scopes.includes(scope))) return false;
+    if (!requiredScopes.every((scope) => this.context.scopes.includes(scope)))
+      return false;
 
-    const policy = this.deps.authorizationEnabled !== false && this.deps.policies
-      ? new GovernancePolicy(this.deps.policies)
-      : undefined;
+    const policy = this.policy(false);
     const access = this.deps.registry.accessOf(tool.name) ?? "read";
-    return (policy?.decide(this.context, tool.name, access, {}) ?? "allow") !== "deny";
+    return (
+      (policy?.decide(this.context, tool.name, access, {}) ?? "allow") !==
+      "deny"
+    );
   }
 
   listTools(): ToolDefinition[] {
-    const tools = this.deps.registry.list().filter((tool) => this.isToolDiscoverable(tool));
+    const tools = this.deps.registry
+      .list()
+      .filter((tool) => this.isToolDiscoverable(tool));
     const transactionFabric = this.deps.transactionFabric;
     const capabilityAdvertised =
-      transactionFabric !== undefined && transactionFabric.config.enforcement !== "off";
+      transactionFabric !== undefined &&
+      transactionFabric.config.enforcement !== "off";
 
     if (capabilityAdvertised) {
       tools.push({
         name: TRANSACTION_CAPABILITY_TOOL,
-        description: "Return the Agent Transaction Fabric v1 capability document.",
+        description:
+          "Return the Agent Transaction Fabric v1 capability document.",
         inputSchema: { type: "object", additionalProperties: false },
         annotations: {
           readOnlyHint: true,
@@ -234,15 +272,24 @@ export class McpToolDispatcher {
     return tools;
   }
 
-  preflight(input: ToolCallInput): ToolResult | undefined {
+  async preflight(input: ToolCallInput): Promise<ToolResult | undefined> {
     const args = input.arguments ?? {};
     let evidenceContractHash: string | undefined;
     try {
-      evidenceContractHash = evidenceActionContractHash(input._meta, input.name, args);
+      evidenceContractHash = evidenceActionContractHash(
+        input._meta,
+        input.name,
+        args,
+      );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       return {
-        content: [{ type: "text", text: `Invalid Evidence-Bound Action Contract: ${message}` }],
+        content: [
+          {
+            type: "text",
+            text: `Invalid Evidence-Bound Action Contract: ${message}`,
+          },
+        ],
         isError: true,
         structuredContent: { code: "EVIDENCE_CONTRACT_INVALID" },
       };
@@ -263,18 +310,21 @@ export class McpToolDispatcher {
     }
     const executor = this.deps.registry.get(input.name);
     if (!executor)
-      return { content: [{ type: "text", text: `Unknown tool: ${input.name}` }], isError: true };
+      return {
+        content: [{ type: "text", text: `Unknown tool: ${input.name}` }],
+        isError: true,
+      };
     const scopeError = missingScopesResult(
       this.deps.registry.requiredScopesOf(input.name),
       this.context,
     );
     if (scopeError) return scopeError;
-    const policy = this.deps.authorizationEnabled !== false && this.deps.policies
-      ? new GovernancePolicy(this.deps.policies)
-      : undefined;
+    const policy = this.policy();
     const access = this.deps.registry.accessOf(input.name) ?? "read";
+    // One rule scan per call resolves effect, rule and evidence requirement (Req 6.3).
+    const decision = policy?.evaluate(this.context, input.name, access, args);
     if (
-      policy?.requiresEvidenceContract(this.context, input.name, access, args) === true &&
+      decision?.requiresEvidenceContract === true &&
       evidenceContractHash === undefined
     )
       return {
@@ -287,29 +337,37 @@ export class McpToolDispatcher {
         isError: true,
         structuredContent: { code: "EVIDENCE_CONTRACT_REQUIRED" },
       };
-    const effect = policy?.decide(this.context, input.name, access, args) ?? "allow";
+    const effect = decision?.effect ?? "allow";
     if (effect === "deny")
       return {
-        content: [{ type: "text", text: `Policy denied tool '${input.name}'.` }],
+        content: [
+          { type: "text", text: `Policy denied tool '${input.name}'.` },
+        ],
         isError: true,
         structuredContent: { code: "POLICY_DENIED" },
       };
     if (
       effect === "approval" &&
-      !policy?.verifyApproval(
+      !(await policy?.verifyApproval(
         approvalToken,
         this.context,
         input.name,
         args,
         evidenceContractHash,
-      )
+      ))
     )
       return {
-        content: [{ type: "text", text: `Approval required for tool '${input.name}'.` }],
+        content: [
+          { type: "text", text: `Approval required for tool '${input.name}'.` },
+        ],
         isError: true,
         structuredContent: {
           code: "APPROVAL_REQUIRED",
-          approvalRequest: policy?.approvalRequest(this.context, input.name, args),
+          approvalRequest: policy?.approvalRequest(
+            this.context,
+            input.name,
+            args,
+          ),
         },
       };
     return undefined;
@@ -329,11 +387,20 @@ export class McpToolDispatcher {
     const args = input.arguments ?? {};
     let evidenceContractHash: string | undefined;
     try {
-      evidenceContractHash = evidenceActionContractHash(input._meta, name, args);
+      evidenceContractHash = evidenceActionContractHash(
+        input._meta,
+        name,
+        args,
+      );
     } catch (cause) {
       const message = cause instanceof Error ? cause.message : String(cause);
       return {
-        content: [{ type: "text", text: `Invalid Evidence-Bound Action Contract: ${message}` }],
+        content: [
+          {
+            type: "text",
+            text: `Invalid Evidence-Bound Action Contract: ${message}`,
+          },
+        ],
         isError: true,
         structuredContent: { code: "EVIDENCE_CONTRACT_INVALID" },
       };
@@ -341,7 +408,10 @@ export class McpToolDispatcher {
     let transactionToken: unknown;
     let approvalToken: unknown;
     try {
-      transactionToken = transactionTokenForAction(input._meta, evidenceContractHash);
+      transactionToken = transactionTokenForAction(
+        input._meta,
+        evidenceContractHash,
+      );
       approvalToken = approvalTokenForAction(input._meta, evidenceContractHash);
     } catch (cause) {
       return invalidActionTokenMapResult(cause);
@@ -350,8 +420,12 @@ export class McpToolDispatcher {
 
     const transactionFabric = this.deps.transactionFabric;
     if (name === TRANSACTION_CAPABILITY_TOOL) {
-      const transactionEnforcement = transactionFabric?.config.enforcement ?? "unavailable";
-      if (transactionFabric === undefined || transactionFabric.config.enforcement === "off") {
+      const transactionEnforcement =
+        transactionFabric?.config.enforcement ?? "unavailable";
+      if (
+        transactionFabric === undefined ||
+        transactionFabric.config.enforcement === "off"
+      ) {
         logger.info("transaction capability call unavailable", {
           event: "mcp_transaction_capability_call",
           session: this.requestId,
@@ -359,7 +433,10 @@ export class McpToolDispatcher {
           scope_count: this.context.scopes.length,
           transaction_enforcement: transactionEnforcement,
           outcome: "unavailable",
-          reason: transactionFabric === undefined ? "fabric_unavailable" : "enforcement_off",
+          reason:
+            transactionFabric === undefined
+              ? "fabric_unavailable"
+              : "enforcement_off",
         });
       } else {
         const capability = transactionFabric.capabilityDocument();
@@ -389,7 +466,15 @@ export class McpToolDispatcher {
     }
 
     if (identityRateLimiter) {
-      const decision = await identityRateLimiter.check(this.context.subject);
+      // Bucket key: issuer + tenant + subject (Req 6.9). Static/disabled
+      // auth has no `iss` claim, so the auth method stands in for it.
+      const issuer =
+        typeof this.context.claims.iss === "string"
+          ? this.context.claims.iss
+          : this.context.method;
+      const decision = await identityRateLimiter.check(
+        `${issuer}:${this.context.tenantId}:${this.context.subject}`,
+      );
       if (!decision.allowed) {
         const message = `Rate limit exceeded for '${this.context.subject}'${
           decision.retryAfterMs !== undefined
@@ -413,7 +498,9 @@ export class McpToolDispatcher {
       sessionId: this.requestId,
       username: this.context.username,
       subject: this.context.subject,
-      ...(this.context.actor !== undefined ? { actor: this.context.actor.subject } : {}),
+      ...(this.context.actor !== undefined
+        ? { actor: this.context.actor.subject }
+        : {}),
       authMethod: this.context.method,
       tool: name,
       meta: { arguments: args },
@@ -429,29 +516,35 @@ export class McpToolDispatcher {
         status: "error",
         message: `Unknown tool: ${name}`,
       });
-      return { content: [{ type: "text", text: `Unknown tool: ${name}` }], isError: true };
+      return {
+        content: [{ type: "text", text: `Unknown tool: ${name}` }],
+        isError: true,
+      };
     }
 
     const requiredScopes = registry.requiredScopesOf(name);
     const access = registry.accessOf(name) ?? "read";
-    const policy = this.deps.authorizationEnabled !== false && this.deps.policies
-      ? new GovernancePolicy(this.deps.policies)
-      : undefined;
+    const policy = this.policy();
+    // One rule scan per call resolves effect, rule and evidence requirement (Req 6.3).
+    const decision = preflighted
+      ? undefined
+      : policy?.evaluate(this.context, name, access, args);
     if (
-      policy?.requiresEvidenceContract(this.context, name, access, args) === true &&
+      decision?.requiresEvidenceContract === true &&
       evidenceContractHash === undefined
     ) {
       return {
         content: [
-          { type: "text", text: `Evidence-Bound Action Contract required for tool '${name}'.` },
+          {
+            type: "text",
+            text: `Evidence-Bound Action Contract required for tool '${name}'.`,
+          },
         ],
         isError: true,
         structuredContent: { code: "EVIDENCE_CONTRACT_REQUIRED" },
       };
     }
-    const effect = preflighted
-      ? "allow"
-      : (policy?.decide(this.context, name, access, args) ?? "allow");
+    const effect = preflighted ? "allow" : (decision?.effect ?? "allow");
     if (effect === "deny") {
       return {
         content: [{ type: "text", text: `Policy denied tool '${name}'.` }],
@@ -461,16 +554,18 @@ export class McpToolDispatcher {
     }
     if (
       effect === "approval" &&
-      !policy?.verifyApproval(
+      !(await policy?.verifyApproval(
         approvalToken,
         this.context,
         name,
         args,
         evidenceContractHash,
-      )
+      ))
     ) {
       return {
-        content: [{ type: "text", text: `Approval required for tool '${name}'.` }],
+        content: [
+          { type: "text", text: `Approval required for tool '${name}'.` },
+        ],
         isError: true,
         structuredContent: {
           code: "APPROVAL_REQUIRED",
@@ -480,7 +575,8 @@ export class McpToolDispatcher {
     }
     const scopeError = missingScopesResult(requiredScopes, this.context);
     if (scopeError) {
-      const message = scopeError.content[0]?.text ?? "Missing required scope(s)";
+      const message =
+        scopeError.content[0]?.text ?? "Missing required scope(s)";
       bus.publish({
         type: "error",
         sessionId: this.requestId,
@@ -509,7 +605,8 @@ export class McpToolDispatcher {
         return { content: [{ type: "text", text: message }], isError: true };
       }
 
-      if (requestSignal?.aborted) throw requestSignal.reason ?? new Error("Request aborted");
+      if (requestSignal?.aborted)
+        throw requestSignal.reason ?? new Error("Request aborted");
       const run = (signal?: AbortSignal) => {
         const effectiveSignal =
           requestSignal && signal
@@ -527,7 +624,12 @@ export class McpToolDispatcher {
           (nestedName, nestedArgs, nestedCtx, nestedSignal, nestedOptions) => {
             if (nestedCtx !== this.context) {
               return Promise.resolve({
-                content: [{ type: "text" as const, text: "Nested invocation context mismatch." }],
+                content: [
+                  {
+                    type: "text" as const,
+                    text: "Nested invocation context mismatch.",
+                  },
+                ],
                 isError: true,
                 structuredContent: { code: "INVOCATION_CONTEXT_MISMATCH" },
               });
@@ -588,7 +690,10 @@ export class McpToolDispatcher {
 
       const bytes = result.content?.reduce(
         (n, content) =>
-          n + (typeof content.text === "string" ? Buffer.byteLength(content.text, "utf8") : 0),
+          n +
+          (typeof content.text === "string"
+            ? Buffer.byteLength(content.text, "utf8")
+            : 0),
         0,
       );
       logger.debug("tool response dispatched", {
