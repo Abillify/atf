@@ -22,7 +22,13 @@
  * Unknown issuers are rejected immediately (no network calls, no fallback).
  */
 
-import { decodeJwt, jwtVerify, createRemoteJWKSet } from "jose";
+import { decodeJwt, type JWTPayload } from "jose";
+import {
+  createDiscoveryClient,
+  createJwtVerifier as createKitJwtVerifier,
+  type DiscoveryClient,
+  type JwtVerifier as KitJwtVerifier,
+} from "@atf/security-kit";
 import type { ApiOidcIssuerConfig } from "./config.js";
 
 export interface JwtPrincipal {
@@ -87,8 +93,10 @@ interface IssuerState {
   config: ApiOidcIssuerConfig;
   /** Normalised issuer URL (no trailing slash) — used for URL construction. */
   normalised: string;
-  discoveryPromise: Promise<string> | null; // resolves to the canonical `issuer` from doc
-  jwks: ReturnType<typeof createRemoteJWKSet> | null;
+  /** Kit discovery client (single-flight, positive cache, negative backoff). */
+  discovery: DiscoveryClient;
+  /** Lazy kit verifier, built once the canonical issuer is discovered. */
+  verifierPromise: Promise<KitJwtVerifier> | null;
 }
 
 /** Normalise an issuer URL for comparison (strip trailing slash, lowercase scheme+host). */
@@ -114,30 +122,51 @@ export function createJwtVerifier(
         `[jwt-verifier] Duplicate API_OIDC_ISSUERS entry for "${norm}" — using last occurrence`,
       );
     }
-    stateMap.set(norm, { config: cfg, normalised: norm, discoveryPromise: null, jwks: null });
+    stateMap.set(norm, {
+      config: cfg,
+      normalised: norm,
+      // `trailing-slash` tolerates providers like Authentik that embed a
+      // trailing slash in `iss`; the kit verifier below is built against
+      // doc.issuer (the canonical value), so the `iss` check always matches
+      // what the provider actually signs.
+      discovery: createDiscoveryClient(cfg.issuer, {
+        issuerMatch: "trailing-slash",
+      }),
+      verifierPromise: null,
+    });
   }
 
   /**
-   * Discover the canonical issuer string and JWKS URI for a state entry.
-   * The canonical issuer is whatever the provider's discovery doc says — it
-   * is the value that appears in `iss` claims and what jose validates against.
-   * Result (the canonical issuer string) is cached for the process lifetime.
+   * Build (once) the kit JWT verifier for a state entry. The canonical issuer
+   * is whatever the provider's discovery doc says — it is the value that
+   * appears in `iss` claims and what jose validates against. The kit provides
+   * the signature/issuer/audience/expiry checks; this module keeps issuer
+   * routing and claim mapping.
    */
-  function getCanonicalIssuer(state: IssuerState): Promise<string> {
-    if (state.discoveryPromise === null) {
-      state.discoveryPromise = fetchDiscovery(state.normalised)
-        .then((doc) => {
-          // Build the JWKS key set now that we have the URI.
-          state.jwks = createRemoteJWKSet(new URL(doc.jwks_uri));
-          return doc.issuer; // canonical — may include trailing slash
-        })
-        .catch((err) => {
+  function getVerifier(state: IssuerState): Promise<KitJwtVerifier> {
+    if (state.verifierPromise === null) {
+      state.verifierPromise = state.discovery
+        .getMetadata()
+        .then((doc) =>
+          createKitJwtVerifier({
+            issuers: [
+              {
+                issuer: doc.issuer, // canonical — may include trailing slash
+                jwksUri: doc.jwks_uri,
+                ...(state.config.audience !== undefined
+                  ? { audiences: [state.config.audience] }
+                  : {}),
+              },
+            ],
+          }),
+        )
+        .catch((err: unknown) => {
           // Reset on transient failure so the next request retries.
-          state.discoveryPromise = null;
+          state.verifierPromise = null;
           throw err;
         });
     }
-    return state.discoveryPromise;
+    return state.verifierPromise;
   }
 
   async function verify(rawJwt: string): Promise<JwtPrincipal | null> {
@@ -155,96 +184,89 @@ export function createJwtVerifier(
     const state = stateMap.get(normalise(iss));
     if (!state) return null; // unknown issuer — reject without network call
 
-    // Step 3 — ensure discovery has run and JWKS is initialised.
-    let canonicalIssuer: string;
+    // Step 3 — discovery + kit verifier construction (JWKS included).
+    let kitVerifier: KitJwtVerifier;
     try {
-      canonicalIssuer = await getCanonicalIssuer(state);
+      kitVerifier = await getVerifier(state);
     } catch {
       return null; // discovery failed
     }
 
-    if (state.jwks === null) return null; // should not happen after successful discovery
-
-    // Step 4 — verify signature and standard claims.
+    // Step 4 — verify signature and standard claims via the kit.
+    let payload: JWTPayload;
+    let canonicalIssuer: string;
     try {
-      const verifyOptions: Parameters<typeof jwtVerify>[2] = {
-        issuer: canonicalIssuer,
-      };
-      if (state.config.audience !== undefined) {
-        verifyOptions.audience = state.config.audience;
-      }
+      const verified = await kitVerifier.verify(rawJwt);
+      payload = verified.payload;
+      canonicalIssuer = verified.issuer;
+    } catch {
+      return null; // expired, bad signature, wrong audience, etc.
+    }
 
-      const { payload } = await jwtVerify(rawJwt, state.jwks, verifyOptions);
+    if (typeof payload.sub !== "string" || !payload.sub) return null;
 
-      if (typeof payload.sub !== "string" || !payload.sub) return null;
+    // Resolve the ACL identity from the configured claim, falling back to
+    // `sub`. A configured claim that is present but not a usable string falls
+    // back rather than yielding an empty identity, because an empty identity
+    // used to mean "service context" downstream — i.e. full access.
+    const userClaim = state.config.userClaim ?? "sub";
+    const rawUser = payload[userClaim];
+    const userId =
+      typeof rawUser === "string" && rawUser.trim().length > 0
+        ? rawUser.trim()
+        : payload.sub;
 
-      // Resolve the ACL identity from the configured claim, falling back to
-      // `sub`. A configured claim that is present but not a usable string falls
-      // back rather than yielding an empty identity, because an empty identity
-      // used to mean "service context" downstream — i.e. full access.
-      const userClaim = state.config.userClaim ?? "sub";
-      const rawUser = payload[userClaim];
-      const userId =
-        typeof rawUser === "string" && rawUser.trim().length > 0
-          ? rawUser.trim()
-          : payload.sub;
-
-      const groupsClaim = state.config.groupsClaim ?? "groups";
-      const groups = normaliseGroupsClaim(payload[groupsClaim]);
-      // Isolation requires the issuer-specific configured claim. In single-
-      // tenant mode caller claims are ignored and the server default is used.
-      const tenantClaim = state.config.tenantClaim ?? "tenantId";
-      const rawTenant = payload[tenantClaim];
-      const verifiedTenantId =
-        typeof rawTenant === "string" && rawTenant.trim() ? rawTenant.trim() : undefined;
-      const tenantId = tenantIsolationEnabled === true
+    const groupsClaim = state.config.groupsClaim ?? "groups";
+    const groups = normaliseGroupsClaim(payload[groupsClaim]);
+    // Isolation requires the issuer-specific configured claim. In single-
+    // tenant mode caller claims are ignored and the server default is used.
+    const tenantClaim = state.config.tenantClaim ?? "tenantId";
+    const rawTenant = payload[tenantClaim];
+    const verifiedTenantId =
+      typeof rawTenant === "string" && rawTenant.trim()
+        ? rawTenant.trim()
+        : undefined;
+    const tenantId =
+      tenantIsolationEnabled === true
         ? verifiedTenantId
         : tenantIsolationEnabled === false
           ? (configuredDefaultTenantId ?? "default")
           : (verifiedTenantId ?? configuredDefaultTenantId);
-      if (!tenantId) return null;
-      const scopesClaim = state.config.scopesClaim ?? "scope";
-      const scopes = [
-        ...normaliseScopesClaim(payload[scopesClaim]),
-        ...normaliseScopesClaim(payload["kb"]).map((collection) => `kb:${collection}`),
-      ];
-      const clientClaim = state.config.clientIdClaim ?? "client_id";
-      const rawClientId = payload[clientClaim];
-      const clientId = typeof rawClientId === "string" && rawClientId.trim() ? rawClientId.trim() : undefined;
-      const audience = typeof payload.aud === "string" || Array.isArray(payload.aud)
-        ? payload.aud as string | string[]
+    if (!tenantId) return null;
+    const scopesClaim = state.config.scopesClaim ?? "scope";
+    const scopes = [
+      ...normaliseScopesClaim(payload[scopesClaim]),
+      ...normaliseScopesClaim(payload["kb"]).map(
+        (collection) => `kb:${collection}`,
+      ),
+    ];
+    const clientClaim = state.config.clientIdClaim ?? "client_id";
+    const rawClientId = payload[clientClaim];
+    const clientId =
+      typeof rawClientId === "string" && rawClientId.trim()
+        ? rawClientId.trim()
         : undefined;
-      const jti = typeof payload.jti === "string" && payload.jti.trim() ? payload.jti.trim() : undefined;
+    const audience =
+      typeof payload.aud === "string" || Array.isArray(payload.aud)
+        ? (payload.aud as string | string[])
+        : undefined;
+    const jti =
+      typeof payload.jti === "string" && payload.jti.trim()
+        ? payload.jti.trim()
+        : undefined;
 
-      return { iss: canonicalIssuer, sub: payload.sub, userId, groups, tenantId, scopes, audience, clientId, jti };
-    } catch {
-      return null; // expired, bad signature, wrong audience, etc.
-    }
+    return {
+      iss: canonicalIssuer,
+      sub: payload.sub,
+      userId,
+      groups,
+      tenantId,
+      scopes,
+      audience,
+      clientId,
+      jti,
+    };
   }
 
   return { verify };
-}
-
-// ─── Discovery helper ──────────────────────────────────────────────────────
-
-interface DiscoveryDocument {
-  issuer: string;
-  jwks_uri: string;
-}
-
-async function fetchDiscovery(normalisedIssuer: string): Promise<DiscoveryDocument> {
-  const url = `${normalisedIssuer}/.well-known/openid-configuration`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(
-      `JWT-verifier discovery failed: ${res.status} ${res.statusText} (${url})`,
-    );
-  }
-  const doc = (await res.json()) as Partial<DiscoveryDocument>;
-  if (!doc.issuer || !doc.jwks_uri) {
-    throw new Error(
-      `JWT-verifier: discovery document at ${url} is missing "issuer" or "jwks_uri"`,
-    );
-  }
-  return doc as DiscoveryDocument;
 }

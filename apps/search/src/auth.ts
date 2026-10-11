@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { type Request, type RequestHandler } from "express";
-import { timingSafeEqual } from "node:crypto";
+import { safeEqual } from "@atf/security-kit";
 import type { JwtVerifier } from "./jwt-verifier.js";
 import {
   readAssertedIdentity,
@@ -126,16 +126,6 @@ export function getLoginPageHtml(options: LoginPageOptions = {}): string {
 }
 
 /**
- * Constant-time string comparison to prevent timing attacks.
- */
-function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, "utf-8");
-  const bufB = Buffer.from(b, "utf-8");
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
-}
-
-/**
  * API / MCP auth middleware.
  *
  * Accepted credentials are determined exclusively by `AUTHN_MODE`:
@@ -204,7 +194,7 @@ export function createAuthMiddleware(
     if (
       (mode === "token" || mode === "token_or_oidc") &&
       apiToken !== null &&
-      safeCompare(bearerToken, apiToken)
+      safeEqual(bearerToken, apiToken)
     ) {
       // Req 3.4: asserted identity headers are only trusted from a static
       // token whose configured scopes include search.assert-identity.
@@ -323,7 +313,7 @@ export function createWebAuthMiddleware(
     if (monitorToken !== null) {
       const cookieHeader = req.headers["cookie"] ?? "";
       const sessionCookie = parseCookieValue(cookieHeader, "session_token");
-      if (sessionCookie !== null && safeCompare(sessionCookie, monitorToken)) {
+      if (sessionCookie !== null && safeEqual(sessionCookie, monitorToken)) {
         return next();
       }
     }
@@ -365,7 +355,7 @@ export function createLoginHandler(
     const token: unknown = (req.body as Record<string, unknown>)["token"];
     const tokenStr = typeof token === "string" ? token : "";
 
-    if (safeCompare(tokenStr, monitorToken)) {
+    if (safeEqual(tokenStr, monitorToken)) {
       const secure = secureCookie ? "; Secure" : "";
       res.setHeader("Set-Cookie", [
         `session_token=${encodeURIComponent(tokenStr)}; HttpOnly; SameSite=Strict; Max-Age=86400; Path=/${secure}`,

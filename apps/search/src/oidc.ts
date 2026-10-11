@@ -37,6 +37,11 @@ import {
   createRemoteJWKSet,
   type JWTPayload,
 } from "jose";
+import {
+  base64UrlEncode,
+  createDiscoveryClient,
+  safeEqual,
+} from "@atf/security-kit";
 import type { OidcConfig } from "./config.js";
 
 const TX_COOKIE = "oidc_tx";
@@ -91,18 +96,22 @@ export function createOidcProvider(
   const hmacKey = new TextEncoder().encode(config.sessionSecret);
 
   // ── Lazy, cached provider discovery + JWKS ────────────────────────────────
-  let discoveryPromise: Promise<DiscoveryDocument> | null = null;
+  // The kit discovery client provides single-flight, positive caching (min
+  // 5 min) and negative backoff (30 s → 5 min). `issuerMatch:
+  // "trailing-slash"` accepts providers like Authentik that embed a trailing
+  // slash in `iss`; token verification below therefore uses doc.issuer, the
+  // canonical value from the discovery document.
+  const discovery = createDiscoveryClient(config.issuer, {
+    issuerMatch: "trailing-slash",
+  });
   let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
   async function discover(): Promise<DiscoveryDocument> {
-    if (discoveryPromise === null) {
-      discoveryPromise = fetchDiscovery(config.issuer).catch((err) => {
-        // Reset so a transient failure doesn't poison the cache permanently.
-        discoveryPromise = null;
-        throw err;
-      });
+    const doc = await discovery.getMetadata();
+    if (!doc.authorization_endpoint || !doc.token_endpoint) {
+      throw new Error("OIDC discovery document is missing required endpoints");
     }
-    return discoveryPromise;
+    return doc as DiscoveryDocument;
   }
 
   async function getJwks(): Promise<ReturnType<typeof createRemoteJWKSet>> {
@@ -124,10 +133,10 @@ export function createOidcProvider(
     try {
       const doc = await discover();
 
-      const state = base64Url(randomBytes(32));
-      const nonce = base64Url(randomBytes(32));
-      const codeVerifier = base64Url(randomBytes(32));
-      const codeChallenge = base64Url(
+      const state = base64UrlEncode(randomBytes(32));
+      const nonce = base64UrlEncode(randomBytes(32));
+      const codeVerifier = base64UrlEncode(randomBytes(32));
+      const codeChallenge = base64UrlEncode(
         createHash("sha256").update(codeVerifier).digest(),
       );
 
@@ -140,12 +149,20 @@ export function createOidcProvider(
           : "/";
 
       // Persist the transaction in a short-lived signed cookie.
-      const tx = await new SignJWT({ state, nonce, cv: codeVerifier, rt: returnTo })
+      const tx = await new SignJWT({
+        state,
+        nonce,
+        cv: codeVerifier,
+        rt: returnTo,
+      })
         .setProtectedHeader({ alg: "HS256" })
         .setIssuedAt()
         .setExpirationTime(`${TX_TTL_SECONDS}s`)
         .sign(hmacKey);
-      appendCookie(res, buildCookie(TX_COOKIE, tx, TX_TTL_SECONDS, secureCookie));
+      appendCookie(
+        res,
+        buildCookie(TX_COOKIE, tx, TX_TTL_SECONDS, secureCookie),
+      );
 
       const authUrl = new URL(doc.authorization_endpoint);
       authUrl.searchParams.set("response_type", "code");
@@ -185,10 +202,7 @@ export function createOidcProvider(
       }
 
       // Recover and validate the transaction cookie.
-      const txCookie = parseCookieValue(
-        req.headers["cookie"] ?? "",
-        TX_COOKIE,
-      );
+      const txCookie = parseCookieValue(req.headers["cookie"] ?? "", TX_COOKIE);
       if (txCookie === null) {
         sendAuthError(res, "Login session expired, please try again");
         return;
@@ -202,7 +216,7 @@ export function createOidcProvider(
         return;
       }
 
-      if (typeof tx["state"] !== "string" || !timingSafeEqualStr(tx["state"], state)) {
+      if (typeof tx["state"] !== "string" || !safeEqual(tx["state"], state)) {
         log.warn("OIDC state mismatch");
         sendAuthError(res, "State mismatch, please try again");
         return;
@@ -247,8 +261,7 @@ export function createOidcProvider(
         typeof payload["email"] === "string" ? payload["email"] : undefined;
       const name =
         typeof payload["name"] === "string" ? payload["name"] : undefined;
-      const subject =
-        typeof payload.sub === "string" ? payload.sub.trim() : "";
+      const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
       const groups = normalizeGroups(payload[config.groupsClaim]);
 
       if (subject === "") {
@@ -342,7 +355,8 @@ export function createOidcProvider(
       const groups = normalizeGroups(payload["groups"]);
       return {
         sub: payload.sub.trim(),
-        email: typeof payload["email"] === "string" ? payload["email"] : undefined,
+        email:
+          typeof payload["email"] === "string" ? payload["email"] : undefined,
         name: typeof payload["name"] === "string" ? payload["name"] : undefined,
         ...(groups.length > 0 ? { groups } : {}),
       };
@@ -361,43 +375,6 @@ export function createOidcProvider(
 }
 
 // ───────────────────────────── helpers ──────────────────────────────────────
-
-async function fetchDiscovery(issuer: string): Promise<DiscoveryDocument> {
-  // Normalise: strip trailing slash so the discovery URL is always clean.
-  const base = issuer.replace(/\/+$/, "");
-  const url = `${base}/.well-known/openid-configuration`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(
-      `OIDC discovery failed: ${res.status} ${res.statusText} (${url})`,
-    );
-  }
-  const doc = (await res.json()) as Partial<DiscoveryDocument>;
-  if (
-    !doc.authorization_endpoint ||
-    !doc.token_endpoint ||
-    !doc.jwks_uri ||
-    !doc.issuer
-  ) {
-    throw new Error("OIDC discovery document is missing required endpoints");
-  }
-
-  // The `issuer` in the discovery document is the authoritative value that
-  // providers embed in token `iss` claims. Warn when it differs from the
-  // configured value (ignoring trailing slashes) — it usually means the
-  // OIDC_ISSUER env var is set incorrectly, but we accept it and use the
-  // document value for JWT verification to avoid the mismatch error.
-  const normalise = (s: string) => s.replace(/\/+$/, "");
-  if (normalise(doc.issuer) !== normalise(issuer)) {
-    console.warn(
-      `[oidc] Discovery issuer "${doc.issuer}" differs from configured OIDC_ISSUER "${issuer}". ` +
-        `Using the discovery document value for token validation. ` +
-        `Consider updating OIDC_ISSUER to "${doc.issuer}".`,
-    );
-  }
-
-  return doc as DiscoveryDocument;
-}
 
 interface ExchangeArgs {
   tokenEndpoint: string;
@@ -472,24 +449,6 @@ function isEmailAllowed(
     if (domain && config.allowedEmailDomains.includes(domain)) return true;
   }
   return false;
-}
-
-function base64Url(buf: Buffer): string {
-  return buf
-    .toString("base64")
-    .replace(/\+/g, "-")
-    .replace(/\//g, "_")
-    .replace(/=+$/, "");
-}
-
-/** Constant-time-ish string compare for state values of equal expected length. */
-function timingSafeEqualStr(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
 }
 
 function buildCookie(

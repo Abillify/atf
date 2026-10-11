@@ -33,6 +33,11 @@
 import { createHash, randomBytes } from "node:crypto";
 import type { Request, RequestHandler } from "express";
 import { SignJWT, createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
+import {
+  base64UrlEncode,
+  createDiscoveryClient,
+  safeEqual,
+} from "@atf/security-kit";
 import type { Logger } from "pino";
 import type { OidcConfig } from "./config.js";
 
@@ -85,18 +90,22 @@ export function createOidcProvider(
   const hmacKey = new TextEncoder().encode(config.sessionSecret);
 
   // ── Lazy, cached provider discovery + JWKS ────────────────────────────────
-  let discoveryPromise: Promise<DiscoveryDocument> | null = null;
+  // Kit discovery: single-flight, positive cache (min 5 min), negative backoff
+  // (30 s → 5 min) and jwks_uri validation (Req 7.3). `issuerMatch:
+  // "trailing-slash"` tolerates providers like Authentik that embed a trailing
+  // slash in `iss`; token verification below uses doc.issuer, the canonical
+  // value, so the `iss` claim always matches.
+  const discovery = createDiscoveryClient(config.issuer, {
+    issuerMatch: "trailing-slash",
+  });
   let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 
   async function discover(): Promise<DiscoveryDocument> {
-    if (discoveryPromise === null) {
-      discoveryPromise = fetchDiscovery(config.issuer).catch((err: unknown) => {
-        // Reset so a transient failure does not poison the cache permanently.
-        discoveryPromise = null;
-        throw err;
-      });
+    const doc = await discovery.getMetadata();
+    if (!doc.authorization_endpoint || !doc.token_endpoint) {
+      throw new Error("OIDC discovery document is missing required endpoints");
     }
-    return discoveryPromise;
+    return doc as DiscoveryDocument;
   }
 
   async function getJwks(): Promise<ReturnType<typeof createRemoteJWKSet>> {
@@ -118,10 +127,12 @@ export function createOidcProvider(
     try {
       const doc = await discover();
 
-      const state = base64Url(randomBytes(32));
-      const nonce = base64Url(randomBytes(32));
-      const codeVerifier = base64Url(randomBytes(32));
-      const codeChallenge = base64Url(createHash("sha256").update(codeVerifier).digest());
+      const state = base64UrlEncode(randomBytes(32));
+      const nonce = base64UrlEncode(randomBytes(32));
+      const codeVerifier = base64UrlEncode(randomBytes(32));
+      const codeChallenge = base64UrlEncode(
+        createHash("sha256").update(codeVerifier).digest(),
+      );
 
       // Open-redirect guard: only same-site absolute paths survive, and `//`
       // is rejected because it is a protocol-relative URL to another host.
@@ -133,12 +144,20 @@ export function createOidcProvider(
           ? rawReturnTo
           : "/";
 
-      const tx = await new SignJWT({ state, nonce, cv: codeVerifier, rt: returnTo })
+      const tx = await new SignJWT({
+        state,
+        nonce,
+        cv: codeVerifier,
+        rt: returnTo,
+      })
         .setProtectedHeader({ alg: "HS256" })
         .setIssuedAt()
         .setExpirationTime(`${TX_TTL_SECONDS}s`)
         .sign(hmacKey);
-      appendCookie(res, buildCookie(TX_COOKIE, tx, TX_TTL_SECONDS, secureCookie));
+      appendCookie(
+        res,
+        buildCookie(TX_COOKIE, tx, TX_TTL_SECONDS, secureCookie),
+      );
 
       const authUrl = new URL(doc.authorization_endpoint);
       authUrl.searchParams.set("response_type", "code");
@@ -193,9 +212,12 @@ export function createOidcProvider(
       }
 
       const txState = tx["state"];
-      if (typeof txState !== "string" || !timingSafeEqualStr(txState, state)) {
+      if (typeof txState !== "string" || !safeEqual(txState, state)) {
         log.warn("OIDC state mismatch");
-        sendAuthError(res, "State stimmt nicht überein, bitte erneut versuchen");
+        sendAuthError(
+          res,
+          "State stimmt nicht überein, bitte erneut versuchen",
+        );
         return;
       }
 
@@ -227,12 +249,17 @@ export function createOidcProvider(
 
       if (payload["nonce"] !== nonce) {
         log.warn("OIDC nonce mismatch");
-        sendAuthError(res, "Nonce stimmt nicht überein, bitte erneut versuchen");
+        sendAuthError(
+          res,
+          "Nonce stimmt nicht überein, bitte erneut versuchen",
+        );
         return;
       }
 
-      const email = typeof payload["email"] === "string" ? payload["email"] : undefined;
-      const name = typeof payload["name"] === "string" ? payload["name"] : undefined;
+      const email =
+        typeof payload["email"] === "string" ? payload["email"] : undefined;
+      const name =
+        typeof payload["name"] === "string" ? payload["name"] : undefined;
       const subject = typeof payload.sub === "string" ? payload.sub.trim() : "";
       const groups = normalizeGroups(payload[config.groupsClaim]);
 
@@ -264,13 +291,20 @@ export function createOidcProvider(
 
       appendCookie(
         res,
-        buildCookie(SESSION_COOKIE, session, config.sessionTtlSeconds, secureCookie),
+        buildCookie(
+          SESSION_COOKIE,
+          session,
+          config.sessionTtlSeconds,
+          secureCookie,
+        ),
       );
       appendCookie(res, buildCookie(TX_COOKIE, "", 0, secureCookie));
 
       const rt = tx["rt"];
       const returnTo =
-        typeof rt === "string" && rt.startsWith("/") && !rt.startsWith("//") ? rt : "/";
+        typeof rt === "string" && rt.startsWith("/") && !rt.startsWith("//")
+          ? rt
+          : "/";
       log.info({ sub: subject, email }, "OIDC login successful");
       res.redirect(returnTo);
     } catch (err) {
@@ -287,7 +321,10 @@ export function createOidcProvider(
       const doc = await discover().catch(() => null);
       if (doc?.end_session_endpoint) {
         const url = new URL(doc.end_session_endpoint);
-        url.searchParams.set("post_logout_redirect_uri", `${resolveBaseUrl(req)}/`);
+        url.searchParams.set(
+          "post_logout_redirect_uri",
+          `${resolveBaseUrl(req)}/`,
+        );
         url.searchParams.set("client_id", config.clientId);
         res.redirect(url.toString());
         return;
@@ -307,11 +344,13 @@ export function createOidcProvider(
         issuer: SESSION_ISSUER,
         audience: SESSION_AUDIENCE,
       });
-      if (typeof payload.sub !== "string" || payload.sub.trim() === "") return null;
+      if (typeof payload.sub !== "string" || payload.sub.trim() === "")
+        return null;
       const groups = normalizeGroups(payload["groups"]);
       return {
         sub: payload.sub.trim(),
-        email: typeof payload["email"] === "string" ? payload["email"] : undefined,
+        email:
+          typeof payload["email"] === "string" ? payload["email"] : undefined,
         name: typeof payload["name"] === "string" ? payload["name"] : undefined,
         ...(groups.length > 0 ? { groups } : {}),
       };
@@ -330,20 +369,6 @@ export function createOidcProvider(
 }
 
 // ───────────────────────────── helpers ──────────────────────────────────────
-
-async function fetchDiscovery(issuer: string): Promise<DiscoveryDocument> {
-  const base = issuer.replace(/\/+$/, "");
-  const url = `${base}/.well-known/openid-configuration`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`OIDC discovery failed: ${res.status} ${res.statusText} (${url})`);
-  }
-  const doc = (await res.json()) as Partial<DiscoveryDocument>;
-  if (!doc.authorization_endpoint || !doc.token_endpoint || !doc.jwks_uri || !doc.issuer) {
-    throw new Error("OIDC discovery document is missing required endpoints");
-  }
-  return doc as DiscoveryDocument;
-}
 
 interface ExchangeArgs {
   tokenEndpoint: string;
@@ -412,20 +437,6 @@ function isEmailAllowed(email: string | undefined, config: OidcConfig): boolean 
     if (domain && config.allowedEmailDomains.includes(domain)) return true;
   }
   return false;
-}
-
-function base64Url(buf: Buffer): string {
-  return buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-/** Constant-time-ish compare for state values of equal expected length. */
-function timingSafeEqualStr(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  }
-  return diff === 0;
 }
 
 function buildCookie(

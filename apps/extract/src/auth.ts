@@ -19,7 +19,7 @@
  * model for the whole fabric.
  */
 
-import { timingSafeEqual } from "node:crypto";
+import { safeEqual } from "@atf/security-kit";
 import type { Request, RequestHandler } from "express";
 import type { AuthnMode } from "./config.js";
 import type { JwtVerifier } from "./jwt-verifier.js";
@@ -43,14 +43,6 @@ export interface OidcSessionChecker {
   loginPath: string;
   /** Resolve to a truthy session when the request carries a valid one. */
   verifySession(req: Request): Promise<unknown>;
-}
-
-/** Constant-time comparison, so a token cannot be recovered byte by byte. */
-function safeCompare(a: string, b: string): boolean {
-  const bufA = Buffer.from(a, "utf-8");
-  const bufB = Buffer.from(b, "utf-8");
-  if (bufA.length !== bufB.length) return false;
-  return timingSafeEqual(bufA, bufB);
 }
 
 function parseCookieValue(cookieHeader: string, name: string): string | null {
@@ -204,7 +196,7 @@ export function createAuthMiddleware(
     if (
       (mode === "token" || mode === "token_or_oidc") &&
       apiToken !== null &&
-      safeCompare(bearerToken, apiToken)
+      safeEqual(bearerToken, apiToken)
     ) {
       const asserted = readAssertedIdentity(req);
       const base =
@@ -215,8 +207,12 @@ export function createAuthMiddleware(
         req,
         normalize({
           ...base,
-          ...(servicePrincipal.scopes?.length ? { scopes: servicePrincipal.scopes } : {}),
-          tenantId: tenantIsolationEnabled ? servicePrincipal.tenantId : defaultTenantId,
+          ...(servicePrincipal.scopes?.length
+            ? { scopes: servicePrincipal.scopes }
+            : {}),
+          tenantId: tenantIsolationEnabled
+            ? servicePrincipal.tenantId
+            : defaultTenantId,
         }),
       );
       next();
@@ -319,7 +315,7 @@ export function createWebAuthMiddleware(
 
     if (monitorToken !== null) {
       const sessionCookie = parseCookieValue(req.headers["cookie"] ?? "", "session_token");
-      if (sessionCookie !== null && safeCompare(sessionCookie, monitorToken)) {
+      if (sessionCookie !== null && safeEqual(sessionCookie, monitorToken)) {
         next();
         return;
       }
@@ -358,7 +354,7 @@ export function createLoginHandler(
     const token: unknown = (req.body as Record<string, unknown> | undefined)?.["token"];
     const tokenStr = typeof token === "string" ? token : "";
 
-    if (safeCompare(tokenStr, monitorToken)) {
+    if (safeEqual(tokenStr, monitorToken)) {
       const secure = secureCookie ? "; Secure" : "";
       res.setHeader("Set-Cookie", [
         `session_token=${encodeURIComponent(tokenStr)}; HttpOnly; SameSite=Strict; Max-Age=86400; Path=/${secure}`,

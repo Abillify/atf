@@ -22,6 +22,7 @@
   "dependencies": {
     "@atf/erasure-contract": "workspace:1.0.0",
     "@atf/extract-contract": "workspace:2.2.0",
+    "@atf/security-kit": "workspace:1.0.0",
     "bmp-js": "0.1.0",
     "express": "5.2.1",
     "fast-xml-parser": "5.11.1",

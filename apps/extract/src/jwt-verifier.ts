@@ -19,11 +19,21 @@
  *     Picking the key set from an unverified claim is the classic way to make a
  *     multi-issuer verifier accept a self-signed token.
  *
- * JWKS fetching, caching and key rotation are handled by jose's remote key set,
- * one per issuer, created lazily so an unreachable IdP does not block startup.
+ * Discovery (single-flight, cached), JWKS fetching, key rotation and token
+ * verification are delegated to `@atf/security-kit` (`createDiscoveryClient`,
+ * `createJwtVerifier`), one verifier per configured issuer, created lazily so an
+ * unreachable IdP does not block startup. The kit verifier is built against the
+ * canonical `issuer` from the discovery document and requires an `exp` claim —
+ * both slightly stricter than the previous local implementation.
  */
 
-import { createRemoteJWKSet, decodeJwt, jwtVerify, type JWTPayload } from "jose";
+import { decodeJwt, type JWTPayload } from "jose";
+import {
+  createDiscoveryClient,
+  createJwtVerifier as createKitJwtVerifier,
+  type DiscoveryClient,
+  type JwtVerifier as KitJwtVerifier,
+} from "@atf/security-kit";
 import type { ApiOidcIssuerConfig } from "./config.js";
 
 /** Identity established by a verified JWT. */
@@ -69,8 +79,10 @@ interface IssuerState {
   config: ApiOidcIssuerConfig;
   /** Normalised issuer without a trailing slash, for matching `iss`. */
   normalised: string;
-  jwks: ReturnType<typeof createRemoteJWKSet> | null;
-  discovery: Promise<string> | null;
+  /** Kit discovery client (single-flight, positive cache, negative backoff). */
+  discovery: DiscoveryClient;
+  /** Lazy kit verifier, built once the canonical issuer is discovered. */
+  verifierPromise: Promise<KitJwtVerifier> | null;
 }
 
 function normaliseIssuer(issuer: string): string {
@@ -93,30 +105,46 @@ export function createJwtVerifier(
   const states: IssuerState[] = issuers.map((config) => ({
     config,
     normalised: normaliseIssuer(config.issuer),
-    jwks: null,
-    discovery: null,
+    // `trailing-slash` tolerates providers like Authentik that embed a trailing
+    // slash in `iss`; the kit verifier is built against doc.issuer (the
+    // canonical value), so the `iss` check matches what the provider signs.
+    discovery: createDiscoveryClient(config.issuer, {
+      issuerMatch: "trailing-slash",
+    }),
+    verifierPromise: null,
   }));
 
-  /** Resolve and cache the JWKS URI from the issuer's discovery document. */
-  async function jwksFor(state: IssuerState): Promise<ReturnType<typeof createRemoteJWKSet>> {
-    if (state.jwks !== null) return state.jwks;
-    if (state.discovery === null) {
-      state.discovery = fetchJwksUri(state.normalised).catch((err: unknown) => {
+  /** Build (once) the kit verifier for a state entry via its discovery doc. */
+  function verifierFor(state: IssuerState): Promise<KitJwtVerifier> {
+    if (state.verifierPromise !== null) return state.verifierPromise;
+    state.verifierPromise = state.discovery
+      .getMetadata()
+      .then((doc) =>
+        createKitJwtVerifier({
+          issuers: [
+            {
+              issuer: doc.issuer,
+              jwksUri: doc.jwks_uri,
+              ...(state.config.audience !== undefined
+                ? { audiences: [state.config.audience] }
+                : {}),
+            },
+          ],
+        }),
+      )
+      .catch((err: unknown) => {
         // Reset so a transient failure does not poison the cache permanently.
-        state.discovery = null;
+        state.verifierPromise = null;
         throw err;
       });
-    }
-    const jwksUri = await state.discovery;
-    state.jwks ??= createRemoteJWKSet(new URL(jwksUri));
-    return state.jwks;
+    return state.verifierPromise;
   }
 
   async function verify(rawJwt: string): Promise<JwtPrincipal | null> {
     // The unverified `iss` is used only to *select* candidate issuers from the
-    // allow-list. Signature, issuer and audience are all still enforced by
-    // jwtVerify below, so a forged `iss` can at worst pick the wrong key set and
-    // fail verification.
+    // allow-list. Signature, issuer and audience are all still enforced by the
+    // kit verifier below, so a forged `iss` can at worst pick the wrong key set
+    // and fail verification.
     let claimedIssuer: string | undefined;
     try {
       claimedIssuer = decodeJwt(rawJwt).iss;
@@ -125,17 +153,21 @@ export function createJwtVerifier(
     }
     if (claimedIssuer === undefined) return null;
     const normalisedClaim = normaliseIssuer(claimedIssuer);
-    const candidates = states.filter((state) => state.normalised === normalisedClaim);
+    const candidates = states.filter(
+      (state) => state.normalised === normalisedClaim,
+    );
     if (candidates.length === 0) return null;
 
     for (const state of candidates) {
       try {
-        const jwks = await jwksFor(state);
-        const { payload } = await jwtVerify(rawJwt, jwks, {
-          issuer: [state.config.issuer, state.normalised],
-          ...(state.config.audience !== undefined ? { audience: state.config.audience } : {}),
-        });
-        return toPrincipal(payload, state.config, defaultTenantId, tenantIsolationEnabled);
+        const kitVerifier = await verifierFor(state);
+        const { payload } = await kitVerifier.verify(rawJwt);
+        return toPrincipal(
+          payload,
+          state.config,
+          defaultTenantId,
+          tenantIsolationEnabled,
+        );
       } catch {
         // Try the next issuer entry with the same URL (different audience).
       }
@@ -190,15 +222,3 @@ function toPrincipal(
   };
 }
 
-async function fetchJwksUri(issuer: string): Promise<string> {
-  const url = `${issuer}/.well-known/openid-configuration`;
-  const res = await fetch(url, { headers: { accept: "application/json" } });
-  if (!res.ok) {
-    throw new Error(`OIDC discovery failed: ${res.status} ${res.statusText} (${url})`);
-  }
-  const doc = (await res.json()) as { jwks_uri?: unknown };
-  if (typeof doc.jwks_uri !== "string") {
-    throw new Error(`OIDC discovery document at ${url} has no jwks_uri`);
-  }
-  return doc.jwks_uri;
-}
