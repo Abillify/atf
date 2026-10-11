@@ -15,6 +15,7 @@
  * The header is inserted after a shebang and after a directive prologue such as
  * `"use client"`, because both must remain the first executable construct in the file.
  */
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 
 const LICENSE_ID = "Elastic-2.0";
@@ -58,6 +59,9 @@ function trackedSourceFiles(): string[] {
 		.filter(Boolean)
 		.filter((path) => !EXCLUDED_PATH.test(path))
 		.filter((path) => !EXCLUDED_FILES.has(path.split("/").at(-1) ?? ""))
+		// Tracked but deleted in the working tree (not yet `git rm`-staged):
+		// nothing left to check, and reading it would crash with ENOENT.
+		.filter((path) => existsSync(path))
 		.sort();
 }
 
