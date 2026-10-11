@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Plattform-Backends fuer den Datei-Watcher (requirements 1.5, design.md):
- * `fs.watch` mit `recursive: true` auf macOS/Windows, chokidar auf Linux.
+ * Platform backends for the file watcher (requirements 1.5, design.md):
+ * `fs.watch` with `recursive: true` on macOS/Windows, chokidar on Linux.
  */
 
 import { watch as fsWatch } from "node:fs";
@@ -15,8 +15,8 @@ export const fsWatchBackend: WatchBackendFactory = async (dir, onChange) => {
   const watcher = fsWatch(dir, { recursive: true }, () => {
     onChange();
   });
-  // Ein EIO/EPERM darf den Prozess nicht beenden — der Intervall-Lauf bleibt
-  // die Sicherheitsnetz-Strategie (1.3).
+  // An EIO/EPERM must not end the process; the interval run stays the
+  // safety-net strategy (1.3).
   watcher.on("error", () => {
     /* bewusst ignoriert */
   });
@@ -40,7 +40,7 @@ export const chokidarBackend: WatchBackendFactory = async (dir, onChange) => {
   };
 };
 
-/** Auswahl gemaess Plattform (design.md). */
+/** Selection by platform (design.md). */
 export function defaultBackendForPlatform(platform: NodeJS.Platform): WatchBackendFactory {
   return platform === "linux" ? chokidarBackend : fsWatchBackend;
 }

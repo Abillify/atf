@@ -2,31 +2,30 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Property 6 — Tenant-Isolation aller Ranglisten (task 6.3, Requirement 3.5):
+ * Property 6: tenant isolation of all ranked lists (task 6.3, Requirement 3.5):
  *
- *   Für beliebige Tenants, ACLs und Queries enthält kein Ergebnis aus Dense,
- *   FTS, Sparse, Identifier oder Fusion eine Zeile eines fremden Tenants oder
- *   eine ACL-verbotene Zeile.
+ *   For arbitrary tenants, ACLs and queries, no result from dense, FTS,
+ *   sparse, identifier or fusion contains a row of a foreign tenant or an
+ *   ACL-forbidden row.
  *
- * fast-check erzeugt eine zufällige Mischung von Einheiten über drei Tenants —
- * jede mit einem zufälligen allowed_users/allowed_groups-Muster — plus einen
- * Query-Scope (Tenant, User-Id, Gruppen, service-Flag). Jede Iteration fügt
- * die Mischung ein, fragt sie über ALLE Ranglisten-Pfade von
- * PostgresClient.search ab (Dense, FTS-only, Hybrid-Fusion, Hybrid+Sparse,
- * Hybrid+Identifier-Liste) und vergleicht die gelieferte Referenzmenge mit der
- * Menge, die das Modell für diesen Scope als sichtbar vorhersagt: nur Zeilen
- * des eigenen Tenants, ACL-Regeln angewandt. Eine fremde Tenant-Zeile oder
- * eine ACL-verbotene Zeile in irgendeiner Liste verwirft die Property — ebenso
- * eine fehlende Zeile (die Listen dürfen weder zu viel noch zu wenig melden).
+ * fast-check generates a random mix of units across three tenants, each with
+ * a random allowed_users/allowed_groups pattern, plus a query scope (tenant,
+ * user id, groups, service flag). Every iteration inserts the mix, queries it
+ * through ALL ranked-list paths of
+ * PostgresClient.search (dense, FTS-only, hybrid fusion, hybrid+sparse,
+ * hybrid+identifier list) and compares the returned reference set with the
+ * set the model predicts as visible for this scope: only rows of the own
+ * tenant, with ACL rules applied. A foreign tenant row or an ACL-forbidden
+ * row in any list falsifies the property, as does a missing row (the lists
+ * must report neither too much nor too little).
  *
- * Der Binary-Dense-Pfad teilt sich buildAccessSql mit dem Dense-Pfad (durch die
- * query-builder-Unit-Tests abgedeckt) und wird hier nicht erneut gegen die DB
- * gefahren.
+ * The binary dense path shares buildAccessSql with the dense path (covered by
+ * the query-builder unit tests) and is not run against the DB again here.
  *
- * Der zweite Describe-Block deckt den zweiten Teil von Requirement 3.5 ab
- * ("fehlende Scopes"): jeder Query-Builder wirft ohne Scope
- * AccessScopeRequiredError, und search() schlägt fehl (ok:false, keine Zeilen),
- * statt unscope'd Ergebnisse zu liefern.
+ * The second describe block covers the second part of Requirement 3.5
+ * ("missing scopes"): every query builder throws AccessScopeRequiredError
+ * without a scope, and search() fails (ok:false, no rows) instead of
+ * returning unscoped results.
  *
  * Self-skips when TEST_POSTGRES_URL is unset (matching the other DB suites).
  */
@@ -226,7 +225,7 @@ describeIfPg("Tenant-Isolation aller Ranglisten · Property 6 (real postgres)", 
 		}
 	}
 
-	it("liefert in keiner Rangliste eine fremde Tenant- oder ACL-verbotene Zeile", async () => {
+	it("returns no foreign-tenant or ACL-forbidden row in any ranked list", async () => {
 		await fc.assert(
 			fc.asyncProperty(caseArb, async (gen) => {
 				const rows: InsertedRow[] = gen.rows.map((r, idx) => ({
@@ -363,7 +362,7 @@ describeIfPg("Fehlende Scopes · Requirement 3.5 (real postgres)", () => {
 	const noScope = undefined as unknown as AccessScope;
 	const vectorJson = JSON.stringify(QUERY_VECTOR);
 
-	it("jeder Query-Builder wirft ohne Scope AccessScopeRequiredError", () => {
+	it("every query builder throws AccessScopeRequiredError without a scope", () => {
 		expect(() =>
 			buildDenseQuery(table, "vector", 10, undefined, false, 0, vectorJson, noScope),
 		).toThrow(AccessScopeRequiredError);
@@ -408,7 +407,7 @@ describeIfPg("Fehlende Scopes · Requirement 3.5 (real postgres)", () => {
 		).toThrow(AccessScopeRequiredError);
 	});
 
-	it("search() schlägt ohne Scope fehl statt Zeilen zu liefern (fail closed)", async () => {
+	it("search() fails without a scope instead of returning rows (fail closed)", async () => {
 		const res = await pg.search(QUERY_TEXT, QUERY_VECTOR, 10, collection, noScope);
 		expect(res.ok).toBe(false);
 	});

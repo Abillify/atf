@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Erzeugt das Tauri-Updater-Manifest `latest.json` fuer den ATF Extract
- * Outpost (Task 23.4, Anforderungen 14.9/14.10).
+ * Generates the Tauri updater manifest `latest.json` for the ATF Extract
+ * Outpost (Task 23.4, Requirements 14.9/14.10).
  *
- * Laeuft im Job `publish` des Workflows `outpost-release.yml`. Erwartet im
- * Artefakt-Verzeichnis die von `tauri build --config
+ * Runs in the `publish` job of the `outpost-release.yml` workflow. Expects in
+ * the artifact directory the updater artifacts produced by `tauri build --config
  * '{"bundle":{"createUpdaterArtifacts":true}}'` erzeugten Updater-Artefakte
- * (`*.nsis.zip`, `*.app.tar.gz`) mit zugehoeriger Minisign-Signatur (`.sig`).
+ * (`*.nsis.zip`, `*.app.tar.gz`) with their Minisign signature (`.sig`).
  *
- * Verwendung:
+ * Usage:
  *   UPDATER_REPO=<owner>/<repo> RELEASE_TAG=outpost-v0.1.0 \
  *     bun run scripts/generate-updater-manifest.ts --dir artifacts --out latest.json
  */
@@ -26,7 +26,7 @@ type Manifest = {
 	platforms: Record<string, PlatformEntry>;
 };
 
-/** Tauri-Plattform-Schluessel aus dem Dateinamen des Updater-Artefakts. */
+/** Tauri platform key from the file name of the updater artifact. */
 function platformKey(fileName: string): string | undefined {
 	const lower = fileName.toLowerCase();
 	if (lower.endsWith(".nsis.zip")) return "windows-x86_64";
@@ -74,7 +74,7 @@ async function main(): Promise<void> {
 	if (repo === undefined || repo === "" || tag === undefined || tag === "") {
 		throw new Error("UPDATER_REPO und RELEASE_TAG muessen gesetzt sein");
 	}
-	// App-Version: Tag ohne Praefix "outpost-v" (vergleicht mit version in
+	// App version: the tag without the "outpost-v" prefix (compared with version in
 	// tauri.conf.json).
 	const version = tag.replace(/^outpost-v/, "");
 

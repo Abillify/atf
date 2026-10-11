@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Graceful Shutdown (requirements 7.10, 10.7).
+ * Graceful shutdown (requirements 7.10, 10.7).
  *
- * SIGTERM/SIGINT: keine neuen Läufe, laufende Übertragungen dürfen zu Ende
- * laufen (Grace, Default 30 s), danach Abbruch, State-Flush, Exit 0. Ein
- * zweites Signal verkürzt die Grace sofort auf null. Der Ablauf ist gegen
- * injizierbare Signal-Handler und einen injizierbaren Exit geschrieben, damit
- * Tests ihn mit Fake-Timern durchspielen können.
+ * SIGTERM/SIGINT: no new runs, running transfers may finish (grace,
+ * default 30 s), then abort, state flush, exit 0. A second signal cuts
+ * the grace to zero immediately. The flow is written against injectable
+ * signal handlers and an injectable exit so tests can play it through
+ * with fake timers.
  */
 
 import type { Scheduler } from "@atf/outpost-core";
@@ -18,11 +18,11 @@ export const DEFAULT_GRACE_MS = 30_000;
 export type ShutdownSignal = "SIGTERM" | "SIGINT";
 
 export interface ShutdownHandler {
-  /** Registriert einen Handler; Rückgabe zum Entfernen. */
+  /** Registers a handler; returns a function to remove it. */
   on(signal: ShutdownSignal, handler: () => void): () => void;
 }
 
-/** Handler auf dem echten `process`. */
+/** Handlers on the real `process`. */
 export const processSignals: ShutdownHandler = {
   on(signal, handler) {
     process.on(signal, handler);
@@ -44,17 +44,17 @@ export interface ShutdownOptions {
 export interface ShutdownHandle {
   /** Entfernt die Signal-Handler (Test-Cleanup). */
   dispose(): void;
-  /** true, nachdem ein Signal eingegangen ist. */
+  /** true after a signal has arrived. */
   requested(): boolean;
-  /** Wartet den Shutdown-Ablauf (für Tests und den Daemon-Hauptloop). */
+  /** Waits for the shutdown flow (for tests and the daemon main loop). */
   done(): Promise<void>;
 }
 
 /**
- * Installiere SIGTERM/SIGINT-Behandlung. Bei Signal:
- * 1. `scheduler.beginShutdown()` — keine neuen Läufe, Intervalle aus;
- * 2. bis `graceMs` auf laufende Läufe warten;
- * 3. `scheduler.stopAll("shutdown")` — nach Grace abbrechen + flushen;
+ * Install SIGTERM/SIGINT handling. On a signal:
+ * 1. `scheduler.beginShutdown()`: no new runs, intervals off;
+ * 2. wait up to `graceMs` for running runs;
+ * 3. `scheduler.stopAll("shutdown")`: abort after the grace + flush;
  * 4. Exit 0.
  */
 export function installShutdown(
@@ -102,7 +102,7 @@ export function installShutdown(
       });
       return;
     }
-    // Zweites Signal: Grace sofort beenden (10.7 — "SIGTERM erneut → sofort").
+    // Second signal: end the grace immediately (10.7, "SIGTERM again → immediately").
     logger?.warn?.({ event: "shutdown.forced" }, "zweites Signal: Grace uebersprungen");
     graceElapsed = true;
     resolveIdle();

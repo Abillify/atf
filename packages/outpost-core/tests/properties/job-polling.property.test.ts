@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 23: Job-Polling endet im Endstatus
+ * Feature: extract-outpost, Property 23: job polling ends in a final status
  *
  * **Validates: Requirements 8.7**
  *
- * Für jede endliche Folge von Job-Statuswerten, die in einem Endstatus
- * (`completed`, `failed`, `cancelled`) endet, beendet `pollJob` das Polling
- * genau beim ersten Endstatus und gibt ihn zurück. Für `paused` oder
- * nicht-terminale Folgen hält es das Intervall zwischen 2 s und 30 s ein.
+ * For every finite sequence of job status values that ends in a final status
+ * (`completed`, `failed`, `cancelled`), `pollJob` stops polling exactly at
+ * the first final status and returns it. For `paused` or non-terminal
+ * sequences it keeps the interval between 2 s and 30 s.
  */
 
 import fc from "fast-check";
@@ -45,9 +45,9 @@ function clientWith(fake: FakeExtract): ExtractHttpClient {
   });
 }
 
-describe("Property 23: Job-Polling endet im Endstatus", () => {
+describe("Property 23: job polling ends in a final status", () => {
   it(
-    "stoppt genau beim ersten Endstatus und liefert ihn zurück",
+    "stops exactly at the first final status and returns it",
     async () => {
       await fc.assert(
         fc.asyncProperty(
@@ -64,9 +64,9 @@ describe("Property 23: Job-Polling endet im Endstatus", () => {
                 slept.push(ms);
               },
             });
-            // Genau der erste Endstatus wird geliefert.
+            // Exactly the first final status is returned.
             expect(job.status).toBe(final);
-            // Es wurde genau so oft gepollt wie Einträge vor dem Endstatus + 1.
+            // Polled exactly as often as entries before the final status + 1.
             const job_ = fake.jobs.get(jobId);
             expect(job_?.reads).toBe(prefix.length + 1);
             // Sleeps: prefix.length mal, Intervall 2 s → 30 s.
@@ -82,7 +82,7 @@ describe("Property 23: Job-Polling endet im Endstatus", () => {
     },
   );
 
-  it("hält das Intervall zwischen 2 s und 30 s (monoton steigend, gedeckelt)", () => {
+  it("keeps the interval between 2 s and 30 s (monotonically increasing, capped)", () => {
     fc.assert(
       fc.property(fc.nat({ max: 40 }), (round) => {
         const delay = pollDelayMs(round);

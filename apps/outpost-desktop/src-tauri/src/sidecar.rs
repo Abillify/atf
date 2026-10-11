@@ -127,13 +127,13 @@ impl SidecarSupervisor {
         }
     }
 
-    /// Umgebungsvariablen fuer den Sidecar (z. B. `OUTPOST_CONFIG_FILE` auf
-    /// `app_config_dir()`, `OUTPOST_DATA_DIR` auf `app_data_dir()`).
+    /// Environment variables for the sidecar (e.g. `OUTPOST_CONFIG_FILE` pointing to
+    /// `app_config_dir()`, `OUTPOST_DATA_DIR` pointing to `app_data_dir()`).
     pub fn set_env(&mut self, env: Vec<(String, String)>) {
         self.env = env;
     }
 
-    /// Aktuell gebundener Control-API-Port (nach `start`, sonst `None`).
+    /// Currently bound Control API port (after `start`, otherwise `None`).
     pub fn port(&self) -> Option<u16> {
         self.port
     }

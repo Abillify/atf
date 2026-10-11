@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Gemeinsames Wiring des Outpost-Runtimes (requirements 1.1–1.4, 2.1–2.9,
- * 5.1, 6.17, 12.1): Konfiguration laden (Datei optional, Env gewinnt),
- * `_FILE`-Secrets falten und im Redaktor registrieren, {@link
- * FileCredentialStore} inkl. Secret-Mounts, AuthManager mit der per
- * {@link selectAuthMethod} gewaehlten Methode, ExtractHttpClient mit
- * optionaler CA, die vier Quellen-Fabriken und ein Store-Cache je Quelle.
+ * Shared wiring of the Outpost runtime (requirements 1.1–1.4, 2.1–2.9,
+ * 5.1, 6.17, 12.1): load the configuration (file optional, env wins),
+ * fold `_FILE` secrets and register them with the redactor, {@link
+ * FileCredentialStore} including secret mounts, AuthManager with the method
+ * chosen by {@link selectAuthMethod}, ExtractHttpClient with an optional
+ * CA, the four source factories and a store cache per source.
  *
- * Der Runtime kennt keine Subcommand-Logik — `daemon`, `once`, `sidecar` …
- * bauen darauf auf. Alle I/O-Abhaengigkeiten sind injizierbar, damit Tests
- * ohne Netzwerk und ohne `/data` auskommen.
+ * The runtime knows no subcommand logic; `daemon`, `once`, `sidecar` …
+ * build on it. All I/O dependencies are injectable so tests work without
+ * network and without `/data`.
  */
 
 import { access, readFile as fsReadFile } from "node:fs/promises";
@@ -56,10 +56,10 @@ import {
 import { confirmForSource } from "./confirm.js";
 import pkgJson from "../package.json";
 
-/** Default-Extract-Limit, bis `whoami` ein anderes meldet (5.1). */
+/** Default Extract limit until `whoami` reports a different one (5.1). */
 export const DEFAULT_MAX_UPLOAD_BYTES = 52_428_800;
 
-/** Konfigurationsfehler — der CLI beendet mit Exit 78 (1.4, 1.5). */
+/** Configuration error: the CLI exits with 78 (1.4, 1.5). */
 export class ConfigLoadError extends Error {
   constructor(
     readonly errors: ReadonlyArray<{ path: string; message: string }>,
@@ -76,24 +76,24 @@ export interface RuntimeOptions {
   env?: Env;
   /** Datenverzeichnis (State + Credentials); Default `/data` (`OUTPOST_DATA_DIR`). */
   dataDir?: string;
-  /** Konfigurationsdatei; Default `OUTPOST_CONFIG_FILE`, sonst `/config/outpost.yaml` (optional). */
+  /** Configuration file; default `OUTPOST_CONFIG_FILE`, otherwise `/config/outpost.yaml` (optional). */
   configFile?: string;
-  /** Version fuer den User-Agent; Default die aus `package.json` (14.9). */
+  /** Version for the User-Agent; default the one from `package.json` (14.9). */
   version?: string;
-  /** Laufzeit fuer den User-Agent (14.9). */
+  /** Runtime for the User-Agent (14.9). */
   runtime?: "docker" | "desktop";
-  /** Injizierter Logger (Tests); sonst `createLogger`. */
+  /** Injected logger (tests); otherwise `createLogger`. */
   logger?: Logger;
-  /** Logger-Ziel; Default stdout. Im Sidecar-Modus stderr (stdout ist fuer
-   *  die `ready`-Zeile und das Bridge-Protokoll reserviert). */
+  /** Logger target; default stdout. In sidecar mode stderr (stdout is
+   *  reserved for the `ready` line and the bridge protocol). */
   logDestination?: NodeJS.WritableStream;
-  /** Credential-Store-Override (Sidecar: Keychain-Bridge statt Datei). */
+  /** Credential store override (sidecar: keychain bridge instead of a file). */
   credentialStore?: CredentialStore;
-  /** Callback bei wiederholter 401 (Reauth-Pause, 4.4). */
+  /** Callback on repeated 401s (reauth pause, 4.4). */
   onReauthRequired?: () => void;
   /** Injizierbares fetch (Tests). */
   fetchImpl?: typeof globalThis.fetch;
-  /** Override der Credential-Auflösung je Quelle (Tests). */
+  /** Override of the credential resolution per source (tests). */
   resolveCredential?: (
     src: SourceConfig,
     store: CredentialStore,
@@ -104,7 +104,7 @@ export interface RuntimeOptions {
 
 export interface Runtime {
   cfg: OutpostConfig;
-  /** Umgebung nach `_FILE`-Faltung (Secrets sind hier, aber redigiert). */
+  /** Environment after `_FILE` folding (secrets are here, but redacted). */
   env: Record<string, string>;
   logger: Logger;
   redactor: SecretRedactor;
@@ -113,15 +113,15 @@ export interface Runtime {
   client: ExtractHttpClient;
   needsAuth: NeedsAuthTracker;
   stateDir: string;
-  /** Konfigurationsdatei, wenn eine geladen wurde (Control-API PUT, 13.9). */
+  /** Configuration file, when one was loaded (Control API PUT, 13.9). */
   configFile?: string;
-  /** Fuehrt genau einen Sync-Lauf aus (Scheduler-Callback). */
+  /** Runs exactly one sync run (scheduler callback). */
   runSource: (src: SourceConfig, signal: AbortSignal) => Promise<RunReport>;
-  /** Flusht den State einer Quelle (Logout-Sequenz, 3.5). */
+  /** Flushes a source's state (logout sequence, 3.5). */
   flushSource: (sourceId: string) => Promise<void>;
-  /** Verbindungsprüfung vor dem ersten Lauf (5.1, 5.2). */
+  /** Connection check before the first run (5.1, 5.2). */
   verify: (signal?: AbortSignal) => Promise<ConnectionResult>;
-  /** State-Store einer Quelle (oeffnet bei Bedarf; fuer Control-API/CLI). */
+  /** State store of a source (opens on demand; for Control API/CLI). */
   storeFor: (src: SourceConfig) => Promise<SyncStateStore>;
   /** Alle Stores schliessen. */
   close: () => Promise<void>;
@@ -139,9 +139,9 @@ async function fileExists(path: string): Promise<boolean> {
 }
 
 /**
- * Baue den Runtime. Wirft {@link ConfigLoadError} bei ungueltiger
- * Konfiguration (Exit 78) oder fehlender OIDC-Angaben fuer interaktive
- * Verfahren.
+ * Build the runtime. Throws {@link ConfigLoadError} for an invalid
+ * configuration (exit 78) or missing OIDC settings for interactive
+ * flows.
  */
 export async function createRuntime(options: RuntimeOptions = {}): Promise<Runtime> {
   const rawEnv: Env = options.env ?? (process.env as Env);
@@ -155,10 +155,10 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Runti
   );
   registerSecrets(redactor, secretValues);
 
-  // Konfigurationsdatei: explizit gesetzte Pfade muessen existieren; der
-  // Default `/config/outpost.yaml` ist optional (Design: "optional, ro").
-  // Achtung: OUTPOST_CONFIG_FILE ist kein Secret und wird von resolveSecretEnv
-  // als *_FILE-Schluessel entfernt — der Pfad muss aus rawEnv gelesen werden.
+  // Configuration file: explicitly set paths must exist; the default
+  // `/config/outpost.yaml` is optional (design: "optional, ro").
+  // Note: OUTPOST_CONFIG_FILE is not a secret and is removed by resolveSecretEnv
+  // as a *_FILE key, so the path must be read from rawEnv.
   const explicitFile = options.configFile ?? rawEnv.OUTPOST_CONFIG_FILE;
   const configFile =
     explicitFile ??
@@ -208,8 +208,8 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Runti
   }
   const oidc = cfg.oidc ?? { issuer: "", clientId: "", scopes: [] };
 
-  // Env-Client-Secret wird NICHT auf Platte geschrieben: der AuthStore liest
-  // es aus der Umgebung, alle anderen Schluessel gehen an den File-Store.
+  // The env client secret is NOT written to disk: the AuthStore reads it
+  // from the environment, all other keys go to the file store.
   const authStore: CredentialStore =
     clientSecretFromEnv !== undefined
       ? {
@@ -372,7 +372,7 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Runti
   };
 
   const needsAuth = new NeedsAuthTracker();
-  /** Quellen, deren Token der Anbieter zuletzt ablehnte (6.18). */
+  /** Sources whose token the provider rejected last (6.18). */
   const rejectedIds = new Set<string>();
   let maxUploadBytes = DEFAULT_MAX_UPLOAD_BYTES;
 
@@ -401,7 +401,7 @@ export async function createRuntime(options: RuntimeOptions = {}): Promise<Runti
         ? { resolveCredential: options.resolveCredential }
         : {}),
     });
-    // rejected-Merkur aktualisieren (6.18): abgelehnt bis erfolgreicher Lauf.
+    // Update the rejected marker (6.18): rejected until a successful run.
     if (report.outcome === "needs-authorization" && report.reason === "rejected") {
       rejectedIds.add(src.id);
     } else if (report.outcome === "ok") {

@@ -124,11 +124,11 @@ export function evaluateConnection(
     case "ok": {
       const response = outcome.response;
       const findings: ConnectionFinding[] = [];
-      // Eine Instanz ohne Authentifizierung (`AUTHN_MODE=disabled`,
-      // Entwicklung/Test) meldet `source: "anonymous"` und strukturell leere
-      // Scopes, gewährt aber alles — eine Scope-Prüfung wäre hier ein
-      // Fehlalarm und würde die Entwicklung gegen eine lokale Instanz
-      // unmachen. Feature-Prüfungen (montierte Routen) bleiben Fehler.
+      // An instance without authentication (`AUTHN_MODE=disabled`,
+      // development/test) reports `source: "anonymous"` and structurally empty
+      // scopes but grants everything; a scope check would be a false alarm
+      // here and would make development against a local instance
+      // impossible. Feature checks (mounted routes) stay errors.
       const authDisabled = response.source === "anonymous";
       const scopeSeverity: "error" | "warning" = authDisabled ? "warning" : "error";
       if (!response.features.ingest) {

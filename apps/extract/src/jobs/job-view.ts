@@ -71,7 +71,7 @@ export function computeProgress(
 
 /**
  * Estimate the remaining seconds for a job (requirement 4.11, the
- * "Restzeitschätzung"). Returns null when there is not enough signal yet (no
+ * "remaining-time estimate"). Returns null when there is not enough signal yet (no
  * measured stage throughput, no progress, or the job is not running).
  *
  * The heuristic mirrors the convert-handler's `remainingPages * pageMs`, but

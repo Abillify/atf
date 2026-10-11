@@ -6,7 +6,7 @@
  * ThemeProvider — simple dark/light mode context (Req. 10.1).
  *
  * Toggles the `dark` class on `<html>` so Tailwind dark-mode variants
- * (`dark:bg-gray-900`, etc.) work across the entire app without prop drilling.
+ * (`dark:bg-muted-foreground`, etc.) work across the entire app without prop drilling.
  * The preference is persisted to localStorage under `aiperator_theme`.
  */
 

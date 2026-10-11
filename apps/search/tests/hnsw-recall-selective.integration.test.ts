@@ -2,23 +2,23 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Recall unter selektivem Filter (task 6.5, Requirement 4.11):
+ * Recall under a selective filter (task 6.5, Requirement 4.11):
  *
- *   Ein dichte HNSW-Suche mit stark selektivem Tenant-/ACL-Filter muss mit
- *   iterativem Scan (Default `relaxed_order`, task 6.4) mindestens 95 % des
- *   ungefilterten Exakt-Recall erreichen — also ≥ 95 % der echten Top-K Nachbarn
- *   innerhalb der sichtbaren Zeilen finden.
+ *   A dense HNSW search with a highly selective tenant/ACL filter must reach,
+ *   with iterative scan (default `relaxed_order`, task 6.4), at least 95 % of
+ *   the unfiltered exact recall, i.e. find ≥ 95 % of the true top-K neighbors
+ *   among the visible rows.
  *
- * Aufbau: eine Collection mit ~21 000 Zeilen, davon gehören 1 000 zum sichtbaren
- * Tenant (≈ 4,7 % Selektivität). Ohne iterativen Scan würde die ANN-Suche nach
- * dem ef_search-Fenster abbrechen und deutlich weniger als `limit` sichtbare
- * Zeilen liefern; der iterative Scan expandiert weiter, bis `limit` erfüllt ist.
+ * Setup: a collection with ~21,000 rows, of which 1,000 belong to the visible
+ * tenant (≈ 4.7 % selectivity). Without iterative scan the ANN search would
+ * stop after the ef_search window and return far fewer than `limit` visible
+ * rows; the iterative scan keeps expanding until `limit` is met.
  *
- * Die Exakt-Baseline wird deterministisch per Brute-Force im Test berechnet
- * (cosine similarity über alle sichtbaren Zeilen) — unabhängig davon, welchen
- * Plan die Datenbank wählt. Ein EXPLAIN-Gegencheck stellt sicher, dass die
- * Suche tatsächlich über den HNSW-Index läuft (bei einem Seq-Scan wäre der
- * Test bedeutungslos, weil er per Definition exakt wäre).
+ * The exact baseline is computed deterministically by brute force in the test
+ * (cosine similarity over all visible rows), independent of the plan the
+ * database chooses. An EXPLAIN cross-check makes sure the search actually
+ * runs through the HNSW index (with a seq scan the test would be
+ * meaningless because it would be exact by definition).
  *
  * Self-skips when TEST_POSTGRES_URL is unset (matching the other DB suites).
  */
@@ -114,7 +114,7 @@ interface Row {
 
 const QUERY_VECTOR = randomVector(mulberry32(seedFrom(`${STAMP}:query`)));
 
-/** Brute-Force-Exakt-Top-K (cosine) über allen sichtbaren Zeilen. */
+/** Brute-force exact top-K (cosine) over all visible rows. */
 function exactTopK(rows: readonly Row[], k: number): string[] {
 	return [...rows]
 		.sort(
@@ -149,7 +149,7 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 				reference: `visible::r${i}`,
 				tenant: TENANT_VISIBLE,
 				vector: randomVector(rand),
-				// ACL-selektiv: nur die Alice-Hälfte ist für Scope alice sichtbar.
+				// ACL selective: only Alice's half is visible to scope alice.
 				users: i < TARGET_ROWS / 2 ? ["alice"] : ["bob"],
 			});
 		}
@@ -190,8 +190,8 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 				params,
 			);
 		}
-		// Frische Statistiken: ohne ANALYZE schätzt der Planner die Tenant-
-		// Selektivität massiv zu niedrig und wählt Bitmap+Sort statt HNSW.
+		// Fresh statistics: without ANALYZE the planner badly underestimates the
+		// tenant selectivity and picks bitmap+sort instead of HNSW.
 		await pool.query(`ANALYZE "${table}"`);
 	}, 180_000);
 
@@ -202,8 +202,8 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 	});
 
 	/**
-	 * Gegencheck: die dichte Suche muss über den HNSW-Index laufen. Ein
-	 * Seq-Scan wäre exakt und würde den Recall-Test bedeutungslos machen.
+	 * Cross-check: the dense search must run through the HNSW index. A seq
+	 * scan would be exact and make the recall test meaningless.
 	 */
 	async function expectHnswIndexScan(): Promise<void> {
 		const client = await pool.connect();
@@ -211,10 +211,10 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 			await client.query("BEGIN");
 			await client.query("SET LOCAL hnsw.ef_search = 100");
 			await client.query("SET LOCAL hnsw.iterative_scan = relaxed_order");
-			// EXPLAIN in exakt der Form, die buildDenseQuery erzeugt:
-			// ORDER BY (vector <=> $2::vector) ASC, id ASC — nur diese rohe
-			// Distanzsortierung ist HNSW-indexkompatibel (die Similarität-
-			// Expression `1 - dist` ist es nicht).
+			// EXPLAIN in exactly the form buildDenseQuery produces:
+			// ORDER BY (vector <=> $2::vector) ASC, id ASC; only this raw
+			// distance ordering is HNSW-index compatible (the similarity
+			// expression `1 - dist` is not).
 			const res = await client.query<{ plan: unknown[] }>(
 				`EXPLAIN (FORMAT JSON)
 				 SELECT id FROM "${table}"
@@ -225,8 +225,8 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 			);
 			await client.query("COMMIT");
 			const planText = JSON.stringify(res.rows);
-			// Der Plan muss einen Index-Scan über einen der HNSW-Indizes nutzen
-			// (voll oder partial `*_vector_latest_hnsw_idx`) — kein Bitmap/Seq.
+			// The plan must use an index scan over one of the HNSW indexes
+			// (full or partial `*_vector_latest_hnsw_idx`); no bitmap/seq.
 			expect(planText).toContain("Index Scan");
 			expect(planText).toMatch(/_hnsw_idx/);
 			expect(planText).not.toContain("Bitmap");
@@ -243,7 +243,7 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 			collection,
 			scope,
 			undefined,
-			false, // dense — kein hybrid, kein FTS
+			false, // dense: no hybrid, no FTS
 		);
 		if (!res.ok) throw new Error(`search fehlgeschlagen: ${JSON.stringify(res.error)}`);
 		const exact = new Set(exactTopK(visible, TOP_K));
@@ -251,20 +251,20 @@ describeIfPg("Recall unter selektivem Filter · iterativer Scan (real postgres)"
 		return hits / TOP_K;
 	}
 
-	it("nutzt für die dichte Suche den HNSW-Index (kein Seq-Scan)", async () => {
+	it("uses the HNSW index for the dense search (no seq scan)", async () => {
 		await expectHnswIndexScan();
 	}, 60_000);
 
-	it("Tenant-Filter (~4,7 % Selektivität): iterativer Scan ≥ 95 % Exakt-Recall", async () => {
-		// Service-Scope: rein tenant-selektiv (sähe alle Zeilen des Tenants,
-		// auch ACL-geschützte) — der Tenant-Filter ist hier der einzige Selektor.
+	it("tenant filter (~4.7 % selectivity): iterative scan ≥ 95 % exact recall", async () => {
+		// Service scope: purely tenant selective (would see all rows of the tenant,
+		// including ACL-protected ones); the tenant filter is the only selector here.
 		const visible = targetRows;
 		const recall = await recallOf({ ...userScope(TENANT_VISIBLE), service: true }, visible);
-		// 95 % von TOP_K = 20 → mindestens 19 der echten Top-20.
+		// 95 % of TOP_K = 20 → at least 19 of the true top 20.
 		expect(recall).toBeGreaterThanOrEqual(0.95);
 	}, 120_000);
 
-	it("Tenant- + ACL-Filter (~2,4 % Selektivität): ≥ 95 % Exakt-Recall", async () => {
+	it("tenant + ACL filter (~2.4 % selectivity): ≥ 95 % exact recall", async () => {
 		const visible = targetRows.filter((r) => r.users.includes("alice"));
 		const recall = await recallOf(userScope(TENANT_VISIBLE, "alice"), visible);
 		expect(recall).toBeGreaterThanOrEqual(0.95);

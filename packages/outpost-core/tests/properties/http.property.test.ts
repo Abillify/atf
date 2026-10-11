@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Property 24 (Retry-Politik), Property 10 (einmalige 401-Behandlung) und
- * Property 11 (Request-Hülle).
+ * Property 24 (retry policy), Property 10 (one-time 401 handling) and
+ * Property 11 (request envelope).
  */
 
 import { describe, expect, it } from "vitest";
@@ -179,7 +179,7 @@ describe("Property 10: single 401 handling", () => {
   });
 });
 
-// Feature: extract-outpost, Property 11: Request-Hülle
+// Feature: extract-outpost, Property 11: request envelope
 // **Validates: Requirements 4.1, 14.9, 15.1**
 describe("Property 11: request envelope", () => {
   const pathArb = fc.constantFrom("/v1/whoami", "/v2/jobs", "/v2/documents/ref", "/a/b?c=1");

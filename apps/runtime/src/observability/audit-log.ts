@@ -449,23 +449,22 @@ export class PostgresAuditLog implements AuditLog {
   }
 
   /**
-   * Req 1.1: Tip-Lesen, ID-Vergabe, Hash-Berechnung und INSERT laufen in
-   * EINER Transaktion unter `pg_advisory_xact_lock`, sodass zwei Replicas
-   * niemals gegen denselben `prev_hash` schreiben. Der Tip-Cache ist
-   * entfallen — die Kette wird ausschließlich aus dem persistierten Zustand
-   * fortgeschrieben.
+   * Req 1.1: tip read, ID allocation, hash computation and INSERT run in
+   * ONE transaction under `pg_advisory_xact_lock`, so two replicas never
+   * write against the same `prev_hash`. The tip cache is gone; the chain
+   * is advanced only from the persisted state.
    *
-   * Req 1.2/1.3: schlägt das Tip-Lesen fehl, schlägt der Schreibvorgang fehl
-   * (der Fehler wird geworfen, nicht auf Genesis zurückgesetzt); der
-   * Genesis-Hash kommt nur zum Einsatz, wenn die Tabelle nachweislich leer
-   * ist (NULL nach LIMIT-1-SELECT innerhalb derselben Transaktion).
+   * Req 1.2/1.3: if the tip read fails, the write fails (the error is
+   * thrown, not reset to genesis); the genesis hash is only used when the
+   * table is provably empty (NULL after a LIMIT-1 SELECT inside the same
+   * transaction).
    */
   private async writeChainEntry(entry: AuditEntry): Promise<void> {
     const exec = async (db: Database): Promise<void> => {
       await db.query("BEGIN");
       try {
-        // Transaktionale Advisory-Lock: serialisiert alle Ketten-Schreiber
-        // über alle Replicas; wird beim COMMIT/ROLLBACK automatisch gelöst.
+        // Transactional advisory lock: serializes all chain writers across
+        // all replicas; released automatically on COMMIT/ROLLBACK.
         await db.query(
           `SELECT pg_advisory_xact_lock(hashtext('atf:audit_log'))`,
         );
@@ -477,9 +476,9 @@ export class PostgresAuditLog implements AuditLog {
           // Unreachable defensively: a LIMIT-1 query returns 0 or 1 rows.
           throw new Error("Unexpected result reading the audit chain tip.");
         }
-        // Genesis NUR bei nachweislich leerer Tabelle (0 Zeilen) — ein
-        // LeseFEHLGER wirft (kein catch) und verhindert so eine stille
-        // Genesis-Neukette nach einem Ausfall (Req 1.2/1.3).
+        // Genesis ONLY for a provably empty table (0 rows); a read ERROR
+        // throws (no catch) and so prevents a silent new genesis chain
+        // after an outage (Req 1.2/1.3).
         let prevHash: string;
         if (tipRow === undefined) {
           prevHash = AUDIT_CHAIN_GENESIS_HASH;
@@ -525,7 +524,7 @@ export class PostgresAuditLog implements AuditLog {
         try {
           await db.query("ROLLBACK");
         } catch {
-          /* der Rollback-Fehler darf den Originalfehler nicht überdecken */
+          /* the rollback error must not mask the original error */
         }
         throw err;
       }

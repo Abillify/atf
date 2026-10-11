@@ -60,7 +60,7 @@ export interface Config {
    * carries an `abstention` signal; `abstain: true` when every candidate
    * fell below the threshold. Empty / unset = disabled, no field emitted.
    */
-  minRerankScore: number | null; // MIN_RERANK_SCORE (default: leer = aus)
+  minRerankScore: number | null; // MIN_RERANK_SCORE (default: empty = off)
   rerankEndpoint: "embeddings" | "rerank"; // RERANK_ENDPOINT (default: "rerank")
   /**
    * JSON field name used to pass documents in native rerank requests.

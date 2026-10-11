@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 38: Logout beendet alle Runs ohne Löschungen
+ * Feature: extract-outpost, Property 38: logout ends all runs without deletions
  *
  * **Validates: Requirements 3.5, 3.8, 9.4**
  *
- * Nach `stopAll("logout")` (via {@link performLogout}): kein aktiver Lauf,
- * kein pending, keine neuen Läufe bis zur Neuanmeldung; abgebrochene Läufe
- * enden `incomplete`; es gehen keine DELETE-Requests an Extract (9.4); der
- * Sync_State wird VOR dem Löschen der Extract-Tokens geflusht (3.5).
- * Fake-Timer kommen nicht zum Einsatz — der Lauf blockiert real im `open`,
- * bis der Abort eintrifft.
+ * After `stopAll("logout")` (via {@link performLogout}): no active run,
+ * no pending, no new runs until the next login; aborted runs end
+ * `incomplete`; no DELETE requests go to Extract (9.4); the
+ * Sync_State is flushed BEFORE the Extract tokens are deleted (3.5).
+ * No fake timers are used; the run really blocks in `open` until the
+ * abort arrives.
  */
 
 import { mkdtemp } from "node:fs/promises";
@@ -33,7 +33,7 @@ import { FakeExtract } from "../fakes/fake-extract.js";
 import { FakeTokenProvider } from "../fakes/fake-token-provider.js";
 import { testLogger } from "../fakes/test-logger.js";
 
-/** Adapter, dessen `open` bis zum Abort blockiert — der Lauf bleibt aktiv. */
+/** Adapter whose `open` blocks until the abort; the run stays active. */
 function blockingAdapter(items: readonly HarnessItem[]): SourceAdapter & {
   readonly openCalls: string[];
 } {
@@ -72,8 +72,8 @@ function blockingAdapter(items: readonly HarnessItem[]): SourceAdapter & {
 const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
-describe("Property 38: Logout beendet alle Runs ohne Löschungen", () => {
-  it("stopAll: incomplete, keine DELETEs, Flush vor Token-Löschung, keine Folgeläufe", async () => {
+describe("Property 38: logout ends all runs without deletions", () => {
+  it("stopAll: incomplete, no DELETEs, flush before token deletion, no follow-up runs", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.uniqueArray(fc.stringMatching(/^[a-z][a-z0-9]{0,8}\.txt$/), {
@@ -167,31 +167,31 @@ describe("Property 38: Logout beendet alle Runs ohne Löschungen", () => {
             },
           };
 
-          // Lauf starten, Trigger während des Laufs → pending (wird verworfen).
+          // Start a run, trigger during the run → pending (gets discarded).
           scheduler.trigger(src.id);
           await vi_waitUntil(() => adapter.openCalls.length >= 1);
           scheduler.trigger(src.id);
 
           await performLogout(scheduler, tokenProvider);
 
-          // 1. Der abgebrochene Lauf endete incomplete, ohne Löschphase.
+          // 1. The aborted run ended incomplete, without a delete phase.
           expect(reports).toHaveLength(1);
           expect(reports[0]?.outcome).toBe("incomplete");
           expect(reports[0]?.deletePhase).toBe("skipped-incomplete");
 
-          // 2. Kein DELETE-Request an Extract (9.4).
+          // 2. No DELETE request to Extract (9.4).
           expect(fake.requests.filter((r) => r.method === "DELETE")).toEqual([]);
 
-          // 3. Flush geschah VOR der Token-Löschung (3.5), genau einmal je Source.
+          // 3. The flush happened BEFORE token deletion (3.5), exactly once per source.
           expect(order).toEqual(["flush", "logout"]);
 
-          // 4. Kein aktiver Lauf, kein pending, Status stopped.
+          // 4. No active run, no pending, status stopped.
           const view = scheduler.status();
           expect(view).toHaveLength(1);
           expect(view[0]?.status).toBe("stopped");
           expect(view[0]?.pending).toBe(false);
 
-          // 5. Keine neuen Läufe bis zur Neuanmeldung (3.8).
+          // 5. No new runs until the next login (3.8).
           scheduler.trigger(src.id);
           scheduler.credentialChanged(src.id);
           await sleep(20);
@@ -205,7 +205,7 @@ describe("Property 38: Logout beendet alle Runs ohne Löschungen", () => {
   });
 });
 
-/** Wartet, bis `pred()` wahr ist (real timers, Polling). */
+/** Waits until `pred()` is true (real timers, polling). */
 async function vi_waitUntil(pred: () => boolean, timeoutMs = 5_000): Promise<void> {
   const start = Date.now();
   for (;;) {

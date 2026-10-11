@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 29: Exit-Code im Einmal-Modus
+ * Feature: extract-outpost, Property 29: exit code in one-shot mode
  *
  * **Validates: Requirements 6.18, 10.5, 10.8**
  *
- * `aggregateExitCode` liefert genau dann 0, wenn alle Sources erfolgreich
- * sind; 78 ueberschreibt alles (Konfiguration), danach 2
- * (Extract-Auth/Verbindung), danach 1 (Source-Fehler, fehlgeschlagene Items
- * oder needs-authorization). Mindestens ein needs-authorization ohne
- * Extract-Fehler → 1.
+ * `aggregateExitCode` returns 0 exactly when all sources succeed; 78
+ * overrides everything (configuration), then 2
+ * (Extract auth/connection), then 1 (source error, failed items
+ * or needs-authorization). At least one needs-authorization without an
+ * Extract error → 1.
  */
 
 import { describe, expect, it } from "vitest";
@@ -39,8 +39,8 @@ const resultArb: fc.Arbitrary<OnceSourceResult> = kindArb.map(
   (kind): OnceSourceResult => ({ kind }),
 );
 
-describe("Property 29: Exit-Code im Einmal-Modus", () => {
-  it("0 genau dann, wenn alle Sources erfolgreich sind", () => {
+describe("Property 29: exit code in one-shot mode", () => {
+  it("0 exactly when all sources succeed", () => {
     fc.assert(
       fc.property(fc.array(resultArb, { minLength: 1, maxLength: 8 }), (results) => {
         const allOk = results.every((r) => r.kind === "ok");
@@ -54,7 +54,7 @@ describe("Property 29: Exit-Code im Einmal-Modus", () => {
     );
   });
 
-  it("Priorität: 78 > 2 > 1; sonst 0", () => {
+  it("priority: 78 > 2 > 1; otherwise 0", () => {
     fc.assert(
       fc.property(fc.array(resultArb, { minLength: 1, maxLength: 8 }), (results) => {
         const kinds = new Set(results.map((r) => r.kind));
@@ -71,7 +71,7 @@ describe("Property 29: Exit-Code im Einmal-Modus", () => {
     );
   });
 
-  it("mindestens ein needs-authorization ohne Extract-Fehler → Exit 1", () => {
+  it("at least one needs-authorization without an Extract error → exit 1", () => {
     fc.assert(
       fc.property(fc.array(resultArb, { minLength: 1, maxLength: 8 }), (results) => {
         const kinds = new Set(results.map((r) => r.kind));

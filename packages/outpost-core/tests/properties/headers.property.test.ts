@@ -2,18 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 20: Header- und Job-Body-Aufbau
+ * Feature: extract-outpost, Property 20: header and job-body construction
  *
  * **Validates: Requirements 8.1, 8.3, 8.4, 8.5**
  *
- * `buildIngestHeaders` enthält immer `X-Reference`, `X-Collection`,
- * `X-Source-Modified` (gültiges RFC 3339 mit Zeitzone), `X-Dedup: auto`,
- * `X-Title` und `X-Source`. Die optionalen Header `X-Tags`, `X-Metadata`,
- * `X-Allowed-Users`, `X-Allowed-Groups` und `X-Link` sind genau dann
- * vorhanden, wenn der zugehörige Wert konfiguriert bzw. vom Item bereitgestellt
- * ist. Dekodieren der Headerwerte mit der Extract-Leselogik ergibt die
- * Ursprungswerte, und `toJobRequest` erzeugt dieselben Werte als gültigen
- * `jobRequestSchema`-Body.
+ * `buildIngestHeaders` always contains `X-Reference`, `X-Collection`,
+ * `X-Source-Modified` (valid RFC 3339 with a time zone), `X-Dedup: auto`,
+ * `X-Title` and `X-Source`. The optional headers `X-Tags`, `X-Metadata`,
+ * `X-Allowed-Users`, `X-Allowed-Groups` and `X-Link` are present exactly
+ * when the matching value is configured or provided by the item.
+ * Decoding the header values with the Extract read logic yields the
+ * original values, and `toJobRequest` produces the same values as a valid
+ * `jobRequestSchema` body.
  */
 
 import fc from "fast-check";
@@ -28,8 +28,8 @@ import {
 import { itemArb, outpostConfigArb, sourceConfigArb } from "../fakes/sync-arb.js";
 
 /**
- * Referenz-Nachbau von Extrakt `decodeIfBase64` (header-utils.ts):
- * `base64:`-Präfix → UTF-8 dekodieren, sonst unverändert.
+ * Reference re-implementation of Extract's `decodeIfBase64` (header-utils.ts):
+ * `base64:` prefix → decode as UTF-8, otherwise unchanged.
  */
 function decodeIfBase64(value: string | undefined): string | undefined {
   if (value === undefined) return undefined;
@@ -51,8 +51,8 @@ function readList(value: string | undefined): string[] {
 
 const RFC3339_TZ = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/;
 
-describe("Property 20: Header- und Job-Body-Aufbau", () => {
-  it("Pflicht-Header sind immer vorhanden und korrekt", () => {
+describe("Property 20: header and job-body construction", () => {
+  it("mandatory headers are always present and correct", () => {
     fc.assert(
       fc.property(itemArb, sourceConfigArb, outpostConfigArb, (item, src, cfg) => {
         const headers = buildIngestHeaders(item, src, cfg);
@@ -69,21 +69,21 @@ describe("Property 20: Header- und Job-Body-Aufbau", () => {
     );
   });
 
-  it("Header-Werte sind ASCII oder base64:-kodiert und round-trippen", () => {
+  it("header values are ASCII or base64:-encoded and round-trip", () => {
     fc.assert(
       fc.property(itemArb, sourceConfigArb, outpostConfigArb, (item, src, cfg) => {
         const headers = buildIngestHeaders(item, src, cfg);
         for (const [name, value] of Object.entries(headers)) {
-          // Entweder druckbares ASCII oder base64:-Präfix — nie Roh-Unicode.
+          // Either printable ASCII or the base64: prefix, never raw Unicode.
           const ok = /^[\x20-\x7E]*$/.test(value) || value.startsWith("base64:");
           expect(ok, `${name}: ${JSON.stringify(value)}`).toBe(true);
         }
-        // Round-Trip gegen die Extrakt-Leseloggik.
+        // Round trip against the Extract read logic.
         expect(decodeIfBase64(headers["x-title"])).toBe(item.name.slice(0, 500));
         if (item.link !== undefined) {
           expect(decodeIfBase64(headers["x-link"])).toBe(item.link.slice(0, 2000));
         }
-        // Vergleich wie readListHeader: getrimmt, leere Einträge entfernt.
+        // Compare like readListHeader: trimmed, empty entries removed.
         const norm = (values: readonly string[] | undefined) =>
           (values ?? []).map((v) => v.trim()).filter((v) => v !== "");
         expect(readList(headers["x-tags"])).toEqual(norm(src.tags));
@@ -98,7 +98,7 @@ describe("Property 20: Header- und Job-Body-Aufbau", () => {
     );
   });
 
-  it("optionale Header genau dann vorhanden, wenn konfiguriert/bereitgestellt", () => {
+  it("optional headers present exactly when configured/provided", () => {
     fc.assert(
       fc.property(itemArb, sourceConfigArb, outpostConfigArb, (item, src, cfg) => {
         const headers = buildIngestHeaders(item, src, cfg);
@@ -119,7 +119,7 @@ describe("Property 20: Header- und Job-Body-Aufbau", () => {
     );
   });
 
-  it("toJobRequest ist gültiger jobRequestSchema-Body mit denselben Werten", () => {
+  it("toJobRequest is a valid jobRequestSchema body with the same values", () => {
     fc.assert(
       fc.property(
         itemArb,

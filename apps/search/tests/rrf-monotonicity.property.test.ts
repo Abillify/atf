@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Property 7 (design.md §Eigenschaft 7, Req 4.3/4.4): RRF-Monotonie.
+ * Property 7 (design.md §Property 7, Req 4.3/4.4): RRF monotonicity.
  *
- * "Erhöht sich der Rang eines Dokuments in einer Liste bei sonst gleichen
- * Listen, sinkt sein Fusionsscore nicht."
+ * "If a document's rank in one list improves while the other lists stay the
+ * same, its fusion score does not drop."
  *
  * The fused score is pure SQL arithmetic, so the property is checked by
  * evaluating the exact expression `buildRrfScoreSql` emits — with rank
@@ -47,7 +47,7 @@ describeIfPg("RRF-Monotonie (Property 7, Req 4.3/4.4)", () => {
 		return Number(res.rows[0].score);
 	}
 
-	it("verbessert ein Rang den Fusionsscore nie (monoton fallend im Rang)", async () => {
+	it("an improved rank never lowers the fusion score (monotonically decreasing in rank)", async () => {
 		await fc.assert(
 			fc.asyncProperty(
 			fc.integer({ min: 1, max: 200 }), // rrfK
@@ -76,7 +76,7 @@ describeIfPg("RRF-Monotonie (Property 7, Req 4.3/4.4)", () => {
 			);
 	});
 
-	it("Heben eines fehlenden Ranks (NULL → Zahl) senkt den Score nie", async () => {
+	it("lifting a missing rank (NULL → number) never lowers the score", async () => {
 		await fc.assert(
 			fc.asyncProperty(
 			fc.integer({ min: 1, max: 200 }),
@@ -96,7 +96,7 @@ describeIfPg("RRF-Monotonie (Property 7, Req 4.3/4.4)", () => {
 			);
 	});
 
-	it("RRF_MISSING_ZERO=true: fehlende Listen tragen exakt 0 bei", async () => {
+	it("RRF_MISSING_ZERO=true: missing lists contribute exactly 0", async () => {
 		await fc.assert(
 			fc.asyncProperty(
 			fc.integer({ min: 1, max: 200 }),
@@ -115,7 +115,7 @@ describeIfPg("RRF-Monotonie (Property 7, Req 4.3/4.4)", () => {
 			);
 	});
 
-	it("RRF_MISSING_ZERO=false: fehlende Listen tragen das Legacy-Pseudo-Rank 1/(k+1000) bei", async () => {
+	it("RRF_MISSING_ZERO=false: missing lists contribute the legacy pseudo-rank 1/(k+1000)", async () => {
 		await fc.assert(
 			fc.asyncProperty(
 			fc.integer({ min: 1, max: 200 }),

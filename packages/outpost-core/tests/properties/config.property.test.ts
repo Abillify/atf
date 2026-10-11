@@ -40,7 +40,7 @@ describe("Property 1: configuration round trip", () => {
   });
 });
 
-// Feature: extract-outpost, Property 2: Vorrang von Umgebungsvariablen und _FILE-Secrets
+// Feature: extract-outpost, Property 2: precedence of environment variables and _FILE secrets
 // **Validates: Requirements 1.2, 12.7**
 describe("Property 2: environment precedence and _FILE secrets", () => {
   function getPath(obj: unknown, path: readonly string[]): unknown {

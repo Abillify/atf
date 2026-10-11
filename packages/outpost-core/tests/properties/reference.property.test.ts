@@ -2,18 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 15: Stabilität und Eindeutigkeit der
- * Reference
+ * Feature: extract-outpost, Property 15: stability and uniqueness of the
+ * reference
  *
  * **Validates: Requirements 7.2, 7.9, 8.2**
  *
- * Für jede Source-ID `s` und Quell-ID `q` liefert `deriveReference(s, q)`
- * bei jedem Aufruf denselben Wert; für verschiedene Paare (nach NFC) sind
- * die References verschieden. NFC/NFD-Varianten desselben Pfads ergeben
- * dieselbe Reference. Format: `outpost:<s>:<h>` mit `h` = erste 32 Zeichen
- * von base64url(sha256(s + "\u0000" + q)); `h` passt auf
- * `^[A-Za-z0-9_-]{32}$` und enthält weder Quell-ID noch Dateinamen als
- * Teilstring.
+ * For every source ID `s` and source item ID `q`, `deriveReference(s, q)`
+ * returns the same value on every call; for different pairs (after NFC) the
+ * references differ. NFC/NFD variants of the same path yield the same
+ * reference. Format: `outpost:<s>:<h>` with `h` = the first 32 characters
+ * of base64url(sha256(s + "\u0000" + q)); `h` matches
+ * `^[A-Za-z0-9_-]{32}$` and contains neither the source item ID nor file
+ * names as a substring.
  */
 
 import { createHash } from "node:crypto";
@@ -36,8 +36,8 @@ function reference(s: string, q: string): string {
   return `outpost:${s}:${h}`;
 }
 
-describe("Property 15: Stabilität und Eindeutigkeit der Reference", () => {
-  it("ist deterministisch und entspricht der Spezifikationsformel", () => {
+describe("Property 15: stability and uniqueness of the reference", () => {
+  it("is deterministic and matches the specification formula", () => {
     fc.assert(
       fc.property(fc.stringMatching(SOURCE_ID), quellIdArb, (s, q) => {
         expect(deriveReference(s, q)).toBe(reference(s, q));
@@ -47,7 +47,7 @@ describe("Property 15: Stabilität und Eindeutigkeit der Reference", () => {
     );
   });
 
-  it("hat das Format outpost:<s>:<32 base64url-Zeichen>", () => {
+  it("has the format outpost:<s>:<32 base64url characters>", () => {
     fc.assert(
       fc.property(fc.stringMatching(SOURCE_ID), quellIdArb, (s, q) => {
         const ref = deriveReference(s, q);
@@ -59,7 +59,7 @@ describe("Property 15: Stabilität und Eindeutigkeit der Reference", () => {
     );
   });
 
-  it("ist eindeutig für verschiedene Paare (nach NFC)", () => {
+  it("is unique for different pairs (after NFC)", () => {
     fc.assert(
       fc.property(
         fc.stringMatching(SOURCE_ID),
@@ -77,7 +77,7 @@ describe("Property 15: Stabilität und Eindeutigkeit der Reference", () => {
     );
   });
 
-  it("NFC- und NFD-Variante desselben Pfads ergeben dieselbe Reference", () => {
+  it("NFC and NFD variants of the same path yield the same reference", () => {
     fc.assert(
       fc.property(fc.stringMatching(SOURCE_ID), quellIdArb, (s, q) => {
         expect(deriveReference(s, q.normalize("NFC"))).toBe(
@@ -88,10 +88,10 @@ describe("Property 15: Stabilität und Eindeutigkeit der Reference", () => {
     );
   });
 
-  it("enthält keinen Klartextpfad und keinen Dateinamen im Hash-Teil", () => {
-    // Segmente aus dem base64url-Alphabet mit ≥ 8 Zeichen: die
-    // Wahrscheinlichkeit, dass so ein Teil zufällig im 32-Zeichen-Hash
-    // auftaucht, ist < 1e-13 — ein Treffer wäre ein echter Bug.
+  it("contains no plain-text path and no file name in the hash part", () => {
+    // Segments from the base64url alphabet with ≥ 8 characters: the
+    // probability that such a part appears by chance in the 32-character hash
+    // is < 1e-13, so a hit would be a real bug.
     const longSegment = /^[A-Za-z0-9][A-Za-z0-9_-]{7,14}$/;
     const pathArb = fc
       .array(fc.stringMatching(longSegment), { minLength: 1, maxLength: 3 })

@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Temporale Sichtbarkeit als CTE (task 6.8, Requirement 4.6):
+ * Temporal visibility as a CTE (task 6.8, Requirement 4.6):
  *
- *   1. Der Default-Pfad (nur `is_latest`, ohne validAt/includeAllVersions)
- *      muss weiterhin den partiellen HNSW-Index nutzen — die EXPLAIN-
- *      Sicherung, die der Design-Plan (design.md §Search, "Temporale CTE")
- *      verlangt: die Sichtbarkeitsprädikate bleiben dort INLINE, damit der
- *      `*_vector_latest_hnsw_idx`-Index scanbar bleibt.
- *   2. Der validAt-Pfad (geteilte `visible`-CTE) muss ausgeführt werden
- *      können und zeitlich korrekt filtern: pro Dokument genau die Version,
- *      die zum Abfragezeitpunkt gültig war.
+ *   1. The default path (only `is_latest`, without validAt/includeAllVersions)
+ *      must keep using the partial HNSW index: the EXPLAIN guard the design
+ *      plan (design.md §Search, "temporal CTE") requires; the visibility
+ *      predicates stay INLINE there so the
+ *      `*_vector_latest_hnsw_idx` index stays scannable.
+ *   2. The validAt path (shared `visible` CTE) must execute and filter
+ *      correctly in time: per document exactly the version that was valid
+ *      at query time.
  *
  * Self-skips when TEST_POSTGRES_URL is unset (matching the other DB suites).
  */
@@ -35,7 +35,7 @@ const table = collectionTableName(collection);
 const TENANT = `tcte-tenant-${STAMP}`;
 const QUERY_TEXT = "dokument";
 const CONTENT = "temporal cte test dokument";
-/** Füller enthalten das Suchwort NICHT — txt trifft nur die Versionszeilen. */
+/** Fillers do NOT contain the search word; txt only matches the version rows. */
 const FILLER_CONTENT = "fueller fueller fueller";
 
 /** Deterministic PRNG (mulberry32) so vectors are stable per run. */
@@ -119,7 +119,7 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 		expect(ensured.ok).toBe(true);
 		await pg.close();
 
-		// --- Dataset A: füllt die Tabelle für den Index-Plan-Test. ---------
+		// --- Dataset A: fills the table for the index plan test. ----------
 		const rand = mulberry32(seedFrom(`${STAMP}:rows`));
 		const BATCH = 1_000;
 		const TOTAL = 6_000;
@@ -151,7 +151,7 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 			);
 		}
 
-		// --- Dataset B: je Referenz zwei Versionen (v1 alt, v2 aktuell). ---
+		// --- Dataset B: two versions per reference (v1 old, v2 current). ---
 		const VERSIONS: Array<{ suffix: string; validFrom: string; latest: boolean }> = [
 			{ suffix: "v1", validFrom: "2026-01-01T00:00:00Z", latest: false },
 			{ suffix: "v2", validFrom: "2026-03-01T00:00:00Z", latest: true },
@@ -187,8 +187,8 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 			);
 		}
 
-		// Frische Statistiken: ohne ANALYZE schätzt der Planner falsch und
-		// meidet den HNSW-Index (siehe hnsw-recall-selective).
+		// Fresh statistics: without ANALYZE the planner estimates wrongly and
+		// avoids the HNSW index (see hnsw-recall-selective).
 		await pool.query(`ANALYZE "${table}"`);
 	}, 180_000);
 
@@ -197,10 +197,10 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 		await pool?.end();
 	});
 
-	it("Default-Pfad (inline is_latest) nutzt weiterhin den HNSW-Index", async () => {
+	it("default path (inline is_latest) keeps using the HNSW index", async () => {
 		const built = hybrid();
-		// Der Default bleibt inline — keine visible-CTE (Unit-Tests pinnen die
-		// SQL-Form; hier sichern wir die Plan-Auswahl).
+		// The default stays inline, no visible CTE (unit tests pin the SQL
+		// form; here we guard the plan choice).
 		expect(built.sql).not.toContain("visible AS (");
 
 		const client = await pool.connect();
@@ -214,8 +214,8 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 			);
 			await client.query("COMMIT");
 			const planText = JSON.stringify(res.rows);
-			// Der vec-Zweig muss über einen HNSW-Index laufen (partial
-			// `*_vector_latest_hnsw_idx` oder voll) — kein reiner Sort-Pfad.
+			// The vec branch must run through an HNSW index (partial
+			// `*_vector_latest_hnsw_idx` or full); not a pure sort path.
 			expect(planText).toContain("Index Scan");
 			expect(planText).toMatch(/_hnsw_idx/);
 		} finally {
@@ -223,7 +223,7 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 		}
 	}, 120_000);
 
-	it("validAt-Pfad führt aus und liefert genau die zum Zeitpunkt gültige Version", async () => {
+	it("validAt path executes and returns exactly the version valid at that time", async () => {
 		const asOfJan = hybrid("2026-02-01T00:00:00.000Z");
 		expect(asOfJan.sql).toContain("visible AS (");
 		expect(asOfJan.sql).toContain("id IN (SELECT id FROM visible)");
@@ -232,9 +232,9 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 			asOfJan.params,
 		);
 		expect(jan.rows.length).toBeGreaterThan(0);
-		// Februar: v1 (valid_from 2026-01-01) ist sichtbar, v2 (März) nicht.
-		// (Füller-Zeilen können je nach created ebenfalls sichtbar sein —
-		// entscheidend ist die Versionsauswahl pro Dokument.)
+		// February: v1 (valid_from 2026-01-01) is visible, v2 (March) is not.
+		// (Filler rows may also be visible depending on created; what matters
+		// is the version choice per document.)
 		for (const row of jan.rows) {
 			expect(row.reference.endsWith("::v2")).toBe(false);
 		}
@@ -252,12 +252,12 @@ describeIfPg("Temporale CTE · EXPLAIN (real postgres)", () => {
 		expect(apr.rows.some((row) => row.reference.endsWith("::v2"))).toBe(true);
 	}, 120_000);
 
-	it("Default-Latest-Pfad verbirgt die alte Version v1", async () => {
+	it("default latest path hides the old version v1", async () => {
 		const built = hybrid();
 		const res = await pool.query<{ reference: string }>(built.sql, built.params);
 		expect(res.rows.length).toBeGreaterThan(0);
-		// Füller-Zeilen sind ebenfalls latest — entscheidend ist: die
-		// supersedierte v1-Version taucht im Latest-Pfad nie auf.
+		// Filler rows are latest too; what matters is that the superseded v1
+		// version never shows up in the latest path.
 		for (const row of res.rows) {
 			expect(row.reference.endsWith("::v1")).toBe(false);
 		}

@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 21: Wahl des Upload-Pfads
+ * Feature: extract-outpost, Property 21: choice of the upload path
  *
  * **Validates: Requirements 8.5**
  *
- * Für jede Dateigröße `n` und jeden Schwellwert `t` wählt der Planer genau
- * dann den resumable Pfad (`/v2/uploads` + `POST /v2/jobs`), wenn `n > t`,
- * und sonst `POST /v1/ingest` (`direct`).
+ * For every file size `n` and every threshold `t` the planner chooses the
+ * resumable path (`/v2/uploads` + `POST /v2/jobs`) exactly when `n > t`,
+ * and otherwise `POST /v1/ingest` (`direct`).
  */
 
 import fc from "fast-check";
@@ -16,8 +16,8 @@ import { describe, expect, it } from "vitest";
 import { planAfterHash } from "../../src/index.js";
 import { itemArb, sha256Arb } from "../fakes/sync-arb.js";
 
-describe("Property 21: Wahl des Upload-Pfads", () => {
-  it("resumable genau dann, wenn size > resumableThresholdBytes", () => {
+describe("Property 21: choice of the upload path", () => {
+  it("resumable exactly when size > resumableThresholdBytes", () => {
     fc.assert(
       fc.property(
         itemArb,
@@ -26,7 +26,7 @@ describe("Property 21: Wahl des Upload-Pfads", () => {
         fc.nat({ max: 200_000_000 }),
         (item, sha256, threshold, extraMax) => {
           const maxUploadBytes = threshold + extraMax;
-          fc.pre(item.size <= maxUploadBytes); // sonst reject-too-large
+          fc.pre(item.size <= maxUploadBytes); // otherwise reject-too-large
           const action = planAfterHash(item, undefined, sha256, {
             resumableThresholdBytes: threshold,
             maxUploadBytes,
@@ -41,7 +41,7 @@ describe("Property 21: Wahl des Upload-Pfads", () => {
     );
   });
 
-  it("Grenzfälle: size == threshold → direct, size == threshold+1 → resumable", () => {
+  it("edge cases: size == threshold → direct, size == threshold+1 → resumable", () => {
     fc.assert(
       fc.property(
         fc.nat({ max: 200_000_000 }),

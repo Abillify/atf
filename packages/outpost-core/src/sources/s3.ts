@@ -243,7 +243,7 @@ export async function resolveS3Credentials(
       return { accessKeyId, secretAccessKey };
     }
     // Missing store credentials fall through to the default chain (6.4:
-    // "ohne gespeicherte Schlüssel nutzt danach Profil bzw. Kette").
+    // "without stored keys, the profile or chain is used afterwards").
     return chainCredentials(deps);
   }
   if (typeof options.credentials === "object") {

@@ -2,17 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 16: Planerentscheidungen
+ * Feature: extract-outpost, Property 16: planner decisions
  *
  * **Validates: Requirements 7.3, 7.4, 7.5, 8.2, 8.11**
  *
- * `planItem` liefert genau dann `skip`, wenn ein Zustand mit Status `synced`
- * existiert und dessen Marker dem aktuellen entspricht; ein `failed`-Item wird
- * nie übersprungen. Nach dem Hashing liefert `planAfterHash` genau dann
- * `update-marker`, wenn der vorherige Zustand `synced` ist und seine Prüfsumme
- * der berechneten entspricht; sonst `upload` mit
- * `isNewVersion == (vorheriger Zustand existiert)`, oder `reject-too-large`,
- * wenn die Größe `maxUploadBytes` übersteigt.
+ * `planItem` returns `skip` exactly when a state with status `synced`
+ * exists and its marker equals the current one; a `failed` item is
+ * never skipped. After hashing, `planAfterHash` returns
+ * `update-marker` exactly when the previous state is `synced` and its checksum
+ * equals the computed one; otherwise `upload` with
+ * `isNewVersion == (previous state exists)`, or `reject-too-large`
+ * when the size exceeds `maxUploadBytes`.
  */
 
 import fc from "fast-check";
@@ -31,7 +31,7 @@ const limitsArb = fc
   }));
 
 describe("Property 16: Planerentscheidungen", () => {
-  it("planItem skippt genau bei synced mit gleichem Marker", () => {
+  it("planItem skips exactly for synced with an equal marker", () => {
     fc.assert(
       fc.property(itemArb, fc.option(itemStateArb, { nil: undefined }), (item, prev) => {
         const action = planItem(item, prev);
@@ -42,7 +42,7 @@ describe("Property 16: Planerentscheidungen", () => {
     );
   });
 
-  it("ein failed-Item wird nie übersprungen", () => {
+  it("a failed item is never skipped", () => {
     fc.assert(
       fc.property(itemArb, itemStateArb, (item, state) => {
         const failed = { ...state, status: "failed" as const, marker: item.marker };
@@ -52,7 +52,7 @@ describe("Property 16: Planerentscheidungen", () => {
     );
   });
 
-  it("planAfterHash update-marker genau bei synced mit gleicher sha256", () => {
+  it("planAfterHash update-marker exactly for synced with an equal sha256", () => {
     fc.assert(
       fc.property(
         itemArb,
@@ -76,7 +76,7 @@ describe("Property 16: Planerentscheidungen", () => {
     );
   });
 
-  it("upload trägt isNewVersion == (vorheriger Zustand existiert)", () => {
+  it("upload carries isNewVersion == (previous state exists)", () => {
     fc.assert(
       fc.property(
         itemArb,
@@ -94,7 +94,7 @@ describe("Property 16: Planerentscheidungen", () => {
     );
   });
 
-  it("übergroße Items werden verworfen, nicht hochgeladen", () => {
+  it("oversized items are rejected, not uploaded", () => {
     fc.assert(
       fc.property(
         itemArb,

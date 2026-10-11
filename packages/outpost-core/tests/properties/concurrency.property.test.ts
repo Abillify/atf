@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 25: Begrenzung der Nebenläufigkeit
+ * Feature: extract-outpost, Property 25: concurrency limit
  *
- * Für jede Menge von Upload-Aufgaben mit beliebigen Laufzeiten und jedes
- * Limit k >= 1 sind zu keinem Zeitpunkt mehr als k Übertragungen gleichzeitig
- * aktiv, und alle Aufgaben werden abgeschlossen. Nach einer Pause startet
- * keine neue Übertragung, bis fortgesetzt wird.
+ * For every set of upload tasks with arbitrary durations and every
+ * limit k >= 1, at no point are more than k transfers active at the same
+ * time, and all tasks complete. After a pause no new transfer starts
+ * until resumed.
  *
  * **Validates: Requirements 8.12, 10.6**
  */
@@ -61,8 +61,8 @@ async function runTracked(
   return { peak, done };
 }
 
-describe("Property 25: Begrenzung der Nebenläufigkeit", () => {
-  it("nie mehr als k aktive Übertragungen und alle Aufgaben fertig", async () => {
+describe("Property 25: concurrency limit", () => {
+  it("never more than k active transfers and all tasks finished", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.integer({ min: 1, max: 6 }),
@@ -81,7 +81,7 @@ describe("Property 25: Begrenzung der Nebenläufigkeit", () => {
     );
   });
 
-  it("generierte Aufgaben mit beliebigen Laufzeiten bleiben begrenzt", async () => {
+  it("generated tasks with arbitrary durations stay bounded", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.integer({ min: 1, max: 5 }),
@@ -96,7 +96,7 @@ describe("Property 25: Begrenzung der Nebenläufigkeit", () => {
     );
   });
 
-  it("nach pause() startet keine neue Übertragung bis resume()", async () => {
+  it("after pause() no new transfer starts until resume()", async () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 4 }), async (k) => {
         const semaphore = new Semaphore(k);
@@ -135,7 +135,7 @@ describe("Property 25: Begrenzung der Nebenläufigkeit", () => {
     );
   });
 
-  it("ein bereits abortedes Signal erwirbt nie ein Permit", async () => {
+  it("an already aborted signal never acquires a permit", async () => {
     const semaphore = new Semaphore(2);
     const controller = new AbortController();
     controller.abort("logout");
@@ -143,7 +143,7 @@ describe("Property 25: Begrenzung der Nebenläufigkeit", () => {
     expect(semaphore.active).toBe(0);
   });
 
-  it("gibt ein Permit bei Abbruch eines Wartenden nicht doppelt frei", async () => {
+  it("does not release a permit twice when a waiter is aborted", async () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 1, max: 3 }), async (k) => {
         const semaphore = new Semaphore(k);

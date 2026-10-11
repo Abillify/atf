@@ -40,7 +40,7 @@ test.describe("Visual regression — app shell", () => {
     const palette = page.getByRole("dialog", { name: "Command palette" });
     await expect(palette).toBeVisible();
     await expect(palette).toHaveScreenshot("command-palette.png", {
-      // Chromium kann bei der gerenderten Dialogkante um genau ein Pixel variieren.
+      // Chromium may vary by exactly one pixel at the rendered dialog edge.
       maxDiffPixels: 1,
     });
   });

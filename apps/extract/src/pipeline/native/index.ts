@@ -168,14 +168,14 @@ export function buildBpmnRecords(
  * Each Visio page becomes one page record carrying a single `figure` block:
  * a `flowchart` figure with a `process` transcription when the page has
  * connectors (the shapes form a flow), or a `diagram` figure with a shape-text
- * `markdown` transcription when it does not — the "process bzw. diagram" split
+ * `markdown` transcription when it does not, the "process or diagram" split
  * the requirement asks for. The original `.vsdx` is kept once as a `native:`
  * asset on the first page.
  *
  * Unlike {@link buildBpmnRecords}, a Visio drawing still benefits from the
  * picture, so each page also references a `page` asset: the design keeps the
  * LibreOffice → PDF render for the image *in addition to* this native structure
- * (design §10.4, "zusätzlich LibreOffice → PDF für das Bild"). This builder
+ * (design §10.4, "additionally LibreOffice → PDF for the image"). This builder
  * produces the structured half; the caller wires the render alongside it.
  */
 export function buildVsdxRecords(

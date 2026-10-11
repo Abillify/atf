@@ -1,16 +1,16 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-//! Minimaler HTTP-Client fuer die Control-API des Sidecars (127.0.0.1) und
-//! Ableitung des Tray-Zustands aus `GET /status` (Requirements 6.18, 11.6,
-//! 11.7, 13.6). Der Host haelt keine Zugangsdaten — nur Statusinformationen.
+//! Minimal HTTP client for the sidecar's Control API (127.0.0.1) and
+//! derivation of the tray state from `GET /status` (Requirements 6.18, 11.6,
+//! 11.7, 13.6). The host holds no credentials, only status information.
 
 use serde_json::Value;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::time::Duration;
 
-/// Aggregierter Status aller Quellen fuer Tray und Benachrichtigungen.
+/// Aggregated status of all sources for the tray and notifications.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Snapshot {
     pub paused: bool,
@@ -20,7 +20,7 @@ pub struct Snapshot {
     pub failed: u64,
 }
 
-/// Zustand, den das Tray-Icon anzeigt.
+/// State shown by the tray icon.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayState {
     Idle,
@@ -31,7 +31,7 @@ pub enum TrayState {
     Unreachable,
 }
 
-/// HTTP/1.1-Anfrage mit Bearer-Token gegen die Control-API (Connection: close).
+/// HTTP/1.1 request with a bearer token against the Control API (Connection: close).
 pub fn request(port: u16, token: &str, method: &str, path: &str) -> Result<(u16, String), String> {
     let mut stream = TcpStream::connect(("127.0.0.1", port))
         .map_err(|error| format!("Control-API nicht erreichbar: {error}"))?;
@@ -52,8 +52,8 @@ pub fn request(port: u16, token: &str, method: &str, path: &str) -> Result<(u16,
     split_response(&String::from_utf8_lossy(&buffer))
 }
 
-/// Trennt Statuszeile und Body einer HTTP-Antwort (ohne Chunk-Encoding —
-/// die Control-API antwortet mit Content-Length bzw. Connection: close).
+/// Splits the status line and body of an HTTP response (without chunk encoding;
+/// the Control API answers with Content-Length or Connection: close).
 fn split_response(raw: &str) -> Result<(u16, String), String> {
     let (head, body) = raw
         .split_once("\r\n\r\n")
@@ -70,7 +70,7 @@ fn split_response(raw: &str) -> Result<(u16, String), String> {
     Ok((status, body.to_string()))
 }
 
-/// Parst die Antwort von `GET /status` zu einem `Snapshot`.
+/// Parses the response of `GET /status` into a `Snapshot`.
 pub fn parse_snapshot(body: &str) -> Result<Snapshot, String> {
     let value: Value =
         serde_json::from_str(body).map_err(|_| "Status-Antwort ist kein JSON".to_string())?;
@@ -110,7 +110,7 @@ pub fn fetch_snapshot(port: u16, token: &str) -> Result<Snapshot, String> {
     parse_snapshot(&body)
 }
 
-/// Loest alle Quellen ueber die Control-API aus (Tray „Jetzt synchronisieren").
+/// Triggers all sources through the Control API (tray "Sync now").
 pub fn sync_all(port: u16, token: &str) -> Result<(), String> {
     let (status, body) = request(port, token, "GET", "/status")?;
     if status != 200 {
@@ -139,15 +139,15 @@ pub fn sync_all(port: u16, token: &str) -> Result<(), String> {
     }
 }
 
-/// Pause/Fortsetzen abhaengig vom aktuellen `paused`-Schalter.
+/// Pause/resume depending on the current `paused` switch.
 pub fn toggle_pause(port: u16, token: &str) -> Result<(), String> {
     let snapshot = fetch_snapshot(port, token)?;
     let path = if snapshot.paused { "/resume" } else { "/pause" };
     request(port, token, "POST", path).map(|_| ())
 }
 
-/// Prioritaet: nicht erreichbar > erneut autorisieren > Fehler > pausiert >
-/// laeuft > bereit.
+/// Priority: unreachable > re-authorize > error > paused >
+/// running > ready.
 pub fn tray_state(snapshot: Option<&Snapshot>) -> TrayState {
     match snapshot {
         None => TrayState::Unreachable,
@@ -159,13 +159,13 @@ pub fn tray_state(snapshot: Option<&Snapshot>) -> TrayState {
     }
 }
 
-/// Hinweis nur bei Verslechterung: Fehlerzahl ist von 0 bzw. einem kleineren
-/// Wert auf einen groesseren Wert gestiegen (keine Wiederholung je Poll).
+/// Notice only on degradation: the error count rose from 0 or a smaller
+/// value to a larger value (no repetition per poll).
 pub fn failed_alert(prev_failed: u64, current: u64) -> bool {
     current > prev_failed && current > 0
 }
 
-/// Hinweis „Erneut autorisieren" beim Uebergang in needs-authorization.
+/// "Re-authorize" notice on the transition to needs-authorization.
 pub fn reauth_alert(prev: Option<&Snapshot>, current: Option<&Snapshot>) -> bool {
     match (prev, current) {
         (Some(previous), Some(now)) => now.needs_authorization && !previous.needs_authorization,

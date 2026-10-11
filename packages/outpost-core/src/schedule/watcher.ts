@@ -2,30 +2,30 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Datei-Watcher fuer lokale Quellen mit `watch: true` (requirements 1.5,
- * 1.6, design.md): Aenderungen fuehren zu einem vollen Sync-Lauf der Quelle.
+ * File watcher for local sources with `watch: true` (requirements 1.5,
+ * 1.6, design.md): changes lead to a full sync run of the source.
  *
- * Plattform-Backends: `fs.watch` mit `recursive: true` auf macOS/Windows,
- * chokidar auf Linux (4.x). Debounce 5 s, maximale Wartezeit 30 s — eine
- * anhaltende Aenderungssequenz startet spaetestens nach 30 s einen Lauf
- * (Anforderung 1.6).
+ * Platform backends: `fs.watch` with `recursive: true` on macOS/Windows,
+ * chokidar on Linux (4.x). Debounce 5 s, maximum wait 30 s: an ongoing
+ * change sequence starts a run after 30 s at the latest
+ * (Requirement 1.6).
  *
- * Das Backend ist injizierbar ({@link WatchBackendFactory}), damit Tests ohne
- * echte Dateisystem-Events auskommen (Task 18.7).
+ * The backend is injectable ({@link WatchBackendFactory}) so tests work
+ * without real file-system events (Task 18.7).
  */
 
 import { fsWatchBackend } from "./watch-backends.js";
 
-/** Rueckgabe eines aktiven Watchers. */
+/** Return value of an active watcher. */
 export interface WatchHandle {
   /** Beobachtung beenden; idempotent. */
   close(): Promise<void>;
 }
 
 /**
- * Backend-Vertrag: ruft `onChange()` bei jeder Aenderung unter `dir` auf.
- * Implementierungen duerfen Events buendeln — die Debounce-Logik liegt im
- * Watcher selbst.
+ * Backend contract: calls `onChange()` on every change under `dir`.
+ * Implementations may batch events; the debounce logic lives in the
+ * watcher itself.
  */
 export type WatchBackendFactory = (
   dir: string,
@@ -35,23 +35,23 @@ export type WatchBackendFactory = (
 export interface WatcherOptions {
   /** Zu beobachtendes Verzeichnis. */
   dir: string;
-  /** Startet einen vollen Sync-Lauf der Quelle. */
+  /** Starts a full sync run of the source. */
   trigger: () => void;
-  /** Debounce-Fenster in ms (Default 5000, Anforderung 1.6). */
+  /** Debounce window in ms (default 5000, Requirement 1.6). */
   debounceMs?: number;
-  /** Maximale Aufschubzeit in ms (Default 30000, Anforderung 1.6). */
+  /** Maximum postponement in ms (default 30000, Requirement 1.6). */
   maxDelayMs?: number;
   /** Backend-Auswahl; Default: plattformabhaengig (1.5). */
   backend?: WatchBackendFactory;
-  /** Timer-Injektion fuer Tests (fake timers patchen i. d. R. die Globals). */
+  /** Timer injection for tests (fake timers usually patch the globals). */
   setTimer?: (fn: () => void, ms: number) => ReturnType<typeof setTimeout>;
   clearTimer?: (handle: ReturnType<typeof setTimeout>) => void;
 }
 
 /**
- * Startet einen Debounce-Watcher auf `dir`. Jeder Event innerhalb des
- * Debounce-Fensters verschiebt den Start; nach spaetestens `maxDelayMs`
- * wird ausgeloesst, auch bei anhaltenden Events.
+ * Starts a debounce watcher on `dir`. Every event within the debounce
+ * window postpones the start; after `maxDelayMs` at the latest it fires,
+ * even with ongoing events.
  */
 export async function startWatcher(options: WatcherOptions): Promise<WatchHandle> {
   const debounceMs = options.debounceMs ?? 5_000;
@@ -82,7 +82,7 @@ export async function startWatcher(options: WatcherOptions): Promise<WatchHandle
     if (debounce !== undefined) clearTimer(debounce);
     debounce = setTimer(fire, debounceMs);
     if (deadline === undefined) {
-      // Spaetestens nach maxDelayMs, auch wenn Events nicht abreissen.
+      // After maxDelayMs at the latest, even if events keep coming.
       deadline = setTimer(fire, maxDelayMs);
     }
   };

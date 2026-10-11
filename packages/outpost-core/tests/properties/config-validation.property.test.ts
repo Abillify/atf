@@ -31,7 +31,7 @@ const validBase = {
   sources: [] as unknown[],
 };
 
-// Feature: extract-outpost, Property 3: Validierung des Collection-Namens
+// Feature: extract-outpost, Property 3: validation of the collection name
 // **Validates: Requirements 1.4**
 describe("Property 3: collection name validation", () => {
   const pattern = /^[a-zA-Z][a-zA-Z0-9_]*$/;

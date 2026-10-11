@@ -21,7 +21,7 @@
  *     document (the pointer resolves to exactly one).
  *
  * It also reports the DB profile (row count, table size, flip-batch count,
- * runtime) so the "DB- und Asset-Größe" deliverable of task 1.16 is visible.
+ * runtime) so the "DB and asset size" deliverable of task 1.16 is visible.
  *
  * The units are synthesised directly into the collection table (one per page,
  * is_latest=FALSE) rather than streamed through the batch worker: the batch
@@ -406,7 +406,7 @@ describeIfPg("scaling · revision visibility + atomic commit at 10,000 pages (ta
       expect(revisionsSeen.size).toBe(1);
       expect(revisionsSeen.has(rev2)).toBe(true);
 
-      // ── the DB profile (task 1.16 "DB- und Asset-Größe" deliverable) ──
+      // ── the DB profile (task 1.16 "DB and asset size" deliverable) ──
       const size = await pool.query<{ total: string; rows: string }>(
         `SELECT pg_size_pretty(pg_total_relation_size($1))::text AS total,
                 count(*)::text AS rows

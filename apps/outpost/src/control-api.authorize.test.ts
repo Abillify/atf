@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Task 20.12 — Control-API: Autorisierung (PKCE über die Bridge, SSE-Ergeb-
- * nis) und Logout-Sequenz (stopAll → Flush → Token-Löschung, `source:*`
- * bleibt). Requirements 3.5, 3.8, 3.9, 6.4, 6.9, 6.10, 13.5, 15.4.
+ * Task 20.12: Control API authorization (PKCE via the bridge, SSE
+ * result) and the logout sequence (stopAll → flush → token deletion, `source:*`
+ * stays). Requirements 3.5, 3.8, 3.9, 6.4, 6.9, 6.10, 13.5, 15.4.
  */
 
 import { describe, expect, test, vi } from "vitest";
@@ -20,9 +20,9 @@ const NULL_LOGGER = {
 } as never;
 
 interface SetupOptions {
-  /** Antwort auf `loopback.result`; Default: hängt (der Test liefert selbst). */
+  /** Answer to `loopback.result`; default: hangs (the test delivers it itself). */
   loopbackResult?: Promise<Record<string, string>>;
-  /** Token-Endpoint-Antwort des Anbieters. */
+  /** The provider's token endpoint answer. */
   tokenResponse?: { status: number; body: Record<string, unknown> };
 }
 
@@ -125,7 +125,7 @@ async function call(port: number, path: string, method: string): Promise<Respons
   });
 }
 
-/** Öffnet den SSE-Stream; `next(name)` wartet auf das benannte Ereignis. */
+/** Opens the SSE stream; `next(name)` waits for the named event. */
 async function openEvents(port: number): Promise<{
   next: (name: string, timeoutMs?: number) => Promise<unknown>;
   close: () => void;
@@ -179,14 +179,14 @@ async function openEvents(port: number): Promise<{
   return { next, close: () => controller.abort() };
 }
 
-/** Wartet auf die Autorisierungs-URL und liefert ihren `state`. */
+/** Waits for the authorization URL and returns its `state`. */
 async function authorizeState(captured: { browserUrl?: string }): Promise<string> {
   await vi.waitFor(() => expect(captured.browserUrl).toBeDefined(), { timeout: 3_000 });
   return new URL(captured.browserUrl as string).searchParams.get("state") ?? "";
 }
 
-describe("Control-API Autorisierung (PKCE über Bridge, SSE)", () => {
-  test("202 pending; state-Mismatch → source.authorization_failed, Token unverändert", async () => {
+describe("Control API authorization (PKCE via the bridge, SSE)", () => {
+  test("202 pending; state mismatch → source.authorization_failed, token unchanged", async () => {
     const { api, values, captured } = setup({
       loopbackResult: Promise.resolve({ code: "auth-code", state: "falscher-state" }),
     });
@@ -219,14 +219,14 @@ describe("Control-API Autorisierung (PKCE über Bridge, SSE)", () => {
       const pending = await call(port, "/sources/db/authorize", "POST");
       expect(pending.status).toBe(202);
       const state = await authorizeState(captured);
-      // PKCE-Parameter müssen in der Autorisierungs-URL stecken (15.2).
+      // PKCE parameters must be in the authorization URL (15.2).
       const url = new URL(captured.browserUrl as string);
       expect(url.searchParams.get("code_challenge_method")).toBe("S256");
       expect(url.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:54321/callback");
       resolveRedirect({ code: "auth-code", state });
       expect(await events.next("source.authorized")).toEqual({ sourceId: "db" });
       expect(values.get("source:db:oauth-refresh")).toBe("new-refresh");
-      // credentialChanged hat einen Lauf für die Source ausgelöst.
+      // credentialChanged triggered a run for the source.
       await vi.waitFor(() => {
         expect(scheduler.status().find((s) => s.sourceId === "db")?.lastRun).toBeDefined();
       });
@@ -236,7 +236,7 @@ describe("Control-API Autorisierung (PKCE über Bridge, SSE)", () => {
     }
   });
 
-  test("409 bei laufender Autorisierung, 400 lokale Source, 404 unbekannt", async () => {
+  test("409 for a running authorization, 400 local source, 404 unknown", async () => {
     let release: (query: Record<string, string>) => void = () => undefined;
     const { api, captured } = setup({
       loopbackResult: new Promise((resolve) => {
@@ -258,7 +258,7 @@ describe("Control-API Autorisierung (PKCE über Bridge, SSE)", () => {
     }
   });
 
-  test("abgelehnter Code-Tausch: Fehlermeldung ohne Token-/Provider-Inhalte", async () => {
+  test("rejected code exchange: error message without token/provider content", async () => {
     let resolveRedirect: (query: Record<string, string>) => void = () => undefined;
     const { api, values, captured } = setup({
       loopbackResult: new Promise((resolve) => {
@@ -289,7 +289,7 @@ describe("Control-API Autorisierung (PKCE über Bridge, SSE)", () => {
 });
 
 describe("Control-API Logout-Sequenz", () => {
-  test("stopAll → Flush → Token-Löschung; source:*-Schlüssel bleiben", async () => {
+  test("stopAll → flush → token deletion; source:* keys stay", async () => {
     const values = new Map<string, string>([
       ["auth:extract:refresh-token", "extract-refresh"],
       ["auth:extract:api-token", "extract-api"],
@@ -358,14 +358,14 @@ describe("Control-API Logout-Sequenz", () => {
       });
       const response = await call(port, "/auth/logout", "POST");
       expect(response.status).toBe(204);
-      // Reihenfolge: State-Flush VOR dem Löschen der Extract-Tokens (3.5).
+      // Order: state flush BEFORE deleting the Extract tokens (3.5).
       expect(order).toEqual(["flush:db", "logout"]);
-      // Nur EXTRACT_AUTH_KEYS entfernt, Cloud-Schlüssel unverändert (3.9).
+      // Only EXTRACT_AUTH_KEYS removed, cloud keys unchanged (3.9).
       expect(values.has("auth:extract:refresh-token")).toBe(false);
       expect(values.has("auth:extract:api-token")).toBe(false);
       expect(values.get("source:db:oauth-refresh")).toBe("cloud-refresh");
       expect(values.get("source:db:s3-access-key")).toBe("ak");
-      // Alle Quellen gestoppt, keine Trigger mehr.
+      // All sources stopped, no more triggers.
       expect(scheduler.status().every((s) => s.status === "stopped")).toBe(true);
     } finally {
       await api.close();

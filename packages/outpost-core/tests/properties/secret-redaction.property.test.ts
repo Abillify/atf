@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Property 6: Keine Offenlegung von Geheimnissen.
+ * Property 6: no disclosure of secrets.
  *
  * For any configuration carrying arbitrary secret values and any arbitrarily
  * nested log object containing them, no secret appears as a substring of the
@@ -31,7 +31,7 @@ const nestedWithSecret = (secret: string, depth: number): Record<string, unknown
   return node;
 };
 
-// Feature: extract-outpost, Property 6: Keine Offenlegung von Geheimnissen
+// Feature: extract-outpost, Property 6: no disclosure of secrets
 // **Validates: Requirements 1.10, 4.6**
 describe("Property 6: no secret disclosure", () => {
   it("secrets never appear in the serialized configuration", async () => {

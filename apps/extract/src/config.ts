@@ -167,7 +167,7 @@ export interface JobWorkerConfig {
 export interface QueueLaneConfig {
   /**
    * LARGE_JOB_PAGE_THRESHOLD — a job with STRICTLY MORE than this many pages
-   * runs in the bounded large-job lane (design §9a.5: "über 1.000 Seiten").
+   * runs in the bounded large-job lane (design §9a.5: "over 1,000 pages").
    * Default 1000, so a 1000-page job is still normal and a 1001-page job is
    * large. A job with an unknown (null) page count is treated as normal until
    * `preparing` sizes it.
@@ -175,7 +175,7 @@ export interface QueueLaneConfig {
   largeJobPageThreshold: number;
   /**
    * LARGE_JOB_MAX_CONCURRENCY — the most large-lane jobs leased across the
-   * whole worker fleet at once (design §9a.5: "höchstens 1–2 parallele Jobs").
+   * whole worker fleet at once (design §9a.5: "at most 1–2 parallel jobs").
    * Kept small on purpose: a large job saturates the vision model's batch
    * capacity by itself, and the point of the lane is that small documents do
    * not wait days behind big ones. Default 1.

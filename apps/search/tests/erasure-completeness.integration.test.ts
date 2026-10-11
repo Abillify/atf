@@ -2,11 +2,11 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Property 3 — Erasure-Vollständigkeit Search (task 4.3, Requirements 2.3/2.4):
+ * Property 3: Search erasure completeness (task 4.3, Requirements 2.3/2.4):
  *
- *   Für beliebige ingestierte Dokumentmengen und Löschreferenzen liefert nach
- *   Delete KEINE Tabelle des Search-Schemas eine Zeile mit gelöschter
- *   Reference oder deren Unit-IDs.
+ *   For arbitrary ingested document sets and erasure references, after the
+ *   delete NO table of the Search schema returns a row with a deleted
+ *   reference or its unit ids.
  *
  * fast-check generates random document sets — multiple revisions per document
  * (committed / staging / aborted), units across those revisions, legacy units

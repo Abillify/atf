@@ -23,13 +23,13 @@
  * Unlike BPMN, though, a Visio drawing genuinely benefits from the *picture*:
  * geometry, colour and spatial grouping carry meaning a shape/connector graph
  * cannot. So the design keeps the LibreOffice → PDF render for the page image
- * *in addition to* this native structure ("zusätzlich LibreOffice → PDF für das
- * Bild"). This module is only the structured half; the render half is unchanged
+ * *in addition to* this native structure ("additionally LibreOffice → PDF for
+ * the image"). This module is only the structured half; the render half is unchanged
  * in the page renderer.
  *
  * ## process vs. diagram — the split
  *
- * Requirement 10.4 asks for "Shape-Texte und Konnektoren → `process` bzw.
+ * Requirement 10.4 asks for "shape texts and connectors → `process` or
  * `diagram`". The decision is per page and follows the content:
  *
  *  - A page whose shapes are joined by connectors is a flow: it becomes a

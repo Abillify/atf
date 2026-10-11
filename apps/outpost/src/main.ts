@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * CLI-Einstieg des Outpost (design.md, Docker_Runtime).
+ * CLI entry point of the Outpost (design.md, Docker_Runtime).
  *
  * Subcommands: `daemon` (Default), `once`, `login`, `source-login <id>`,
- * `confirm-deletes <id>`, `healthcheck`, `sidecar`. Exit-Codes: 0 Erfolg,
- * 1 Item-/Source-Fehler bzw. needs-authorization, 2 Extract-Auth/Verbindung,
- * 64 Benutzungsfehler, 78 Konfiguration.
+ * `confirm-deletes <id>`, `healthcheck`, `sidecar`. Exit codes: 0 success,
+ * 1 item/source error or needs-authorization, 2 Extract auth/connection,
+ * 64 usage error, 78 configuration.
  */
 
 import { writeFile } from "node:fs/promises";
@@ -145,20 +145,20 @@ async function cmdDaemon(
   };
   const scheduler = new Scheduler(schedulerOptions);
 
-  // 4.4: wiederholte 401 pausiert alle Quellen bis zur erneuten Anmeldung.
+  // 4.4: repeated 401s pause all sources until the next login.
   notifyReauth = (): void => {
     reauthRequired = true;
     scheduler.onReauthRequired();
   };
 
-  // Shutdown-Handler VOR der Verbindungspruefung installieren: Als PID 1 (Docker)
-  // ignoriert der Prozess SIGTERM ohne Handler sonst vollstaendig, und ein Daemon
-  // ohne erreichbares Extract waere nicht mehr sauber stoppbar (12.2).
+  // Install the shutdown handler BEFORE the connection check: as PID 1 (Docker)
+  // the process otherwise ignores SIGTERM without a handler completely, and a
+  // daemon without a reachable Extract could no longer be stopped cleanly (12.2).
   const shutdown = installShutdown(scheduler, { logger });
 
-  // 5.1/5.2: Verbindungspruefung vor dem ersten Lauf; Fehler → Retry mit
-  // Backoff (der Daemon exitet nicht, er wartet auf eine funktionierende
-  // Konfiguration).
+  // 5.1/5.2: connection check before the first run; errors → retry with
+  // backoff (the daemon does not exit, it waits for a working
+  // configuration).
   const abort = new AbortController();
   let backoffMs = 5_000;
   for (;;) {
@@ -173,7 +173,7 @@ async function cmdDaemon(
     backoffMs = Math.min(backoffMs * 2, 60_000);
   }
 
-  // Health-Zustand: wer/wann hat Extract zuletzt geprueft (11.3).
+  // Health state: who/when last checked Extract (11.3).
   let probe: ExtractProbeResult = { reachable: true, status: 200, checkedAt: new Date().toISOString() };
   const health = createHealthServer({
     bind: rt.cfg.health.bind,
@@ -194,7 +194,7 @@ async function cmdDaemon(
   }, 30_000);
   probeTimer.unref?.();
 
-  // Watcher fuer Local-Sources mit watch: true (10.2).
+  // Watchers for local sources with watch: true (10.2).
   const watchers: WatchHandle[] = [];
   for (const src of rt.cfg.sources) {
     if (src.type === "local" && src.watch === true) {
@@ -208,8 +208,8 @@ async function cmdDaemon(
     }
   }
 
-  // 6.17: Credential-Aenderungen (Token-Datei) starten die Quelle sofort;
-  // ein neues Extract-Refresh-Token hebt die Reauth-Pause auf.
+  // 6.17: credential changes (token file) start the source immediately;
+  // a new Extract refresh token lifts the reauth pause.
   const keyToSource = new Map<string, string>();
   for (const src of rt.cfg.sources) {
     keyToSource.set(credentialFileHash(sourceOauthRefreshKey(src.id)), src.id);
@@ -375,8 +375,8 @@ async function cmdConfirmDeletes(
 // ── healthcheck ─────────────────────────────────────────────────────────────
 
 async function cmdHealthcheck(options: MainOptions, err: (l: string) => void): Promise<number> {
-  // Port ohne volle Runtime bestimmen: OUTPOST_HEALTH_PORT, sonst Config,
-  // sonst Default. Ein Konfigurationsfehler bedeutet hier "nicht gesund".
+  // Determine the port without the full runtime: OUTPOST_HEALTH_PORT, otherwise
+  // the config, otherwise the default. A configuration error means "not healthy" here.
   const envPort = process.env.OUTPOST_HEALTH_PORT;
   if (envPort !== undefined && /^\d+$/.test(envPort)) {
     return runHealthcheck(Number.parseInt(envPort, 10));
@@ -410,7 +410,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** FileCredentialStore.watchChanges, gekapselt (nur Docker-Runtime). */
+/** FileCredentialStore.watchChanges, encapsulated (Docker runtime only). */
 function watchCredentials(
   rt: Runtime,
   onChange: (keyHash: string) => void,
@@ -424,14 +424,14 @@ function watchCredentials(
   return () => store.unwatchChanges?.();
 }
 
-/** Logout-Sequenz fuer Control-API/CLI (3.5): stopAll → flush → Token weg. */
+/** Logout sequence for Control API/CLI (3.5): stopAll → flush → token gone. */
 export async function logout(rt: Runtime, scheduler: Scheduler): Promise<void> {
   await performLogout(scheduler, rt.authManager);
 }
 
-// CLI-Bootstrap: beim direkten Ausfuehren (bun/node main.ts, dist-node im
-// Docker-Image, SEA-Binary) wird main() gestartet; Tests importieren die
-// Funktion und rufen sie mit injizierten Argumenten auf.
+// CLI bootstrap: when run directly (bun/node main.ts, dist-node in the
+// Docker image, SEA binary) main() starts; tests import the function and
+// call it with injected arguments.
 if (import.meta.main) {
   process.exitCode = await main();
 }

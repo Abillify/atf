@@ -2,18 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 26: Sicherheit der Löschplanung
+ * Feature: extract-outpost, Property 26: safety of the delete planning
  *
  * **Validates: Requirements 6.12, 9.1, 9.2, 9.4, 9.5, 9.6, 9.11**
  *
- * Ist das Listing unvollständig, ist der Plan leer; bei deaktiviertem
- * Mirror_Delete enthält der Plan keine Löschungen; jede geplante Reference
- * stammt aus dem Sync_State dieser Source und gehört zu einer nicht gesehenen
- * Quell-ID; übersteigt der Anteil der Kandidaten den Schwellwert und liegt
- * keine Bestätigung für genau diese Kandidatenmenge vor, lautet der Plan
- * `awaiting-confirmation`; sonst entspricht die Löschmenge genau der
- * Kandidatenmenge. Bei `awaiting-confirmation` bleibt `state.items`
- * unverändert (der Reducer wird für Kandidaten nicht aufgerufen).
+ * If the listing is incomplete, the plan is empty; with Mirror_Delete
+ * disabled the plan contains no deletions; every planned reference comes
+ * from this source's Sync_State and belongs to a source ID that was not
+ * seen; if the share of candidates exceeds the threshold and there is no
+ * confirmation for exactly this candidate set, the plan is
+ * `awaiting-confirmation`; otherwise the delete set equals exactly the
+ * candidate set. With `awaiting-confirmation`, `state.items` stays
+ * unchanged (the reducer is not called for candidates).
  */
 
 import fc from "fast-check";
@@ -26,7 +26,7 @@ import {
 } from "../../src/index.js";
 import { quellIdArb, sourceStateArb } from "../fakes/sync-arb.js";
 
-/** Kandidaten eines Laufs: im State, aber nicht gesehen. */
+/** Candidates of a run: in the state, but not seen. */
 function candidates(state: SourceState, seen: ReadonlySet<string>): string[] {
   return Object.keys(state.items)
     .filter((q) => !seen.has(q))
@@ -37,8 +37,8 @@ const seenArb: fc.Arbitrary<ReadonlySet<string>> = fc
   .array(fc.oneof(quellIdArb, fc.stringMatching(/^[a-z][a-z0-9]{0,8}$/)), { maxLength: 12 })
   .map((ids) => new Set(ids));
 
-describe("Property 26: Sicherheit der Löschplanung", () => {
-  it("unvollständiges Listing → keine Löschungen", () => {
+describe("Property 26: safety of the delete planning", () => {
+  it("incomplete listing → no deletions", () => {
     fc.assert(
       fc.property(sourceStateArb, seenArb, fc.boolean(), fc.integer({ min: 0, max: 100 }), (state, seen, mirror, threshold) => {
         const plan = planDeletes({
@@ -55,7 +55,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
     );
   });
 
-  it("deaktivierter Mirror_Delete → keine Löschungen, Markierung stattdessen", () => {
+  it("disabled Mirror_Delete → no deletions, marking instead", () => {
     fc.assert(
       fc.property(sourceStateArb, seenArb, fc.integer({ min: 0, max: 100 }), (state, seen, threshold) => {
         const plan = planDeletes({
@@ -96,7 +96,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
     );
   });
 
-  it("jede geplante Reference stammt aus dem State einer nicht gesehenen Quell-ID", () => {
+  it("every planned reference comes from the state of an unseen source ID", () => {
     fc.assert(
       fc.property(
         sourceStateArb,
@@ -120,7 +120,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
               expect(plan.references).toContain(ref);
               expect(seen.has(quellId)).toBe(false);
             }
-            // Keine Reference für eine gesehene Quell-ID (9.6).
+            // No reference for a seen source ID (9.6).
             for (const [quellId, item] of Object.entries(state.items)) {
               if (seen.has(quellId)) expect(plan.references).not.toContain(item.reference);
             }
@@ -131,7 +131,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
     );
   });
 
-  it("über Schwellwert ohne Bestätigung → awaiting-confirmation mit korrekten Zahlen", () => {
+  it("above the threshold without confirmation → awaiting-confirmation with correct counts", () => {
     fc.assert(
       fc.property(sourceStateArb, seenArb, (state, seen) => {
         const missing = candidates(state, seen);
@@ -151,7 +151,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
     );
   });
 
-  it("unter Schwellwert oder bestätigt → Löschmenge == Kandidatenmenge", () => {
+  it("below the threshold or confirmed → delete set == candidate set", () => {
     fc.assert(
       fc.property(
         sourceStateArb,
@@ -184,7 +184,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
     );
   });
 
-  it("awaiting-confirmation: state.items bleibt unverändert, kein reduce für Kandidaten", () => {
+  it("awaiting-confirmation: state.items stays unchanged, no reduce for candidates", () => {
     fc.assert(
       fc.property(sourceStateArb, seenArb, (state, seen) => {
         const missing = candidates(state, seen);
@@ -200,15 +200,15 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
           confirmed: false,
         });
         expect(plan.kind).toBe("awaiting-confirmation");
-        // planDeletes ist rein: der State wird nicht verändert.
+        // planDeletes is pure: the state is not changed.
         expect(state).toEqual(before);
-        // Und: es gibt für Kandidaten keine Outcomes, also auch keine Reducer-Aufrufe.
+        // And: there are no outcomes for candidates, hence no reducer calls.
         for (const quellId of missing) {
           const prev = state.items[quellId];
           expect(prev).toEqual(before.items[quellId]);
         }
-        // Demonstration: ein versehentlicher missing-in-source-Outcome würde den
-        // Status ändern — genau das darf der Run bei awaiting-confirmation nicht tun.
+        // Demonstration: an accidental missing-in-source outcome would change
+        // the status, which is exactly what the run must not do with awaiting-confirmation.
         const demo = reduce(before.items[missing[0] as string], (before.items[missing[0] as string] as { reference: string }).reference, {
           kind: "missing-in-source",
           mirrorDelete: false,
@@ -219,7 +219,7 @@ describe("Property 26: Sicherheit der Löschplanung", () => {
     );
   });
 
-  it("candidateSetHash ist stabil und unterscheidet verschiedene Mengen", () => {
+  it("candidateSetHash is stable and distinguishes different sets", () => {
     fc.assert(
       fc.property(
         fc.uniqueArray(quellIdArb, { minLength: 1, maxLength: 8 }),

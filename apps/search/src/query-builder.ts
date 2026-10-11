@@ -657,7 +657,7 @@ export interface LexicalRanker {
 
 /**
  * `ts_rank_cd` normalisation flag 32: divide the score by 1 + log(document
- * length) — the Längennormalisierung Requirement 4.7 demands of the default
+ * length): the length normalization Requirement 4.7 demands of the default
  * ranker so long chunks do not outrank short ones on raw term hits alone.
  */
 const TS_RANK_CD_LENGTH_NORMALIZATION = 32;

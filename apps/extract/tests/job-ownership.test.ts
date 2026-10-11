@@ -77,9 +77,9 @@ async function buildApp(
   return serve(created.app);
 }
 
-// ── Property 39: Lesezugriff auf Jobs (E3) — the pure rule ─────────────────
+// ── Property 39: read access to jobs (E3), the pure rule ──────────────────
 
-// Feature: extract-outpost, Property 39: Lesezugriff auf Jobs (E3)
+// Feature: extract-outpost, Property 39: read access to jobs (E3)
 // **Validates: Requirements 8.7, 8.13, 8.14**
 describe("Property 39: canReadJob", () => {
   const subjectArb = fc.constantFrom(undefined, "anna", "bob");

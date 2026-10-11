@@ -55,7 +55,7 @@ export const RERANK_MAX_TOKENS = 1024;
 /** Characters per token used for the char-based approximation (see file header). */
 export const CHARS_PER_TOKEN = 4;
 
-/** Default per-section cap for diversification (design §7.1 step 4, "höchstens n"). */
+/** Default per-section cap for diversification (design §7.1 step 4, "at most n"). */
 export const DEFAULT_SECTION_CAP = 3;
 
 // ─── Context extraction ─────────────────────────────────────────────────────

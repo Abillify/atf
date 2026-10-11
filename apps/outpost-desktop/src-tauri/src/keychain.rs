@@ -179,8 +179,8 @@ mod tests {
         let port = opened.port.expect("loopback.open liefert einen Port");
         assert!(port > 0);
 
-        // Simuliert den Systembrowser: Redirect mit code/state auf den Loopback.
-        // handle() blockiert in loopback.result, bis der Redirect eintrifft.
+        // Simulates the system browser: redirect with code/state to the loopback.
+        // handle() blocks in loopback.result until the redirect arrives.
         let worker_host = Arc::clone(&host);
         let worker = thread::spawn(move || {
             worker_host.handle(super::BridgeRequest::LoopbackResult { id: 2 })
@@ -222,8 +222,8 @@ mod tests {
             .unwrap();
         let first = worker.join().unwrap();
         assert!(first.ok);
-        // Der Listener wird mit dem ersten Ergebnis verbraucht; ein zweiter
-        // Aufruf scheitert, statt auf einen neuen Redirect zu warten.
+        // The listener is consumed by the first result; a second call
+        // fails instead of waiting for a new redirect.
         let second = host.handle(super::BridgeRequest::LoopbackResult { id: 3 });
         assert!(!second.ok);
         assert_eq!(

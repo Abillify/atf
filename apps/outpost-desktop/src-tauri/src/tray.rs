@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-//! Tray mit Status-Icon (idle/syncing/error/paused/erneut autorisieren),
-//! Menüaktionen und Fenster-Oeffnen (Requirements 6.18, 11.6, 11.7, 13.6).
-//! Die Statusableitung erfolgt aus `GET /status` des Sidecars (`control.rs`);
-//! die Icons werden als einfache RGBA-Felder erzeugt, damit das Tray ohne
-//! grafische Assets zwischenzustaenden unterscheidbar bleibt. Der Zustand
-//! steht zusaetzlich im Tooltip (kein reiner Farb-Indikator).
+//! Tray with a status icon (idle/syncing/error/paused/re-authorize),
+//! menu actions and window opening (Requirements 6.18, 11.6, 11.7, 13.6).
+//! The status is derived from the sidecar's `GET /status` (`control.rs`);
+//! the icons are generated as simple RGBA fields so the tray can tell the
+//! states apart without graphic assets. The state is also shown in the
+//! tooltip (not a color-only indicator).
 
 use tauri::image::Image;
 use tauri::menu::{MenuBuilder, MenuItem};
@@ -52,7 +52,7 @@ pub fn install<R: Runtime>(app: &AppHandle<R>) -> tauri::Result<()> {
     Ok(())
 }
 
-/// Setzt Icon und Tooltip des Trays auf den aggregierten Zustand.
+/// Sets the tray icon and tooltip to the aggregated state.
 pub fn apply_state<R: Runtime>(tray: &TrayIcon<R>, state: TrayState) {
     let _ = tray.set_icon(Some(icon_for(state)));
     let _ = tray.set_tooltip(Some(tooltip_for(state)));
@@ -69,7 +69,7 @@ pub fn tooltip_for(state: TrayState) -> &'static str {
     }
 }
 
-/// 16×16-RGBA-Feld in der Zustandsfarbe.
+/// 16×16 RGBA field in the state color.
 fn icon_for(state: TrayState) -> Image<'static> {
     let (red, green, blue) = match state {
         TrayState::Idle => (34_u8, 197, 94),
@@ -96,7 +96,7 @@ fn icon_for(state: TrayState) -> Image<'static> {
     Image::new_owned(rgba, size, size)
 }
 
-/// Fuehrt eine Control-API-Aktion gegen den aktuellen Sidecar-Port aus.
+/// Runs a Control API action against the current sidecar port.
 fn control_action<R: Runtime>(app: &AppHandle<R>, action: fn(u16, &str) -> Result<(), String>) {
     let Some(supervisor) = app.try_state::<std::sync::Arc<std::sync::Mutex<SidecarSupervisor>>>()
     else {

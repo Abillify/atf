@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 28: Serialisierung der Runs je Source
+ * Feature: extract-outpost, Property 28: serialization of runs per source
  *
  * **Validates: Requirements 10.4**
  *
- * Zu keinem Zeitpunkt laufen zwei Runs derselben Quelle, und jeder Trigger
- * waehrend eines laufenden Runs fuehrt zu genau einem spaeteren Lauf
- * (pending-Koaleszenz). Trigger werden deterministisch ABGEGEBEN, waehrend
- * ein Lauf aktiv ist (im runSource-Callback), damit die Zaehlung exakt ist:
- * totalRuns = 1 + Anzahl der Laeufe, in denen mindestens ein Trigger
- * abgegeben wurde.
+ * At no point do two runs of the same source run, and every trigger
+ * during a running run leads to exactly one later run
+ * (pending coalescing). Triggers are fired deterministically while a run is
+ * active (in the runSource callback) so the count is exact:
+ * totalRuns = 1 + the number of runs in which at least one trigger
+ * was fired.
  */
 
 import { describe, expect, it } from "vitest";
@@ -43,12 +43,12 @@ const sleep = (ms: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, ms));
 
 interface Plan {
-  /** Trigger-Anzahl waehrend jedem Lauf; der erste Wert gilt fuer Lauf 1. */
+  /** Trigger count during each run; the first value applies to run 1. */
   perRun: number[];
 }
 
-describe("Property 28: Serialisierung der Runs je Source", () => {
-  it("nie zwei gleichzeitige Läufe; jeder Trigger während eines Laufs → genau ein Folgelauf", async () => {
+describe("Property 28: serialization of runs per source", () => {
+  it("never two concurrent runs; every trigger during a run → exactly one follow-up run", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.record({
@@ -83,7 +83,7 @@ describe("Property 28: Serialisierung der Runs je Source", () => {
               maxConcurrent = Math.max(maxConcurrent, now);
               const triggers = n <= plan.perRun.length ? plan.perRun[n - 1] : undefined;
               if (triggers !== undefined) {
-                // Trigger abgeben, solange dieser Lauf aktiv ist (pending).
+                // Fire triggers while this run is active (pending).
                 for (let i = 0; i < triggers; i += 1) {
                   scheduler.trigger(src.id);
                 }
@@ -95,10 +95,10 @@ describe("Property 28: Serialisierung der Runs je Source", () => {
             },
           });
 
-          // Initialer Trigger je Quelle (kein Intervall-Start).
+          // Initial trigger per source (no interval start).
           for (const id of ids) scheduler.trigger(id);
 
-          // Settle: wartet, bis keine Läufe aktiv/pending und die Zahl stabil ist.
+          // Settle: waits until no runs are active/pending and the count is stable.
           let prevTotal = -1;
           let stable = 0;
           for (let i = 0; i < 200 && stable < 10; i += 1) {

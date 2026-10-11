@@ -131,9 +131,9 @@ function indexBackedSearchClient(
 const indexKey = (collection: string, reference: string): string =>
   `${collection}\\u0000${reference}`;
 
-// ── Property 27: Idempotenz der Löschung per Reference ─────────────────────
+// ── Property 27: idempotency of erasure by reference ───────────────────────
 
-// Feature: extract-outpost, Property 27: Idempotenz der Löschung per Reference (Extract)
+// Feature: extract-outpost, Property 27: idempotency of erasure by reference (Extract)
 // **Validates: Requirements 9.3, 9.7, 9.9**
 describe("Property 27: delete by reference is idempotent", () => {
   // Path-parameter-safe reference alphabet; the handler trims, so a reference
@@ -210,9 +210,9 @@ describe("Property 27: delete by reference is idempotent", () => {
   });
 });
 
-// ── Property 40: Scope-Pflicht für Löschungen ──────────────────────────────
+// ── Property 40: scope requirement for erasures ────────────────────────────
 
-// Feature: extract-outpost, Property 40: Scope-Pflicht für Löschungen (Extract)
+// Feature: extract-outpost, Property 40: scope requirement for erasures (Extract)
 // **Validates: Requirements 9.8**
 describe("Property 40: delete requires the extract.delete scope", () => {
   const token = "d".repeat(40);

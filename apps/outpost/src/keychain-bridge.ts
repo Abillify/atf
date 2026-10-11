@@ -2,20 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Keychain-Bridge (requirements 6.9, 13.2, 13.5, 15.3, 15.4).
+ * Keychain bridge (requirements 6.9, 13.2, 13.5, 15.3, 15.4).
  *
- * Das Sidecar hat keinen direkten Zugriff auf den Betriebssystem-Keychain —
- * der Rust-Host besitzt ihn. Die Bridge ist ein zeilenbasiertes JSON-RPC über
- * die stdio-Pipes des Sidecars: jede Anfrage ist eine Zeile
- * `{"id":N,"op":…}`, jede Antwort eine Zeile `{"id":N,…}`. Operationen:
+ * The sidecar has no direct access to the operating-system keychain; the
+ * Rust host owns it. The bridge is a line-based JSON-RPC over the sidecar's
+ * stdio pipes: every request is one line
+ * `{"id":N,"op":…}`, every response one line `{"id":N,…}`. Operations:
  *
- * - `get`/`set`/`delete` — Keychain-Zugriff (Service `me.abillify.atf-outpost`)
- * - `loopback.open` — Host bindet `127.0.0.1:0` und meldet den Port
- * - `browser.open` — Host öffnet die Autorisierungs-URL
- * - `loopback.result` — Host liefert den gefangenen Redirect zurück
+ * - `get`/`set`/`delete`: keychain access (service `me.abillify.atf-outpost`)
+ * - `loopback.open`: the host binds `127.0.0.1:0` and reports the port
+ * - `browser.open`: the host opens the authorization URL
+ * - `loopback.result`: the host returns the captured redirect
  *
- * Secrets gehen niemals auf Platte; ein Bridge-Fehler wird als Fehler
- * weitergereicht, es gibt keinen Fallback (15.4).
+ * Secrets never go to disk; a bridge error is passed on as an error, there
+ * is no fallback (15.4).
  */
 
 import { type CredentialStore, CredentialStoreError } from "@atf/outpost-core";
@@ -31,28 +31,28 @@ export interface BridgeRequest {
 export interface BridgeResponse {
   id: number;
   ok: boolean;
-  /** get: der Wert oder null. */
+  /** get: the value or null. */
   value?: string | null;
-  /** loopback.open: der gebundene Port. */
+  /** loopback.open: the bound port. */
   port?: number;
-  /** loopback.result: query-Parameter des Redirects. */
+  /** loopback.result: query parameters of the redirect. */
   query?: Record<string, string>;
-  /** Fehlercode ohne Geheimnis-Inhalte. */
+  /** Error code without secret content. */
   error?: string;
 }
 
-/** Transport: eine Anfrage senden, die zugehörige Antwort erwarten. */
+/** Transport: send a request, expect the matching response. */
 export type BridgeTransport = (request: BridgeRequest) => Promise<BridgeResponse>;
 
 /**
- * Zeilenbasierte JSON-Codec-Haelfte: zerlegt einen Textstrom in Zeilen und
- * serialisiert Anfragen. Getrennt vom Transport, damit Tests die Protokolle
- * ohne echte Pipes prüfen können.
+ * Line-based JSON codec half: splits a text stream into lines and
+ * serializes requests. Separate from the transport so tests can check the
+ * protocols without real pipes.
  */
 export class LineJsonCodec {
   private buffer = "";
 
-  /** Füttere den Codec mit einem Chunk; liefert vollständige Objekte. */
+  /** Feed the codec a chunk; returns complete objects. */
   push(chunk: string): BridgeResponse[] {
     this.buffer += chunk;
     const out: BridgeResponse[] = [];
@@ -65,21 +65,21 @@ export class LineJsonCodec {
       try {
         out.push(JSON.parse(line) as BridgeResponse);
       } catch {
-        // Zeile ohne gültiges JSON wird verworfen — der Host antwortet erneut.
+        // A line without valid JSON is discarded; the host answers again.
       }
     }
     return out;
   }
 
-  /** Serialisiere eine Anfrage als Protokollzeile. */
+  /** Serialize a request as a protocol line. */
   static encode(request: BridgeRequest): string {
     return `${JSON.stringify(request)}\n`;
   }
 }
 
 /**
- * {@link CredentialStore} über die Bridge. Fehler werden zu
- * {@link CredentialStoreError} — niemals zu einem stillen Fallback (15.4).
+ * {@link CredentialStore} over the bridge. Errors become
+ * {@link CredentialStoreError}, never a silent fallback (15.4).
  */
 export class KeychainBridgeStore implements CredentialStore {
   constructor(private readonly transport: BridgeTransport) {}
@@ -106,7 +106,7 @@ export class KeychainBridgeStore implements CredentialStore {
     }
   }
 
-  /** Host bindet einen Loopback-Port für den PKCE-Redirect (6.9). */
+  /** The host binds a loopback port for the PKCE redirect (6.9). */
   async openLoopback(): Promise<number> {
     const response = await this.send({ id: 0, op: "loopback.open" });
     if (!response.ok || response.port === undefined) {
@@ -115,7 +115,7 @@ export class KeychainBridgeStore implements CredentialStore {
     return response.port;
   }
 
-  /** Host öffnet die Autorisierungs-URL im Standardbrowser. */
+  /** The host opens the authorization URL in the default browser. */
   async openBrowser(url: string): Promise<void> {
     const response = await this.send({ id: 0, op: "browser.open", url });
     if (!response.ok) {
@@ -123,7 +123,7 @@ export class KeychainBridgeStore implements CredentialStore {
     }
   }
 
-  /** Host liefert den gefangenen Redirect (query-Parameter). */
+  /** The host returns the captured redirect (query parameters). */
   async loopbackResult(): Promise<Record<string, string>> {
     const response = await this.send({ id: 0, op: "loopback.result" });
     if (!response.ok || response.query === undefined) {
@@ -142,9 +142,9 @@ export class KeychainBridgeStore implements CredentialStore {
 }
 
 /**
- * Bridge über echte stdio-Pipes: Anfragen als Zeilen nach stdout des Hosts
- * (unser stdin-Reader liest die Antworten des Hosts von unserem stdout —
- * aus Sidecar-Sicht: Anfragen → process.stdout, Antworten ← process.stdin).
+ * Bridge over real stdio pipes: requests as lines to the host's stdout
+ * (our stdin reader reads the host's answers from our stdout; from the
+ * sidecar's point of view: requests → process.stdout, answers ← process.stdin).
  */
 export function createStdioBridge(
   writeLine: (line: string) => void,

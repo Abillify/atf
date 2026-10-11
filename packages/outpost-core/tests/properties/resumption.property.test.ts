@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 19: Wiederaufnahme nach Abbruch
+ * Feature: extract-outpost, Property 19: resumption after an abort
  *
- * Für jede Item-Menge, jeden Unterbrechungsgrund (Fehlerinjektion bzw.
- * Netzwerkverlust im Fake-Extract, Prozessabbruch nach n Journal-Schreib-
- * vorgängen, `abort("shutdown")` nach Grace oder `abort("logout")`) und jeden
- * Unterbrechungszeitpunkt während beliebiger Übertragungen gilt: Kein zum
- * Abbruchzeitpunkt noch übertragenes Item ist danach im State als `synced` mit
- * neuem Marker verzeichnet. Nach einem erneuten vollständigen Lauf sind alle
- * Items `synced`, und kein Item, dessen Erfolg vor dem Abbruch im Journal
- * stand, wird erneut hochgeladen.
+ * For every item set, every interruption cause (fault injection or
+ * network loss in the fake Extract, process abort after n journal
+ * writes, `abort("shutdown")` after the grace or `abort("logout")`) and every
+ * interruption point during arbitrary transfers: no item still being
+ * transferred at the abort is recorded afterwards in the state as `synced`
+ * with a new marker. After another complete run all items are `synced`, and
+ * no item whose success was in the journal before the abort is uploaded
+ * again.
  *
  * **Validates: Requirements 3.8, 7.8, 7.10, 10.7**
  */
@@ -43,11 +43,11 @@ const itemsArb = fc.uniqueArray(
 type Interruption =
   /** SIGTERM/Shutdown mit Grace → abort("shutdown"). */
   | { kind: "shutdown" }
-  /** Logout ohne Grace → abort("logout"). */
+  /** Logout without grace → abort("logout"). */
   | { kind: "logout" }
-  /** Netzwerkverlust im Fake-Extract (ingest-Antwort geht verloren). */
+  /** Network loss in the fake Extract (the ingest response is lost). */
   | { kind: "network-loss" }
-  /** Prozessabbruch nach n Journal-Schreibvorgängen. */
+  /** Process abort after n journal writes. */
   | { kind: "crash"; afterWrites: number };
 
 const interruptionArb: fc.Arbitrary<Interruption> = fc.oneof(
@@ -61,13 +61,13 @@ const interruptionArb: fc.Arbitrary<Interruption> = fc.oneof(
 
 const shaOf = (item: HarnessItem): string => sha256Hex(item.content);
 
-describe("Property 19: Wiederaufnahme nach Abbruch", () => {
-  it("kein abgebrochenes Item ist synced, Folgelauf completes, Erfolge nicht erneut geladen", async () => {
+describe("Property 19: resumption after an abort", () => {
+  it("no aborted item is synced, the follow-up run completes, successes are not uploaded again", async () => {
     await fc.assert(
       fc.asyncProperty(itemsArb, interruptionArb, async (items, interruption) => {
         const dir = await mkdtemp(path.join(tmpdir(), "atf-prop19-"));
         const fake = new FakeExtract();
-        // Verfolge, welches Item als erstes geöffnet wird, und brich dort ab.
+        // Track which item is opened first and abort there.
         let aborted = false;
         const abortFirstOpen = (): void => {
           if (aborted) return;
@@ -77,7 +77,7 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
         const controller = new AbortController();
 
         if (interruption.kind === "network-loss") {
-          // Antwort geht verloren, nachdem Extract das Dokument gespeichert hat.
+          // The response is lost after Extract has stored the document.
           fake.inject({ kind: "abort-after-commit", pathIncludes: "/v1/ingest" });
         }
 
@@ -102,8 +102,8 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
                 }
               : undefined,
         });
-        // Der Abbruch für shutdown/logout/prozessabbruch erfolgt nach dem
-        // ersten erfolgreichen Journal-Write bzw. beim ersten open.
+        // The abort for shutdown/logout/process-abort happens after the
+        // first successful journal write or at the first open.
         if (interruption.kind === "shutdown" || interruption.kind === "logout") {
           const originalOpen = first.adapter.open.bind(first.adapter);
           first.adapter.open = async (item, signal) => {
@@ -114,13 +114,13 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
         }
 
         const report = await first.run();
-        // Der unterbrochene Lauf meldet sich als unvollständig oder mit Fehlern.
+        // The interrupted run reports itself as incomplete or with errors.
         expect(["incomplete", "ok"]).toContain(report.outcome);
         const stateAfter = structuredClone(first.store.state);
         await first.close();
 
-        // Invariante 1: synced mit neuem Marker ⇒ Dokument liegt bei Extract
-        // (nur vollständig verarbeitete Items schrieben ein Outcome, 7.10).
+        // Invariant 1: synced with a new marker ⇒ the document is in Extract
+        // (only completely processed items wrote an outcome, 7.10).
         for (const item of items) {
           const entry = stateAfter.items[item.quellId];
           if (entry !== undefined && entry.status === "synced" && entry.marker === contentMarker(item.content)) {
@@ -129,8 +129,8 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
           }
         }
 
-        // Invariante 2: Items, die vor dem Abbruch als synced im Journal
-        // standen, werden im Folgelauf nicht erneut geöffnet (kein Re-Upload).
+        // Invariant 2: items that were synced in the journal before the abort
+        // are not opened again in the follow-up run (no re-upload).
         const alreadySynced = items.filter((item) => {
           const entry = stateAfter.items[item.quellId];
           return (
@@ -164,12 +164,12 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
     );
   });
 
-  it("Netzwerkverlust führt zu failed, nicht zu einem vorgetäuschten synced", async () => {
+  it("network loss leads to failed, not to a faked synced", async () => {
     await fc.assert(
       fc.asyncProperty(itemsArb, async (items) => {
         const dir = await mkdtemp(path.join(tmpdir(), "atf-prop19n-"));
         const fake = new FakeExtract();
-        // Jeder ingest-Aufruf verliert die Antwort → Retries erschöpfen.
+        // Every ingest call loses the response → retries are exhausted.
         for (let i = 0; i < items.length * 8; i++) {
           fake.inject({ kind: "network-error", pathIncludes: "/v1/ingest" });
         }
@@ -182,7 +182,7 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
             const entry = harness.store.state.items[item.quellId];
             expect(entry?.status).toBe("failed");
             expect(entry?.lastError?.code).toBe("RETRIES_EXHAUSTED");
-            // Kein Marker-Fortschritt ohne bestätigte Übertragung (8.10).
+            // No marker progress without a confirmed transfer (8.10).
             expect(entry?.marker).toBe("");
           }
         } finally {
@@ -194,12 +194,12 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
     );
   });
 
-  it("Resumable Session wird fortgesetzt und nach Erfolg entfernt", async () => {
+  it("a resumable session is continued and removed after success", async () => {
     const dir = await mkdtemp(path.join(tmpdir(), "atf-prop19r-"));
     const content = new Uint8Array(2048).fill(7);
     const items: HarnessItem[] = [{ quellId: "big.bin", content }];
     const fake = new FakeExtract();
-    // Erster PATCH verliert die Antwort nach Commit → Session bleibt bestehen.
+    // The first PATCH loses the response after the commit → the session stays.
     fake.patchFaults.set(0, "network-after");
     const harness = await makeHarness({
       items,
@@ -212,7 +212,7 @@ describe("Property 19: Wiederaufnahme nach Abbruch", () => {
       expect(report.outcome).toBe("ok");
       const entry = harness.store.state.items["big.bin"];
       expect(entry?.status).toBe("synced");
-      // Nach erfolgreichem Abschluss ist keine Session mehr offen (8.6).
+      // After successful completion no session is open any more (8.6).
       expect(entry?.pendingUpload).toBeUndefined();
       const ref = deriveReference("s1", "big.bin");
       expect(fake.documents.get("main")?.get(ref)).toBe(sha256Hex(content));

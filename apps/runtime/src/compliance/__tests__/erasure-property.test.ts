@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
  * Property tests for erasure honesty (Req 2.10 / Property 4):
- * "Für beliebige Kombinationen von Store-Ergebnissen ist der Gesamtstatus genau
- * dann `ok`, wenn kein Store `failed` meldet; die Summe `erased` ist die Summe
- * der Teilwerte."
+ * "For arbitrary combinations of store results the overall status is `ok`
+ * exactly when no store reports `failed`; the `erased` total is the sum of
+ * the partial values."
  *
  * Tested on two levels: the pure aggregation function `aggregateStatus` and the
  * full orchestrator round-trip (local retention stores + remote stores).
@@ -158,16 +158,16 @@ describe("Property 4: orchestrator erasure honesty", () => {
           };
           const op = await orch.execute(req);
 
-          // Gesamtstatus genau dann complete, wenn kein Store failed meldet.
+          // Overall status is complete exactly when no store reports failed.
           const anyFailed = op.results.some((r) => r.status === "failed");
           expect(op.status === "complete").toBe(!anyFailed);
 
-          // Summe erased ist exakt die Summe der Teilwerte.
+          // The erased total is exactly the sum of the partial values.
           expect(op.erased).toBe(
             op.results.reduce((n, r) => n + r.erased, 0),
           );
 
-          // Konsistenz mit der reinen Aggregationsfunktion.
+          // Consistency with the pure aggregation function.
           expect(op.status).toBe(aggregateStatus(op.results));
         },
       ),

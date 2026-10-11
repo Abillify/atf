@@ -24,9 +24,9 @@
  * decode steps, low pages/minute); set it too high and requests queue
  * (`num_requests_waiting` climbs) and per-request latency rises with no
  * throughput gain — the classic saturation knee. Design §9a.4 pins the
- * intent: "`PAGE_CONCURRENCY` richtet sich nach der Batch-Kapazität des
- * vLLM-Servers (Continuous Batching, Richtwert 8–16), nicht nach einem festen
- * Wert von 4."
+ * intent: "`PAGE_CONCURRENCY` follows the batch capacity of the
+ * vLLM server (continuous batching, guideline 8–16), not a fixed
+ * value of 4."
  *
  * This module turns that qualitative guidance into a repeatable measurement an
  * operator runs on their OWN hardware:

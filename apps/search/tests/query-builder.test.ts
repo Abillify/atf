@@ -47,7 +47,7 @@ const aclScope = (userId: string | undefined, userGroups: string[]): AccessScope
   service: false,
 });
 
-/** Tenant-gebundener Service-Scope: buildAccessSql liefert nur das Tenant-Prädikat. */
+/** Tenant-bound service scope: buildAccessSql returns only the tenant predicate. */
 const serviceScope: AccessScope = {
   principal: { userId: undefined, userGroups: undefined, tenantId: "tenant-a", source: "service" },
   userId: undefined,

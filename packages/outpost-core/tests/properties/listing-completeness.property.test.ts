@@ -2,18 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 12: Vollständigkeit des Listings
+ * Feature: extract-outpost, Property 12: completeness of the listing
  *
  * **Validates: Requirements 6.1, 6.2, 6.3, 6.6, 6.8**
  *
- * Für generierte Bäume (lokal, inkl. Symlinks und verschachtelter
- * Verzeichnisse) bzw. generierte Objekt-/Datei-/Eintrag-Mengen mit
- * beliebiger Seitengröße (S3, Drive, Dropbox über die Fakes) liefert der
- * Adapter genau die regulären Dateien/Objekte — jede genau einmal.
- * Symlinks (6.2) und Ordner-Marker erscheinen nicht; die `quellId` ist der
- * relative POSIX-Pfad (lokal), der S3-Key bzw. die Provider-ID
- * (Drive/Dropbox). Pagination (beliebige Seitengröße 1–3) ändert die
- * Ergebnismenge nicht.
+ * For generated trees (local, including symlinks and nested directories) or
+ * generated object/file/entry sets with arbitrary page sizes (S3, Drive,
+ * Dropbox through the fakes), the adapter returns exactly the regular
+ * files/objects, each exactly once.
+ * Symlinks (6.2) and folder markers do not appear; the `quellId` is the
+ * relative POSIX path (local), the S3 key or the provider ID
+ * (Drive/Dropbox). Pagination (arbitrary page size 1–3) does not change the
+ * result set.
  */
 
 import { mkdtemp, mkdir, rm, symlink, writeFile } from "node:fs/promises";
@@ -53,8 +53,8 @@ const relPathArb = fc
   .map((segments) => segments.join("/"));
 
 /**
- * Mengen eindeutiger Pfade, in denen kein Pfad ein anderes Pfadpräfix ist —
- * sonst kollidiert eine Datei mit einem Ordner (z. B. „u“ und „u/a“).
+ * Sets of unique paths in which no path is a prefix of another path;
+ * otherwise a file collides with a folder (e.g. "u" and "u/a").
  */
 const filePathSetArb = fc
   .uniqueArray(relPathArb, { minLength: 0, maxLength: 12 })
@@ -66,7 +66,7 @@ const filePathSetArb = fc
   );
 
 describe("Property 12: lokales Listing (createLocalSource)", () => {
-  it("liefert genau die regulären Dateien, keine Symlinks, quellId = relativer POSIX-Pfad", async () => {
+  it("returns exactly the regular files, no symlinks, quellId = relative POSIX path", async () => {
     await fc.assert(
       fc.asyncProperty(filePathSetArb, async (relPaths) => {
           const dir = await mkdtemp(path.join(tmpDir, "local-"));
@@ -78,7 +78,7 @@ describe("Property 12: lokales Listing (createLocalSource)", () => {
               await writeFile(full, enc(`body:${rel}`));
               expected.add(rel);
             }
-            // Symlinks (auf Datei und ins Leere) dürfen nicht erscheinen (6.2).
+            // Symlinks (to a file and dangling) must not appear (6.2).
             const [firstPath] = relPaths;
             if (firstPath !== undefined) {
               await symlink(path.join(dir, ...firstPath.split("/")), path.join(dir, "link-a.txt"));
@@ -93,8 +93,8 @@ describe("Property 12: lokales Listing (createLocalSource)", () => {
             expect(ids.length).toBe(new Set(ids).size);
             for (const item of result.items) {
               expect(item.quellId).not.toContain("\\");
-              // Marker: `${mtimeMs}:${size}` — mtimeMs kann Nachkomma-Stellen
-              // haben (APFS); das Date entsteht daraus durch Rundung.
+              // Marker: `${mtimeMs}:${size}`; mtimeMs can have fractional
+              // digits (APFS); the Date is derived from it by rounding.
               const [ms, size] = item.marker.split(":");
               expect(size).toBe(String(item.size));
               expect(Math.round(Number(ms))).toBe(item.modified.getTime());
@@ -109,8 +109,8 @@ describe("Property 12: lokales Listing (createLocalSource)", () => {
   });
 });
 
-describe("Property 12: S3-Listing (FakeS3, beliebige Seitengröße)", () => {
-  it("liefert genau die Objekte einmal; Ordner-Marker fehlen; quellId = Key", async () => {
+describe("Property 12: S3 listing (FakeS3, arbitrary page size)", () => {
+  it("returns exactly the objects once; folder markers missing; quellId = key", async () => {
     await fc.assert(
       fc.asyncProperty(
         filePathSetArb,
@@ -121,7 +121,7 @@ describe("Property 12: S3-Listing (FakeS3, beliebige Seitengröße)", () => {
           for (const key of keys) {
             s3.addObject(key, enc(`body:${key}`));
             expected.add(key);
-            // Ordner-Marker zum Key: darf nicht im Listing erscheinen.
+            // Folder marker for the key: must not appear in the listing.
             s3.addObject(`${key}/`, new Uint8Array());
           }
           const store = new MemoryCredentialStore();
@@ -148,8 +148,8 @@ describe("Property 12: S3-Listing (FakeS3, beliebige Seitengröße)", () => {
   });
 });
 
-describe("Property 12: GDrive-Listing (FakeGdrive, beliebige Seitengröße)", () => {
-  it("liefert genau die Nicht-Ordner-Dateien einmal; quellId = Provider-ID", async () => {
+describe("Property 12: GDrive listing (FakeGdrive, arbitrary page size)", () => {
+  it("returns exactly the non-folder files once; quellId = provider ID", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.uniqueArray(fc.stringMatching(/^[a-z0-9]{6,12}$/), { minLength: 0, maxLength: 10 }),
@@ -177,7 +177,7 @@ describe("Property 12: GDrive-Listing (FakeGdrive, beliebige Seitengröße)", ()
             });
             expected.add(id);
           }
-          // Unterordner mit Datei — Ordner selbst darf nicht erscheinen.
+          // Subfolder with a file; the folder itself must not appear.
           gdrive.addFile({
             id: "sub",
             name: "Unterordner",
@@ -216,8 +216,8 @@ describe("Property 12: GDrive-Listing (FakeGdrive, beliebige Seitengröße)", ()
   });
 });
 
-describe("Property 12: Dropbox-Listing (FakeDropbox, beliebige Seitengröße)", () => {
-  it("liefert genau die file-Einträge einmal; Ordner fehlen; quellId = Provider-ID", async () => {
+describe("Property 12: Dropbox listing (FakeDropbox, arbitrary page size)", () => {
+  it("returns exactly the file entries once; folders missing; quellId = provider ID", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.uniqueArray(fc.stringMatching(/^[a-z][a-z0-9]{2,8}\.txt$/), {
@@ -242,7 +242,7 @@ describe("Property 12: Dropbox-Listing (FakeDropbox, beliebige Seitengröße)", 
             });
             expected.add(id);
           }
-          // Ordner-Eintrag: darf nicht erscheinen.
+          // Folder entry: must not appear.
           dropbox.addEntry({
             id: "folderid",
             name: "Unterordner",

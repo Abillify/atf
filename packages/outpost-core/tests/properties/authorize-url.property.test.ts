@@ -2,20 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 34: Aufbau der Cloud-Autorisierungs-URL
+ * Feature: extract-outpost, Property 34: structure of the cloud authorization URL
  *
  * **Validates: Requirements 6.9, 6.13, 6.14, 6.20, 15.2**
  *
- * Für jeden Anbieter (Dropbox, GDrive), jede Client-ID, jede
- * `code_challenge` und jeden `state` enthält die von `buildAuthorizeUrl`
- * erzeugte URL genau die für den Anbieter festgelegten lesenden Scopes
+ * For every provider (Dropbox, GDrive), every client ID, every
+ * `code_challenge` and every `state`, the URL produced by `buildAuthorizeUrl`
+ * contains exactly the read scopes defined for the provider
  * (Dropbox: `files.metadata.read`, `files.content.read`; GDrive:
- * `drive.readonly`) und keinen weiteren Scope, den Offline-Parameter
- * (`token_access_type=offline` bzw. `access_type=offline`),
- * `code_challenge_method=S256`, die unveränderte `code_challenge` und den
- * `state`. Für Dropbox im Docker-Modus enthält sie keinen `redirect_uri`. Für
- * GDrive ist `redirectUri` immer eine URL mit Schema `http`, Host `127.0.0.1`
- * und einem Port in 1–65535.
+ * `drive.readonly`) and no further scope, the offline parameter
+ * (`token_access_type=offline` or `access_type=offline`),
+ * `code_challenge_method=S256`, the unchanged `code_challenge` and the
+ * `state`. For Dropbox in Docker mode it contains no `redirect_uri`. For
+ * GDrive `redirectUri` is always a URL with scheme `http`, host `127.0.0.1`
+ * and a port in 1–65535.
  */
 
 import fc from "fast-check";
@@ -35,7 +35,7 @@ const loopbackArb = fc
   .integer({ min: 1, max: 65535 })
   .map((port) => `http://127.0.0.1:${port}`);
 
-describe("Property 34: Aufbau der Cloud-Autorisierungs-URL", () => {
+describe("Property 34: structure of the cloud authorization URL", () => {
   it(
     "Dropbox: exakt die lesenden Scopes, token_access_type=offline, S256",
     () => {
@@ -49,7 +49,7 @@ describe("Property 34: Aufbau der Cloud-Autorisierungs-URL", () => {
           const p = url.searchParams;
           expect(url.origin + url.pathname).toBe(PROVIDERS.dropbox.authorizeEndpoint);
           expect(p.get("scope")).toBe(DROPBOX_SCOPE);
-          // Nur die beiden lesenden Scopes, kein weiterer.
+          // Only the two read scopes, nothing else.
           expect(p.get("scope")?.split(" ").sort()).toEqual([
             "files.content.read",
             "files.metadata.read",
@@ -60,7 +60,7 @@ describe("Property 34: Aufbau der Cloud-Autorisierungs-URL", () => {
           expect(p.get("state")).toBe(state);
           expect(p.get("response_type")).toBe("code");
           expect(p.get("client_id")).toBe(clientId);
-          // Docker no-redirect: kein redirect_uri.
+          // Docker no-redirect: no redirect_uri.
           expect(p.has("redirect_uri")).toBe(false);
         }),
         { numRuns: 100 },
@@ -87,7 +87,7 @@ describe("Property 34: Aufbau der Cloud-Autorisierungs-URL", () => {
             const p = url.searchParams;
             expect(url.origin + url.pathname).toBe(PROVIDERS.gdrive.authorizeEndpoint);
             expect(p.get("scope")).toBe(GDRIVE_SCOPE);
-            // Genau ein Scope: die drive.readonly-URL, nichts weiteres.
+            // Exactly one scope: the drive.readonly URL, nothing else.
             expect(p.get("scope")?.split(" ")).toEqual([
               "https://www.googleapis.com/auth/drive.readonly",
             ]);
@@ -98,7 +98,7 @@ describe("Property 34: Aufbau der Cloud-Autorisierungs-URL", () => {
             expect(p.get("state")).toBe(state);
             expect(p.get("response_type")).toBe("code");
             expect(p.get("client_id")).toBe(clientId);
-            // GDrive leitet immer auf Loopback http://127.0.0.1:<port>.
+            // GDrive always redirects to the loopback http://127.0.0.1:<port>.
             const sent = new URL(p.get("redirect_uri") ?? "");
             expect(sent.protocol).toBe("http:");
             expect(sent.hostname).toBe("127.0.0.1");
@@ -113,7 +113,7 @@ describe("Property 34: Aufbau der Cloud-Autorisierungs-URL", () => {
   );
 
   it(
-    "Dropbox mit Loopback (Desktop) setzt redirect_uri unverändert",
+    "Dropbox with loopback (desktop) sets redirect_uri unchanged",
     () => {
       fc.assert(
         fc.property(

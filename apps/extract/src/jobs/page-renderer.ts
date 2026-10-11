@@ -220,7 +220,7 @@ export interface PreparedSource {
    * source or when the package could not be read.
    *
    * Unlike BPMN/XLSX, a VSDX is NOT native-only: the design keeps the
-   * LibreOffice → PDF render for the page image "zusätzlich" (design §10.4), so
+   * LibreOffice → PDF render for the page image "additionally" (design §10.4), so
    * `native` above stays null and the source is rendered and driven through the
    * normal PDF path. This field carries the parsed shape/connector structure
    * alongside that render, so the document pass can attach the `process`/
@@ -492,7 +492,7 @@ export function createPageRenderer(deps: PageRendererDeps): PageRenderer {
 
     // ── VSDX: read shape texts and the connector graph natively, but STILL
     //    render via LibreOffice below for the page image (design §10.4,
-    //    requirement 10.4 — "zusätzlich LibreOffice → PDF für das Bild"). The
+    //    requirement 10.4: "additionally LibreOffice → PDF for the image"). The
     //    native structure rides alongside the render as `vsdxStructure`. ─────
     const vsdxStructure: ParsedVsdx | null =
       format.kind === "visio"

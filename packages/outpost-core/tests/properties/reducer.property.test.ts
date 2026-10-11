@@ -2,15 +2,15 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 17: Reducer-Semantik
+ * Feature: extract-outpost, Property 17: reducer semantics
  *
  * **Validates: Requirements 7.6, 8.7, 8.8, 8.10, 9.2, 9.3**
  *
- * `ingested` (ok/skipped) und `job-final` mit `completed` ergeben `synced`
- * mit übernommener Prüfsumme, Marker und unveränderter Reference;
- * `client-error` und `retries-exhausted` ergeben `failed` mit Fehlermeldung
- * und lassen die zuletzt synchronisierte Prüfsumme unverändert; `deleted`
- * ergibt `null`; `missing-in-source` bei deaktiviertem Mirror_Delete ergibt
+ * `ingested` (ok/skipped) and `job-final` with `completed` yield `synced`
+ * with the checksum and marker taken over and the reference unchanged;
+ * `client-error` and `retries-exhausted` yield `failed` with an error message
+ * and leave the last synchronized checksum unchanged; `deleted`
+ * yields `null`; `missing-in-source` with Mirror_Delete disabled yields
  * `deleted-in-source`.
  */
 
@@ -64,7 +64,7 @@ const NOW = "2026-02-02T12:00:00.000Z";
 const now = () => NOW;
 
 describe("Property 17: Reducer-Semantik", () => {
-  it("Referenz bleibt über jedes Outcome unverändert", () => {
+  it("the reference stays unchanged across every outcome", () => {
     fc.assert(
       fc.property(fc.option(itemStateArb, { nil: undefined }), referenceArb, outcomeArb, (prev, ref, outcome) => {
         const next = reduce(prev, ref, outcome, now);
@@ -78,7 +78,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("ingested und job-final/completed ergeben synced mit sha256 und Marker", () => {
+  it("ingested and job-final/completed yield synced with sha256 and marker", () => {
     fc.assert(
       fc.property(fc.option(itemStateArb, { nil: undefined }), referenceArb, outcomeArb, (prev, ref, outcome) => {
         const next = reduce(prev, ref, outcome, now);
@@ -97,7 +97,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("client-error und retries-exhausted ergeben failed ohne sha256 zu ändern", () => {
+  it("client-error and retries-exhausted yield failed without changing sha256", () => {
     fc.assert(
       fc.property(
         fc.option(itemStateArb, { nil: undefined }),
@@ -117,7 +117,7 @@ describe("Property 17: Reducer-Semantik", () => {
             } else {
               expect(next.lastError?.message).toBe(outcome.message);
             }
-            // Die zuletzt synchronisierte Prüfsumme bleibt unverändert (8.10).
+            // The last synchronized checksum stays unchanged (8.10).
             if (syncedPrev !== undefined) {
               expect(next.sha256).toBe(syncedPrev.sha256);
               expect(next.marker).toBe(syncedPrev.marker);
@@ -129,7 +129,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("deleted entfernt den Eintrag (null)", () => {
+  it("deleted removes the entry (null)", () => {
     fc.assert(
       fc.property(fc.option(itemStateArb, { nil: undefined }), referenceArb, (prev, ref) => {
         expect(reduce(prev, ref, { kind: "deleted" }, now)).toBeNull();
@@ -150,7 +150,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("accepted ergibt pending-job mit jobId, marker-only verschiebt nur den Marker", () => {
+  it("accepted yields pending-job with jobId, marker-only only moves the marker", () => {
     fc.assert(
       fc.property(fc.option(itemStateArb, { nil: undefined }), referenceArb, outcomeArb, (prev, ref, outcome) => {
         const next = reduce(prev, ref, outcome, now);
@@ -169,7 +169,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("job-final failed/cancelled ergibt failed mit Fehler", () => {
+  it("job-final failed/cancelled yields failed with an error", () => {
     fc.assert(
       fc.property(
         fc.option(itemStateArb, { nil: undefined }),
@@ -187,7 +187,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("Reducer ist deterministisch: gleiches Outcome, gleiches Ergebnis", () => {
+  it("the reducer is deterministic: same outcome, same result", () => {
     fc.assert(
       fc.property(fc.option(itemStateArb, { nil: undefined }), referenceArb, outcomeArb, (prev, ref, outcome) => {
         const a = reduce(prev, ref, outcome, now);
@@ -198,7 +198,7 @@ describe("Property 17: Reducer-Semantik", () => {
     );
   });
 
-  it("Typ: reduce liefert nie ein Objekt ohne Referenz", () => {
+  it("type: reduce never returns an object without a reference", () => {
     const state: ItemState = { reference: "outpost:s1:x", marker: "m", size: 1, status: "synced" };
     const next = reduce(state, "outpost:s1:y", { kind: "marker-only", marker: "n" }, now);
     expect(next?.reference).toBe("outpost:s1:y");

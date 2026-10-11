@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Health-Endpunkt (requirements 6.18, 11.3, 11.4).
+ * Health endpoint (requirements 6.18, 11.3, 11.4).
  *
- * `GET /healthz` auf `OUTPOST_HEALTH_BIND` (Default `127.0.0.1:8787`).
- * Antwortform gemäß Design:
+ * `GET /healthz` on `OUTPOST_HEALTH_BIND` (default `127.0.0.1:8787`).
+ * Response shape per the design:
  *
  * ```json
  * {"auth":"ok"|"reauth_required",
@@ -13,12 +13,12 @@
  *  "sources":[{"id":"…","status":"idle","lastRun":{…}}]}
  * ```
  *
- * HTTP `503` gibt es NUR bei `reauth_required` oder nicht erreichbarem
- * Extract — `needs-authorization` einer Quelle bleibt `200`, weil ein
- * Container-Neustart dadurch nichts gewonnen wäre und die übrigen Quellen
- * unterbrechen würde (11.4). Der Endpunkt ist unauthentifiziert und enthaelt
- * weder Secrets noch Dateinamen; eine Bindung ausserhalb des Loopback wird
- * beim Start als Warnung geloggt (11.3).
+ * HTTP `503` happens ONLY for `reauth_required` or an unreachable
+ * Extract; `needs-authorization` of a source stays `200`, because a
+ * container restart would gain nothing and would interrupt the other
+ * sources (11.4). The endpoint is unauthenticated and contains neither
+ * secrets nor file names; a bind outside the loopback is logged as a
+ * warning at startup (11.3).
  */
 
 import { createServer, type Server } from "node:http";
@@ -28,16 +28,16 @@ import type { SourceStatusView } from "@atf/outpost-core";
 export const DEFAULT_HEALTH_BIND = "127.0.0.1";
 export const DEFAULT_HEALTH_PORT = 8787;
 
-/** Ergebnis des letzten Extract-Probes (whoami). */
+/** Result of the last Extract probe (whoami). */
 export interface ExtractProbeResult {
   reachable: boolean;
-  /** HTTP-Status, wenn eine Antwort einging. */
+  /** HTTP status when a response arrived. */
   status?: number;
   checkedAt: string;
 }
 
 export interface HealthState {
-  /** Extract-Auth-Status des AuthManagers (4.4). */
+  /** Extract auth status of the AuthManager (4.4). */
   auth: "ok" | "reauth_required";
   sources: SourceStatusView[];
   extract: ExtractProbeResult;
@@ -51,14 +51,14 @@ export interface HealthServerOptions {
 }
 
 export interface HealthServer {
-  /** Startet der Server; liefert die gebundene Adresse. */
+  /** Starts the server; returns the bound address. */
   listen(): Promise<{ address: string; port: number }>;
   close(): Promise<void>;
-  /** Gebundener Port nach listen() (0 → zugewiesener Port). */
+  /** Bound port after listen() (0 → assigned port). */
   port(): number;
 }
 
-/** true für Loopback-Adressen (Warnung sonst, 11.3). */
+/** true for loopback addresses (warning otherwise, 11.3). */
 export function isLoopbackBind(bind: string): boolean {
   const host = bind.includes("%") ? bind.slice(0, bind.indexOf("%")) : bind;
   return (
@@ -70,12 +70,12 @@ export function isLoopbackBind(bind: string): boolean {
   );
 }
 
-/** HTTP-Status für die Health-Antwort (11.4). */
+/** HTTP status for the health response (11.4). */
 export function healthStatusCode(state: HealthState): number {
   return state.auth === "reauth_required" || !state.extract.reachable ? 503 : 200;
 }
 
-/** JSON-Body für /healthz — keine Secrets, keine Dateinamen (11.3). */
+/** JSON body for /healthz: no secrets, no file names (11.3). */
 export function healthBody(state: HealthState): unknown {
   return {
     auth: state.auth,
@@ -102,9 +102,9 @@ export function healthBody(state: HealthState): unknown {
 }
 
 /**
- * Health-Server. Der Server antwortet ausschließlich mit dem Zustand, den
- * `getState` liefert — die Probe-Logik (wer/wann) liegt beim Aufrufer, damit
- * der Endpunkt selbst rein testbar ist.
+ * Health server. The server answers only with the state `getState`
+ * returns; the probe logic (who/when) lives with the caller so the
+ * endpoint itself is purely testable.
  */
 export function createHealthServer(options: HealthServerOptions): HealthServer {
   const bind = options.bind ?? DEFAULT_HEALTH_BIND;
@@ -160,9 +160,9 @@ export function createHealthServer(options: HealthServerOptions): HealthServer {
 }
 
 /**
- * Einmaliger Extract-Probe über `GET /v1/whoami` (5.1). Fehler werden zu
- * `reachable:false` — der Health-Endpunkt darf nie selbst scheitern, weil ein
- * Probe wirft (11.3).
+ * One-off Extract probe via `GET /v1/whoami` (5.1). Errors become
+ * `reachable:false`; the health endpoint must never fail itself because a
+ * probe throws (11.3).
  */
 export async function probeExtract(
   client: { request: (r: { url: string; signal?: AbortSignal }) => Promise<{ status: number }> },
@@ -178,9 +178,9 @@ export async function probeExtract(
 }
 
 /**
- * Subcommand `healthcheck`: ruft den lokalen Health-Endpunkt auf und liefert
- * den Exit-Code (0 bei 200, sonst 1). Verwendet 127.0.0.1 unabhaengig von der
- * Bind-Adresse, damit der Docker-HEALTHCHECK auch bei anderer Bind funktioniert.
+ * Subcommand `healthcheck`: calls the local health endpoint and returns the
+ * exit code (0 for 200, otherwise 1). Uses 127.0.0.1 regardless of the bind
+ * address so the Docker HEALTHCHECK also works with a different bind.
  */
 export async function runHealthcheck(
   port: number,

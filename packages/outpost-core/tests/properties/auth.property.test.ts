@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Property 7 (Auth-Priorität), Property 8 (PKCE-/State-Integrität) und
- * Property 9 (proaktive Token-Erneuerung).
+ * Property 7 (auth priority), Property 8 (PKCE/state integrity) and
+ * Property 9 (proactive token renewal).
  */
 
 import { describe, expect, it } from "vitest";
@@ -28,7 +28,7 @@ import { MemoryCredentialStore } from "../../src/index.js";
 import { FakeIdP } from "../fakes/fake-idp.js";
 import { testLogger } from "../fakes/test-logger.js";
 
-// Feature: extract-outpost, Property 7: Priorität der Auth-Verfahren
+// Feature: extract-outpost, Property 7: priority of the auth methods
 // **Validates: Requirements 2.1, 2.5, 2.6, 2.7, 2.9, 3.6**
 describe("Property 7: auth method priority", () => {
   it("api-token > client-credentials > interactive (device/pkce)", async () => {
@@ -96,7 +96,7 @@ describe("Property 7: auth method priority", () => {
   });
 });
 
-// Feature: extract-outpost, Property 8: PKCE- und State-Integrität
+// Feature: extract-outpost, Property 8: PKCE and state integrity
 // **Validates: Requirements 3.1, 3.2, 3.3**
 describe("Property 8: PKCE and state integrity", () => {
   const RFC7636 = /^[A-Za-z0-9\-._~]+$/;

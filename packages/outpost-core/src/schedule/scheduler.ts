@@ -2,20 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Scheduler: Serialisierung der Sync-Laeufe pro Quelle (requirements 1.3,
+ * Scheduler: serialization of the sync runs per source (requirements 1.3,
  * 1.4, 3.5, 3.8, 3.9, 6.17).
  *
- * Zustandsmaschine pro Quelle: `idle -> running -> idle` mit `pending`-Flag
- * (Trigger waehrend eines Laufs koaleszieren zu genau einem Folge-Lauf).
- * Zusaetzliche Zustände: `stopped` (nach {@link Scheduler.stopAll} — Trigger
- * werden verworfen), `paused` (Extract-Reauth erforderlich, 4.4) sowie die
- * aus dem letzten Lauf abgeleiteten Anzeigestaende `needs-authorization`,
- * `awaiting-confirmation` und `error`.
+ * State machine per source: `idle -> running -> idle` with a `pending` flag
+ * (triggers during a run coalesce into exactly one follow-up run).
+ * Additional states: `stopped` (after {@link Scheduler.stopAll}; triggers
+ * are discarded), `paused` (Extract reauth required, 4.4) and the display
+ * states derived from the last run: `needs-authorization`,
+ * `awaiting-confirmation` and `error`.
  *
- * Logout-Sequenz (3.5, 3.8, design.md): {@link performLogout} stoppt zuerst
- * alle Quellen (inkl. Abort ohne Grace-Periode und Warten auf laufende
- * Transfers), flusht jeden Sync_State und loescht ERST danach die
- * Extract-Credentials — pendingUpload-Eintraege bleiben erhalten (8.6).
+ * Logout sequence (3.5, 3.8, design.md): {@link performLogout} first stops
+ * all sources (including abort without a grace period and waiting for
+ * running transfers), flushes every Sync_State and ONLY THEN deletes the
+ * Extract credentials; pendingUpload entries are kept (8.6).
  */
 
 import type { Logger } from "pino";
@@ -24,7 +24,7 @@ import type { RunReport } from "../sync/run.js";
 import type { TokenProvider } from "../auth/manager.js";
 import { newCounters, type RunCounters } from "../sync/counters.js";
 
-/** Anzeigestatus einer Quelle fuer Health/Tray (Anforderung 11.3). */
+/** Display status of a source for health/tray (Requirement 11.3). */
 export type SourceStatus =
   | "idle"
   | "running"
@@ -34,21 +34,21 @@ export type SourceStatus =
   | "error"
   | "stopped";
 
-/** Zusammenfassung des zuletzt abgeschlossenen Laufs. */
+/** Summary of the last completed run. */
 export interface LastRunInfo {
-  /** ISO-Zeitpunkt des Laufendes. */
+  /** ISO time of the run's end. */
   finishedAt: string;
-  /** Ergebnis des Laufs. */
+  /** Result of the run. */
   result: RunReport["outcome"];
-  /** Zaehler des Laufs. */
+  /** Counters of the run. */
   counters: RunCounters;
 }
 
-/** Status-Sicht einer Quelle (Health-API, Task 20.3). */
+/** Status view of a source (health API, Task 20.3). */
 export interface SourceStatusView {
   sourceId: string;
   status: SourceStatus;
-  /** Ein Trigger wartet auf den naechsten Lauf. */
+  /** A trigger is waiting for the next run. */
   pending: boolean;
   lastRun?: LastRunInfo;
 }
@@ -67,20 +67,20 @@ interface SourceEntry {
 export interface SchedulerOptions {
   cfg: OutpostConfig;
   logger: Logger;
-  /** Fuehrt genau einen Sync-Lauf fuer eine Quelle aus (runSourceOnce). */
+  /** Runs exactly one sync run for a source (runSourceOnce). */
   runSource: (src: SourceConfig, signal: AbortSignal) => Promise<RunReport>;
-  /** Flusht den Sync_State einer Quelle (vor Token-Loeschung, 3.5). */
+  /** Flushes a source's Sync_State (before token deletion, 3.5). */
   flushSource: (sourceId: string) => Promise<void>;
 }
 
 export class Scheduler {
   private readonly opts: SchedulerOptions;
   private readonly entries = new Map<string, SourceEntry>();
-  /** true, waehrend alle Quellen wegen Extract-Reauth pausieren (4.4). */
+  /** true while all sources are paused for Extract reauth (4.4). */
   private reauthPaused = false;
-  /** true nach beginShutdown(): keine neuen Läufe mehr (10.7). */
+  /** true after beginShutdown(): no new runs any more (10.7). */
   private shutdownRequested = false;
-  /** manuelle Pause (10.6): Trigger setzen nur pending, laufende Läufe enden. */
+  /** Manual pause (10.6): triggers only set pending, running runs finish. */
   private paused = false;
 
   constructor(options: SchedulerOptions) {
@@ -95,8 +95,8 @@ export class Scheduler {
     }
   }
 
-  /** Startet alle Quellen: sofortiger Lauf, danach Intervall (1.3).
-   *  Hebt ausserdem `stopped` nach erneuter Anmeldung auf (3.8). */
+  /** Starts all sources: immediate run, then the interval (1.3).
+   *  Also lifts `stopped` after a new login (3.8). */
   start(): void {
     const intervalMs = this.opts.cfg.syncIntervalSec * 1000;
     for (const entry of this.entries.values()) {
@@ -108,7 +108,7 @@ export class Scheduler {
         entry.interval = setInterval(() => {
           this.trigger(entry.src.id);
         }, intervalMs);
-        // Der Timer darf einen Prozess nicht am Beenden hindern (CLI once).
+        // The timer must not keep a process from exiting (CLI once).
         entry.interval.unref?.();
       }
       this.trigger(entry.src.id);
@@ -116,10 +116,10 @@ export class Scheduler {
   }
 
   /**
-   * Triggert einen Lauf fuer eine Quelle. Laeuft bereits einer, wird
-   * `pending` gesetzt (genau ein Folge-Lauf, 1.4). Gestoppte/quellende
-   * Quellen ignorieren Trigger (3.8); Quellen im Zustand
-   * `needs-authorization` starten weiterhin Laeufe (6.17).
+   * Triggers a run for a source. If one is already running, `pending` is
+   * set (exactly one follow-up run, 1.4). Stopped sources ignore
+   * triggers (3.8); sources in the state
+   * `needs-authorization` still start runs (6.17).
    */
   trigger(sourceId: string): void {
     const entry = this.entries.get(sourceId);
@@ -137,16 +137,16 @@ export class Scheduler {
   }
 
   /**
-   * Credential-Aenderung einer Quelle (6.17): startet den naechsten Lauf
-   * sofort, ohne auf das Intervall zu warten.
+   * Credential change of a source (6.17): starts the next run
+   * immediately without waiting for the interval.
    */
   credentialChanged(sourceId: string): void {
     this.trigger(sourceId);
   }
 
   /**
-   * Extract-Reauth erforderlich (4.4): bricht laufende Laeufe ab, pausiert
-   * alle Quellen bis {@link resume}. pending-Trigger bleiben erhalten.
+   * Extract reauth required (4.4): aborts running runs, pauses
+   * all sources until {@link resume}. Pending triggers are kept.
    */
   onReauthRequired(): void {
     this.reauthPaused = true;
@@ -160,15 +160,15 @@ export class Scheduler {
   }
 
   /**
-   * Manuelle Pause (10.6): es starten keine neuen Läufe, laufende laufen zu
-   * Ende. Trigger während der Pause werden zu genau einem Folge-Lauf.
+   * Manual pause (10.6): no new runs start, running runs finish. Triggers
+   * during the pause become exactly one follow-up run.
    */
   pauseAll(): void {
     this.paused = true;
     this.opts.logger.info({ event: "scheduler.paused" }, "Sync-Laeufe pausiert");
   }
 
-  /** Beendet die manuelle Pause; pending-Trigger starten sofort (10.6). */
+  /** Ends the manual pause; pending triggers start immediately (10.6). */
   resumeAll(): void {
     if (!this.paused) return;
     this.paused = false;
@@ -182,12 +182,12 @@ export class Scheduler {
     }
   }
 
-  /** true, wenn manuell pausiert (10.6). */
+  /** true when manually paused (10.6). */
   isPaused(): boolean {
     return this.paused;
   }
 
-  /** Setzt nach erfolgreichem Re-Login alle Pausen auf; pending -> Lauf. */
+  /** Lifts all pauses after a successful re-login; pending -> run. */
   resume(): void {
     this.reauthPaused = false;
     for (const entry of this.entries.values()) {
@@ -201,10 +201,10 @@ export class Scheduler {
   }
 
   /**
-   * Stoppt alle Quellen (3.8): stopped-Status, pending verwerfen, Intervalle
-   * loeschen, laufende Laeufe ohne Grace-Periode abbrechen, auf alle Laeufe
-   * warten und jeden Sync_State flushen. Nach Rueckkehr dieses Aufrufs sind
-   * alle Stores persistent — die Token-Loeschung darf beginnen (3.5).
+   * Stops all sources (3.8): stopped status, discard pending, clear
+   * intervals, abort running runs without a grace period, wait for all runs
+   * and flush every Sync_State. When this call returns all stores are
+   * persisted, so token deletion may begin (3.5).
    */
   async stopAll(reason: string): Promise<void> {
     const waits: Promise<void>[] = [];
@@ -229,7 +229,7 @@ export class Scheduler {
     );
   }
 
-  /** Status-Sicht aller Quellen (Health/Tray, 11.3). */
+  /** Status view of all sources (health/tray, 11.3). */
   status(): SourceStatusView[] {
     return [...this.entries.values()].map((entry) => ({
       sourceId: entry.src.id,
@@ -240,7 +240,7 @@ export class Scheduler {
     }));
   }
 
-  /** true, wenn der Scheduler gestoppt ist (erste gestoppte Quelle). */
+  /** true when the scheduler is stopped (first stopped source). */
   isStopped(): boolean {
     for (const entry of this.entries.values()) {
       if (entry.stopped) return true;
@@ -249,9 +249,9 @@ export class Scheduler {
   }
 
   /**
-   * Graceful Shutdown (10.7): Intervalle stoppen und keine neuen Läufe mehr
-   * starten, aber laufende Übertragungen NICHT abbrechen — sie dürfen zu
-   * Ende laufen. {@link stopAll} bricht nach der Grace-Periode ab.
+   * Graceful shutdown (10.7): stop intervals and start no new runs, but do
+   * NOT abort running transfers; they may finish. {@link stopAll} aborts
+   * after the grace period.
    */
   beginShutdown(): void {
     this.shutdownRequested = true;
@@ -263,7 +263,7 @@ export class Scheduler {
     }
   }
 
-  /** true, wenn mindestens ein Lauf aktiv ist (Graceful-Shutdown-Warte). */
+  /** true when at least one run is active (graceful-shutdown wait). */
   hasActiveRun(): boolean {
     for (const entry of this.entries.values()) {
       if (entry.runPromise !== undefined) return true;
@@ -271,7 +271,7 @@ export class Scheduler {
     return false;
   }
 
-  /** Wartet, bis kein Lauf mehr aktiv ist (oder alle gestoppt sind). */
+  /** Waits until no run is active (or all are stopped). */
   async awaitIdle(): Promise<void> {
     for (;;) {
       const waits = [...this.entries.values()]
@@ -286,8 +286,8 @@ export class Scheduler {
     entry.status = "running";
     const controller = new AbortController();
     entry.controller = controller;
-    // Gate sofort setzen: Trigger, die synchron in runSource (vor dessen
-    // erstem await) eintreffen, sehen einen laufenden Run und setzen pending.
+    // Set the gate immediately: triggers that arrive synchronously in runSource
+    // (before its first await) see a running run and set pending.
     let settle!: () => void;
     const gate = new Promise<void>((resolve) => {
       settle = resolve;
@@ -317,7 +317,7 @@ export class Scheduler {
       if (this.reauthPaused || this.paused) {
         if (this.reauthPaused) entry.status = "paused";
         settle();
-        return; // resume()/resumeAll() startet den naechsten Lauf
+        return; // resume()/resumeAll() starts the next run
       }
       if (failed) {
         entry.status = "error";
@@ -350,10 +350,10 @@ function statusFromReport(report: RunReport): SourceStatus {
 }
 
 /**
- * Logout-Sequenz in fester Reihenfolge (3.5, 3.8, design.md):
- * 1. alle Laeufe stoppen, auf Transfers warten, Sync_State flushen
- * 2. ERST danach die Extract-Credentials loeschen
- * Cloud-Quellen-Schluessel (`source:*`) bleiben erhalten (3.9).
+ * Logout sequence in a fixed order (3.5, 3.8, design.md):
+ * 1. stop all runs, wait for transfers, flush the Sync_State
+ * 2. ONLY THEN delete the Extract credentials
+ * Cloud source keys (`source:*`) are kept (3.9).
  */
 export async function performLogout(
   scheduler: Scheduler,
@@ -363,7 +363,7 @@ export async function performLogout(
   await tokenProvider.logout();
 }
 
-/** Leere Zaehler-Hilfe fuer Status-Anzeigen ohne letzten Lauf. */
+/** Empty counter helper for status displays without a last run. */
 export function emptyCounters(): RunCounters {
   return newCounters();
 }

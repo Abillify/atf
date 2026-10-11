@@ -28,7 +28,7 @@ import type { BudgetLedger } from "./stage-runner.js";
 
 /**
  * The fraction of a job's token budget at which a single early-warning is
- * recorded (design §9, requirement 6.6: "Warnung bei 80 %"). The hard cap at
+ * recorded (design §9, requirement 6.6: "warning at 80 %"). The hard cap at
  * 100 % is the stage runner's budget guard, which parks the job in
  * `paused(reason=budget)` (requirement 4.9); this warning is the heads-up
  * before that, so an operator can raise the budget before the job stalls.

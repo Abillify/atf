@@ -387,8 +387,8 @@ export function chunkDocument(
   // Build chunks from adjusted boundaries.
   //
   // NOTE: chunkDocument is intentionally *lossless* — it never drops chunks and
-  // keeps `index` aligned with document order (Requirement 6.1: "Kein
-  // Textverlust"). Filtering out low-value ("meaningless") chunks is an
+  // keeps `index` aligned with document order (Requirement 6.1: "no
+  // text loss"). Filtering out low-value ("meaningless") chunks is an
   // indexing-layer concern and is applied by the ingest job builders via
   // isMeaningfulChunk, so that the chunking contract stays a pure, reversible
   // split of the input.

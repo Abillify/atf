@@ -60,18 +60,18 @@ function whoamiWith(overrides: Partial<WhoamiResponse>): WhoamiResponse {
 }
 
 describe("whoami (11.1)", () => {
-  it("liefert die validierte Antwort", async () => {
+  it("returns the validated response", async () => {
     const fake = new FakeExtract();
     const response = await whoami(clientWith(fake));
     expect(response.service.name).toBe("atf-extract");
     expect(response.features.ingest).toBe(true);
   });
 
-  it("wirft bei 401 (Client: ReauthRequiredError nach einmaligem Refresh)", async () => {
+  it("throws on 401 (client: ReauthRequiredError after a single refresh)", async () => {
     const fake = new FakeExtract({ requireToken: "other" });
     const error = await whoami(clientWith(fake)).catch((e: unknown) => e);
-    // Der Client wiederholt nach forceRefresh genau einmal; der zweite 401
-    // wird zu ReauthRequiredError (4.4) — beides bedeutet abgelehnt.
+    // The client retries exactly once after forceRefresh; the second 401
+    // becomes ReauthRequiredError (4.4); both mean rejected.
     expect(
       error instanceof ReauthRequiredError ||
         (error instanceof ExtractApiError && error.status === 401),
@@ -82,7 +82,7 @@ describe("whoami (11.1)", () => {
 });
 
 describe("ingest (11.1)", () => {
-  it("sendet multipart im Feld document und liefert ok", async () => {
+  it("sends multipart in the document field and returns ok", async () => {
     const fake = new FakeExtract();
     const bytes = new Uint8Array([1, 2, 3]);
     const result = await ingest(
@@ -95,7 +95,7 @@ describe("ingest (11.1)", () => {
     expect(fake.documents.get("docs")?.get("outpost:a:b")).toBe(sha(bytes));
   });
 
-  it("liefert accepted mit job_id bei 202", async () => {
+  it("returns accepted with job_id on 202", async () => {
     const fake = new FakeExtract({ ingestMode: "async" });
     const result = await ingest(
       clientWith(fake),
@@ -107,7 +107,7 @@ describe("ingest (11.1)", () => {
     if (result.kind === "accepted") expect(result.jobId).toBe("job-1");
   });
 
-  it("markiert Duplicate als skipped", async () => {
+  it("marks duplicates as skipped", async () => {
     const fake = new FakeExtract();
     const client = clientWith(fake);
     const bytes = new Uint8Array([7]);
@@ -126,7 +126,7 @@ describe("deleteByReference (11.1)", () => {
     expect(result.kind).toBe("deleted");
   });
 
-  it("404 = not-found gilt als Erfolg", async () => {
+  it("404 = not-found counts as success", async () => {
     const fake = new FakeExtract();
     const result = await deleteByReference(clientWith(fake), "c", "fehlt");
     expect(result).toEqual({ kind: "not-found" });
@@ -143,7 +143,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
   const MIRROR_ON = { mirrorDelete: true };
   const MIRROR_OFF = { mirrorDelete: false };
 
-  it("ok bei vollständigem Token und Features", () => {
+  it("ok with a complete token and features", () => {
     const result = evaluateConnection(
       { kind: "ok", response: whoamiWith({}) },
       MIRROR_ON,
@@ -153,7 +153,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.maxUploadBytes).toBe(52_428_800);
   });
 
-  it("TLS-Fehler wird mit Code und URL gemeldet (5.3)", () => {
+  it("a TLS error is reported with code and URL (5.3)", () => {
     const result = evaluateConnection(
       { kind: "tls", code: "CERT_HAS_EXPIRED", checkedUrl: "https://e.example/x" },
       MIRROR_OFF,
@@ -170,7 +170,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.findings[0]?.code).toBe("unauthorized");
   });
 
-  it("fehlender Scope extract.ingest → Fehler (5.2)", () => {
+  it("missing scope extract.ingest → error (5.2)", () => {
     const result = evaluateConnection(
       { kind: "ok", response: whoamiWith({ scopes: [] }) },
       MIRROR_OFF,
@@ -179,7 +179,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.findings.some((f) => f.code === "missing_ingest_scope")).toBe(true);
   });
 
-  it("Instanz ohne Authentifizierung (anonymous): Scope-Fehler wird Warnung", () => {
+  it("instance without authentication (anonymous): a scope error becomes a warning", () => {
     const result = evaluateConnection(
       { kind: "ok", response: whoamiWith({ source: "anonymous", scopes: [] }) },
       MIRROR_ON,
@@ -195,7 +195,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.findings.length).toBeGreaterThan(0);
   });
 
-  it("Mirror_Delete ohne extract.delete → Fehler (9.10)", () => {
+  it("Mirror_Delete without extract.delete → error (9.10)", () => {
     const result = evaluateConnection(
       { kind: "ok", response: whoamiWith({ scopes: ["extract.ingest"] }) },
       MIRROR_ON,
@@ -204,7 +204,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.findings.some((f) => f.code === "missing_delete_scope")).toBe(true);
   });
 
-  it("Mirror_Delete ohne deleteByReference-Feature → Fehler (9.10)", () => {
+  it("Mirror_Delete without the deleteByReference feature → error (9.10)", () => {
     const response = whoamiWith({});
     response.features.deleteByReference = false;
     const result = evaluateConnection({ kind: "ok", response }, MIRROR_ON);
@@ -212,7 +212,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.findings.some((f) => f.code === "delete_not_available")).toBe(true);
   });
 
-  it("Mirror_Delete aus → fehlender delete-Scope ist kein Fehler", () => {
+  it("Mirror_Delete off → a missing delete scope is not an error", () => {
     const result = evaluateConnection(
       { kind: "ok", response: whoamiWith({ scopes: ["extract.ingest"] }) },
       MIRROR_OFF,
@@ -220,7 +220,7 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("ownJobRead=false ohne extract.admin → Warnung, ok bleibt true", () => {
+  it("ownJobRead=false without extract.admin → warning, ok stays true", () => {
     const response = whoamiWith({});
     response.features.ownJobRead = false;
     const result = evaluateConnection({ kind: "ok", response }, MIRROR_OFF);
@@ -230,14 +230,14 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     ]);
   });
 
-  it("ownJobRead=false MIT extract.admin → keine Warnung", () => {
+  it("ownJobRead=false WITH extract.admin → no warning", () => {
     const response = whoamiWith({ scopes: ["extract.ingest", "extract.admin"] });
     response.features.ownJobRead = false;
     const result = evaluateConnection({ kind: "ok", response }, MIRROR_OFF);
     expect(result.findings).toHaveLength(0);
   });
 
-  it("ingest nicht montiert → Fehler", () => {
+  it("ingest not mounted → error", () => {
     const response = whoamiWith({});
     response.features.ingest = false;
     const result = evaluateConnection({ kind: "ok", response }, MIRROR_OFF);
@@ -256,14 +256,14 @@ describe("evaluateConnection (11.3, 5.1, 5.2, 9.10)", () => {
     expect(net.kind).toBe("network");
   });
 
-  it("verifyConnection ruft whoami auf und wertet aus", async () => {
+  it("verifyConnection calls whoami and evaluates it", async () => {
     const fake = new FakeExtract();
     const result = await verifyConnection(clientWith(fake), MIRROR_ON);
     expect(result.ok).toBe(true);
     expect(fake.requests.some((r) => r.method === "GET" && r.url.endsWith("/v1/whoami"))).toBe(true);
   });
 
-  it("verifyConnection meldet Netzwerkfehler als Befund", async () => {
+  it("verifyConnection reports network errors as a finding", async () => {
     const fake = new FakeExtract();
     fake.inject({ kind: "network-error", pathIncludes: "/v1/whoami" });
     const result = await verifyConnection(clientWith(fake), MIRROR_ON);

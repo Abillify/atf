@@ -16,7 +16,7 @@ import { collectionArb, sourceIdArb } from "./config-arb.js";
 export const quellIdArb: fc.Arbitrary<string> = fc
   .stringMatching(/^[a-zA-Z0-9][a-zA-Z0-9 ._\-\u00e4\u00f6\u00fc\u00df]{0,30}(\/[a-zA-Z0-9 ._\-\u00e4\u00f6\u00fc\u00df]{1,20}){0,3}$/);
 
-/** Namen mit Unicode inkl. Umlauten, Kommata und Leerzeichen. */
+/** Names with Unicode including umlauts, commas and spaces. */
 export const itemNameArb: fc.Arbitrary<string> = fc
   .string({ minLength: 1, maxLength: 60 })
   .filter((s) => s.trim() !== "");
@@ -25,7 +25,7 @@ export const itemArb: fc.Arbitrary<SourceItem> = fc.record({
   quellId: quellIdArb,
   name: itemNameArb,
   size: fc.nat({ max: 200_000_000 }),
-  // fc.date kann ein Invalid Date erzeugen — daher Zeitstempel als integer.
+  // fc.date can produce an Invalid Date, hence timestamps as integers.
   modified: fc
     .integer({ min: 946_684_800_000, max: 2_051_222_400_000 })
     .map((ms) => new Date(Math.floor(ms / 1000) * 1000)),
@@ -36,7 +36,7 @@ export const itemArb: fc.Arbitrary<SourceItem> = fc.record({
   }),
 });
 
-/** Tags/ACL-Werte ohne Komma — Extrakt nutzt `readListHeader` (Komma = Trenner). */
+/** Tag/ACL values without commas: Extract uses `readListHeader` (comma = separator). */
 const listValueArb: fc.Arbitrary<string> = fc
   .stringMatching(/^[A-Za-z0-9 .\-\u00e4\u00f6\u00fc\u00df]{1,20}$/)
   .filter((s) => s.trim() !== "");
@@ -111,7 +111,7 @@ export const itemStateArb: fc.Arbitrary<ItemState> = fc.oneof(
   }),
 );
 
-/** SourceState mit 0–10 Items; quellIds und References konsistent. */
+/** SourceState with 0–10 items; source ids and references consistent. */
 export const sourceStateArb: fc.Arbitrary<SourceState> = fc
   .uniqueArray(quellIdArb, { maxLength: 10 })
   .chain((quellIds) =>

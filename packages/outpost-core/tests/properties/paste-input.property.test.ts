@@ -2,21 +2,21 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 33: Parsen eingefügter
- * Autorisierungseingaben (Round-Trip mit `state`)
+ * Feature: extract-outpost, Property 33: parsing pasted
+ * authorization inputs (round trip with `state`)
  *
  * **Validates: Requirements 3.3, 6.13, 6.14**
  *
- * Für jeden Code `c` aus dem Anbieter-Alphabet, jeden erwarteten `state` `s`,
- * jeden eingefügten `state` `s'` und jede Redirect-URI
- * `r = http://127.0.0.1:<port>` gilt: `parsePastedInput(buildRedirectUrl(r, c,
- * s'), {state: s, redirectUri: r})` liefert genau dann `{kind: "code", code:
- * c}`, wenn `s == s'`, sonst `state-mismatch`. Das gilt auch mit umgebendem
- * Leerraum oder Anführungszeichen und beliebig umsortierten bzw. zusätzlichen
- * Query-Parametern. Jede URL mit Parameter `error` ergibt `provider-error`,
- * jede URL mit anderem Origin oder Pfad als `r` bzw. ohne `code` ergibt einen
- * Fehler. Bei `allowBareCode` ergibt jeder nackte Code `c` (ohne Schema) `c`.
- * Kein Ergebnis vom Typ `code` entsteht aus einer Eingabe mit falschem
+ * For every code `c` from the provider alphabet, every expected `state` `s`,
+ * every pasted `state` `s'` and every redirect URI
+ * `r = http://127.0.0.1:<port>`: `parsePastedInput(buildRedirectUrl(r, c,
+ * s'), {state: s, redirectUri: r})` returns `{kind: "code", code:
+ * c}` exactly when `s == s'`, otherwise `state-mismatch`. This also holds with
+ * surrounding whitespace or quotes and arbitrarily reordered or additional
+ * query parameters. Every URL with an `error` parameter yields `provider-error`,
+ * every URL with a different origin or path than `r`, or without `code`, yields
+ * an error. With `allowBareCode` every bare code `c` (without a scheme) yields `c`.
+ * No result of type `code` arises from an input with a wrong
  * `state`.
  */
 
@@ -24,16 +24,16 @@ import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { buildRedirectUrl, parsePastedInput } from "../../src/index.js";
 
-/** Anbieter-Alphabet für Codes (URL-sicher, wie Google/Dropbox liefern). */
+/** Provider alphabet for codes (URL safe, as Google/Dropbox deliver). */
 const PROVIDER_CODE = /^[A-Za-z0-9_-]{8,64}$/;
-/** States wie base64url(32 Byte), plus gelegentlich kürzere Werte. */
+/** States like base64url(32 bytes), plus occasionally shorter values. */
 const STATE = /^[A-Za-z0-9_-]{16,64}$/;
 
 const redirectUriArb = fc
   .integer({ min: 1, max: 65535 })
   .map((port) => `http://127.0.0.1:${port}`);
 
-/** Umgebender Leerraum und optional ein Paar Anführungszeichen. */
+/** Surrounding whitespace and optionally a pair of quotes. */
 const wrapArb = fc.record({
   before: fc.constantFrom("", " ", "\n", " \t ", "\r\n"),
   quote: fc.constantFrom("", '"', "'"),
@@ -44,7 +44,7 @@ function wrap(value: string, w: { before: string; quote: string; after: string }
   return w.before + w.quote + value + w.quote + w.after;
 }
 
-/** URL mit umsortierten/zusätzlichen Parametern bauen (code/state bleiben). */
+/** Build a URL with reordered/additional parameters (code/state stay). */
 function shuffledRedirectUrl(
   r: string,
   code: string,
@@ -60,9 +60,9 @@ function shuffledRedirectUrl(
   return `${base.origin}${base.pathname}?${params}`;
 }
 
-describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
+describe("Property 33: parsing pasted authorization inputs", () => {
   it(
-    "Round-Trip: code genau dann, wenn state übereinstimmt",
+    "round trip: code exactly when the state matches",
     () => {
       fc.assert(
         fc.property(
@@ -91,7 +91,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
   );
 
   it(
-    "umsortierte und zusätzliche Query-Parameter ändern das Ergebnis nicht",
+    "reordered and additional query parameters do not change the result",
     () => {
       fc.assert(
         fc.property(
@@ -119,7 +119,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
   );
 
   it(
-    "error-Parameter ergibt provider-error, falscher Origin/Pfad oder fehlender code ergibt Fehler",
+    "an error parameter yields provider-error, a wrong origin/path or missing code yields an error",
     () => {
       fc.assert(
         fc.property(
@@ -140,7 +140,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
               expect(result.reason).toBe("provider-error");
             }
 
-            // Anderer Origin → Fehler, niemals code.
+            // Different origin → error, never a code.
             const foreign = buildRedirectUrl("http://127.0.0.2:9999", code, state);
             const foreignResult = parsePastedInput(foreign, {
               state,
@@ -149,7 +149,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
             });
             expect(foreignResult.kind).toBe("error");
 
-            // Anderer Pfad → Fehler.
+            // Different path → error.
             const otherPath = buildRedirectUrl(`${redirectUri}/callback`, code, state);
             const pathResult = parsePastedInput(otherPath, {
               state,
@@ -158,7 +158,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
             });
             expect(pathResult.kind).toBe("error");
 
-            // URL ohne code-Parameter → Fehler.
+            // URL without a code parameter → error.
             const noCode = `${redirectUri}/?state=${encodeURIComponent(state)}`;
             const noCodeResult = parsePastedInput(noCode, {
               state,
@@ -174,7 +174,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
   );
 
   it(
-    "nackter Code bei allowBareCode; nie code bei falschem state",
+    "bare code with allowBareCode; never a code with a wrong state",
     () => {
       fc.assert(
         fc.property(
@@ -185,7 +185,7 @@ describe("Property 33: Parsen eingefügter Autorisierungseingaben", () => {
             const bare = parsePastedInput(code, { state, redirectUri, allowBareCode: true });
             expect(bare).toEqual({ kind: "code", code });
 
-            // Mit falschem state in einer URL entsteht niemals ein code.
+            // With a wrong state in a URL a code never arises.
             const wrong = buildRedirectUrl(redirectUri, code, `${state}x`);
             const wrongResult = parsePastedInput(wrong, {
               state,

@@ -2,17 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 35: Isolierung nicht autorisierter Sources
+ * Feature: extract-outpost, Property 35: isolation of unauthorized sources
  *
- * Jede Source ohne gültiges Credential endet mit `needs-authorization`, ruft
- * keinen Anbieter-Endpunkt auf, erzeugt keine Uploads und keine Löschungen,
- * ihr Sync_State bleibt unverändert, und das Log enthält den Hinweis
- * `atf-outpost source-login <sourceId>`. Eine GDrive-Source mit
- * `auth: service-account` und vorhandenem Schlüssel ist nie betroffen. Für
- * alle übrigen Sources sind Aufrufe an Fake-Extract, Zähler und Sync_State
- * identisch mit einem Lauf, in dem die betroffenen Sources nicht konfiguriert
- * sind. Health/Status melden über den NeedsAuthTracker genau die betroffenen
- * Sources als `needs-authorization`.
+ * Every source without a valid credential ends with `needs-authorization`,
+ * calls no provider endpoint, produces no uploads and no deletions, its
+ * Sync_State stays unchanged, and the log contains the hint
+ * `atf-outpost source-login <sourceId>`. A GDrive source with
+ * `auth: service-account` and an existing key is never affected. For all
+ * other sources, calls to the fake Extract, counters and Sync_State are
+ * identical to a run in which the affected sources are not configured.
+ * Health/status report exactly the affected sources as
+ * `needs-authorization` via the NeedsAuthTracker.
  *
  * **Validates: Requirements 6.10, 6.12, 6.18**
  */
@@ -240,7 +240,7 @@ function seedCredentials(
 
 const flagsArb = fc.record({ gdrive: fc.boolean(), dropbox: fc.boolean() });
 
-describe("Property 35: Isolierung nicht autorisierter Sources", () => {
+describe("Property 35: isolation of unauthorized sources", () => {
   it("fehlende Credentials isolieren genau die betroffene Source", async () => {
     await fc.assert(
       fc.asyncProperty(flagsArb, async (flags) => {
@@ -311,13 +311,13 @@ describe("Property 35: Isolierung nicht autorisierter Sources", () => {
           expect(a.report.outcome).toBe("ok");
           expect(a.requests).toEqual(b.requests);
           expect(a.report.counters).toEqual(b.report.counters);
-          // Strukturell vergleichen — die Item-Reihenfolge im State hängt von
-          // der (bewusst variablen) Nebenläufigkeit ab, nicht der Inhalt.
+          // Compare structurally: the item order in the state depends on the
+          // (deliberately variable) concurrency, not the content.
           expect(JSON.parse(a.stateJson)).toEqual(JSON.parse(b.stateJson));
         }
       }),
-      // Pro Auswertung 8 State-Stores mit fsync (2 Szenarien × 4 Sources) —
-      // auf langsamen Volumes sind 100 Läufe nicht zeitverträglich.
+      // Per evaluation 8 state stores with fsync (2 scenarios × 4 sources);
+      // on slow volumes 100 runs do not fit the time budget.
       { numRuns: 25 },
     );
   });

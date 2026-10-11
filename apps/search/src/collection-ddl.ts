@@ -564,7 +564,7 @@ export const CURRENT_SCHEMA_VERSION = 14;
  * are TEXT[] — the refs on a unit are just ids; the richer {@link Ref} shape
  * lives in the block payload, not on the index row.
  *
- * Schema 14 (task 3.4, "Lexik und Bezeichner") adds `ts_ident`: a SECOND FTS
+ * Schema 14 (task 3.4, "lexicon and identifiers") adds `ts_ident`: a SECOND FTS
  * vector built with the `simple` config so codes like `WE-01/A` or
  * `DIN EN 1090-2` are tokenised verbatim rather than German-stemmed
  * (Requirement 12.1). The existing `ts_search` column stays the prose vector

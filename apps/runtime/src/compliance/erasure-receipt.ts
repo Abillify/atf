@@ -8,7 +8,7 @@
  * the subject appears only as `sha256(tenantId + "|" + identifier)`. The byte
  * source for signing is the canonical JSON form (recursively sorted keys).
  *
- * Signing algorithm (design.md §Löschung): Ed25519 with
+ * Signing algorithm (design.md §Erasure): Ed25519 with
  * `ERASURE_RECEIPT_SIGNING_KEY`; when that key is unset the audit-anchor HMAC
  * secret (`AUDIT_ANCHOR_SECRET`) is used as documented fallback and the
  * algorithm is recorded in the envelope's `alg` field — never in the payload,

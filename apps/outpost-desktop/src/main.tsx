@@ -16,8 +16,8 @@ function injectedEndpoint(): ControlEndpoint | null {
   return url !== undefined && token !== undefined ? { url, token } : null;
 }
 
-/// Port/Token des Sidecars sind erst nach dem Start bekannt: innerhalb von
-/// Tauri pollt das WebView den Command `control_info`, bis er bereit ist.
+/// The sidecar's port/token are only known after startup: inside
+/// Tauri the WebView polls the `control_info` command until it is ready.
 function useControlEndpoint(): ControlEndpoint | null {
   const [endpoint, setEndpoint] = useState<ControlEndpoint | null>(injectedEndpoint);
   useEffect(() => {

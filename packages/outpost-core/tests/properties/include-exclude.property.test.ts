@@ -2,16 +2,16 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 13: Include-/Exclude-Semantik
+ * Feature: extract-outpost, Property 13: include/exclude semantics
  *
  * **Validates: Requirements 1.9, 6.11**
  *
- * Für jeden Pfad `p` und beliebige Include-/Exclude-Listen gilt:
- * `isIncluded(p, include, exclude)` ist genau dann `true`, wenn kein
- * Exclude-Muster matcht UND (keine Include-Muster gesetzt sind ODER
- * mindestens ein Include-Muster matcht). Exclude gewinnt also immer; bei
- * leerer Include-Liste gilt „alles außer Exclude". Als Referenz dient
- * `picomatch` direkt mit denselben Optionen (`dot: true`).
+ * For every path `p` and arbitrary include/exclude lists:
+ * `isIncluded(p, include, exclude)` is `true` exactly when no
+ * exclude pattern matches AND (no include patterns are set OR
+ * at least one include pattern matches). Exclude therefore always wins; with
+ * an empty include list "everything except exclude" applies. The reference is
+ * `picomatch` directly with the same options (`dot: true`).
  */
 
 import fc from "fast-check";
@@ -31,8 +31,8 @@ function referenceIncluded(
   return picomatch(include as string[], { dot: true })(norm);
 }
 
-// Erzeugt Pfadsegmente ohne Glob-Metazeichen, damit Pfade selbst determiniert
-// matchen; Muster kommen aus einem separaten, kleinen Vorrat.
+// Generates path segments without glob metacharacters so paths match
+// deterministically; patterns come from a separate, small pool.
 const SEGMENT = /^[a-z][a-z0-9._-]{0,8}$/;
 const pathArb = fc
   .array(fc.stringMatching(SEGMENT), { minLength: 1, maxLength: 4 })
@@ -55,7 +55,7 @@ const PATTERN_POOL = [
 const patternsArb = fc.subarray(PATTERN_POOL, { minLength: 0, maxLength: 4 });
 
 describe("Property 13: Include-/Exclude-Semantik", () => {
-  it("isIncluded == (!exclude matcht && (include leer || include matcht))", () => {
+  it("isIncluded == (!exclude matches && (include empty || include matches))", () => {
     fc.assert(
       fc.property(pathArb, patternsArb, patternsArb, (path, include, exclude) => {
         expect(isIncluded(path, include, exclude)).toBe(
@@ -66,7 +66,7 @@ describe("Property 13: Include-/Exclude-Semantik", () => {
     );
   });
 
-  it("Exclude gewinnt immer: geschützte Pfade sind nie enthalten", () => {
+  it("exclude always wins: protected paths are never included", () => {
     fc.assert(
       fc.property(pathArb, patternsArb, (path, exclude) => {
         const norm = normalizeMatchPath(path);
@@ -88,7 +88,7 @@ describe("Property 13: Include-/Exclude-Semantik", () => {
     );
   });
 
-  it("Rückwärts-Separatoren und ./ werden vor dem Match normalisiert", () => {
+  it("backslash separators and ./ are normalized before matching", () => {
     fc.assert(
       fc.property(pathArb, patternsArb, (path, include) => {
         const windows = path.replaceAll("/", "\\");

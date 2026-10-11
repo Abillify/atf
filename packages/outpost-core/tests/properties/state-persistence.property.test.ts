@@ -2,17 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 18: Sync_State-Persistenz und
- * Robustheit
+ * Feature: extract-outpost, Property 18: Sync_State persistence and
+ * robustness
  *
  * **Validates: Requirements 7.1, 7.7**
  *
- * Für jeden `SourceState` ergibt Schreiben (Snapshot und beliebige
- * Journal-Folgen) und erneutes Laden einen gleichwertigen Zustand. Für
- * beliebige Byte-Folgen als Snapshot-Inhalt oder für ein an beliebiger
- * Stelle abgeschnittenes Journal wirft das Laden nicht: Es liefert
- * entweder einen leeren Zustand (Snapshot unlesbar) oder den Zustand bis
- * zur letzten vollständigen Journal-Zeile.
+ * For every `SourceState`, writing (snapshot and arbitrary journal
+ * sequences) and loading again yields an equivalent state. For
+ * arbitrary byte sequences as snapshot content or for a journal cut off at
+ * an arbitrary point, loading does not throw: it returns
+ * either an empty state (snapshot unreadable) or the state up to the
+ * last complete journal line.
  */
 
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
@@ -91,7 +91,7 @@ const entryArb: fc.Arbitrary<JournalEntry> = fc.oneof(
   fc.record({
     op: fc.constant("meta" as const),
     collection: fc.option(fc.stringMatching(/^[a-z][a-z0-9_]{0,10}$/), { nil: undefined }),
-    // undefined = unverändert, null = entfernen, string = setzen
+    // undefined = unchanged, null = remove, string = set
     candidateSetHash: fc.oneof(
       fc.constant(undefined),
       fc.constant(null),
@@ -104,8 +104,8 @@ function expectedState(base: SourceState, entries: JournalEntry[]): SourceState 
   return entries.reduce(applyJournalEntry, base);
 }
 
-describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
-  it("Schreiben (Snapshot + Journal) und erneutes Laden ist gleichwertig", async () => {
+describe("Property 18: Sync_State persistence and robustness", () => {
+  it("writing (snapshot + journal) and loading again is equivalent", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.array(entryArb, { minLength: 0, maxLength: 12 }),
@@ -124,15 +124,15 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
             if (entry.op === "upsert") await store.upsert(entry.quellId, entry.item);
             else if (entry.op === "delete") await store.deleteItem(entry.quellId);
             else await store.setMeta({ collection: entry.collection, candidateSetHash: entry.candidateSetHash });
-            if (i === mid - 1) await store.flush(); // Snapshot mitten im Lauf
+            if (i === mid - 1) await store.flush(); // snapshot in the middle of the run
           }
           const expected = expectedState(base, entries);
           expect(store.state).toEqual(expected);
-          // Ohne flush erneut öffnen: Journal-Replay ergibt denselben Zustand.
+          // Reopen without a flush: journal replay yields the same state.
           await store.close();
           const reopened = await SyncStateStore.open({ dir, sourceId: "s1", collection: "col" });
           expect(reopened.state).toEqual(expected);
-          // Mit flush: Snapshot enthält denselben Zustand.
+          // With a flush: the snapshot contains the same state.
           await reopened.flush();
           const onDisk = JSON.parse(await readFile(path.join(dir, "s1.json"), "utf8")) as SourceState;
           expect(onDisk).toEqual(expected);
@@ -143,7 +143,7 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
     );
   });
 
-  it("beliebiger Byte-Müll als Snapshot: kein Wurf, leerer Zustand + Quarantäne", async () => {
+  it("arbitrary byte garbage as a snapshot: no throw, empty state + quarantine", async () => {
     await fc.assert(
       fc.asyncProperty(fc.uint8Array({ minLength: 0, maxLength: 200 }), async (bytes) => {
         const dir = await freshDir();
@@ -151,7 +151,7 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
         const store = await SyncStateStore.open({ dir, sourceId: "s1", collection: "col" });
         expect(store.state.items).toEqual({});
         expect(store.state.collection).toBe("col");
-        // Unlesbarer Snapshot wird nach *.corrupt-<ts> verschoben (7.7).
+        // An unreadable snapshot is moved to *.corrupt-<ts> (7.7).
         const names = await readdir(dir);
         expect(names.some((n) => n.startsWith("s1.json.corrupt-"))).toBe(true);
         expect(names).not.toContain("s1.json");
@@ -161,7 +161,7 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
     );
   });
 
-  it("abgeschnittenes Journal: Zustand bis zur letzten vollständigen Zeile", async () => {
+  it("truncated journal: state up to the last complete line", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.array(entryArb, { minLength: 1, maxLength: 8 }),
@@ -177,11 +177,11 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
           await store.close();
           const journalPath = path.join(dir, "s1.journal");
           const full = await readFile(journalPath);
-          // Journal an einer beliebigen Stelle abschneiden.
+          // Cut the journal off at an arbitrary point.
           const cut = full.length === 0 ? 0 : cutFraction % full.length;
           await writeFile(journalPath, full.subarray(0, cut));
           const reopened = await SyncStateStore.open({ dir, sourceId: "s1", collection: "col" });
-          // Rekonstruiere den erwarteten Zustand aus den vollständigen Zeilen.
+          // Reconstruct the expected state from the complete lines.
           let offset = 0;
           let expected: SourceState = { version: 1, sourceId: "s1", collection: "col", items: {} };
           for (;;) {
@@ -199,7 +199,7 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
     );
   });
 
-  it("Record-Kodierung: encode/decode Round-Trip und CRC-Prüfung", () => {
+  it("record encoding: encode/decode round trip and CRC check", () => {
     fc.assert(
       fc.property(fc.string({ minLength: 0, maxLength: 300 }), (payload) => {
         const bytes = new TextEncoder().encode(payload);
@@ -210,13 +210,13 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
           expect(decoded.payload).toBe(payload);
           expect(decoded.next).toBe(record.length);
         }
-        // Eine geänderte Nutzdaten-Byte → CRC-Fehler.
+        // A changed payload byte → CRC error.
         if (bytes.length > 0) {
           const broken = Buffer.from(record);
           broken[8] = ((broken[8] ?? 0) + 1) % 256;
           expect(decodeJournalRecord(broken, 0).ok).toBe(false);
         }
-        // Abgeschnittener Record → nicht ok.
+        // Truncated record → not ok.
         expect(decodeJournalRecord(Buffer.from(record.subarray(0, record.length - 1)), 0).ok).toBe(false);
       }),
       { numRuns: 100 },
@@ -229,7 +229,7 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
     expect(crc32(new Uint8Array(0))).toBe(0);
   });
 
-  it("Kompaktierung nach compactAfterEntries leert das Journal", async () => {
+  it("compaction after compactAfterEntries empties the journal", async () => {
     const dir = await freshDir();
     const store = await SyncStateStore.open({
       dir,
@@ -241,9 +241,9 @@ describe("Property 18: Sync_State-Persistenz und Robustheit", () => {
     const item: ItemState = { reference: ref, marker: "m", size: 1, status: "synced" };
     await store.upsert("a.txt", item);
     await store.upsert("b.txt", item);
-    // Noch unter der Schwelle: Journal enthält Zeilen.
+    // Still below the threshold: the journal contains lines.
     expect((await readFile(path.join(dir, "s1.journal"))).length).toBeGreaterThan(0);
-    await store.upsert("c.txt", item); // 3. Eintrag → Kompaktierung
+    await store.upsert("c.txt", item); // 3rd entry → compaction
     expect((await readFile(path.join(dir, "s1.journal"))).length).toBe(0);
     const onDisk = JSON.parse(await readFile(path.join(dir, "s1.json"), "utf8")) as SourceState;
     expect(Object.keys(onDisk.items).sort()).toEqual(["a.txt", "b.txt", "c.txt"]);

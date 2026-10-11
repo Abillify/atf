@@ -158,9 +158,9 @@ describe("signReceipt / verifyReceipt", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Property 5 (Req 2.11 / design §Properties): Receipt-Round-Trip —
-// `verify(sign(receipt)) = true`; jede Bit-Änderung an Payload oder Signatur
-// ergibt `false`. Getestet für Ed25519 und den HS256-Fallback.
+// Property 5 (Req 2.11 / design §Properties): receipt round trip:
+// `verify(sign(receipt)) = true`; every bit change in payload or signature
+// yields `false`. Tested for Ed25519 and the HS256 fallback.
 // ---------------------------------------------------------------------------
 
 const storeResultArb = fc
@@ -238,21 +238,21 @@ function roundTripProperty(key: () => ErasureReceiptKey) {
       const envelope = signReceipt(payload, k);
       if (!verifyReceipt(envelope, k)) return false;
 
-      // Payload-Änderung (Tenant angehängt) → verify muss fehlschlagen.
+      // Payload change (tenant appended) → verify must fail.
       const tamperedPayload = {
         ...envelope,
         payload: { ...envelope.payload, tenantId: `${envelope.payload.tenantId}!` },
       };
       if (verifyReceipt(tamperedPayload, k)) return false;
 
-      // Signatur-Bit-Flip → verify muss fehlschlagen.
+      // Signature bit flip → verify must fail.
       const flipped = {
         ...envelope,
         signature: flipSignatureBit(envelope.signature, flipIdx),
       };
       if (verifyReceipt(flipped, k)) return false;
 
-      // Fremder Schlüssel → verify muss fehlschlagen.
+      // Foreign key → verify must fail.
       if (verifyReceipt(envelope, key())) return false;
 
       return true;

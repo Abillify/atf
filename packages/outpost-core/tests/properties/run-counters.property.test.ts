@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 30: Konsistenz der Run-Zähler
+ * Feature: extract-outpost, Property 30: consistency of the run counters
  *
- * Für jeden Sync_Run ist die Summe `new + updated + skipped + failed` gleich
- * der Anzahl verarbeiteter Source_Items nach Filterung, `deleted` gleich der
- * Anzahl bestätigter Löschungen, und jedes Item wird in genau einer Klasse
- * gezählt.
+ * For every Sync_Run the sum `new + updated + skipped + failed` equals the
+ * number of processed Source_Items after filtering, `deleted` equals the
+ * number of confirmed deletions, and every item is counted in exactly one
+ * class.
  *
  * **Validates: Requirements 11.1**
  */
@@ -40,7 +40,7 @@ const itemsArb = fc.uniqueArray(itemArb, {
   maxLength: 8,
 });
 
-describe("Property 30: Konsistenz der Run-Zähler", () => {
+describe("Property 30: consistency of the run counters", () => {
   it("new + updated + skipped + failed == verarbeitete Items", async () => {
     await fc.assert(
       fc.asyncProperty(itemsArb, async (items) => {
@@ -50,7 +50,7 @@ describe("Property 30: Konsistenz der Run-Zähler", () => {
           const report = await harness.run();
           expect(report.outcome).toBe("ok");
           expect(processedTotal(report.counters)).toBe(items.length);
-          // Erster Lauf ohne vorherigen State: alles neu.
+          // First run without a previous state: everything is new.
           expect(report.counters.new).toBe(items.length);
           expect(report.counters.updated).toBe(0);
           expect(report.counters.failed).toBe(0);
@@ -63,7 +63,7 @@ describe("Property 30: Konsistenz der Run-Zähler", () => {
     );
   });
 
-  it("zweiter Lauf ohne Änderungen zählt alles als skipped", async () => {
+  it("a second run without changes counts everything as skipped", async () => {
     await fc.assert(
       fc.asyncProperty(itemsArb, async (items) => {
         const dir = await mkdtemp(path.join(tmpdir(), "atf-prop30b-"));
@@ -85,7 +85,7 @@ describe("Property 30: Konsistenz der Run-Zähler", () => {
     );
   });
 
-  it("geänderte Inhalte zählen als updated, neue als new, gelöschte in deleted", async () => {
+  it("changed content counts as updated, new as new, removed as deleted", async () => {
     await fc.assert(
       fc.asyncProperty(itemsArb, async (items) => {
         fc.pre(items.length >= 2);
@@ -109,7 +109,7 @@ describe("Property 30: Konsistenz der Run-Zähler", () => {
             expect(processedTotal(report.counters)).toBe(nextItems.length);
             expect(report.counters.updated).toBe(1);
             expect(report.counters.skipped).toBe(nextItems.length - 1);
-            // 1 von n ≤ 50 % → unter Schwellwert, bestätigt gelöscht (9.1).
+            // 1 of n ≤ 50 % → below the threshold, deleted as confirmed (9.1).
             expect(report.counters.deleted).toBe(1);
             expect(report.deletePhase).toBe("deleted");
             const ref = deriveReference("s1", dropped.quellId);
@@ -130,12 +130,12 @@ describe("Property 30: Konsistenz der Run-Zähler", () => {
     );
   });
 
-  it("fehlgeschlagene Items zählen als failed und nicht als new", async () => {
+  it("failed items count as failed and not as new", async () => {
     await fc.assert(
       fc.asyncProperty(itemsArb, async (items) => {
         const dir = await mkdtemp(path.join(tmpdir(), "atf-prop30d-"));
         const fake = new FakeExtract();
-        // Erste ingest-Antwort 422 → permanenter Fehler für genau ein Item.
+        // The first ingest response is 422 → a permanent error for exactly one item.
         fake.inject({ kind: "status", status: 422, pathIncludes: "/v1/ingest" });
         const harness = await makeHarness({ items, fake, dir });
         try {

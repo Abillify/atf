@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-/** Buildet das Node-SEA-Sidecar fuer die drei Desktop-Ziele (13.1, 14.1). */
+/** Builds the Node SEA sidecar for the three desktop targets (13.1, 14.1). */
 
 import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";

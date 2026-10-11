@@ -24,10 +24,10 @@ const ITEM_C: HarnessItem = { quellId: "c.txt", content: bytes("c") };
 const deleteRequests = (h: Harness): number =>
   h.fake.requests.filter((r) => r.method === "DELETE").length;
 
-describe("Confirm-Deletes: über Schwellwert bleibt awaiting bis zur Bestätigung", () => {
+describe("Confirm-Deletes: above the threshold it stays awaiting until confirmed", () => {
   it(
-    "Run 1 syncs; Run 2 awaiting; Run 3 ohne Bestätigung löscht NICHT; " +
-      "Run 4 mit korrekter Bestätigung löscht genau die Kandidaten",
+    "Run 1 syncs; Run 2 awaiting; Run 3 without confirmation does NOT delete; " +
+      "Run 4 with the correct confirmation deletes exactly the candidates",
     async () => {
       const h1 = await makeHarness({
         items: [ITEM_A, ITEM_B, ITEM_C],
@@ -39,7 +39,7 @@ describe("Confirm-Deletes: über Schwellwert bleibt awaiting bis zur Bestätigun
       await h1.close();
 
       const dir = h1.dir;
-      // Run 2: nur a vorhanden → b,c Kandidaten (2/3 = 66 % > 50 %).
+      // Run 2: only a present → b,c candidates (2/3 = 66 % > 50 %).
       const h2 = await makeHarness({
         items: [ITEM_A],
         dir,
@@ -55,8 +55,8 @@ describe("Confirm-Deletes: über Schwellwert bleibt awaiting bis zur Bestätigun
       expect(storedHash).toBe(computeCandidateSetHash(["b.txt", "c.txt"]));
       await h2.close();
 
-      // Run 3: GLEICHER Kandidatensatz, KEINE Nutzerbestätigung. Der gespeicherte
-      // Hash darf den Lauf nicht selbst bestätigen (Bug-Fix 9.5/9.11).
+      // Run 3: the SAME candidate set, NO user confirmation. The stored
+      // hash must not confirm the run by itself (bug fix 9.5/9.11).
       const h3 = await makeHarness({
         items: [ITEM_A],
         dir,
@@ -68,8 +68,8 @@ describe("Confirm-Deletes: über Schwellwert bleibt awaiting bis zur Bestätigun
       expect(Object.keys(h3.store.state.items).sort()).toEqual(["a.txt", "b.txt", "c.txt"]);
       await h3.close();
 
-      // Run 4: bestätigter Hash (vom CLI aus /data/state/<id>.confirm gelesen)
-      // → genau b,c werden gelöscht, Hash wird geleert.
+      // Run 4: confirmed hash (read by the CLI from /data/state/<id>.confirm)
+      // → exactly b,c are deleted, the hash is cleared.
       const confirmed = computeCandidateSetHash(["b.txt", "c.txt"]);
       const h4 = await makeHarness({
         items: [ITEM_A],
@@ -88,7 +88,7 @@ describe("Confirm-Deletes: über Schwellwert bleibt awaiting bis zur Bestätigun
   );
 
   it(
-    "Bestätigung für einen ANDEREN Kandidatensatz löscht nicht",
+    "a confirmation for a DIFFERENT candidate set does not delete",
     async () => {
       const h1 = await makeHarness({
         items: [ITEM_A, ITEM_B, ITEM_C],
@@ -101,7 +101,7 @@ describe("Confirm-Deletes: über Schwellwert bleibt awaiting bis zur Bestätigun
         items: [ITEM_A],
         dir: h1.dir,
         config: { mirrorDelete: true, deleteThresholdPercent: 50 },
-        // Veraltete Bestätigung (z. B. Kandidatensatz einer früheren Runde).
+        // Stale confirmation (e.g. the candidate set of an earlier round).
         deleteConfirmation: computeCandidateSetHash(["b.txt"]),
       });
       const report = await h2.run();

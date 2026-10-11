@@ -14,7 +14,7 @@
  * the block that made the reference. When the pass can resolve the pointer to a
  * concrete target (a figure id, a section id, a table id), it fills `target`;
  * an unresolved reference is kept as a dangling ref (text only) so a later pass
- * or a human can still see it. This is the "leichtgewichtiger Dokumentgraph in
+ * or a human can still see it. This is the "lightweight document graph in
  * PostgreSQL" of the design — links, no graph database.
  *
  * ## The patterns

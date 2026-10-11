@@ -2,19 +2,19 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Control-API des Sidecars (design.md, Desktop_App; requirements 1.3, 3.5,
+ * Control API of the sidecar (design.md, Desktop_App; requirements 1.3, 3.5,
  * 3.8, 3.9, 5.1, 6.4, 6.9, 6.10, 6.18, 9.5, 10.3, 10.6, 11.5, 13.4, 13.5,
  * 15.3, 15.4).
  *
- * Bindet ausschliesslich auf `127.0.0.1:0`. Jede Anfrage braucht
- * `Authorization: Bearer <ipc-token>` (Konstantzeitvergleich über SHA-256-
- * Digeste, damit die Laenge nicht durchhaengt) und einen `Host` exakt
- * `127.0.0.1:<port>` (Schutz vor DNS-Rebinding aus dem WebView). Fehler:
- * `401` ohne/mit falschem Token, `403` bei falschem Host — ohne jede Aktion.
+ * Binds only to `127.0.0.1:0`. Every request needs
+ * `Authorization: Bearer <ipc-token>` (constant-time comparison over SHA-256
+ * digests so the length does not leak) and a `Host` of exactly
+ * `127.0.0.1:<port>` (protection against DNS rebinding from the WebView). Errors:
+ * `401` without/with a wrong token, `403` for a wrong host, without any action.
  *
- * Secrets werden nie zurueckgegeben: `GET /status` meldet je Source nur
- * `credentials: {configured}`; der Body der Credentials-Route wird nie
- * geloggt; uebernommene Werte werden im Redaktor registriert.
+ * Secrets are never returned: `GET /status` reports per source only
+ * `credentials: {configured}`; the body of the credentials route is never
+ * logged; accepted values are registered with the redactor.
  */
 
 import { createHash, timingSafeEqual } from "node:crypto";
@@ -54,7 +54,7 @@ import type { Runtime } from "./runtime.js";
 import type { KeychainBridgeStore } from "./keychain-bridge.js";
 import { confirmFilePath } from "./confirm.js";
 
-/** Maximale Groesse eines JSON-Bodies (Config-PUT; SEA-Keys sind 64 KiB). */
+/** Maximum size of a JSON body (config PUT; SEA keys are 64 KiB). */
 export const MAX_BODY_BYTES = 1_048_576;
 
 export interface ControlApiOptions {
@@ -63,32 +63,32 @@ export interface ControlApiOptions {
   bridge: KeychainBridgeStore;
   ipcToken: string;
   logger: Logger;
-  /** Pfad, auf den `PUT /config` die validierte Konfiguration schreibt. */
+  /** Path to which `PUT /config` writes the validated configuration. */
   configPath?: string;
-  /** Beenden nach `POST /shutdown`; Default `process.exit`. */
+  /** Exit after `POST /shutdown`; default `process.exit`. */
   exit?: (code: number) => void;
-  /** Grace in Sekunden fuer `POST /shutdown` (Design: 30). */
+  /** Grace in seconds for `POST /shutdown` (design: 30). */
   shutdownGraceSec?: number;
-  /** Injizierbares fetch fuer Token-Tausch/Verbindungspruefung (Tests). */
+  /** Injectable fetch for token exchange/connection check (tests). */
   fetchImpl?: FetchLike;
 }
 
 export interface ControlApiHandle {
-  /** Startet den Server auf `127.0.0.1:0`; liefert den Port. */
+  /** Starts the server on `127.0.0.1:0`; returns the port. */
   listen(): Promise<number>;
   close(): Promise<void>;
-  /** Der gebundene Port (nach `listen()`). */
+  /** The bound port (after `listen()`). */
   port(): number;
 }
 
-/** Konstantzeitvergleich zweier Tokens ueber Digeste (15.3). */
+/** Constant-time comparison of two tokens via digests (15.3). */
 export function tokenMatches(provided: string, expected: string): boolean {
   const a = createHash("sha256").update(provided, "utf8").digest();
   const b = createHash("sha256").update(expected, "utf8").digest();
   return timingSafeEqual(a, b);
 }
 
-/** Host-Header muss exakt `127.0.0.1:<port>` sein (15.3). */
+/** The Host header must be exactly `127.0.0.1:<port>` (15.3). */
 export function hostAllowed(host: string | undefined, port: number): boolean {
   return host === `127.0.0.1:${port}`;
 }
@@ -136,9 +136,9 @@ function sendNoContent(res: ServerResponse): void {
 }
 
 /**
- * Loopback-Listener, der den Redirect ueber die Keychain-Bridge vom
- * Rust-Host bezieht (6.9): der Host bindet den Port und oeffnet den
- * Browser; das Sidecar kennt weder Tokens noch den Verifier-Transport.
+ * Loopback listener that obtains the redirect through the keychain bridge from
+ * the Rust host (6.9): the host binds the port and opens the browser; the
+ * sidecar knows neither tokens nor the verifier transport.
  */
 export function bridgeLoopbackListener(bridge: KeychainBridgeStore): LoopbackListener {
   return {
@@ -155,21 +155,21 @@ export function bridgeLoopbackListener(bridge: KeychainBridgeStore): LoopbackLis
   };
 }
 
-/** Statische Zugangsdaten je Source: welche Schluessel gelten (6.4, 6.10). */
+/** Static credentials per source: which keys apply (6.4, 6.10). */
 function staticCredentialKeys(src: SourceConfig): string[] {
   if (src.type === "gdrive") return [sourceGdriveSaKey(src.id)];
   if (src.type === "s3") return [sourceS3AccessKeyKey(src.id), sourceS3SecretKeyKey(src.id)];
   return [];
 }
 
-/** Sind die statischen Zugangsdaten der Source hinterlegt? (nur boolean) */
+/** Are the source's static credentials stored? (boolean only) */
 export async function credentialsConfigured(
   store: CredentialStore,
   src: SourceConfig,
 ): Promise<boolean> {
   const keys = staticCredentialKeys(src);
   if (keys.length === 0) {
-    // OAuth-Quellen: konfigurierter Zustand = vorhandener Refresh-Token.
+    // OAuth sources: configured state = an existing refresh token.
     if (src.type === "dropbox" || (src.type === "gdrive" && src.auth === "oauth")) {
       return (await store.get(sourceOauthRefreshKey(src.id))) !== null;
     }
@@ -181,7 +181,7 @@ export async function credentialsConfigured(
   return true;
 }
 
-/** SSE-Broadcast-Hub fuer Sidecar-Ereignisse. */
+/** SSE broadcast hub for sidecar events. */
 class EventHub {
   private readonly clients = new Set<ServerResponse>();
 
@@ -202,13 +202,13 @@ class EventHub {
 }
 
 /**
- * Startet die Control-API. Der Handler ist als Funktion gekapselt, damit
- * Tests ihn ohne echten Server aufrufen koennen (`handle(request)`).
+ * Starts the Control API. The handler is encapsulated as a function so
+ * tests can call it without a real server (`handle(request)`).
  */
 export function createControlApi(options: ControlApiOptions): ControlApiHandle {
   const { rt, scheduler, bridge, ipcToken, logger } = options;
   const hub = new EventHub();
-  /** laufende Autorisierungen je Source (409 bei Doppel-Trigger). */
+  /** Running authorizations per source (409 on a double trigger). */
   const authInFlight = new Set<string>();
   let boundPort = 0;
 
@@ -250,7 +250,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
     if (!validated.ok) {
       throw httpError(400, { code: "INVALID_CONFIG", errors: validated.errors });
     }
-    // Erneute Verbindungspruefung gegen die neue Konfiguration (5.1).
+    // Check the connection again against the new configuration (5.1).
     const probe = new ExtractHttpClient({
       extractUrl: validated.value.extractUrl,
       tokenProvider: rt.authManager,
@@ -319,7 +319,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
           fetchImpl,
         );
       } catch {
-        // Netzwerk-/Anbieterfehler: Meldung ohne Token-Inhalte.
+        // Network/provider error: message without token content.
         hub.emit("source.authorization_failed", { sourceId, reason: "exchange-failed" });
         return;
       }
@@ -375,7 +375,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
           }
         }
         registerSecrets(rt.redactor, [accessKeyId as string, secretAccessKey as string]);
-        // Zweiter Schreibfehler → ersten Schluessel zurueckrollen (6.10).
+        // Second write error → roll back the first key (6.10).
         await store.set(sourceS3AccessKeyKey(sourceId), accessKeyId as string);
         try {
           await store.set(sourceS3SecretKeyKey(sourceId), secretAccessKey as string);
@@ -388,7 +388,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
       }
     } catch (error) {
       if (error instanceof JsonError) throw error;
-      // Keychain-Fehler: 502 ohne Fallback, ohne Werte (15.4).
+      // Keychain error: 502 without fallback, without values (15.4).
       throw httpError(502, { code: "CREDENTIAL_STORE" });
     }
     scheduler.credentialChanged(sourceId);
@@ -444,7 +444,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
   function startShutdown(): void {
     void (async () => {
       scheduler.beginShutdown();
-      // Grace: hochstens `shutdownGraceSec` auf laufende Läufe warten (10.7).
+      // Grace: wait at most `shutdownGraceSec` for running runs (10.7).
       let timer: ReturnType<typeof setTimeout> | undefined;
       const grace = new Promise<void>((resolve) => {
         timer = setTimeout(resolve, graceSec * 1000);
@@ -517,7 +517,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
     if (m !== undefined) {
       const id = decodeURIComponent(m[0] as string);
       if (method === "PUT") {
-        // Body nie loggen (15.4) — diese Route schreibt den Logger nicht an.
+        // Never log the body (15.4); this route does not write to the logger.
         await handleCredentialsPut(id, await readJsonBody(req));
         sendNoContent(res);
         return;
@@ -566,7 +566,7 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
     const url = new URL(req.url ?? "/", "http://127.0.0.1");
     const pathname = url.pathname;
 
-    // Authentifizierung vor jeder Route (15.3).
+    // Authentication before every route (15.3).
     const authHeader = req.headers.authorization;
     const token = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : undefined;
     if (token === undefined || !tokenMatches(token, ipcToken)) {
@@ -584,8 +584,8 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
         "cache-control": "no-cache",
         connection: "keep-alive",
       });
-      // Header sofort senden und Stream mit SSE-Kommentar anstossen, damit
-      // Clients nicht auf das erste Ereignis warten muessen.
+      // Send headers immediately and kick the stream with an SSE comment so
+      // clients do not have to wait for the first event.
       res.flushHeaders();
       res.write(":ok\n\n");
       hub.add(res);
@@ -626,5 +626,5 @@ export function createControlApi(options: ControlApiOptions): ControlApiHandle {
   };
 }
 
-/** Typ-Export fuer Konsumenten, die die Config-Struktur validieren wollen. */
+/** Type export for consumers that want to validate the config structure. */
 export type { OutpostConfig };

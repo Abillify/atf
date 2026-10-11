@@ -295,7 +295,7 @@ export type AuthorizationOperation =
   | "acl.manage"
   | "metrics"
   | "global.admin"
-  /** Subjektbezogene Löschung (DSAR / Erasure, Requirement 2.5). */
+  /** Subject-scoped erasure (DSAR / erasure, Requirement 2.5). */
   | "erasure";
 
 const OPERATION_SCOPES: Readonly<

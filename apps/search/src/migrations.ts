@@ -278,7 +278,7 @@ export const GLOBAL_MIGRATIONS: MigrationStep[] = [
       // stored a plain SHA-256 in `query` — those move to query_hash and have
       // their query nulled. Any row whose `query` is NOT a 64-char hex digest
       // predates the hashing and may contain raw personal data, so it is
-      // deleted outright (data minimisation: Altbestände werden geleert).
+      // deleted outright (data minimisation: legacy rows are cleared).
       await client.query(`
         ALTER TABLE vs_search_stats
           ADD COLUMN IF NOT EXISTS query_hash TEXT

@@ -2,13 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit-Tests fuer den Watcher und den Credential-Trigger (Task 18.7).
+ * Unit tests for the watcher and the credential trigger (Task 18.7).
  *
  * **Validates: Requirements 10.2, 6.17**
  *
- * Fake-Timer: Ein Aenderungsereignis fuehrt innerhalb von 30 s zu einem Lauf
- * (Debounce 5 s, spaetestens 30 s bei anhaltenden Ereignissen).
- * `credentialChanged` startet sofort einen Lauf fuer eine Quelle im Zustand
+ * Fake timers: a change event leads to a run within 30 s
+ * (debounce 5 s, at the latest 30 s with ongoing events).
+ * `credentialChanged` starts a run immediately for a source in the state
  * `needs-authorization`.
  */
 
@@ -39,7 +39,7 @@ function captureBackend(): CapturedBackend {
   return box as CapturedBackend;
 }
 
-describe("Watcher: Entprellung und 30-s-Frist (10.2)", () => {
+describe("Watcher: debouncing and the 30 s deadline (10.2)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -47,7 +47,7 @@ describe("Watcher: Entprellung und 30-s-Frist (10.2)", () => {
     vi.useRealTimers();
   });
 
-  it("startet einen Lauf 5 s nach der letzten Änderung", async () => {
+  it("starts a run 5 s after the last change", async () => {
     const backend = captureBackend();
     const trigger = vi.fn();
     const handle = await startWatcher({ dir: "/tmp/x", trigger, backend: backend.factory });
@@ -62,7 +62,7 @@ describe("Watcher: Entprellung und 30-s-Frist (10.2)", () => {
     expect(backend.closed).toBe(1);
   });
 
-  it("verschiebt den Start bei weiteren Ereignissen (Debounce)", async () => {
+  it("postpones the start on further events (debounce)", async () => {
     const backend = captureBackend();
     const trigger = vi.fn();
     await startWatcher({ dir: "/tmp/x", trigger, backend: backend.factory });
@@ -76,12 +76,12 @@ describe("Watcher: Entprellung und 30-s-Frist (10.2)", () => {
     expect(trigger).toHaveBeenCalledTimes(1);
   });
 
-  it("startet spätestens nach 30 s bei anhaltenden Ereignissen", async () => {
+  it("starts after 30 s at the latest with ongoing events", async () => {
     const backend = captureBackend();
     const trigger = vi.fn();
     await startWatcher({ dir: "/tmp/x", trigger, backend: backend.factory });
 
-    // Ereignis alle 1 s — das Debounce-Fenster würde ewig verschoben.
+    // An event every 1 s; the debounce window would be postponed forever.
     for (let i = 0; i < 40; i += 1) {
       backend.change();
       await vi.advanceTimersByTimeAsync(1_000);
@@ -90,7 +90,7 @@ describe("Watcher: Entprellung und 30-s-Frist (10.2)", () => {
     expect(trigger).toHaveBeenCalledTimes(1);
   });
 
-  it("close() verhindert Auslösen nach offenen Timern", async () => {
+  it("close() prevents firing after pending timers", async () => {
     const backend = captureBackend();
     const trigger = vi.fn();
     const handle = await startWatcher({ dir: "/tmp/x", trigger, backend: backend.factory });
@@ -117,8 +117,8 @@ function makeCfg(): OutpostConfig {
   return { ...base, sources: [src] };
 }
 
-describe("Credential-Trigger: sofortiger Run nach needs-authorization (6.17)", () => {
-  it("credentialChanged startet sofort einen weiteren Lauf", async () => {
+describe("Credential trigger: immediate run after needs-authorization (6.17)", () => {
+  it("credentialChanged starts another run immediately", async () => {
     let runs = 0;
     const scheduler = new Scheduler({
       cfg: makeCfg(),
@@ -142,7 +142,7 @@ describe("Credential-Trigger: sofortiger Run nach needs-authorization (6.17)", (
     });
     expect(runs).toBe(1);
 
-    // Credential hinterlegt → sofortiger neuer Lauf, ohne Intervall.
+    // Credential stored → immediate new run, without the interval.
     scheduler.credentialChanged("a");
     await vi.waitFor(() => {
       expect(scheduler.status()[0]?.status).toBe("idle");
@@ -150,7 +150,7 @@ describe("Credential-Trigger: sofortiger Run nach needs-authorization (6.17)", (
     expect(runs).toBe(2);
   });
 
-  it("Trigger auf needs-authorization-Quelle startet weiterhin Läufe", async () => {
+  it("a trigger on a needs-authorization source still starts runs", async () => {
     let runs = 0;
     const scheduler = new Scheduler({
       cfg: makeCfg(),

@@ -13,7 +13,7 @@ export interface UseSessionRenewOptions {
    * hook is inert (a manually-pasted token has no refresh session to renew).
    */
   enabled: boolean;
-  /** Persists the freshly minted token (from `useToken`). */
+  /** Persists the freshly minted token (from `useAuth`). */
   setToken: (value: string) => void;
   /** Renew this many seconds BEFORE the token's exp. Default 60. */
   skewSeconds?: number;

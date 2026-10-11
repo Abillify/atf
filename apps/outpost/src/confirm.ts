@@ -2,33 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Aufloesung der Nutzerbestätigung fuer ausgesetzte Loeschungen (requirements
+ * Resolution of the user confirmation for suspended deletions (requirements
  * 9.5, 9.11).
  *
- * Eine Bestätigung kommt aus genau zwei Quellen:
- * - der Confirm-Datei `<stateDir>/<sourceId>.confirm` (geschrieben von
+ * A confirmation comes from exactly two sources:
+ * - the confirm file `<stateDir>/<sourceId>.confirm` (written by
  *   `atf-outpost confirm-deletes <sourceId>`),
- * - der Umgebungsvariable `OUTPOST_CONFIRM_DELETES=<sourceId>:<hash>` (Komma
- *   fuer mehrere Quellen).
+ * - the environment variable `OUTPOST_CONFIRM_DELETES=<sourceId>:<hash>` (comma
+ *   for several sources).
  *
- * Der Wert ist der Hash der Kandidatenmenge, die der Benutzer gesehen hat.
- * Nur wenn er exakt dem aktuellen Kandidaten-Hash entspricht, loescht der
- * Lauf (die Pruefung passiert in `run.ts`). Ein gespeicherter Hash aus einem
- * frueheren Lauf bestaetigt niemals selbst.
+ * The value is the hash of the candidate set the user has seen. The run only
+ * deletes when it exactly matches the current candidate hash (the check
+ * happens in `run.ts`). A stored hash from an earlier run never confirms on
+ * its own.
  */
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Env } from "@atf/outpost-core";
 
-/** Pfad der Confirm-Datei einer Quelle. */
+/** Path of a source's confirm file. */
 export const confirmFilePath = (stateDir: string, sourceId: string): string =>
   join(stateDir, `${sourceId}.confirm`);
 
 /**
- * Parse `OUTPOST_CONFIRM_DELETES=<id>:<hash>[,<id>:<hash>...]`. Ein Eintrag
- * ohne Doppelpunkt oder mit leerem Hash wird ignoriert (fehlertolerant — die
- * Variable ist ein Convenience-Pfad, kein Sicherheitsanker).
+ * Parse `OUTPOST_CONFIRM_DELETES=<id>:<hash>[,<id>:<hash>...]`. An entry
+ * without a colon or with an empty hash is ignored (fault tolerant; the
+ * variable is a convenience path, not a security anchor).
  */
 export function parseConfirmEnv(
   value: string | undefined,
@@ -48,10 +48,10 @@ export function parseConfirmEnv(
 }
 
 /**
- * Die vom Benutzer bestaetigte Kandidatenmenge fuer eine Quelle: Datei gewinnt
- * vor der Env-Variable (die Datei ist die explizite Aktion des Operators).
- * Liefert `undefined`, wenn nichts bestaetigt ist. Fehler beim Lesen der
- * Datei zaehlen als "nicht bestaetigt" — nie als Fehler des Laufs.
+ * The candidate set confirmed by the user for a source: the file wins over
+ * the env variable (the file is the operator's explicit action).
+ * Returns `undefined` when nothing is confirmed. Errors reading the file
+ * count as "not confirmed", never as a failure of the run.
  */
 export async function confirmForSource(
   env: Env,
@@ -64,7 +64,7 @@ export async function confirmForSource(
     const hash = raw.trim();
     if (hash !== "") return hash;
   } catch {
-    // keine Confirm-Datei — normaler Fall
+    // no confirm file: the normal case
   }
   return parseConfirmEnv(env.OUTPOST_CONFIRM_DELETES).get(sourceId);
 }

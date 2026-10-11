@@ -217,7 +217,7 @@ export class SyncStateStore {
     const record = encodeJournalRecord(payload);
     const handle = await this.#appendHandleOpen();
     await handle.write(record);
-    await handle.sync(); // 7.8: jede Änderung fsync-geschützt
+    await handle.sync(); // 7.8: every change is fsync-protected
     this.#appended += 1;
     this.#state = applyJournalEntry(this.#state, entry);
     if (this.#appended >= this.#compactAfter) await this.flush();

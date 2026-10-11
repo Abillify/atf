@@ -2,12 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Unit-Tests für die Source-Adapter (task 14.10).
+ * Unit tests for the source adapters (task 14.10).
  *
- * Abgedeckt: GDrive-Export-Mapping (6.7), S3-Endpunkt-Override und
- * Addressing (6.5), SigV4-Signatur, Credential-Auflösung (6.4),
- * Fehler → Listing incomplete (6.12), Refresh-Token-Rotation (6.17) und
- * Dropbox-Marker (6.8).
+ * Covered: GDrive export mapping (6.7), S3 endpoint override and
+ * addressing (6.5), SigV4 signature, credential resolution (6.4),
+ * errors → listing incomplete (6.12), refresh-token rotation (6.17) and
+ * Dropbox markers (6.8).
  */
 
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
@@ -53,7 +53,7 @@ afterAll(async () => {
 });
 
 describe("GDrive Export-Mapping (6.7)", () => {
-  it("exportMimeType bildet die konfigurierten Formate ab, Default pdf", () => {
+  it("exportMimeType maps the configured formats, default pdf", () => {
     expect(exportMimeType("pdf")).toBe("application/pdf");
     expect(exportMimeType("docx")).toBe(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -67,7 +67,7 @@ describe("GDrive Export-Mapping (6.7)", () => {
     expect(exportMimeType("unknown")).toBe("application/pdf");
   });
 
-  it("Workspace-Dateien bekommen exportAs; open trifft /export mit mimeType", async () => {
+  it("workspace files get exportAs; open hits /export with mimeType", async () => {
     const gdrive = new FakeGdrive();
     gdrive.addFile({ id: "root", name: "R", parentId: null, mimeType: "application/vnd.google-apps.folder" });
     gdrive.addFile({
@@ -99,7 +99,7 @@ describe("GDrive Export-Mapping (6.7)", () => {
     const doc = result.items.find((i) => i.quellId === "doc1");
     const bin = result.items.find((i) => i.quellId === "bin1");
     expect(doc?.exportAs).toBe("docx");
-    // Workspace: md5Checksum fehlt → revisionId ist der Marker (6.6).
+    // Workspace: md5Checksum missing → revisionId is the marker (6.6).
     expect(doc?.marker).toBe("rev-7");
     expect(bin?.exportAs).toBeUndefined();
     expect(bin?.marker).toBe("md5-1");
@@ -119,7 +119,7 @@ describe("GDrive Export-Mapping (6.7)", () => {
     }
   });
 
-  it("Refresh-Token-Rotation wird über rotatedRefreshToken() sichtbar (6.17)", async () => {
+  it("refresh-token rotation becomes visible via rotatedRefreshToken() (6.17)", async () => {
     const gdrive = new FakeGdrive({ rotateOnRefresh: "rt-rotated" });
     gdrive.addFile({ id: "root", name: "R", parentId: null, mimeType: "application/vnd.google-apps.folder" });
     const adapter: GdriveSource = createGdriveSource(
@@ -149,11 +149,11 @@ describe("GDrive Export-Mapping (6.7)", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("incomplete");
     expect(result.kind === "incomplete" && result.error).toBeInstanceOf(SourceRejectedError);
-    // Das Listing erreicht die API nie (6.18).
+    // The listing never reaches the API (6.18).
     expect(gdrive.listCalls).toBe(0);
   });
 
-  it("ungültiger Service-Account-Key → SourceRejectedError", async () => {
+  it("invalid service-account key → SourceRejectedError", async () => {
     const gdrive = new FakeGdrive();
     const adapter = createGdriveSource(
       { id: "g", folderId: "root", exportFormat: "pdf" },
@@ -168,7 +168,7 @@ describe("GDrive Export-Mapping (6.7)", () => {
     expect(gdrive.listCalls).toBe(0);
   });
 
-  it("Listing-Fehler (500 / Netzwerk) → incomplete (6.12)", async () => {
+  it("listing errors (500 / network) → incomplete (6.12)", async () => {
     const gdrive = new FakeGdrive();
     gdrive.addFile({ id: "root", name: "R", parentId: null, mimeType: "application/vnd.google-apps.folder" });
     gdrive.injectListFailure(500);
@@ -199,14 +199,14 @@ describe("GDrive Export-Mapping (6.7)", () => {
   });
 });
 
-describe("S3 Addressing und SigV4 (6.3, 6.4, 6.5)", () => {
+describe("S3 addressing and SigV4 (6.3, 6.4, 6.5)", () => {
   it("resolveS3Target: virtual-hosted Default, Endpoint-Override, path-style, localhost", () => {
     expect(resolveS3Target("b", "eu-central-1")).toEqual({
       host: "b.s3.eu-central-1.amazonaws.com",
       pathPrefix: "",
       scheme: "https",
     });
-    // 6.5: eigener Endpoint ersetzt den AWS-Default.
+    // 6.5: a custom endpoint replaces the AWS default.
     expect(resolveS3Target("b", "us-east-1", "https://s3.mine.example")).toEqual({
       host: "b.s3.mine.example",
       pathPrefix: "",
@@ -223,7 +223,7 @@ describe("S3 Addressing und SigV4 (6.3, 6.4, 6.5)", () => {
     });
   });
 
-  it("Credentials aus dem Store; SigV4-Authorization-Header gesetzt", async () => {
+  it("credentials from the store; SigV4 Authorization header set", async () => {
     const s3 = new FakeS3({ bucket: "b", pageSize: 2 });
     s3.addObject("docs/a.txt", enc("a"));
     s3.addObject("docs/b.txt", enc("b"));
@@ -256,7 +256,7 @@ describe("S3 Addressing und SigV4 (6.3, 6.4, 6.5)", () => {
     expect(s3.lastAuthHeader).toMatch(/^AWS4-HMAC-SHA256 Credential=AKIATEST\/\d{8}\/eu-central-1\/s3\/aws4_request/);
   });
 
-  it("Default-Chain über Umgebungsvariablen (6.4)", async () => {
+  it("default chain via environment variables (6.4)", async () => {
     const store = new MemoryCredentialStore();
     const creds = await resolveS3Credentials(
       { id: "s3b", bucket: "b", credentials: "default-chain" },
@@ -277,7 +277,7 @@ describe("S3 Addressing und SigV4 (6.3, 6.4, 6.5)", () => {
     });
   });
 
-  it("Profil-Auflösung aus ~/.aws/credentials (6.4)", async () => {
+  it("profile resolution from ~/.aws/credentials (6.4)", async () => {
     const store = new MemoryCredentialStore();
     const ini = ["[default]", "aws_access_key_id = PROFID", "aws_secret_access_key = PROFSECRET"].join("\n");
     const creds = await resolveS3Credentials(
@@ -321,7 +321,7 @@ describe("S3 Addressing und SigV4 (6.3, 6.4, 6.5)", () => {
     expect(result.kind).toBe("incomplete");
   });
 
-  it("open lädt signiert den Objektinhalt", async () => {
+  it("open loads the object content signed", async () => {
     const s3 = new FakeS3({ bucket: "b" });
     s3.addObject("x/y.bin", enc("inhalt"));
     const store = new MemoryCredentialStore();
@@ -343,7 +343,7 @@ describe("S3 Addressing und SigV4 (6.3, 6.4, 6.5)", () => {
 });
 
 describe("Dropbox (6.8)", () => {
-  it("Marker = content_hash, sonst rev; nur .tag=file erscheint", async () => {
+  it("marker = content_hash, otherwise rev; only .tag=file appears", async () => {
     const dropbox = new FakeDropbox();
     dropbox.addEntry({
       id: "id1",
@@ -387,7 +387,7 @@ describe("Dropbox (6.8)", () => {
     }
   });
 
-  it("abgelehntes Refresh-Token → SourceRejectedError, kein Listing (6.18)", async () => {
+  it("rejected refresh token → SourceRejectedError, no listing (6.18)", async () => {
     const dropbox = new FakeDropbox({ rejectRefresh: true });
     const adapter = createDropboxSource(
       { id: "d", path: "" },
@@ -404,8 +404,8 @@ describe("Dropbox (6.8)", () => {
   });
 });
 
-describe("Lokaler Source: open mit Pfad-Guard (15.5)", () => {
-  it("liest Dateien; Symlinks nach außerhalb werden beim open abgelehnt", async () => {
+describe("local source: open with the path guard (15.5)", () => {
+  it("reads files; symlinks pointing outside are rejected on open", async () => {
     const dir = path.join(tmpDir, "src");
     const outside = path.join(tmpDir, "out");
     await mkdir(dir, { recursive: true });
@@ -418,7 +418,7 @@ describe("Lokaler Source: open mit Pfad-Guard (15.5)", () => {
     const result = await collectListing(adapter, noSignal);
     expect(result.kind).toBe("complete");
     if (result.kind !== "complete") return;
-    // Der Symlink erscheint im Listing nicht (6.2) — nur a.txt.
+    // The symlink does not appear in the listing (6.2), only a.txt.
     expect(result.items.map((i) => i.quellId)).toEqual(["a.txt"]);
 
     const [first] = result.items;
@@ -426,7 +426,7 @@ describe("Lokaler Source: open mit Pfad-Guard (15.5)", () => {
     const content = await readAll(await adapter.open(first, noSignal));
     expect(dec(content)).toBe("inhalt-a");
 
-    // Ein erzwungener Ausbruchspfad wird beim open abgelehnt.
+    // A forced escape path is rejected on open.
     await expect(
       adapter.open(
         { quellId: "link.txt", name: "link.txt", size: 6, modified: new Date(), marker: "m" },

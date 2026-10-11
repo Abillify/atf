@@ -2,14 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Feature: extract-outpost, Property 36: Credential-Übernahme ohne Neustart
+ * Feature: extract-outpost, Property 36: credential pickup without a restart
  *
- * Über eine Folge von Läufen mit zwischenzeitlichen Store-Änderungen
- * (Token setzen, Token löschen, Provider-Rotation) verwendet jeder Run
- * genau den Refresh-Token-Wert, der zu seinem Start im CredentialStore
- * stand, bzw. endet mit `needs-authorization`, wenn keiner vorlag. Nach dem
- * ersten Schreiben eines gültigen Tokens synchronisiert spätestens der
- * nächste Run — ohne Prozessneustart; rotierte Tokens werden übernommen.
+ * Over a sequence of runs with store changes in between (set token,
+ * delete token, provider rotation) every run uses exactly the refresh-token
+ * value that was in the CredentialStore at its start, or ends with
+ * `needs-authorization` when there was none. After the first write of a
+ * valid token, the next run synchronizes at the latest, without a process
+ * restart; rotated tokens are picked up.
  *
  * **Validates: Requirements 6.16, 6.17**
  */
@@ -68,8 +68,8 @@ const opsArb: fc.Arbitrary<Op[]> = fc.array(
   { minLength: 1, maxLength: 10 },
 );
 
-describe("Property 36: Credential-Übernahme ohne Neustart", () => {
-  it("jeder Run liest den Store frisch; Token erscheint spätestens im nächsten Run", async () => {
+describe("Property 36: credential pickup without a restart", () => {
+  it("every run reads the store fresh; a token appears in the next run at the latest", async () => {
     await fc.assert(
       fc.asyncProperty(opsArb, async (ops) => {
         const dir = await mkdtemp(path.join(tmpdir(), "atf-prop36-"));

@@ -4,18 +4,18 @@
 /**
  * Subcommand `source-login <sourceId>` (requirements 6.13–6.20, 15.2).
  *
- * Autorisiert eine Cloud-Quelle im Terminal. Ohne TTY ist interaktive
- * Eingabe unmöglich → Exit 64 (6.19); unbekannte Quelle, falscher Typ oder
- * GDrive mit `auth: service-account` ebenfalls 64. Dropbox nutzt den
- * No-Redirect-Flow (Code auf der Anbieterseite, `redirect_uri` entfaellt),
- * GDrive einen Loopback-Redirect auf einem zufaelligen Port — die
- * Weiterleitung schlaegt fehl, der Benutzer kopiert die vollstaendige URL
- * aus der Adresszeile (6.14). `deviceFlow: true` prueft zuerst den
- * Device-Endpunkt und faellt bei `invalid_scope` auf Code-Paste zurueck
- * (6.15). Eingaben werden mit {@link parsePastedInput} bis zu 3-mal
- * akzeptiert; der Code-Tausch laeuft mit PKCE, Fehlermeldungen enthalten
- * niemals Token-Inhalte (6.19). Erfolg speichert das Refresh-Token unter
- * `source:<id>:oauth-refresh` (0600 ueber den FileCredentialStore, 6.16).
+ * Authorizes a cloud source in the terminal. Without a TTY interactive
+ * input is impossible → exit 64 (6.19); an unknown source, a wrong type or
+ * GDrive with `auth: service-account` also exit 64. Dropbox uses the
+ * no-redirect flow (code on the provider side, no `redirect_uri`),
+ * GDrive a loopback redirect on a random port: the redirect fails and the
+ * user copies the complete URL from the address bar (6.14).
+ * `deviceFlow: true` tries the device endpoint first and falls back to
+ * code paste on `invalid_scope` (6.15). Inputs are accepted up to 3 times
+ * via {@link parsePastedInput}; the code exchange runs with PKCE, error
+ * messages never contain token content (6.19). Success stores the refresh
+ * token under `source:<id>:oauth-refresh` (0600 via the
+ * FileCredentialStore, 6.16).
  */
 
 import { createInterface } from "node:readline";
@@ -40,10 +40,10 @@ import {
 } from "@atf/outpost-core";
 import { EXIT_CONFIG, EXIT_OK, EXIT_USAGE } from "@atf/outpost-core";
 
-/** Maximal drei Eingabeversuche, danach Exit 1 (6.19). */
+/** At most three input attempts, then exit 1 (6.19). */
 export const MAX_PASTE_ATTEMPTS = 3;
 
-/** Dynamischer Portbereich fuer den Loopback-Redirect (6.14). */
+/** Dynamic port range for the loopback redirect (6.14). */
 export const LOOPBACK_PORT_MIN = 49152;
 export const LOOPBACK_PORT_MAX = 65535;
 
@@ -52,13 +52,13 @@ export const randomLoopbackPort = (rand: () => number = Math.random): number =>
 
 export interface SourceLoginIo {
   isTTY: boolean;
-  /** Eine Zeile von stdin (nach Prompt). */
+  /** One line from stdin (after a prompt). */
   readLine(prompt: string): Promise<string>;
   out(message: string): void;
   err(message: string): void;
 }
 
-/** Io ueber den echten Prozess. */
+/** Io through the real process. */
 export function processIo(
   stdin: NodeJS.ReadStream & { isTTY?: boolean } = process.stdin,
   stdout: { write: (s: string) => void } = process.stdout,
@@ -87,7 +87,7 @@ export interface SourceLoginDeps {
   rand?: () => number;
 }
 
-/** Exit-Codes des Subcommands (design.md). */
+/** Exit codes of the subcommand (design.md). */
 export const SOURCE_LOGIN_OK = EXIT_OK;
 export const SOURCE_LOGIN_FAILED = 1;
 
@@ -96,8 +96,8 @@ function findSource(cfg: OutpostConfig, sourceId: string): SourceConfig | undefi
 }
 
 /**
- * Fuehre `source-login` aus. Liefert den Exit-Code; schreibt Meldungen ohne
- * Token-Inhalte (6.19).
+ * Run `source-login`. Returns the exit code; writes messages without
+ * token content (6.19).
  */
 export async function runSourceLogin(
   sourceId: string | undefined,
@@ -168,8 +168,8 @@ export async function runSourceLogin(
 }
 
 /**
- * Code-Paste-Flow (6.13, 6.14): URL bauen, Benutzer fuellt ein, bis zu 3
- * Versuche, Tausch mit PKCE.
+ * Code paste flow (6.13, 6.14): build the URL, the user pastes, up to 3
+ * attempts, exchange with PKCE.
  */
 async function loginCodePaste(
   provider: ProviderId,
@@ -228,7 +228,7 @@ async function loginCodePaste(
         deps.fetchImpl,
       );
     } catch {
-      // Transienter Provider-/Transportfehler — Meldung ohne Token-Inhalte.
+      // Transient provider/transport error: message without token content.
       io.err("Der Code-Tausch schlug fehl (Netzwerk oder Anbieter). Bitte erneut versuchen.");
       return SOURCE_LOGIN_FAILED;
     }
@@ -238,7 +238,7 @@ async function loginCodePaste(
   return SOURCE_LOGIN_FAILED;
 }
 
-/** Poll den GDrive-Token-Endpunkt im Device-Flow bis zum Erfolg. */
+/** Poll the GDrive token endpoint in the device flow until success. */
 async function pollDeviceToken(
   sourceId: string,
   clientId: string,
@@ -294,7 +294,7 @@ async function pollDeviceToken(
   }
 }
 
-/** Ergebnis speichern; Fehlermeldungen ohne Token-Inhalte (6.19). */
+/** Store the result; error messages without token content (6.19). */
 async function storeRefreshToken(
   sourceId: string,
   refreshToken: string | undefined,

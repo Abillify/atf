@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Property 37: Logout lässt Cloud-Tokens unangetastet.
+ * Property 37: logout leaves cloud tokens untouched.
  *
  * For any store content over the `auth:extract:*` and `source:*` namespaces,
  * after `logout()` no `EXTRACT_AUTH_KEYS` entry remains, every `source:*`
@@ -37,7 +37,7 @@ class RecordingStore implements CredentialStore {
   }
 }
 
-// Feature: extract-outpost, Property 37: Logout lässt Cloud-Tokens unangetastet
+// Feature: extract-outpost, Property 37: logout leaves cloud tokens untouched
 // **Validates: Requirements 3.5, 3.9**
 describe("Property 37: logout leaves cloud tokens untouched", () => {
   const sourceIdArb = fc.stringMatching(/^[a-z][a-z0-9-]{0,8}$/);

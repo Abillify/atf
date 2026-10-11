@@ -68,7 +68,7 @@ const gdriveSource = (over: Partial<Extract<SourceConfig, { type: "gdrive" }>> =
 });
 
 describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () => {
-  it("Code-Tausch liefert Tokens und optionales rotiertes Refresh-Token", async () => {
+  it("code exchange returns tokens and an optional rotated refresh token", async () => {
     const captured: { url?: string; body?: string } = {};
     const result = await exchangeCodeForTokens(
       "gdrive",
@@ -94,7 +94,7 @@ describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () =>
     expect(form.get("redirect_uri")).toBe("http://127.0.0.1:49999");
   });
 
-  it("invalid_grant → rejected; das gespeicherte Token bleibt (6.18)", async () => {
+  it("invalid_grant → rejected; the stored token stays (6.18)", async () => {
     const store = new MemoryCredentialStore();
     await store.set(sourceOauthRefreshKey("g1"), "stored-refresh");
     const result = await refreshSourceToken(
@@ -103,11 +103,11 @@ describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () =>
       fakeFetch(400, { error: "invalid_grant" }),
     );
     expect(result).toEqual({ kind: "rejected", detail: "invalid_grant" });
-    // 6.18: abgelehntes Token wird NICHT gelöscht.
+    // 6.18: a rejected token is NOT deleted.
     expect(await store.get(sourceOauthRefreshKey("g1"))).toBe("stored-refresh");
   });
 
-  it("401 ohne OAuth-Fehlercode → rejected", async () => {
+  it("401 without an OAuth error code → rejected", async () => {
     const result = await refreshSourceToken(
       "dropbox",
       { clientId: "cid", refreshToken: "rt" },
@@ -116,7 +116,7 @@ describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () =>
     expect(result).toEqual({ kind: "rejected", detail: "http_401" });
   });
 
-  it("5xx und Netzwerkfehler sind transient, nicht rejected (6.12)", async () => {
+  it("5xx and network errors are transient, not rejected (6.12)", async () => {
     await expect(
       refreshSourceToken("dropbox", { clientId: "cid", refreshToken: "rt" }, fakeFetch(503, {})),
     ).rejects.toBeInstanceOf(SourceTransientError);
@@ -128,7 +128,7 @@ describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () =>
     ).rejects.toBeInstanceOf(SourceTransientError);
   });
 
-  it("Fehlermeldungen enthalten keine Token-Inhalte", async () => {
+  it("error messages contain no token content", async () => {
     const secretToken = "super-secret-refresh-value";
     const bodyEcho: FetchLike = async () => ({
       status: 400,
@@ -147,7 +147,7 @@ describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () =>
     }
   });
 
-  it("Rotation schreibt das neue Refresh-Token atomar zurück (6.17)", async () => {
+  it("rotation writes the new refresh token back atomically (6.17)", async () => {
     const store = new MemoryCredentialStore();
     await store.set(sourceOauthRefreshKey("d1"), "old-rt");
     const result = await refreshSourceToken(
@@ -160,7 +160,7 @@ describe("parsePastedInput / exchange: Fehlerklassifikation (6.12, 6.18)", () =>
     expect(await store.get(sourceOauthRefreshKey("d1"))).toBe("rotated-rt");
   });
 
-  it("persistRotatedRefreshToken ist No-op ohne Rotation", async () => {
+  it("persistRotatedRefreshToken is a no-op without rotation", async () => {
     const store = new MemoryCredentialStore();
     await store.set(sourceOauthRefreshKey("d1"), "keep-me");
     const written = await persistRotatedRefreshToken(store, "d1", {
@@ -181,7 +181,7 @@ describe("resolveSourceCredential (6.10, 6.17, 6.18)", () => {
     expect(await resolveSourceCredential(s3, store, {})).toEqual({ kind: "static" });
   });
 
-  it("GDrive service-account liest den Docker-`_FILE`-Pfad ohne Benutzer-Autorisierung (6.10)", async () => {
+  it("GDrive service-account reads the Docker `_FILE` path without user authorization (6.10)", async () => {
     const store = new MemoryCredentialStore();
     const env: Env = { OUTPOST_SOURCE_G1_GDRIVE_SA_KEY_FILE: "/run/secrets/g1_sa.json" };
     expect(gdriveSaKeyFileEnv("g1")).toBe("OUTPOST_SOURCE_G1_GDRIVE_SA_KEY_FILE");
@@ -195,7 +195,7 @@ describe("resolveSourceCredential (6.10, 6.17, 6.18)", () => {
     expect(result).toEqual({ kind: "service-account", keyJson: "KEY-JSON" });
   });
 
-  it("GDrive service-account fällt auf den Schlüsselbund zurück (Desktop)", async () => {
+  it("GDrive service-account falls back to the keychain (desktop)", async () => {
     const store = new MemoryCredentialStore();
     await store.set(sourceGdriveSaKey("g1"), "sa-from-keychain");
     const result = await resolveSourceCredential(
@@ -222,7 +222,7 @@ describe("resolveSourceCredential (6.10, 6.17, 6.18)", () => {
     expect(result).toEqual({ kind: "needs-authorization", reason: "missing" });
   });
 
-  it("oauth ohne Token → needs-authorization missing; mit Token → refresh-token", async () => {
+  it("oauth without a token → needs-authorization missing; with a token → refresh-token", async () => {
     const store = new MemoryCredentialStore();
     expect(await resolveSourceCredential(gdriveSource(), store, {})).toEqual({
       kind: "needs-authorization",
@@ -241,20 +241,20 @@ describe("resolveSourceCredential (6.10, 6.17, 6.18)", () => {
     expect(sourceLoginHint("g1")).toBe("atf-outpost source-login g1");
   });
 
-  it("liest bei jedem Aufruf frisch aus dem Store (6.17)", async () => {
+  it("reads fresh from the store on every call (6.17)", async () => {
     const store = new MemoryCredentialStore();
     const before = await resolveSourceCredential(gdriveSource(), store, {});
     expect(before.kind).toBe("needs-authorization");
-    // source-login schreibt das Token, ohne den Prozess neu zu starten …
+    // source-login writes the token without restarting the process …
     await store.set(sourceOauthRefreshKey("g1"), "fresh-rt");
-    // … der nächste Run sieht es sofort.
+    // … the next run sees it immediately.
     const after = await resolveSourceCredential(gdriveSource(), store, {});
     expect(after).toEqual({ kind: "refresh-token", token: "fresh-rt" });
   });
 });
 
 describe("Env-Namens-Kollision (6.10)", () => {
-  it("weist Source-IDs zurück, die auf denselben Env-Namen abbilden", () => {
+  it("rejects source IDs that map to the same env name", () => {
     const result = validateConfig({
       extractUrl: "https://extract.example.com",
       collection: "docs",
@@ -271,7 +271,7 @@ describe("Env-Namens-Kollision (6.10)", () => {
 });
 
 describe("GDrive-Device-Flow (6.15)", () => {
-  it("invalid_scope → Rückfall auf Code-Paste mit Log-Eintrag", async () => {
+  it("invalid_scope → fallback to code paste with a log entry", async () => {
     const logs: { msg: string; fields?: Record<string, unknown> }[] = [];
     const plan = await startGdriveAuthorization({
       clientId: "cid",
@@ -285,7 +285,7 @@ describe("GDrive-Device-Flow (6.15)", () => {
     expect(logs[0]?.fields).toEqual({ reason: "invalid_scope", fallback: "code-paste" });
   });
 
-  it("deviceFlow:false → direkt Code-Paste, kein Netzwerkaufruf", async () => {
+  it("deviceFlow:false → code paste directly, no network call", async () => {
     let called = false;
     const plan = await startGdriveAuthorization({
       clientId: "cid",
@@ -300,7 +300,7 @@ describe("GDrive-Device-Flow (6.15)", () => {
     expect(called).toBe(false);
   });
 
-  it("erfolgreiche Device-Antwort liefert Verifizierungs-URL und Benutzer-Code", async () => {
+  it("a successful device response returns the verification URL and user code", async () => {
     const result = await requestGdriveDeviceCode(
       "cid",
       fakeFetch(200, {
@@ -325,7 +325,7 @@ describe("GDrive-Device-Flow (6.15)", () => {
     });
   });
 
-  it("5xx am Device-Endpunkt ist ein transienter Fehler", async () => {
+  it("5xx at the device endpoint is a transient error", async () => {
     await expect(requestGdriveDeviceCode("cid", fakeFetch(500, {}))).rejects.toThrow(/500/);
   });
 });
@@ -341,11 +341,11 @@ describe("Service-Account (6.10, 6.20, 15.1)", () => {
     private_key: pem,
     client_email: "bot@p.iam.gserviceaccount.com",
     client_id: "123",
-    // token_uri wird bewusst ignoriert (15.1) — hier eine böse URL.
+    // token_uri is deliberately ignored (15.1); here a malicious URL.
     token_uri: "https://evil.example.com/token",
   });
 
-  it("parseServiceAccountKey akzeptiert ein gültiges Schlüssel-JSON", () => {
+  it("parseServiceAccountKey accepts a valid key JSON", () => {
     const result = parseServiceAccountKey(keyJson);
     expect(result.ok).toBe(true);
     if (result.ok) {
@@ -353,7 +353,7 @@ describe("Service-Account (6.10, 6.20, 15.1)", () => {
     }
   });
 
-  it("parseServiceAccountKey lehnt fehlerhafte Eingaben ab", () => {
+  it("parseServiceAccountKey rejects malformed input", () => {
     expect(parseServiceAccountKey("not json")).toEqual({ ok: false, reason: "not-json" });
     expect(parseServiceAccountKey("[]")).toEqual({ ok: false, reason: "not-object" });
     expect(parseServiceAccountKey(JSON.stringify({ type: "authorized_user" }))).toEqual({
@@ -374,7 +374,7 @@ describe("Service-Account (6.10, 6.20, 15.1)", () => {
     });
   });
 
-  it("Assertion nutzt den festen Google-Token-Endpunkt, nie token_uri (15.1)", () => {
+  it("the assertion uses the fixed Google token endpoint, never token_uri (15.1)", () => {
     const parsed = parseServiceAccountKey(keyJson);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -389,7 +389,7 @@ describe("Service-Account (6.10, 6.20, 15.1)", () => {
     expect(JSON.parse(Buffer.from(header ?? "", "base64url").toString("utf8")).alg).toBe("RS256");
   });
 
-  it("serviceAccountToken POSTet den jwt-bearer-Grant an den festen Endpunkt", async () => {
+  it("serviceAccountToken POSTs the jwt-bearer grant to the fixed endpoint", async () => {
     const parsed = parseServiceAccountKey(keyJson);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -406,7 +406,7 @@ describe("Service-Account (6.10, 6.20, 15.1)", () => {
     expect(form.get("assertion")?.split(".")).toHaveLength(3);
   });
 
-  it("abgelehnte Assertion → rejected ohne Tokenlöschung", async () => {
+  it("rejected assertion → rejected without token deletion", async () => {
     const parsed = parseServiceAccountKey(keyJson);
     expect(parsed.ok).toBe(true);
     if (!parsed.ok) return;
@@ -419,8 +419,8 @@ describe("Service-Account (6.10, 6.20, 15.1)", () => {
   });
 });
 
-describe("Google client_secret wird redigiert (4.6)", () => {
-  it("loadGoogleClientSecret registriert den Wert im Redaktor", async () => {
+describe("Google client_secret is redacted (4.6)", () => {
+  it("loadGoogleClientSecret registers the value with the redactor", async () => {
     const redactor = new SecretRedactor();
     const secret = "ya29.googleapis-client-secret-value";
     const store = new MemoryCredentialStore();
@@ -429,7 +429,7 @@ describe("Google client_secret wird redigiert (4.6)", () => {
     expect(redactor.redact(`token=${secret} done`)).toBe("token=[REDACTED] done");
   });
 
-  it("liest aus dem Schlüsselbund, wenn die Env fehlt", async () => {
+  it("reads from the keychain when the env is missing", async () => {
     const redactor = new SecretRedactor();
     const store = new MemoryCredentialStore();
     await store.set("auth:gdrive:client-secret", "keychain-secret");
@@ -438,7 +438,7 @@ describe("Google client_secret wird redigiert (4.6)", () => {
     expect(redactor.redact("prefix keychain-secret suffix")).toBe("prefix [REDACTED] suffix");
   });
 
-  it("undefined ohne Env und ohne Schlüsselbund", async () => {
+  it("undefined without env and without keychain", async () => {
     expect(await loadGoogleClientSecret({}, new MemoryCredentialStore())).toBeUndefined();
   });
 });

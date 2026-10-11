@@ -36,7 +36,7 @@
  * output: the source is content-addressed, the DPI is a pure function of the
  * page size and the (clamped) target, and poppler + sharp are deterministic at
  * a fixed DPI. That is what lets Search cache the result and treat a second
- * request as a pure read (design §9a.1 "deterministische Zwischenstände").
+ * request as a pure read (design §9a.1 "deterministic intermediate states").
  */
 
 import sharp from "sharp";

@@ -2,28 +2,28 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Systemtest Erasure (platform-hardening Task 4.13, Anforderungen 2.9, 2.10, 2.12).
+ * Erasure system test (platform-hardening Task 4.13, Requirements 2.9, 2.10, 2.12).
  *
- * Teil A (selbstenthalten, laeuft immer): Der echte Runtime-Erasure-
- * Orchestrator faehrt gegen Contract-konforme Stub-Server fuer Search,
- * Extract und Gate (je ein `POST /v1/erasure` nach `@atf/erasure-contract`).
- * Geprueft werden die Verteilung mit je-Store-Teilergebnissen, Idempotenz
- * ueber `requestId`, ehrliche Aggregation (partial bei Ausfall) mit
- * anschiessendem Retry sowie der signierte Erasure_Receipt (Req 2.11).
+ * Part A (self-contained, always runs): the real Runtime erasure
+ * orchestrator runs against contract-conformant stub servers for Search,
+ * Extract and Gate (one `POST /v1/erasure` each per `@atf/erasure-contract`).
+ * Checked are the fan-out with per-store partial results, idempotency
+ * via `requestId`, honest aggregation (partial on an outage) with a
+ * subsequent retry, and the signed Erasure_Receipt (Req 2.11).
  *
- * Teil B (live, env-gated wie outpost.test.ts): Outpost-MirrorDelete ->
- * Extract -> Search — ein lokal entferntes Dokument muss aus beiden
- * Services verschwinden — sowie die Extract-Kaskade ueber
- * `POST /v1/erasure` (scope=reference), die das Search-Ergebnis als
- * Teilergebnis `search.documents` zurueckmeldet (Anforderung 2.12).
- * Voraussetzungen (Umgebungsvariablen):
+ * Part B (live, env-gated like outpost.test.ts): Outpost MirrorDelete ->
+ * Extract -> Search (a locally removed document must disappear from both
+ * services) plus the Extract cascade via
+ * `POST /v1/erasure` (scope=reference), which reports the Search result as
+ * the partial result `search.documents` (Requirement 2.12).
+ * Prerequisites (environment variables):
  *
- *   OUTPOST_IT_EXTRACT_URL   Basis-URL der Extract-Instanz
- *   OUTPOST_IT_EXTRACT_TOKEN Bearer-Token (extract.ingest, extract.delete;
- *                            extract.erasure nur fuer den Kaskaden-Check)
- *   OUTPOST_IT_SEARCH_URL    Search-URL fuer den Retrieval-/Loesch-Check
+ *   OUTPOST_IT_EXTRACT_URL   base URL of the Extract instance
+ *   OUTPOST_IT_EXTRACT_TOKEN bearer token (extract.ingest, extract.delete;
+ *                            extract.erasure only for the cascade check)
+ *   OUTPOST_IT_SEARCH_URL    Search URL for the retrieval/delete check
  *
- * Ausfuehren:
+ * Run:
  *   bun test ./erasure.test.ts
  *   OUTPOST_IT_EXTRACT_URL=... OUTPOST_IT_EXTRACT_TOKEN=... \
  *     OUTPOST_IT_SEARCH_URL=... bun test ./erasure.test.ts
@@ -60,7 +60,7 @@ function skip(why: string): void {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Teil A — Runtime-DSAR -> Search/Extract/Gate gegen Contract-Stubs
+// Part A: Runtime DSAR -> Search/Extract/Gate against contract stubs
 // ─────────────────────────────────────────────────────────────────────────────
 
 const STUB_TOKEN = "stub-erasure-token";
@@ -69,16 +69,16 @@ if (RECEIPT_KEY === undefined) throw new Error("Erasure-Key nicht verfuegbar");
 
 type StubService = "search" | "extract" | "gate";
 
-/** Zaehlt die eingegangenen Erasure-Aufrufe je Stub (Idempotenz-Nachweis). */
+/** Counts the incoming erasure calls per stub (idempotency proof). */
 const stubCalls: Record<StubService, number> = { search: 0, extract: 0, gate: 0 };
 
-/** Wenn true, antwortet der Gate-Stub mit 503 (Teilfailure-Szenario). */
+/** When true, the Gate stub answers 503 (partial-failure scenario). */
 let gateFails = false;
 
 /**
- * Je-Store-Teilergebnisse der Stubs — Search meldet unnamespaced (wie die
- * echte API, der Orchestrator praefixt `search.`), Extract meldet seine
- * eigenen Stores plus den Search-Cascade `search.documents` (Anforderung 2.12).
+ * Per-store partial results of the stubs: Search reports unnamespaced (like the
+ * real API; the orchestrator prefixes `search.`), Extract reports its own
+ * stores plus the Search cascade `search.documents` (Requirement 2.12).
  */
 function stubResults(service: StubService): ErasureStoreResult[] {
 	switch (service) {
@@ -98,8 +98,8 @@ function stubResults(service: StubService): ErasureStoreResult[] {
 }
 
 /**
- * Startet einen Contract-konformen `POST /v1/erasure`-Stub: prueft Bearer-
- * Token und Request-Schema und antwortet mit einem validen ErasureResponse.
+ * Starts a contract-conformant `POST /v1/erasure` stub: checks the bearer
+ * token and request schema and answers with a valid ErasureResponse.
  */
 function startStubServer(service: StubService): ReturnType<typeof Bun.serve> {
 	return Bun.serve({
@@ -130,11 +130,11 @@ function startStubServer(service: StubService): ReturnType<typeof Bun.serve> {
 	});
 }
 
-describe("runtime-dsar -> search/extract/gate (Systemtest 2.9, 2.10, 2.11, 2.12)", () => {
+describe("runtime-dsar -> search/extract/gate (system test 2.9, 2.10, 2.11, 2.12)", () => {
 	let servers: Partial<Record<StubService, ReturnType<typeof Bun.serve>>> = {};
 	let urls: Record<StubService, string> = { search: "", extract: "", gate: "" };
 
-	/** Port eines gestarteten Stub-Servers — wirft statt Non-null Assertion. */
+	/** Port of a started stub server; throws instead of a non-null assertion. */
 	function serverPort(
 		map: Partial<Record<StubService, ReturnType<typeof Bun.serve>>>,
 		service: StubService,
@@ -164,7 +164,7 @@ describe("runtime-dsar -> search/extract/gate (Systemtest 2.9, 2.10, 2.11, 2.12)
 		servers = {};
 	});
 
-	/** Orchestrator wie in Produktion: lokales Retention-Ziel + drei Remote-Stores. */
+	/** Orchestrator as in production: local retention target + three remote stores. */
 	function makeOrchestrator(): ErasureOrchestrator {
 		return createErasureOrchestrator({
 			retention: new RetentionService([
@@ -191,22 +191,22 @@ describe("runtime-dsar -> search/extract/gate (Systemtest 2.9, 2.10, 2.11, 2.12)
 		};
 	}
 
-	test("DSAR verteilt an Search/Extract/Gate, je-Store-Ergebnis, signierter Receipt (2.9, 2.11, 2.12)", async () => {
+	test("DSAR fans out to Search/Extract/Gate, per-store result, signed receipt (2.9, 2.11, 2.12)", async () => {
 		const orch = makeOrchestrator();
 		const request = subjectRequest();
 		const op = await orch.execute(request);
 		expect(op.status).toBe("complete");
 		const byStore = new Map(op.results.map((r) => [r.store, r]));
-		// Lokales Runtime-Ziel plus alle drei Services mit namespaced Stores.
+		// Local Runtime target plus all three services with namespaced stores.
 		expect(byStore.get("runtime.sessions")?.erased).toBe(2);
 		expect(byStore.get("search.chunks")?.status).toBe("ok");
 		expect(byStore.get("search.stats")?.erased).toBe(2);
 		expect(byStore.get("extract.jobs")?.erased).toBe(3);
-		// Extract meldet den Search-Cascade als eigenes Teilergebnis (2.12).
+		// Extract reports the Search cascade as its own partial result (2.12).
 		expect(byStore.get("search.documents")?.status).toBe("ok");
 		expect(byStore.get("gate.audit")?.erased).toBe(1);
 		expect(op.erased).toBe(2 + 5 + 2 + 3 + 5 + 1);
-		// Signierter Erasure_Receipt (2.11): verifizierbar, Subjekt nur als Hash.
+		// Signed Erasure_Receipt (2.11): verifiable, subject only as a hash.
 		const envelope = op.receipt as ErasureReceiptEnvelope;
 		expect(envelope.typ).toBe(ERASURE_RECEIPT_TYPE);
 		expect(verifyReceipt(envelope, RECEIPT_KEY)).toBe(true);
@@ -217,26 +217,26 @@ describe("runtime-dsar -> search/extract/gate (Systemtest 2.9, 2.10, 2.11, 2.12)
 		expect(JSON.stringify(envelope)).not.toContain("u-system-413");
 	});
 
-	test("Idempotenz: gleiches requestId replayt ohne erneuten Loeschlauf (2.9)", async () => {
+	test("idempotency: the same requestId replays without another erasure run (2.9)", async () => {
 		const orch = makeOrchestrator();
 		const request = subjectRequest();
 		const first = await orch.execute(request);
 		expect(first.status).toBe("complete");
 		const callsAfterFirst = { ...stubCalls };
 		const second = await orch.execute(request);
-		// Replay des gespeicherten Ergebnisses — kein Service wird erneut gerufen.
+		// Replay of the stored result; no service is called again.
 		expect(second.status).toBe(first.status);
 		expect(second.erased).toBe(first.erased);
 		expect(stubCalls).toEqual(callsAfterFirst);
 	});
 
-	test("Teilfailure -> partial; Retry vervollstaendigt ehrlich (2.9, 2.10)", async () => {
+	test("partial failure -> partial; retry completes honestly (2.9, 2.10)", async () => {
 		gateFails = true;
 		try {
 			const orch = makeOrchestrator();
 			const request = subjectRequest();
 			const op = await orch.execute(request);
-			// Ehrliche Aggregation: ein ausgefallener Store => partial, nie complete.
+			// Honest aggregation: a failed store => partial, never complete.
 			expect(op.status).toBe("partial");
 			const gateEndpoint = op.results.find((r) => r.store === "gate.endpoint");
 			expect(gateEndpoint?.status).toBe("failed");
@@ -249,7 +249,7 @@ describe("runtime-dsar -> search/extract/gate (Systemtest 2.9, 2.10, 2.11, 2.12)
 			expect(retried?.status).toBe("complete");
 			const stores = new Set((retried?.results ?? []).map((r) => r.store));
 			expect(stores.has("gate.audit")).toBe(true);
-			// Die synthetische Endpoint-Failure darf den Retry nicht ueberdauern.
+			// The synthetic endpoint failure must not outlive the retry.
 			expect(stores.has("gate.endpoint")).toBe(false);
 			const retriedEnvelope = retried?.receipt as ErasureReceiptEnvelope;
 			expect(retriedEnvelope.payload.status).toBe("complete");
@@ -261,7 +261,7 @@ describe("runtime-dsar -> search/extract/gate (Systemtest 2.9, 2.10, 2.11, 2.12)
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Teil B — live: Outpost-MirrorDelete -> Extract -> Search (Anforderung 2.12)
+// Part B: live: Outpost MirrorDelete -> Extract -> Search (Requirement 2.12)
 // ─────────────────────────────────────────────────────────────────────────────
 
 const OUTPOST_MAIN = join(import.meta.dirname, "../../apps/outpost/src/main.ts");
@@ -273,10 +273,10 @@ const servicesAvailable = EXTRACT_URL !== "" && EXTRACT_TOKEN !== "";
 const COLLECTION = "erasure_it";
 const SOURCE_ID = "local";
 
-/** Siehe outpost.test.ts: `once`-Laufe inkl. Vision-Extraktion brauchen Minuten. */
+/** See outpost.test.ts: `once` runs including vision extraction take minutes. */
 const RUN_TIMEOUT_MS = 300_000;
 
-/** Minimales gueltiges PDF-1.4 mit echtem Textlayer (wie outpost.test.ts). */
+/** Minimal valid PDF 1.4 with a real text layer (as in outpost.test.ts). */
 function makePdf(text: string): Uint8Array<ArrayBuffer> {
 	const chunks: string[] = [];
 	const offsets: number[] = [];
@@ -303,7 +303,7 @@ function makePdf(text: string): Uint8Array<ArrayBuffer> {
 	return new TextEncoder().encode(chunks.join(""));
 }
 
-/** Minimaler HTTP-Client gegen die Extract-API (Bearer + X-Collection). */
+/** Minimal HTTP client against the Extract API (bearer + X-Collection). */
 async function extractFetch(path: string, init?: RequestInit): Promise<Response> {
 	return fetch(`${EXTRACT_URL}${path}`, {
 		...init,
@@ -317,7 +317,7 @@ async function extractFetch(path: string, init?: RequestInit): Promise<Response>
 
 type JobView = { jobId: string; reference: string; status: string };
 
-/** Alle Jobs der Test-Collection fuer einen Reference-Prefix. */
+/** All jobs of the test collection for a reference prefix. */
 async function listJobs(prefix = `outpost:${SOURCE_ID}:`): Promise<JobView[]> {
 	const res = await extractFetch("/v2/jobs?limit=100");
 	expect(res.status).toBe(200);
@@ -325,7 +325,7 @@ async function listJobs(prefix = `outpost:${SOURCE_ID}:`): Promise<JobView[]> {
 	return (body.jobs ?? []).filter((job) => job.reference.startsWith(prefix));
 }
 
-/** Liefert true, wenn Search fuer das Wort einen Hit auf die Reference liefert. */
+/** Returns true when Search returns a hit on the reference for the word. */
 async function searchHit(reference: string, word: string): Promise<boolean> {
 	const res = await fetch(`${SEARCH_URL}/search`, {
 		method: "POST",
@@ -378,7 +378,7 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 	});
 
 	afterAll(async () => {
-		// Testreferenzen in Extract wieder entfernen (best effort).
+		// Remove the test references from Extract again (best effort).
 		try {
 			for (const job of await listJobs()) {
 				await extractFetch(`/v2/documents/${encodeURIComponent(job.reference)}`, {
@@ -386,16 +386,16 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 				});
 			}
 		} catch {
-			/* Ausraeumen best effort */
+			/* cleanup is best effort */
 		}
 		if (dataDir !== "") await rm(dataDir, { recursive: true, force: true });
 	});
 
-	/** `atf-outpost once` gegen die Live-Instanz; erwartet Exit 0 und failed=0. */
+	/** `atf-outpost once` against the live instance; expects exit 0 and failed=0. */
 	async function runOnce(): Promise<string> {
 		const env: Record<string, string> = {};
 		for (const [key, value] of Object.entries(process.env)) {
-			// CODELLDB_LAUNCH_CONNECT_FILE bringt bun mit ENOENT zum Absturz.
+			// CODELLDB_LAUNCH_CONNECT_FILE makes bun crash with ENOENT.
 			if (value !== undefined && key !== "CODELLDB_LAUNCH_CONNECT_FILE") env[key] = value;
 		}
 		const proc = Bun.spawn({
@@ -423,7 +423,7 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 	}
 
 	test(
-		"MirrorDelete: entferntes Dokument verschwindet aus Extract und Search (2.12)",
+		"MirrorDelete: a removed document disappears from Extract and Search (2.12)",
 		async () => {
 			const word = `Loeschwort${Math.floor(Math.random() * 1e9)}`;
 			await writeFile(join(srcDir, "mirror.pdf"), makePdf(`einmalig ${word}`));
@@ -432,7 +432,7 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 			if (SEARCH_URL === "") {
 				skip("OUTPOST_IT_SEARCH_URL nicht gesetzt — nur Extract-Pfad geprueft");
 			} else {
-				// Der Inhalt erreicht Search erst nach terminalem Job und Emit.
+				// The content reaches Search only after the terminal job and emit.
 				let found = false;
 				for (let attempt = 0; attempt < 30 && !found; attempt += 1) {
 					found = await searchHit(reference, word);
@@ -441,18 +441,18 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 				expect(found).toBe(true);
 			}
 
-			// Lokal entfernen -> naechster `once`-Lauf spiegelt den Loeschfall.
+			// Remove locally -> the next `once` run mirrors the deletion.
 			await rm(join(srcDir, "mirror.pdf"));
 			await runOnce();
 
-			// Extract: das Dokument ist weg (DELETE liefert 404, idempotent).
+			// Extract: the document is gone (DELETE returns 404, idempotent).
 			const res = await extractFetch(`/v2/documents/${encodeURIComponent(reference)}`, {
 				method: "DELETE",
 			});
 			expect(res.status).toBe(404);
 
 			if (SEARCH_URL !== "") {
-				// Search-Cascade: der Inhalt ist nicht mehr auffindbar.
+				// Search cascade: the content can no longer be found.
 				let gone = false;
 				for (let attempt = 0; attempt < 30 && !gone; attempt += 1) {
 					gone = !(await searchHit(reference, word));
@@ -495,14 +495,14 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 			if (!parsed.success) return;
 			expect(parsed.data.requestId).toBe(requestId);
 			const byStore = new Map(parsed.data.results.map((r) => [r.store, r]));
-			// Extract meldet seine eigenen Stores und den Search-Cascade — der
-			// Cascade darf nie als Erfolg vorgetaeuscht werden (not_configured
-			// ist zulaessig, failed nicht verschluckt).
+			// Extract reports its own stores and the Search cascade; the
+			// cascade must never be faked as a success (not_configured
+			// is allowed, failed is not swallowed).
 			expect(byStore.has("extract.jobs")).toBe(true);
 			const cascade = byStore.get("search.documents");
 			expect(cascade?.status === "ok" || cascade?.status === "not_configured").toBe(true);
 
-			// Idempotenz ueber requestId: Replay ohne erneutes Loeschen.
+			// Idempotency via requestId: replay without deleting again.
 			const replay = await extractFetch("/v1/erasure", {
 				method: "POST",
 				headers: { "content-type": "application/json" },
@@ -513,7 +513,7 @@ describe("outpost mirror-delete -> extract -> search (live, 2.12)", () => {
 			expect(replayBody.requestId).toBe(requestId);
 
 			if (SEARCH_URL !== "") {
-				// Nach der Kaskade ist der Inhalt aus Search entfernt.
+				// After the cascade the content is removed from Search.
 				let gone = false;
 				for (let attempt = 0; attempt < 30 && !gone; attempt += 1) {
 					gone = !(await searchHit(reference, word));

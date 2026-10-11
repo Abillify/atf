@@ -389,7 +389,7 @@ export interface FastPathCandidates {
 
 /**
  * Detect table and figure candidates on a would-be fast-path page (requirement
- * 7.5: "keine Tabellen-/Abbildungskandidaten"). The ink-outside-blocks gate
+ * 7.5: "no table/figure candidates"). The ink-outside-blocks gate
  * catches raster/vector graphics; this catches what it cannot:
  *
  *   - a *text* table (a table whose cells are real text, so its ink lies inside
