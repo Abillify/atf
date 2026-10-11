@@ -3,6 +3,7 @@
 
 import crypto from "node:crypto";
 import type { Database } from "../db/database.js";
+import { egressFetch } from "../security/egress.js";
 import type { Logger } from "../observability/logger.js";
 import type { AssistantRun, PostgresAssistantRunStore } from "./run-store.js";
 import type { AssistantScope } from "./types.js";
@@ -303,17 +304,27 @@ export interface RocketChatClientOptions {
   botUserId: string;
   authToken: string;
   timeoutMs?: number;
+  /** Guarded outbound fetch (Egress_Guard, Req 7.1/7.2). */
+  fetchFn?: typeof fetch;
 }
 
 export class RocketChatClient {
   readonly baseUrl: string;
   private readonly endpoint: string;
   private readonly updateEndpoint: string;
+  private readonly fetchFn: typeof fetch;
 
   constructor(private readonly options: RocketChatClientOptions) {
     this.baseUrl = normalizeBaseUrl(options.baseUrl);
-    this.endpoint = new URL("/api/v1/chat.sendMessage", `${this.baseUrl}/`).toString();
-    this.updateEndpoint = new URL("/api/v1/chat.update", `${this.baseUrl}/`).toString();
+    this.endpoint = new URL(
+      "/api/v1/chat.sendMessage",
+      `${this.baseUrl}/`,
+    ).toString();
+    this.updateEndpoint = new URL(
+      "/api/v1/chat.update",
+      `${this.baseUrl}/`,
+    ).toString();
+    this.fetchFn = options.fetchFn ?? egressFetch;
   }
 
   private requestOptions(body: Record<string, unknown>): RequestInit {
@@ -331,19 +342,26 @@ export class RocketChatClient {
     };
   }
 
-  async verifiedPrimaryEmail(rocketUserId: string): Promise<string | undefined> {
+  async verifiedPrimaryEmail(
+    rocketUserId: string,
+  ): Promise<string | undefined> {
     const endpoint = new URL(
       `/api/v1/users.info?userId=${encodeURIComponent(rocketUserId)}`,
       `${this.baseUrl}/`,
     );
-    const response = await fetch(endpoint, {
-      headers: { "X-Auth-Token": this.options.authToken, "X-User-Id": this.options.botUserId },
+    const response = await this.fetchFn(endpoint, {
+      headers: {
+        "X-Auth-Token": this.options.authToken,
+        "X-User-Id": this.options.botUserId,
+      },
       signal: AbortSignal.timeout(
         Math.min(60_000, Math.max(1_000, this.options.timeoutMs ?? 10_000)),
       ),
     });
     if (!response.ok)
-      throw new Error(`Rocket.Chat user lookup failed with HTTP ${response.status}.`);
+      throw new Error(
+        `Rocket.Chat user lookup failed with HTTP ${response.status}.`,
+      );
     const payload = (await response.json()) as {
       user?: { emails?: Array<{ address?: string; verified?: boolean }> };
     };
@@ -353,7 +371,9 @@ export class RocketChatClient {
     return address?.trim().toLowerCase();
   }
 
-  private async apiResult(response: Response): Promise<{ body: string; succeeded: boolean }> {
+  private async apiResult(
+    response: Response,
+  ): Promise<{ body: string; succeeded: boolean }> {
     const body = await response.text();
     let declaredSuccess: unknown;
     if (body.length > 0) {
@@ -376,19 +396,28 @@ export class RocketChatClient {
           message?: unknown;
         };
         detail = [payload.errorType, payload.error, payload.message].find(
-          (value): value is string => typeof value === "string" && value.trim().length > 0,
+          (value): value is string =>
+            typeof value === "string" && value.trim().length > 0,
         );
       } catch {
         // Avoid logging an arbitrary HTML/proxy response body.
       }
     }
-    const suffix = detail === undefined ? "" : ` (${detail.replace(/\s+/g, " ").slice(0, 200)})`;
-    return new Error(`${operation} failed with HTTP ${response.status}${suffix}.`);
+    const suffix =
+      detail === undefined
+        ? ""
+        : ` (${detail.replace(/\s+/g, " ").slice(0, 200)})`;
+    return new Error(
+      `${operation} failed with HTTP ${response.status}${suffix}.`,
+    );
   }
 
   private isDuplicateMessage(response: Response, body: string): boolean {
-    if (response.status !== 400 && response.status !== 409 && !response.ok) return false;
-    return /duplicate|already exists|error-message-id-already-exists/i.test(body);
+    if (response.status !== 400 && response.status !== 409 && !response.ok)
+      return false;
+    return /duplicate|already exists|error-message-id-already-exists/i.test(
+      body,
+    );
   }
 
   private async createMessage(input: {
@@ -396,7 +425,7 @@ export class RocketChatClient {
     roomId: string;
     text: string;
   }): Promise<"created" | "exists"> {
-    const response = await fetch(
+    const response = await this.fetchFn(
       this.endpoint,
       this.requestOptions({
         message: { _id: input.messageId, rid: input.roomId, msg: input.text },
@@ -415,25 +444,41 @@ export class RocketChatClient {
     roomId: string;
     text: string;
   }): Promise<void> {
-    const response = await fetch(
+    const response = await this.fetchFn(
       this.updateEndpoint,
-      this.requestOptions({ roomId: input.roomId, msgId: input.messageId, text: input.text }),
+      this.requestOptions({
+        roomId: input.roomId,
+        msgId: input.messageId,
+        text: input.text,
+      }),
     );
     const result = await this.apiResult(response);
     if (result.succeeded) return;
     throw this.apiError("Rocket.Chat message update", response, result.body);
   }
 
-  async sendMessage(input: { messageId: string; roomId: string; text: string }): Promise<void> {
+  async sendMessage(input: {
+    messageId: string;
+    roomId: string;
+    text: string;
+  }): Promise<void> {
     await this.createMessage(input);
   }
 
-  async updateMessage(input: { messageId: string; roomId: string; text: string }): Promise<void> {
+  async updateMessage(input: {
+    messageId: string;
+    roomId: string;
+    text: string;
+  }): Promise<void> {
     await this.tryUpdateMessage(input);
   }
 
   /** Updates a deterministic message, creating it after any failed first update. */
-  async upsertMessage(input: { messageId: string; roomId: string; text: string }): Promise<void> {
+  async upsertMessage(input: {
+    messageId: string;
+    roomId: string;
+    text: string;
+  }): Promise<void> {
     try {
       await this.tryUpdateMessage(input);
       return;
@@ -442,10 +487,16 @@ export class RocketChatClient {
         if ((await this.createMessage(input)) === "created") return;
       } catch (createError) {
         const updateMessage =
-          updateError instanceof Error ? updateError.message : String(updateError);
+          updateError instanceof Error
+            ? updateError.message
+            : String(updateError);
         const createMessage =
-          createError instanceof Error ? createError.message : String(createError);
-        throw new Error(`Rocket.Chat upsert failed: ${updateMessage}; ${createMessage}`);
+          createError instanceof Error
+            ? createError.message
+            : String(createError);
+        throw new Error(
+          `Rocket.Chat upsert failed: ${updateMessage}; ${createMessage}`,
+        );
       }
     }
     // Another delivery may have created the deterministic id between our update

@@ -68,10 +68,12 @@ import {
   createRedisPubSub,
 } from "./monitoring/monitoring-service.js";
 import { createLogger } from "./observability/logger.js";
+import { createMetrics } from "./observability/metrics.js";
 import { createTracer, parseTraceparent } from "./observability/tracing.js";
 import { createChatRouter } from "./routes/chat.js";
 import { createResponsesRouter } from "./routes/responses.js";
 import { createHealthRouter } from "./routes/health.js";
+import { createTransactionJwksRouter } from "./routes/transaction-jwks.js";
 import { createMetricsRouter } from "./routes/metrics.js";
 import { createLimitsRouter } from "./routes/limits.js";
 import { createModelsRouter } from "./routes/models.js";
@@ -109,6 +111,7 @@ import { createAbManager, type AbManager } from "./graph/flow-ab.js";
 import { createToolAuthzLoader } from "./graph/tool-authz-loader.js";
 import { createFlowMcpServer } from "./mcp/flow-mcp-server.js";
 import { createFlowMcpRouter } from "./routes/flow-mcp.js";
+import { initRuntimeEgress } from "./security/egress.js";
 import { createRedTeamEngine } from "./security/red-team-engine.js";
 import { createRedTeamScheduler } from "./security/red-team-scheduler.js";
 import { createRedTeamRouter } from "./routes/red-team.js";
@@ -143,6 +146,17 @@ if (import.meta.main) {
 
   // 1. Config
   const config = loadConfig();
+
+  // 1b. Egress_Guard (Req 7.1, 7.2): every outbound HTTP call goes through
+  // this guard. Private/loopback targets need an explicit host exception in
+  // EGRESS_ALLOW_PRIVATE_HOSTS; loopback exceptions only apply in development.
+  initRuntimeEgress({
+    allowedPrivateHosts: config.egressAllowPrivateHosts ?? [],
+    allowedHosts: config.egressAllowedHosts ?? [],
+    maxResponseBytes: config.egressMaxResponseBytes,
+    timeoutMs: config.egressTimeoutMs,
+    allowLoopback: (config.appEnv ?? "development") !== "production",
+  });
 
   // 2. Logger + tracer
   const logger = createLogger(config.logLevel);
@@ -212,7 +226,17 @@ if (import.meta.main) {
   }
 
   // 5. Cache (embedder must be ready before guardrails + engine)
-  const cacheResult = await buildCache(config, logger, database, storeFactory);
+  // Metrics are created up front (before the cache) because the memory
+  // extractor built there reports its fail-open degradations through them
+  // (Req 7.8); buildObservability below receives this same instance.
+  const metrics = createMetrics(config.metricsEnabled ?? true);
+  const cacheResult = await buildCache(
+    config,
+    logger,
+    database,
+    storeFactory,
+    metrics,
+  );
   const {
     embedder,
     semanticCache,
@@ -231,9 +255,9 @@ if (import.meta.main) {
     executionStore,
     memoryStore,
     piiVaultStore,
+    metrics,
   });
   const {
-    metrics,
     budgetService,
     spendRecorder,
     tokenLimitService,
@@ -331,19 +355,27 @@ if (import.meta.main) {
       ...(config.piiDetectors !== undefined
         ? { globalNames: config.piiDetectors }
         : {}),
-      flowLookup: (flowId: string) => guardrailPolicy.resolve(flowId)?.detectors,
-      flowTypesLookup: (flowId: string) => guardrailPolicy.resolve(flowId)?.piiTypes,
+      flowLookup: (flowId: string) =>
+        guardrailPolicy.resolve(flowId)?.detectors,
+      flowTypesLookup: (flowId: string) =>
+        guardrailPolicy.resolve(flowId)?.piiTypes,
       generation: () => guardrailPolicy.generation(),
     });
     piiVault.setDetectorResolver(detectorResolver);
     piiVault.setMetrics(metrics);
-    logger.info("PII detector resolver wired (per-flow detector selection active)", {
-      globalDetectors: config.piiDetectors ?? ["regex (legacy sync)"],
-    });
+    logger.info(
+      "PII detector resolver wired (per-flow detector selection active)",
+      {
+        globalDetectors: config.piiDetectors ?? ["regex (legacy sync)"],
+      },
+    );
   }
 
   const toolAuthzLoader = createToolAuthzLoader(config.flowsDir, logger, {
     failClosed: config.toolAuthzFailClosed === true,
+    // Req 7.7: a failed policy reload increments aiperator_policy_stale_total
+    // and flips the loader's policyStale flag (surfaced in /health/ready).
+    metrics,
   });
 
   // 7c. Flow parser + hot-reload wiring
@@ -558,9 +590,8 @@ if (import.meta.main) {
   // built above — passing it in earlier would be a construction cycle. The scheduler
   // holds an indirection that becomes live at this assignment.
   if (assistantsResult !== undefined && replayStore !== undefined) {
-    const { createLearningPassRunner } = await import(
-      "./assistants/learning-pass.js"
-    );
+    const { createLearningPassRunner } =
+      await import("./assistants/learning-pass.js");
     // The deployment's memory-extraction model when configured, else its default:
     // the pass is a short judgement over a bounded transcript, so it belongs on the
     // same model that already serves the deployment's side tasks rather than on a
@@ -574,25 +605,25 @@ if (import.meta.main) {
       );
     } else {
       assistantLearningRunner = createLearningPassRunner({
-      runtime: assistantsResult.runtime,
-      model: createLlmProvider(reviewModelConfig, config),
-      loadTranscript: async (candidate) => {
-        const snapshot = await replayStore.get(candidate.executionId);
-        if (snapshot === undefined) return [];
-        // The snapshot holds the request messages and the final answer. Appending the
-        // answer reconstructs the full turn, which is what the pass must judge — the
-        // request alone shows the goal but not how it was reached.
-        return [
-          ...snapshot.messages.map((message) => ({
-            role: message.role,
-            content: message.content,
-          })),
-          ...(snapshot.responseText.length > 0
-            ? [{ role: "assistant", content: snapshot.responseText }]
-            : []),
-        ];
-      },
-      logger,
+        runtime: assistantsResult.runtime,
+        model: createLlmProvider(reviewModelConfig, config),
+        loadTranscript: async (candidate) => {
+          const snapshot = await replayStore.get(candidate.executionId);
+          if (snapshot === undefined) return [];
+          // The snapshot holds the request messages and the final answer. Appending the
+          // answer reconstructs the full turn, which is what the pass must judge — the
+          // request alone shows the goal but not how it was reached.
+          return [
+            ...snapshot.messages.map((message) => ({
+              role: message.role,
+              content: message.content,
+            })),
+            ...(snapshot.responseText.length > 0
+              ? [{ role: "assistant", content: snapshot.responseText }]
+              : []),
+          ];
+        },
+        logger,
       });
       logger.info("Assistant learning pass wired to the replay store");
     }
@@ -625,9 +656,8 @@ if (import.meta.main) {
     | import("./graph/pii-image-scanner.js").MultimodalOptions
     | undefined;
   if (piiVault !== undefined && piiMultimodalMode !== "off") {
-    const { createRemoteImageRedactor, createLlmImageDescriber } = await import(
-      "./graph/pii-image-scanner.js"
-    );
+    const { createRemoteImageRedactor, createLlmImageDescriber } =
+      await import("./graph/pii-image-scanner.js");
     const imageRedactor =
       config.piiImageRemoteEndpoint !== undefined
         ? createRemoteImageRedactor({
@@ -677,7 +707,10 @@ if (import.meta.main) {
       logger.warn(
         "PII_VAULT_MULTIMODAL_MODE=redact but no PII_IMAGE_REMOTE_ENDPOINT configured — image/file attachments will be STRIPPED (blocked) instead of redacted.",
       );
-    } else if (piiMultimodalMode === "describe" && imageDescriber === undefined) {
+    } else if (
+      piiMultimodalMode === "describe" &&
+      imageDescriber === undefined
+    ) {
       logger.warn(
         "PII_VAULT_MULTIMODAL_MODE=describe but no PII_IMAGE_DESCRIBE_MODEL configured — image/file attachments will be STRIPPED (blocked) instead of described.",
       );
@@ -737,12 +770,14 @@ if (import.meta.main) {
     if (typeof flowId !== "string" || flowId.length === 0) {
       throw new Error("Assistant run payload requires a non-empty flowId.");
     }
-    const message = typeof run.resumePayload.message === "string"
-      ? run.resumePayload.message
-      : JSON.stringify(run.resumePayload);
-    const conversationId = typeof run.resumePayload.conversationId === "string"
-      ? run.resumePayload.conversationId
-      : undefined;
+    const message =
+      typeof run.resumePayload.message === "string"
+        ? run.resumePayload.message
+        : JSON.stringify(run.resumePayload);
+    const conversationId =
+      typeof run.resumePayload.conversationId === "string"
+        ? run.resumePayload.conversationId
+        : undefined;
     const runTrigger = run.origin === "schedule" ? "schedule" : "message";
     const userName =
       typeof run.resumePayload.userName === "string" &&
@@ -757,17 +792,23 @@ if (import.meta.main) {
     let authorityClaims: Record<string, unknown> | undefined;
     if (authority.token.length > 0) {
       if (!(await jwtVerifier.verify(authority.token))) {
-        throw new Error("Resolved assistant authority token failed JWT verification.");
+        throw new Error(
+          "Resolved assistant authority token failed JWT verification.",
+        );
       }
       authorityClaims = jwtVerifier.decodePayload(authority.token) ?? undefined;
       if (authorityClaims === undefined) {
-        throw new Error("Resolved assistant authority token has no decodable JWT payload.");
+        throw new Error(
+          "Resolved assistant authority token has no decodable JWT payload.",
+        );
       }
     }
     const responseParts: string[] = [];
     let finalResponse = "";
     const rocketChat =
-      run.resumePayload.delivery === "rocket-chat" ? assistantsResult.rocketChat : undefined;
+      run.resumePayload.delivery === "rocket-chat"
+        ? assistantsResult.rocketChat
+        : undefined;
     let reasoning = "";
     let lastProgress = "";
     let lastProgressAt = 0;
@@ -792,8 +833,12 @@ if (import.meta.main) {
         trigger: runTrigger,
         assistant_id: run.scope.assistantId,
         assistant_run_id: run.id,
-        ...(conversationId !== undefined ? { conversation_id: conversationId } : {}),
-        ...(authority.notice !== undefined ? { authority_notice: authority.notice } : {}),
+        ...(conversationId !== undefined
+          ? { conversation_id: conversationId }
+          : {}),
+        ...(authority.notice !== undefined
+          ? { authority_notice: authority.notice }
+          : {}),
       },
     };
     emitBoundaryNode(monitoringService, run.id, boundaryMeta, {
@@ -812,44 +857,61 @@ if (import.meta.main) {
     });
 
     try {
-      await requireExecutionAdmission(executionAdmission, flowId, executionContext);
+      await requireExecutionAdmission(
+        executionAdmission,
+        flowId,
+        executionContext,
+      );
       await graphEngine.executeFlow(
         flowId,
         [{ role: "user", content: message }],
         executionContext,
-      async (chunk) => {
-        const delta = chunk.choices[0]?.delta;
-        if (typeof delta?.content === "string") responseParts.push(delta.content);
-        if (rocketChat !== undefined && typeof delta?.reasoning_content === "string") {
-          reasoning = `${reasoning}${delta.reasoning_content}`.slice(-8_000);
-          const progress = rocketChatProgressMessage(reasoning);
-          const now = Date.now();
-          const reachedBoundary = /[.!?…]\s*$|\n/.test(delta.reasoning_content);
+        async (chunk) => {
+          const delta = chunk.choices[0]?.delta;
+          if (typeof delta?.content === "string")
+            responseParts.push(delta.content);
           if (
-            progress !== undefined &&
-            progress !== lastProgress &&
-            (reachedBoundary || now - lastProgressAt >= 1_000)
+            rocketChat !== undefined &&
+            typeof delta?.reasoning_content === "string"
           ) {
-            lastProgress = progress;
-            lastProgressAt = now;
-            try {
-              const queued = await rocketChat.outbox.enqueueRunProgress(run, progress);
-              if (queued !== undefined) await rocketChat.flushOutbox();
-            } catch (error) {
-              logger.warn("Rocket.Chat progress update failed; the durable run continues", {
-                runId: run.id,
-                error: error instanceof Error ? error.message : String(error),
-              });
+            reasoning = `${reasoning}${delta.reasoning_content}`.slice(-8_000);
+            const progress = rocketChatProgressMessage(reasoning);
+            const now = Date.now();
+            const reachedBoundary = /[.!?…]\s*$|\n/.test(
+              delta.reasoning_content,
+            );
+            if (
+              progress !== undefined &&
+              progress !== lastProgress &&
+              (reachedBoundary || now - lastProgressAt >= 1_000)
+            ) {
+              lastProgress = progress;
+              lastProgressAt = now;
+              try {
+                const queued = await rocketChat.outbox.enqueueRunProgress(
+                  run,
+                  progress,
+                );
+                if (queued !== undefined) await rocketChat.flushOutbox();
+              } catch (error) {
+                logger.warn(
+                  "Rocket.Chat progress update failed; the durable run continues",
+                  {
+                    runId: run.id,
+                    error:
+                      error instanceof Error ? error.message : String(error),
+                  },
+                );
+              }
             }
           }
-        }
-      },
-      async () => {},
-      monitoringService,
-      undefined,
-      async (response) => {
-        finalResponse = response;
-      },
+        },
+        async () => {},
+        monitoringService,
+        undefined,
+        async (response) => {
+          finalResponse = response;
+        },
       );
     } catch (error) {
       emitBoundaryNode(monitoringService, run.id, boundaryMeta, {
@@ -868,19 +930,29 @@ if (import.meta.main) {
     });
     if (run.resumePayload.delivery === "rocket-chat") {
       if (rocketChat === undefined) {
-        throw new Error("Rocket.Chat delivery was requested but the channel is unavailable.");
+        throw new Error(
+          "Rocket.Chat delivery was requested but the channel is unavailable.",
+        );
       }
-      const queued = await rocketChat.outbox.enqueueRunResult(run, responseText);
+      const queued = await rocketChat.outbox.enqueueRunResult(
+        run,
+        responseText,
+      );
       if (queued === undefined) {
-        throw new Error("Rocket.Chat delivery was requested but no active binding or response was available.");
+        throw new Error(
+          "Rocket.Chat delivery was requested but no active binding or response was available.",
+        );
       }
       try {
         await rocketChat.flushOutbox();
       } catch (error) {
-        logger.warn("Immediate Rocket.Chat final delivery failed; durable outbox will retry", {
-          runId: run.id,
-          error: error instanceof Error ? error.message : String(error),
-        });
+        logger.warn(
+          "Immediate Rocket.Chat final delivery failed; durable outbox will retry",
+          {
+            runId: run.id,
+            error: error instanceof Error ? error.message : String(error),
+          },
+        );
       }
     }
   });
@@ -892,8 +964,10 @@ if (import.meta.main) {
   // Lazy-load shadow config (shadow.yaml / shadow.json in flows dir), build the
   // service with the canary judge (reused — same model, already configured), and
   // store the ref for hot-reload wiring above.
-  const { parseFlowFile: _parseFlowFileFn, resolveConfigFile: _resolveConfigFileFn } =
-    await import("./util/parse-flow-file.js");
+  const {
+    parseFlowFile: _parseFlowFileFn,
+    resolveConfigFile: _resolveConfigFileFn,
+  } = await import("./util/parse-flow-file.js");
   const loadShadowConfig = (flowsDir: string): unknown => {
     const path = _resolveConfigFileFn(flowsDir, "shadow");
     if (path === null) return null;
@@ -938,10 +1012,15 @@ if (import.meta.main) {
     authorizationEnabled: config.authzEnabled ?? true,
     authorizer: flowAuthorizer,
     flowScopeClaims: config.flowScopeClaims,
-    compliancePolicyLoader: { get policy() { return compliancePolicyLoaderRef?.policy; } },
+    compliancePolicyLoader: {
+      get policy() {
+        return compliancePolicyLoaderRef?.policy;
+      },
+    },
     providerRegions: config.providerRegions,
     failClosedUnknownRegion:
-      config.complianceFailClosedUnknownRegion ?? config.appEnv === "production",
+      config.complianceFailClosedUnknownRegion ??
+      config.appEnv === "production",
     costTracker: budgetService,
     budgetDailyPerTenant: config.budgetDailyPerTenant,
     limitEnforcer: tokenLimitEnforcer,
@@ -983,7 +1062,8 @@ if (import.meta.main) {
 
   if (config.redTeamEnabled === true) {
     // Boot the attack registry (with optional remote hot-updates) BEFORE the engine.
-    const { createAttackRegistry } = await import("./security/red-team-attack-registry.js");
+    const { createAttackRegistry } =
+      await import("./security/red-team-attack-registry.js");
     createAttackRegistry({
       remoteUrl: config.redTeamAttacksUrl,
       pollIntervalMs: config.redTeamAttacksPollIntervalMs,
@@ -1047,8 +1127,15 @@ if (import.meta.main) {
       }
 
       const parts: string[] = [];
-      const executionContext = { ssoToken: "red-team", executionId: crypto.randomUUID() };
-      await requireExecutionAdmission(executionAdmission, flowId, executionContext);
+      const executionContext = {
+        ssoToken: "red-team",
+        executionId: crypto.randomUUID(),
+      };
+      await requireExecutionAdmission(
+        executionAdmission,
+        flowId,
+        executionContext,
+      );
       await graphEngine.executeFlow(
         flowId,
         [{ role: "user", content: payload }],
@@ -1227,15 +1314,14 @@ if (import.meta.main) {
   // weights the previous window and avoids the ~2× burst a fixed-window counter
   // allows at the boundary. Fall back to the StoreFactory-backed (fixed-window)
   // counter when Redis is unavailable or not configured.
-  const rateLimitStore =
-    anyRateLimitEnabled
-      ? (config.redisUrl !== undefined
-          ? createRedisRateLimitStore(config.redisUrl, logger)
-          : undefined) ??
-        createStoreBackedRateLimitStore(
-          storeFactory.counter<string>("rate-limit"),
-        )
-      : undefined;
+  const rateLimitStore = anyRateLimitEnabled
+    ? ((config.redisUrl !== undefined
+        ? createRedisRateLimitStore(config.redisUrl, logger)
+        : undefined) ??
+      createStoreBackedRateLimitStore(
+        storeFactory.counter<string>("rate-limit"),
+      ))
+    : undefined;
   if (rateLimitStore !== undefined)
     logger.info("Rate limiting enabled", {
       backing: storeFactory.backing(),
@@ -1270,6 +1356,7 @@ if (import.meta.main) {
         rateLimitStore,
         logger,
         config.rateLimitFailMode ?? "open",
+        metrics,
       ),
     ),
   );
@@ -1284,6 +1371,7 @@ if (import.meta.main) {
         logger,
         config.rateLimitFailMode ?? "open",
         rateLimitPerUserPerMinute,
+        metrics,
       ),
     ),
   );
@@ -1294,7 +1382,8 @@ if (import.meta.main) {
   const apiKeyResolver =
     config.authnMode !== "oidc" &&
     config.authnMode !== "disabled" &&
-    config.tenantManagementEnabled === true && tenantStore !== undefined
+    config.tenantManagementEnabled === true &&
+    tenantStore !== undefined
       ? (rawKey: string) => resolveApiKey(rawKey, tenantStore, logger)
       : undefined;
   if (apiKeyResolver !== undefined) {
@@ -1320,6 +1409,7 @@ if (import.meta.main) {
         rateLimitStore,
         logger,
         config.rateLimitFailMode ?? "open",
+        metrics,
       ),
     ),
   );
@@ -1327,7 +1417,9 @@ if (import.meta.main) {
   // ── Routes ─────────────────────────────────────────────────────────────────
   app.route(
     "/",
-    createAnalysisArtifactsRouter(new AnalysisArtifactService(analysisArtifactStore)),
+    createAnalysisArtifactsRouter(
+      new AnalysisArtifactService(analysisArtifactStore),
+    ),
   );
   let healthRedisClient:
     | import("./routes/health.js").RedisProbeClient
@@ -1356,8 +1448,15 @@ if (import.meta.main) {
       // Req 1.9: surface failed durable audit writes as a degraded (never 503)
       // readiness hint.
       audit: auditLog,
+      // Req 7.7: a failed tool-authz.json reload surfaces as a degraded
+      // (never 503) policy_stale hint — the last-known-good policy still holds.
+      toolAuthz: toolAuthzLoader,
     }),
   );
+  // Req 7.11: public JWKS for asymmetrically signed transaction tokens
+  // (TRANSACTION_SIGNING_ALG=ES256|EdDSA). Unauthenticated by design — it only
+  // ever serves public key material; HS256 mode returns an empty key set.
+  app.route("/", createTransactionJwksRouter());
   app.route(
     "/",
     createModelsRouter(flowRegistry, {
@@ -1376,12 +1475,15 @@ if (import.meta.main) {
   // Durable Agent Runtime opt-in for async/batch jobs (JOB_RECOVERY_ENABLED).
   // Requires a job store — recovery has nothing to recover without one.
   const executionContextSecret = process.env.AGENT_TRANSACTION_SECRET;
-  const jobRecoveryOptions: { maxAttempts: number; leaseMs: number; contextSecret?: string } | undefined =
+  const jobRecoveryOptions:
+    | { maxAttempts: number; leaseMs: number; contextSecret?: string }
+    | undefined =
     jobStore !== undefined && config.jobRecoveryEnabled === true
       ? {
           maxAttempts: config.jobRecoveryMaxAttempts ?? 3,
           leaseMs: config.jobRecoveryLeaseMs ?? 300_000,
-          ...(executionContextSecret !== undefined && executionContextSecret.length > 0
+          ...(executionContextSecret !== undefined &&
+          executionContextSecret.length > 0
             ? { contextSecret: executionContextSecret }
             : {}),
         }
@@ -1407,8 +1509,11 @@ if (import.meta.main) {
     ...(byokResolver !== undefined ? { byokResolver } : {}),
     ...(idempotencyStore !== undefined ? { idempotencyStore } : {}),
     ...(jobStore !== undefined ? { jobStore } : {}),
-    ...(jobRecoveryOptions !== undefined ? { jobRecovery: jobRecoveryOptions } : {}),
-    ...(executionContextSecret !== undefined && executionContextSecret.length > 0
+    ...(jobRecoveryOptions !== undefined
+      ? { jobRecovery: jobRecoveryOptions }
+      : {}),
+    ...(executionContextSecret !== undefined &&
+    executionContextSecret.length > 0
       ? { executionContextSecret }
       : {}),
     ...(inputGuardrail !== undefined
@@ -1489,11 +1594,12 @@ if (import.meta.main) {
   // job-recovery-sweeper.ts module doc comments). Only meaningful with a
   // job store AND JOB_RECOVERY_ENABLED; otherwise async jobs keep their
   // pre-existing (non-recoverable) behaviour.
-  let jobRecoverySweeper: import("./graph/job-recovery-sweeper.js").JobRecoverySweeper | undefined;
+  let jobRecoverySweeper:
+    | import("./graph/job-recovery-sweeper.js").JobRecoverySweeper
+    | undefined;
   if (jobStore !== undefined && jobRecoveryOptions !== undefined) {
-    const { createJobRecoverySweeper } = await import(
-      "./graph/job-recovery-sweeper.js"
-    );
+    const { createJobRecoverySweeper } =
+      await import("./graph/job-recovery-sweeper.js");
     const { createJobRetryRunner } = await import("./routes/chat/metering.js");
     jobRecoverySweeper = createJobRecoverySweeper(
       { intervalMs: config.jobRecoverySweepIntervalMs ?? 60_000 },
@@ -1512,11 +1618,14 @@ if (import.meta.main) {
       },
     );
     jobRecoverySweeper.start();
-    logger.info("Durable Agent Runtime enabled — async jobs recover from a crash", {
-      maxAttempts: jobRecoveryOptions.maxAttempts,
-      leaseMs: jobRecoveryOptions.leaseMs,
-      sweepIntervalMs: config.jobRecoverySweepIntervalMs ?? 60_000,
-    });
+    logger.info(
+      "Durable Agent Runtime enabled — async jobs recover from a crash",
+      {
+        maxAttempts: jobRecoveryOptions.maxAttempts,
+        leaseMs: jobRecoveryOptions.leaseMs,
+        sweepIntervalMs: config.jobRecoverySweepIntervalMs ?? 60_000,
+      },
+    );
   }
 
   // Flow-as-MCP-Server: POST/GET/DELETE /mcp. Unlike /v1 routes it is mounted
@@ -1562,8 +1671,15 @@ if (import.meta.main) {
               };
             }
             const parts: string[] = [];
-            const executionContext = { ssoToken: "red-team", executionId: crypto.randomUUID() };
-            await requireExecutionAdmission(executionAdmission, flowId, executionContext);
+            const executionContext = {
+              ssoToken: "red-team",
+              executionId: crypto.randomUUID(),
+            };
+            await requireExecutionAdmission(
+              executionAdmission,
+              flowId,
+              executionContext,
+            );
             await graphEngine.executeFlow(
               flowId,
               [{ role: "user", content: payload }],
@@ -1607,19 +1723,20 @@ if (import.meta.main) {
     logger.info("RAG ingestion API enabled at /v1/rag/*");
   }
   if (memoryStore !== undefined) {
-    app.route(
-      "/",
-      createMemoryRouter(memoryStore, jwtVerifier, operatorAuth),
-    );
+    app.route("/", createMemoryRouter(memoryStore, jwtVerifier, operatorAuth));
     logger.info("Long-term memory API enabled at /v1/memory/*");
   }
   if (assistantsResult !== undefined) {
     // Vectorsearch is optional. The session API stays available without it,
     // while hybrid search returns an explicit 503 rather than falling back to
     // an unscoped local scan.
-    const vectorsearchConfigured = config.mcpServers.some((server) => server.name === "vectorsearch");
+    const vectorsearchConfigured = config.mcpServers.some(
+      (server) => server.name === "vectorsearch",
+    );
     const sessionIndex = vectorsearchConfigured
-      ? new (await import("./assistants/session-index.js")).McpAssistantSessionIndex(mcpWrapper)
+      ? new (
+          await import("./assistants/session-index.js")
+        ).McpAssistantSessionIndex(mcpWrapper)
       : undefined;
     assistantsResult.runtime.setSessionIndex(sessionIndex);
     // Mounted on the `/v1` plane so it runs behind the same auth middleware as the
@@ -1647,9 +1764,8 @@ if (import.meta.main) {
     // The operator plane. Separate router because it authenticates differently:
     // an operator role that spans users, versus a user's own identity. It owns the
     // `constraints` soul write class, which no user-plane route can reach.
-    const { createAssistantsAdminRouter } = await import(
-      "./routes/assistants-admin.js"
-    );
+    const { createAssistantsAdminRouter } =
+      await import("./routes/assistants-admin.js");
     app.route(
       "/",
       createAssistantsAdminRouter({
@@ -1840,12 +1956,10 @@ if (import.meta.main) {
   // ── Compliance Policy-as-Code ─────────────────────────────────────────────
   // Always mount — the loader returns undefined when no policy file exists, and
   // the route responds gracefully. Hot-reload is wired via onComplianceChange.
-  const { createCompliancePolicyLoader } = await import(
-    "./compliance/policy-loader.js"
-  );
-  const { createCompliancePolicyRouter } = await import(
-    "./routes/compliance-policy.js"
-  );
+  const { createCompliancePolicyLoader } =
+    await import("./compliance/policy-loader.js");
+  const { createCompliancePolicyRouter } =
+    await import("./routes/compliance-policy.js");
   const compliancePolicyLoader = createCompliancePolicyLoader(
     config.flowsDir,
     logger,
@@ -1893,9 +2007,8 @@ if (import.meta.main) {
   // (lets CI or an operator record a completed eval run).
   const { createEvalRunHistory } = await import("./eval/eval-run-history.js");
   const evalRunHistory = createEvalRunHistory(database, logger);
-  const { createEvalMatrixRunStore, EvalMatrixService } = await import(
-    "./eval/eval-matrix.js"
-  );
+  const { createEvalMatrixRunStore, EvalMatrixService } =
+    await import("./eval/eval-matrix.js");
   const evalMatrix = new EvalMatrixService({
     store: createEvalMatrixRunStore(database, logger),
     graphEngine,
@@ -1910,9 +2023,12 @@ if (import.meta.main) {
   try {
     const recoveredEvalMatrices = await evalMatrix.recoverInterruptedRuns();
     if (recoveredEvalMatrices > 0) {
-      logger.warn("Marked interrupted eval matrices as failed after runtime restart", {
-        count: recoveredEvalMatrices,
-      });
+      logger.warn(
+        "Marked interrupted eval matrices as failed after runtime restart",
+        {
+          count: recoveredEvalMatrices,
+        },
+      );
     }
   } catch (error) {
     // Recovery is best-effort maintenance. A permission/transient database
@@ -2031,9 +2147,8 @@ if (import.meta.main) {
     optimizerScheduleFlows.length > 0 &&
     activeReplayStore !== undefined
   ) {
-    const { createOptimizerScheduler } = await import(
-      "./graph/optimizer-scheduler.js"
-    );
+    const { createOptimizerScheduler } =
+      await import("./graph/optimizer-scheduler.js");
     const intervalMs = config.optimizerScheduleIntervalMs ?? 86_400_000;
     optimizerScheduler = createOptimizerScheduler(
       {
@@ -2257,7 +2372,8 @@ if (import.meta.main) {
   if (assistantsResult?.rocketChat !== undefined) {
     const connectIssuer = process.env.ROCKETCHAT_CONNECT_OIDC_ISSUER;
     const connectClientId = process.env.ROCKETCHAT_CONNECT_OIDC_CLIENT_ID;
-    const connectClientSecret = process.env.ROCKETCHAT_CONNECT_OIDC_CLIENT_SECRET;
+    const connectClientSecret =
+      process.env.ROCKETCHAT_CONNECT_OIDC_CLIENT_SECRET;
     const delegationClientSecret = config.assistantDelegationClientSecret;
     const connectSessionSecret = process.env.ROCKETCHAT_CONNECT_SESSION_SECRET;
     const connectPublicUrl = process.env.ROCKETCHAT_CONNECT_PUBLIC_URL;
@@ -2407,7 +2523,8 @@ if (import.meta.main) {
   );
   logger.info("Webhook trigger route enabled at /triggers/:flowId");
 
-  const { createTriggerScheduler } = await import("./graph/trigger-scheduler.js");
+  const { createTriggerScheduler } =
+    await import("./graph/trigger-scheduler.js");
   const triggerScheduler = createTriggerScheduler(
     flowRegistry,
     graphEngine,

@@ -156,6 +156,7 @@ function mkWrapper(
     schemaCompatibilityMode?: "report" | "strict";
     onSchemaCompatibility?: (report: SchemaCompatibilityReport) => void;
     maxTokenClientsPerServer?: number;
+    fetchFn?: typeof fetch;
   } = {},
 ): ReturnType<typeof createMcpWrapper> {
   return createMcpWrapper({ clientFactory, ...options });
@@ -328,7 +329,15 @@ describe("connect + getInstructions", () => {
    * GET event stream (`eventSourceInit.fetch`).
    */
   test("forwards configured headers to an sse server on both legs", async () => {
-    const w = mkWrapper();
+    // Req 7.2: the wrapper's outbound transport is injectable now — the
+    // capture stub goes through fetchFn instead of globalThis.fetch.
+    let seen: Record<string, string> | undefined;
+    const w = mkWrapper({
+      fetchFn: (async (_url: unknown, init?: RequestInit) => {
+        seen = init?.headers as Record<string, string>;
+        return new Response("", { status: 200 });
+      }) as typeof fetch,
+    });
     await w.connect(
       mkConfig({
         name: "sse-auth",
@@ -352,19 +361,9 @@ describe("connect + getInstructions", () => {
     const wrappedFetch = transport._eventSourceInit?.fetch;
     expect(typeof wrappedFetch).toBe("function");
 
-    let seen: Record<string, string> | undefined;
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
-      seen = init?.headers as Record<string, string>;
-      return new Response("", { status: 200 });
-    }) as typeof fetch;
-    try {
-      await wrappedFetch?.("https://example.test/sse", {
-        headers: { Accept: "text/event-stream" },
-      });
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
+    await wrappedFetch?.("https://example.test/sse", {
+      headers: { Accept: "text/event-stream" },
+    });
     expect(seen).toMatchObject({
       Accept: "text/event-stream",
       "X-Api-Key": "secret",
@@ -1599,9 +1598,16 @@ describe("Stateless2026Client approvals", () => {
       });
     }) as typeof fetch;
     try {
+      // Req 7.2: the client's transport is injectable — pass the stub
+      // installed above instead of relying on globalThis.fetch.
       const client = new Stateless2026Client(
-        mkConfig({ name: "native", profile: "2026-07-28", forwardAuthToken: true }),
+        mkConfig({
+          name: "native",
+          profile: "2026-07-28",
+          forwardAuthToken: true,
+        }),
         "same-bearer",
+        globalThis.fetch,
       );
       await client.connect();
       const input = {
@@ -1655,7 +1661,11 @@ describe("Stateless2026Client approvals", () => {
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), { status: 200 });
     }) as typeof fetch;
     try {
-      const client = new Stateless2026Client(mkConfig({ name: "native", profile: "2026-07-28" }));
+      const client = new Stateless2026Client(
+        mkConfig({ name: "native", profile: "2026-07-28" }),
+        undefined,
+        globalThis.fetch,
+      );
       await client.connect();
       const input = { name: "pay", arguments: { amount: 10 } };
       await client.callTool(input);
@@ -1724,8 +1734,13 @@ describe("Stateless2026Client resource and task APIs", () => {
     }) as typeof fetch;
     try {
       const client = new Stateless2026Client(
-        mkConfig({ name: "native", profile: "2026-07-28", forwardAuthToken: true }),
+        mkConfig({
+          name: "native",
+          profile: "2026-07-28",
+          forwardAuthToken: true,
+        }),
         "caller-token",
+        globalThis.fetch,
       );
       await client.connect();
       expect(client.getInstructions()).toBe("Use the documented API.");
@@ -1788,7 +1803,11 @@ describe("Stateless2026Client resource and task APIs", () => {
       return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result }), { status: 200 });
     }) as typeof fetch;
     try {
-      const client = new Stateless2026Client(mkConfig({ name: "native", profile: "2026-07-28" }));
+      const client = new Stateless2026Client(
+        mkConfig({ name: "native", profile: "2026-07-28" }),
+        undefined,
+        globalThis.fetch,
+      );
       expect(await client.readResource("docs://guide")).toEqual({
         contents: [{ uri: "docs://guide", text: "Hello" }],
         ttlMs: 250,
@@ -1858,6 +1877,8 @@ describe("Stateless2026Client resource and task APIs", () => {
           taskPollingIntervalMs: 0,
           taskPollingMaxAttempts: 3,
         }),
+        undefined,
+        globalThis.fetch,
       );
       expect(await client.getTask("task-1")).toEqual({
         task: { taskId: "task-1", state: "working", statusMessage: "Running" },

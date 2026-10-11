@@ -34,7 +34,9 @@
  */
 
 import { Hono } from "hono";
-import { jwtVerify, createRemoteJWKSet, SignJWT } from "jose";
+import { customFetch, createRemoteJWKSet, jwtVerify, SignJWT } from "jose";
+import { createDiscoveryClient } from "@atf/security-kit";
+import { egressFetch } from "../security/egress.js";
 import {
   resolveOperatorRoleFromClaims,
   type OperatorRole,
@@ -75,6 +77,11 @@ export interface OidcAuthRouterDeps {
    * refresh is disabled (pre-refresh behaviour) and that endpoint 401s.
    */
   sessionStore?: OidcSessionStore;
+  /**
+   * Outbound fetch for discovery, JWKS and the token endpoint. Defaults to
+   * the process-wide Egress_Guard (SSRF-safe); tests may inject a stub.
+   */
+  fetchFn?: typeof fetch;
   logger?: Logger;
 }
 
@@ -208,47 +215,62 @@ function withFragment(baseUrl: string, fragment: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Discovery (memoised per issuer).
+// Discovery (Security_Kit client: single-flight, cached, validated).
 // ---------------------------------------------------------------------------
 
-const metadataCache = new Map<string, OidcMetadata>();
-
-async function discover(issuer: string): Promise<OidcMetadata> {
-  const cached = metadataCache.get(issuer);
-  if (cached !== undefined) return cached;
-  const base = issuer.endsWith("/") ? issuer.slice(0, -1) : issuer;
-  const res = await fetch(`${base}/.well-known/openid-configuration`, {
-    headers: { Accept: "application/json" },
+/**
+ * Build the per-router discovery accessor on top of the shared
+ * `@atf/security-kit` client (Req 11.2). The kit enforces an exact `issuer`
+ * match and validates `jwks_uri` (Req 7.3: HTTPS whenever discovery is HTTPS,
+ * host must be the issuer host); this adds the flow-required endpoints and
+ * narrows the document. Caching (positive ≥ 5 min, negative back-off) replaces
+ * the previous permanent per-issuer map, so key-endpoint changes propagate
+ * instead of sticking until restart.
+ */
+function createDiscovery(
+  issuer: string,
+  fetchFn: typeof fetch,
+): () => Promise<OidcMetadata> {
+  const client = createDiscoveryClient(issuer, {
+    fetchImpl: (url, init) =>
+      fetchFn(url, {
+        ...(init?.headers !== undefined ? { headers: init.headers } : {}),
+        ...(init?.signal !== undefined ? { signal: init.signal } : {}),
+      }),
   });
-  if (!res.ok) {
-    throw new Error(`OIDC discovery failed: HTTP ${res.status}`);
-  }
-  const doc = (await res.json()) as Partial<OidcMetadata>;
-  if (
-    typeof doc.authorization_endpoint !== "string" ||
-    typeof doc.token_endpoint !== "string" ||
-    typeof doc.jwks_uri !== "string"
-  ) {
-    throw new Error("OIDC discovery document is missing required endpoints.");
-  }
-  const meta: OidcMetadata = {
-    authorization_endpoint: doc.authorization_endpoint,
-    token_endpoint: doc.token_endpoint,
-    jwks_uri: doc.jwks_uri,
-    ...(typeof doc.end_session_endpoint === "string"
-      ? { end_session_endpoint: doc.end_session_endpoint }
-      : {}),
+  return async (): Promise<OidcMetadata> => {
+    const doc = (await client.getMetadata()) as Partial<OidcMetadata>;
+    if (
+      typeof doc.authorization_endpoint !== "string" ||
+      typeof doc.token_endpoint !== "string" ||
+      typeof doc.jwks_uri !== "string"
+    ) {
+      throw new Error("OIDC discovery document is missing required endpoints.");
+    }
+    const meta: OidcMetadata = {
+      authorization_endpoint: doc.authorization_endpoint,
+      token_endpoint: doc.token_endpoint,
+      jwks_uri: doc.jwks_uri,
+      ...(typeof doc.end_session_endpoint === "string"
+        ? { end_session_endpoint: doc.end_session_endpoint }
+        : {}),
+    };
+    return meta;
   };
-  metadataCache.set(issuer, meta);
-  return meta;
 }
 
 // Per-issuer JWKS set (cached + rotated internally by jose).
 const jwksCache = new Map<string, ReturnType<typeof createRemoteJWKSet>>();
-function jwksFor(meta: OidcMetadata): ReturnType<typeof createRemoteJWKSet> {
+function jwksFor(
+  meta: OidcMetadata,
+  fetchFn: typeof fetch,
+): ReturnType<typeof createRemoteJWKSet> {
   let jwks = jwksCache.get(meta.jwks_uri);
   if (jwks === undefined) {
-    jwks = createRemoteJWKSet(new URL(meta.jwks_uri));
+    jwks = createRemoteJWKSet(new URL(meta.jwks_uri), {
+      [customFetch]: (input: URL | RequestInfo, init: RequestInit) =>
+        fetchFn(input, init as RequestInit),
+    });
     jwksCache.set(meta.jwks_uri, jwks);
   }
   return jwks;
@@ -274,6 +296,8 @@ interface TokenResponse {
 export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
   const app = new Hono();
   const { config, sessionStore, logger } = deps;
+  const fetchFn = deps.fetchFn ?? egressFetch;
+  const discover = createDiscovery(config.issuer, fetchFn);
   const sessionKey = new TextEncoder().encode(config.sessionSecret);
   const audience = config.audience ?? config.clientId;
   const scopes = ensureRefreshScopes(config.scopes);
@@ -292,7 +316,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
     meta: OidcMetadata,
     expectedNonce?: string,
   ): Promise<{ session: string; sub: string } | undefined> => {
-    const { payload } = await jwtVerify(idToken, jwksFor(meta), {
+    const { payload } = await jwtVerify(idToken, jwksFor(meta, fetchFn), {
       issuer: config.issuer,
       audience,
     });
@@ -314,8 +338,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
     });
     if (role === undefined) return undefined;
 
-    const email =
-      typeof claims.email === "string" ? claims.email : undefined;
+    const email = typeof claims.email === "string" ? claims.email : undefined;
     const name =
       (typeof claims.name === "string" && claims.name) ||
       email ||
@@ -340,13 +363,28 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
     return { session, sub };
   };
 
+  // `issuerHost` lets the dashboard validate the end-session URL returned by
+  // POST /monitoring/auth/logout (Req 8.4): the browser may only navigate to
+  // an HTTPS URL whose host matches the configured IdP host.
+  let issuerHost: string | null = null;
+  try {
+    issuerHost = new URL(config.issuer).host;
+  } catch {
+    /* malformed issuer config — the dashboard then refuses end-session URLs */
+  }
+
   app.get("/monitoring/auth/config", (ctx) =>
-    ctx.json({ enabled: true, autoLogin: config.autoLogin, required: true }),
+    ctx.json({
+      enabled: true,
+      autoLogin: config.autoLogin,
+      required: true,
+      issuerHost,
+    }),
   );
 
   app.get("/monitoring/auth/login", async (ctx) => {
     try {
-      const meta = await discover(config.issuer);
+      const meta = await discover();
       const origin = requestOrigin(ctx.req);
       const redirectUri =
         config.redirectUri ?? `${origin}/monitoring/auth/callback`;
@@ -438,7 +476,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
     if (state !== flow.state) return fail("state_mismatch");
 
     try {
-      const meta = await discover(config.issuer);
+      const meta = await discover();
       const redirectUri =
         config.redirectUri ?? `${origin}/monitoring/auth/callback`;
 
@@ -450,7 +488,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
         client_secret: config.clientSecret,
         code_verifier: flow.codeVerifier,
       });
-      const tokenRes = await fetch(meta.token_endpoint, {
+      const tokenRes = await fetchFn(meta.token_endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -542,7 +580,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
     }
 
     try {
-      const meta = await discover(config.issuer);
+      const meta = await discover();
       const body = new URLSearchParams({
         grant_type: "refresh_token",
         refresh_token: record.refreshToken,
@@ -550,7 +588,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
         client_secret: config.clientSecret,
         scope: scopes,
       });
-      const tokenRes = await fetch(meta.token_endpoint, {
+      const tokenRes = await fetchFn(meta.token_endpoint, {
         method: "POST",
         headers: {
           "Content-Type": "application/x-www-form-urlencoded",
@@ -629,7 +667,7 @@ export function createOidcAuthRouter(deps: OidcAuthRouterDeps): Hono {
     // The client also drops its token. Offer the IdP end-session URL for
     // optional RP-initiated logout.
     try {
-      const meta = await discover(config.issuer);
+      const meta = await discover();
       if (meta.end_session_endpoint !== undefined) {
         const params = new URLSearchParams({ client_id: config.clientId });
         if (config.dashboardUrl !== undefined) {

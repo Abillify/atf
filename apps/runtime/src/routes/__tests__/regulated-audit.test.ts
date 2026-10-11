@@ -1,17 +1,17 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 /**
- * Req 1.5 (Task 3.8): jede Route einer Regulierten_Aktion muss
- * `recordRequired` verwenden — dieser Test scannt die Route-Quellen und
- * stellt sicher, dass keine regulierte Aktion auf best-effort `record()`
- * zurückfällt oder die Auditierung ganz verliert.
+ * Req 1.5 (Task 3.8): every route of a regulated action must use
+ * `recordRequired`; this test scans the route sources and makes sure no
+ * regulated action falls back to best-effort `record()` or loses auditing
+ * altogether.
  *
- * Req 1.1–1.3 (Task 3.7, Properties 1 & 2): Kettenlinearität mit N
- * parallelen Writern und Genesis-Fehlerinjektion. Der Fake-Database-Stub
- * simuliert `pg_advisory_xact_lock` als transaktionalen Mutex — schreibt
- * der Produktionscode den Lock nicht (oder liest den Tip davor), zweigt
- * die Kette ab und der Property-Test schlägt fehl. Ein echter
- * Postgres-Paralleltest läuft env-gated über TEST_POSTGRES_URL.
+ * Req 1.1–1.3 (Task 3.7, Properties 1 & 2): chain linearity with N
+ * parallel writers and genesis fault injection. The fake database stub
+ * simulates `pg_advisory_xact_lock` as a transactional mutex: if the
+ * production code does not take the lock (or reads the tip before it), the
+ * chain forks and the property test fails. A real Postgres parallel test
+ * runs env-gated via TEST_POSTGRES_URL.
  */
 import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
@@ -25,7 +25,7 @@ import {
 import { REGULATED_ACTIONS } from "../../compliance/regulated-actions.ts";
 
 // ---------------------------------------------------------------------------
-// Task 3.8 — jede regulierte Aktion wird über recordRequired auditiert
+// Task 3.8: every regulated action is audited via recordRequired
 // ---------------------------------------------------------------------------
 
 const ROUTE_FILES = [
@@ -35,16 +35,16 @@ const ROUTE_FILES = [
   "compliance.ts",
 ];
 
-describe("Regulierte Aktionen verwenden recordRequired (Req 1.5)", () => {
+describe("Regulated actions use recordRequired (Req 1.5)", () => {
   const sources = ROUTE_FILES.map((file) => ({
     file,
     text: readFileSync(new URL(`../${file}`, import.meta.url), "utf8"),
   }));
 
   for (const action of REGULATED_ACTIONS) {
-    test(`"${action}" wird per recordRequired auditiert`, () => {
-      // recordRequired({ ... action: "<id>" ... }) — das action-Feld muss
-      // innerhalb des Audit-Objekts der recordRequired-Call stehen.
+    test(`"${action}" is audited via recordRequired`, () => {
+      // recordRequired({ ... action: "<id>" ... }): the action field must be
+      // inside the audit object of the recordRequired call.
       const pattern = new RegExp(
         `recordRequired\\(\\{[\\s\\S]{0,400}?action: "${action}"`,
       );
@@ -57,8 +57,8 @@ describe("Regulierte Aktionen verwenden recordRequired (Req 1.5)", () => {
     });
   }
 
-  test("regulierte Routen liefern bei Audit-Fehler 503 AUDIT_UNAVAILABLE", () => {
-    // Jede Datei mit recordRequired muss auch den 503-Fallback importieren.
+  test("regulated routes answer 503 AUDIT_UNAVAILABLE on an audit failure", () => {
+    // Every file with recordRequired must also import the 503 fallback.
     for (const src of sources) {
       if (!src.text.includes("recordRequired(")) continue;
       expect(src.text).toContain("AUDIT_UNAVAILABLE_BODY");
@@ -68,16 +68,16 @@ describe("Regulierte Aktionen verwenden recordRequired (Req 1.5)", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Task 3.7 — Properties 1 & 2: Kettenlinearität und Genesis-Verhalten
+// Task 3.7: Properties 1 & 2: chain linearity and genesis behavior
 // ---------------------------------------------------------------------------
 
 /**
- * Fake-Database, die die Postgres-Semantik der Ketten-Tabelle modelliert:
- * - `pg_advisory_xact_lock` wird als transaktionaler Mutex implementiert
- *   (hält bis COMMIT/ROLLBACK) — genau der Mechanismus, auf den sich der
- *   Produktionscode verlassen muss.
- * - Tip-Lesen/INSERT arbeiten auf gemeinsamen Zeilen, mit echten await-
- *   Punkten, damit parallele Aufrufer tatsächlich interleaven können.
+ * Fake database that models the Postgres semantics of the chain table:
+ * - `pg_advisory_xact_lock` is implemented as a transactional mutex
+ *   (held until COMMIT/ROLLBACK), exactly the mechanism the production
+ *   code has to rely on.
+ * - Tip read/INSERT work on shared rows with real await points, so
+ *   parallel callers can actually interleave.
  */
 function lockedChainDb(): {
   db: Database;
@@ -91,8 +91,8 @@ function lockedChainDb(): {
   let tipFails = false;
   let insertFails = false;
 
-  // Transaktionaler Mutex: simuliert pg_advisory_xact_lock mit sauberer
-  // Übergabe (Handoff) an den nächsten Wartenden.
+  // Transactional mutex: simulates pg_advisory_xact_lock with a clean
+  // handoff to the next waiter.
   let locked = false;
   const waiters: (() => void)[] = [];
   const acquire = async (): Promise<void> => {
@@ -103,7 +103,7 @@ function lockedChainDb(): {
     await new Promise<void>((resolve) => {
       waiters.push(resolve);
     });
-    // Der Lock wurde direkt an diesen Wartenden übergeben.
+    // The lock was handed directly to this waiter.
   };
   const release = (): void => {
     const next = waiters.shift();
@@ -117,8 +117,8 @@ function lockedChainDb(): {
       params?: readonly unknown[],
     ): Promise<T[]> {
       const trimmed = text.trim();
-      // Jeder Query-Schritt gibt den Event-Loop frei → echte Interleaving-
-      // Möglichkeiten für parallele recordRequired-Aufrufer.
+      // Every query step yields the event loop → real interleaving
+      // opportunities for parallel recordRequired callers.
       await Promise.resolve();
       if (/pg_advisory_xact_lock/i.test(trimmed)) {
         await acquire();
@@ -165,8 +165,8 @@ function lockedChainDb(): {
   };
 }
 
-describe("Audit-Kettenlinearität (Properties 1 & 2)", () => {
-  test("N parallele Writer erzeugen eine lineare Kette ohne Abzweigung", async () => {
+describe("Audit chain linearity (Properties 1 & 2)", () => {
+  test("N parallel writers produce a linear chain without forks", async () => {
     await fc.assert(
       fc.asyncProperty(fc.integer({ min: 2, max: 24 }), async (n) => {
         const { db, rows } = lockedChainDb();
@@ -176,8 +176,8 @@ describe("Audit-Kettenlinearität (Properties 1 & 2)", () => {
         );
         await Promise.all(writers);
         expect(rows).toHaveLength(n);
-        // Property 1: sortiert nach id bildet jede Zeile genau auf den Hash
-        // der Vorgängerzeile — erste Zeile an Genesis, keine Abzweigung.
+        // Property 1: sorted by id, every row maps exactly onto the hash of
+        // the previous row; the first row onto genesis, no forks.
         const sorted = [...rows].sort((a, b) => a.id - b.id);
         let expectedPrev = AUDIT_CHAIN_GENESIS_HASH;
         for (const row of sorted) {
@@ -190,7 +190,7 @@ describe("Audit-Kettenlinearität (Properties 1 & 2)", () => {
     );
   });
 
-  test("nach einem Fehler wird die Kette am realen Tip fortgesetzt, nie neu bei Genesis (Property 2)", async () => {
+  test("after a failure the chain continues at the real tip, never anew at genesis (Property 2)", async () => {
     await fc.assert(
       fc.asyncProperty(
         fc.integer({ min: 1, max: 6 }),
@@ -203,7 +203,7 @@ describe("Audit-Kettenlinearität (Properties 1 & 2)", () => {
             await log.recordRequired({ actor: "a", action: `ok-${i}` });
           }
           const tipBefore = rows[rows.length - 1]?.hash;
-          // Fehlerinjektion: Tip-Lesen und INSERT schlagen fehl.
+          // Fault injection: tip read and INSERT fail.
           injectTipFailure(true);
           await expect(
             log.recordRequired({ actor: "a", action: "boom-tip" }),
@@ -214,8 +214,8 @@ describe("Audit-Kettenlinearität (Properties 1 & 2)", () => {
             log.recordRequired({ actor: "a", action: "boom-insert" }),
           ).rejects.toThrow("injected insert failure");
           injectInsertFailure(false);
-          // Danach: keine Genesis-Neukette — der nächste Erfolg hängt sich an
-          // den (unveränderten) Tip vor den Fehlern.
+          // Afterwards: no new genesis chain; the next success attaches to
+          // the (unchanged) tip from before the failures.
           for (let i = 0; i < after; i++) {
             await log.recordRequired({ actor: "a", action: `resume-${i}` });
           }
@@ -233,8 +233,8 @@ describe("Audit-Kettenlinearität (Properties 1 & 2)", () => {
     );
   });
 
-  // Env-gated: echter Postgres-Paralleltest gegen zwei PostgresAuditLog-
-  // Instanzen (simuliert zwei Replicas). Läuft nur mit TEST_POSTGRES_URL.
+  // Env-gated: real Postgres parallel test against two PostgresAuditLog
+  // instances (simulates two replicas). Only runs with TEST_POSTGRES_URL.
   const pgUrl = process.env["TEST_POSTGRES_URL"];
   test.skipIf(pgUrl === undefined || pgUrl === "")(
     "zwei Replicas schreiben linear über den Advisory-Lock (echtes Postgres)",

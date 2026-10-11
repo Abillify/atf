@@ -50,10 +50,14 @@ const TWO_OPENAI_SERVERS = [
 ];
 
 /** Captures the URL of the next outgoing request, then short-circuits it. */
-function captureRequestUrl(): { urls: string[]; restore: () => void } {
+function captureRequestUrl(): {
+  urls: string[];
+  fetch: typeof fetch;
+  restore: () => void;
+} {
   const original = globalThis.fetch;
   const urls: string[] = [];
-  globalThis.fetch = (async (input: unknown) => {
+  const stub = (async (input: unknown) => {
     urls.push(
       typeof input === "string"
         ? input
@@ -66,14 +70,27 @@ function captureRequestUrl(): { urls: string[]; restore: () => void } {
         id: "1",
         object: "chat.completion",
         choices: [
-          { index: 0, message: { role: "assistant", content: "ok" }, finish_reason: "stop" },
+          {
+            index: 0,
+            message: { role: "assistant", content: "ok" },
+            finish_reason: "stop",
+          },
         ],
         usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
       }),
       { status: 200, headers: { "content-type": "application/json" } },
     );
   }) as typeof fetch;
-  return { urls, restore: () => { globalThis.fetch = original; } };
+  // Req 7.2: the factory transport is injectable now — wire the stub through
+  // createLlmProvider's options instead of globalThis.
+  globalThis.fetch = stub;
+  return {
+    urls,
+    fetch: stub,
+    restore: () => {
+      globalThis.fetch = original;
+    },
+  };
 }
 
 afterEach(() => {
@@ -162,15 +179,23 @@ describe("registry resolution", () => {
 describe("endpoint selection", () => {
   test("two instances of one protocol reach their own URLs", async () => {
     setProviderRegistry(TWO_OPENAI_SERVERS);
-    const { urls, restore } = captureRequestUrl();
+    const { urls, fetch: stub, restore } = captureRequestUrl();
     try {
       const { generateText } = await import("ai");
       await generateText({
-        model: createLlmProvider({ provider: "vllm-a", model: "m" }, appConfig),
+        model: createLlmProvider(
+          { provider: "vllm-a", model: "m" },
+          appConfig,
+          { fetch: stub },
+        ),
         prompt: "hi",
       });
       await generateText({
-        model: createLlmProvider({ provider: "vllm-b", model: "m" }, appConfig),
+        model: createLlmProvider(
+          { provider: "vllm-b", model: "m" },
+          appConfig,
+          { fetch: stub },
+        ),
         prompt: "hi",
       });
     } finally {
@@ -182,12 +207,16 @@ describe("endpoint selection", () => {
 
   test("a bare protocol carries no endpoint or credentials of its own", async () => {
     setProviderRegistry(TWO_OPENAI_SERVERS);
-    const { urls, restore } = captureRequestUrl();
+    const { urls, fetch: stub, restore } = captureRequestUrl();
     let error: unknown;
     try {
       const { generateText } = await import("ai");
       await generateText({
-        model: createLlmProvider({ provider: "openai", model: "m" }, appConfig),
+        model: createLlmProvider(
+          { provider: "openai", model: "m" },
+          appConfig,
+          { fetch: stub },
+        ),
         prompt: "hi",
       });
     } catch (err) {

@@ -569,15 +569,18 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
   const dsarRouter = new Hono<AuthContext>();
 
   /** Extracts the calling user's identity from their JWT. */
-  const resolveCallerSubject = (
-    ctx: Context<AuthContext>,
-  ): ErasureSubject | null => {
+  const resolveCallerSubject = (ctx: Context<AuthContext>): ErasureSubject | null => {
     const token = ctx.get(TOKEN_KEY as keyof AuthContext["Variables"]) as
       | string
       | undefined;
     if (token === undefined || token === "") return null;
 
-    const claims = jwtVerifier?.decodePayload(token) ?? null;
+    // Req 7.4: DSAR subjects act on erasure data, so they must come from a
+    // verified credential only. `decodePayload` is an unverified base64 read;
+    // with a disabled (Noop) verifier the payload is attacker-chosen and the
+    // request resolves to no subject instead of a forged one.
+    const claims =
+      jwtVerifier?.enabled === true ? jwtVerifier.decodePayload(token) : null;
     const email =
       typeof claims?.email === "string" ? (claims.email as string) : undefined;
     const sub =
@@ -598,7 +601,7 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
       userId,
       ...(tenantId !== undefined ? { tenantId } : {}),
     };
-  };
+  };;
 
   // GET /v1/me/data — summary of data held for the calling identity.
   // Returns capability metadata per retention target (what is stored and for

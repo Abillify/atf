@@ -31,7 +31,9 @@
 
 import crypto from "node:crypto";
 import { QueueFullError } from "./semaphore.js";
+import { safeSqlIdentifier } from "../db/sql-identifier.js";
 import type { Logger } from "../observability/logger.js";
+import type { Metrics } from "../observability/metrics.js";
 import {
   createRedisClient,
   type RedisClientLike,
@@ -160,6 +162,7 @@ export class RedisConcurrencyLimiter implements DistributedConcurrencyLimiter {
     private readonly client: LimiterRedisClient,
     opts: RedisLimiterOptions,
     private readonly logger?: Logger,
+    private readonly metrics?: Metrics,
   ) {
     this.maxConcurrent = Math.max(1, opts.maxConcurrent);
     this.ttlMs = opts.ttlMs ?? 150_000;
@@ -189,6 +192,9 @@ export class RedisConcurrencyLimiter implements DistributedConcurrencyLimiter {
         // Over capacity — the Lua script already removed our token.
       } catch (err) {
         // Redis unavailable — fail open (per-replica semaphore still bounds us).
+        this.metrics?.recordCounter("aiperator_degraded_total", {
+          component: "semaphore",
+        });
         this.logger?.warn(
           "Global concurrency limiter Redis error — proceeding without global bound",
           { error: err instanceof Error ? err.message : String(err) },
@@ -249,13 +255,16 @@ export function createRedisConcurrencyLimiter(
   redisUrl: string,
   opts: RedisLimiterOptions,
   logger?: Logger,
+  metrics?: Metrics,
 ): DistributedConcurrencyLimiter | undefined {
   const client = createRedisClient<LimiterRedisClient>(
     redisUrl,
     "Global concurrency limit",
     logger,
   );
-  return client ? new RedisConcurrencyLimiter(client, opts, logger) : undefined;
+  return client
+    ? new RedisConcurrencyLimiter(client, opts, logger, metrics)
+    : undefined;
 }
 
 // ---------------------------------------------------------------------------
@@ -319,6 +328,11 @@ export interface ConcurrencyLimiterFactoryOptions extends RedisLimiterOptions {
   redisUrl?: string;
   /** Database instance — used when the StoreFactory backing is Postgres. */
   database?: Database;
+  /**
+   * Metrics sink — fail-open degradations count as
+   * `aiperator_degraded_total{component="semaphore"}` (Req 7.8).
+   */
+  metrics?: Metrics;
 }
 
 /**
@@ -355,6 +369,7 @@ export function createConcurrencyLimiterFromFactory(
         opts.redisUrl,
         opts,
         logger,
+        opts.metrics,
       );
       if (limiter !== undefined) return limiter;
       // Redis client creation failed — fall back to in-memory
@@ -370,7 +385,12 @@ export function createConcurrencyLimiterFromFactory(
         );
         return new InMemoryConcurrencyLimiter(opts);
       }
-      return new PostgresConcurrencyLimiter(opts.database, opts, logger);
+      return new PostgresConcurrencyLimiter(
+        opts.database,
+        opts,
+        logger,
+        opts.metrics,
+      );
     }
     case "memory":
       return new InMemoryConcurrencyLimiter(opts);
@@ -383,7 +403,13 @@ export function createConcurrencyLimiterFromFactory(
 // Postgres-backed concurrency limiter (advisory locks)
 // ---------------------------------------------------------------------------
 
-const PG_SEMAPHORE_TABLE = "distributed_semaphore";
+// Validated through the central identifier whitelist (Req 7.10) — the name is
+// an internal constant, but it is interpolated into DDL/DML, so it must match
+// the safe-identifier shape. Fails fast at module load if it ever does not.
+const PG_SEMAPHORE_TABLE = safeSqlIdentifier(
+  "distributed_semaphore",
+  "semaphore table name",
+);
 const PG_LOCK_KEY = 778_201_200; // Arbitrary advisory lock key for the semaphore
 
 /**
@@ -394,9 +420,7 @@ const PG_LOCK_KEY = 778_201_200; // Arbitrary advisory lock key for the semaphor
  * Cluster-wide consistency is guaranteed by `pg_advisory_xact_lock` serialising
  * concurrent acquire/release operations.
  */
-export class PostgresConcurrencyLimiter
-  implements DistributedConcurrencyLimiter
-{
+export class PostgresConcurrencyLimiter implements DistributedConcurrencyLimiter {
   private readonly maxConcurrent: number;
   private readonly ttlMs: number;
   private readonly retryMs: number;
@@ -407,6 +431,7 @@ export class PostgresConcurrencyLimiter
     private readonly db: Database,
     opts: RedisLimiterOptions,
     private readonly logger?: Logger,
+    private readonly metrics?: Metrics,
   ) {
     this.maxConcurrent = Math.max(1, opts.maxConcurrent);
     this.ttlMs = opts.ttlMs ?? 150_000;
@@ -449,6 +474,9 @@ export class PostgresConcurrencyLimiter
       await this.ensureTable();
     } catch (err) {
       // Fail open — per-replica semaphore still applies
+      this.metrics?.recordCounter("aiperator_degraded_total", {
+        component: "semaphore",
+      });
       this.logger?.warn(
         "PostgresConcurrencyLimiter: table init failed — proceeding without global bound",
         {
@@ -464,6 +492,9 @@ export class PostgresConcurrencyLimiter
         if (acquired) return this.makeSlot(token);
       } catch (err) {
         // Fail open
+        this.metrics?.recordCounter("aiperator_degraded_total", {
+          component: "semaphore",
+        });
         this.logger?.warn(
           "PostgresConcurrencyLimiter: database error — proceeding without global bound",
           { error: err instanceof Error ? err.message : String(err) },

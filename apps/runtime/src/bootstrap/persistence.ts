@@ -317,12 +317,16 @@ export async function buildPersistence(
       : undefined;
 
   // ── Tenant store + usage meter ─────────────────────────────────────────────
+  // API_KEY_PEPPER (Req 7.9): when set, keys hash as HMAC-SHA-256(pepper,
+  // rawKey) and legacy SHA-256 rows migrate lazily on lookup.
   const tenantStore: TenantStore =
     config.tenantManagementEnabled === true
       ? database !== undefined
-        ? new PostgresTenantStore(database, logger)
-        : new InMemoryTenantStore()
-      : new InMemoryTenantStore();
+        ? new PostgresTenantStore(database, logger, {
+            pepper: config.apiKeyPepper,
+          })
+        : new InMemoryTenantStore({ pepper: config.apiKeyPepper })
+      : new InMemoryTenantStore({ pepper: config.apiKeyPepper });
   const usageMeter: UsageMeter = createUsageMeter(
     config.tenantManagementEnabled === true ? database : undefined,
     logger,
@@ -391,7 +395,8 @@ export async function buildPersistence(
       vaultStore,
       {
         enabled: true,
-        ...(config.piiVaultTypes !== undefined && config.piiVaultTypes.length > 0
+        ...(config.piiVaultTypes !== undefined &&
+        config.piiVaultTypes.length > 0
           ? { piiTypes: config.piiVaultTypes as PiiType[] }
           : {}),
       },

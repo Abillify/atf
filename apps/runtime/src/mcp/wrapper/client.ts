@@ -50,6 +50,7 @@ import { withRetry, resolveInjectedParams, stripProtectedParams } from "./tool-p
 import type { McpApprovalInputRequest, McpApprovalResolution, ToolResult } from "./tool-proxy.js";
 import { MCP_2026_PROTOCOL_VERSION, Stateless2026Client } from "./stateless-2026-client.js";
 import type { Logger } from "../../observability/logger.js";
+import { egressFetch } from "../../security/egress.js";
 import {
   EXCHANGE_EXPIRY_MARGIN_MS,
   TokenExchanger,
@@ -605,7 +606,10 @@ export class McpWrapper implements McpWrapperService {
    * are never retained as pool keys. Idle entries are bounded by
    * {@link maxTokenClientsPerServer}; active leases may temporarily exceed it.
    */
-  private readonly tokenClients = new Map<string, Map<string, TokenClientEntry>>();
+  private readonly tokenClients = new Map<
+    string,
+    Map<string, TokenClientEntry>
+  >();
 
   /** In-flight lazy client creation, deduplicated per server/token hash. */
   private readonly tokenClientCreations = new Map<
@@ -646,7 +650,9 @@ export class McpWrapper implements McpWrapperService {
 
   private readonly schemaCompatibilityMode: SchemaCompatibilityMode;
 
-  private readonly onSchemaCompatibility?: (report: SchemaCompatibilityReport) => void;
+  private readonly onSchemaCompatibility?: (
+    report: SchemaCompatibilityReport,
+  ) => void;
 
   /** Builds the underlying MCP SDK client (injectable for tests). */
   private readonly clientFactory: McpClientFactory;
@@ -662,7 +668,15 @@ export class McpWrapper implements McpWrapperService {
   private readonly tokenExchangers = new Map<string, TokenExchanger>();
 
   /** Builds a {@link TokenExchanger} for a server config (injectable for tests). */
-  private readonly tokenExchangerFactory: (config: McpServerConfig) => TokenExchanger | undefined;
+  private readonly tokenExchangerFactory: (
+    config: McpServerConfig,
+  ) => TokenExchanger | undefined;
+
+  /**
+   * Outbound fetch for the HTTP/SSE transports. Defaults to the process-wide
+   * Egress_Guard (SSRF-safe, Req 7.1/7.2); tests may inject a stub.
+   */
+  private readonly fetchFn: typeof fetch;
 
   /**
    * Expiry (epoch ms) of the exchanged bearer each token-exchange session was
@@ -684,7 +698,14 @@ export class McpWrapper implements McpWrapperService {
       maxPreparedEvidenceCallsPerCaller?: number;
       maxTokenClientsPerServer?: number;
       clientFactory?: McpClientFactory;
-      tokenExchangerFactory?: (config: McpServerConfig) => TokenExchanger | undefined;
+      tokenExchangerFactory?: (
+        config: McpServerConfig,
+      ) => TokenExchanger | undefined;
+      /**
+       * Outbound fetch for HTTP/SSE transports. Defaults to the process-wide
+       * Egress_Guard (SSRF-safe); tests may inject a stub.
+       */
+      fetchFn?: typeof fetch;
       /** Receives token-exchange outcomes from the default exchanger factory. */
       logger?: Logger;
     } = {},
@@ -696,11 +717,13 @@ export class McpWrapper implements McpWrapperService {
     this.retryTimeoutMs = options.retryTimeoutMs ?? 5_000;
     this.connectTimeoutMs = options.connectTimeoutMs ?? 4_000;
     this.preparedEvidenceCallTtlMs =
-      options.preparedEvidenceCallTtlMs ?? DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS;
+      options.preparedEvidenceCallTtlMs ??
+      DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS;
     this.maxPreparedEvidenceCalls =
       options.maxPreparedEvidenceCalls ?? DEFAULT_MAX_PREPARED_EVIDENCE_CALLS;
     this.maxPreparedEvidenceCallsPerCaller =
-      options.maxPreparedEvidenceCallsPerCaller ?? DEFAULT_MAX_PREPARED_EVIDENCE_CALLS_PER_CALLER;
+      options.maxPreparedEvidenceCallsPerCaller ??
+      DEFAULT_MAX_PREPARED_EVIDENCE_CALLS_PER_CALLER;
     this.maxTokenClientsPerServer = options.maxTokenClientsPerServer ?? 500;
     if (
       !Number.isSafeInteger(this.preparedEvidenceCallTtlMs) ||
@@ -715,7 +738,9 @@ export class McpWrapper implements McpWrapperService {
       !Number.isSafeInteger(this.maxPreparedEvidenceCalls) ||
       this.maxPreparedEvidenceCalls <= 0
     ) {
-      throw new Error("maxPreparedEvidenceCalls must be a positive safe integer");
+      throw new Error(
+        "maxPreparedEvidenceCalls must be a positive safe integer",
+      );
     }
     if (
       !Number.isSafeInteger(this.maxPreparedEvidenceCallsPerCaller) ||
@@ -730,9 +755,12 @@ export class McpWrapper implements McpWrapperService {
       !Number.isSafeInteger(this.maxTokenClientsPerServer) ||
       this.maxTokenClientsPerServer <= 0
     ) {
-      throw new Error("maxTokenClientsPerServer must be a positive safe integer");
+      throw new Error(
+        "maxTokenClientsPerServer must be a positive safe integer",
+      );
     }
     this.clientFactory = options.clientFactory ?? defaultClientFactory;
+    this.fetchFn = options.fetchFn ?? egressFetch;
     const logger = options.logger;
     this.tokenExchangerFactory =
       options.tokenExchangerFactory ??
@@ -754,7 +782,8 @@ export class McpWrapper implements McpWrapperService {
     // Build (or drop) the per-server token exchanger before anything else, so a
     // reconnect that changed the auth config takes effect immediately.
     const exchanger = this.tokenExchangerFactory(config);
-    if (exchanger !== undefined) this.tokenExchangers.set(config.name, exchanger);
+    if (exchanger !== undefined)
+      this.tokenExchangers.set(config.name, exchanger);
     else this.tokenExchangers.delete(config.name);
 
     if (config.allowAnonymous === true && config.forwardAuthToken === true) {
@@ -814,7 +843,8 @@ export class McpWrapper implements McpWrapperService {
   getInstructions(serverName: string): string | undefined {
     // Initialize instructions may be identity-dependent. A bootstrap session
     // must never contribute guidance to a caller-authenticated LLM request.
-    if (this.configs.get(serverName)?.forwardAuthToken === true) return undefined;
+    if (this.configs.get(serverName)?.forwardAuthToken === true)
+      return undefined;
     return this.instructions.get(serverName);
   }
 
@@ -836,7 +866,9 @@ export class McpWrapper implements McpWrapperService {
     if (bearer === undefined) return undefined;
     try {
       const sub = decodeJwt(bearer).sub;
-      return typeof sub === "string" && sub.trim() !== "" ? sub.trim() : undefined;
+      return typeof sub === "string" && sub.trim() !== ""
+        ? sub.trim()
+        : undefined;
     } catch {
       return undefined;
     }
@@ -869,7 +901,11 @@ export class McpWrapper implements McpWrapperService {
     subjectToken: string | undefined,
   ): Promise<{ bearer: string | undefined; expiresAt?: number }> {
     const exchanger = this.tokenExchangers.get(serverName);
-    if (exchanger === undefined || subjectToken === undefined || subjectToken === "") {
+    if (
+      exchanger === undefined ||
+      subjectToken === undefined ||
+      subjectToken === ""
+    ) {
       return { bearer: subjectToken };
     }
     const result = await exchanger.exchange(subjectToken);
@@ -887,7 +923,11 @@ export class McpWrapper implements McpWrapperService {
    * server with a caller token, where the cached exchanged token for that
    * caller is dropped first so the rebuilt session carries a fresh one.
    */
-  private _shouldRecover(serverName: string, err: unknown, subjectToken?: string): boolean {
+  private _shouldRecover(
+    serverName: string,
+    err: unknown,
+    subjectToken?: string,
+  ): boolean {
     if (isSessionExpiredError(err) || isConnectionError(err)) return true;
     const exchanger = this.tokenExchangers.get(serverName);
     if (
@@ -938,7 +978,10 @@ export class McpWrapper implements McpWrapperService {
    */
   private _hasStaleBearer(client: Client): boolean {
     const expiresAt = this.bearerExpiries.get(client);
-    return expiresAt !== undefined && expiresAt - EXCHANGE_EXPIRY_MARGIN_MS <= Date.now();
+    return (
+      expiresAt !== undefined &&
+      expiresAt - EXCHANGE_EXPIRY_MARGIN_MS <= Date.now()
+    );
   }
 
   /**
@@ -950,8 +993,12 @@ export class McpWrapper implements McpWrapperService {
    * uses the static `config.headers` as-is. For a token-exchange server the
    * subject token is first exchanged (see {@link _resolveBearer}).
    */
-  private async _createClient(config: McpServerConfig, authToken?: string): Promise<Client> {
-    const configuredProfile = config.profile ?? config.protocolVersion ?? "2025";
+  private async _createClient(
+    config: McpServerConfig,
+    authToken?: string,
+  ): Promise<Client> {
+    const configuredProfile =
+      config.profile ?? config.protocolVersion ?? "2025";
     if (
       config.profile !== undefined &&
       config.protocolVersion !== undefined &&
@@ -970,12 +1017,15 @@ export class McpWrapper implements McpWrapperService {
     // Remember when an exchanged bearer lapses, so the session carrying it is
     // rebuilt before use instead of failing every call with 401.
     const trackBearer = (created: Client): Client => {
-      if (bearerExpiresAt !== undefined) this.bearerExpiries.set(created, bearerExpiresAt);
+      if (bearerExpiresAt !== undefined)
+        this.bearerExpiries.set(created, bearerExpiresAt);
       return created;
     };
     if (configuredProfile === MCP_2026_PROTOCOL_VERSION) {
       if (config.transport !== "http") {
-        throw new Error("MCP 2026-07-28 is supported only with the http transport");
+        throw new Error(
+          "MCP 2026-07-28 is supported only with the http transport",
+        );
       }
       const native = new Stateless2026Client(config, bearer);
       await native.connect();
@@ -984,7 +1034,10 @@ export class McpWrapper implements McpWrapperService {
 
     const client = this.clientFactory({ name: "aiperator", version: "1.0.0" });
 
-    let transport: StdioClientTransport | SSEClientTransport | StreamableHTTPClientTransport;
+    let transport:
+      | StdioClientTransport
+      | SSEClientTransport
+      | StreamableHTTPClientTransport;
 
     // Shared for both HTTP transports: static config headers, with the
     // per-caller bearer overriding a static Authorization when present.
@@ -1000,7 +1053,10 @@ export class McpWrapper implements McpWrapperService {
       case "http": {
         const headers = httpHeaders();
         transport = new StreamableHTTPClientTransport(new URL(config.url), {
-          requestInit: Object.keys(headers).length > 0 ? { headers } : undefined,
+          requestInit:
+            Object.keys(headers).length > 0 ? { headers } : undefined,
+          // All SDK legs (POST JSON-RPC) go through the Egress_Guard.
+          fetch: this.fetchFn,
         });
         break;
       }
@@ -1013,14 +1069,21 @@ export class McpWrapper implements McpWrapperService {
         // an SSE MCP server behind auth could not be reached at all.
         const headers = httpHeaders();
         transport = new SSEClientTransport(new URL(config.url), {
+          // POST-back legs of the SDK use this fetch — guarded too.
+          fetch: this.fetchFn,
           ...(Object.keys(headers).length > 0
             ? {
                 requestInit: { headers },
                 eventSourceInit: {
+                  // The long-lived GET leg merges auth headers on top of the
+                  // SDK's own and delegates to the guarded fetch.
                   fetch: (url: string | URL, init?: RequestInit) =>
-                    fetch(url, {
+                    this.fetchFn(url, {
                       ...init,
-                      headers: { ...(init?.headers as Record<string, string>), ...headers },
+                      headers: {
+                        ...(init?.headers as Record<string, string>),
+                        ...headers,
+                      },
                     }),
                 },
               }
@@ -1070,7 +1133,8 @@ export class McpWrapper implements McpWrapperService {
 
     // Keep parity with connect(): a reconnect may carry updated auth config.
     const exchanger = this.tokenExchangerFactory(config);
-    if (exchanger !== undefined) this.tokenExchangers.set(config.name, exchanger);
+    if (exchanger !== undefined)
+      this.tokenExchangers.set(config.name, exchanger);
     else this.tokenExchangers.delete(config.name);
 
     const hasBootstrapAuthorization = Object.entries(config.headers ?? {}).some(
@@ -1146,14 +1210,24 @@ export class McpWrapper implements McpWrapperService {
    * re-initialised and the request is retried once.
    * Requirements: 7.1
    */
-  async listTools(serverName: string, opts?: { authToken?: string }): Promise<string[]> {
-    const session = await this._getDiscoverySession(serverName, opts?.authToken);
+  async listTools(
+    serverName: string,
+    opts?: { authToken?: string },
+  ): Promise<string[]> {
+    const session = await this._getDiscoverySession(
+      serverName,
+      opts?.authToken,
+    );
     try {
       const tools = await listAllTools(session.client);
       return tools.map((tool) => tool.name);
     } catch (err) {
       if (this._shouldRecover(serverName, err, session.authToken)) {
-        await this._recoverClient(serverName, session.client, session.authToken);
+        await this._recoverClient(
+          serverName,
+          session.client,
+          session.authToken,
+        );
       } else {
         throw err;
       }
@@ -1161,7 +1235,10 @@ export class McpWrapper implements McpWrapperService {
       session.release();
     }
 
-    const recovered = await this._getDiscoverySession(serverName, opts?.authToken);
+    const recovered = await this._getDiscoverySession(
+      serverName,
+      opts?.authToken,
+    );
     try {
       return (await listAllTools(recovered.client)).map((tool) => tool.name);
     } finally {
@@ -1174,11 +1251,18 @@ export class McpWrapper implements McpWrapperService {
     authToken?: string,
   ): Promise<{ client: Stateless2026Client; release: () => void }> {
     const config = this._requireConfig(serverName);
-    if ((config.profile ?? config.protocolVersion ?? "2025") !== MCP_2026_PROTOCOL_VERSION) {
-      throw new Error(`MCP server ${serverName} does not use the 2026-07-28 profile`);
+    if (
+      (config.profile ?? config.protocolVersion ?? "2025") !==
+      MCP_2026_PROTOCOL_VERSION
+    ) {
+      throw new Error(
+        `MCP server ${serverName} does not use the 2026-07-28 profile`,
+      );
     }
     const lease =
-      config.forwardAuthToken === true && authToken !== undefined && authToken !== ""
+      config.forwardAuthToken === true &&
+      authToken !== undefined &&
+      authToken !== ""
         ? await this._acquireTokenClient(serverName, authToken)
         : { client: this._requireClient(serverName), release: () => {} };
     if (!((lease.client as unknown) instanceof Stateless2026Client)) {
@@ -1195,18 +1279,25 @@ export class McpWrapper implements McpWrapperService {
     serverName: string,
     opts?: { authToken?: string },
   ): Promise<{ resources: McpResourceDescriptor[] } & McpCacheMetadata> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     const resources: McpResourceDescriptor[] = [];
     let cursor: string | undefined;
     let metadata: McpCacheMetadata = {};
     try {
       do {
-        const page = await lease.client.listResources(cursor !== undefined ? { cursor } : {});
+        const page = await lease.client.listResources(
+          cursor !== undefined ? { cursor } : {},
+        );
         resources.push(...page.resources);
         metadata = {
           ...metadata,
           ...(page.ttlMs !== undefined ? { ttlMs: page.ttlMs } : {}),
-          ...(page.cacheScope !== undefined ? { cacheScope: page.cacheScope } : {}),
+          ...(page.cacheScope !== undefined
+            ? { cacheScope: page.cacheScope }
+            : {}),
         };
         cursor = page.nextCursor;
       } while (cursor !== undefined);
@@ -1219,8 +1310,13 @@ export class McpWrapper implements McpWrapperService {
   async listResourceTemplates(
     serverName: string,
     opts?: { authToken?: string },
-  ): Promise<{ resourceTemplates: McpResourceTemplateDescriptor[] } & McpCacheMetadata> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+  ): Promise<
+    { resourceTemplates: McpResourceTemplateDescriptor[] } & McpCacheMetadata
+  > {
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     const resourceTemplates: McpResourceTemplateDescriptor[] = [];
     let cursor: string | undefined;
     let metadata: McpCacheMetadata = {};
@@ -1233,7 +1329,9 @@ export class McpWrapper implements McpWrapperService {
         metadata = {
           ...metadata,
           ...(page.ttlMs !== undefined ? { ttlMs: page.ttlMs } : {}),
-          ...(page.cacheScope !== undefined ? { cacheScope: page.cacheScope } : {}),
+          ...(page.cacheScope !== undefined
+            ? { cacheScope: page.cacheScope }
+            : {}),
         };
         cursor = page.nextCursor;
       } while (cursor !== undefined);
@@ -1248,7 +1346,10 @@ export class McpWrapper implements McpWrapperService {
     uri: string,
     opts?: { authToken?: string; signal?: AbortSignal },
   ): Promise<{ contents: unknown[] } & McpCacheMetadata> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     try {
       return await lease.client.readResource(uri, opts?.signal);
     } finally {
@@ -1260,18 +1361,25 @@ export class McpWrapper implements McpWrapperService {
     serverName: string,
     opts?: { authToken?: string },
   ): Promise<{ prompts: McpPromptDescriptor[] } & McpCacheMetadata> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     const prompts: McpPromptDescriptor[] = [];
     let cursor: string | undefined;
     let metadata: McpCacheMetadata = {};
     try {
       do {
-        const page = await lease.client.listPrompts(cursor !== undefined ? { cursor } : {});
+        const page = await lease.client.listPrompts(
+          cursor !== undefined ? { cursor } : {},
+        );
         prompts.push(...page.prompts);
         metadata = {
           ...metadata,
           ...(page.ttlMs !== undefined ? { ttlMs: page.ttlMs } : {}),
-          ...(page.cacheScope !== undefined ? { cacheScope: page.cacheScope } : {}),
+          ...(page.cacheScope !== undefined
+            ? { cacheScope: page.cacheScope }
+            : {}),
         };
         cursor = page.nextCursor;
       } while (cursor !== undefined);
@@ -1287,7 +1395,10 @@ export class McpWrapper implements McpWrapperService {
     args: Record<string, unknown> = {},
     opts?: { authToken?: string; signal?: AbortSignal },
   ): Promise<{ description?: string; messages: unknown[] }> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     try {
       return await lease.client.getPrompt(name, args, opts?.signal);
     } finally {
@@ -1300,7 +1411,10 @@ export class McpWrapper implements McpWrapperService {
     taskId: string,
     opts?: { authToken?: string; signal?: AbortSignal },
   ): Promise<McpTaskStatus> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     try {
       return await lease.client.getTask(taskId, opts?.signal);
     } finally {
@@ -1314,7 +1428,10 @@ export class McpWrapper implements McpWrapperService {
     input: Record<string, unknown>,
     opts?: { authToken?: string; signal?: AbortSignal },
   ): Promise<McpTaskStatus> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     try {
       return await lease.client.updateTask(taskId, input, opts?.signal);
     } finally {
@@ -1327,7 +1444,10 @@ export class McpWrapper implements McpWrapperService {
     taskId: string,
     opts?: { authToken?: string; signal?: AbortSignal },
   ): Promise<McpTaskStatus> {
-    const lease = await this._native2026ClientLease(serverName, opts?.authToken);
+    const lease = await this._native2026ClientLease(
+      serverName,
+      opts?.authToken,
+    );
     try {
       return await lease.client.cancelTask(taskId, opts?.signal);
     } finally {
@@ -1348,7 +1468,8 @@ export class McpWrapper implements McpWrapperService {
     // A forwardAuthToken peer authenticates the transport per caller, so the
     // unauthenticated/bootstrap session may legitimately expose a different
     // tool list (or reject the request outright) than the caller's session.
-    const forwardAuth = this._requireConfig(serverName).forwardAuthToken === true;
+    const forwardAuth =
+      this._requireConfig(serverName).forwardAuthToken === true;
     const authToken =
       forwardAuth && opts?.authToken !== undefined && opts.authToken !== ""
         ? opts.authToken
@@ -1362,7 +1483,9 @@ export class McpWrapper implements McpWrapperService {
     // Keyed per session identity so one caller's negative result cannot mask
     // another caller's advertised v1 support.
     const cacheKey =
-      authToken === undefined ? serverName : `${serverName}\u0000${sha256(authToken)}`;
+      authToken === undefined
+        ? serverName
+        : `${serverName}\u0000${sha256(authToken)}`;
     const cached = this.capabilityCache.get(cacheKey);
     if (cached !== undefined && cached.expiresAt > Date.now()) {
       return cached.value;
@@ -1415,8 +1538,11 @@ export class McpWrapper implements McpWrapperService {
     opts?: { authToken?: string },
   ): Promise<FilteredToolSchema> {
     const config = this._requireConfig(serverName);
-    const fetch = async (): Promise<FilteredToolSchema> => {
-      const session = await this._getDiscoverySession(serverName, opts?.authToken);
+    const doFetch = async (): Promise<FilteredToolSchema> => {
+      const session = await this._getDiscoverySession(
+        serverName,
+        opts?.authToken,
+      );
       try {
         const tool = await this.schemaCache.fetchRawTool(
           session.client,
@@ -1426,7 +1552,9 @@ export class McpWrapper implements McpWrapperService {
         );
         const contract: ToolSchemas = {
           inputSchema: tool.inputSchema,
-          ...(tool.outputSchema !== undefined ? { outputSchema: tool.outputSchema } : {}),
+          ...(tool.outputSchema !== undefined
+            ? { outputSchema: tool.outputSchema }
+            : {}),
         };
         const checksum = computeSchemaChecksum({
           ...contract,
@@ -1442,7 +1570,11 @@ export class McpWrapper implements McpWrapperService {
           toolName,
           session.schemaScope,
         );
-        if (storedChecksum !== undefined && checksum !== storedChecksum && previousContract !== undefined) {
+        if (
+          storedChecksum !== undefined &&
+          checksum !== storedChecksum &&
+          previousContract !== undefined
+        ) {
           const diff = diffToolSchemas(previousContract, contract);
           if (diff.breaking.length > 0 || diff.unknown.length > 0) {
             try {
@@ -1456,18 +1588,31 @@ export class McpWrapper implements McpWrapperService {
               // Compatibility observability must not alter schema acceptance.
             }
           }
-          if (this.schemaCompatibilityMode === "strict" && diff.breaking.length > 0) {
+          if (
+            this.schemaCompatibilityMode === "strict" &&
+            diff.breaking.length > 0
+          ) {
             // fetchRawTool cached the live candidate; remove it before rejecting
             // so no later caller can observe a schema that policy did not accept.
-            this.schemaCache.invalidateDiscovery(serverName, session.schemaScope);
+            this.schemaCache.invalidateDiscovery(
+              serverName,
+              session.schemaScope,
+            );
             throw new Error(
               `Breaking MCP schema change rejected for ${serverName}/${toolName}: ` +
-                diff.breaking.map((finding) => `${finding.path} ${finding.message}`).join("; "),
+                diff.breaking
+                  .map((finding) => `${finding.path} ${finding.message}`)
+                  .join("; "),
             );
           }
         }
         if (storedChecksum === undefined || checksum !== storedChecksum) {
-          this.schemaCache.storeChecksum(serverName, toolName, checksum, session.schemaScope);
+          this.schemaCache.storeChecksum(
+            serverName,
+            toolName,
+            checksum,
+            session.schemaScope,
+          );
           this.schemaCache.storeSchemaContract(
             serverName,
             toolName,
@@ -1489,7 +1634,9 @@ export class McpWrapper implements McpWrapperService {
           ...Object.keys(config.injectedParams ?? {}),
         ];
         const filteredProperties: Record<string, unknown> = {};
-        for (const [key, value] of Object.entries(tool.inputSchema.properties ?? {})) {
+        for (const [key, value] of Object.entries(
+          tool.inputSchema.properties ?? {},
+        )) {
           if (!protectedParams.includes(key)) filteredProperties[key] = value;
         }
         const filteredRequired = tool.inputSchema.required?.filter(
@@ -1498,7 +1645,9 @@ export class McpWrapper implements McpWrapperService {
         return {
           name: tool.name,
           description: tool.description,
-          ...(tool.annotations !== undefined ? { annotations: tool.annotations } : {}),
+          ...(tool.annotations !== undefined
+            ? { annotations: tool.annotations }
+            : {}),
           inputSchema: {
             type: tool.inputSchema.type,
             properties: filteredProperties,
@@ -1513,16 +1662,23 @@ export class McpWrapper implements McpWrapperService {
     };
 
     try {
-      return await fetch();
+      return await doFetch();
     } catch (err) {
       if (this._shouldRecover(serverName, err, opts?.authToken)) {
-        const session = await this._getDiscoverySession(serverName, opts?.authToken);
+        const session = await this._getDiscoverySession(
+          serverName,
+          opts?.authToken,
+        );
         try {
-          await this._recoverClient(serverName, session.client, session.authToken);
+          await this._recoverClient(
+            serverName,
+            session.client,
+            session.authToken,
+          );
         } finally {
           session.release();
         }
-        return await fetch();
+        return await doFetch();
       }
       throw err;
     }
@@ -1543,7 +1699,10 @@ export class McpWrapper implements McpWrapperService {
     toolName: string,
     opts?: { authToken?: string },
   ): Promise<boolean> {
-    const session = await this._getDiscoverySession(serverName, opts?.authToken);
+    const session = await this._getDiscoverySession(
+      serverName,
+      opts?.authToken,
+    );
     try {
       // Bypass cache to get the live schema from every tools/list page.
       const tools = await listAllTools(session.client);
@@ -1558,7 +1717,11 @@ export class McpWrapper implements McpWrapperService {
           ...rest,
         },
         ...("outputSchema" in rawTool && rawTool.outputSchema !== undefined
-          ? { outputSchema: rawTool.outputSchema as Readonly<Record<string, unknown>> }
+          ? {
+              outputSchema: rawTool.outputSchema as Readonly<
+                Record<string, unknown>
+              >,
+            }
           : {}),
       };
 
@@ -1605,18 +1768,32 @@ export class McpWrapper implements McpWrapperService {
             // Compatibility observability must not alter schema acceptance.
           }
         }
-        if (this.schemaCompatibilityMode === "strict" && diff.breaking.length > 0) {
+        if (
+          this.schemaCompatibilityMode === "strict" &&
+          diff.breaking.length > 0
+        ) {
           throw new Error(
             `Breaking MCP schema change rejected for ${serverName}/${toolName}: ` +
-              diff.breaking.map((finding) => `${finding.path} ${finding.message}`).join("; "),
+              diff.breaking
+                .map((finding) => `${finding.path} ${finding.message}`)
+                .join("; "),
           );
         }
       }
 
       // invalidateTool deliberately clears all old state; install the accepted
       // checksum and contract only after compatibility policy succeeds.
-      this.schemaCache.invalidateTool(serverName, toolName, session.schemaScope);
-      this.schemaCache.storeChecksum(serverName, toolName, newChecksum, session.schemaScope);
+      this.schemaCache.invalidateTool(
+        serverName,
+        toolName,
+        session.schemaScope,
+      );
+      this.schemaCache.storeChecksum(
+        serverName,
+        toolName,
+        newChecksum,
+        session.schemaScope,
+      );
       this.schemaCache.storeSchemaContract(
         serverName,
         toolName,
@@ -1696,7 +1873,8 @@ export class McpWrapper implements McpWrapperService {
       for (const [key, value] of Object.entries(
         resolveInjectedParams(config.injectedParams, ctx),
       )) {
-        if (declaredParams === undefined || declaredParams.has(key)) enhancedArgs[key] = value;
+        if (declaredParams === undefined || declaredParams.has(key))
+          enhancedArgs[key] = value;
       }
     }
     const now = Date.now();
@@ -1724,7 +1902,10 @@ export class McpWrapper implements McpWrapperService {
     return {
       preparedCallId,
       args: structuredClone(preparedArgs),
-      evidenceContract: bindEvidenceActionContract(contract.contract, enhancedArgs),
+      evidenceContract: bindEvidenceActionContract(
+        contract.contract,
+        enhancedArgs,
+      ),
     };
   }
 
@@ -1784,8 +1965,14 @@ export class McpWrapper implements McpWrapperService {
     const preparedCall =
       opts?.preparedEvidenceCallId === undefined
         ? undefined
-        : this._takePreparedEvidenceCall(opts.preparedEvidenceCallId, serverName, toolName, ctx);
-    args = preparedCall?.args ?? (nfcNormalizeDeep(args) as Record<string, unknown>);
+        : this._takePreparedEvidenceCall(
+            opts.preparedEvidenceCallId,
+            serverName,
+            toolName,
+            ctx,
+          );
+    args =
+      preparedCall?.args ?? (nfcNormalizeDeep(args) as Record<string, unknown>);
 
     // Build enhanced args: strip protected params from caller-supplied args,
     // then inject system-determined values from RequestContext.
@@ -1793,12 +1980,14 @@ export class McpWrapper implements McpWrapperService {
     // (user_token, user_email, client_id, or server-specific injectedParams)
     // into args, they are removed before forwarding. Only system-injected
     // values are used. (Requirements: 4.3)
-    const buildEnhancedArgs = (declaredParams?: ReadonlySet<string>): Record<string, unknown> => {
+    const buildEnhancedArgs = (
+      declaredParams?: ReadonlySet<string>,
+    ): Record<string, unknown> => {
       // Determine all protected param keys (default + server-configured injectedParams keys)
       const protectedKeys = [
         ...(allowAnonymous
-        ? [...DEFAULT_PROTECTED_PARAMS, ...(config.protectedParams ?? [])]
-        : (config.protectedParams ?? DEFAULT_PROTECTED_PARAMS)),
+          ? [...DEFAULT_PROTECTED_PARAMS, ...(config.protectedParams ?? [])]
+          : (config.protectedParams ?? DEFAULT_PROTECTED_PARAMS)),
         ...Object.keys(config.injectedParams ?? {}),
       ];
 
@@ -1864,16 +2053,20 @@ export class McpWrapper implements McpWrapperService {
     }
     let declaredParams: Set<string> | undefined;
     if (config.injectedParams !== undefined && rawTool !== undefined) {
-      declaredParams = new Set(Object.keys(rawTool.inputSchema.properties ?? {}));
+      declaredParams = new Set(
+        Object.keys(rawTool.inputSchema.properties ?? {}),
+      );
     }
     const annotations: ToolAnnotations | undefined = rawTool?.annotations;
-    const retryable = annotations?.readOnlyHint === true || annotations?.idempotentHint === true;
+    const retryable =
+      annotations?.readOnlyHint === true ||
+      annotations?.idempotentHint === true;
     // A server config can override the annotation gate: slow-but-recoverable
     // servers (embedding searches behind a loaded GPU) benefit from more
     // attempts even when a tool forgets to declare readOnlyHint.
-    const maxAttempts =
-      config.retryAttempts ?? (retryable ? 3 : 1);
-    const enhancedArgs = preparedCall?.args ?? buildEnhancedArgs(declaredParams);
+    const maxAttempts = config.retryAttempts ?? (retryable ? 3 : 1);
+    const enhancedArgs =
+      preparedCall?.args ?? buildEnhancedArgs(declaredParams);
     let attemptClient: Client | undefined;
     let attemptCount = 0;
     const attemptFailures: Array<{ attempt: number; message: string }> = [];
@@ -1915,10 +2108,16 @@ export class McpWrapper implements McpWrapperService {
         timeoutMs: config.requestTimeoutMs ?? this.retryTimeoutMs,
         onAttemptFailure: async (error, attempt, signal) => {
           attemptFailures.push({ attempt, message: error.message });
-          const timedOut = /^Attempt \d+ timed out after \d+ms$/u.test(error.message);
+          const timedOut = /^Attempt \d+ timed out after \d+ms$/u.test(
+            error.message,
+          );
           if (
             !timedOut &&
-            !this._shouldRecover(serverName, error, forwardAuth ? ctx.ssoToken : undefined)
+            !this._shouldRecover(
+              serverName,
+              error,
+              forwardAuth ? ctx.ssoToken : undefined,
+            )
           ) {
             return;
           }
@@ -1963,7 +2162,9 @@ export class McpWrapper implements McpWrapperService {
     ): ToolResult => ({
       content: value.content,
       ...(typeof value.isError === "boolean" ? { isError: value.isError } : {}),
-      ...(value.resultType !== undefined ? { resultType: value.resultType } : {}),
+      ...(value.resultType !== undefined
+        ? { resultType: value.resultType }
+        : {}),
       ...(value.structuredContent !== undefined
         ? { structuredContent: value.structuredContent }
         : {}),
@@ -1975,7 +2176,9 @@ export class McpWrapper implements McpWrapperService {
     return {
       content: result.content,
       isError: typeof result.isError === "boolean" ? result.isError : undefined,
-      ...(attemptCount > 1 ? { retry: { attempts: attemptCount, failures: attemptFailures } } : {}),
+      ...(attemptCount > 1
+        ? { retry: { attempts: attemptCount, failures: attemptFailures } }
+        : {}),
       ...("resultType" in result &&
       (result.resultType === "complete" ||
         result.resultType === "input_required" ||
@@ -1989,8 +2192,12 @@ export class McpWrapper implements McpWrapperService {
       typeof result.task.taskId === "string"
         ? { task: result.task as McpTaskHandle }
         : {}),
-      ...("structuredContent" in result ? { structuredContent: result.structuredContent } : {}),
-      ...(approvalRequests.length > 0 ? { inputRequests: approvalRequests } : {}),
+      ...("structuredContent" in result
+        ? { structuredContent: result.structuredContent }
+        : {}),
+      ...(approvalRequests.length > 0
+        ? { inputRequests: approvalRequests }
+        : {}),
       ...(native2026 !== undefined
         ? {
             resolveApproval: async (
@@ -2001,7 +2208,9 @@ export class McpWrapper implements McpWrapperService {
                 callInput,
                 request.requestState,
                 resolution,
-                opts?.signal !== undefined ? { signal: opts.signal } : undefined,
+                opts?.signal !== undefined
+                  ? { signal: opts.signal }
+                  : undefined,
               );
               return resumed === undefined ? undefined : mapResult(resumed);
             },
@@ -2028,18 +2237,28 @@ export class McpWrapper implements McpWrapperService {
     }
   }
 
-  private _assertPreparedEvidenceCallCapacity(serverName: string, callerHash: string): void {
+  private _assertPreparedEvidenceCallCapacity(
+    serverName: string,
+    callerHash: string,
+  ): void {
     if (this.preparedEvidenceCalls.size >= this.maxPreparedEvidenceCalls) {
-      throw new Error("Prepared Evidence-Bound Action Contract capacity exceeded");
+      throw new Error(
+        "Prepared Evidence-Bound Action Contract capacity exceeded",
+      );
     }
     let callerEntries = 0;
     for (const prepared of this.preparedEvidenceCalls.values()) {
-      if (prepared.serverName === serverName && prepared.callerHash === callerHash) {
+      if (
+        prepared.serverName === serverName &&
+        prepared.callerHash === callerHash
+      ) {
         callerEntries += 1;
       }
     }
     if (callerEntries >= this.maxPreparedEvidenceCallsPerCaller) {
-      throw new Error("Prepared Evidence-Bound Action Contract caller capacity exceeded");
+      throw new Error(
+        "Prepared Evidence-Bound Action Contract caller capacity exceeded",
+      );
     }
   }
 
@@ -2053,14 +2272,18 @@ export class McpWrapper implements McpWrapperService {
     const callerHash = ctx.ssoToken === undefined ? "" : sha256(ctx.ssoToken);
     if (prepared === undefined || prepared.expiresAt <= Date.now()) {
       if (prepared !== undefined) this._deletePreparedEvidenceCall(id);
-      throw new Error("Invalid or expired prepared Evidence-Bound Action Contract call");
+      throw new Error(
+        "Invalid or expired prepared Evidence-Bound Action Contract call",
+      );
     }
     if (
       prepared.serverName !== serverName ||
       prepared.toolName !== toolName ||
       prepared.callerHash !== callerHash
     ) {
-      throw new Error("Invalid or expired prepared Evidence-Bound Action Contract call");
+      throw new Error(
+        "Invalid or expired prepared Evidence-Bound Action Contract call",
+      );
     }
     this._deletePreparedEvidenceCall(id);
     return { args: prepared.args };
@@ -2101,13 +2324,22 @@ export class McpWrapper implements McpWrapperService {
   private async _getDiscoverySession(
     serverName: string,
     authToken?: string,
-  ): Promise<{ client: Client; authToken?: string; schemaScope: string; release: () => void }> {
+  ): Promise<{
+    client: Client;
+    authToken?: string;
+    schemaScope: string;
+    release: () => void;
+  }> {
     const config = this._requireConfig(serverName);
     if (config.forwardAuthToken === true) {
       if (authToken === undefined || authToken === "") {
-        throw new Error(`Missing required auth token for MCP discovery: ${serverName}`);
+        throw new Error(
+          `Missing required auth token for MCP discovery: ${serverName}`,
+        );
       }
-      const recovery = this.reconnects.get(this._reconnectKey(serverName, authToken));
+      const recovery = this.reconnects.get(
+        this._reconnectKey(serverName, authToken),
+      );
       if (recovery !== undefined) await recovery;
       const lease = await this._acquireTokenClient(serverName, authToken);
       return {
@@ -2119,12 +2351,18 @@ export class McpWrapper implements McpWrapperService {
     }
     const recovery = this.reconnects.get(this._reconnectKey(serverName));
     if (recovery !== undefined) await recovery;
-    return { client: this._requireClient(serverName), schemaScope: "shared", release: () => {} };
+    return {
+      client: this._requireClient(serverName),
+      schemaScope: "shared",
+      release: () => {},
+    };
   }
 
   private _reconnectKey(serverName: string, token?: string): string {
     const tokenKey =
-      token === undefined ? "shared" : crypto.createHash("sha256").update(token).digest("hex");
+      token === undefined
+        ? "shared"
+        : crypto.createHash("sha256").update(token).digest("hex");
     return `${serverName}:${tokenKey}`;
   }
 
@@ -2137,14 +2375,22 @@ export class McpWrapper implements McpWrapperService {
     const key = this._reconnectKey(serverName, token);
     const inFlight = this.reconnects.get(key);
     if (inFlight !== undefined) {
-      await this._bounded(inFlight, `MCP reconnect ${serverName}`, signal, this.retryTimeoutMs * 2);
+      await this._bounded(
+        inFlight,
+        `MCP reconnect ${serverName}`,
+        signal,
+        this.retryTimeoutMs * 2,
+      );
       return;
     }
 
     const tokenKey = token === undefined ? undefined : sha256(token);
     const currentEntry =
-      tokenKey === undefined ? undefined : this.tokenClients.get(serverName)?.get(tokenKey);
-    const current = token === undefined ? this.clients.get(serverName) : currentEntry?.client;
+      tokenKey === undefined
+        ? undefined
+        : this.tokenClients.get(serverName)?.get(tokenKey);
+    const current =
+      token === undefined ? this.clients.get(serverName) : currentEntry?.client;
     if (current !== failedClient) return;
 
     const recovery = (async (): Promise<void> => {
@@ -2152,7 +2398,10 @@ export class McpWrapper implements McpWrapperService {
       if (token === undefined) {
         this.clients.delete(serverName);
         try {
-          await this._bounded(Promise.resolve(failedClient.close()), `MCP close ${serverName}`);
+          await this._bounded(
+            Promise.resolve(failedClient.close()),
+            `MCP close ${serverName}`,
+          );
         } catch {
           // Best effort. A stuck close must not prevent creating a replacement.
         }
@@ -2161,7 +2410,10 @@ export class McpWrapper implements McpWrapperService {
         currentEntry.retireWhenIdle = true;
         if (currentEntry.leases === 0) {
           try {
-            await this._bounded(Promise.resolve(failedClient.close()), `MCP close ${serverName}`);
+            await this._bounded(
+              Promise.resolve(failedClient.close()),
+              `MCP close ${serverName}`,
+            );
           } catch {
             // Best effort. A stuck close must not prevent creating a replacement.
           }
@@ -2179,7 +2431,8 @@ export class McpWrapper implements McpWrapperService {
       }
 
       if (token === undefined) {
-        if (!this.clients.has(serverName)) this.clients.set(serverName, replacement);
+        if (!this.clients.has(serverName))
+          this.clients.set(serverName, replacement);
         else void replacement.close().catch(() => {});
       } else if (tokenKey !== undefined) {
         let perServer = this.tokenClients.get(serverName);
@@ -2215,7 +2468,12 @@ export class McpWrapper implements McpWrapperService {
     // The shared recovery is independent of this caller. Its signal only
     // bounds this caller's wait, so one disconnected request cannot cancel
     // recovery needed by other concurrent requests.
-    await this._bounded(recovery, `MCP reconnect ${serverName}`, signal, this.retryTimeoutMs * 2);
+    await this._bounded(
+      recovery,
+      `MCP reconnect ${serverName}`,
+      signal,
+      this.retryTimeoutMs * 2,
+    );
   }
 
   private _requireClient(serverName: string): Client {
@@ -2240,7 +2498,10 @@ export class McpWrapper implements McpWrapperService {
    * Concurrent cold starts share one creation promise. Failed creation promises
    * are removed so a later call can retry.
    */
-  private async _getTokenClient(serverName: string, token: string): Promise<Client> {
+  private async _getTokenClient(
+    serverName: string,
+    token: string,
+  ): Promise<Client> {
     const config = this._requireConfig(serverName);
     const tokenKey = sha256(token);
 
@@ -2300,7 +2561,10 @@ export class McpWrapper implements McpWrapperService {
     }
   }
 
-  private async _acquireTokenClient(serverName: string, token: string): Promise<ClientLease> {
+  private async _acquireTokenClient(
+    serverName: string,
+    token: string,
+  ): Promise<ClientLease> {
     const client = await this._getTokenClient(serverName, token);
     const perServer = this.tokenClients.get(serverName);
     const entry = perServer?.get(sha256(token));
@@ -2334,7 +2598,9 @@ export class McpWrapper implements McpWrapperService {
    */
   private _evictTokenClients(perServer: Map<string, TokenClientEntry>): void {
     if (perServer.size <= this.maxTokenClientsPerServer) return;
-    const sorted = [...perServer.entries()].sort((a, b) => a[1].lastUsed - b[1].lastUsed);
+    const sorted = [...perServer.entries()].sort(
+      (a, b) => a[1].lastUsed - b[1].lastUsed,
+    );
     const removeCount = perServer.size - this.maxTokenClientsPerServer;
     for (const [tokenKey, entry] of sorted.slice(0, removeCount)) {
       perServer.delete(tokenKey);
@@ -2370,7 +2636,11 @@ export function createMcpWrapper(options?: {
   maxPreparedEvidenceCallsPerCaller?: number;
   maxTokenClientsPerServer?: number;
   clientFactory?: McpClientFactory;
-  tokenExchangerFactory?: (config: McpServerConfig) => TokenExchanger | undefined;
+  tokenExchangerFactory?: (
+    config: McpServerConfig,
+  ) => TokenExchanger | undefined;
+  /** Outbound fetch for HTTP/SSE transports (default: Egress_Guard). */
+  fetchFn?: typeof fetch;
   logger?: Logger;
 }): McpWrapperService {
   return new McpWrapper(options);

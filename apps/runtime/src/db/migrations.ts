@@ -1459,8 +1459,8 @@ export const MIGRATIONS: readonly Migration[] = [
          n BIGINT;
        BEGIN
          PERFORM set_config('atf.audit_retention', 'on', true);
-         -- Vorab-Anker: letzter entfernter Eintrag inkl. Hash, damit die
-         -- Kettenverifikation den Purge als legitimen Schnitt erkennt.
+         -- Prior anchor: last removed entry including its hash, so chain
+         -- verification recognizes the purge as a legitimate cut.
          SELECT id, hash INTO last_row
            FROM audit_log WHERE created_at < before_at ORDER BY id DESC LIMIT 1;
          IF last_row IS NOT NULL THEN
@@ -1514,6 +1514,18 @@ export const MIGRATIONS: readonly Migration[] = [
        )`,
       `CREATE INDEX IF NOT EXISTS erasure_requests_tenant_idx
          ON erasure_requests (tenant_id, created_at DESC)`,
+    ],
+  },
+  {
+    version: 45,
+    name: "api_keys hash_alg — peppered HMAC-SHA-256 key hashing (Req 7.9)",
+    statements: [
+      // Records which one-way function produced `key_hash`: the original
+      // unsalted SHA-256 ('sha256') or the peppered HMAC-SHA-256
+      // ('hmac-sha256') used once API_KEY_PEPPER is configured. Existing rows
+      // default to 'sha256' and are migrated lazily by
+      // `PostgresTenantStore.lookupByApiKey` on the next successful lookup.
+      `ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS hash_alg TEXT NOT NULL DEFAULT 'sha256'`,
     ],
   },
 ];

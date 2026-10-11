@@ -37,6 +37,7 @@ import type { InputGuardrail } from "../graph/input-guardrails.js";
 import { scoreText } from "../graph/input-guardrails.js";
 import type { AttackTemplate, AttackCategory } from "./red-team-attacks.js";
 import { ATTACK_TEMPLATES, sampleAttacks } from "./red-team-attacks.js";
+import { egressFetch } from "./egress.js";
 
 // ---------------------------------------------------------------------------
 // Interfaces
@@ -163,6 +164,11 @@ export interface RedTeamEngineOptions {
   postureAlertThreshold?: number;
   /** Webhook URL for posture alerts. */
   alertWebhookUrl?: string;
+  /**
+   * Outbound fetch for alert webhooks. Defaults to the process-wide
+   * Egress_Guard (SSRF-safe); tests may inject a stub.
+   */
+  fetchFn?: typeof fetch;
   /** ReplayStore to persist successful attacks as regression cases. */
   replayStore?: ReplayStore;
   logger?: Logger;
@@ -253,6 +259,7 @@ class RedTeamEngineImpl implements RedTeamEngine {
   private readonly autoTuneMinThreshold: number;
   private readonly postureAlertThreshold: number;
   private readonly alertWebhookUrl: string | undefined;
+  private readonly fetchFn: typeof fetch;
   private readonly replayStore: ReplayStore | undefined;
   private readonly logger: Logger | undefined;
 
@@ -275,6 +282,7 @@ class RedTeamEngineImpl implements RedTeamEngine {
     this.autoTuneMinThreshold = opts.autoTuneMinThreshold ?? 0.3;
     this.postureAlertThreshold = opts.postureAlertThreshold ?? 0.7;
     this.alertWebhookUrl = opts.alertWebhookUrl;
+    this.fetchFn = opts.fetchFn ?? egressFetch;
     this.replayStore = opts.replayStore;
     this.logger = opts.logger;
   }
@@ -393,7 +401,11 @@ class RedTeamEngineImpl implements RedTeamEngine {
       });
 
       // 4. Auto-tune guardrail threshold.
-      if (this.autoTune && evaluable.length > 0 && bypassRate > this.autoTuneBypassCeiling) {
+      if (
+        this.autoTune &&
+        evaluable.length > 0 &&
+        bypassRate > this.autoTuneBypassCeiling
+      ) {
         // Track against the LIVE guardrail's current threshold when one is
         // supplied, so repeated runs keep tightening from the real value rather
         // than a stale engine-local copy.
@@ -599,7 +611,7 @@ class RedTeamEngineImpl implements RedTeamEngine {
       totalTrials: run.trials.length,
       timestamp: run.finishedAt,
     });
-    await fetch(this.alertWebhookUrl, {
+    await this.fetchFn(this.alertWebhookUrl, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body,

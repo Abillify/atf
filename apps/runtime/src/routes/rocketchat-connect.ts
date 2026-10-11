@@ -3,12 +3,14 @@
 
 import crypto from "node:crypto";
 import { Hono } from "hono";
-import { SignJWT, createRemoteJWKSet, jwtVerify } from "jose";
+import { SignJWT, createRemoteJWKSet, customFetch, jwtVerify } from "jose";
+import { createDiscoveryClient } from "@atf/security-kit";
 import type { Database } from "../db/database.js";
 import type { AssistantRuntime } from "../assistants/assistant-runtime.js";
 import type { RocketChatChannel } from "../assistants/rocketchat-channel.js";
 import type { RocketChatDelegationBridge } from "../assistants/rocketchat-delegation.js";
 import { isValidAssistantIdentifier } from "../assistants/types.js";
+import { egressFetch } from "../security/egress.js";
 
 export interface RocketChatConnectConfig {
   issuer: string;
@@ -56,29 +58,53 @@ export function createRocketChatConnectRouter(params: {
   runtime: AssistantRuntime;
   delegation: RocketChatDelegationBridge;
   config: RocketChatConnectConfig;
-  logger?: { warn(message: string, attributes?: Record<string, unknown>): void };
+  /** Outbound fetch (default: process-wide Egress_Guard, SSRF-safe). */
+  fetchFn?: typeof fetch;
+  logger?: {
+    warn(message: string, attributes?: Record<string, unknown>): void;
+  };
 }): Hono {
   const app = new Hono();
   const cfg = params.config;
+  const fetchFn = params.fetchFn ?? egressFetch;
   // Request only the standard OIDC scopes plus the scopes configured by the
   // deployment. Application-specific permissions remain opaque to Aiperator:
   // the original access token is forwarded to MCP servers, which enforce them.
   const requestedScopes = new Set(
-    (cfg.scopes ?? "openid profile email offline_access").split(/\s+/).filter(Boolean),
+    (cfg.scopes ?? "openid profile email offline_access")
+      .split(/\s+/)
+      .filter(Boolean),
   );
   for (const required of ["openid", "profile", "email", "offline_access"]) {
     requestedScopes.add(required);
   }
   const authorizationScope = [...requestedScopes].join(" ");
   const key = new TextEncoder().encode(cfg.sessionSecret);
+  // Shared Security_Kit discovery (Req 11.2): single-flight, cached, exact
+  // issuer match and jwks_uri validation (Req 7.3) instead of a bespoke fetch.
+  const discoveryClient = createDiscoveryClient(cfg.issuer, {
+    fetchImpl: (url, init) =>
+      fetchFn(url, {
+        ...(init?.headers !== undefined ? { headers: init.headers } : {}),
+        ...(init?.signal !== undefined ? { signal: init.signal } : {}),
+      }),
+  });
   const metadata = async (): Promise<Metadata> => {
-    const res = await fetch(`${cfg.issuer.replace(/\/$/, "")}/.well-known/openid-configuration`);
-    if (!res.ok) throw new Error("OIDC discovery failed");
-    const value = (await res.json()) as Partial<Metadata>;
-    if (!value.authorization_endpoint || !value.token_endpoint || !value.jwks_uri)
+    const value = (await discoveryClient.getMetadata()) as Partial<Metadata>;
+    if (
+      !value.authorization_endpoint ||
+      !value.token_endpoint ||
+      !value.jwks_uri
+    )
       throw new Error("OIDC discovery is incomplete");
     return value as Metadata;
   };
+  // Req 7.1/7.2: the JWKS download must go through the same (guarded) fetch —
+  // a bare createRemoteJWKSet would bypass the Egress_Guard.
+  const jwksFor = (jwksUri: string): ReturnType<typeof createRemoteJWKSet> =>
+    createRemoteJWKSet(new URL(jwksUri), {
+      [customFetch]: (input, init) => fetchFn(input, init as RequestInit),
+    });
   const pending = async (id: string): Promise<Pending | undefined> =>
     (
       await params.db.withOperator((db) =>
@@ -371,12 +397,22 @@ export function createRocketChatConnectRouter(params: {
     }
     const request = await pending(requestId);
     if (!request)
-      return ctx.html(page("<p>This connect link has expired or was already used.</p>"), 410);
+      return ctx.html(
+        page("<p>This connect link has expired or was already used.</p>"),
+        410,
+      );
     const state = random(),
       nonce = random(),
       verifier = random();
-    const challenge = b64(crypto.createHash("sha256").update(verifier).digest());
-    const flow = await new SignJWT({ requestId: request.id, state, nonce, verifier })
+    const challenge = b64(
+      crypto.createHash("sha256").update(verifier).digest(),
+    );
+    const flow = await new SignJWT({
+      requestId: request.id,
+      state,
+      nonce,
+      verifier,
+    })
       .setProtectedHeader({ alg: "HS256" })
       .setExpirationTime("10m")
       .sign(key);
@@ -393,23 +429,32 @@ export function createRocketChatConnectRouter(params: {
     ctx.header("Set-Cookie", cookie(COOKIE, "", 0));
     if (!packed)
       return ctx.html(
-        page("<p>Login session expired. Return to Rocket.Chat and use a new link.</p>"),
+        page(
+          "<p>Login session expired. Return to Rocket.Chat and use a new link.</p>",
+        ),
         400,
       );
-    let flow: { requestId: string; state: string; nonce: string; verifier: string };
+    let flow: {
+      requestId: string;
+      state: string;
+      nonce: string;
+      verifier: string;
+    };
     try {
-      flow = (await jwtVerify(decodeURIComponent(packed), key)).payload as unknown as typeof flow;
+      flow = (await jwtVerify(decodeURIComponent(packed), key))
+        .payload as unknown as typeof flow;
     } catch {
       return ctx.html(page("<p>Login session expired.</p>"), 400);
     }
     if (ctx.req.query("state") !== flow.state || !ctx.req.query("code"))
       return ctx.html(page("<p>Login could not be verified.</p>"), 400);
     const request = await pending(flow.requestId);
-    if (!request) return ctx.html(page("<p>This connect link has expired.</p>"), 410);
+    if (!request)
+      return ctx.html(page("<p>This connect link has expired.</p>"), 410);
     try {
       const meta = await metadata();
       const redirect = `${cfg.publicUrl.replace(/\/$/, "")}/connect/rocketchat/callback`;
-      const tokens = await fetch(meta.token_endpoint, {
+      const tokens = await fetchFn(meta.token_endpoint, {
         method: "POST",
         headers: { "content-type": "application/x-www-form-urlencoded" },
         body: new URLSearchParams({
@@ -426,9 +471,10 @@ export function createRocketChatConnectRouter(params: {
         refresh_token?: string;
         scope?: string;
       };
-      if (!tokens.ok || !token.id_token) throw new Error("token exchange failed");
+      if (!tokens.ok || !token.id_token)
+        throw new Error("token exchange failed");
       const claims = (
-        await jwtVerify(token.id_token, createRemoteJWKSet(new URL(meta.jwks_uri)), {
+        await jwtVerify(token.id_token, jwksFor(meta.jwks_uri), {
           issuer: cfg.issuer,
           audience: cfg.clientId,
         })
@@ -441,7 +487,10 @@ export function createRocketChatConnectRouter(params: {
         typeof claims.sub !== "string"
       )
         throw new Error("email verification failed");
-      if (typeof token.refresh_token !== "string" || token.refresh_token.trim().length === 0) {
+      if (
+        typeof token.refresh_token !== "string" ||
+        token.refresh_token.trim().length === 0
+      ) {
         return ctx.html(
           page(
             "<p>The identity provider did not grant durable access. Please allow offline access and open a new connection link.</p>",
@@ -469,7 +518,10 @@ export function createRocketChatConnectRouter(params: {
             `<option value="${escapeHtml(a.scope.assistantId)}">${escapeHtml(a.displayName)}</option>`,
         )
         .join("");
-      const complete = await new SignJWT({ requestId: request.id, sub: claims.sub })
+      const complete = await new SignJWT({
+        requestId: request.id,
+        sub: claims.sub,
+      })
         .setProtectedHeader({ alg: "HS256" })
         .setExpirationTime("10m")
         .sign(key);
@@ -501,7 +553,9 @@ export function createRocketChatConnectRouter(params: {
       );
     } catch {
       return ctx.html(
-        page("<p>Login failed. Your verified identity did not match the Rocket.Chat account.</p>"),
+        page(
+          "<p>Login failed. Your verified identity did not match the Rocket.Chat account.</p>",
+        ),
         403,
       );
     }
@@ -527,7 +581,10 @@ export function createRocketChatConnectRouter(params: {
         verified.payload.sub.length === 0 ||
         verified.payload.requestId !== requestId
       ) {
-        return ctx.html(page("<p>The connection session does not match this request.</p>"), 400);
+        return ctx.html(
+          page("<p>The connection session does not match this request.</p>"),
+          400,
+        );
       }
       sub = verified.payload.sub;
     } catch {
@@ -544,7 +601,9 @@ export function createRocketChatConnectRouter(params: {
     const newAssistantName = String(
       form.get("newAssistantName") ?? form.get("newAssistantId") ?? "",
     ).trim();
-    const assistantId = createNew ? assistantIdentifier(newAssistantName) : selectedAssistantId;
+    const assistantId = createNew
+      ? assistantIdentifier(newAssistantName)
+      : selectedAssistantId;
     if (!isValidAssistantIdentifier(assistantId)) {
       return ctx.html(
         page(
@@ -592,7 +651,9 @@ export function createRocketChatConnectRouter(params: {
       );
     }
     ctx.header("Set-Cookie", cookie(COMPLETE_COOKIE, "", 0));
-    return ctx.html(page("<p>Connected. You can return to Rocket.Chat.</p>", "success"));
+    return ctx.html(
+      page("<p>Connected. You can return to Rocket.Chat.</p>", "success"),
+    );
   });
   return app;
 }

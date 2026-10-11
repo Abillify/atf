@@ -23,6 +23,7 @@
 
 import crypto from "node:crypto";
 import type { Logger } from "./logger.js";
+import { egressFetch } from "../security/egress.js";
 
 // ---------------------------------------------------------------------------
 // W3C Trace Context helpers
@@ -259,6 +260,11 @@ export interface TracerOptions {
   maxBatch?: number;
   /** Max ms between flushes. Default 5000. */
   flushIntervalMs?: number;
+  /**
+   * Outbound fetch for OTLP export. Defaults to the process-wide
+   * Egress_Guard (SSRF-safe); tests may inject a stub.
+   */
+  fetchFn?: typeof fetch;
   logger?: Logger;
 }
 
@@ -324,7 +330,7 @@ class BatchingTracer implements Tracer {
 
     try {
       const payload = this.toOtlp(batch);
-      const res = await fetch(this.opts.endpoint, {
+      const res = await (this.opts.fetchFn ?? egressFetch)(this.opts.endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),

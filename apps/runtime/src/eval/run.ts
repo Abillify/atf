@@ -31,6 +31,7 @@ import { createLlmProvider } from "../graph/llm-factory.js";
 import { loadConfig } from "../config/index.js";
 import type { LlmConfig } from "../types/flow.js";
 import type { ChatMessage } from "../types/openai.js";
+import { egressFetch } from "../security/egress.js";
 
 interface CliArgs {
   dataset: string;
@@ -74,6 +75,8 @@ function parseArgs(argv: string[]): CliArgs {
 export function createHttpExecutor(
   baseUrl: string,
   token?: string,
+  /** Outbound fetch: the process-wide Egress_Guard by default (SSRF-safe). */
+  fetchFn: typeof fetch = egressFetch,
 ): FlowExecutor {
   return async (
     flow: string,
@@ -90,7 +93,7 @@ export function createHttpExecutor(
       stream: false,
       ...(metadata !== undefined ? { metadata } : {}),
     };
-    const res = await fetch(
+    const res = await fetchFn(
       `${baseUrl.replace(/\/$/, "")}/v1/chat/completions`,
       {
         method: "POST",

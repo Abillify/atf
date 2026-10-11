@@ -42,6 +42,7 @@
 import type { PiiDetector } from "./pii-detector.js";
 import type { PiiMatch, PiiType } from "./output-guardrails.js";
 import type { Logger } from "../observability/logger.js";
+import { egressFetch } from "../security/egress.js";
 
 // ---------------------------------------------------------------------------
 // Configuration
@@ -64,6 +65,11 @@ export interface RemotePiiDetectorConfig {
   logger?: Logger;
   /** Human-readable name suffix for provenance tagging (e.g. "presidio"). */
   serviceName?: string;
+  /**
+   * Outbound fetch. Defaults to the process-wide Egress_Guard (SSRF-safe);
+   * tests may inject a stub.
+   */
+  fetchFn?: typeof fetch;
 }
 
 // ---------------------------------------------------------------------------
@@ -147,6 +153,7 @@ export class RemotePiiDetector implements PiiDetector {
   private readonly timeoutMs: number;
   private readonly language: string;
   private readonly logger?: Logger;
+  private readonly fetchFn: typeof fetch;
   private readonly breaker: CircuitBreaker;
 
   constructor(config: RemotePiiDetectorConfig) {
@@ -155,6 +162,7 @@ export class RemotePiiDetector implements PiiDetector {
     this.timeoutMs = config.timeoutMs ?? 3_000;
     this.language = config.language ?? "de";
     this.logger = config.logger;
+    this.fetchFn = config.fetchFn ?? egressFetch;
     this.name = `remote:${config.serviceName ?? new URL(this.endpoint).hostname}`;
     this.breaker = new CircuitBreaker(
       config.circuitBreakerThreshold ?? 5,
@@ -192,7 +200,7 @@ export class RemotePiiDetector implements PiiDetector {
         headers.Authorization = `Bearer ${this.apiKey}`;
       }
 
-      const response = await fetch(this.endpoint, {
+      const response = await this.fetchFn(this.endpoint, {
         method: "POST",
         headers,
         body,

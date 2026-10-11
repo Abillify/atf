@@ -1,29 +1,28 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import crypto from "node:crypto";
+import {
+  canonicalJson,
+  EVIDENCE_ACTION_CONTRACT_HASH_META_KEY,
+  EVIDENCE_ACTION_CONTRACT_META_KEY,
+  EVIDENCE_CONTRACT_HASH_META_KEY,
+  EVIDENCE_PACK_HASH_META_KEY,
+  inspectEvidenceActionContract,
+  sha256Hex,
+  type EvidenceActionContractV1,
+} from "@atf/evidence-contract";
 
-export const EVIDENCE_ACTION_CONTRACT_META_KEY = "evidence/actionContract";
-export const EVIDENCE_ACTION_CONTRACT_HASH_META_KEY = "evidence/actionContractHash";
-export const EVIDENCE_CONTRACT_HASH_META_KEY = "evidence/evidenceContractHash";
-export const EVIDENCE_PACK_HASH_META_KEY = "evidence/evidencePackHash";
+// The wire metadata keys and the action-contract shape are defined once in
+// `@atf/evidence-contract` (Req 11.3); the Runtime re-exports them under its
+// established names instead of keeping its own copies.
+export {
+  EVIDENCE_ACTION_CONTRACT_HASH_META_KEY,
+  EVIDENCE_ACTION_CONTRACT_META_KEY,
+  EVIDENCE_CONTRACT_HASH_META_KEY,
+  EVIDENCE_PACK_HASH_META_KEY,
+};
 
-export interface EvidenceActionContract {
-  schemaVersion: "v1";
-  action: { tool: string; argsHash: string };
-  evidence: {
-    packId: string;
-    retrievedAt: string;
-    items: Array<{
-      evidenceId: string;
-      snapshotHash: string;
-      contentHash: string;
-      version: string;
-      modifiedAt: string;
-      dataClassification?: string;
-    }>;
-  };
-}
+export type EvidenceActionContract = EvidenceActionContractV1;
 
 export interface EvidenceActionContractMeta {
   contract: EvidenceActionContract;
@@ -38,20 +37,8 @@ export interface EvidenceActionContractMeta {
   hash: string;
 }
 
-function stable(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value !== null && typeof value === "object") {
-    return `{${Object.entries(value as Record<string, unknown>)
-      .sort(([left], [right]) => left.localeCompare(right))
-      .map(([key, item]) => `${JSON.stringify(key)}:${stable(item)}`)
-      .join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
+const stable = canonicalJson;
+const sha256 = sha256Hex;
 
 function object(value: unknown): Record<string, unknown> | undefined {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -184,15 +171,13 @@ export function createEvidenceActionContract(
 export function serializeEvidenceActionContract(
   contract: EvidenceActionContract,
 ): EvidenceActionContractMeta {
-  const serialized = stable(contract);
-  const actionContractHash = sha256(serialized);
+  // Canonicalisation, hashing and schema validation come from the contract
+  // package; the deprecated `hash` alias stays for current consumers.
+  const inspected = inspectEvidenceActionContract(contract);
   return {
+    ...inspected,
     contract,
-    serialized,
-    actionContractHash,
-    evidenceContractHash: actionContractHash,
-    evidencePackHash: contract.evidence.packId,
-    hash: actionContractHash,
+    hash: inspected.actionContractHash,
   };
 }
 

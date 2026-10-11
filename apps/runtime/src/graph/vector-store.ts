@@ -27,6 +27,7 @@
 
 import { cosineSimilarity } from "./semantic-cache.js";
 import type { Database } from "../db/database.js";
+import { safeSqlIdentifier } from "../db/sql-identifier.js";
 import type { Logger } from "../observability/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -292,11 +293,9 @@ export class PgVectorStore implements VectorStore {
     tableName = "rag_documents",
   ) {
     // Defensive: the table name is an internal constant, never user input, but
-    // validate it anyway since it is interpolated into DDL/queries.
-    if (!/^[a-z_][a-z0-9_]*$/.test(tableName)) {
-      throw new Error(`Invalid vector store table name: ${tableName}`);
-    }
-    this.table = tableName;
+    // validate it anyway since it is interpolated into DDL/queries. The check
+    // goes through the central identifier whitelist (Req 7.10).
+    this.table = safeSqlIdentifier(tableName, "vector store table name");
   }
 
   /** Idempotent, single-flight schema provisioning + capability detection. */

@@ -31,6 +31,7 @@ import {
   type AuthPrincipal,
 } from "./auth.js";
 import type { Logger } from "../observability/logger.js";
+import type { Metrics } from "../observability/metrics.js";
 import { createRedisClient } from "../util/redis-client.js";
 import type { CounterStore } from "../db/store/index.js";
 
@@ -338,6 +339,8 @@ export function userScopedKeyFn(headers: {
  *                           `tenantId` and `userId` extractors to be set via
  *                           `userContext`. Falls back to token-level limiting when
  *                           the context is unavailable.
+ * @param metrics            When set, counts fail-open store degradations as
+ *                           `aiperator_degraded_total{component="rate_limit"}` (Req 7.8).
  */
 export function rateLimitMiddleware(
   limitPerMinute: number,
@@ -345,6 +348,7 @@ export function rateLimitMiddleware(
   logger?: Logger,
   failMode: "open" | "closed" = "open",
   userLimitPerMinute = 0,
+  metrics?: Metrics,
 ): MiddlewareHandler {
   if (limitPerMinute <= 0 && userLimitPerMinute <= 0) {
     return createMiddleware(async (_ctx, next) => {
@@ -361,21 +365,36 @@ export function rateLimitMiddleware(
 
     // ── Token/IP-level limit (existing behaviour) ───────────────────────────
     if (limitPerMinute > 0) {
-      const key = legacyRateLimitKey({ authorization: authHeader, forwardedFor, realIp });
+      const key = legacyRateLimitKey({
+        authorization: authHeader,
+        forwardedFor,
+        realIp,
+      });
       let result: RateLimitHit;
       try {
         result = await backing.hit(key, WINDOW_MS);
       } catch (err) {
         if (failMode === "closed") {
-          logger?.warn("Rate-limit store error — rejecting request (fail-closed)", {
-            error: err instanceof Error ? err.message : String(err),
-          });
+          logger?.warn(
+            "Rate-limit store error — rejecting request (fail-closed)",
+            {
+              error: err instanceof Error ? err.message : String(err),
+            },
+          );
           ctx.header("Retry-After", "5");
           return ctx.json(
-            { error: { message: "Rate limiter temporarily unavailable. Retry shortly.", type: "rate_limit_error" } },
+            {
+              error: {
+                message: "Rate limiter temporarily unavailable. Retry shortly.",
+                type: "rate_limit_error",
+              },
+            },
             503,
           );
         }
+        metrics?.recordCounter("aiperator_degraded_total", {
+          component: "rate_limit",
+        });
         logger?.warn("Rate-limit store error — allowing request (fail-open)", {
           error: err instanceof Error ? err.message : String(err),
         });
@@ -389,10 +408,18 @@ export function rateLimitMiddleware(
       ctx.header("X-RateLimit-Reset", String(Math.ceil(result.resetAt / 1000)));
 
       if (result.count > limitPerMinute) {
-        const retryAfterSec = Math.max(1, Math.ceil((result.resetAt - Date.now()) / 1000));
+        const retryAfterSec = Math.max(
+          1,
+          Math.ceil((result.resetAt - Date.now()) / 1000),
+        );
         ctx.header("Retry-After", String(retryAfterSec));
         return ctx.json(
-          { error: { message: "Rate limit exceeded. Slow down and retry shortly.", type: "rate_limit_error" } },
+          {
+            error: {
+              message: "Rate limit exceeded. Slow down and retry shortly.",
+              type: "rate_limit_error",
+            },
+          },
           429,
         );
       }
@@ -422,21 +449,36 @@ export function rateLimitMiddleware(
           if (failMode === "closed") {
             ctx.header("Retry-After", "5");
             return ctx.json(
-              { error: { message: "Rate limiter temporarily unavailable. Retry shortly.", type: "rate_limit_error" } },
+              {
+                error: {
+                  message:
+                    "Rate limiter temporarily unavailable. Retry shortly.",
+                  type: "rate_limit_error",
+                },
+              },
               503,
             );
           }
           // fail-open: skip user-level check
+          metrics?.recordCounter("aiperator_degraded_total", {
+            component: "rate_limit",
+          });
           await next();
           return;
         }
 
-        const userRemaining = Math.max(0, userLimitPerMinute - userResult.count);
+        const userRemaining = Math.max(
+          0,
+          userLimitPerMinute - userResult.count,
+        );
         ctx.header("X-RateLimit-User-Limit", String(userLimitPerMinute));
         ctx.header("X-RateLimit-User-Remaining", String(userRemaining));
 
         if (userResult.count > userLimitPerMinute) {
-          const retryAfterSec = Math.max(1, Math.ceil((userResult.resetAt - Date.now()) / 1000));
+          const retryAfterSec = Math.max(
+            1,
+            Math.ceil((userResult.resetAt - Date.now()) / 1000),
+          );
           ctx.header("Retry-After", String(retryAfterSec));
           return ctx.json(
             {
@@ -489,6 +531,7 @@ function boundaryRateLimitMiddleware(opts: {
   logger?: Logger;
   failMode: "open" | "closed";
   boundary: "Pre-Auth" | "Post-Auth";
+  metrics?: Metrics;
   key: (ctx: Parameters<MiddlewareHandler<AuthContext>>[0]) => string | null;
 }): MiddlewareHandler<AuthContext> {
   if (opts.limitPerMinute <= 0) {
@@ -525,6 +568,9 @@ function boundaryRateLimitMiddleware(opts: {
           503,
         );
       }
+      opts.metrics?.recordCounter("aiperator_degraded_total", {
+        component: "rate_limit",
+      });
       opts.logger?.warn(
         `${opts.boundary} rate-limit store error — allowing request (fail-open)`,
         { error: err instanceof Error ? err.message : String(err) },
@@ -566,11 +612,13 @@ export function preAuthRateLimitMiddleware(
   store?: RateLimitStore,
   logger?: Logger,
   failMode: "open" | "closed" = "open",
+  metrics?: Metrics,
 ): MiddlewareHandler<AuthContext> {
   return boundaryRateLimitMiddleware({
     limitPerMinute,
     ...(store !== undefined ? { store } : {}),
     ...(logger !== undefined ? { logger } : {}),
+    ...(metrics !== undefined ? { metrics } : {}),
     failMode,
     boundary: "Pre-Auth",
     key: (ctx) => {
@@ -592,11 +640,13 @@ export function postAuthRateLimitMiddleware(
   store?: RateLimitStore,
   logger?: Logger,
   failMode: "open" | "closed" = "open",
+  metrics?: Metrics,
 ): MiddlewareHandler<AuthContext> {
   return boundaryRateLimitMiddleware({
     limitPerMinute,
     ...(store !== undefined ? { store } : {}),
     ...(logger !== undefined ? { logger } : {}),
+    ...(metrics !== undefined ? { metrics } : {}),
     failMode,
     boundary: "Post-Auth",
     key: (ctx) => postAuthRateLimitKey(ctx.get(AUTH_PRINCIPAL_KEY)),

@@ -55,10 +55,22 @@ function jsonResponse(obj: unknown): Response {
   });
 }
 
-/** Installs a stubbed IdP. `idToken` is returned by the token endpoint. */
+/**
+ * Installs a stubbed IdP. `idToken` is returned by the token endpoint.
+ * Req 7.2: the router takes the stub through its `fetchFn` dependency now
+ * (`idpFetch`); the globalThis assignment only covers any stray call.
+ */
+let currentIdpStub: typeof fetch = (async () => {
+  throw new Error("installIdp() was not called");
+}) as unknown as typeof fetch;
+
+/** Lazy delegator: routers capture this once but always see the latest stub. */
+const idpFetch: typeof fetch = ((input: RequestInfo | URL, init?: RequestInit) =>
+  currentIdpStub(input, init)) as typeof fetch;
+
 function installIdp(idToken: string): void {
   lastTokenBody = undefined;
-  globalThis.fetch = (async (
+  currentIdpStub = (async (
     input: unknown,
     init?: RequestInit,
   ): Promise<Response> => {
@@ -66,6 +78,8 @@ function installIdp(idToken: string): void {
       typeof input === "string" ? input : (input as { url: string }).url;
     if (url.includes("/.well-known/openid-configuration")) {
       return jsonResponse({
+        // The Security_Kit discovery client requires an exact issuer match.
+        issuer: ISSUER,
         authorization_endpoint: AUTH_EP,
         token_endpoint: TOKEN_EP,
         jwks_uri: JWKS_URI,
@@ -81,6 +95,7 @@ function installIdp(idToken: string): void {
     }
     throw new Error(`unexpected fetch: ${url}`);
   }) as unknown as typeof fetch;
+  globalThis.fetch = currentIdpStub;
 }
 
 function baseConfig(overrides: Partial<OidcAuthConfig> = {}): OidcAuthConfig {
@@ -153,19 +168,27 @@ afterEach(() => {
 describe("OIDC BFF router", () => {
   test("GET /monitoring/auth/config reports enabled + autoLogin", async () => {
     installIdp(await makeIdToken({ nonce: "x" }));
-    const app = createOidcAuthRouter({ config: baseConfig() });
+    const app = createOidcAuthRouter({
+      config: baseConfig(),
+      fetchFn: idpFetch,
+    });
     const res = await app.request("http://localhost/monitoring/auth/config");
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       enabled: true,
       autoLogin: true,
       required: true,
+      // Req 8.4: the dashboard validates endSessionUrl against this host.
+      issuerHost: "idp.example.com",
     });
   });
 
   test("GET /monitoring/auth/login redirects to the IdP and sets a state cookie", async () => {
     installIdp(await makeIdToken({ nonce: "x" }));
-    const app = createOidcAuthRouter({ config: baseConfig() });
+    const app = createOidcAuthRouter({
+      config: baseConfig(),
+      fetchFn: idpFetch,
+    });
     const res = await app.request("http://localhost/monitoring/auth/login");
     expect(res.status).toBe(302);
     const loc = new URL(requiredHeader(res, "location"));
@@ -184,7 +207,7 @@ describe("OIDC BFF router", () => {
     const cfg = baseConfig();
     // 1. Login to obtain the signed flow cookie (carries state + nonce).
     installIdp(await makeIdToken({ nonce: "placeholder" }));
-    const app = createOidcAuthRouter({ config: cfg });
+    const app = createOidcAuthRouter({ config: cfg, fetchFn: idpFetch });
     const loginRes = await app.request(
       "http://localhost/monitoring/auth/login",
     );
@@ -239,7 +262,7 @@ describe("OIDC BFF router", () => {
   test("callback with a mismatched state fails with an auth_error (CSRF guard)", async () => {
     const cfg = baseConfig();
     installIdp(await makeIdToken({ nonce: "n" }));
-    const app = createOidcAuthRouter({ config: cfg });
+    const app = createOidcAuthRouter({ config: cfg, fetchFn: idpFetch });
     const loginRes = await app.request(
       "http://localhost/monitoring/auth/login",
     );
@@ -265,7 +288,7 @@ describe("OIDC BFF router", () => {
   test("callback denies an identity with no mappable role", async () => {
     const cfg = baseConfig({ roleMap: { "aiperator-admins": "admin" } });
     installIdp(await makeIdToken({ nonce: "n" }));
-    const app = createOidcAuthRouter({ config: cfg });
+    const app = createOidcAuthRouter({ config: cfg, fetchFn: idpFetch });
     const loginRes = await app.request(
       "http://localhost/monitoring/auth/login",
     );
@@ -300,7 +323,7 @@ describe("OIDC BFF router", () => {
   test("defaultRole lets any verified identity in without group mapping", async () => {
     const cfg = baseConfig({ roleMap: {}, defaultRole: "admin" });
     installIdp(await makeIdToken({ nonce: "n" }));
-    const app = createOidcAuthRouter({ config: cfg });
+    const app = createOidcAuthRouter({ config: cfg, fetchFn: idpFetch });
     const loginRes = await app.request(
       "http://localhost/monitoring/auth/login",
     );

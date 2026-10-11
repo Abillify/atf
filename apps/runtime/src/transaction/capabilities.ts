@@ -97,8 +97,11 @@ export async function shouldIssueTransaction(
     opts,
   );
   const hasSecret =
-    env.AGENT_TRANSACTION_SECRET !== undefined &&
-    env.AGENT_TRANSACTION_SECRET !== "";
+    (env.AGENT_TRANSACTION_SECRET !== undefined &&
+      env.AGENT_TRANSACTION_SECRET !== "") ||
+    ((env.TRANSACTION_SIGNING_ALG ?? "HS256") !== "HS256" &&
+      env.TRANSACTION_SIGNING_KEY !== undefined &&
+      env.TRANSACTION_SIGNING_KEY !== "");
 
   if (!negotiation.negotiated) {
     if (enforcement === "required") {

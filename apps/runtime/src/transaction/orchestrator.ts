@@ -348,14 +348,19 @@ export function createTransactionOrchestrator(
 }
 
 let singleton: TransactionOrchestrator | undefined;
-let singletonSecret: string | undefined;
+let singletonKey: string | undefined;
 
-export function getTransactionOrchestrator(): TransactionOrchestrator | undefined {
-  const secret = process.env.AGENT_TRANSACTION_SECRET;
-  if (secret === undefined || secret === "") return undefined;
-  if (singleton === undefined || singletonSecret !== secret) {
+export function getTransactionOrchestrator():
+  | TransactionOrchestrator
+  | undefined {
+  // Works for both HS256 (AGENT_TRANSACTION_SECRET) and asymmetric modes
+  // (TRANSACTION_SIGNING_ALG + TRANSACTION_SIGNING_KEY).
+  const config = transactionTokenConfigFromEnv();
+  if (config === undefined) return undefined;
+  const key = `${config.alg}:${config.secret ?? config.signingKeyPem}`;
+  if (singleton === undefined || singletonKey !== key) {
     singleton = createTransactionOrchestrator();
-    singletonSecret = secret;
+    singletonKey = key;
   }
   return singleton;
 }

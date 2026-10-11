@@ -21,6 +21,7 @@ import {
   preAuthRateLimitMiddleware,
   postAuthRateLimitMiddleware,
 } from "../rate-limit.js";
+import { createMetrics } from "../../observability/metrics.js";
 
 /** `createRedisRateLimitStore` for a URL known to produce a store (mocked RedisClient global). */
 function mustCreateRedisRateLimitStore(
@@ -233,6 +234,46 @@ describe("rateLimitMiddleware — shared store (cluster-wide)", () => {
     for (let i = 0; i < 5; i++) {
       expect((await app.fetch(req(VALID_JWT))).status).toBe(200);
     }
+  });
+
+  test("fail-open store error counts aiperator_degraded_total (Req 7.8)", async () => {
+    const brokenStore = {
+      hit: async () => {
+        throw new Error("store down");
+      },
+    };
+    const m = createMetrics(true);
+    const app = new Hono();
+    app.use(
+      "/v1/*",
+      rateLimitMiddleware(1, brokenStore, undefined, "open", 0, m),
+    );
+    app.get("/v1/ping", (c) => c.json({ ok: true }));
+
+    expect((await app.fetch(req(VALID_JWT))).status).toBe(200);
+    expect((await app.fetch(req(VALID_JWT))).status).toBe(200);
+    expect(m.render()).toContain(
+      'aiperator_degraded_total{component="rate_limit"} 2',
+    );
+  });
+
+  test("fail-closed store error returns 503 and is NOT a degradation (Req 7.8)", async () => {
+    const brokenStore = {
+      hit: async () => {
+        throw new Error("store down");
+      },
+    };
+    const m = createMetrics(true);
+    const app = new Hono();
+    app.use(
+      "/v1/*",
+      rateLimitMiddleware(1, brokenStore, undefined, "closed", 0, m),
+    );
+    app.get("/v1/ping", (c) => c.json({ ok: true }));
+
+    expect((await app.fetch(req(VALID_JWT))).status).toBe(503);
+    // Fail-closed is a rejection, not a fail-open degradation — not counted.
+    expect(m.render()).not.toContain("aiperator_degraded_total");
   });
 });
 

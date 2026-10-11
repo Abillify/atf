@@ -27,6 +27,7 @@ import {
   resolveProviderProtocol,
 } from "../config/providers.js";
 import { parseBedrockByokCredentials } from "./tenant-provider-keys.js";
+import { egressFetch } from "../security/egress.js";
 
 // ---------------------------------------------------------------------------
 // reasoning_content fetch interceptor
@@ -238,6 +239,7 @@ function makeReasoningFetch(
   chatTemplateKwargs?: Record<string, unknown>,
   reasoningEffort?: string,
   extraBody?: Record<string, unknown>,
+  baseFetch: typeof fetch = egressFetch,
 ): typeof fetch {
   const fn = async (
     input: Parameters<typeof fetch>[0],
@@ -260,7 +262,7 @@ function makeReasoningFetch(
     }
     const effectiveInit =
       init?.body != null && body !== init.body ? { ...init, body } : init;
-    const response = await fetch(input, effectiveInit);
+    const response = await baseFetch(input, effectiveInit);
     const responseBody = response.body;
     if (!responseBody) return response;
 
@@ -460,6 +462,12 @@ export interface LlmProviderOptions {
    * API key to use for this call, overriding the single key in {@link AppConfig}.
    */
   apiKey?: string;
+  /**
+   * Outbound fetch for providers routed through the reasoning interceptor.
+   * Defaults to the process-wide Egress_Guard (SSRF-safe); tests may inject
+   * a stub. Streaming responses are passed through untouched.
+   */
+  fetch?: typeof fetch;
 }
 
 /**
@@ -484,6 +492,9 @@ export function createLlmProvider(
   options?: LlmProviderOptions,
 ): LanguageModel {
   const overrideKey = options?.apiKey;
+  // Outbound transport for the reasoning interceptor: the process-wide
+  // Egress_Guard by default (SSRF-safe), overridable in tests.
+  const baseFetch = options?.fetch ?? egressFetch;
   const instance = getProviderInstance(config.provider);
   const protocol = resolveProviderProtocol(config.provider);
   if (protocol === undefined) throw new UnknownProviderError(config.provider);
@@ -493,7 +504,9 @@ export function createLlmProvider(
   // are ignored. Never sent by the AI SDK itself — injected at the fetch layer.
   const rawKwargs = config.parameters?.chatTemplateKwargs;
   const chatTemplateKwargs =
-    rawKwargs !== null && typeof rawKwargs === "object" && !Array.isArray(rawKwargs)
+    rawKwargs !== null &&
+    typeof rawKwargs === "object" &&
+    !Array.isArray(rawKwargs)
       ? (rawKwargs as Record<string, unknown>)
       : undefined;
   // Optional `reasoning_effort` (e.g. `"none"` to disable thinking) sourced from
@@ -502,7 +515,9 @@ export function createLlmProvider(
   // ignores `chat_template_kwargs`). Non-string/empty values are ignored.
   const rawEffort = config.parameters?.reasoningEffort;
   const reasoningEffort =
-    typeof rawEffort === "string" && rawEffort.length > 0 ? rawEffort : undefined;
+    typeof rawEffort === "string" && rawEffort.length > 0
+      ? rawEffort
+      : undefined;
   // Optional `extraBody` (e.g. `{ repeat_penalty: 1.15, frequency_penalty: 0.4 }`)
   // sourced from the node's llm parameters, merged verbatim into the request
   // body for the OpenAI-compatible providers. This is how anti-repetition
@@ -511,7 +526,9 @@ export function createLlmProvider(
   // Non-object values are ignored.
   const rawExtra = config.parameters?.extraBody;
   const extraBody =
-    rawExtra !== null && typeof rawExtra === "object" && !Array.isArray(rawExtra)
+    rawExtra !== null &&
+    typeof rawExtra === "object" &&
+    !Array.isArray(rawExtra)
       ? (rawExtra as Record<string, unknown>)
       : undefined;
   switch (protocol) {
@@ -527,7 +544,12 @@ export function createLlmProvider(
       const openai = createOpenAI({
         ...(apiKey !== undefined ? { apiKey } : {}),
         ...(instance?.url !== undefined ? { baseURL: instance.url } : {}),
-        fetch: makeReasoningFetch(chatTemplateKwargs, reasoningEffort, extraBody),
+        fetch: makeReasoningFetch(
+          chatTemplateKwargs,
+          reasoningEffort,
+          extraBody,
+          baseFetch,
+        ),
       } as Parameters<typeof createOpenAI>[0]);
       // Use the Chat Completions API (`/v1/chat/completions`) explicitly rather
       // than the SDK's default Responses API (`/v1/responses`). The Responses
@@ -562,7 +584,12 @@ export function createLlmProvider(
         baseURL: `${host}/v1`,
         // Ollama accepts any non-empty value.
         apiKey: instance?.apiKey ?? "ollama",
-        fetch: makeReasoningFetch(chatTemplateKwargs, reasoningEffort, extraBody),
+        fetch: makeReasoningFetch(
+          chatTemplateKwargs,
+          reasoningEffort,
+          extraBody,
+          baseFetch,
+        ),
       } as Parameters<typeof createOpenAI>[0]);
       // Chat Completions API explicitly (see the openai case above): Ollama's
       // OpenAI-compatible surface is `/v1/chat/completions`, and the reasoning-
@@ -590,7 +617,9 @@ export function createLlmProvider(
       // Bedrock BYOK is an atomic JSON credential bundle. Never combine a
       // tenant access key with a platform secret/session credential.
       const tenantCredentials =
-        overrideKey === undefined ? undefined : parseBedrockByokCredentials(overrideKey);
+        overrideKey === undefined
+          ? undefined
+          : parseBedrockByokCredentials(overrideKey);
       if (overrideKey !== undefined && tenantCredentials === undefined) {
         throw new Error(
           "Bedrock BYOK must be a JSON object containing accessKeyId and secretAccessKey.",

@@ -10,6 +10,7 @@
 
 import { describe, test, expect } from "bun:test";
 import { createMemoryExtractor } from "../memory-extractor.js";
+import { createMetrics } from "../../observability/metrics.js";
 import type { LanguageModel } from "ai";
 
 /**
@@ -157,5 +158,15 @@ describe("createMemoryExtractor", () => {
     const extract = createMemoryExtractor(fakeModel("throw"));
     const facts = await extract({ userMessage: "Ich bin Teamleiter." });
     expect(facts).toEqual([]);
+  });
+
+  test("fail-open on a model error counts aiperator_degraded_total (Req 7.8)", async () => {
+    const m = createMetrics(true);
+    const extract = createMemoryExtractor(fakeModel("throw"), { metrics: m });
+    const facts = await extract({ userMessage: "Ich bin Teamleiter." });
+    expect(facts).toEqual([]);
+    expect(m.render()).toContain(
+      'aiperator_degraded_total{component="memory_extractor"} 1',
+    );
   });
 });

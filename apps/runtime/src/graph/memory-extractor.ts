@@ -26,6 +26,7 @@
 
 import { generateObject, jsonSchema } from "ai";
 import type { LanguageModel } from "ai";
+import type { Metrics } from "../observability/metrics.js";
 
 /** A single completed turn to distill durable user facts from. */
 export interface MemoryExtractInput {
@@ -47,6 +48,12 @@ export interface MemoryExtractorOptions {
   maxFactChars?: number;
   /** Optional structured logger for diagnostics. */
   logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * Optional metrics registry. When supplied, every fail-open extraction
+   * failure increments `aiperator_degraded_total{component="memory_extractor"}`
+   * (Req 7.8) so silent model outages are observable rather than invisible.
+   */
+  metrics?: Metrics;
 }
 
 const EXTRACTOR_SYSTEM_PROMPT =
@@ -119,6 +126,7 @@ export function createMemoryExtractor(
   const maxFacts = opts.maxFacts ?? 5;
   const maxFactChars = opts.maxFactChars ?? 240;
   const logger = opts.logger;
+  const metrics = opts.metrics;
 
   return async (input: MemoryExtractInput): Promise<string[]> => {
     const userMessage = input.userMessage.trim();
@@ -144,6 +152,10 @@ export function createMemoryExtractor(
       return sanitizeFacts(object.facts, maxFacts, maxFactChars);
     } catch (err) {
       // Fail open — an extractor outage must not break the request.
+      // Req 7.8: count the degradation so it is observable.
+      metrics?.recordCounter("aiperator_degraded_total", {
+        component: "memory_extractor",
+      });
       logger?.warn("Memory fact extraction failed (fail-open)", {
         error: err instanceof Error ? err.message : String(err),
       });

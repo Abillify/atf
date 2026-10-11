@@ -25,6 +25,7 @@
 
 import crypto from "node:crypto";
 import type { Logger } from "../observability/logger.js";
+import type { Metrics } from "../observability/metrics.js";
 import {
   createRedisClient,
   type RedisClientLike,
@@ -245,6 +246,12 @@ export class RedisThreadLock implements ThreadLock {
     private readonly client: LockRedisClient,
     private readonly logger?: Logger,
     opts: RedisThreadLockOptions = {},
+    /**
+     * Metrics sink — fail-open degradations (Redis error, exhausted wait
+     * budget) count as `aiperator_degraded_total{component="thread_lock"}`
+     * (Req 7.8).
+     */
+    private readonly metrics?: Metrics,
   ) {
     this.ttlMs = opts.ttlMs ?? 120_000;
     this.retryMs = opts.retryMs ?? 50;
@@ -291,6 +298,9 @@ export class RedisThreadLock implements ThreadLock {
           ok = res === "OK" || res === true;
         } catch (err) {
           // Redis unavailable — fail open: rely on the in-process lock only.
+          this.metrics?.recordCounter("aiperator_degraded_total", {
+            component: "thread_lock",
+          });
           this.logger?.warn(
             "Thread lock Redis error — proceeding with local lock only",
             {
@@ -302,6 +312,9 @@ export class RedisThreadLock implements ThreadLock {
         }
         if (ok) break;
         if (opts.signal?.aborted === true) {
+          this.metrics?.recordCounter("aiperator_degraded_total", {
+            component: "thread_lock",
+          });
           this.logger?.warn(
             "Thread lock wait aborted (execution timeout) — proceeding anyway",
             { key },
@@ -309,6 +322,9 @@ export class RedisThreadLock implements ThreadLock {
           break;
         }
         if (Date.now() >= deadline) {
+          this.metrics?.recordCounter("aiperator_degraded_total", {
+            component: "thread_lock",
+          });
           this.logger?.warn(
             "Thread lock wait budget exhausted — proceeding anyway",
             { key },
@@ -354,11 +370,14 @@ export function createRedisThreadLock(
   redisUrl: string,
   logger?: Logger,
   opts?: RedisThreadLockOptions,
+  metrics?: Metrics,
 ): ThreadLock | undefined {
   const client = createRedisClient<LockRedisClient>(
     redisUrl,
     "Distributed thread lock",
     logger,
   );
-  return client ? new RedisThreadLock(client, logger, opts) : undefined;
+  return client
+    ? new RedisThreadLock(client, logger, opts, metrics)
+    : undefined;
 }

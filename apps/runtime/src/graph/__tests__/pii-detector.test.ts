@@ -292,9 +292,9 @@ describe("FlowPiiDetectorResolver", () => {
     const resolver = new FlowPiiDetectorResolver({
       factory,
       globalNames: ["regex"],
-      flowLookup: (id) => (id === "abby" ? ["regex", "ner", "remote"] : undefined),
+      flowLookup: (id) => (id === "support" ? ["regex", "ner", "remote"] : undefined),
     });
-    expect(resolver.resolve("abby")?.registry.listDetectors()).toEqual([
+    expect(resolver.resolve("support")?.registry.listDetectors()).toEqual([
       "regex",
       "ner",
       "remote",
@@ -320,9 +320,9 @@ describe("FlowPiiDetectorResolver", () => {
       globalNames: ["regex", "ner"],
       flowLookup: () => undefined,
       flowTypesLookup: (id) =>
-        id === "abby" ? ["location", "iban", "bogus-type"] : undefined,
+        id === "support" ? ["location", "iban", "bogus-type"] : undefined,
     });
-    const plan = resolver.resolve("abby");
+    const plan = resolver.resolve("support");
     expect(plan?.piiTypes).toEqual(["location", "iban"]); // "bogus-type" dropped
     // A flow without a type override inherits the vault global (undefined here).
     expect(resolver.resolve("other")?.piiTypes).toBeUndefined();
@@ -367,6 +367,9 @@ describe("RemotePiiDetector", () => {
       const d = new RemotePiiDetector({
         endpoint: "http://pii.internal/detect",
         circuitBreakerThreshold: detectorOpts?.circuitBreakerThreshold ?? 5,
+        // Req 7.2: the detector now goes through an injectable fetch seam —
+        // the stub is wired directly instead of via globalThis.
+        fetchFn: impl,
       });
       await fn(d);
     } finally {

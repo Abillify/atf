@@ -16,6 +16,7 @@ import {
   RedisThreadLock,
   type LockRedisClient,
 } from "../thread-lock.js";
+import { createMetrics } from "../../observability/metrics.js";
 
 const tick = (ms = 5): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
@@ -122,5 +123,20 @@ describe("RedisThreadLock", () => {
     const h = await lock.acquire("conv-y");
     await h.release();
     expect(true).toBe(true);
+  });
+
+  test("fail-open on a Redis error counts aiperator_degraded_total (Req 7.8)", async () => {
+    const m = createMetrics(true);
+    const client: LockRedisClient = {
+      async send(): Promise<unknown> {
+        throw new Error("redis down");
+      },
+    };
+    const lock = new RedisThreadLock(client, undefined, undefined, m);
+    const h = await lock.acquire("conv-z");
+    await h.release();
+    expect(m.render()).toContain(
+      'aiperator_degraded_total{component="thread_lock"} 1',
+    );
   });
 });

@@ -318,6 +318,10 @@ export function loadConfig(): AppConfig {
     guardrailMode: env.GUARDRAIL_MODE,
     toolEgressGuardrailEnabled: env.TOOL_EGRESS_GUARDRAIL,
     toolEgressMode: env.TOOL_EGRESS_MODE,
+    egressAllowPrivateHosts: env.EGRESS_ALLOW_PRIVATE_HOSTS,
+    egressAllowedHosts: env.EGRESS_ALLOWED_HOSTS,
+    egressMaxResponseBytes: env.EGRESS_MAX_RESPONSE_BYTES,
+    egressTimeoutMs: env.EGRESS_TIMEOUT_MS,
     toolOutputValidatorEnabled: env.TOOL_OUTPUT_VALIDATOR_ENABLED,
     toolOutputValidatorMode: env.TOOL_OUTPUT_VALIDATOR_MODE,
     toolOutputValidatorThreshold: env.TOOL_OUTPUT_VALIDATOR_THRESHOLD,
@@ -382,6 +386,12 @@ export function loadConfig(): AppConfig {
     inputGuardrailThreshold: env.INPUT_GUARDRAIL_THRESHOLD,
     inputGuardrailModel: env.INPUT_GUARDRAIL_MODEL,
     inputGuardrailModelMinScore: env.INPUT_GUARDRAIL_MODEL_MIN_SCORE,
+    // Requirement 7.5: environment-conditional default — fail-open in
+    // Development (availability), fail-closed in Production (protection).
+    inputGuardrailModelFailMode:
+      env.INPUT_GUARDRAIL_MODEL_FAIL_MODE ??
+      (env.APP_ENV === "production" ? "closed" : "open"),
+    inputGuardrailMaxChars: env.INPUT_GUARDRAIL_MAX_CHARS,
     jobsEnabled: env.JOBS_ENABLED,
     jobsTtlSeconds: env.JOBS_TTL_SECONDS,
     jobsMaxEntries: env.JOBS_MAX_ENTRIES,
@@ -438,6 +448,9 @@ export function loadConfig(): AppConfig {
     operatorRoleMap: env.OPERATOR_ROLE_MAP,
     operatorDefaultRole: env.OPERATOR_DEFAULT_ROLE,
     tenantManagementEnabled: env.TENANT_MANAGEMENT_ENABLED,
+    apiKeyPepper: env.API_KEY_PEPPER,
+    transactionSigningAlg: env.TRANSACTION_SIGNING_ALG,
+    transactionSigningKey: env.TRANSACTION_SIGNING_KEY,
     gitopsEnabled: env.GITOPS_ENABLED,
     gitopsWebhookSecret: env.GITOPS_WEBHOOK_SECRET,
     gitopsBranch: env.GITOPS_BRANCH,

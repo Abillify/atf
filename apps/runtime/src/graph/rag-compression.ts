@@ -187,7 +187,12 @@ export async function compressRagChunks(
         : {}),
     });
   } catch (err) {
-    if (err instanceof UnknownProviderError) return chunks; // fail open
+    // Fail open — Req 7.8: count the degradation before returning the
+    // uncompressed chunks.
+    runtime.metrics.recordCounter("aiperator_degraded_total", {
+      component: "rag_compression",
+    });
+    if (err instanceof UnknownProviderError) return chunks;
     return chunks;
   }
 
@@ -224,7 +229,11 @@ export async function compressRagChunks(
     text = res.text;
     genUsage = res.usage;
   } catch {
-    return chunks; // fail open on provider error
+    // Fail open on provider error — Req 7.8.
+    runtime.metrics.recordCounter("aiperator_degraded_total", {
+      component: "rag_compression",
+    });
+    return chunks;
   }
 
   // Cost/token accounting (mirrors the classifier handler): estimate when the
@@ -262,7 +271,13 @@ export async function compressRagChunks(
   }
 
   const entries = extractJsonArray(text);
-  if (entries === null) return chunks; // unparseable → fail open
+  if (entries === null) {
+    // Unparseable → fail open — Req 7.8.
+    runtime.metrics.recordCounter("aiperator_degraded_total", {
+      component: "rag_compression",
+    });
+    return chunks;
+  }
 
   const compressed = applyCompressionEntries(chunks, entries);
 

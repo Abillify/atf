@@ -39,6 +39,8 @@ import {
   type CachedAccessToken,
 } from "./execution-authority.js";
 import { scopeKey, type AssistantScope } from "./types.js";
+import { egressFetch } from "../security/egress.js";
+import { createDiscoveryClient } from "@atf/security-kit";
 
 // ---------------------------------------------------------------------------
 // OIDC plumbing
@@ -129,7 +131,8 @@ export class DelegatedTokenMinter {
   private readonly now: () => number;
 
   constructor(private readonly options: TokenMinterOptions) {
-    this.fetchImpl = options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+    // Egress_Guard by default (SSRF-safe); tests inject a FetchLike stub.
+    this.fetchImpl = options.fetchImpl ?? (egressFetch as unknown as FetchLike);
     this.now = options.now ?? (() => Date.now());
   }
 
@@ -364,7 +367,10 @@ export class DelegatedTokenMinter {
 }
 
 /**
- * Memoised OIDC discovery for the token endpoint.
+ * OIDC discovery for the token endpoint, backed by the shared
+ * `@atf/security-kit` client (Req 11.2): single-flight, cached (positive
+ * ≥ 5 min instead of permanent), exact issuer match and `jwks_uri`
+ * validation (Req 7.3).
  *
  * Separate from the operator-plane discovery in `routes/auth-oidc.ts` because
  * that module's cache is private to its router. Sharing a cache across the two
@@ -372,24 +378,33 @@ export class DelegatedTokenMinter {
  * saving of one HTTP request per issuer per process.
  */
 export function createTokenEndpointResolver(fetchImpl?: FetchLike): TokenEndpointResolver {
-  const cache = new Map<string, TokenEndpointMetadata>();
-  const doFetch = fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+  const doFetch = fetchImpl ?? (egressFetch as unknown as FetchLike);
+  const clients = new Map<string, ReturnType<typeof createDiscoveryClient>>();
   return async (issuer: string): Promise<TokenEndpointMetadata> => {
-    const cached = cache.get(issuer);
-    if (cached !== undefined) return cached;
-    const base = issuer.endsWith("/") ? issuer.slice(0, -1) : issuer;
-    const res = await doFetch(`${base}/.well-known/openid-configuration`, {
-      headers: { Accept: "application/json" },
-    });
-    if (!res.ok) {
-      throw new Error(`OIDC discovery failed: HTTP ${res.status}`);
+    let client = clients.get(issuer);
+    if (client === undefined) {
+      client = createDiscoveryClient(issuer, {
+        // FetchLike has no response Headers object; the kit only reads
+        // Cache-Control, and its 5-minute positive-cache floor applies anyway.
+        fetchImpl: async (url, init) => {
+          const res = await doFetch(url, {
+            ...(init?.headers !== undefined ? { headers: init.headers } : {}),
+            ...(init?.signal !== undefined ? { signal: init.signal } : {}),
+          });
+          return {
+            ok: res.ok,
+            status: res.status,
+            headers: { get: (): string | null => null },
+            json: () => res.json(),
+          };
+        },
+      });
+      clients.set(issuer, client);
     }
-    const doc = (await res.json()) as { token_endpoint?: unknown };
+    const doc = (await client.getMetadata()) as { token_endpoint?: unknown };
     if (typeof doc.token_endpoint !== "string") {
       throw new Error("OIDC discovery document has no token_endpoint.");
     }
-    const meta: TokenEndpointMetadata = { token_endpoint: doc.token_endpoint };
-    cache.set(issuer, meta);
-    return meta;
+    return { token_endpoint: doc.token_endpoint };
   };
 }

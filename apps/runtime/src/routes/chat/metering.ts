@@ -214,6 +214,10 @@ export async function evaluateInputGuardrail(opts: {
   const blockThreshold = effectiveInputGuardrail.threshold;
   let combinedScore = scan.score;
   let modelMatched: string[] = [];
+  // Extra trace-requestParams from the model layer (degradation diagnosis,
+  // chunk count) — recorded even when the combined score itself is 0 so every
+  // fail-open case leaves a trace diagnosis (Requirement 7.5).
+  let modelDiagnostics: Record<string, unknown> | undefined;
   if (
     inputGuardrailClassify !== undefined &&
     scan.score >= inputGuardrailModelMinScore
@@ -230,19 +234,49 @@ export async function evaluateInputGuardrail(opts: {
     metrics?.recordCounter("aiperator_input_guardrail_model_total", {
       result: modelResult.isInjection ? "injection" : "benign",
     });
+    // Requirement 7.5: every classifier failure (fail-open AND fail-closed)
+    // is counted as a metric; the trace diagnosis is patched below.
+    if (modelResult.degraded !== undefined) {
+      metrics?.recordCounter("aiperator_input_guardrail_model_degraded_total", {
+        fail_mode: modelResult.degraded.failMode,
+      });
+      modelDiagnostics = {
+        ...modelDiagnostics,
+        inputGuardrailClassifierDegraded: modelResult.degraded.failMode,
+        inputGuardrailClassifierError: modelResult.degraded.error.slice(0, 280),
+      };
+    }
+    if (modelResult.chunks !== undefined && modelResult.chunks > 1) {
+      // Requirement 7.6: observability for chunked classification of long input.
+      metrics?.recordCounter(
+        "aiperator_input_guardrail_model_chunked_total",
+        {},
+      );
+      modelDiagnostics = {
+        ...modelDiagnostics,
+        inputGuardrailChunks: modelResult.chunks,
+      };
+    }
   }
   const combinedFlagged = combinedScore >= blockThreshold;
   const combinedSignals = [...scan.matched, ...modelMatched];
 
   let requestCtxPatch: GuardrailRequestCtxPatch | undefined;
-  if (combinedScore > 0) {
-    metrics?.recordCounter("aiperator_input_guardrail_total", {
-      result: combinedFlagged ? "flagged" : "scanned",
-    });
+  if (combinedScore > 0 || modelDiagnostics !== undefined) {
+    if (combinedScore > 0) {
+      metrics?.recordCounter("aiperator_input_guardrail_total", {
+        result: combinedFlagged ? "flagged" : "scanned",
+      });
+    }
     requestCtxPatch = {
       requestParams: {
-        inputRiskScore: combinedScore,
-        inputRiskSignals: combinedSignals,
+        ...(combinedScore > 0
+          ? {
+              inputRiskScore: combinedScore,
+              inputRiskSignals: combinedSignals,
+            }
+          : {}),
+        ...(modelDiagnostics ?? {}),
       },
     };
   }

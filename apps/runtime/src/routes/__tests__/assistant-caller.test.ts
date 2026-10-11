@@ -46,8 +46,26 @@ describe("resolveAssistantCaller tenant resolution", () => {
     expect(caller.tenantId).toBe("verified");
   });
 
+  // Req 7.4: a principal without a tenant (e.g. legacy mode, where unverified
+  // claims resolve no tenant) must not have one re-filled from a header — the
+  // header fallback exists only for routers mounted without auth middleware.
+  test("a principal without a tenant never falls back to the headers", () => {
+    const principal: AuthPrincipal = {
+      method: "token",
+      verified: false,
+      claims: {},
+    };
+    const caller = resolveAssistantCaller(
+      headers({ "X-Tenant-Id": "spoofed", "X-Mandant-Id": "spoofed-legacy" }),
+      principal,
+    );
+    expect(caller.tenantId).toBeUndefined();
+  });
+
   test("leaves the tenant unset when neither header nor principal supplies one", () => {
-    const caller = resolveAssistantCaller(headers({ "X-OpenWebUI-User-Id": "user-1" }));
+    const caller = resolveAssistantCaller(
+      headers({ "X-OpenWebUI-User-Id": "user-1" }),
+    );
     expect(caller.tenantId).toBeUndefined();
     expect(caller.userId).toBe("user-1");
   });

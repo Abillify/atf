@@ -94,11 +94,15 @@ export async function buildGuardrails(
       );
       inputGuardrailClassify = createModelInputClassifier(guardrailModel, {
         logger,
+        failMode: config.inputGuardrailModelFailMode ?? "open",
+        maxChars: config.inputGuardrailMaxChars,
       });
       logger.info("Model-based input guardrail enabled", {
         provider: config.inputGuardrailModel.provider,
         model: config.inputGuardrailModel.model,
         minScore: config.inputGuardrailModelMinScore ?? 0.3,
+        failMode: config.inputGuardrailModelFailMode ?? "open",
+        maxChars: config.inputGuardrailMaxChars ?? 8000,
       });
     } catch (err) {
       logger.warn("Failed to build model-based input guardrail — disabled", {

@@ -192,6 +192,9 @@ describe("API-key identity outranks client-supplied attributes", () => {
       ssoToken: JWT,
       claims: { client_id: "claim-tenant" },
       metadata: {},
+      // Req 7.4: a raw claim only routes the tenant once the middleware
+      // reports the payload as cryptographically verified.
+      identityClaimsVerified: true,
     });
     expect(ctx.clientId).toBe("claim-tenant");
   });

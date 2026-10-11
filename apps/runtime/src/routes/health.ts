@@ -6,7 +6,7 @@
  *
  * Three endpoints with distinct semantics for K8s probes and load-balancers:
  *
- *   GET /health        — legacy all-in-one (rückwärtskompatibel, always 200)
+ *   GET /health        — legacy all-in-one (backward compatible, always 200)
  *   GET /health/live   — liveness probe: is the process alive and able to serve?
  *                        Never checks external dependencies — a transient DB
  *                        hiccup must NOT kill the pod (K8s would restart it,
@@ -63,6 +63,16 @@ export interface HealthDetail {
    * the whole replica out of rotation. Present only when an audit log is wired.
    */
   audit?: DependencyCheck;
+  /**
+   * Tool-Authorization-Policy health (Req 7.7, platform-hardening):
+   * `degraded` (`policy_stale: true`) when the last `tool-authz.json` reload
+   * failed — the engine in effect is the last-known-good (or deny-all) policy,
+   * not the file on disk. Informational only — like `audit` it never flips
+   * readiness to 503, since a stale policy still enforces a known-good rule
+   * set and pulling the replica out of rotation would not fix the file.
+   * Present only when a tool-authz loader is wired.
+   */
+  policy_stale?: DependencyCheck & { policy_stale?: boolean };
 }
 
 export interface ReadinessResponse {
@@ -191,6 +201,13 @@ export interface HealthRouterOptions {
    * health module must not depend on the audit backend.
    */
   audit?: { writeFailures?(): number };
+  /**
+   * Tool-authorization policy loader (Req 7.7). When provided, `/health/ready`
+   * reports a `policy_stale` check: `degraded` while the last
+   * `tool-authz.json` reload failed, `ok` after the next successful one.
+   * Duck-typed on purpose — the health module must not depend on the loader.
+   */
+  toolAuthz?: { readonly policyStale?: boolean };
 }
 
 // ---------------------------------------------------------------------------
@@ -207,7 +224,7 @@ export function createHealthRouter(
   const probeTimeoutMs = options?.probeTimeoutMs ?? 2_000;
 
   // -------------------------------------------------------------------------
-  // GET /health — legacy endpoint, always 200 (rückwärtskompatibel)
+  // GET /health — legacy endpoint, always 200 (backward compatible)
   // -------------------------------------------------------------------------
   router.get("/health", (ctx) => {
     const body: Record<string, unknown> = { status: "ok" };
@@ -250,7 +267,10 @@ export function createHealthRouter(
       probeDatabase(options?.database, probeTimeoutMs),
       probeRedis(options?.redisClient, probeTimeoutMs).then((result) =>
         options?.redisRequired === true && result.status === "unconfigured"
-          ? { status: "unavailable" as const, reason: "Redis is configured but no probe client is available." }
+          ? {
+              status: "unavailable" as const,
+              reason: "Redis is configured but no probe client is available.",
+            }
           : result,
       ),
     ]);
@@ -268,11 +288,29 @@ export function createHealthRouter(
             }
           : { status: "ok" };
 
+    // Req 7.7: stale tool-authz policy as an informational (never 503) flag.
+    const policyStaleCheck:
+      | (DependencyCheck & { policy_stale?: boolean })
+      | undefined =
+      options?.toolAuthz === undefined
+        ? undefined
+        : options.toolAuthz.policyStale === true
+          ? {
+              status: "degraded",
+              reason:
+                "The last tool-authz.json reload failed — the last-known-good policy is still enforced (see aiperator_policy_stale_total).",
+              policy_stale: true,
+            }
+          : { status: "ok", policy_stale: false };
+
     const checks: HealthDetail = {
       database: dbCheck,
       redis: redisCheck,
       flows: flowsCheck,
       ...(auditCheck !== undefined ? { audit: auditCheck } : {}),
+      ...(policyStaleCheck !== undefined
+        ? { policy_stale: policyStaleCheck }
+        : {}),
     };
 
     // A replica with no loaded flows cannot serve meaningful execution traffic.

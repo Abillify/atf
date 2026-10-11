@@ -101,13 +101,16 @@ describe("createJwtVerifier — OIDC mode", () => {
     // was used and discovery of /.well-known/openid-configuration happened.
     const realFetch = globalThis.fetch;
     const calls: string[] = [];
-    globalThis.fetch = (async (input: unknown): Promise<Response> => {
+    const stubFetch = (async (input: unknown): Promise<Response> => {
       const url =
         typeof input === "string" ? input : (input as { url: string }).url;
       calls.push(url);
       if (url.includes("/.well-known/openid-configuration")) {
         return new Response(
-          JSON.stringify({ jwks_uri: "https://idp.example.com/jwks" }),
+          JSON.stringify({
+            issuer: "https://idp.example.com",
+            jwks_uri: "https://idp.example.com/jwks",
+          }),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
@@ -118,10 +121,15 @@ describe("createJwtVerifier — OIDC mode", () => {
     }) as unknown as typeof fetch;
 
     try {
-      const verifier = createJwtVerifier({
-        ...baseConfig,
-        oidcIssuer: "https://idp.example.com",
-      });
+      // Req 7.2: discovery/JWKS go through the injectable fetch seam now.
+      const verifier = createJwtVerifier(
+        {
+          ...baseConfig,
+          oidcIssuer: "https://idp.example.com",
+        },
+        undefined,
+        stubFetch,
+      );
       const token = await makeHs256Token("shared-secret");
       expect(await verifier.verify(token)).toBe(false);
       expect(

@@ -189,13 +189,35 @@ describe("buildRequestContext identity trust", () => {
       claims: { client_id: "acme" },
       metadata: { clientId: "other-tenant" },
       trustClientIdentity: true,
+      identityClaimsVerified: true,
     });
     expect(ctx.clientId).toBe("acme");
   });
 
   test("the `tid` claim is honoured as a tenant fallback", () => {
-    const { ctx } = build({ claims: { tid: "acme" } });
+    const { ctx } = build({
+      claims: { tid: "acme" },
+      identityClaimsVerified: true,
+    });
     expect(ctx.clientId).toBe("acme");
+  });
+
+  // Req 7.4: an unverified payload (legacy mode, NoopVerifier) must never
+  // resolve a tenant — the claim is attacker-chosen base64.
+  test("an unverified client_id claim never resolves the tenant", () => {
+    const { ctx } = build({
+      claims: { client_id: "acme" },
+      identityClaimsVerified: false,
+    });
+    expect(ctx.clientId).toBeUndefined();
+  });
+
+  test("an unverified tid claim never resolves the tenant", () => {
+    const { ctx } = build({
+      claims: { tid: "acme" },
+      identityClaimsVerified: false,
+    });
+    expect(ctx.clientId).toBeUndefined();
   });
 
   test("metadata.plan cannot satisfy allowPlans by default", () => {
@@ -294,7 +316,9 @@ describe("buildRequestContext identity trust", () => {
       "userId",
       "userName",
     ]);
-    expect(warnings.every((warning) => warning.action === "overridden")).toBe(true);
+    expect(warnings.every((warning) => warning.action === "overridden")).toBe(
+      true,
+    );
   });
 
   test("strict mode falls back from verified name claims to verified email then userId", () => {
@@ -319,7 +343,11 @@ describe("buildRequestContext identity trust", () => {
 
   test("strict mode rejects OWUI/metadata fallbacks and unverified claims", () => {
     const { ctx, warnings } = build({
-      claims: { email: "unverified@example.com", sub: "unverified-id", name: "Unverified" },
+      claims: {
+        email: "unverified@example.com",
+        sub: "unverified-id",
+        name: "Unverified",
+      },
       identityClaimsVerified: false,
       strictIdentityHeaders: true,
       metadata: { email: "metadata@example.com" },
@@ -328,7 +356,9 @@ describe("buildRequestContext identity trust", () => {
     expect(ctx.userEmail).toBeUndefined();
     expect(ctx.userId).toBeUndefined();
     expect(ctx.userName).toBeUndefined();
-    expect(warnings.every((warning) => warning.action === "rejected")).toBe(true);
+    expect(warnings.every((warning) => warning.action === "rejected")).toBe(
+      true,
+    );
   });
 
   test("strict profile warnings are structured without asserted values", () => {

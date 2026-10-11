@@ -30,6 +30,7 @@
 
 import crypto from "node:crypto";
 import type { Database } from "../db/database.js";
+import { safeSqlIdentifier } from "../db/sql-identifier.js";
 import type { Logger } from "../observability/logger.js";
 import {
   emptyStats,
@@ -408,7 +409,12 @@ export class PostgresSkillCanaryStore implements SkillCanaryStore {
     // count.
     await this.scoped(scope.tenantId, async (db) => {
       for (const outcome of outcomes) {
-        const prefix = outcome.treatment ? "treatment" : "control";
+        // The column prefix is interpolated into the UPDATE, so it goes through
+        // the central identifier whitelist (Req 7.10). Values stay parameterised.
+        const prefix = safeSqlIdentifier(
+          outcome.treatment ? "treatment" : "control",
+          "canary outcome column prefix",
+        );
         await db.query(
           `UPDATE assistant_skill_canaries
               SET ${prefix}_runs = ${prefix}_runs + 1,

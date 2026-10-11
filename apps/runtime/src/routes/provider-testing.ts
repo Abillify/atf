@@ -18,11 +18,17 @@ import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
 } from "../middleware/operator-rbac.js";
+import { egressFetch } from "../security/egress.js";
 
 export interface ProviderTestingRouterDeps {
   config: AppConfig;
   authRequired?: boolean;
   operatorAuth?: OperatorAuthorizer;
+  /**
+   * Outbound fetch for live model listing. Defaults to the process-wide
+   * Egress_Guard (SSRF-safe); tests may inject a stub.
+   */
+  fetchFn?: typeof fetch;
 }
 
 /**
@@ -49,8 +55,9 @@ async function fetchJson(
   url: string,
   headers: Record<string, string>,
   signal: AbortSignal,
+  fetchFn: typeof fetch,
 ): Promise<unknown> {
-  const res = await fetch(url, { headers, signal });
+  const res = await fetchFn(url, { headers, signal });
   if (!res.ok) {
     throw new Error(`upstream responded ${res.status} ${res.statusText}`);
   }
@@ -67,6 +74,7 @@ async function fetchJson(
 async function listProviderModels(
   provider: string,
   signal: AbortSignal,
+  fetchFn: typeof fetch,
 ): Promise<ListedModel[]> {
   const protocol: ProviderProtocol | undefined =
     resolveProviderProtocol(provider);
@@ -82,16 +90,24 @@ async function listProviderModels(
         /\/$/,
         "",
       );
-      const headers: Record<string, string> = { "content-type": "application/json" };
+      const headers: Record<string, string> = {
+        "content-type": "application/json",
+      };
       if (instance?.apiKey !== undefined) {
         headers.authorization = `Bearer ${instance.apiKey}`;
       }
-      const body = (await fetchJson(`${base}/models`, headers, signal)) as {
+      const body = (await fetchJson(
+        `${base}/models`,
+        headers,
+        signal,
+        fetchFn,
+      )) as {
         data?: Array<{ id?: string; owned_by?: string }>;
       };
       return (body.data ?? [])
-        .filter((m): m is { id: string; owned_by?: string } =>
-          typeof m.id === "string",
+        .filter(
+          (m): m is { id: string; owned_by?: string } =>
+            typeof m.id === "string",
         )
         .map((m) => ({
           id: m.id,
@@ -104,8 +120,17 @@ async function listProviderModels(
       // trailing /api or /v1 which is normalised away (mirrors llm-factory).
       const rawBase = instance?.url ?? "http://localhost:11434";
       const host = rawBase.replace(/\/(api|v1)\/?$/, "").replace(/\/$/, "");
-      const body = (await fetchJson(`${host}/api/tags`, {}, signal)) as {
-        models?: Array<{ name?: string; model?: string; details?: { parameter_size?: string } }>;
+      const body = (await fetchJson(
+        `${host}/api/tags`,
+        {},
+        signal,
+        fetchFn,
+      )) as {
+        models?: Array<{
+          name?: string;
+          model?: string;
+          details?: { parameter_size?: string };
+        }>;
       };
       return (body.models ?? [])
         .map((m) => {
@@ -128,12 +153,14 @@ async function listProviderModels(
         "https://generativelanguage.googleapis.com/v1beta/models",
         { "x-goog-api-key": key },
         signal,
+        fetchFn,
       )) as {
         models?: Array<{ name?: string; displayName?: string }>;
       };
       return (body.models ?? [])
-        .filter((m): m is { name: string; displayName?: string } =>
-          typeof m.name === "string",
+        .filter(
+          (m): m is { name: string; displayName?: string } =>
+            typeof m.name === "string",
         )
         .map((m) => ({
           id: m.name,
@@ -156,10 +183,12 @@ async function listProviderModels(
         `${base}/v1/models`,
         { "x-api-key": key, "anthropic-version": "2023-06-01" },
         signal,
+        fetchFn,
       )) as { data?: Array<{ id?: string; display_name?: string }> };
       return (body.data ?? [])
-        .filter((m): m is { id: string; display_name?: string } =>
-          typeof m.id === "string",
+        .filter(
+          (m): m is { id: string; display_name?: string } =>
+            typeof m.id === "string",
         )
         .map((m) => ({
           id: m.id,
@@ -508,6 +537,7 @@ export function createProviderTestingRouter(
   deps: ProviderTestingRouterDeps,
 ): Hono {
   const router = new Hono();
+  const fetchFn = deps.fetchFn ?? egressFetch;
   const auth =
     deps.operatorAuth ??
     createOperatorAuthorizer({ authRequired: deps.authRequired ?? false });
@@ -533,7 +563,11 @@ export function createProviderTestingRouter(
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 15_000);
     try {
-      const models = await listProviderModels(provider, controller.signal);
+      const models = await listProviderModels(
+        provider,
+        controller.signal,
+        fetchFn,
+      );
       models.sort((a, b) => a.id.localeCompare(b.id));
       return ctx.json({ provider, models });
     } catch (err) {

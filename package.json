@@ -40,6 +40,7 @@
 		"test:contracts": "bun run --filter @atf/extract-contract test && bun run --filter @atf/system-integration test",
 		"lint": "bunx biome lint --max-diagnostics=10000 .",
 		"lint:baseline": "bun run scripts/check-lint-baseline.ts",
+		"check:raw-fetch": "bun run scripts/check-raw-fetch.ts",
 		"format": "bunx biome format --write",
 		"check:budgets": "bun run scripts/report-budgets.ts --report",
 		"check:budgets:ci": "bun run scripts/report-budgets.ts --enforce",

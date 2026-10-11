@@ -189,3 +189,93 @@ describe("compressRagChunks — deadline signal propagation", () => {
     expect(captured?.abortSignal).toBe(deadlineController.signal);
   });
 });
+
+// ---------------------------------------------------------------------------
+// compressRagChunks — fail-open degradations counted (Req 7.8)
+// ---------------------------------------------------------------------------
+
+describe("compressRagChunks — degraded metric (Req 7.8)", () => {
+  function mkRuntime(
+    modelOrFactory: (() => unknown) | unknown,
+    counters: Array<{ name: string; labels: Record<string, string> }>,
+  ): ExecRuntime {
+    const deadlineController = new AbortController();
+    return {
+      appConfig: baseConfig,
+      ctx: { ssoToken: "t", executionId: "exec-1" },
+      usage: mkUsage(),
+      signal: deadlineController.signal,
+      llmProviderFactory:
+        typeof modelOrFactory === "function"
+          ? (modelOrFactory as () => never)
+          : () => modelOrFactory as never,
+      metrics: {
+        recordLlmCall: () => {},
+        recordCounter: (name: string, labels: Record<string, string>) => {
+          counters.push({ name, labels });
+        },
+      } as unknown as ExecRuntime["metrics"],
+      costTracker: { record: () => {} },
+    } as unknown as ExecRuntime;
+  }
+
+  const cfg: RagCompressionConfig = {
+    enabled: true,
+    llm: { provider: "openai", model: "m" },
+    minChars: 1,
+  };
+
+  test("model factory throwing counts rag_compression and returns originals", async () => {
+    const counters: Array<{ name: string; labels: Record<string, string> }> = [];
+    const runtime = mkRuntime(() => {
+      throw new Error("misconfigured");
+    }, counters);
+    const chunks = [chunk("a", "alpha content long enough")];
+    const out = await compressRagChunks(runtime, "q", chunks, cfg);
+    expect(out).toBe(chunks); // fail-open: originals unchanged
+    expect(counters).toContainEqual({
+      name: "aiperator_degraded_total",
+      labels: { component: "rag_compression" },
+    });
+  });
+
+  test("unparseable model output counts rag_compression", async () => {
+    const counters: Array<{ name: string; labels: Record<string, string> }> = [];
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => ({
+        content: [{ type: "text" as const, text: "kein json hier" }],
+        finishReason: { unified: "stop" as const, raw: "stop" },
+        usage: {
+          inputTokens: { total: 10, noCache: undefined, cacheRead: undefined, cacheWrite: undefined },
+          outputTokens: { total: 5, text: undefined, reasoning: undefined },
+        },
+        warnings: [],
+      }),
+    });
+    const runtime = mkRuntime(model, counters);
+    const chunks = [chunk("a", "alpha content long enough")];
+    const out = await compressRagChunks(runtime, "q", chunks, cfg);
+    expect(out).toBe(chunks); // fail-open: originals unchanged
+    expect(counters).toContainEqual({
+      name: "aiperator_degraded_total",
+      labels: { component: "rag_compression" },
+    });
+  });
+
+  test("model call throwing counts rag_compression", async () => {
+    const counters: Array<{ name: string; labels: Record<string, string> }> = [];
+    const model = new MockLanguageModelV3({
+      doGenerate: async () => {
+        throw new Error("provider down");
+      },
+    });
+    const runtime = mkRuntime(model, counters);
+    const chunks = [chunk("a", "alpha content long enough")];
+    const out = await compressRagChunks(runtime, "q", chunks, cfg);
+    expect(out).toBe(chunks);
+    expect(counters).toContainEqual({
+      name: "aiperator_degraded_total",
+      labels: { component: "rag_compression" },
+    });
+  });
+});

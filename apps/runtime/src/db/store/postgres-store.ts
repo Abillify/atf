@@ -18,6 +18,7 @@
 
 import type { Store, CounterStore, StoreFactory } from "./store.js";
 import type { Database } from "../database.js";
+import { safeSqlIdentifier } from "../sql-identifier.js";
 import type { Logger } from "../../observability/logger.js";
 
 // ---------------------------------------------------------------------------
@@ -33,8 +34,14 @@ function serializeKey(key: unknown): string {
 // Table initialisation (idempotent)
 // ---------------------------------------------------------------------------
 
-const KV_TABLE = "store_kv";
-const COUNTER_TABLE = "store_counters";
+// Both names are internal constants interpolated into DDL/DML; they are
+// validated through the central identifier whitelist (Req 7.10) so a future
+// edit can never introduce an unsafe identifier. Fails fast at module load.
+const KV_TABLE = safeSqlIdentifier("store_kv", "store KV table name");
+const COUNTER_TABLE = safeSqlIdentifier(
+  "store_counters",
+  "store counter table name",
+);
 
 const CREATE_KV_TABLE = `
 CREATE TABLE IF NOT EXISTS ${KV_TABLE} (

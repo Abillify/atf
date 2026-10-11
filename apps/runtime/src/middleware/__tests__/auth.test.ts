@@ -394,7 +394,12 @@ describe("Unit: extractCookieToken", () => {
 // ---------------------------------------------------------------------------
 
 import { Hono } from "hono";
-import { authMiddleware, TOKEN_KEY, type AuthContext } from "../auth.js";
+import {
+  authMiddleware,
+  AUTH_PRINCIPAL_KEY,
+  TOKEN_KEY,
+  type AuthContext,
+} from "../auth.js";
 import type { JwtVerifier } from "../jwt-verifier.js";
 
 function makeAuthApp(verifier?: JwtVerifier) {
@@ -525,5 +530,107 @@ describe("authMiddleware — token sourcing and validation", () => {
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ token: VALID_JWT });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// authMiddleware — Req 7.4: tenantId only from verified claims
+// ---------------------------------------------------------------------------
+
+describe("authMiddleware — tenant identity requires verification (Req 7.4)", () => {
+  function makePrincipalApp(
+    verifier?: JwtVerifier,
+    options: Parameters<typeof authMiddleware>[2] = {},
+  ) {
+    const app = new Hono<AuthContext>();
+    app.use("/v1/*", authMiddleware(verifier, undefined, options));
+    app.get("/v1/ping", (c) =>
+      c.json({ principal: c.get(AUTH_PRINCIPAL_KEY) ?? null }),
+    );
+    return app;
+  }
+
+  const ping = (app: Hono<AuthContext>) =>
+    app.fetch(
+      new Request("http://localhost/v1/ping", {
+        headers: { Authorization: `Bearer ${VALID_JWT}` },
+      }),
+    );
+
+  const tenantPayload = { tenant_id: "acme" };
+
+  test("a verified verifier's tenant claim resolves the principal tenant", async () => {
+    const verifier: JwtVerifier = {
+      enabled: true,
+      verify: async () => true,
+      decodePayload: () => tenantPayload,
+    };
+    const res = await ping(makePrincipalApp(verifier, { tenantIsolationEnabled: true }));
+    expect(res.status).toBe(200);
+    const { principal } = (await res.json()) as {
+      principal: { tenantId?: string; verified: boolean };
+    };
+    expect(principal.verified).toBe(true);
+    expect(principal.tenantId).toBe("acme");
+  });
+
+  test("an unverified verifier's tenant claim does NOT resolve a tenant", async () => {
+    // Legacy mode: NoopVerifier (enabled=false) → decodePayload is an
+    // attacker-chosen base64 read and must not establish a tenant.
+    const verifier: JwtVerifier = {
+      enabled: false,
+      verify: async () => true,
+      decodePayload: () => tenantPayload,
+    };
+    const res = await ping(makePrincipalApp(verifier));
+    expect(res.status).toBe(200);
+    const { principal } = (await res.json()) as {
+      principal: { tenantId?: string; verified: boolean; claims: unknown };
+    };
+    expect(principal.verified).toBe(false);
+    // Isolation is not enabled here, so no tenant is resolved at all — the
+    // unverified "acme" never appears. (The deployment default applies only
+    // when TENANT_ISOLATION_ENABLED is explicitly false, see below.)
+    expect(principal.tenantId).toBeUndefined();
+    // The payload stays on the principal for display purposes only.
+    expect(principal.claims).toEqual(tenantPayload);
+  });
+
+  test("unverified claims with tenant isolation enabled → 401", async () => {
+    const verifier: JwtVerifier = {
+      enabled: false,
+      verify: async () => true,
+      decodePayload: () => tenantPayload,
+    };
+    const res = await ping(
+      makePrincipalApp(verifier, { tenantIsolationEnabled: true }),
+    );
+    expect(res.status).toBe(401);
+    const body = (await res.json()) as { error: { message: string } };
+    expect(body.error.message).toContain("no tenant claim");
+  });
+
+  test("a missing verifier resolves no tenant from the payload", async () => {
+    const res = await ping(makePrincipalApp(undefined, { tenantIsolationEnabled: true }));
+    expect(res.status).toBe(401);
+  });
+
+  test("unverified requests fall back to the configured default tenant", async () => {
+    const verifier: JwtVerifier = {
+      enabled: false,
+      verify: async () => true,
+      decodePayload: () => tenantPayload,
+    };
+    const res = await ping(
+      makePrincipalApp(verifier, {
+        tenantIsolationEnabled: false,
+        defaultTenantId: "standalone",
+      }),
+    );
+    expect(res.status).toBe(200);
+    const { principal } = (await res.json()) as {
+      principal: { tenantId?: string };
+    };
+    expect(principal.tenantId).toBe("standalone");
   });
 });

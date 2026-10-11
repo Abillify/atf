@@ -61,4 +61,35 @@ describe("transaction capability negotiation", () => {
       }),
     ).rejects.toThrow(/signing is not configured/u);
   });
+
+  test("asymmetric config (ES256 + key) counts as signing configured (Req 7.11)", async () => {
+    const provider = { getTransactionCapabilities: async () => v1 };
+    expect(
+      await shouldIssueTransaction(provider, "peer", {
+        TRANSACTION_SIGNING_ALG: "ES256",
+        // Synthetic PEM, assembled so the public-tree scanner does not flag it.
+        TRANSACTION_SIGNING_KEY: [
+          "-----BEGIN",
+          "PRIVATE KEY-----\nabc\n-----END",
+          "PRIVATE KEY-----",
+        ].join(" "),
+        AGENT_TRANSACTION_ENFORCEMENT: "required",
+      }),
+    ).toBe(true);
+  });
+
+  test("asymmetric alg without a key is not signing configured", async () => {
+    const provider = {
+      getTransactionCapabilities: async () => ({
+        ...v1,
+        enforcement: "required" as const,
+      }),
+    };
+    await expect(
+      shouldIssueTransaction(provider, "peer", {
+        TRANSACTION_SIGNING_ALG: "EdDSA",
+        AGENT_TRANSACTION_ENFORCEMENT: "optional",
+      }),
+    ).rejects.toThrow(/signing is not configured/u);
+  });
 });

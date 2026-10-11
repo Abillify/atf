@@ -301,3 +301,64 @@ describe("GET /health/ready", () => {
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// policy_stale check (Req 7.7) — informational, never causes 503
+// ---------------------------------------------------------------------------
+
+describe("GET /health/ready — policy_stale (Req 7.7)", () => {
+  it("omits the policy_stale key when no loader is wired", async () => {
+    const app = buildApp(
+      createHealthRouter(makeFlowRegistry(["f"]), {}),
+    );
+    const res = await app.request("/health/ready");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ReadinessResponse;
+    expect(body.checks.policy_stale).toBeUndefined();
+  });
+
+  it("reports ok when the last reload succeeded", async () => {
+    const app = buildApp(
+      createHealthRouter(makeFlowRegistry(["f"]), {
+        toolAuthz: { policyStale: false },
+      }),
+    );
+    const res = await app.request("/health/ready");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ReadinessResponse;
+    expect(body.checks.policy_stale?.status).toBe("ok");
+    expect(body.checks.policy_stale?.policy_stale).toBe(false);
+  });
+
+  it("reports degraded with policy_stale=true after a failed reload", async () => {
+    const app = buildApp(
+      createHealthRouter(makeFlowRegistry(["f"]), {
+        toolAuthz: { policyStale: true },
+      }),
+    );
+    const res = await app.request("/health/ready");
+    const body = (await res.json()) as ReadinessResponse;
+    expect(body.checks.policy_stale?.status).toBe("degraded");
+    expect(body.checks.policy_stale?.policy_stale).toBe(true);
+    expect(body.checks.policy_stale?.reason).toContain(
+      "aiperator_policy_stale_total",
+    );
+  });
+
+  it("stale policy never turns readiness into 503", async () => {
+    // Informational check only: the last-known-good policy is still enforced,
+    // so the replica keeps serving traffic (mirrors the audit check pattern).
+    const app = buildApp(
+      createHealthRouter(makeFlowRegistry(["f"]), {
+        database: makeDatabase(),
+        redisClient: makeRedisClient(),
+        toolAuthz: { policyStale: true },
+      }),
+    );
+    const res = await app.request("/health/ready");
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as ReadinessResponse;
+    expect(body.status).toBe("ready");
+    expect(body.checks.policy_stale?.status).toBe("degraded");
+  });
+});

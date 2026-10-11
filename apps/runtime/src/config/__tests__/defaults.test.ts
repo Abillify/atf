@@ -170,7 +170,7 @@ describe("applySecureDefaults", () => {
     expect(result.rateLimitFailMode).toBe("closed");
   });
 
-  test("APP_ENV-unabhängig: invalid values produce secure defaults in all environments", () => {
+  test("independent of APP_ENV: invalid values produce secure defaults in all environments", () => {
     const invalidConfig = {
       corsOrigins: 42 as unknown as string[],
       monitoringAuthRequired: "nope" as unknown as boolean,

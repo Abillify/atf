@@ -22,6 +22,7 @@ import {
   type LimiterRedisClient,
 } from "../distributed-semaphore.js";
 import { QueueFullError } from "../semaphore.js";
+import { createMetrics } from "../../observability/metrics.js";
 import type { StoreFactory } from "../../db/store/store.js";
 import type { Database } from "../../db/database.js";
 
@@ -139,6 +140,21 @@ describe("RedisConcurrencyLimiter", () => {
     // Should not throw and release is safe.
     await slot.release();
     expect(true).toBe(true);
+  });
+
+  it("fail-open on a Redis error counts aiperator_degraded_total (Req 7.8)", async () => {
+    const m = createMetrics(true);
+    const limiter = new RedisConcurrencyLimiter(
+      new BrokenRedis(),
+      { maxConcurrent: 1 },
+      undefined,
+      m,
+    );
+    const slot = await limiter.acquire();
+    await slot.release();
+    expect(m.render()).toContain(
+      'aiperator_degraded_total{component="semaphore"} 1',
+    );
   });
 
   it("resolves a race for the last slot atomically (no under-admission)", async () => {

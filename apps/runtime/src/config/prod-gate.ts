@@ -9,6 +9,7 @@
  */
 
 import type { AppConfig } from "./schema.js";
+import { transactionTokenConfigFromEnv } from "../transaction/token.js";
 
 // ---------------------------------------------------------------------------
 // ClusterStateContext
@@ -53,6 +54,7 @@ export interface ClusterStateContext {
 export function checkProductionReadiness(
   config: AppConfig,
   clusterState?: ClusterStateContext,
+  env: Record<string, string | undefined> = process.env,
 ): {
   fatal: string[];
   warnings: string[];
@@ -62,7 +64,10 @@ export function checkProductionReadiness(
 
   const isProd = config.appEnv === "production";
 
-  if (config.authnMode === "disabled" && config.tenantIsolationEnabled === true) {
+  if (
+    config.authnMode === "disabled" &&
+    config.tenantIsolationEnabled === true
+  ) {
     fatal.push(
       "AUTHN_MODE=disabled cannot be used with TENANT_ISOLATION_ENABLED=true; tenant isolation requires an authenticated tenant principal.",
     );
@@ -76,7 +81,9 @@ export function checkProductionReadiness(
     );
   }
   if (isProd && config.authnMode !== "oidc") {
-    fatal.push("Production requires AUTHN_MODE=oidc; local token/API-key primary credentials are not permitted.");
+    fatal.push(
+      "Production requires AUTHN_MODE=oidc; local token/API-key primary credentials are not permitted.",
+    );
   }
   if (isProd && config.authzEnabled !== true) {
     fatal.push("Production requires AUTHZ_ENABLED=true.");
@@ -86,20 +93,29 @@ export function checkProductionReadiness(
   }
   if (config.authnMode === "oidc") {
     if (config.oidcIssuer === undefined || config.oidcAudience === undefined) {
-      const msg = "AUTHN_MODE=oidc requires both OIDC_ISSUER and OIDC_AUDIENCE.";
-      if (isProd) fatal.push(msg); else warnings.push(msg);
+      const msg =
+        "AUTHN_MODE=oidc requires both OIDC_ISSUER and OIDC_AUDIENCE.";
+      if (isProd) fatal.push(msg);
+      else warnings.push(msg);
     }
     if (isProd && (config.operatorTokens?.length ?? 0) > 0) {
-      fatal.push("AUTHN_MODE=oidc production must not configure OPERATOR_TOKENS; operator identity must derive from external OIDC.");
+      fatal.push(
+        "AUTHN_MODE=oidc production must not configure OPERATOR_TOKENS; operator identity must derive from external OIDC.",
+      );
     }
     if (config.jwtSecret !== undefined || config.jwtJwksUrl !== undefined) {
-      const msg = "AUTHN_MODE=oidc ignores JWT_SECRET and JWT_JWKS_URL; remove local or raw token-primary credentials. JWT_ADDITIONAL_ISSUERS remains allowed only for issuer/audience-pinned external OIDC providers.";
-      if (isProd) fatal.push(msg); else warnings.push(msg);
+      const msg =
+        "AUTHN_MODE=oidc ignores JWT_SECRET and JWT_JWKS_URL; remove local or raw token-primary credentials. JWT_ADDITIONAL_ISSUERS remains allowed only for issuer/audience-pinned external OIDC providers.";
+      if (isProd) fatal.push(msg);
+      else warnings.push(msg);
     }
-    for (const [index, issuer] of (config.inferenceExtraOidcIssuers ?? []).entries()) {
+    for (const [index, issuer] of (
+      config.inferenceExtraOidcIssuers ?? []
+    ).entries()) {
       if (issuer.audience === undefined) {
         const msg = `JWT_ADDITIONAL_ISSUERS[${index}] must configure audience in OIDC-only mode.`;
-        if (isProd) fatal.push(msg); else warnings.push(msg);
+        if (isProd) fatal.push(msg);
+        else warnings.push(msg);
       }
     }
   }
@@ -107,15 +123,19 @@ export function checkProductionReadiness(
     config.jwtJwksUrl !== undefined &&
     (config.jwtIssuer === undefined || config.jwtAudience === undefined)
   ) {
-    const msg = "JWT_JWKS_URL must be bound to both JWT_ISSUER and JWT_AUDIENCE; signature-only JWKS verification is unsafe.";
-    if (isProd) fatal.push(msg); else warnings.push(msg);
+    const msg =
+      "JWT_JWKS_URL must be bound to both JWT_ISSUER and JWT_AUDIENCE; signature-only JWKS verification is unsafe.";
+    if (isProd) fatal.push(msg);
+    else warnings.push(msg);
   }
   if (
     isProd &&
     config.tenantIsolationEnabled === true &&
     (config.tenantRlsEnabled !== true || config.tenantRlsRequired !== true)
   ) {
-    fatal.push("Tenant-isolated production requires TENANT_RLS_ENABLED=true and TENANT_RLS_REQUIRED=true (no RLS opt-out).");
+    fatal.push(
+      "Tenant-isolated production requires TENANT_RLS_ENABLED=true and TENANT_RLS_REQUIRED=true (no RLS opt-out).",
+    );
   }
 
   if (config.corsOrigins.includes("*")) {
@@ -155,7 +175,11 @@ export function checkProductionReadiness(
   // Production does not accept raw operator credentials in URL query strings.
   // A ticket secret is therefore required for browser transports that cannot
   // attach Authorization headers (SSE/WebSocket).
-  if (isProd && config.monitoringAuthRequired && config.monitoringTicketSecret === undefined) {
+  if (
+    isProd &&
+    config.monitoringAuthRequired &&
+    config.monitoringTicketSecret === undefined
+  ) {
     fatal.push(
       "MONITORING_AUTH=true but MONITORING_TICKET_SECRET is not set. Production disables raw URL-token fallback; set a random 32+ character ticket secret for SSE/WebSocket authentication.",
     );
@@ -163,7 +187,11 @@ export function checkProductionReadiness(
 
   // RLS not configured in production without explicit opt-out → warn so operators
   // don't accidentally run multi-tenant production without defense-in-depth.
-  if (isProd && config.databaseUrl !== undefined && config.tenantRlsEnabled !== true) {
+  if (
+    isProd &&
+    config.databaseUrl !== undefined &&
+    config.tenantRlsEnabled !== true
+  ) {
     const rlsOptedOut = config.tenantRlsRequired === false;
     if (!rlsOptedOut) {
       warnings.push(
@@ -268,7 +296,9 @@ export function checkProductionReadiness(
   // resolver/store, otherwise-valid external-provider flows would fail only
   // at request time with no actionable startup diagnosis.
   if (config.byokMode === "required" && config.byokEnabled !== true) {
-    fatal.push("BYOK_MODE=required requires BYOK_ENABLED=true so tenant provider keys can be resolved.");
+    fatal.push(
+      "BYOK_MODE=required requires BYOK_ENABLED=true so tenant provider keys can be resolved.",
+    );
   }
 
   if (
@@ -303,6 +333,49 @@ export function checkProductionReadiness(
         "(all tool calls allowed). Set TOOL_AUTHZ_FAIL_CLOSED=true so a broken policy denies all tool calls. " +
         "This is especially important in access-control deployments. The secure default (SECURE_DEFAULTS) has this as true.",
     );
+  }
+
+  // API-key hashing (Req 7.9): without API_KEY_PEPPER, keys are stored as
+  // unsalted SHA-256 — a database dump can then be brute-forced offline at
+  // the attacker's leisure. With a pepper, keys hash as HMAC-SHA-256 and a
+  // dump alone is not enough. Existing SHA-256 rows migrate lazily on the
+  // next successful lookup once the pepper is set.
+  if (
+    isProd &&
+    (config.apiKeyPepper === undefined ||
+      config.apiKeyPepper.trim().length === 0)
+  ) {
+    warnings.push(
+      "API_KEY_PEPPER is not set — API keys are stored as unsalted SHA-256, so a " +
+        "database dump alone can be brute-forced offline. Set API_KEY_PEPPER " +
+        "(e.g. `openssl rand -base64 32`) so keys hash as HMAC-SHA-256 with a " +
+        "server-side pepper; existing SHA-256 hashes migrate automatically on " +
+        "their next successful lookup.",
+    );
+  }
+
+  // Transaction-token signing (Req 7.11): HS256 requires every verifier (e.g.
+  // the Gate) to hold the SAME shared secret — a leak anywhere can mint valid
+  // tokens. Asymmetric modes (ES256/EdDSA) publish only the public key via
+  // /.well-known/atf-transaction-jwks.json. Per the design config table,
+  // HS256 in production is a warning, not a blocker (it stays supported).
+  if (isProd) {
+    try {
+      const txConfig = transactionTokenConfigFromEnv(env);
+      if (txConfig !== undefined && (txConfig.alg ?? "HS256") === "HS256") {
+        warnings.push(
+          "Transaction tokens are signed with HS256 — every verifier must hold the " +
+            "shared AGENT_TRANSACTION_SECRET. Prefer TRANSACTION_SIGNING_ALG=ES256 " +
+            "(or EdDSA) with a PKCS8 key in TRANSACTION_SIGNING_KEY: the runtime then " +
+            "publishes the public key under /.well-known/atf-transaction-jwks.json and " +
+            "verifiers (Gate: MCPGATE_TRANSACTION_JWKS_URI) never need the secret.",
+        );
+      }
+    } catch (error) {
+      fatal.push(
+        `Transaction signing configuration is invalid: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
   }
 
   // Autopilot governance: the Continuous Safety & Quality Autopilot loop

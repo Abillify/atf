@@ -63,6 +63,8 @@ interface Harness {
   llmCalls: Array<{ promptTokens: number; completionTokens: number }>;
   diagnostics: Array<{ code: string }>;
   callOptions: Array<{ temperature?: number; abortSignal?: AbortSignal }>;
+  /** Generic counters recorded via metrics.recordCounter (Req 7.8). */
+  counters: Array<{ name: string; labels: Record<string, string> }>;
 }
 
 /**
@@ -77,6 +79,7 @@ function harness(
   const llmCalls: Harness["llmCalls"] = [];
   const diagnostics: Harness["diagnostics"] = [];
   const callOptions: Harness["callOptions"] = [];
+  const counters: Harness["counters"] = [];
 
   const model = new MockLanguageModelV3({
     doGenerate: async (options) => {
@@ -178,7 +181,9 @@ function harness(
       recordRejected: () => {},
       recordCache: () => {},
       recordGuardrail: () => {},
-      recordCounter: () => {},
+      recordCounter: (name: string, labels: Record<string, string>) => {
+        counters.push({ name, labels });
+      },
       setActiveExecutions: () => {},
       setQueueDepth: () => {},
       render: () => "",
@@ -187,7 +192,7 @@ function harness(
     costTracker: { record: () => {} },
   } as unknown as ExecRuntime;
 
-  return { runtime, seen, llmCalls, diagnostics, callOptions };
+  return { runtime, seen, llmCalls, diagnostics, callOptions, counters };
 }
 
 const middle: ModelMessage[] = [
@@ -296,6 +301,32 @@ describe("createHistorySummarizer", () => {
     expect(
       await createHistorySummarizer(h.runtime, summarizerLlm, "n")(middle),
     ).toBeUndefined();
+  });
+
+  test("fail-open on a model error counts aiperator_degraded_total (Req 7.8)", async () => {
+    const hThrow = harness(new Error("provider down"));
+    expect(
+      await createHistorySummarizer(hThrow.runtime, summarizerLlm, "n")(middle),
+    ).toBeUndefined();
+    expect(hThrow.counters).toContainEqual({
+      name: "aiperator_degraded_total",
+      labels: { component: "history_summarizer" },
+    });
+
+    const hFactory = harness("S", {
+      factoryThrows: new Error("misconfigured"),
+    });
+    expect(
+      await createHistorySummarizer(
+        hFactory.runtime,
+        summarizerLlm,
+        "n",
+      )(middle),
+    ).toBeUndefined();
+    expect(hFactory.counters).toContainEqual({
+      name: "aiperator_degraded_total",
+      labels: { component: "history_summarizer" },
+    });
   });
 
   test("returns undefined for a blank model response", async () => {

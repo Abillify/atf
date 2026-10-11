@@ -74,15 +74,24 @@ export function buildObservability(
     replayStore,
     memoryStore,
     piiVaultStore,
+    metrics: metricsOption,
   }: {
     executionStore?: ExecutionStore;
     replayStore?: ReplayStore;
     memoryStore?: MemoryStore;
     piiVaultStore?: PiiVaultStore;
+    /**
+     * Pre-built metrics registry. index.ts creates metrics before the cache
+     * bundle (the memory extractor reports degradations through them,
+     * Req 7.8) and hands the same instance to this bundle so every
+     * subsystem shares one registry. Defaults to a fresh registry
+     * honoring `METRICS_ENABLED`.
+     */
+    metrics?: Metrics;
   } = {},
 ): ObservabilityResult {
   // ── Metrics ───────────────────────────────────────────────────────────────
-  const metrics = createMetrics(config.metricsEnabled ?? true);
+  const metrics = metricsOption ?? createMetrics(config.metricsEnabled ?? true);
 
   // ── Budget service ────────────────────────────────────────────────────────
   const costStore =
@@ -169,13 +178,9 @@ export function buildObservability(
   // Req 1.9 (platform-hardening): every failed durable audit write increments
   // the write-failure counter (readiness surfaces it as `degraded`, Prod_Gate
   // and alerting key off it) — a silently lost trail must be observable.
-  const auditLog: AuditLog = createAuditLog(
-    database,
-    logger,
-    () => {
-      metrics.recordCounter("aiperator_audit_write_failures_total", {});
-    },
-  );
+  const auditLog: AuditLog = createAuditLog(database, logger, () => {
+    metrics.recordCounter("aiperator_audit_write_failures_total", {});
+  });
 
   // ── Audit chain external anchoring (secret-gated) ──────────────────────────
   // Signs the chain tip periodically with an operator-held secret and stores it

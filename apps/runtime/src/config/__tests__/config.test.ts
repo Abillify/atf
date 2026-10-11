@@ -46,6 +46,11 @@ beforeEach(() => {
   delete process.env.EXECUTION_TIMEOUT_MS;
   delete process.env.MCP_TX_SECRET;
   delete process.env.MCP_TX_ACTOR_SECRET;
+  delete process.env.APP_ENV;
+  delete process.env.TRANSACTION_SIGNING_ALG;
+  delete process.env.TRANSACTION_SIGNING_KEY;
+  delete process.env.INPUT_GUARDRAIL_MODEL_FAIL_MODE;
+  delete process.env.INPUT_GUARDRAIL_MAX_CHARS;
   // Keep configuration tests independent of the repository's flows/mcp.yaml.
   // The loader uses ./flows by default, which is intentionally populated in
   // production and would otherwise add real MCP servers to these env tests.
@@ -149,6 +154,100 @@ describe("loadConfig() — valid configurations", () => {
     expect(config.rateLimitPostAuthPerMinute).toBe(23);
   });
 
+  // Requirement 7.9: API_KEY_PEPPER enables peppered HMAC-SHA-256 key hashing.
+  test("API_KEY_PEPPER is undefined by default and passed through when set", () => {
+    expect(expectConfigSuccess().apiKeyPepper).toBeUndefined();
+    expect(
+      expectConfigSuccess({ API_KEY_PEPPER: "s3cret-pepper" }).apiKeyPepper,
+    ).toBe("s3cret-pepper");
+    // Blank/whitespace counts as unset — the legacy SHA-256 form stays active.
+    expect(
+      expectConfigSuccess({ API_KEY_PEPPER: "   " }).apiKeyPepper,
+    ).toBeUndefined();
+  });
+
+  // Requirement 7.11: asymmetric transaction-token signing configuration.
+  test("TRANSACTION_SIGNING_ALG/KEY are parsed into the config (Req 7.11)", () => {
+    expect(expectConfigSuccess().transactionSigningAlg).toBeUndefined();
+    expect(expectConfigSuccess().transactionSigningKey).toBeUndefined();
+    const config = expectConfigSuccess({
+      TRANSACTION_SIGNING_ALG: "ES256",
+      // Synthetic PEM, assembled so the public-tree scanner does not flag it.
+      TRANSACTION_SIGNING_KEY: [
+        "-----BEGIN",
+        "PRIVATE KEY-----\nabc\n-----END",
+      ].join(" "),
+    });
+    expect(config.transactionSigningAlg).toBe("ES256");
+    expect(config.transactionSigningKey).toContain("BEGIN PRIVATE KEY");
+    expect(
+      expectConfigSuccess({ TRANSACTION_SIGNING_ALG: "EdDSA" })
+        .transactionSigningAlg,
+    ).toBe("EdDSA");
+    // Blank PEM counts as unset.
+    expect(
+      expectConfigSuccess({ TRANSACTION_SIGNING_KEY: "   " })
+        .transactionSigningKey,
+    ).toBeUndefined();
+  });
+
+  test("invalid TRANSACTION_SIGNING_ALG is rejected at startup (Req 7.11)", () => {
+    const { stderrOutput } = expectConfigFailure({
+      TRANSACTION_SIGNING_ALG: "RS512",
+    });
+    expect(stderrOutput.join("\n")).toContain("TRANSACTION_SIGNING_ALG");
+  });
+
+  // Requirement 7.5: the input-guardrail fail mode defaults to `open` in
+  // Development and `closed` in Production, with an explicit override.
+  test("input guardrail fail mode defaults to open outside production", () => {
+    expect(expectConfigSuccess().inputGuardrailModelFailMode).toBe("open");
+    expect(
+      expectConfigSuccess({ APP_ENV: "development" })
+        .inputGuardrailModelFailMode,
+    ).toBe("open");
+  });
+
+  test("input guardrail fail mode defaults to closed in production", () => {
+    expect(
+      expectConfigSuccess({ APP_ENV: "production" })
+        .inputGuardrailModelFailMode,
+    ).toBe("closed");
+  });
+
+  test("input guardrail fail mode explicit override wins over APP_ENV", () => {
+    expect(
+      expectConfigSuccess({
+        APP_ENV: "production",
+        INPUT_GUARDRAIL_MODEL_FAIL_MODE: "open",
+      }).inputGuardrailModelFailMode,
+    ).toBe("open");
+    expect(
+      expectConfigSuccess({
+        APP_ENV: "development",
+        INPUT_GUARDRAIL_MODEL_FAIL_MODE: "closed",
+      }).inputGuardrailModelFailMode,
+    ).toBe("closed");
+  });
+
+  test("rejects an invalid input guardrail fail mode", () => {
+    const { stderrOutput } = expectConfigFailure({
+      INPUT_GUARDRAIL_MODEL_FAIL_MODE: "lenient",
+    });
+    expect(stderrOutput.join("\n")).toContain(
+      "INPUT_GUARDRAIL_MODEL_FAIL_MODE",
+    );
+  });
+
+  // Requirement 7.6: classifier character budget for chunked classification.
+  test("input guardrail max chars defaults to 8000 and parses overrides", () => {
+    expect(expectConfigSuccess().inputGuardrailMaxChars).toBe(8000);
+    expect(
+      expectConfigSuccess({ INPUT_GUARDRAIL_MAX_CHARS: "12000" })
+        .inputGuardrailMaxChars,
+    ).toBe(12000);
+  });
+
   test("parses strict MCP schema compatibility mode", () => {
     expect(
       expectConfigSuccess({ MCP_SCHEMA_COMPATIBILITY_MODE: "strict" })
@@ -157,7 +256,12 @@ describe("loadConfig() — valid configurations", () => {
   });
 
   test("parses every LLM stream fallback policy", () => {
-    for (const policy of ["legacy", "report", "explicit", "disabled"] as const) {
+    for (const policy of [
+      "legacy",
+      "report",
+      "explicit",
+      "disabled",
+    ] as const) {
       expect(
         expectConfigSuccess({ LLM_STREAM_FALLBACK_POLICY: policy })
           .llmStreamFallbackPolicy,
@@ -271,13 +375,31 @@ describe("loadConfig() — valid configurations", () => {
   test("loads endpoints and credentials from PROVIDERS", () => {
     const config = expectConfigSuccess({
       PROVIDERS: JSON.stringify([
-        { name: "gpuvllm", protocol: "openai", url: "http://vllm:8000/v1", apiKey: "sk-test" },
-        { name: "localollama", protocol: "ollama", url: "http://localhost:11434" },
+        {
+          name: "gpuvllm",
+          protocol: "openai",
+          url: "http://vllm:8000/v1",
+          apiKey: "sk-test",
+        },
+        {
+          name: "localollama",
+          protocol: "ollama",
+          url: "http://localhost:11434",
+        },
       ]),
     });
     expect(config.providers).toEqual([
-      { name: "gpuvllm", protocol: "openai", url: "http://vllm:8000/v1", apiKey: "sk-test" },
-      { name: "localollama", protocol: "ollama", url: "http://localhost:11434" },
+      {
+        name: "gpuvllm",
+        protocol: "openai",
+        url: "http://vllm:8000/v1",
+        apiKey: "sk-test",
+      },
+      {
+        name: "localollama",
+        protocol: "ollama",
+        url: "http://localhost:11434",
+      },
     ]);
   });
 
@@ -334,7 +456,9 @@ describe("loadConfig() — valid configurations", () => {
         writeFileSync(join(flowsDir, "mcp.yaml"), content);
         process.stderr.write = () => true;
 
-        expect(expectConfigSuccess({ FLOWS_DIR: flowsDir }).mcpServers).toEqual([]);
+        expect(expectConfigSuccess({ FLOWS_DIR: flowsDir }).mcpServers).toEqual(
+          [],
+        );
       } finally {
         process.stderr.write = originalStderr;
         rmSync(flowsDir, { recursive: true, force: true });

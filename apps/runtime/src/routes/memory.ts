@@ -37,11 +37,15 @@ function scopeFromRequest(
   jwtVerifier: JwtVerifier | undefined,
   metadata: Record<string, unknown>,
 ): MemoryScope | undefined {
-  const claims = jwtVerifier?.decodePayload(token) ?? null;
+  // Req 7.4: the memory scope selects a tenant/user partition, so claims count
+  // only when the verifier actually verifies (`enabled`). `decodePayload` is an
+  // unverified base64 read; a Noop verifier's payload is attacker-chosen and
+  // must not resolve a scope. `metadata.clientId` stays as the explicit client
+  // parameter an authenticated caller passes for its own tenant.
+  const claims =
+    jwtVerifier?.enabled === true ? jwtVerifier.decodePayload(token) : null;
   const userEmail =
-    typeof claims?.email === "string"
-      ? (claims.email as string)
-      : undefined;
+    typeof claims?.email === "string" ? (claims.email as string) : undefined;
   const clientId =
     (typeof metadata.clientId === "string"
       ? (metadata.clientId as string)

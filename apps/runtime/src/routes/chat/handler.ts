@@ -726,8 +726,15 @@ export function buildRequestContext(opts: {
       // available and must not be overridable by anything the caller sends.
       { value: opts.verifiedTenantId, source: "verified principal" },
       { value: apiKeyIdentity?.tenantId, source: "API key (aip-…)" },
-      { value: claims?.client_id, source: 'JWT claim "client_id"' },
-      { value: claims?.tid, source: 'JWT claim "tid"' },
+      // Req 7.4: raw JWT claims feed the tenant only when the middleware
+      // reports them as cryptographically verified (`identityClaimsVerified`).
+      // An unverified payload stays available for display, never for routing.
+      ...(opts.identityClaimsVerified === true
+        ? ([
+            { value: claims?.client_id, source: 'JWT claim "client_id"' },
+            { value: claims?.tid, source: 'JWT claim "tid"' },
+          ] as const)
+        : []),
     ],
     metadata.clientId,
     "metadata.clientId",

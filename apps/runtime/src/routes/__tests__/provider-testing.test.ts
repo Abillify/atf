@@ -34,7 +34,12 @@ const config = {
 /** Router with auth switched off — the default for the behaviour tests. */
 function openApp() {
   const app = new Hono();
-  app.route("/", createProviderTestingRouter({ config }));
+  // Req 7.2: the router's outbound transport is injectable — hand it the stub
+  // that stubFetch() installed just before this router is built.
+  app.route(
+    "/",
+    createProviderTestingRouter({ config, fetchFn: globalThis.fetch }),
+  );
   return app;
 }
 
@@ -45,6 +50,7 @@ function guardedApp() {
     "/",
     createProviderTestingRouter({
       config,
+      fetchFn: globalThis.fetch,
       authRequired: true,
       operatorAuth: createOperatorAuthorizer({
         authRequired: true,

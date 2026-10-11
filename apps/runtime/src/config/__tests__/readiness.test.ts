@@ -78,6 +78,76 @@ describe("checkProductionReadiness", () => {
     ).toBe(false);
   });
 
+  test("warns in production when API_KEY_PEPPER is unset (Req 7.9)", () => {
+    const { warnings } = checkProductionReadiness(productionConfig());
+    expect(warnings.some((w) => w.includes("API_KEY_PEPPER is not set"))).toBe(
+      true,
+    );
+  });
+
+  test("no pepper warning when API_KEY_PEPPER is configured", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({ apiKeyPepper: "s3cret-pepper" }),
+    );
+    expect(warnings.some((w) => w.includes("API_KEY_PEPPER is not set"))).toBe(
+      false,
+    );
+  });
+
+  test("no pepper warning outside production", () => {
+    const { warnings } = checkProductionReadiness(
+      baseConfig({ appEnv: "development" }),
+    );
+    expect(warnings.some((w) => w.includes("API_KEY_PEPPER is not set"))).toBe(
+      false,
+    );
+  });
+
+  test("warns in production when transaction tokens sign with HS256 (Req 7.11)", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      productionConfig(),
+      undefined,
+      { AGENT_TRANSACTION_SECRET: "0".repeat(32) },
+    );
+    expect(fatal).toEqual([]);
+    expect(warnings.some((w) => w.includes("signed with HS256"))).toBe(true);
+  });
+
+  test("no HS256 warning for asymmetric transaction signing (Req 7.11)", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig(),
+      undefined,
+      {
+        TRANSACTION_SIGNING_ALG: "ES256",
+        // Synthetic PEM, assembled so the public-tree scanner does not flag it.
+        TRANSACTION_SIGNING_KEY: [
+          "-----BEGIN",
+          "PRIVATE KEY-----\nabc\n-----END",
+          "PRIVATE KEY-----",
+        ].join(" "),
+      },
+    );
+    expect(warnings.some((w) => w.includes("signed with HS256"))).toBe(false);
+  });
+
+  test("no HS256 warning when transaction signing is unconfigured", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig(),
+      undefined,
+      {},
+    );
+    expect(warnings.some((w) => w.includes("signed with HS256"))).toBe(false);
+  });
+
+  test("ES256 without TRANSACTION_SIGNING_KEY is fatal in production (Req 7.11)", () => {
+    const { fatal } = checkProductionReadiness(productionConfig(), undefined, {
+      TRANSACTION_SIGNING_ALG: "ES256",
+    });
+    expect(
+      fatal.some((f) => f.includes("Transaction signing configuration")),
+    ).toBe(true);
+  });
+
   test("rejects anonymous authentication with active tenant isolation", () => {
     const report = checkProductionReadiness(
       baseConfig({
@@ -91,6 +161,31 @@ describe("checkProductionReadiness", () => {
         finding.includes("AUTHN_MODE=disabled cannot be used"),
       ),
     ).toBe(true);
+  });
+
+  // Req 7.4: the legacy mode (AUTHN_MODE unset) is a development-only
+  // convenience — production startup must be blocked.
+  test("legacy mode (AUTHN_MODE unset) is fatal in production", () => {
+    const report = checkProductionReadiness(
+      baseConfig({ appEnv: "production" }),
+    );
+    expect(
+      report.fatal.some((finding) =>
+        finding.includes("Production requires AUTHN_MODE=oidc"),
+      ),
+    ).toBe(true);
+    expect(
+      report.warnings.some((w) => w.includes("AUTHN_MODE is not set")),
+    ).toBe(true);
+  });
+
+  test("legacy mode stays allowed in development", () => {
+    const report = checkProductionReadiness(
+      baseConfig({ appEnv: "development" }),
+    );
+    expect(report.fatal.some((finding) => finding.includes("AUTHN_MODE"))).toBe(
+      false,
+    );
   });
 
   test("wildcard CORS is fatal in production, warning in development", () => {

@@ -1797,6 +1797,15 @@ class GraphEngineServiceImpl implements GraphEngineService {
         inspectionToolAnnounced: edgeFlowInspectionAnnounced,
         imageConsumedUpstream: edgeFlowImagesConsumed,
         imageConsumerId: edgeFlowImageConsumerId,
+        // Req 7.12: the debug trace is a persisted copy of what crossed the
+        // edge — while output redaction is active it must not hold raw PII.
+        // The SAME effective guardrail as the SSE stream applies (per-flow
+        // override already resolved into `guardrail`); content the PII vault
+        // has already tokenized (`[[PII:...]]`) matches no detector and passes
+        // through, so tokenization is respected rather than double-processed.
+        ...(guardrail !== undefined
+          ? { redact: (text: string): string => guardrail.redact(text).text }
+          : {}),
       });
       edgeFlowInspectionAnnounced = result.inspectionToolAnnounced;
       edgeFlowImagesConsumed = result.imageConsumedUpstream;

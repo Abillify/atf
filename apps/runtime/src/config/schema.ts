@@ -430,6 +430,14 @@ export interface AppConfig {
   guardrailMode?: "redact" | "block";
   toolEgressGuardrailEnabled?: boolean;
   toolEgressMode?: "redact" | "block";
+  /** Egress_Guard: split-DNS host exceptions allowed to reach private ranges. */
+  egressAllowPrivateHosts?: string[];
+  /** Egress_Guard: optional destination allow-list (empty = any public host). */
+  egressAllowedHosts?: string[];
+  /** Egress_Guard: maximum response body size in bytes (0 = unlimited). */
+  egressMaxResponseBytes?: number;
+  /** Egress_Guard: default timeout in ms for calls without a caller signal. */
+  egressTimeoutMs?: number;
   toolOutputValidatorEnabled?: boolean;
   toolOutputValidatorMode?: "flag" | "redact";
   toolOutputValidatorThreshold?: number;
@@ -506,6 +514,13 @@ export interface AppConfig {
   inputGuardrailThreshold?: number;
   inputGuardrailModel?: LlmConfig;
   inputGuardrailModelMinScore?: number;
+  /**
+   * Fail mode of the model-based input guardrail (Requirement 7.5). Resolved
+   * in load.ts: `open` in Development, `closed` in Production when unset.
+   */
+  inputGuardrailModelFailMode?: "open" | "closed";
+  /** Per-call character budget for chunked classification (Requirement 7.6). */
+  inputGuardrailMaxChars?: number;
   jobsEnabled?: boolean;
   jobsTtlSeconds?: number;
   jobsMaxEntries?: number;
@@ -629,6 +644,23 @@ export interface AppConfig {
   operatorRoleMap?: Record<string, OperatorRole>;
   operatorDefaultRole?: OperatorRole;
   tenantManagementEnabled?: boolean;
+  /**
+   * Server-side pepper for API-key hashing (`API_KEY_PEPPER`). When set, new
+   * API keys are stored as HMAC-SHA-256(pepper, rawKey) instead of unsalted
+   * SHA-256, so a database dump alone cannot be brute-forced offline. Legacy
+   * SHA-256 hashes migrate lazily on the next successful lookup.
+   */
+  apiKeyPepper?: string;
+  /**
+   * Transaction-token signing algorithm (`TRANSACTION_SIGNING_ALG`, Req 7.11).
+   * Defaults to HS256; ES256/EdDSA sign with the PKCS8 PEM in
+   * `transactionSigningKey` and publish the public key under
+   * `/.well-known/atf-transaction-jwks.json` so verifiers (Gate) never need
+   * the shared secret.
+   */
+  transactionSigningAlg?: "HS256" | "ES256" | "EdDSA";
+  /** PKCS8 PEM private signing key for asymmetric transaction tokens. */
+  transactionSigningKey?: string;
   gitopsEnabled?: boolean;
   gitopsWebhookSecret?: string;
   gitopsBranch?: string;
@@ -1551,6 +1583,38 @@ export const EnvSchema = z.object({
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
   TOOL_EGRESS_MODE: z.enum(["redact", "block"]).default("redact"),
+  // Egress_Guard (Req 7.1, 7.2): exact hostnames (split-DNS exceptions) that
+  // may resolve to RFC1918/ULA — and in development, loopback — addresses.
+  EGRESS_ALLOW_PRIVATE_HOSTS: z
+    .string()
+    .optional()
+    .transform((raw): string[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      return raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }),
+  // Optional destination allow-list for every guarded outbound call; empty
+  // means "any public host". Entries may be exact hosts or `.suffix` domains.
+  EGRESS_ALLOWED_HOSTS: z
+    .string()
+    .optional()
+    .transform((raw): string[] => {
+      if (raw === undefined || raw.trim() === "") return [];
+      return raw
+        .split(",")
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }),
+  EGRESS_MAX_RESPONSE_BYTES: z.coerce
+    .number()
+    .int()
+    .min(0)
+    .default(64 * 1024 * 1024),
+  // Default timeout for guarded calls without a caller-provided signal.
+  // 0 disables it so long-lived streaming calls are unaffected.
+  EGRESS_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
   TOOL_OUTPUT_VALIDATOR_ENABLED: z
     .string()
     .optional()
@@ -1990,6 +2054,22 @@ export const EnvSchema = z.object({
       return result.data;
     }),
   INPUT_GUARDRAIL_MODEL_MIN_SCORE: z.coerce.number().min(0).max(1).default(0.3),
+  /**
+   * Fail mode of the model-based input classifier. No Zod default: the
+   * effective default is environment-conditional and resolved in load.ts —
+   * `open` in Development, `closed` in Production (Requirement 7.5).
+   */
+  INPUT_GUARDRAIL_MODEL_FAIL_MODE: z.enum(["open", "closed"]).optional(),
+  /**
+   * Character budget per classifier call; longer texts are classified
+   * chunk-wise with overlap instead of risking a timeout (Requirement 7.6).
+   */
+  INPUT_GUARDRAIL_MAX_CHARS: z.coerce
+    .number()
+    .int()
+    .min(500)
+    .max(200_000)
+    .default(8000),
   JOBS_ENABLED: z
     .string()
     .optional()
@@ -2253,6 +2333,26 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  // Server-side pepper for API-key hashing (Req 7.9). Empty/unset keeps the
+  // legacy unsalted SHA-256 form; when set, new keys hash as
+  // HMAC-SHA-256(pepper, rawKey) and legacy rows migrate lazily on lookup.
+  API_KEY_PEPPER: z
+    .string()
+    .optional()
+    .transform((raw): string | undefined =>
+      raw !== undefined && raw.trim().length > 0 ? raw : undefined,
+    ),
+  // Transaction-token signing (Req 7.11). HS256 stays the default; ES256/EdDSA
+  // require TRANSACTION_SIGNING_KEY (PKCS8 PEM) and expose the public key via
+  // /.well-known/atf-transaction-jwks.json. Actual key/alg combination checks
+  // happen in transactionTokenConfigFromEnv() when tokens are issued.
+  TRANSACTION_SIGNING_ALG: z.enum(["HS256", "ES256", "EdDSA"]).optional(),
+  TRANSACTION_SIGNING_KEY: z
+    .string()
+    .optional()
+    .transform((raw): string | undefined =>
+      raw !== undefined && raw.trim().length > 0 ? raw : undefined,
+    ),
   GITOPS_ENABLED: z
     .string()
     .optional()

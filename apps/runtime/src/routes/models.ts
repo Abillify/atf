@@ -100,6 +100,7 @@ export function createModelsRouter(
       ssoToken,
       claims: principal?.claims ?? null,
       metadata: {},
+      identityClaimsVerified: principal?.verified === true,
       ...(principal?.tenantId !== undefined
         ? { verifiedTenantId: principal.tenantId }
         : {}),

@@ -24,6 +24,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Logger } from "../observability/logger.js";
+import type { Metrics } from "../observability/metrics.js";
 import {
   createDenyAllToolAuthzEngine,
   createToolAuthzEngine,
@@ -44,6 +45,14 @@ export interface ToolAuthzLoader {
   readonly engine: ToolAuthzEngine;
   /** True when a policy file was found and loaded successfully. */
   readonly hasPolicy: boolean;
+  /**
+   * True once a reload of `tool-authz.json` has failed (parse or read error)
+   * and has not since been followed by a successful reload (Req 7.7). While
+   * stale, the engine in effect is the last-known-good (or deny-all) policy —
+   * NOT the file on disk. Surfaced as `aiperator_policy_stale_total` and the
+   * `policy_stale` health flag.
+   */
+  readonly policyStale: boolean;
   /** Reload the policy file. Called by the flow-parser watcher on file change. */
   reload(): void;
   /**
@@ -59,17 +68,21 @@ class ToolAuthzLoaderImpl implements ToolAuthzLoader {
   private _hasPolicy = false;
   /** True once a syntactically valid policy has been loaded at least once. */
   private _hasValidPolicy = false;
+  /** Req 7.7: set on every failed reload, cleared on the next success. */
+  private _policyStale = false;
   private readonly filePath: string;
   private readonly failClosed: boolean;
+  private readonly metrics: Metrics | undefined;
 
   constructor(
     flowsDir: string,
     private readonly logger?: Logger,
-    options?: { failClosed?: boolean },
+    options?: { failClosed?: boolean; metrics?: Metrics },
   ) {
     this.filePath = path.join(flowsDir, TOOL_AUTHZ_FILE);
     // Fail-closed is the secure default; callers opt out with failClosed:false.
     this.failClosed = options?.failClosed !== false;
+    this.metrics = options?.metrics;
     this._engine = createToolAuthzEngine(undefined); // no-op until loaded
     this.reload();
   }
@@ -80,6 +93,16 @@ class ToolAuthzLoaderImpl implements ToolAuthzLoader {
 
   get hasPolicy(): boolean {
     return this._hasPolicy;
+  }
+
+  get policyStale(): boolean {
+    return this._policyStale;
+  }
+
+  /** Req 7.7: mark the policy stale and count the failed reload. */
+  private markPolicyStale(): void {
+    this._policyStale = true;
+    this.metrics?.recordCounter("aiperator_policy_stale_total", {});
   }
 
   save(policy: unknown): ToolAuthzSaveResult {
@@ -136,12 +159,14 @@ class ToolAuthzLoaderImpl implements ToolAuthzLoader {
             `tool-authz.json failed to parse (${error}) — denying all tool calls (fail-closed)`,
           );
           this._hasPolicy = true;
+          this.markPolicyStale();
           this.logger?.error(
             "Failed to parse tool-authz.json — failing CLOSED (all tool calls denied)",
             { error, file: this.filePath },
           );
           return;
         }
+        this.markPolicyStale();
         this.logger?.warn(
           this.failClosed
             ? "Failed to parse tool-authz.json — keeping last-known-good policy (fail-closed)"
@@ -153,11 +178,13 @@ class ToolAuthzLoaderImpl implements ToolAuthzLoader {
       this._engine = engine;
       this._hasPolicy = engine.active;
       this._hasValidPolicy = true;
+      this._policyStale = false;
       this.logger?.info("Tool authorization policy loaded", {
         file: this.filePath,
         active: this._hasPolicy,
       });
     } catch (err) {
+      this.markPolicyStale();
       this.logger?.warn(
         "Error reading tool-authz.json — keeping previous policy",
         {
@@ -172,7 +199,7 @@ class ToolAuthzLoaderImpl implements ToolAuthzLoader {
 export function createToolAuthzLoader(
   flowsDir: string,
   logger?: Logger,
-  options?: { failClosed?: boolean },
+  options?: { failClosed?: boolean; metrics?: Metrics },
 ): ToolAuthzLoader {
   return new ToolAuthzLoaderImpl(flowsDir, logger, options);
 }

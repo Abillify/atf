@@ -57,6 +57,7 @@ interface ClassifyArgs {
   inspectionToolAnnounced?: boolean;
   imageConsumedUpstream?: boolean;
   imageConsumerId?: string | undefined;
+  redact?: (text: string) => string;
 }
 
 const classify = (args: ClassifyArgs) =>
@@ -71,6 +72,7 @@ const classify = (args: ClassifyArgs) =>
     inspectionToolAnnounced: args.inspectionToolAnnounced ?? false,
     imageConsumedUpstream: args.imageConsumedUpstream ?? false,
     imageConsumerId: args.imageConsumerId ?? undefined,
+    ...(args.redact !== undefined ? { redact: args.redact } : {}),
   });
 
 const itemsOfKind = (
@@ -505,5 +507,93 @@ describe("classifyEdgeFlow — record shape", () => {
     expect(record.source).toBe("start");
     expect(record.target).toBe("end");
     expect(record.sequence).toBe(7);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Redaction / tokenization (Req 7.12)
+// ---------------------------------------------------------------------------
+
+describe("classifyEdgeFlow — redaction hook (Req 7.12)", () => {
+  // Deterministic stand-in for the output guardrail: every e-mail becomes a
+  // placeholder, everything else passes through.
+  const redactEmails = (text: string): string =>
+    text.replace(/[\w.+-]+@[\w-]+\.[\w.]+/g, "[REDACTED_EMAIL]");
+
+  const piiState = (): AgentState =>
+    state({
+      messages: [
+        new HumanMessage("Schreib an jane.doe@example.com"),
+        new AIMessage("OK, mail geht an jane.doe@example.com"),
+      ],
+      toolResults: [
+        {
+          tool_name: "crm",
+          tool_call_id: "c-redact",
+          result: { kontakt: "jane.doe@example.com" },
+          execution_time_seconds: 0.1,
+        },
+      ],
+      classification: { imageContext: "Transkript: jane.doe@example.com" },
+    });
+
+  it("scrubs every free-text item content through the redact hook", () => {
+    const { record } = classify({
+      state: piiState(),
+      baseline: counters({ toolResultCount: 0 }),
+      redact: redactEmails,
+    });
+    for (const item of record.items) {
+      expect(item.content ?? "").not.toContain("jane.doe@example.com");
+    }
+    expect(findLabel(record.items, "Query")?.content).toBe(
+      "Schreib an [REDACTED_EMAIL]",
+    );
+    expect(findLabel(record.items, "Antwort")?.content).toBe(
+      "OK, mail geht an [REDACTED_EMAIL]",
+    );
+    expect(findLabel(record.items, "Ergebnis: crm")?.content).toContain(
+      "[REDACTED_EMAIL]",
+    );
+    expect(findLabel(record.items, "Klassifikation")?.content).toContain(
+      "[REDACTED_EMAIL]",
+    );
+  });
+
+  it("redacts BEFORE excerpting (no half-PII at the excerpt boundary)", () => {
+    // A long filler pushes the e-mail past the 2000-char excerpt cut: with
+    // excerpt-then-redact the visible half would survive; redact-then-excerpt
+    // leaves no raw PII anywhere in the content.
+    const email = "jane.doe@example.com";
+    const text = `${"x".repeat(1_990)}${email}`;
+    const { record } = classify({
+      state: state({ messages: [new HumanMessage(text)] }),
+      redact: redactEmails,
+    });
+    const content = findLabel(record.items, "Query")?.content ?? "";
+    expect(content).not.toContain(email);
+    expect(content).toContain("[REDACTED_EMAIL]");
+  });
+
+  it("passes already-tokenized content through unchanged (vault mode)", () => {
+    // PII-vault ingress tokenizes the state before the graph runs; the trace
+    // must keep the [[PII:...]] placeholders as-is (they match no detector).
+    const tokenized = "Kontakt: [[PII:0123456789abcdef]]";
+    const { record } = classify({
+      state: state({ messages: [new HumanMessage(tokenized)] }),
+      redact: (t) => t,
+    });
+    expect(findLabel(record.items, "Query")?.content).toBe(tokenized);
+  });
+
+  it("keeps raw content when no redact hook is given (guardrails off)", () => {
+    const { record } = classify({
+      state: state({
+        messages: [new HumanMessage("mail an jane.doe@example.com")],
+      }),
+    });
+    expect(findLabel(record.items, "Query")?.content).toBe(
+      "mail an jane.doe@example.com",
+    );
   });
 });

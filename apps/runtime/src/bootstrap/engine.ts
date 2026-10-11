@@ -179,7 +179,7 @@ export async function buildEngine(
   const checkpointer = createCheckpointer(config, database, logger);
   const threadLock =
     config.redisUrl !== undefined && config.checkpointingEnabled === true
-      ? createRedisThreadLock(config.redisUrl, logger)
+      ? createRedisThreadLock(config.redisUrl, logger, undefined, metrics)
       : undefined;
   if (threadLock !== undefined) {
     logger.info("Distributed conversation thread locking enabled via Redis");
@@ -196,6 +196,8 @@ export async function buildEngine(
             ttlMs: (config.executionTimeoutMs ?? 120_000) + 30_000,
             redisUrl: config.redisUrl,
             database,
+            // Req 7.8: count fail-open degradations of the cluster limiter.
+            metrics,
           },
           logger,
         )

@@ -25,6 +25,7 @@
 import type { AttackTemplate, AttackCategory } from "./red-team-attacks.js";
 import { ATTACK_TEMPLATES } from "./red-team-attacks.js";
 import type { Logger } from "../observability/logger.js";
+import { egressFetch } from "./egress.js";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -53,6 +54,11 @@ export interface AttackRegistryOptions {
    * from `getAll()` and from the sample rotations used by the scheduler.
    */
   disabledCategories?: AttackCategory[];
+  /**
+   * Outbound fetch for remote template polling. Defaults to the
+   * process-wide Egress_Guard (SSRF-safe); tests may inject a stub.
+   */
+  fetchFn?: typeof fetch;
   logger?: Logger;
 }
 
@@ -125,6 +131,7 @@ class AttackRegistryImpl implements AttackRegistry {
   private readonly disabled: Set<AttackCategory>;
   private readonly remoteUrl: string | undefined;
   private readonly pollIntervalMs: number;
+  private readonly fetchFn: typeof fetch;
   private readonly logger: Logger | undefined;
   private timer: ReturnType<typeof setInterval> | undefined;
 
@@ -132,6 +139,7 @@ class AttackRegistryImpl implements AttackRegistry {
     this.disabled = new Set(opts.disabledCategories ?? []);
     this.remoteUrl = opts.remoteUrl;
     this.pollIntervalMs = opts.pollIntervalMs ?? 6 * 60 * 60_000;
+    this.fetchFn = opts.fetchFn ?? egressFetch;
     this.logger = opts.logger;
   }
 
@@ -159,7 +167,9 @@ class AttackRegistryImpl implements AttackRegistry {
     // Never shadow a built-in.
     const builtinIds = new Set(ATTACK_TEMPLATES.map((t) => t.id));
     if (builtinIds.has(template.id)) {
-      this.logger?.warn("[AttackRegistry] Cannot override built-in template", { id: template.id });
+      this.logger?.warn("[AttackRegistry] Cannot override built-in template", {
+        id: template.id,
+      });
       return;
     }
     this.custom.set(template.id, template);
@@ -168,7 +178,7 @@ class AttackRegistryImpl implements AttackRegistry {
   async refreshRemote(): Promise<void> {
     if (this.remoteUrl === undefined) return;
     try {
-      const resp = await fetch(this.remoteUrl, {
+      const resp = await this.fetchFn(this.remoteUrl, {
         headers: { Accept: "application/json" },
         signal: AbortSignal.timeout(10_000),
       });
@@ -187,8 +197,14 @@ class AttackRegistryImpl implements AttackRegistry {
       const builtinIds = new Set(ATTACK_TEMPLATES.map((t) => t.id));
 
       for (const item of raw) {
-        if (!isValidSerializable(item)) { skipped++; continue; }
-        if (builtinIds.has(item.id)) { skipped++; continue; }
+        if (!isValidSerializable(item)) {
+          skipped++;
+          continue;
+        }
+        if (builtinIds.has(item.id)) {
+          skipped++;
+          continue;
+        }
         this.remote.set(item.id, toAttackTemplate(item));
         added++;
       }
@@ -239,7 +255,8 @@ class AttackRegistryImpl implements AttackRegistry {
   stats() {
     return {
       total: this.getAll().length,
-      builtin: ATTACK_TEMPLATES.filter((t) => !this.disabled.has(t.category)).length,
+      builtin: ATTACK_TEMPLATES.filter((t) => !this.disabled.has(t.category))
+        .length,
       custom: this.custom.size,
       remote: this.remote.size,
       disabled: this.disabled.size,

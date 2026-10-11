@@ -153,6 +153,10 @@ export function createHistorySummarizer(
           : {}),
       });
     } catch (err) {
+      // Fail open — Req 7.8: the caller keeps the full history.
+      runtime.metrics.recordCounter("aiperator_degraded_total", {
+        component: "history_summarizer",
+      });
       if (err instanceof UnknownProviderError) return undefined;
       return undefined;
     }
@@ -188,7 +192,11 @@ export function createHistorySummarizer(
       text = res.text;
       genUsage = res.usage;
     } catch {
-      return undefined; // fail open — caller keeps the full history
+      // Fail open — caller keeps the full history. Req 7.8.
+      runtime.metrics.recordCounter("aiperator_degraded_total", {
+        component: "history_summarizer",
+      });
+      return undefined;
     }
 
     // Accounting (mirrors rag-compression): estimate when the provider omits

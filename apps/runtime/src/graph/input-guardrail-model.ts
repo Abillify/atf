@@ -15,9 +15,19 @@
  * the model when the heuristic already saw *some* signal (a configurable
  * gray-zone floor), so benign traffic never pays for a model round-trip.
  *
- * The classifier fails OPEN (returns score 0) on any error or timeout — a
- * classifier outage must never block legitimate traffic; the heuristic score
- * still stands on its own.
+ * Failure behaviour is configurable via `failMode` (Requirement 7.5):
+ * - `open` (default in Development): an error or timeout yields score 0 — a
+ *   classifier outage never blocks legitimate traffic; the heuristic score
+ *   still stands on its own.
+ * - `closed` (default in Production): an error or timeout yields
+ *   `{ isInjection: true, score: 1, reason: "classifier_unavailable" }` so the
+ *   request is treated as hostile while the classifier is down.
+ * In both modes the result carries a `degraded` marker so the caller can emit
+ * a metric and a trace diagnosis for every failure.
+ *
+ * Texts longer than `maxChars` are classified chunk-wise with an overlap
+ * (Requirement 7.6) instead of risking a model timeout on one huge prompt; the
+ * chunk verdicts are combined by maximum score.
  *
  * No `any` at module boundaries.
  */
@@ -33,6 +43,15 @@ export interface ModelClassifierResult {
   isInjection: boolean;
   /** Short human-readable rationale (for logging / observability). */
   reason?: string;
+  /**
+   * Set when the classifier itself failed (error/timeout) and the verdict came
+   * from the configured fail mode rather than the model. Carries the fail mode
+   * actually applied so callers can count it as a metric and surface a trace
+   * diagnosis (Requirement 7.5).
+   */
+  degraded?: { failMode: "open" | "closed"; error: string };
+  /** Number of chunks the text was split into (only set when chunking, Req 7.6). */
+  chunks?: number;
 }
 
 /** An async classifier: maps inbound text to a risk assessment. */
@@ -41,10 +60,26 @@ export type ModelInputClassify = (
 ) => Promise<ModelClassifierResult>;
 
 export interface ModelInputClassifierOptions {
-  /** Abort the model call after this many ms (fail-open). Default 4000. */
+  /** Abort a model call after this many ms. Default 4000. */
   timeoutMs?: number;
   /** Optional structured logger for diagnostics. */
   logger?: { warn: (msg: string, meta?: Record<string, unknown>) => void };
+  /**
+   * Behaviour when the classifier errors or times out (Requirement 7.5).
+   * `open` → score 0 (traffic flows, heuristic still applies);
+   * `closed` → `{ isInjection: true, score: 1, reason: "classifier_unavailable" }`.
+   * Default `open`; the config layer resolves the environment-conditional
+   * default (`closed` in Production).
+   */
+  failMode?: "open" | "closed";
+  /**
+   * Maximum characters sent to the model per call. Longer texts are split
+   * into chunks with `overlapChars` overlap and combined by maximum score
+   * (Requirement 7.6). Default 8000; 0 disables chunking.
+   */
+  maxChars?: number;
+  /** Overlap between consecutive chunks. Default 200. */
+  overlapChars?: number;
 }
 
 const CLASSIFIER_SYSTEM_PROMPT =
@@ -79,10 +114,51 @@ function clampScore(n: unknown): number {
   return Math.round(n * 1000) / 1000;
 }
 
+/** Default per-call character budget for chunked classification (Req 7.6). */
+export const DEFAULT_INPUT_GUARDRAIL_MAX_CHARS = 8000;
+/** Default overlap between consecutive chunks (Req 7.6). */
+export const DEFAULT_INPUT_GUARDRAIL_OVERLAP_CHARS = 200;
+
+/**
+ * Splits `text` into chunks of at most `maxChars` characters, advancing by
+ * `maxChars - overlapChars` so consecutive chunks share `overlapChars`
+ * characters — an injection split across a chunk boundary is still seen whole
+ * by at least one chunk. Prefers a whitespace boundary near the cut so chunk
+ * semantics survive; falls back to a hard cut.
+ */
+export function splitIntoChunks(
+  text: string,
+  maxChars: number,
+  overlapChars: number,
+): string[] {
+  if (maxChars <= 0 || text.length <= maxChars) return [text];
+  const overlap = Math.max(0, Math.min(overlapChars, maxChars - 1));
+  const step = maxChars - overlap;
+  const chunks: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(start + maxChars, text.length);
+    if (end < text.length) {
+      // Prefer cutting at the last whitespace before `end` — but never earlier
+      // than `start + step`, so the next chunk (start = max(end - overlap,
+      // start + step)) always begins at or before this chunk's end: full
+      // coverage with no gaps is guaranteed.
+      const cut = text.lastIndexOf(" ", end);
+      if (cut >= start + step) end = cut;
+    }
+    chunks.push(text.slice(start, end));
+    if (end >= text.length) break;
+    start = Math.max(end - overlap, start + step);
+  }
+  return chunks;
+}
+
 /**
  * Builds a model-based classifier bound to a specific {@link LanguageModel}.
  * The returned function is safe to call on the request hot path: it is bounded
- * by a timeout and never throws (fails open with score 0).
+ * by a timeout and never throws. On error or timeout it applies the configured
+ * `failMode` (Requirement 7.5) and marks the result `degraded`; texts longer
+ * than `maxChars` are classified chunk-wise (Requirement 7.6).
  */
 export function createModelInputClassifier(
   model: LanguageModel,
@@ -90,11 +166,12 @@ export function createModelInputClassifier(
 ): ModelInputClassify {
   const timeoutMs = opts.timeoutMs ?? 4000;
   const logger = opts.logger;
+  const failMode = opts.failMode ?? "open";
+  const maxChars = opts.maxChars ?? DEFAULT_INPUT_GUARDRAIL_MAX_CHARS;
+  const overlapChars =
+    opts.overlapChars ?? DEFAULT_INPUT_GUARDRAIL_OVERLAP_CHARS;
 
-  return async (text: string): Promise<ModelClassifierResult> => {
-    if (text.trim().length === 0) {
-      return { score: 0, isInjection: false };
-    }
+  const classifyOnce = async (text: string): Promise<ModelClassifierResult> => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -116,13 +193,59 @@ export function createModelInputClassifier(
           : {}),
       };
     } catch (err) {
-      // Fail open — a classifier outage must not block traffic.
-      logger?.warn("Model input guardrail classification failed (fail-open)", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return { score: 0, isInjection: false };
+      const message = err instanceof Error ? err.message : String(err);
+      // Requirement 7.5: the fail mode decides whether a classifier outage
+      // blocks (closed) or lets traffic through (open); either way the result
+      // is marked degraded so the caller emits a metric + trace diagnosis.
+      logger?.warn(
+        `Model input guardrail classification failed (fail-${failMode})`,
+        { error: message, failMode },
+      );
+      if (failMode === "closed") {
+        return {
+          score: 1,
+          isInjection: true,
+          reason: "classifier_unavailable",
+          degraded: { failMode, error: message },
+        };
+      }
+      return {
+        score: 0,
+        isInjection: false,
+        degraded: { failMode, error: message },
+      };
     } finally {
       clearTimeout(timer);
     }
+  };
+
+  return async (text: string): Promise<ModelClassifierResult> => {
+    if (text.trim().length === 0) {
+      return { score: 0, isInjection: false };
+    }
+    const chunks = splitIntoChunks(text, maxChars, overlapChars);
+    if (chunks.length <= 1) {
+      return classifyOnce(text);
+    }
+    // Requirement 7.6: classify long texts chunk-wise instead of risking a
+    // timeout on one oversized prompt. Combine by maximum score; a degraded
+    // chunk is reported once on the combined result.
+    let best: ModelClassifierResult = { score: 0, isInjection: false };
+    let degraded: ModelClassifierResult["degraded"];
+    for (const chunk of chunks) {
+      const r = await classifyOnce(chunk);
+      if (r.degraded !== undefined && degraded === undefined) {
+        degraded = r.degraded;
+      }
+      if (r.score > best.score) {
+        best = r;
+      }
+      if (best.score >= 1) break;
+    }
+    return {
+      ...best,
+      chunks: chunks.length,
+      ...(degraded !== undefined ? { degraded } : {}),
+    };
   };
 }

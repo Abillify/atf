@@ -95,6 +95,16 @@ export interface EdgeFlowClassificationInput {
    * incoming one.
    */
   imageConsumerId: string | undefined;
+  /**
+   * Optional content scrubber (Req 7.12): applied to every free-text item
+   * content BEFORE excerpting, so an Edge-Data-Flow trace never persists raw
+   * PII while output redaction is active — the engine passes the effective
+   * output guardrail here. Content that is already tokenized (PII vault,
+   * `[[PII:...]]` placeholders) passes through unchanged, so the trace
+   * respects tokenization as well. Omitting it keeps the raw content
+   * (guardrails disabled → trace shows what actually crossed the edge).
+   */
+  redact?: (text: string) => string;
 }
 
 export interface EdgeFlowClassificationResult {
@@ -236,11 +246,18 @@ export function classifyEdgeFlow(
     inspectionToolAnnounced,
     imageConsumedUpstream,
     imageConsumerId,
+    redact,
   } = input;
   // (imageConsumerId: node that consumed the images upstream, if any)
   const base = baseline ?? ZERO_EDGE_FLOW_COUNTERS;
   const messages = state.messages ?? [];
   const items: EdgeFlowItem[] = [];
+  // Req 7.12: scrub free text BEFORE excerpting — excerpting first could cut a
+  // PII value in half at the excerpt boundary and let the visible half through
+  // the detectors. Pure callback (see the input field docs), so the classifier
+  // stays side-effect-free.
+  const scrub = (text: string, max = CONTENT_EXCERPT_CHARS): string =>
+    excerpt(redact !== undefined ? redact(text) : text, max);
   // The target reads pictures itself → the image channel ENDS on this edge.
   const consumedByTarget = nodeHasVisionInput(nodeMap.get(target));
 
@@ -255,7 +272,7 @@ export function classifyEdgeFlow(
         kind: "text",
         label: "Query",
         status: "passed",
-        content: excerpt(queryText),
+        content: scrub(queryText),
       });
     }
   }
@@ -269,10 +286,9 @@ export function classifyEdgeFlow(
   producedTexts.slice(0, MAX_TEXT_ITEMS).forEach((text, idx) => {
     items.push({
       kind: "text",
-      label:
-        producedTexts.length > 1 ? `Antwort ${idx + 1}` : "Antwort",
+      label: producedTexts.length > 1 ? `Antwort ${idx + 1}` : "Antwort",
       status: "produced",
-      content: excerpt(text),
+      content: scrub(text),
     });
   });
   if (producedTexts.length > MAX_TEXT_ITEMS) {
@@ -356,7 +372,7 @@ export function classifyEdgeFlow(
       kind: "text",
       label: "Klassifikation",
       status: "produced",
-      content: excerpt(classificationJson),
+      content: scrub(classificationJson),
     });
   }
 
@@ -379,7 +395,7 @@ export function classifyEdgeFlow(
   // classifier overwrote it). Attached to every inspect_image item so the
   // panel shows the picture's text content wherever the tool travels.
   const transcription = imagePresent
-    ? excerpt(transcriptionFromClassification(state.classification))
+    ? scrub(transcriptionFromClassification(state.classification))
     : "";
   const transcriptionPatch =
     transcription !== "" ? { content: transcription } : {};
@@ -392,7 +408,11 @@ export function classifyEdgeFlow(
       ...transcriptionPatch,
     });
     announced = true;
-  } else if (imagePresent && !announced && targetNode?.config?.imageInspection !== undefined) {
+  } else if (
+    imagePresent &&
+    !announced &&
+    targetNode?.config?.imageInspection !== undefined
+  ) {
     // No vision consumer upstream (yet): the runtime injects the tool into
     // this node itself, so it appears on the node's incoming edge.
     items.push({
@@ -420,14 +440,17 @@ export function classifyEdgeFlow(
   // the target node opted out (`config.clientTools: false`).
   const clientTools = state.context?.clientTools;
   const targetOptsOutClientTools =
-    target !== "__end__" &&
-    nodeMap.get(target)?.config?.clientTools === false;
-  if (clientTools !== undefined && clientTools.length > 0 && !targetOptsOutClientTools) {
+    target !== "__end__" && nodeMap.get(target)?.config?.clientTools === false;
+  if (
+    clientTools !== undefined &&
+    clientTools.length > 0 &&
+    !targetOptsOutClientTools
+  ) {
     items.push({
       kind: "tool",
       label: `Client-Werkzeuge (${clientTools.length})`,
       status: "passed",
-      content: excerpt(
+      content: scrub(
         clientTools
           .map((t) => t.function?.name ?? "?")
           .filter((n) => n !== "?")
@@ -456,7 +479,7 @@ export function classifyEdgeFlow(
       kind: "data",
       label: `Ergebnis: ${r.tool_name}`,
       status: "produced",
-      ...(resultText.length > 0 ? { content: excerpt(resultText) } : {}),
+      ...(resultText.length > 0 ? { content: scrub(resultText) } : {}),
     });
   });
   if (newResults.length > MAX_RESULT_ITEMS) {
@@ -474,7 +497,7 @@ export function classifyEdgeFlow(
       kind: "data",
       label: `Quellen (${newCitations.length})`,
       status: "produced",
-      content: excerpt(
+      content: scrub(
         newCitations.map((c) => c.title ?? c.url ?? "?").join(", "),
         500,
       ),

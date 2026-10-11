@@ -16,12 +16,15 @@
  */
 
 import {
+  customFetch,
   jwtVerify,
   createRemoteJWKSet,
   decodeJwt,
   decodeProtectedHeader,
 } from "jose";
+import { createDiscoveryClient } from "@atf/security-kit";
 import type { AppConfig } from "../config/index.js";
+import { egressFetch } from "../security/egress.js";
 import type { Logger } from "../observability/logger.js";
 
 export interface JwtVerifier {
@@ -88,8 +91,12 @@ class JwksVerifier implements JwtVerifier {
     private readonly issuer: string | undefined,
     private readonly audience: string | undefined,
     logger?: Logger,
+    fetchFn: typeof fetch = egressFetch,
   ) {
-    this.jwks = createRemoteJWKSet(new URL(jwksUrl));
+    // Req 7.1/7.2: the JWKS download goes through the Egress_Guard.
+    this.jwks = createRemoteJWKSet(new URL(jwksUrl), {
+      [customFetch]: (input, init) => fetchFn(input, init as RequestInit),
+    });
     this.logger = logger;
   }
 
@@ -126,8 +133,11 @@ class JwksVerifier implements JwtVerifier {
  * the IdP and the backend validates it here before the operator RBAC layer maps
  * its role/groups claims onto an operator role.
  *
- * Discovery is performed lazily on first verify and memoised; a failed
- * discovery is not cached so a transient IdP outage can recover on a later
+ * Discovery runs through the shared `@atf/security-kit` client (Req 11.2):
+ * single-flight, cached metadata, exact `issuer` match, and `jwks_uri`
+ * validation (Req 7.3 — HTTPS whenever discovery is HTTPS, host must be the
+ * issuer host). The resolved JWKS set is memoised on first verify; a failed
+ * discovery is not memoised so a transient IdP outage can recover on a later
  * request. `createRemoteJWKSet` handles JWKS caching + key rotation internally.
  */
 class OidcVerifier implements JwtVerifier {
@@ -138,19 +148,18 @@ class OidcVerifier implements JwtVerifier {
   private readonly logger: Logger | undefined;
   private jwksPromise: Promise<ReturnType<typeof createRemoteJWKSet>> | null =
     null;
+  private readonly fetchFn: typeof fetch;
 
-  constructor(issuer: string, audience: string | undefined, logger?: Logger) {
+  constructor(
+    issuer: string,
+    audience: string | undefined,
+    logger?: Logger,
+    fetchFn: typeof fetch = egressFetch,
+  ) {
     this.issuer = issuer;
     this.audience = audience;
     this.logger = logger;
-  }
-
-  /** Discovery URL, tolerant of a trailing slash on the issuer. */
-  private discoveryUrl(): string {
-    const base = this.issuer.endsWith("/")
-      ? this.issuer.slice(0, -1)
-      : this.issuer;
-    return `${base}/.well-known/openid-configuration`;
+    this.fetchFn = fetchFn;
   }
 
   private async resolveJwks(): Promise<ReturnType<typeof createRemoteJWKSet>> {
@@ -165,20 +174,24 @@ class OidcVerifier implements JwtVerifier {
   }
 
   private async discover(): Promise<ReturnType<typeof createRemoteJWKSet>> {
-    const url = this.discoveryUrl();
-    const res = await fetch(url);
-    if (!res.ok) {
-      throw new Error(`OIDC discovery failed for ${url}: HTTP ${res.status}`);
-    }
-    const doc = (await res.json()) as { jwks_uri?: unknown };
-    if (typeof doc.jwks_uri !== "string" || doc.jwks_uri.length === 0) {
-      throw new Error(`OIDC discovery document at ${url} has no jwks_uri`);
-    }
+    // Req 11.2: shared Security_Kit discovery (exact issuer match + jwks_uri
+    // validation, Req 7.3). Req 7.1/7.2: discovery and the JWKS download both
+    // go through the injectable fetch seam (Egress_Guard by default).
+    const client = createDiscoveryClient(this.issuer, {
+      fetchImpl: (url, init) =>
+        this.fetchFn(url, {
+          ...(init?.headers !== undefined ? { headers: init.headers } : {}),
+          ...(init?.signal !== undefined ? { signal: init.signal } : {}),
+        }),
+    });
+    const document = await client.getMetadata();
     this.logger?.info("OIDC discovery complete", {
       issuer: this.issuer,
-      jwksUri: doc.jwks_uri,
+      jwksUri: document.jwks_uri,
     });
-    return createRemoteJWKSet(new URL(doc.jwks_uri));
+    return createRemoteJWKSet(new URL(document.jwks_uri), {
+      [customFetch]: (input, init) => this.fetchFn(input, init as RequestInit),
+    });
   }
 
   async verify(token: string): Promise<boolean> {
@@ -283,6 +296,7 @@ function _decodeHeaderSafe(token: string): Record<string, unknown> | null {
 function buildExtraOidcVerifiers(
   config: AppConfig,
   logger?: Logger,
+  fetchFn?: typeof fetch,
 ): JwtVerifier[] {
   const extraIssuers = config.inferenceExtraOidcIssuers ?? [];
   return extraIssuers.map((e) => {
@@ -290,32 +304,41 @@ function buildExtraOidcVerifiers(
       issuer: e.issuer,
       ...(e.audience !== undefined ? { audience: e.audience } : {}),
     });
-    return new OidcVerifier(e.issuer, e.audience, logger);
+    return new OidcVerifier(e.issuer, e.audience, logger, fetchFn);
   });
 }
 
 export function createJwtVerifier(
   config: AppConfig,
   logger?: Logger,
+  fetchFn?: typeof fetch,
 ): JwtVerifier {
   const mode = config.authnMode;
   if (mode === "disabled") {
-    logger?.warn("Authentication is disabled; requests use an anonymous principal");
+    logger?.warn(
+      "Authentication is disabled; requests use an anonymous principal",
+    );
     return new NoopVerifier();
   }
 
   const oidcPrimary = (): JwtVerifier | undefined =>
     config.oidcIssuer !== undefined
-      ? new OidcVerifier(config.oidcIssuer, config.oidcAudience, logger)
+      ? new OidcVerifier(
+          config.oidcIssuer,
+          config.oidcAudience,
+          logger,
+          fetchFn,
+        )
       : undefined;
 
   // OIDC-only excludes local HMAC/API-key credentials, but may trust several
   // explicitly issuer/audience-pinned external OIDC applications. This is
   // required when the operator BFF and upstream clients use different IdP apps.
   if (mode === "oidc") {
-    const children = [oidcPrimary(), ...buildExtraOidcVerifiers(config, logger)].filter(
-      (verifier): verifier is JwtVerifier => verifier?.enabled === true,
-    );
+    const children = [
+      oidcPrimary(),
+      ...buildExtraOidcVerifiers(config, logger),
+    ].filter((verifier): verifier is JwtVerifier => verifier?.enabled === true);
     if (children.length === 0) {
       logger?.warn("AUTHN_MODE=oidc but no OIDC issuer is configured");
       return new NoopVerifier();
@@ -327,7 +350,11 @@ export function createJwtVerifier(
 
   // Additional trusted issuers are token credentials and therefore participate
   // only in legacy/token and explicit token_or_oidc modes.
-  const extraVerifiers: JwtVerifier[] = buildExtraOidcVerifiers(config, logger);
+  const extraVerifiers: JwtVerifier[] = buildExtraOidcVerifiers(
+    config,
+    logger,
+    fetchFn,
+  );
 
   const tokenPrimary = (): JwtVerifier => {
     if (config.jwtJwksUrl !== undefined) {
@@ -347,6 +374,7 @@ export function createJwtVerifier(
         config.jwtIssuer,
         config.jwtAudience,
         logger,
+        fetchFn,
       );
     }
     if (config.jwtSecret !== undefined) {
@@ -369,7 +397,9 @@ export function createJwtVerifier(
 
   if (mode === "token") {
     const primary = tokenPrimary();
-    const children = primary.enabled ? [primary, ...extraVerifiers] : extraVerifiers;
+    const children = primary.enabled
+      ? [primary, ...extraVerifiers]
+      : extraVerifiers;
     return children.length === 0
       ? primary
       : children.length === 1
@@ -389,13 +419,17 @@ export function createJwtVerifier(
         config.jwtIssuer,
         config.jwtAudience,
         logger,
+        fetchFn,
       );
     }
-    if (config.jwtSecret !== undefined) return new HmacVerifier(config.jwtSecret, logger);
+    if (config.jwtSecret !== undefined)
+      return new HmacVerifier(config.jwtSecret, logger);
     return oidcPrimary() ?? new NoopVerifier();
   })();
   if (extraVerifiers.length === 0) return primary;
-  const children = primary.enabled ? [primary, ...extraVerifiers] : extraVerifiers;
+  const children = primary.enabled
+    ? [primary, ...extraVerifiers]
+    : extraVerifiers;
   return new CompositeVerifier(children, logger);
 }
 
@@ -423,8 +457,9 @@ export function createOperatorVerifier(
   config: AppConfig,
   fallback: JwtVerifier,
   logger?: Logger,
+  fetchFn?: typeof fetch,
 ): JwtVerifier {
-  const extraVerifiers = buildExtraOidcVerifiers(config, logger);
+  const extraVerifiers = buildExtraOidcVerifiers(config, logger, fetchFn);
 
   // Composes a dedicated operator-plane primary with any additional issuers so
   // the approval gate accepts every configured token source.
@@ -453,7 +488,7 @@ export function createOperatorVerifier(
         : {}),
     });
     return withExtras(
-      new OidcVerifier(config.oidcIssuer, config.oidcAudience, logger),
+      new OidcVerifier(config.oidcIssuer, config.oidcAudience, logger, fetchFn),
     );
   }
   // Fallback: the inference verifier already folds in the extra issuers.

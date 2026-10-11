@@ -31,6 +31,7 @@
  */
 
 import type { Logger } from "../observability/logger.js";
+import { egressFetch } from "../security/egress.js";
 
 /** A monotonic clock (ms). Injectable for deterministic tests. */
 export type Clock = () => number;
@@ -205,7 +206,8 @@ class SloRegistryImpl implements SloRegistry {
 
     const doFetch =
       this.alert.fetchFn ??
-      ((url, init) => fetch(url, init) as unknown as Promise<{ ok: boolean }>);
+      ((url, init) =>
+        egressFetch(url, init) as unknown as Promise<{ ok: boolean }>);
     const body = JSON.stringify({
       type: "slo_breach",
       flow: entry.flow,

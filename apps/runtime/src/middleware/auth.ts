@@ -24,6 +24,7 @@
  * Requirements: 2.1, 2.2, 2.3, 2.4, 2.5
  */
 
+import type { RuntimePrincipalInput } from "@atf/identity-contract";
 import type { MiddlewareHandler } from "hono";
 import { createMiddleware } from "hono/factory";
 import type { JwtVerifier } from "./jwt-verifier.js";
@@ -41,12 +42,12 @@ export const TOKEN_KEY = "sso_token" as const;
 /** Verified/synthetic identity established once by the auth middleware. */
 export const AUTH_PRINCIPAL_KEY = "auth_principal" as const;
 
-export interface AuthPrincipal {
-  method: "anonymous" | "token" | "api_key";
-  verified: boolean;
-  claims: Record<string, unknown> | null;
-  tenantId?: string;
-}
+/**
+ * The middleware principal shape is the shared identity contract
+ * (`RuntimePrincipalInput` from `@atf/identity-contract`, Req 11.3) — the
+ * Runtime no longer keeps its own copy of the wire shape.
+ */
+export type AuthPrincipal = RuntimePrincipalInput;
 
 /**
  * Resolves the canonical tenant claim from an authenticated token payload.
@@ -275,7 +276,8 @@ export function authMiddleware(
         return ctx.json(
           {
             error: {
-              message: "API key authentication is not accepted in OIDC-only mode.",
+              message:
+                "API key authentication is not accepted in OIDC-only mode.",
               type: "authentication_error",
             },
           },
@@ -303,17 +305,17 @@ export function authMiddleware(
         return ctx.json(
           {
             error: {
-              message:
-                "Authentication failed: unknown or revoked API key.",
+              message: "Authentication failed: unknown or revoked API key.",
               type: "authentication_error",
             },
           },
           401,
         );
       }
-      const tenantId = options.tenantIsolationEnabled === false
-        ? defaultTenantId
-        : identity.tenantId;
+      const tenantId =
+        options.tenantIsolationEnabled === false
+          ? defaultTenantId
+          : identity.tenantId;
       ctx.set(TOKEN_KEY, token);
       ctx.set(API_KEY_IDENTITY_KEY, { ...identity, tenantId });
       ctx.set(AUTH_PRINCIPAL_KEY, {
@@ -344,7 +346,8 @@ export function authMiddleware(
       return ctx.json(
         {
           error: {
-            message: "Authentication failed: configured verifier is unavailable.",
+            message:
+              "Authentication failed: configured verifier is unavailable.",
             type: "authentication_error",
           },
         },
@@ -370,15 +373,24 @@ export function authMiddleware(
     }
 
     const claims = verifier?.decodePayload(token) ?? null;
-    const claimedTenant = resolveTenantClaim(claims);
-    const tenantId = options.tenantIsolationEnabled === false
-      ? defaultTenantId
-      : claimedTenant;
+    // Req 7.4: a tenant identity may only ever come from a cryptographically
+    // verified credential. `decodePayload` is an unverified base64 read, so in
+    // legacy mode (no AUTHN_MODE, no verifier configured → NoopVerifier) the
+    // payload is attacker-chosen: it stays on the principal for display, but it
+    // must not resolve a tenant. With isolation enabled that means 401; without
+    // it the request falls back to the deployment's default tenant.
+    const claimedTenant =
+      verifier?.enabled === true ? resolveTenantClaim(claims) : undefined;
+    const tenantId =
+      options.tenantIsolationEnabled === false
+        ? defaultTenantId
+        : claimedTenant;
     if (options.tenantIsolationEnabled === true && tenantId === undefined) {
       return ctx.json(
         {
           error: {
-            message: "Authentication failed: verified credential has no tenant claim.",
+            message:
+              "Authentication failed: verified credential has no tenant claim.",
             type: "authentication_error",
           },
         },

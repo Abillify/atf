@@ -33,6 +33,7 @@ import {
 import type { AppConfig } from "../config/index.js";
 import { getProviderInstance } from "../config/providers.js";
 import type { Logger } from "../observability/logger.js";
+import { egressFetch } from "../security/egress.js";
 
 /**
  * One asset attached to a v2 search hit (via `include_assets`). Mirrors the
@@ -172,6 +173,8 @@ export class TeiReranker implements Reranker {
     private readonly model: string,
     private readonly logger?: Logger,
     private readonly timeoutMs = DEFAULT_TEI_TIMEOUT_MS,
+    /** Outbound fetch: the process-wide Egress_Guard by default (SSRF-safe). */
+    private readonly fetchFn: typeof fetch = egressFetch,
   ) {}
 
   async rerank(
@@ -185,7 +188,7 @@ export class TeiReranker implements Reranker {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await fetch(this.url, {
+      const response = await this.fetchFn(this.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -197,9 +200,12 @@ export class TeiReranker implements Reranker {
         signal: controller.signal,
       });
       if (!response.ok) {
-        this.logger?.warn("TEI rerank call failed; trying configured fallback", {
-          status: response.status,
-        });
+        this.logger?.warn(
+          "TEI rerank call failed; trying configured fallback",
+          {
+            status: response.status,
+          },
+        );
         return [];
       }
 

@@ -19,6 +19,7 @@
 
 import type { AppConfig } from "../config/index.js";
 import type { Logger } from "../observability/logger.js";
+import type { Metrics } from "../observability/metrics.js";
 import type { Database } from "../db/database.js";
 import type { StoreFactory } from "../db/store/index.js";
 import {
@@ -57,11 +58,18 @@ export interface CacheResult {
   reranker: Reranker | undefined;
 }
 
+/**
+ * @param metrics Optional metrics registry, forwarded to the memory
+ * extractor so its fail-open degradations are counted
+ * (`aiperator_degraded_total{component="memory_extractor"}`, Req 7.8).
+ * Built before the observability bundle in index.ts, hence a parameter.
+ */
 export async function buildCache(
   config: AppConfig,
   logger: Logger,
   database: Database | undefined,
   storeFactory?: StoreFactory,
+  metrics?: Metrics,
 ): Promise<CacheResult> {
   // ── Shared embedder ────────────────────────────────────────────────────────
   let embedder: Embedder | undefined;
@@ -219,7 +227,10 @@ export async function buildCache(
           extractionModelConfig,
           config,
         );
-        memoryExtractor = createMemoryExtractor(extractionModel, { logger });
+        memoryExtractor = createMemoryExtractor(extractionModel, {
+          logger,
+          metrics,
+        });
         logger.info(
           "Long-term memory auto-capture enabled (LLM fact extraction)",
           {

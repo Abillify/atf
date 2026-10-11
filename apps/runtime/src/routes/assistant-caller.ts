@@ -28,24 +28,31 @@ export function resolveAssistantCaller(
   principal?: AuthPrincipal,
 ): AssistantCaller {
   const userId =
-    (typeof principal?.claims?.sub === "string" ? principal.claims.sub : undefined) ??
-    (typeof principal?.claims?.email === "string" ? principal.claims.email : undefined) ??
+    (typeof principal?.claims?.sub === "string"
+      ? principal.claims.sub
+      : undefined) ??
+    (typeof principal?.claims?.email === "string"
+      ? principal.claims.email
+      : undefined) ??
     headers.get("X-OpenWebUI-User-Id") ??
     headers.get("X-OpenWebUI-User-Email") ??
     undefined;
-  // In the deployed /v1 wiring the auth middleware always supplies a principal,
-  // so neither tenant header can override (or replace) the verified tenant. The
-  // header fallback preserves compatibility for directly embedded routers that
-  // are mounted without the platform auth middleware.
+  // Req 7.4: once the auth middleware supplied a principal, the tenant is
+  // whatever that principal resolved from verified claims (or the deployment
+  // default) — a request header must never substitute or re-fill it, even when
+  // the principal itself carries no tenant. The header fallback therefore
+  // applies only when there is no principal at all, i.e. routers directly
+  // embedded without the platform auth middleware.
   //
   // `X-Mandant-Id` is the pre-1.0 spelling of `X-Tenant-Id`, still accepted so
   // existing callers keep working. Prefer `X-Tenant-Id`; the legacy name will be
   // dropped in a future major.
   const tenantId =
-    principal?.tenantId ??
-    headers.get("X-Tenant-Id") ??
-    headers.get("X-Mandant-Id") ??
-    undefined;
+    principal !== undefined
+      ? principal.tenantId
+      : (headers.get("X-Tenant-Id") ??
+        headers.get("X-Mandant-Id") ??
+        undefined);
   const rawName = headers.get("X-OpenWebUI-User-Name");
   let userName: string | undefined;
   if (rawName !== null) {
