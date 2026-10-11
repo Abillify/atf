@@ -17,9 +17,12 @@
  *      `auth_error`), returning it so it can be stored as the operator token.
  *   4. `logout()` asks the backend for an optional IdP end-session URL.
  *
- * The token transport to the operator plane is unchanged (stored via useToken,
- * sent as `?token=` / Bearer) — only its origin moved to the backend.
+ * The token transport to the operator plane is unchanged (stored via
+ * `AuthProvider`, sent as `?token=` / Bearer) — only its origin moved to the
+ * backend.
  */
+
+import { base64UrlDecodeToString } from "@atf/security-kit/browser";
 
 import { backendUrl } from "./backend-url";
 
@@ -30,6 +33,13 @@ export interface AuthConfig {
   autoLogin: boolean;
   /** True when the operator plane requires an authenticated identity. */
   required: boolean;
+  /**
+   * Host (with port) of the configured IdP issuer, reported by the backend.
+   * Used to validate the `endSessionUrl` before navigating to it (Req 8.4).
+   * `null` for older backends that do not report it — end-session URLs are
+   * then refused (fail closed).
+   */
+  issuerHost: string | null;
 }
 
 // Fail closed for unreachable or older backends that do not expose `required`.
@@ -37,6 +47,7 @@ const AUTH_CONFIG_UNSET: AuthConfig = {
   enabled: false,
   autoLogin: false,
   required: true,
+  issuerHost: null,
 };
 
 let cachedConfig: AuthConfig | null = null;
@@ -72,6 +83,10 @@ export async function getAuthConfig(): Promise<AuthConfig> {
       autoLogin: data.autoLogin === true,
       // Missing field means an older backend: keep requiring auth.
       required: data.required !== false,
+      issuerHost:
+        typeof data.issuerHost === "string" && data.issuerHost !== ""
+          ? data.issuerHost
+          : null,
     };
     return cachedConfig;
   } catch {
@@ -124,8 +139,29 @@ export function consumeSessionFromUrl(): SessionHandoff {
 }
 
 /**
+ * Validates an IdP end-session URL before the browser navigates to it (Req 8.4):
+ * only an HTTPS URL whose host matches the configured IdP issuer host is
+ * trusted. Anything else — plain HTTP, a foreign host, a malformed URL, or no
+ * known issuer host at all — is refused so a compromised or misconfigured
+ * backend cannot redirect the operator (with their session context) elsewhere.
+ */
+export function isTrustedEndSessionUrl(
+  url: string,
+  issuerHost: string | null,
+): boolean {
+  if (issuerHost === null || issuerHost === "") return false;
+  try {
+    const parsed = new URL(url);
+    return parsed.protocol === "https:" && parsed.host === issuerHost;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Logs out: asks the backend for an optional IdP end-session URL and, when one
- * is returned, navigates there (RP-initiated logout). The caller is expected to
+ * is returned AND passes `isTrustedEndSessionUrl` (HTTPS + configured IdP host,
+ * Req 8.4), navigates there (RP-initiated logout). The caller is expected to
  * clear the locally stored token regardless. Returns true when it redirected.
  */
 export async function logout(): Promise<boolean> {
@@ -139,8 +175,14 @@ export async function logout(): Promise<boolean> {
     if (res.ok) {
       const data = (await res.json()) as { endSessionUrl?: string | null };
       if (typeof data.endSessionUrl === "string" && data.endSessionUrl !== "") {
-        window.location.assign(data.endSessionUrl);
-        return true;
+        const { issuerHost } = await getAuthConfig();
+        if (isTrustedEndSessionUrl(data.endSessionUrl, issuerHost)) {
+          window.location.assign(data.endSessionUrl);
+          return true;
+        }
+        console.warn(
+          "Refusing end-session URL: not HTTPS or host does not match the configured IdP",
+        );
       }
     }
   } catch {
@@ -179,17 +221,18 @@ export async function refreshSession(): Promise<string | null> {
  * Decodes a JWT's `exp` (seconds since epoch) WITHOUT verifying the signature —
  * used only to schedule client-side renewal ahead of expiry. Returns null when
  * the token is malformed or has no numeric `exp`.
+ *
+ * Decoding goes through the shared padding-correct base64url codec from
+ * `@atf/security-kit/browser` (Req 8.5) — the same implementation as the
+ * backend, so no second ad-hoc atob/Buffer path can drift from it.
  */
 export function decodeTokenExpSeconds(token: string): number | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
-    const payloadPart = parts[1]!.replace(/-/g, "+").replace(/_/g, "/");
-    const json =
-      typeof atob === "function"
-        ? atob(payloadPart)
-        : Buffer.from(payloadPart, "base64").toString("binary");
-    const payload = JSON.parse(json) as { exp?: unknown };
+    const payload = JSON.parse(base64UrlDecodeToString(parts[1]!)) as {
+      exp?: unknown;
+    };
     return typeof payload.exp === "number" ? payload.exp : null;
   } catch {
     return null;

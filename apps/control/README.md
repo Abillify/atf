@@ -55,10 +55,12 @@ Three optional variables are documented in [`.env.example`](.env.example):
   every cost figure. Purely a label: values are never converted. Must match the Runtime's
   `CURRENCY`. Frozen into the browser bundle at build time, so change it via the build argument
   or `.env` before `next build`, not at container runtime.
-- `CONTROL_CSP_MODE` — `legacy` (default) emits no CSP header. `report-only` emits
-  `Content-Security-Policy-Report-Only` so operators can observe violations before deciding on
-  an enforcement policy at their ingress. Control currently never emits an enforcement
-  `Content-Security-Policy` header.
+- `CONTROL_CSP_MODE` — `enforce` (default since 0.15) emits an enforcing `Content-Security-Policy`
+  with a per-request script nonce (generated in `src/proxy.ts`, applied to Next's own scripts and
+  the theme-init script). `report-only` emits `Content-Security-Policy-Report-Only` for rollout
+  observation; `legacy` emits no CSP header (pre-0.15 behaviour — set it explicitly to restore).
+  Baseline security headers (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`,
+  `X-Frame-Options`, and `Strict-Transport-Security` over HTTPS) are emitted in every mode.
 
 ## Testing
 

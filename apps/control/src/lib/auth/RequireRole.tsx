@@ -52,8 +52,11 @@ export interface RequireRoleProps {
  * `<RequireRole>` gates UI based on the user's role level.
  *
  * - `mode="hide"` (default): renders nothing (or `fallback`) when unauthorized.
- * - `mode="disable"`: renders children in a disabled container (pointer-events
- *   disabled, reduced opacity) when unauthorized.
+ * - `mode="disable"`: renders children in a disabled container when
+ *   unauthorized. The container is marked `inert` (Req 8.8), which removes
+ *   every descendant from the tab order and blocks pointer, click, and
+ *   focus events — plain `aria-disabled` or `pointer-events: none` alone
+ *   would still leave buttons and inputs reachable via the keyboard.
  *
  * @example
  * ```tsx
@@ -79,7 +82,10 @@ export function RequireRole({
   // Unauthorized path
   if (mode === "disable") {
     return (
+      // `inert` (Req 8.8) excludes all descendants from keyboard focus and
+      // hit-testing; `pointerEvents`/`opacity` keep the visual affordance.
       <div
+        inert
         aria-disabled="true"
         style={{ pointerEvents: "none", opacity: 0.5 }}
         data-testid="require-role-disabled"

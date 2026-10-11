@@ -18,8 +18,19 @@
  * time by Next.js. Injecting an absolute URL at build time makes the image
  * environment-specific and breaks relative-path routing. Always use the proxy
  * approach in production.
+ *
+ * BFF mode (Req 8.7, `CONTROL_SESSION_MODE=bff`): every backend call is
+ * rewritten to the Next.js route handler `/api/backend/…`, which injects the
+ * server-side session token. The browser then talks to its own origin only —
+ * `NEXT_PUBLIC_BACKEND_URL` becomes irrelevant in that mode.
  */
+import { isBffMode } from "./client-session-mode";
+
+/** Prefix of the Next.js BFF proxy route (`app/api/backend/[...path]`). */
+export const BFF_PROXY_PREFIX = "/api/backend";
+
 export function backendBase(): string {
+  if (isBffMode()) return BFF_PROXY_PREFIX;
   if (typeof process !== "undefined") {
     const configured = process.env["NEXT_PUBLIC_BACKEND_URL"] ?? "";
     // Only use an explicit non-default URL (e.g. local dev without a proxy).

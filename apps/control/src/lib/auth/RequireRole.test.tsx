@@ -125,7 +125,11 @@ describe("RequireRole", () => {
       expect(wrapper).toBeInTheDocument();
       expect(wrapper).toHaveAttribute("aria-disabled", "true");
       expect(wrapper).toHaveStyle({ pointerEvents: "none", opacity: "0.5" });
-      expect(screen.getByText("Delete")).toBeInTheDocument();
+      // Req 8.8: `inert` must be set so keyboard focus cannot reach children.
+      expect(wrapper).toHaveAttribute("inert");
+      const button = screen.getByText("Delete");
+      expect(button.closest("[inert]")).toBe(wrapper);
+      expect(button).toBeInTheDocument();
     });
 
     it("renders children normally (no wrapper) when role is sufficient", () => {

@@ -113,6 +113,7 @@ describe("oidc BFF client", () => {
           enabled: false,
           autoLogin: false,
           required: true,
+          issuerHost: null,
         });
       } finally {
         vi.useRealTimers();
@@ -165,24 +166,127 @@ describe("oidc BFF client", () => {
   });
 
   describe("logout", () => {
-    test("redirects to the IdP end-session URL when provided", async () => {
+    /**
+     * Fetch stub answering BOTH the logout POST and the auth-config probe that
+     * `logout()` performs to validate the end-session host (Req 8.4).
+     */
+    function stubLogoutFetch(
+      endSessionUrl: string | null,
+      issuerHost: string | null = "idp.example.com",
+    ): void {
+      globalThis.fetch = vi.fn(async (input: unknown) => {
+        const url = String(input);
+        if (url.includes("/monitoring/auth/config")) {
+          return jsonResponse({
+            enabled: true,
+            autoLogin: false,
+            required: true,
+            issuerHost,
+          });
+        }
+        return jsonResponse({ endSessionUrl });
+      }) as unknown as typeof fetch;
+    }
+
+    test("redirects to a trusted HTTPS end-session URL on the IdP host", async () => {
       const { assign } = setLocation(`${ORIGIN}/`);
-      globalThis.fetch = vi.fn(async () =>
-        jsonResponse({ endSessionUrl: "https://idp.example.com/logout?x=1" }),
-      ) as unknown as typeof fetch;
+      stubLogoutFetch("https://idp.example.com/logout?x=1");
       const { logout } = await loadModule();
       const redirected = await logout();
       expect(redirected).toBe(true);
       expect(assign).toHaveBeenCalledWith("https://idp.example.com/logout?x=1");
     });
 
-    test("resolves false when there is no end-session URL", async () => {
-      setLocation(`${ORIGIN}/`);
-      globalThis.fetch = vi.fn(async () =>
-        jsonResponse({ endSessionUrl: null }),
-      ) as unknown as typeof fetch;
+    test("refuses an end-session URL over plain HTTP (Req 8.4)", async () => {
+      const { assign } = setLocation(`${ORIGIN}/`);
+      stubLogoutFetch("http://idp.example.com/logout?x=1");
       const { logout } = await loadModule();
       expect(await logout()).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    test("refuses an end-session URL on a foreign host (Req 8.4)", async () => {
+      const { assign } = setLocation(`${ORIGIN}/`);
+      stubLogoutFetch("https://evil.example.com/logout");
+      const { logout } = await loadModule();
+      expect(await logout()).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    test("refuses any end-session URL when the backend reports no issuer host", async () => {
+      const { assign } = setLocation(`${ORIGIN}/`);
+      stubLogoutFetch("https://idp.example.com/logout", null);
+      const { logout } = await loadModule();
+      expect(await logout()).toBe(false);
+      expect(assign).not.toHaveBeenCalled();
+    });
+
+    test("resolves false when there is no end-session URL", async () => {
+      setLocation(`${ORIGIN}/`);
+      stubLogoutFetch(null);
+      const { logout } = await loadModule();
+      expect(await logout()).toBe(false);
+    });
+  });
+
+  describe("isTrustedEndSessionUrl", () => {
+    test("accepts HTTPS on the exact issuer host", async () => {
+      const { isTrustedEndSessionUrl } = await loadModule();
+      expect(
+        isTrustedEndSessionUrl(
+          "https://idp.example.com/logout?x=1",
+          "idp.example.com",
+        ),
+      ).toBe(true);
+    });
+
+    test("compares host including port", async () => {
+      const { isTrustedEndSessionUrl } = await loadModule();
+      expect(
+        isTrustedEndSessionUrl(
+          "https://idp.example.com:8443/logout",
+          "idp.example.com:8443",
+        ),
+      ).toBe(true);
+      expect(
+        isTrustedEndSessionUrl(
+          "https://idp.example.com/logout",
+          "idp.example.com:8443",
+        ),
+      ).toBe(false);
+    });
+
+    test("rejects non-HTTPS, foreign hosts, subdomains, and garbage", async () => {
+      const { isTrustedEndSessionUrl } = await loadModule();
+      expect(
+        isTrustedEndSessionUrl(
+          "http://idp.example.com/logout",
+          "idp.example.com",
+        ),
+      ).toBe(false);
+      expect(
+        isTrustedEndSessionUrl("https://evil.example.com", "idp.example.com"),
+      ).toBe(false);
+      expect(
+        isTrustedEndSessionUrl(
+          "https://sub.idp.example.com",
+          "idp.example.com",
+        ),
+      ).toBe(false);
+      // A suffix trick must not pass host equality.
+      expect(
+        isTrustedEndSessionUrl(
+          "https://idp.example.com.evil.test",
+          "idp.example.com",
+        ),
+      ).toBe(false);
+      expect(isTrustedEndSessionUrl("not a url", "idp.example.com")).toBe(
+        false,
+      );
+      expect(isTrustedEndSessionUrl("https://idp.example.com", null)).toBe(
+        false,
+      );
+      expect(isTrustedEndSessionUrl("https://idp.example.com", "")).toBe(false);
     });
   });
 });
