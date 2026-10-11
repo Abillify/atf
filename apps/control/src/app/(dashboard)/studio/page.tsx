@@ -22,7 +22,7 @@ import { OptimizePanel } from "../../../components/OptimizePanel";
 import type { FlowDefinition } from "../../../types/flow";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { RequireRole } from "../../../lib/auth/RequireRole";
-import { Button } from "../../../lib/ui";
+import { Button, useConfirm } from "../../../lib/ui";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { FlowListEntry } from "../../../types/flow";
 import type { PlaygroundResult } from "../../../lib/studio-run";
@@ -36,7 +36,7 @@ import {
   validateStudioEvalCase,
   buildStudioEvalCase,
 } from "../../../lib/studio-eval-case";
-import { backendUrl } from "../../../lib/backend-url";
+import { json, request } from "../../../lib/control-api";
 import { usePersistentToggle } from "../../../hooks/usePersistentToggle";
 import {
   PanelToggle,
@@ -106,17 +106,20 @@ interface FlowListResponse {
   fileWriting: boolean;
 }
 
+// Req 9.2: all data queries go through lib/control-api; direct
+// fetch calls are no longer allowed here.
 async function fetchFlowList(
   token: string | undefined,
 ): Promise<FlowListResponse> {
-  const resp = await fetch(backendUrl("/flows"), {
-    // Header nur mit echtem Token; bei AUTHN_MODE=disabled anonym anfragen.
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = (await resp.json()) as
-    | { flows?: FlowListEntry[]; onlineEditing?: boolean; fileWriting?: boolean }
-    | FlowListEntry[];
+  // Header only with a real token; with AUTHN_MODE=disabled, request anonymously.
+  const data = await json<
+    | {
+        flows?: FlowListEntry[];
+        onlineEditing?: boolean;
+        fileWriting?: boolean;
+      }
+    | FlowListEntry[]
+  >("/flows", { target: "backend", token });
   return Array.isArray(data)
     ? { flows: data, onlineEditing: false, fileWriting: false }
     : {
@@ -131,33 +134,34 @@ async function postEvalCase(
   evalCase: unknown,
 ): Promise<string | undefined> {
   // Runtime endpoint (there is no Next API route for this).
-  const resp = await fetch(backendUrl("/eval/cases"), {
+  // ControlApiError carries the backend error message ({error.message}),
+  // identical to the previous behavior.
+  const created = await json<{ id?: string } | undefined>("/eval/cases", {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      // Header nur mit echtem Token; bei AUTHN_MODE=disabled anonym anfragen.
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify(evalCase),
+    target: "backend",
+    token,
+    jsonBody: evalCase,
   });
-  if (!resp.ok) {
-    const data = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
-    throw new Error(data?.error?.message ?? `HTTP ${resp.status}`);
-  }
-  const created = (await resp.json().catch(() => null)) as { id?: string } | null;
   return created?.id;
 }
 
-async function deleteEvalCase(token: string | undefined, id: string): Promise<void> {
-  const resp = await fetch(backendUrl(`/eval/cases/${encodeURIComponent(id)}`), {
-    method: "DELETE",
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
+async function deleteEvalCase(
+  token: string | undefined,
+  id: string,
+): Promise<void> {
   // 404: already gone — the goal of the delete is met.
-  if (!resp.ok && resp.status !== 404) {
-    const data = (await resp.json().catch(() => null)) as { error?: { message?: string } } | null;
-    throw new Error(data?.error?.message ?? `HTTP ${resp.status}`);
-  }
+  await request(`/eval/cases/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    target: "backend",
+    token,
+  }).then(async (resp) => {
+    if (!resp.ok && resp.status !== 404) {
+      const data = (await resp.json().catch(() => null)) as {
+        error?: { message?: string };
+      } | null;
+      throw new Error(data?.error?.message ?? `HTTP ${resp.status}`);
+    }
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -222,9 +226,9 @@ function SidebarSection({
 // ---------------------------------------------------------------------------
 
 export default function StudioPage() {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym). fetchFlowList/postEvalCase
-  // senden den Authorization-Header nur mit echtem Token.
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously). fetchFlowList/postEvalCase
+  // only send the Authorization header with a real token.
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
 
@@ -232,7 +236,10 @@ export default function StudioPage() {
   const [builderDirty, setBuilderDirty] = useState(false);
   /** The builder's current definition, for checks that run on the canvas (Optimize). */
   const canvasDefinitionRef = useRef<(() => FlowDefinition) | null>(null);
-  const getCanvasDefinition = useCallback(() => canvasDefinitionRef.current?.() ?? null, []);
+  const getCanvasDefinition = useCallback(
+    () => canvasDefinitionRef.current?.() ?? null,
+    [],
+  );
 
   // Deep-link support: /studio?flow=<id> opens that flow (e.g. Edit/Inspect on
   // /flows); no param starts a new flow. The selection is mirrored back into
@@ -242,7 +249,10 @@ export default function StudioPage() {
   const [urlRead, setUrlRead] = useState(false);
   // `&execution=<id>` (Live Graph → "Open in Studio") attaches that request to
   // Run & Trace for the flow it ran on.
-  const [attach, setAttach] = useState<{ flowId: string; executionId: string } | null>(null);
+  const [attach, setAttach] = useState<{
+    flowId: string;
+    executionId: string;
+  } | null>(null);
   useEffect(() => {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
@@ -250,7 +260,8 @@ export default function StudioPage() {
     const execution = params.get("execution");
     if (flow !== null && flow !== "") {
       setSelectedFlowIdRaw(flow);
-      if (execution !== null && execution !== "") setAttach({ flowId: flow, executionId: execution });
+      if (execution !== null && execution !== "")
+        setAttach({ flowId: flow, executionId: execution });
     }
     setUrlRead(true);
   }, []);
@@ -264,7 +275,8 @@ export default function StudioPage() {
     window.history.replaceState(null, "", url.toString());
   }, []);
   useEffect(() => {
-    if (attach !== null && urlRead && selectedFlowId !== attach.flowId) detachExecution();
+    if (attach !== null && urlRead && selectedFlowId !== attach.flowId)
+      detachExecution();
   }, [attach, urlRead, selectedFlowId, detachExecution]);
   useEffect(() => {
     if (!urlRead || typeof window === "undefined") return;
@@ -303,34 +315,39 @@ export default function StudioPage() {
   const [sidebarSection, setSidebarSection] = useState<string>("nodes");
   useEffect(() => {
     try {
-      const stored = window.localStorage.getItem("atf.ui.studio.sidebarSection");
+      const stored = window.localStorage.getItem(
+        "atf.ui.studio.sidebarSection",
+      );
       if (stored !== null) setSidebarSection(stored);
     } catch {
       /* storage unavailable — keep the default */
     }
   }, []);
-  const toggleSidebarSection = useCallback(
-    (section: string) => {
-      setSidebarSection((cur) => {
-        const next = cur === section ? "" : section;
-        try {
-          window.localStorage.setItem("atf.ui.studio.sidebarSection", next);
-        } catch {
-          /* storage unavailable — state still applies for this session */
-        }
-        return next;
-      });
-    },
-    [],
-  );
+  const toggleSidebarSection = useCallback((section: string) => {
+    setSidebarSection((cur) => {
+      const next = cur === section ? "" : section;
+      try {
+        window.localStorage.setItem("atf.ui.studio.sidebarSection", next);
+      } catch {
+        /* storage unavailable — state still applies for this session */
+      }
+      return next;
+    });
+  }, []);
   /** DOM node the builder's node palette is portalled into (Nodes section). */
   const [paletteHost, setPaletteHost] = useState<HTMLElement | null>(null);
   /** DOM node the builder's sub-flow palette is portalled into (Subflows section). */
   const [subflowsHost, setSubflowsHost] = useState<HTMLElement | null>(null);
   // Copilot and Run & Trace start hidden and are switched on individually from
   // the builder toolbar (next to Undo/Redo) — they are not permanently visible.
-  const [copilotOpen, setCopilotOpen] = usePersistentToggle("studio.copilot", false);
-  const [runTraceOpen, setRunTraceOpen] = usePersistentToggle("studio.runTrace", false);
+  const [copilotOpen, setCopilotOpen] = usePersistentToggle(
+    "studio.copilot",
+    false,
+  );
+  const [runTraceOpen, setRunTraceOpen] = usePersistentToggle(
+    "studio.runTrace",
+    false,
+  );
   const handleTogglePanel = useCallback(
     (panel: "copilot" | "runTrace") => {
       if (panel === "copilot") setCopilotOpen((v) => !v);
@@ -355,20 +372,26 @@ export default function StudioPage() {
   );
 
   // Switching flows reloads the canvas — don't silently drop edits.
+  // Req 9.5: confirmation through the dialog primitive instead of window.confirm.
+  const { confirm: confirmDialog } = useConfirm();
   const setSelectedFlowId = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (id === selectedFlowId) return;
       if (
         builderDirty &&
-        !window.confirm(
-          "The builder has unsaved changes. Switch flows and discard them?",
-        )
+        !(await confirmDialog({
+          title: "Unsaved changes",
+          message:
+            "The builder has unsaved changes. Switch flows and discard them?",
+          confirmLabel: "Discard and switch",
+          destructive: true,
+        }))
       ) {
         return;
       }
       setSelectedFlowIdRaw(id);
     },
-    [selectedFlowId, builderDirty],
+    [selectedFlowId, builderDirty, confirmDialog],
   );
 
   const { data: flowList, isLoading: flowsLoading } = useQuery<
@@ -388,7 +411,12 @@ export default function StudioPage() {
   const evalCaseMutation = useMutation<
     string | undefined,
     Error,
-    { prompt: string; flowId: string; result: PlaygroundResult; expected: string }
+    {
+      prompt: string;
+      flowId: string;
+      result: PlaygroundResult;
+      expected: string;
+    }
   >({
     mutationFn: async ({ prompt, flowId, result, expected }) => {
       if (!isAuthenticated) throw new Error("Not authenticated");
@@ -422,8 +450,12 @@ export default function StudioPage() {
 
   const { mutateAsync: saveEvalCase } = evalCaseMutation;
   const handleSaveEvalCase = useCallback(
-    (prompt: string, flowId: string, result: PlaygroundResult, expected: string) =>
-      saveEvalCase({ prompt, flowId, result, expected }),
+    (
+      prompt: string,
+      flowId: string,
+      result: PlaygroundResult,
+      expected: string,
+    ) => saveEvalCase({ prompt, flowId, result, expected }),
     [saveEvalCase],
   );
   const handleDeleteEvalCase = useCallback(
@@ -448,9 +480,11 @@ export default function StudioPage() {
 
   // Node documentation follows the builder's selection.
   const catalog = useNodeTypeCatalog();
-  const [inspect, setInspect] = useState<
-    { nodeId: string; type: string; field?: string } | null
-  >(null);
+  const [inspect, setInspect] = useState<{
+    nodeId: string;
+    type: string;
+    field?: string;
+  } | null>(null);
   const nodeDocs = useNodeDocs(inspect, catalog);
   const docType = nodeDocs.doc;
   const docsAvailable = docType !== undefined || nodeDocs.hidden !== undefined;
@@ -469,7 +503,10 @@ export default function StudioPage() {
     setSidebarSection((cur) => {
       if (cur === "documentation") return cur;
       try {
-        window.localStorage.setItem("atf.ui.studio.sidebarSection", "documentation");
+        window.localStorage.setItem(
+          "atf.ui.studio.sidebarSection",
+          "documentation",
+        );
       } catch {
         /* storage unavailable — state still applies for this session */
       }
@@ -550,12 +587,15 @@ export default function StudioPage() {
                 : "border-border text-foreground hover:bg-muted"
             }`}
           >
-            {focusMode ? <Minimize2 size={13} aria-hidden /> : <Maximize2 size={13} aria-hidden />}
+            {focusMode ? (
+              <Minimize2 size={13} aria-hidden />
+            ) : (
+              <Maximize2 size={13} aria-hidden />
+            )}
             {focusMode ? "Exit focus" : "Focus canvas"}
           </button>
         </div>
       </div>
-
 
       {/* Studio grid: Builder | Optimize on the right */}
       <div className="flex flex-1 overflow-hidden">
@@ -563,9 +603,7 @@ export default function StudioPage() {
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden gap-0">
           {/* Builder panel */}
           <div
-            className={`flex min-h-0 flex-col overflow-hidden border-b border-border bg-card p-2 ${
-              "flex-1"
-            }`}
+            className={`flex min-h-0 flex-col overflow-hidden border-b border-border bg-card p-2 ${"flex-1"}`}
           >
             {/* Builder canvas — write controls gated by operator role (Req. 21.1) */}
             <div className="flex-1 min-h-0">
@@ -595,14 +633,16 @@ export default function StudioPage() {
                     subflowsContainer={subflowsContainer}
                     canvasDefinitionRef={canvasDefinitionRef}
                     {...(attach !== null && attach.flowId === selectedFlowId
-                      ? { attachExecutionId: attach.executionId, onDetachExecution: detachExecution }
+                      ? {
+                          attachExecutionId: attach.executionId,
+                          onDetachExecution: detachExecution,
+                        }
                       : {})}
                   />
                 </div>
               </RequireRole>
             </div>
           </div>
-
         </div>
 
         {/* Right column: an accordion — Nodes (the palette) and Subflows
@@ -635,7 +675,9 @@ export default function StudioPage() {
                   <NodeTypeDocs
                     doc={docType}
                     common={catalog.common}
-                    {...(catalog.llmFields ? { llmFields: catalog.llmFields } : {})}
+                    {...(catalog.llmFields
+                      ? { llmFields: catalog.llmFields }
+                      : {})}
                     {...(inspect?.field ? { focusedField: inspect.field } : {})}
                     {...(inspect?.nodeId ? { nodeId: inspect.nodeId } : {})}
                   />
@@ -647,7 +689,8 @@ export default function StudioPage() {
           if (sidebarCollapsed) {
             return (
               <div className="flex w-8 shrink-0 flex-col items-center border-l border-border bg-card pt-2">
-                <button type="button"
+                <button
+                  type="button"
                   onClick={() => setSidebarCollapsed(false)}
                   title="Show the sidebar (Nodes, Subflows, Optimize, Diff, Autopilot, Docs)"
                   aria-label="Show sidebar"
@@ -666,151 +709,160 @@ export default function StudioPage() {
           const showDocsSection = docsVisible || nodeDocs.hidden !== undefined;
           return (
             <>
-            <ResizeHandle
-              side="left"
-              width={sidebarWidth}
-              onWidth={setSidebarWidth}
-              min={280}
-              max={720}
-              initial={384}
-              label="Resize the sidebar"
-            />
-            <div
-              style={{ width: sidebarWidth }}
-              className="flex shrink-0 flex-col overflow-auto border-l border-border bg-card px-4"
-            >
-              <div className="flex justify-end pt-2">
-                <button type="button"
-                  onClick={() => setSidebarCollapsed(true)}
-                  title="Hide the sidebar to give the canvas more room"
-                  className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                >
-                  <PanelRightClose size={14} aria-hidden />
-                  Hide
-                </button>
-              </div>
-
-              <SidebarSection
-                id="nodes"
-                current={sidebarSection}
-                onToggle={toggleSidebarSection}
-                icon={<Shapes size={13} aria-hidden />}
-                title="Nodes"
+              <ResizeHandle
+                side="left"
+                width={sidebarWidth}
+                onWidth={setSidebarWidth}
+                min={280}
+                max={720}
+                initial={384}
+                label="Resize the sidebar"
+              />
+              <div
+                style={{ width: sidebarWidth }}
+                className="flex shrink-0 flex-col overflow-auto border-l border-border bg-card px-4"
               >
-                {/* The builder's node palette is portalled into this element —
-                    drag cards from here onto the canvas. */}
-                <div ref={setPaletteHost} />
-              </SidebarSection>
+                <div className="flex justify-end pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setSidebarCollapsed(true)}
+                    title="Hide the sidebar to give the canvas more room"
+                    className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                  >
+                    <PanelRightClose size={14} aria-hidden />
+                    Hide
+                  </button>
+                </div>
 
-              {/* Sub-flows (create / include) live in their own section — the
+                <SidebarSection
+                  id="nodes"
+                  current={sidebarSection}
+                  onToggle={toggleSidebarSection}
+                  icon={<Shapes size={13} aria-hidden />}
+                  title="Nodes"
+                >
+                  {/* The builder's node palette is portalled into this element —
+                    drag cards from here onto the canvas. */}
+                  <div ref={setPaletteHost} />
+                </SidebarSection>
+
+                {/* Sub-flows (create / include) live in their own section — the
                   builder portals its sub-flow palette in here. Only for file
                   flows with write access, like the builder's own gate. */}
-              {showSubflowsSection && (
+                {showSubflowsSection && (
+                  <SidebarSection
+                    id="subflows"
+                    current={sidebarSection}
+                    onToggle={toggleSidebarSection}
+                    icon={<FolderInput size={13} aria-hidden />}
+                    title="Subflows"
+                  >
+                    <div ref={setSubflowsHost} />
+                  </SidebarSection>
+                )}
+
                 <SidebarSection
-                  id="subflows"
+                  id="optimize"
                   current={sidebarSection}
                   onToggle={toggleSidebarSection}
-                  icon={<FolderInput size={13} aria-hidden />}
-                  title="Subflows"
+                  icon={<Gauge size={13} aria-hidden />}
+                  title="Optimize"
                 >
-                  <div ref={setSubflowsHost} />
-                </SidebarSection>
-              )}
-
-              <SidebarSection
-                id="optimize"
-                current={sidebarSection}
-                onToggle={toggleSidebarSection}
-                icon={<Gauge size={13} aria-hidden />}
-                title="Optimize"
-              >
-                <OptimizePanel
-                  selectedFlowId={selectedFlowId}
-                  token={token ?? null}
-                  getCanvasDefinition={getCanvasDefinition}
-                  canvasLabel={builderDirty ? "canvas (unsaved changes)" : "canvas"}
-                  hideHeading
-                />
-              </SidebarSection>
-
-              {/* Flow Diff panel — shows draft vs. published; only meaningful
-                  once an online flow has both (file flows never do). */}
-              {hasDiff && (
-                <SidebarSection
-                  id="diff"
-                  current={sidebarSection}
-                  onToggle={toggleSidebarSection}
-                  icon={<GitCompare size={13} aria-hidden />}
-                  title="Diff (live → draft)"
-                >
-                  <FlowDiffPanel
-                    flowId={selectedFlowId}
-                    token={token ?? undefined}
-                    draftMode
+                  <OptimizePanel
+                    selectedFlowId={selectedFlowId}
+                    token={token ?? null}
+                    getCanvasDefinition={getCanvasDefinition}
+                    canvasLabel={
+                      builderDirty ? "canvas (unsaved changes)" : "canvas"
+                    }
+                    hideHeading
                   />
                 </SidebarSection>
-              )}
 
-              <SidebarSection
-                id="autopilot"
-                current={sidebarSection}
-                onToggle={toggleSidebarSection}
-                icon={<RefreshCw size={13} aria-hidden />}
-                title="Autopilot"
-              >
-                <AutopilotPanel
-                  flowId={selectedFlowId || undefined}
-                  fixedFlow
-                  limit={5}
-                  hideHeading
-                />
-              </SidebarSection>
+                {/* Flow Diff panel — shows draft vs. published; only meaningful
+                  once an online flow has both (file flows never do). */}
+                {hasDiff && (
+                  <SidebarSection
+                    id="diff"
+                    current={sidebarSection}
+                    onToggle={toggleSidebarSection}
+                    icon={<GitCompare size={13} aria-hidden />}
+                    title="Diff (live → draft)"
+                  >
+                    <FlowDiffPanel
+                      flowId={selectedFlowId}
+                      token={token ?? undefined}
+                      draftMode
+                    />
+                  </SidebarSection>
+                )}
 
-              {showDocsSection && (
                 <SidebarSection
-                  id="documentation"
+                  id="autopilot"
                   current={sidebarSection}
                   onToggle={toggleSidebarSection}
-                  icon={<BookOpen size={13} aria-hidden />}
-                  title="Documentation"
+                  icon={<RefreshCw size={13} aria-hidden />}
+                  title="Autopilot"
                 >
-                  {docsVisible ? (
-                    <>
-                      <div className="mb-2 flex items-center justify-between">
-                        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                          Node documentation
-                        </span>
-                        <button
-                          type="button"
-                          onClick={nodeDocs.close}
-                          title="Hide the documentation for this node"
-                          aria-label="Hide node documentation"
-                          className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <NodeTypeDocs
-                        doc={docType}
-                        common={catalog.common}
-                        {...(catalog.llmFields ? { llmFields: catalog.llmFields } : {})}
-                        {...(inspect?.field ? { focusedField: inspect.field } : {})}
-                        {...(inspect?.nodeId ? { nodeId: inspect.nodeId } : {})}
-                      />
-                    </>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={nodeDocs.show}
-                      className="flex items-center gap-1.5 self-start rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
-                    >
-                      <BookOpen size={13} aria-hidden />
-                      Show {nodeDocs.hidden?.title} node documentation
-                    </button>
-                  )}
+                  <AutopilotPanel
+                    flowId={selectedFlowId || undefined}
+                    fixedFlow
+                    limit={5}
+                    hideHeading
+                  />
                 </SidebarSection>
-              )}
-            </div>
+
+                {showDocsSection && (
+                  <SidebarSection
+                    id="documentation"
+                    current={sidebarSection}
+                    onToggle={toggleSidebarSection}
+                    icon={<BookOpen size={13} aria-hidden />}
+                    title="Documentation"
+                  >
+                    {docsVisible ? (
+                      <>
+                        <div className="mb-2 flex items-center justify-between">
+                          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                            Node documentation
+                          </span>
+                          <button
+                            type="button"
+                            onClick={nodeDocs.close}
+                            title="Hide the documentation for this node"
+                            aria-label="Hide node documentation"
+                            className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                          >
+                            ×
+                          </button>
+                        </div>
+                        <NodeTypeDocs
+                          doc={docType}
+                          common={catalog.common}
+                          {...(catalog.llmFields
+                            ? { llmFields: catalog.llmFields }
+                            : {})}
+                          {...(inspect?.field
+                            ? { focusedField: inspect.field }
+                            : {})}
+                          {...(inspect?.nodeId
+                            ? { nodeId: inspect.nodeId }
+                            : {})}
+                        />
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={nodeDocs.show}
+                        className="flex items-center gap-1.5 self-start rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
+                      >
+                        <BookOpen size={13} aria-hidden />
+                        Show {nodeDocs.hidden?.title} node documentation
+                      </button>
+                    )}
+                  </SidebarSection>
+                )}
+              </div>
             </>
           );
         })()}

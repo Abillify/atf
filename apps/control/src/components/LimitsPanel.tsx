@@ -31,6 +31,8 @@ import type {
   TokenLimitInput,
   UsageBucket,
 } from "../types/limits";
+import { formatNumber, formatDateTime } from "../lib/i18n";
+import { useChartPalette } from "../lib/theme/palette";
 
 export interface LimitsPanelProps {
   enabled: boolean;
@@ -64,9 +66,9 @@ function periodLabel(p: LimitPeriod): string {
 }
 
 function barColor(fraction: number): string {
-  if (fraction >= 1) return "bg-red-500";
-  if (fraction >= 0.8) return "bg-amber-500";
-  return "bg-emerald-500";
+  if (fraction >= 1) return "bg-danger-solid";
+  if (fraction >= 0.8) return "bg-warning-solid";
+  return "bg-success-solid";
 }
 
 /**
@@ -78,6 +80,7 @@ export function LimitsPanel({
   enabled,
   token,
 }: LimitsPanelProps): React.JSX.Element {
+  const chart = useChartPalette();
   const { models } = useUsageModels(enabled, token);
   const {
     limits,
@@ -127,7 +130,7 @@ export function LimitsPanel({
     () =>
       series.map((p) => ({
         ts: p.bucket,
-        label: new Date(p.bucket).toLocaleString(undefined, {
+        label: formatDateTime(p.bucket, {
           month: "short",
           day: "numeric",
           ...(bucket === "hour" ? { hour: "2-digit" } : {}),
@@ -246,7 +249,7 @@ export function LimitsPanel({
         </div>
 
         {seriesError !== null ? (
-          <p className="py-8 text-center text-sm text-red-600 dark:text-red-400">{seriesError}</p>
+          <p className="py-8 text-center text-sm text-danger">{seriesError}</p>
         ) : chartData.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
             No usage recorded in this range.
@@ -254,11 +257,11 @@ export function LimitsPanel({
         ) : (
           <ResponsiveContainer width="100%" height={260}>
             <LineChart data={chartData} margin={{ left: 8, right: 16, top: 8 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+              <CartesianGrid strokeDasharray="3 3" stroke={chart.grid} />
               <XAxis dataKey="label" tick={{ fontSize: 10 }} minTickGap={24} />
               <YAxis tick={{ fontSize: 10 }} width={56} />
               <Tooltip
-                formatter={(v) => Number(v ?? 0).toLocaleString()}
+                formatter={(v) => formatNumber(Number(v ?? 0))}
                 labelStyle={{ fontSize: 12 }}
               />
               <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -266,7 +269,7 @@ export function LimitsPanel({
                 type="monotone"
                 dataKey="total"
                 name="Total tokens"
-                stroke="#2563eb"
+                stroke={chart.c1}
                 strokeWidth={2}
                 dot={false}
               />
@@ -274,7 +277,7 @@ export function LimitsPanel({
                 type="monotone"
                 dataKey="prompt"
                 name="Prompt"
-                stroke="#0891b2"
+                stroke={chart.c3}
                 strokeWidth={1}
                 dot={false}
               />
@@ -282,7 +285,7 @@ export function LimitsPanel({
                 type="monotone"
                 dataKey="completion"
                 name="Completion"
-                stroke="#7c3aed"
+                stroke={chart.c2}
                 strokeWidth={1}
                 dot={false}
               />
@@ -302,7 +305,7 @@ export function LimitsPanel({
           slightly exceed it).
         </p>
         {limitsError !== null && (
-          <p className="mb-2 text-xs text-red-600 dark:text-red-400">{limitsError}</p>
+          <p className="mb-2 text-xs text-danger">{limitsError}</p>
         )}
         {limits.length === 0 ? (
           <p className="py-4 text-center text-sm text-muted-foreground">
@@ -315,7 +318,9 @@ export function LimitsPanel({
                 <TableHeaderCell>Scope</TableHeaderCell>
                 <TableHeaderCell>Model</TableHeaderCell>
                 <TableHeaderCell>Period</TableHeaderCell>
-                <TableHeaderCell className="text-right">Used / Limit</TableHeaderCell>
+                <TableHeaderCell className="text-right">
+                  Used / Limit
+                </TableHeaderCell>
                 <TableHeaderCell className="pl-3">Consumption</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
@@ -360,7 +365,9 @@ function LimitRow({
 
   return (
     <TableRow className="align-middle">
-      <TableCell className="text-xs text-foreground">{scopeLabel(limit)}</TableCell>
+      <TableCell className="text-xs text-foreground">
+        {scopeLabel(limit)}
+      </TableCell>
       <TableCell className="text-xs text-muted-foreground">
         {limit.model ?? <span className="text-muted-foreground">all</span>}
       </TableCell>
@@ -370,7 +377,7 @@ function LimitRow({
       <TableCell className="text-right tabular-nums text-xs">
         {editing ? (
           <span className="flex items-center justify-end gap-1">
-            {limit.used.totalTokens.toLocaleString()} /
+            {formatNumber(limit.used.totalTokens)} /
             <input
               type="number"
               min={1}
@@ -381,8 +388,8 @@ function LimitRow({
           </span>
         ) : (
           <>
-            {limit.used.totalTokens.toLocaleString()} /{" "}
-            {limit.limitTokens.toLocaleString()}
+            {formatNumber(limit.used.totalTokens)} /{" "}
+            {formatNumber(limit.limitTokens)}
           </>
         )}
       </TableCell>
@@ -395,7 +402,7 @@ function LimitRow({
             />
           </div>
           <span
-            className={`w-10 text-right text-[10px] tabular-nums ${over ? "font-semibold text-red-600" : "text-muted-foreground"}`}
+            className={`w-10 text-right text-[10px] tabular-nums ${over ? "font-semibold text-danger" : "text-muted-foreground"}`}
           >
             {pct}%
           </span>
@@ -578,7 +585,7 @@ function AddLimitForm({
           {saving ? "Saving…" : "Save limit"}
         </Button>
       </div>
-      {error !== null && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {error !== null && <p className="mt-1 text-xs text-danger">{error}</p>}
     </div>
   );
 }

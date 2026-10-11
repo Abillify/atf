@@ -40,10 +40,10 @@ export const pairKey = (source: string, target: string): string =>
 
 /** One color per payload kind — the parallel lines must stay distinguishable. */
 export const CHANNEL_COLORS: Record<EdgeFlowItemKind, string> = {
-  text: "#10b981",
-  image: "#f59e0b",
-  tool: "#8b5cf6",
-  data: "#0ea5e9",
+  text: "var(--edge-used)",
+  image: "var(--edge-active)",
+  tool: "var(--edge-parallel)",
+  data: "var(--info-solid)",
 };
 
 /** German kind names for the property panel's data list. */
@@ -63,9 +63,9 @@ export const CHANNEL_STATUS_LABEL: Record<EdgeFlowItemStatus, string> = {
 
 /** Tailwind classes of the status badge in the data list. */
 export const CHANNEL_STATUS_BADGE: Record<EdgeFlowItemStatus, string> = {
-  passed: "bg-sky-50 text-sky-700 border-sky-200",
-  produced: "bg-green-50 text-green-700 border-green-200",
-  consumed: "bg-amber-50 text-amber-700 border-amber-200",
+  passed: "bg-info-soft text-info border-info-border",
+  produced: "bg-success-soft text-success border-success-border",
+  consumed: "bg-warning-soft text-warning border-warning-border",
 };
 
 /**

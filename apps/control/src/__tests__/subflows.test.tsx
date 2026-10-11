@@ -75,7 +75,7 @@ describe("sub-flow boxes", () => {
     expect(card).not.toBeNull();
     // Bold selection ring (not the old subtle ring-2).
     expect(card!.className).toContain("ring-4");
-    expect(card!.className).toContain("ring-sky-500");
+    expect(card!.className).toContain("ring-info");
   });
 
   test("the selected sub-flow group's box is visibly highlighted", () => {
@@ -155,7 +155,7 @@ describe("SubflowPalette", () => {
       ok: true,
       json: async () => ({
         subflows: [
-          { path: "subflows/lib.yaml", name: "Library", nodeIds: ["recall", "vision"], edgeCount: 0, usedBy: ["abby"] },
+          { path: "subflows/lib.yaml", name: "Library", nodeIds: ["recall", "vision"], edgeCount: 0, usedBy: ["support"] },
           { path: "subflows/on-canvas.yaml", nodeIds: ["x"], edgeCount: 0, usedBy: [] },
         ],
       }),
@@ -163,7 +163,7 @@ describe("SubflowPalette", () => {
     const a = actions();
     render(<SubflowPalette actions={a} />);
     const card = await screen.findByText("📄 lib.yaml");
-    expect(screen.getByText(/used by abby/)).toBeInTheDocument();
+    expect(screen.getByText(/used by support/)).toBeInTheDocument();
     // The card is draggable and carries the file path as its payload.
     const li = card.closest("li") as HTMLElement;
     expect(li.getAttribute("draggable")).toBe("true");

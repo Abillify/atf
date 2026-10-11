@@ -189,7 +189,7 @@ export function FlowPicker({
                     <span className="min-w-0 flex-1 truncate">{o.name}</span>
                     <span className="shrink-0 font-mono text-[10px] text-muted-foreground">{o.id}</span>
                     {o.entry.hasDraft && (
-                      <span className="shrink-0 rounded bg-amber-50 px-1 text-[10px] text-amber-700">draft</span>
+                      <span className="shrink-0 rounded bg-warning-soft px-1 text-[10px] text-warning">draft</span>
                     )}
                     {o.entry.source !== undefined && (
                       <span className="shrink-0 rounded bg-muted px-1 text-[10px] uppercase text-muted-foreground">

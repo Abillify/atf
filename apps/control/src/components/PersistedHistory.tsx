@@ -30,6 +30,7 @@ import {
   TableCell,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
+import { formatDateTime } from "../lib/i18n";
 
 export interface PersistedHistoryProps {
   executions: PersistedExecution[];
@@ -343,7 +344,7 @@ function RequestRow({
           return r === null ? "—" : formatDuration(r);
         })()}
       </TableCell>
-      <TableCell className="text-right tabular-nums text-emerald-700">
+      <TableCell className="text-right tabular-nums text-success">
         {e.total_cost != null && e.total_cost > 0
           ? formatCost(e.total_cost)
           : "—"}
@@ -352,7 +353,7 @@ function RequestRow({
         <Badge variant={b.variant}>{b.label}</Badge>
       </TableCell>
       <TableCell className="text-right text-xs text-muted-foreground">
-        {Number.isNaN(started.getTime()) ? "—" : started.toLocaleString()}
+        {Number.isNaN(started.getTime()) ? "—" : formatDateTime(started)}
       </TableCell>
       {hasActions && (
         <TableCell className="text-right">
@@ -647,7 +648,7 @@ export function PersistedHistory({
             </div>
           )}
           {error && (
-            <span className="text-xs text-red-600 dark:text-red-400">
+            <span className="text-xs text-danger">
               {error}
             </span>
           )}
@@ -809,7 +810,7 @@ export function PersistedHistory({
                           ? "—"
                           : formatDuration(summary.runtime)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-emerald-700">
+                      <TableCell className="text-right tabular-nums text-success">
                         {summary.cost != null && summary.cost > 0
                           ? formatCost(summary.cost)
                           : "—"}
@@ -823,7 +824,7 @@ export function PersistedHistory({
                         {groupStarted === null ||
                         Number.isNaN(groupStarted.getTime())
                           ? "—"
-                          : groupStarted.toLocaleString()}
+                          : formatDateTime(groupStarted)}
                       </TableCell>
                       {hasActions && <TableCell />}
                     </TableRow>

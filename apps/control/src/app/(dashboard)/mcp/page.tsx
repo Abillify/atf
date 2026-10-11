@@ -45,9 +45,9 @@ const STATUS_VARIANT: Record<McpServer["status"], BadgeVariant> = {
 };
 
 export default function McpPage() {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
-  // Authorization-Header bei undefined-Token weg.
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously). authFetch omits
+  // the Authorization header for an undefined token.
   const { token, ready, isAuthenticated } = useAuth();
 
   const {
@@ -79,7 +79,7 @@ export default function McpPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md bg-red-50 p-4 text-sm text-red-700"
+          className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
           Failed to load MCP servers: {error.message}
         </div>
@@ -130,7 +130,7 @@ export default function McpPage() {
                       )}
                     </div>
                     <span
-                      className={`text-xs font-medium ${tool.authorized ? "text-green-600" : "text-red-600 dark:text-red-400"}`}
+                      className={`text-xs font-medium ${tool.authorized ? "text-success" : "text-danger"}`}
                       aria-label={
                         tool.authorized ? "Authorized" : "Not authorized"
                       }

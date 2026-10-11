@@ -26,7 +26,9 @@ describe("FlowCanvas Start / End", () => {
     );
     expect(screen.getByTestId("boundary-start")).toHaveTextContent("Where is my order?");
     expect(screen.getByTestId("boundary-end")).toHaveTextContent("On its way.");
-    expect(screen.getByTestId("boundary-end").className).toContain("ring-green-500");
+    expect(screen.getByTestId("boundary-end").className).toContain(
+      "ring-success",
+    );
   });
 
   test("draws neither without the prop", () => {

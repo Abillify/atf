@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { render, screen, waitFor } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, test, expect, vi, afterEach } from "vitest";
 import { AutopilotPanel } from "../components/AutopilotPanel";
 
@@ -32,6 +33,15 @@ function mockFetchSequence(
   }) as unknown as typeof fetch;
 }
 
+// Req 9.2: the panel uses TanStack Query; every test gets a fresh client
+// (retry:false so error cases run without backoff).
+function renderPanel(ui: React.ReactElement): void {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
 describe("AutopilotPanel — governance display", () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -51,7 +61,7 @@ describe("AutopilotPanel — governance display", () => {
         },
       },
     ]);
-    render(<AutopilotPanel />);
+    renderPanel(<AutopilotPanel />);
     await waitFor(() =>
       expect(screen.getByText("Human approval required")).toBeInTheDocument(),
     );
@@ -71,7 +81,7 @@ describe("AutopilotPanel — governance display", () => {
         },
       },
     ]);
-    render(<AutopilotPanel />);
+    renderPanel(<AutopilotPanel />);
     await waitFor(() =>
       expect(screen.getByText("Auto-promote enabled")).toBeInTheDocument(),
     );
@@ -80,7 +90,7 @@ describe("AutopilotPanel — governance display", () => {
 
   test("does not render a governance badge when /autopilot/config fails", async () => {
     mockFetchSequence([{ body: { runs: [] } }, { ok: false, body: {} }]);
-    render(<AutopilotPanel />);
+    renderPanel(<AutopilotPanel />);
     await waitFor(() =>
       expect(
         screen.getByText(/No autopilot runs yet/),
@@ -93,12 +103,17 @@ describe("AutopilotPanel — governance display", () => {
   test("loads without a token when operator auth is open (AUTHN_MODE=disabled)", async () => {
     auth.current = { token: undefined, ready: true, isAuthenticated: true };
     mockFetchSequence([{ body: { runs: [] } }, { ok: false, body: {} }]);
-    render(<AutopilotPanel />);
+    renderPanel(<AutopilotPanel />);
     await waitFor(() =>
       expect(screen.getByText(/No autopilot runs yet/)).toBeInTheDocument(),
     );
     const init = vi.mocked(global.fetch).mock.calls[0]![1] as RequestInit;
-    expect(init.headers).toEqual({});
+    // lib/control-api passes a Headers instance; without a token no
+    // Authorization header may be set.
+    const headers = init.headers as Headers;
+    expect(headers).toBeInstanceOf(Headers);
+    expect(headers.get("Authorization")).toBeNull();
+    expect([...headers.entries()]).toEqual([]);
   });
 
   test("explains why autopilot is unavailable instead of loading forever", async () => {
@@ -109,7 +124,7 @@ describe("AutopilotPanel — governance display", () => {
         body: { error: { message: "Autopilot requires RED_TEAM_ENABLED=true." } },
       },
     ]);
-    render(<AutopilotPanel />);
+    renderPanel(<AutopilotPanel />);
     await waitFor(() =>
       expect(
         screen.getByText(/Autopilot requires RED_TEAM_ENABLED=true/),
@@ -121,7 +136,7 @@ describe("AutopilotPanel — governance display", () => {
 
   test("offers a flow picker that follows the selected flow", () => {
     mockFetchSequence([{ body: { runs: [] } }]);
-    render(
+    renderPanel(
       <AutopilotPanel
         flowId="b"
         flows={[
@@ -136,9 +151,9 @@ describe("AutopilotPanel — governance display", () => {
 
   test("shows the host page's flow instead of another selector when fixed", () => {
     mockFetchSequence([{ body: { runs: [] } }]);
-    render(<AutopilotPanel flowId="abby-pii" fixedFlow />);
+    renderPanel(<AutopilotPanel flowId="support-pii" fixedFlow />);
     expect(screen.queryByLabelText("Flow for manual autopilot trigger")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Flow ID for manual autopilot trigger")).not.toBeInTheDocument();
-    expect(screen.getByText("abby-pii")).toBeInTheDocument();
+    expect(screen.getByText("support-pii")).toBeInTheDocument();
   });
 });

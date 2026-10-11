@@ -7,6 +7,7 @@ import { Filter, Search, X } from "lucide-react";
 import { Badge, Button } from "../lib/ui";
 import { FlowMultiSelect } from "./FlowMultiSelect";
 import { UserSelectFilter } from "./UserSelectFilter";
+import { formatDate, formatTime } from "../lib/i18n";
 
 export interface ExecutionPickerItem {
   executionId: string;
@@ -61,11 +62,11 @@ export interface ExecutionPickerProps {
 function statusDot(status: ExecutionPickerItem["status"]): string {
   switch (status) {
     case "running":
-      return "bg-yellow-500";
+      return "bg-warning-solid";
     case "error":
-      return "bg-red-500";
+      return "bg-danger-solid";
     case "completed":
-      return "bg-green-500";
+      return "bg-success-solid";
   }
 }
 
@@ -309,7 +310,7 @@ export function ExecutionPicker({
                       <span>
                         {it.nodeCount} node{it.nodeCount === 1 ? "" : "s"}
                         {it.errorCount > 0 && (
-                          <span className="ml-1 text-red-600 dark:text-red-400">
+                          <span className="ml-1 text-danger">
                             · {it.errorCount} err
                           </span>
                         )}
@@ -320,7 +321,7 @@ export function ExecutionPicker({
                         )}
                         {it.cost != null && (
                           <span
-                            className="ml-1 font-medium text-emerald-600"
+                            className="ml-1 font-medium text-success"
                             title="Estimated cost"
                           >
                             · {it.cost.toFixed(4)}
@@ -330,19 +331,16 @@ export function ExecutionPicker({
                       <span className="text-right leading-tight">
                         <span className="block">
                           {it.startedAt
-                            ? new Date(it.startedAt).toLocaleTimeString()
+                            ? formatTime(it.startedAt)
                             : "—"}
                         </span>
                         <span className="block">
                           {it.startedAt
-                            ? new Date(it.startedAt).toLocaleDateString(
-                                "de-DE",
-                                {
+                            ? formatDate(it.startedAt,  {
                                   day: "2-digit",
                                   month: "2-digit",
                                   year: "2-digit",
-                                },
-                              )
+                                })
                             : ""}
                         </span>
                       </span>

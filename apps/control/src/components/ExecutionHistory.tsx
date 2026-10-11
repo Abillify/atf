@@ -15,6 +15,7 @@ import {
   TableCell,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
+import { formatTime } from "../lib/i18n";
 
 export interface ExecutionHistoryProps {
   events: NodeExecutionEvent[];
@@ -137,7 +138,7 @@ export function ExecutionHistory({
                   <TableCell className="text-right tabular-nums">
                     {r.totalLatencyMs} ms
                   </TableCell>
-                  <TableCell className="text-right tabular-nums text-emerald-700">
+                  <TableCell className="text-right tabular-nums text-success">
                     {r.totalCost > 0 ? formatCost(r.totalCost) : "—"}
                   </TableCell>
                   <TableCell className="text-center">
@@ -145,7 +146,7 @@ export function ExecutionHistory({
                   </TableCell>
                   <TableCell className="text-right text-xs text-muted-foreground">
                     {r.startedAt
-                      ? new Date(r.startedAt).toLocaleTimeString()
+                      ? formatTime(r.startedAt)
                       : "—"}
                   </TableCell>
                 </TableRow>

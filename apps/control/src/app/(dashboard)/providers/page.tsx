@@ -3,15 +3,19 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * /providers — Provider & pool monitoring plus provider key pool.
+ * /providers — Providers consolidated (Req 9.9).
  *
- * Top: live provider/pool health from GET /monitoring/providers — capabilities
- * (reasoning, tool-calling, structured output, vision), per-provider call/error
- * counts, reachability (circuit-breaker state) and the global admission queue.
- * Bottom: the configured provider key pool from GET /admin/provider-keys.
+ * Two tabs: "Monitoring" (live provider/pool health from GET
+ * /monitoring/providers — capabilities, per-provider call/error counts,
+ * reachability/circuit-breaker state, the global admission queue, plus the
+ * configured provider key pool from GET /admin/provider-keys) and "Test bench"
+ * (the interactive provider/model test bench formerly at /provider-testing,
+ * which now redirects here).
  */
 
-import React from "react";
+import React, { useEffect, useState } from "react";
+import dynamic from "next/dynamic";
+import { KeyRound } from "lucide-react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
@@ -24,8 +28,25 @@ import {
   TableRow,
   TableHeaderCell,
   TableCell,
+  Tabs,
+  TabsList,
+  TabsTrigger,
+  TabsContent,
+  EmptyState,
 } from "../../../lib/ui";
 import type { BadgeVariant } from "../../../lib/ui";
+
+// Test bench — loaded client-side only, and only when its tab is active
+// (Req. 12.3).
+const ProviderTestingPanel = dynamic(
+  () =>
+    import("../../../components/ProviderTestingPanel").then(
+      (m) => m.ProviderTestingPanel,
+    ),
+  { ssr: false },
+);
+
+type ProvidersTab = "monitoring" | "testing";
 
 interface ProviderKey {
   id: string;
@@ -130,7 +151,7 @@ function CapabilityBadges({ caps }: { caps: ProviderCapabilities }) {
   );
 }
 
-export default function ProvidersPage() {
+function ProviderMonitoringPanel(): React.JSX.Element {
   const { token, ready, isAuthenticated } = useAuth();
 
   // Gate on isAuthenticated (= !authRequired || !!token) rather than !!token,
@@ -157,15 +178,15 @@ export default function ProvidersPage() {
   });
 
   return (
-    <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
-      <h1 className="mb-4 text-xl font-semibold text-foreground">
+    <div className="space-y-4">
+      <h2 className="text-lg font-semibold text-foreground">
         Provider Monitoring
-      </h1>
+      </h2>
 
       {monitoring.error && (
         <div
           role="alert"
-          className="mb-4 rounded-md bg-red-50 p-4 text-sm text-red-700"
+          className="mb-4 rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
           Failed to load provider monitoring: {monitoring.error.message}
         </div>
@@ -201,7 +222,9 @@ export default function ProvidersPage() {
                   <TableHeaderCell>Provider</TableHeaderCell>
                   <TableHeaderCell>Capabilities</TableHeaderCell>
                   <TableHeaderCell>Status</TableHeaderCell>
-                  <TableHeaderCell className="text-right">Calls</TableHeaderCell>
+                  <TableHeaderCell className="text-right">
+                    Calls
+                  </TableHeaderCell>
                   <TableHeaderCell className="text-right">
                     Errors
                   </TableHeaderCell>
@@ -310,7 +333,9 @@ export default function ProvidersPage() {
         </>
       )}
 
-      <h2 className="mb-3 text-lg font-semibold text-foreground">Provider key pool</h2>
+      <h2 className="mb-3 text-lg font-semibold text-foreground">
+        Provider key pool
+      </h2>
 
       {isLoading && (
         <div
@@ -325,16 +350,18 @@ export default function ProvidersPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md bg-red-50 p-4 text-sm text-red-700"
+          className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
           Failed to load provider keys: {error.message}
         </div>
       )}
 
       {!isLoading && !error && keys.length === 0 && (
-        <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          No provider keys configured.
-        </div>
+        <EmptyState
+          icon={KeyRound}
+          title="No provider keys configured."
+          description="Add a provider key so ATF can call model APIs. Keys are stored server-side and shown masked here."
+        />
       )}
 
       {keys.length > 0 && (
@@ -345,8 +372,12 @@ export default function ProvidersPage() {
                 <TableHeaderCell>Provider</TableHeaderCell>
                 <TableHeaderCell>Key</TableHeaderCell>
                 <TableHeaderCell>Status</TableHeaderCell>
-                <TableHeaderCell className="text-right">Successes</TableHeaderCell>
-                <TableHeaderCell className="text-right">Failures</TableHeaderCell>
+                <TableHeaderCell className="text-right">
+                  Successes
+                </TableHeaderCell>
+                <TableHeaderCell className="text-right">
+                  Failures
+                </TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -373,6 +404,38 @@ export default function ProvidersPage() {
           </Table>
         </div>
       )}
+    </div>
+  );
+}
+
+export default function ProvidersPage() {
+  const [tab, setTab] = useState<ProvidersTab>("monitoring");
+
+  // Deep-link support: /providers?tab=testing opens the Test bench tab
+  // (used by the /provider-testing redirect, Req. 9.9).
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const param = new URLSearchParams(window.location.search).get("tab");
+    if (param === "testing") setTab("testing");
+  }, []);
+
+  return (
+    <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
+      <Tabs value={tab} onValueChange={(v) => setTab(v as ProvidersTab)}>
+        <TabsList className="mb-4">
+          <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
+          <TabsTrigger value="testing">Test bench</TabsTrigger>
+        </TabsList>
+        {/* Panels are wrapped in TabsContent so the tabs expose real
+            role="tabpanel" targets (valid aria-controls); the heavy, code-split
+            panels still only mount for the active tab. */}
+        <TabsContent value="monitoring">
+          {tab === "monitoring" && <ProviderMonitoringPanel />}
+        </TabsContent>
+        <TabsContent value="testing">
+          {tab === "testing" && <ProviderTestingPanel />}
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

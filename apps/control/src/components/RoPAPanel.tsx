@@ -49,10 +49,10 @@ interface DataFlowMap {
 }
 
 const STATUS_STYLE: Record<RoPAEntry["status"], string> = {
-  compliant: "border-green-200 bg-green-50 text-green-700",
-  violation: "border-red-300 bg-red-50 text-red-700",
-  undeclared: "border-amber-200 bg-amber-50 text-amber-700",
-  "no-policy": "border-slate-200 bg-slate-50 text-slate-600",
+  compliant: "border-success-border bg-success-soft text-success",
+  violation: "border-danger-border bg-danger-soft text-danger",
+  undeclared: "border-warning-border bg-warning-soft text-warning",
+  "no-policy": "border-border bg-muted text-muted-foreground",
 };
 
 export function RoPAPanel(): React.JSX.Element {
@@ -134,7 +134,7 @@ export function RoPAPanel(): React.JSX.Element {
       </div>
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
           {error}
         </div>
       )}
@@ -144,7 +144,7 @@ export function RoPAPanel(): React.JSX.Element {
           <p className="text-xs text-muted-foreground">
             {map.summary.flows} flow(s), {map.summary.withDataClasses} with
             declared data classes,{" "}
-            <span className={map.summary.violations > 0 ? "text-red-600 font-medium" : ""}>
+            <span className={map.summary.violations > 0 ? "text-danger font-medium" : ""}>
               {map.summary.violations} residency violation(s)
             </span>
             . Providers: {map.summary.providers.join(", ") || "none"}.
@@ -194,7 +194,7 @@ export function RoPAPanel(): React.JSX.Element {
                   </div>
                 )}
                 {e.warnings.map((w, i) => (
-                  <div key={i} className="mt-1 text-[11px] text-amber-700">
+                  <div key={i} className="mt-1 text-[11px] text-warning">
                     ⚠ {w}
                   </div>
                 ))}

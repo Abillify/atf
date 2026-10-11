@@ -101,7 +101,7 @@ function PaletteIcon({ type }: { type: NodeType }): React.JSX.Element {
   return (
     <span
       aria-hidden
-      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-white ${nodeTypeColor(type)}`}
+      className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded border text-on-solid ${nodeTypeColor(type)}`}
     >
       <Icon size={13} strokeWidth={2.25} />
     </span>

@@ -25,6 +25,7 @@ import {
 import { answerText } from "../lib/run-attach";
 import { RunPicker, type RunsContext } from "./FormulaEditor";
 import type { NodeState } from "./graph/graphUtils";
+import { formatDateTime } from "../lib/i18n";
 
 export interface BoundaryPanelProps {
   kind: "start" | "end";
@@ -188,10 +189,10 @@ function messageText(content: RunTraceMessage["content"]): string {
 }
 
 const ROLE_BADGE: Record<string, string> = {
-  system: "bg-slate-500/15 text-slate-700 dark:text-slate-300",
-  user: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
-  assistant: "bg-indigo-500/15 text-indigo-700 dark:text-indigo-300",
-  tool: "bg-teal-500/15 text-teal-700 dark:text-teal-300",
+  system: "bg-muted-foreground/15 text-muted-foreground",
+  user: "bg-info-solid/15 text-info",
+  assistant: "bg-info-solid/15 text-info",
+  tool: "bg-subflow-solid/15 text-subflow",
 };
 
 function RequestMessages({ messages }: { messages: RunTraceMessage[] }): React.JSX.Element {
@@ -246,7 +247,7 @@ function RequestMessages({ messages }: { messages: RunTraceMessage[] }): React.J
 function formatTime(iso: string | null | undefined): string | undefined {
   if (!iso) return undefined;
   const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? iso : d.toLocaleString();
+  return Number.isNaN(d.getTime()) ? iso : formatDateTime(d);
 }
 
 function TraceMetadata({ trace }: { trace: RunTrace }): React.JSX.Element {

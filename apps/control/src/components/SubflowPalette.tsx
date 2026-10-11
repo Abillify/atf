@@ -78,8 +78,8 @@ function IncludeDialog({
             className="min-w-0 flex-1 bg-transparent text-xs outline-none"
           />
         </div>
-        {error && <p role="alert" className="text-xs text-red-600">{error}</p>}
-        {message && <p className="text-xs text-teal-700 dark:text-teal-300">{message}</p>}
+        {error && <p role="alert" className="text-xs text-danger">{error}</p>}
+        {message && <p className="text-xs text-subflow">{message}</p>}
         {list === null && !error && <p className="text-xs text-muted-foreground">Loading…</p>}
         {list !== null && list.length === 0 && (
           <p className="text-xs text-muted-foreground">No files in subflows/ yet — create one with “New subflow”.</p>
@@ -199,7 +199,7 @@ export function SubflowPalette({
           onClick={() => setIncluding(true)}
           title="Include a sub-flow"
           aria-label="Include a sub-flow"
-          className="flex h-8 w-8 items-center justify-center rounded-md border border-teal-300 bg-teal-50 text-teal-700 hover:bg-teal-100 dark:border-teal-800 dark:bg-teal-950/40 dark:text-teal-300"
+          className="flex h-8 w-8 items-center justify-center rounded-md border border-subflow-border bg-subflow-soft text-subflow hover:bg-subflow-soft dark:border-subflow-border dark:bg-subflow-soft dark:text-subflow"
         >
           <FolderInput size={15} aria-hidden />
         </button>
@@ -218,15 +218,15 @@ export function SubflowPalette({
   );
 
   return (
-    <section aria-label="Subflows" className="rounded-md border border-teal-200 bg-teal-50/50 p-2 dark:border-teal-900 dark:bg-teal-950/20">
+    <section aria-label="Subflows" className="rounded-md border border-subflow-border bg-subflow-soft p-2 dark:border-subflow-border dark:bg-subflow-soft">
       <div className="mb-1.5 flex items-center gap-1.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-teal-800 dark:text-teal-300">Subflows</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-subflow">Subflows</p>
         <button
           type="button"
           onClick={() => setReloadNonce((n) => n + 1)}
           title="Reload the sub-flow list"
           aria-label="Reload the sub-flow list"
-          className="ml-auto rounded p-0.5 text-teal-700 hover:bg-teal-100 dark:text-teal-300 dark:hover:bg-teal-900/40"
+          className="ml-auto rounded p-0.5 text-subflow hover:bg-subflow-soft dark:text-subflow dark:hover:bg-subflow-solid-hover/40"
         >
           <RefreshCw size={12} aria-hidden />
         </button>
@@ -239,7 +239,7 @@ export function SubflowPalette({
             setError(null);
           }}
           aria-expanded={creating}
-          className="flex flex-1 items-center justify-center gap-1 rounded border border-teal-300 bg-card px-1.5 py-1 text-[11px] font-medium text-teal-800 hover:bg-teal-100 dark:border-teal-800 dark:text-teal-200 dark:hover:bg-teal-900/40"
+          className="flex flex-1 items-center justify-center gap-1 rounded border border-subflow-border bg-card px-1.5 py-1 text-[11px] font-medium text-subflow hover:bg-subflow-soft dark:border-subflow-border dark:text-subflow dark:hover:bg-subflow-solid-hover/40"
         >
           <FilePlus2 size={13} aria-hidden />
           New subflow
@@ -267,7 +267,7 @@ export function SubflowPalette({
               type="button"
               onClick={create}
               disabled={!path}
-              className="rounded bg-teal-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-teal-700 disabled:opacity-40"
+              className="rounded bg-subflow-solid px-2 py-1 text-[11px] font-medium text-on-solid hover:bg-subflow-solid-hover disabled:opacity-40"
             >
               Create
             </button>
@@ -278,7 +278,7 @@ export function SubflowPalette({
               ? `the ${actions.selectedCount} selected node(s) move into it.`
               : "starts with one node; drop more nodes onto its box. Select nodes first to move them in."}
           </p>
-          {error && <p role="alert" className="text-[10px] text-red-600">{error}</p>}
+          {error && <p role="alert" className="text-[10px] text-danger">{error}</p>}
         </div>
       )}
       <div className="mt-2 flex items-center gap-1.5 rounded border border-border bg-card px-2 py-1">
@@ -291,8 +291,8 @@ export function SubflowPalette({
           className="min-w-0 flex-1 bg-transparent text-xs outline-none"
         />
       </div>
-      {message && <p className="mt-1.5 text-[10px] leading-snug text-teal-700 dark:text-teal-300">{message}</p>}
-      {listError && <p role="alert" className="mt-1.5 text-[10px] text-red-600">{listError}</p>}
+      {message && <p className="mt-1.5 text-[10px] leading-snug text-subflow">{message}</p>}
+      {listError && <p role="alert" className="mt-1.5 text-[10px] text-danger">{listError}</p>}
       {list === null && !listError && <p className="mt-1.5 text-[10px] text-muted-foreground">Loading…</p>}
       {list !== null && list.length === 0 && (
         <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
@@ -322,7 +322,7 @@ export function SubflowPalette({
                   : `${s.path} — drag onto the canvas, or double-click to include`
               }
               className={`rounded border border-border bg-card p-1.5 ${
-                onCanvas ? "opacity-60" : "cursor-grab select-none transition-colors hover:border-teal-300 active:cursor-grabbing"
+                onCanvas ? "opacity-60" : "cursor-grab select-none transition-colors hover:border-subflow-border active:cursor-grabbing"
               }`}
             >
               <div className="flex items-start gap-1.5">
@@ -344,7 +344,7 @@ export function SubflowPalette({
                   type="button"
                   disabled={onCanvas || busy !== null}
                   onClick={() => include(s.path)}
-                  className="shrink-0 rounded bg-teal-600 px-1.5 py-0.5 text-[10px] font-medium text-white hover:bg-teal-700 disabled:bg-muted disabled:text-muted-foreground"
+                  className="shrink-0 rounded bg-subflow-solid px-1.5 py-0.5 text-[10px] font-medium text-on-solid hover:bg-subflow-solid-hover disabled:bg-muted disabled:text-muted-foreground"
                 >
                   {onCanvas ? "On canvas" : busy === s.path ? "…" : "Include"}
                 </button>

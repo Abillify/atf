@@ -130,7 +130,7 @@ function FieldDoc({
 }
 
 const USAGE_STYLE: Record<string, string> = {
-  required: "text-red-600",
+  required: "text-danger",
   recommended: "text-foreground",
   optional: "text-muted-foreground",
   ignored: "text-muted-foreground line-through",

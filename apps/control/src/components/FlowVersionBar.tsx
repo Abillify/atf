@@ -4,7 +4,7 @@
 
 /**
  * FlowVersionBar — Studio builder toolbar segment for Phase 2
- * ("Versionierung & Diff als First-Class-Citizen").
+ * ("versioning & diff as a first-class citizen").
  *
  * Lets the operator pick a past published version (or "draft vs published")
  * to compare against the latest/current state. The comparison is fetched via
@@ -21,7 +21,8 @@
 
 import type React from "react";
 import { useCallback, useEffect, useState } from "react";
-import { backendUrl } from "../lib/backend-url";
+import { useQuery } from "@tanstack/react-query";
+import { request } from "../lib/control-api";
 import { Button } from "../lib/ui";
 import { buildDiffOverlay, type DiffOverlay } from "../lib/flow-diff-view";
 import type { RFNode, RFEdge } from "../lib/flow-graph";
@@ -30,6 +31,7 @@ import type {
   FlowDiffResponse,
   FlowVersionEntry,
 } from "../types/flow";
+import { formatDate } from "../lib/i18n";
 
 export interface FlowVersionBarProps {
   flowId: string;
@@ -47,19 +49,15 @@ export interface FlowVersionBarProps {
 
 type Comparison = { kind: "version"; version: number } | { kind: "draft" };
 
+// Req 9.2: transport through lib/control-api; the null-on-error semantics of
+// the previous helpers are kept (comparisons/rollback are imperative).
 async function fetchJson<T>(
-  url: string,
+  path: string,
   token: string | undefined,
   init?: RequestInit,
 ): Promise<T | null> {
   try {
-    const resp = await fetch(url, {
-      ...init,
-      headers: {
-        ...(init?.headers ?? {}),
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-    });
+    const resp = await request(path, { target: "backend", token, ...init });
     if (!resp.ok) return null;
     return (await resp.json()) as T;
   } catch {
@@ -76,20 +74,34 @@ export function FlowVersionBar({
   onDiffOverlayChange,
   onRolledBack,
 }: FlowVersionBarProps): React.JSX.Element | null {
-  const [versions, setVersions] = useState<FlowVersionEntry[]>([]);
   const [selected, setSelected] = useState<Comparison | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
 
+  // Req 9.2: version list through TanStack Query; an error yields an empty
+  // list (as before), and the panel then renders nothing.
+  const versionsQuery = useQuery<FlowVersionEntry[], Error>({
+    queryKey: ["flow-versions", flowId, token ?? null],
+    retry: false,
+    queryFn: async () => {
+      const resp = await request(
+        `/flows/${encodeURIComponent(flowId)}/versions`,
+        { target: "backend", token },
+      );
+      if (!resp.ok) return [];
+      const data = (await resp.json()) as { versions?: FlowVersionEntry[] };
+      return data.versions ?? [];
+    },
+  });
+  const versions = versionsQuery.data ?? [];
+
+  // Reset the selection when the flow changes (onDiffOverlayChange is a
+  // parent callback and must not run in render-phase code, hence useEffect).
   useEffect(() => {
     setSelected(null);
     setConfirmingRollback(false);
     setStatus(null);
     onDiffOverlayChange(undefined);
-    fetchJson<{ versions: FlowVersionEntry[] }>(
-      backendUrl(`/flows/${encodeURIComponent(flowId)}/versions`),
-      token,
-    ).then((data) => setVersions(data?.versions ?? []));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [flowId, token]);
 
@@ -99,17 +111,14 @@ export function FlowVersionBar({
       if (comparison.kind === "draft") {
         const [diffResp, detail] = await Promise.all([
           fetchJson<FlowDiffResponse>(
-            backendUrl(`/flows/${encodeURIComponent(flowId)}/diff?draft=true`),
+            `/flows/${encodeURIComponent(flowId)}/diff?draft=true`,
             token,
           ),
           fetchJson<{
             published: FlowDefinition | null;
             /** Live file a never-published draft would replace. */
             fileDefinition?: FlowDefinition;
-          }>(
-            backendUrl(`/flows/${encodeURIComponent(flowId)}`),
-            token,
-          ),
+          }>(`/flows/${encodeURIComponent(flowId)}`, token),
         ]);
         const baseline = detail?.published ?? detail?.fileDefinition;
         if (!diffResp || !baseline) {
@@ -131,9 +140,7 @@ export function FlowVersionBar({
       if (!fromDef) return;
 
       const diffResp = await fetchJson<FlowDiffResponse>(
-        backendUrl(
-          `/flows/${encodeURIComponent(flowId)}/diff?from=${comparison.version}&to=${latest}`,
-        ),
+        `/flows/${encodeURIComponent(flowId)}/diff?from=${comparison.version}&to=${latest}`,
         token,
       );
       if (!diffResp) {
@@ -165,7 +172,7 @@ export function FlowVersionBar({
     if (!selected || selected.kind !== "version") return;
     setStatus("Rolling back…");
     const result = await fetchJson<{ record: unknown }>(
-      backendUrl(`/flows/${encodeURIComponent(flowId)}/rollback`),
+      `/flows/${encodeURIComponent(flowId)}/rollback`,
       token,
       {
         method: "POST",
@@ -211,7 +218,7 @@ export function FlowVersionBar({
           .filter((v) => v.version !== latestVersion)
           .map((v) => (
             <option key={v.version} value={v.version}>
-              v{v.version} → v{latestVersion} ({new Date(v.publishedAt).toLocaleDateString()})
+              v{v.version} → v{latestVersion} ({formatDate(v.publishedAt)})
             </option>
           ))}
       </select>

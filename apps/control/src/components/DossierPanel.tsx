@@ -26,6 +26,7 @@ import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
 import { downloadAuthenticated } from "../lib/authenticated-download";
+import { formatDateTime, formatDate } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend src/compliance/dossier.ts)
@@ -196,7 +197,7 @@ export function DossierPanel(): React.JSX.Element {
       </div>
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
           {error}
         </div>
       )}
@@ -204,9 +205,9 @@ export function DossierPanel(): React.JSX.Element {
       {dossier && (
         <>
           <p className="text-xs text-muted-foreground">
-            Generated {new Date(dossier.generatedAt).toLocaleString()} — window{" "}
-            {new Date(dossier.windowStart).toLocaleDateString()} →{" "}
-            {new Date(dossier.windowEnd).toLocaleDateString()}
+            Generated {formatDateTime(dossier.generatedAt)} — window{" "}
+            {formatDate(dossier.windowStart)} →{" "}
+            {formatDate(dossier.windowEnd)}
           </p>
 
           {/* Audit chain integrity */}
@@ -215,12 +216,12 @@ export function DossierPanel(): React.JSX.Element {
               Audit Trail Integrity
             </h3>
             {dossier.auditIntegrity.chainVerification.valid ? (
-              <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-800">
+              <div className="rounded border border-success-border bg-success-soft px-3 py-2 text-xs text-success">
                 ✓ Verified — {dossier.auditIntegrity.chainVerification.checked} record(s)
                 checked, hash chain intact from genesis.
               </div>
             ) : (
-              <div className="rounded border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-800">
+              <div className="rounded border border-danger-border bg-danger-soft px-3 py-2 text-xs text-danger">
                 ✗ TAMPER DETECTED — broken at record #
                 {dossier.auditIntegrity.chainVerification.brokenAt?.id} (
                 {dossier.auditIntegrity.chainVerification.brokenAt?.reason})
@@ -253,7 +254,7 @@ export function DossierPanel(): React.JSX.Element {
                     {dossier.rtbfEvidence.operations.slice(0, 20).map((op, i) => (
                       <TableRow key={`${op.at}-${i}`}>
                         <TableCell className="text-muted-foreground whitespace-nowrap">
-                          {new Date(op.at).toLocaleString()}
+                          {formatDateTime(op.at)}
                         </TableCell>
                         <TableCell>{op.actor}</TableCell>
                         <TableCell className="font-mono">{op.action}</TableCell>
@@ -280,7 +281,7 @@ export function DossierPanel(): React.JSX.Element {
                   <span className="font-medium">{t.name}</span>:{" "}
                   {t.maxAgeDays !== null ? `${t.maxAgeDays}d` : "no window"}
                   {t.subjectErase && (
-                    <span className="ml-1 text-green-600">RTBF-capable</span>
+                    <span className="ml-1 text-success">RTBF-capable</span>
                   )}
                 </span>
               ))}
@@ -307,13 +308,13 @@ export function DossierPanel(): React.JSX.Element {
                     <span className="font-mono">{e.dataset}</span>
                     <span
                       className={
-                        e.passRate >= 0.9 ? "text-green-600" : "text-amber-600"
+                        e.passRate >= 0.9 ? "text-success" : "text-warning"
                       }
                     >
                       {e.passed}/{e.total} passed ({(e.passRate * 100).toFixed(0)}%)
                     </span>
                     <span className="text-muted-foreground">
-                      {new Date(e.recordedAt).toLocaleDateString()} [{e.source}]
+                      {formatDate(e.recordedAt)} [{e.source}]
                     </span>
                   </div>
                 ))}
@@ -338,8 +339,8 @@ export function DossierPanel(): React.JSX.Element {
                       key={flowId}
                       className={`rounded px-2 py-1 text-xs border ${
                         score >= 0.7
-                          ? "border-green-200 bg-green-50 text-green-700"
-                          : "border-red-200 bg-red-50 text-red-700"
+                          ? "border-success-border bg-success-soft text-success"
+                          : "border-danger-border bg-danger-soft text-danger"
                       }`}
                     >
                       {flowId}: {(score * 100).toFixed(0)}%
@@ -364,8 +365,8 @@ export function DossierPanel(): React.JSX.Element {
                   <span
                     className={
                       dossier.dlpEffectiveness.overall.recall >= 0.9
-                        ? "text-green-600"
-                        : "text-amber-600"
+                        ? "text-success"
+                        : "text-warning"
                     }
                   >
                     recall {(dossier.dlpEffectiveness.overall.recall * 100).toFixed(1)}%

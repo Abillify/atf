@@ -98,7 +98,7 @@ function SessionEntries({
     return <div className="text-xs text-muted-foreground">Loading entries…</div>;
   }
   if (error) {
-    return <div className="text-xs text-red-600">{error.message}</div>;
+    return <div className="text-xs text-danger">{error.message}</div>;
   }
   if (entries.length === 0) {
     return <div className="text-xs text-muted-foreground">No entries.</div>;
@@ -125,9 +125,9 @@ function SessionEntries({
 }
 
 export default function MemoryPage() {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
-  // Authorization-Header bei undefined-Token weg.
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously). authFetch omits
+  // the Authorization header for an undefined token.
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -186,7 +186,7 @@ export default function MemoryPage() {
       {error && !memoryDisabled && (
         <div
           role="alert"
-          className="rounded-md bg-red-50 p-4 text-sm text-red-700"
+          className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
           Failed to load sessions: {error.message}
         </div>

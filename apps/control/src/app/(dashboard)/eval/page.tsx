@@ -32,6 +32,7 @@ import {
   TabsContent,
 } from "../../../lib/ui";
 import { EvalRunsPanel } from "../../../components/EvalRunsPanel";
+import { formatDateTime } from "../../../lib/i18n";
 
 interface EvalCase {
   id: string;
@@ -65,9 +66,9 @@ function deleteEvalCase(id: string, token: string | undefined): Promise<void> {
 }
 
 export default function EvalPage() {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
-  // Authorization-Header bei undefined-Token weg.
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously). authFetch omits
+  // the Authorization header for an undefined token.
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [tab, setTab] = React.useState<"cases" | "runs">("cases");
@@ -118,14 +119,14 @@ export default function EvalPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md bg-red-50 p-4 text-sm text-red-700"
+          className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
           Failed to load eval cases: {error.message}
         </div>
       )}
 
       {deleteMutation.error && (
-        <div role="alert" className="mb-3 rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div role="alert" className="mb-3 rounded-md bg-danger-soft p-3 text-sm text-danger">
           Failed to delete eval case: {deleteMutation.error.message}
         </div>
       )}
@@ -160,7 +161,7 @@ export default function EvalPage() {
                   </TableCell>
                   <TableCell className="text-muted-foreground">{c.createdBy}</TableCell>
                   <TableCell className="text-muted-foreground">
-                    {new Date(c.createdAt).toLocaleString()}
+                    {formatDateTime(c.createdAt)}
                   </TableCell>
                   <TableCell className="text-right">
                     {confirmId === c.id ? (

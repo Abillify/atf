@@ -4,6 +4,19 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { FlowsTab, formatDuration, studioHref } from "../components/FlowsTab";
+import { ConfirmProvider } from "../lib/ui";
+
+/**
+ * Req 9.5: FlowsTab asks for confirmations through useConfirm(), so every
+ * test mounts the ConfirmProvider.
+ */
+function renderWithConfirm() {
+  return render(
+    <ConfirmProvider>
+      <FlowsTab />
+    </ConfirmProvider>,
+  );
+}
 
 function mockList(onlineEditing: boolean) {
   return vi.fn().mockResolvedValue({
@@ -69,7 +82,7 @@ describe("FlowsTab", () => {
 
   test("renders file and online flows with the right actions", async () => {
     vi.stubGlobal("fetch", mockList(true));
-    render(<FlowsTab />);
+    renderWithConfirm();
     await waitFor(() =>
       expect(screen.getByText("File Flow")).toBeInTheDocument(),
     );
@@ -96,7 +109,7 @@ describe("FlowsTab", () => {
 
   test("shows the disabled hint and no New-flow button when online editing is off", async () => {
     vi.stubGlobal("fetch", mockList(false));
-    render(<FlowsTab />);
+    renderWithConfirm();
     await waitFor(() =>
       expect(screen.getByText("File Flow")).toBeInTheDocument(),
     );
@@ -113,7 +126,7 @@ describe("FlowsTab", () => {
 
   test("renders per-flow stats columns and dashes for flows without runs", async () => {
     vi.stubGlobal("fetch", mockListAndStats(true));
-    render(<FlowsTab />);
+    renderWithConfirm();
     await waitFor(() =>
       expect(screen.getByText("File Flow")).toBeInTheDocument(),
     );
@@ -133,7 +146,7 @@ describe("FlowsTab", () => {
   test("range selector defaults to 1d and refetches stats on change", async () => {
     const fetchMock = mockListAndStats(true);
     vi.stubGlobal("fetch", fetchMock);
-    render(<FlowsTab />);
+    renderWithConfirm();
     await waitFor(() =>
       expect(screen.getByText("File Flow")).toBeInTheDocument(),
     );

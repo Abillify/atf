@@ -164,7 +164,7 @@ function NameInput({
 		<div className="min-w-0 flex-1">
 			<input
 				aria-label={`Variable name ${name}`}
-				className={`${inputCls} font-mono text-xs font-semibold ${error ? "border-red-400" : ""}`}
+				className={`${inputCls} font-mono text-xs font-semibold ${error ? "border-danger-border" : ""}`}
 				placeholder="name"
 				value={draft}
 				spellCheck={false}
@@ -176,7 +176,7 @@ function NameInput({
 				}}
 			/>
 			{error && (
-				<span className="mt-0.5 block text-[10px] text-red-600">{error}</span>
+				<span className="mt-0.5 block text-[10px] text-danger">{error}</span>
 			)}
 		</div>
 	);
@@ -211,7 +211,7 @@ function JsonValueInput({
 				aria-label={`Value of ${name}`}
 				rows={Math.min(8, Math.max(2, text.split("\n").length))}
 				spellCheck={false}
-				className={`${inputCls} resize-y font-mono text-xs ${error ? "border-red-400" : ""}`}
+				className={`${inputCls} resize-y font-mono text-xs ${error ? "border-danger-border" : ""}`}
 				value={text}
 				onChange={(e) => {
 					setText(e.target.value);
@@ -224,7 +224,7 @@ function JsonValueInput({
 				}}
 			/>
 			{error && (
-				<span className="mt-0.5 block text-[10px] text-red-600">{error}</span>
+				<span className="mt-0.5 block text-[10px] text-danger">{error}</span>
 			)}
 		</div>
 	);
@@ -355,7 +355,7 @@ function FormulaResult({
 }): React.JSX.Element {
 	if (error) {
 		return (
-			<p role="alert" className="text-[10px] text-red-600">
+			<p role="alert" className="text-[10px] text-danger">
 				⚠ {error}
 			</p>
 		);
@@ -366,7 +366,7 @@ function FormulaResult({
 			? "null"
 			: typeof value;
 	return (
-		<p className="truncate text-[10px] text-emerald-700 dark:text-emerald-400">
+		<p className="truncate text-[10px] text-success">
 			→ <code>{JSON.stringify(value)}</code>{" "}
 			<span className="text-muted-foreground">({type})</span>
 		</p>
@@ -520,7 +520,7 @@ export function VariablesEditor({
 										onClick={() =>
 											used > 0 ? setConfirmDelete(name) : remove(name)
 										}
-										className="shrink-0 rounded p-1.5 text-muted-foreground hover:bg-red-50 hover:text-red-600"
+										className="shrink-0 rounded p-1.5 text-muted-foreground hover:bg-danger-soft hover:text-danger"
 									>
 										<Trash2 className="h-3.5 w-3.5" aria-hidden />
 									</button>
@@ -567,13 +567,13 @@ export function VariablesEditor({
 								{confirmDelete === name ? (
 									<div
 										role="alert"
-										className="flex flex-wrap items-center gap-2 text-[10px] text-red-600"
+										className="flex flex-wrap items-center gap-2 text-[10px] text-danger"
 									>
 										Still used {used}× — references would stay unresolved.
 										<button
 											type="button"
 											onClick={() => remove(name)}
-											className="rounded bg-red-600 px-1.5 py-0.5 font-medium text-white"
+											className="rounded bg-danger-solid px-1.5 py-0.5 font-medium text-on-solid"
 										>
 											Delete anyway
 										</button>

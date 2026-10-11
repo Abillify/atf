@@ -81,7 +81,7 @@ export function StatsBar({ summary }: StatsBarProps): React.JSX.Element {
       <Kpi
         label="Active"
         value={String(summary.activeExecutions)}
-        accent="text-yellow-600"
+        accent="text-warning"
         hint={
           summary.queueDepth > 0 ? `${summary.queueDepth} queued` : "no backlog"
         }
@@ -95,7 +95,7 @@ export function StatsBar({ summary }: StatsBarProps): React.JSX.Element {
       <Kpi
         label="Est. cost"
         value={formatCurrency(summary.costTotal)}
-        accent="text-emerald-600"
+        accent="text-success"
       />
       <Kpi
         label="Avg node"
@@ -104,13 +104,13 @@ export function StatsBar({ summary }: StatsBarProps): React.JSX.Element {
       <Kpi
         label="Error rate"
         value={`${errorRate.toFixed(1)}%`}
-        accent={errorRate > 5 ? "text-red-600" : "text-foreground"}
+        accent={errorRate > 5 ? "text-danger" : "text-foreground"}
       />
       {groundednessTotal > 0 && (
         <Kpi
           label="Grounded"
           value={`${groundedPct.toFixed(0)}%`}
-          accent={groundedPct < 80 ? "text-amber-600" : "text-foreground"}
+          accent={groundedPct < 80 ? "text-warning" : "text-foreground"}
           hint={`${summary.groundednessFailed} ungrounded`}
         />
       )}

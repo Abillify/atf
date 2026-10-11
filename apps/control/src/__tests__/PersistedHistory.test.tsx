@@ -5,6 +5,7 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { describe, test, expect, vi } from "vitest";
 import { PersistedHistory } from "../components/PersistedHistory";
 import type { PersistedExecution } from "../types/history";
+import { formatDateTime } from "../lib/i18n";
 
 function exec(
   id: string,
@@ -168,7 +169,7 @@ describe("PersistedHistory", () => {
     expect(groupRow).toHaveTextContent("ok");
     // Start = oldest request (aaaa @ 00:01).
     expect(groupRow).toHaveTextContent(
-      new Date("2025-01-01T00:01:00Z").toLocaleString(),
+      formatDateTime(new Date("2025-01-01T00:01:00Z")),
     );
   });
 
@@ -335,7 +336,7 @@ describe("PersistedHistory", () => {
       render(
         <PersistedHistory
           executions={[exec("e1")]}
-          flowOptions={["abby-pii"]}
+          flowOptions={["support-pii"]}
           userOptions={["Example User"]}
           onIncludeFlowsChange={vi.fn()}
           onExcludeFlowsChange={vi.fn()}
@@ -361,7 +362,7 @@ describe("PersistedHistory", () => {
       render(
         <PersistedHistory
           executions={[exec("e1")]}
-          includeFlows={["abby-pii"]}
+          includeFlows={["support-pii"]}
           excludeFlows={["app-editor-coach"]}
           userFilter="Example User"
           onIncludeFlowsChange={vi.fn()}

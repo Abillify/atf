@@ -319,7 +319,8 @@ function ChannelEdgeImpl({
     targetY: ty,
     targetPosition,
   })[0];
-  const stroke = typeof data?.color === "string" ? data.color : "#10b981";
+  const stroke =
+    typeof data?.color === "string" ? data.color : "var(--edge-used)";
   const title = typeof data?.title === "string" ? data.title : undefined;
   return (
     <>
@@ -334,7 +335,7 @@ function ChannelEdgeImpl({
       />
       {/* Source-end dot on the lane's own start, so the bundle reads as
           separate lines even where they converge at the handle. */}
-      <circle cx={sx} cy={sy} r={selected ? 4 : 3} fill={stroke} />
+      <circle cx={sx} cy={sy} r={selected ? 4 : 3} style={{ fill: stroke }} />
       {title !== undefined && <title>{title}</title>}
     </>
   );

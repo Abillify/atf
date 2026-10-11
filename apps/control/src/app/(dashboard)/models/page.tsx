@@ -19,6 +19,7 @@ import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Button, Badge } from "../../../lib/ui";
+import { formatDate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors src/routes/models.ts ModelObject)
@@ -93,7 +94,7 @@ function ModelDetail({
         <Button variant="ghost" size="sm" onClick={onClose}>✕ Close</Button>
       </div>
       {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
-      {error && <p className="text-sm text-red-600">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
       {model && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
@@ -101,7 +102,7 @@ function ModelDetail({
               { label: "ID", value: model.id },
               { label: "Display name", value: model.name ?? "—" },
               { label: "Owned by", value: model.owned_by },
-              { label: "Created", value: new Date(model.created * 1000).toLocaleDateString() },
+              { label: "Created", value: formatDate(model.created * 1000) },
             ].map(({ label, value }) => (
               <div key={label} className="rounded border border-border bg-background p-2">
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
@@ -204,7 +205,7 @@ export default function ModelsPage() {
       />
 
       {error && (
-        <div role="alert" className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div role="alert" className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
           {error}
         </div>
       )}

@@ -178,7 +178,7 @@ export function FlowEndpointPicker({
               {selected.flow.name}{" "}
               <span className="font-mono text-muted-foreground">({selected.flow.id})</span>
               {selected.draft !== undefined && (
-                <span className="ml-1 inline-flex items-center gap-1 rounded bg-amber-50 px-1 text-[10px] text-amber-700">
+                <span className="ml-1 inline-flex items-center gap-1 rounded bg-warning-soft px-1 text-[10px] text-warning">
                   <GitBranch size={9} aria-hidden />
                   {selected.draft.label}
                 </span>
@@ -260,10 +260,10 @@ export function FlowEndpointPicker({
                     <GitBranch
                       size={11}
                       aria-hidden
-                      className="shrink-0 text-amber-600"
+                      className="shrink-0 text-warning"
                     />
                     <span className="min-w-0 flex-1 truncate">{o.name}</span>
-                    <span className="shrink-0 rounded bg-amber-50 px-1 text-[10px] text-amber-700">
+                    <span className="shrink-0 rounded bg-warning-soft px-1 text-[10px] text-warning">
                       draft
                     </span>
                   </>

@@ -14,12 +14,14 @@
  */
 
 import type React from "react";
-import { useEffect, useState, useCallback, useMemo } from "react";
+import { useEffect, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
-import { backendUrl } from "../lib/backend-url";
+import { request } from "../lib/control-api";
 import { FlowPicker } from "./FlowPicker";
 import { Badge, Button } from "../lib/ui";
 import { useDocumentVisibility } from "../hooks/useDocumentVisibility";
+import { formatTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors src/autopilot/autopilot-engine.ts)
@@ -61,11 +63,11 @@ interface AutopilotGovernanceConfig {
 
 const STATUS_COLORS: Record<AutopilotRunStatus, string> = {
   pending: "text-muted-foreground",
-  optimizing: "text-blue-600",
-  "registering-canary": "text-purple-600",
-  done: "text-green-600",
+  optimizing: "text-info",
+  "registering-canary": "text-copilot",
+  done: "text-success",
   skipped: "text-muted-foreground",
-  error: "text-red-600",
+  error: "text-danger",
 };
 
 const STATUS_ICONS: Record<AutopilotRunStatus, string> = {
@@ -90,7 +92,7 @@ function RunRow({ run }: { run: AutopilotRun }) {
         </span>
         <span className="font-mono text-foreground">{run.flowId}</span>
         <span className="ml-auto text-muted-foreground">
-          {new Date(run.startedAt).toLocaleTimeString()}
+          {formatTime(run.startedAt)}
         </span>
       </div>
 
@@ -100,20 +102,20 @@ function RunRow({ run }: { run: AutopilotRun }) {
           {run.status}
         </span>
         {run.bypassRate !== undefined && (
-          <span className="text-amber-600">
+          <span className="text-warning">
             bypass: {(run.bypassRate * 100).toFixed(1)}%
           </span>
         )}
         {run.promotedVersion !== undefined && (
-          <span className="text-green-600">→ v{run.promotedVersion}</span>
+          <span className="text-success">→ v{run.promotedVersion}</span>
         )}
         {run.canaryRegistered === true && (
-          <span className="text-purple-600">canary ↗</span>
+          <span className="text-copilot">canary ↗</span>
         )}
       </div>
 
       {run.error && (
-        <p className="text-red-600 text-[10px]">{run.error}</p>
+        <p className="text-danger text-[10px]">{run.error}</p>
       )}
       {run.status === "done" && run.optimizerRunId !== undefined && (
         // The optimizer run holds the variants, scores and the promote action.
@@ -149,6 +151,22 @@ export interface AutopilotPanelProps {
   hideHeading?: boolean;
 }
 
+/** Signal: the backend reports the autopilot as unavailable (501/503). */
+class AutopilotUnavailableError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AutopilotUnavailableError";
+  }
+}
+
+/** A trigger request reached the backend but was refused (vs. a network error). */
+class AutopilotTriggerRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AutopilotTriggerRefusedError";
+  }
+}
+
 export function AutopilotPanel({
   flowId,
   limit = 10,
@@ -156,137 +174,118 @@ export function AutopilotPanel({
   fixedFlow = false,
   hideHeading = false,
 }: AutopilotPanelProps): React.JSX.Element {
-  // isAuthenticated statt !!token: bei AUTHN_MODE=disabled gibt es kein Token,
-  // die Operator-Plane ist trotzdem erreichbar. Header nur mit echtem Token.
+  // isAuthenticated instead of !!token: with AUTHN_MODE=disabled there is no token,
+  // the operator plane is still reachable. Header only with a real token
+  // (handled by lib/control-api).
   const { token, ready, isAuthenticated } = useAuth();
-  const authHeaders = useMemo((): Record<string, string> => {
-    const headers: Record<string, string> = {};
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    return headers;
-  }, [token]);
-  const [runs, setRuns] = useState<AutopilotRun[]>([]);
-  const [governance, setGovernance] = useState<AutopilotGovernanceConfig | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [triggering, setTriggering] = useState(false);
   const [triggerFlowId, setTriggerFlowId] = useState(flowId ?? "");
   const [triggerMsg, setTriggerMsg] = useState<string | null>(null);
-  /** Set when the backend reports the feature as unavailable (503). */
-  const [unavailable, setUnavailable] = useState<string | null>(null);
 
   // Follow the Studio's flow selection.
   useEffect(() => {
     setTriggerFlowId(flowId ?? "");
   }, [flowId]);
 
-  const fetchGovernance = useCallback(async () => {
-    if (!ready || !isAuthenticated) return;
-    try {
-      const resp = await fetch(backendUrl("/autopilot/config"), {
-        headers: authHeaders,
-      });
-      if (!resp.ok) return;
-      const data = (await resp.json()) as { config: AutopilotGovernanceConfig };
-      setGovernance(data.config ?? null);
-    } catch {
-      /* governance display is best-effort; runs list is the primary content */
-    }
-  }, [authHeaders, ready, isAuthenticated]);
+  const isVisible = useDocumentVisibility();
 
-  const fetchRuns = useCallback(async () => {
-    if (!ready) return;
-    if (!isAuthenticated) {
-      setLoading(false);
-      setError("Not signed in.");
-      return;
-    }
-    try {
-      const url = flowId
-        ? backendUrl(`/autopilot/runs/flow/${encodeURIComponent(flowId)}?limit=${limit}`)
-        : backendUrl(`/autopilot/runs?limit=${limit}`);
-      const resp = await fetch(url, { headers: authHeaders });
+  // Req 9.2: TanStack Query + lib/control-api instead of direct fetch/state.
+  // retry:false: the panel never showed a retry backoff before either.
+  const runsQuery = useQuery<{ runs: AutopilotRun[] }, Error>({
+    queryKey: ["autopilot-runs", flowId ?? null, limit, token ?? null],
+    enabled: ready,
+    retry: false,
+    queryFn: async () => {
+      if (!isAuthenticated) throw new Error("Not signed in.");
+      const path = flowId
+        ? `/autopilot/runs/flow/${encodeURIComponent(flowId)}?limit=${limit}`
+        : `/autopilot/runs?limit=${limit}`;
+      const resp = await request(path, { target: "backend", token });
       if (!resp.ok) {
         const d = (await resp.json().catch(() => ({}))) as {
           error?: { message?: string };
         };
         const message = d.error?.message ?? `HTTP ${resp.status}`;
         if (resp.status === 503 || resp.status === 501) {
-          setUnavailable(message);
-          setError(null);
-        } else {
-          setError(message);
+          throw new AutopilotUnavailableError(message);
         }
-        setRuns([]);
-        return;
+        throw new Error(message);
       }
-      const data = (await resp.json()) as { runs: AutopilotRun[] };
-      setRuns(data.runs ?? []);
-      setUnavailable(null);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
-    }
-    // The flagged "runs" below is `data.runs` (from the `as { runs: ... }`
-    // cast above), not the `runs` state. @babel/eslint-parser has no
-    // TypeScript type info, so exhaustive-deps' scope analysis can't tell the
-    // cast's property name apart from the same-named outer binding.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authHeaders, ready, isAuthenticated, flowId, limit]);
+      const data = (await resp.json()) as { runs?: AutopilotRun[] };
+      return { runs: data.runs ?? [] };
+    },
+    // Poll while any run is in progress (only while the tab is visible).
+    refetchInterval: (query) => {
+      const hasActive = query.state.data?.runs.some(
+        (r) => r.status === "optimizing" || r.status === "registering-canary",
+      );
+      return hasActive && isVisible ? 5_000 : false;
+    },
+  });
 
-  // Initial load + poll while any run is in progress.
-  // Two separate effects: one for initial/refetch-on-deps-change, one for polling.
-  useEffect(() => {
-    void fetchRuns();
-  }, [fetchRuns]);
+  // Governance display is best-effort; the runs list is the primary content.
+  const governanceQuery = useQuery<AutopilotGovernanceConfig | null, Error>({
+    queryKey: ["autopilot-governance", token ?? null],
+    enabled: ready && isAuthenticated,
+    retry: false,
+    queryFn: async () => {
+      const resp = await request("/autopilot/config", { target: "backend", token });
+      if (!resp.ok) return null;
+      const data = (await resp.json()) as { config?: AutopilotGovernanceConfig };
+      return data.config ?? null;
+    },
+  });
 
-  useEffect(() => {
-    void fetchGovernance();
-  }, [fetchGovernance]);
-
-  const isVisible = useDocumentVisibility();
-
-  useEffect(() => {
-    const hasActive = runs.some(
-      (r) => r.status === "optimizing" || r.status === "registering-canary",
-    );
-    if (!hasActive || !isVisible) return;
-    const interval = setInterval(() => void fetchRuns(), 5_000);
-    return () => clearInterval(interval);
-  }, [fetchRuns, runs, isVisible]);
-
-  const handleTrigger = useCallback(async () => {
-    if (!isAuthenticated || !triggerFlowId.trim()) return;
-    setTriggering(true);
-    setTriggerMsg(null);
-    try {
-      const resp = await fetch(backendUrl("/autopilot/trigger"), {
+  const triggerMutation = useMutation<string, Error, string>({
+    mutationFn: async (targetFlowId: string) => {
+      const resp = await request("/autopilot/trigger", {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders,
-        },
-        body: JSON.stringify({ flowId: triggerFlowId.trim() }),
+        target: "backend",
+        token,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ flowId: targetFlowId }),
       });
-      if (resp.ok) {
-        setTriggerMsg("Autopilot cycle started.");
-        void fetchRuns();
-      } else {
-        const d = (await resp.json().catch(() => ({}))) as { error?: { message?: string } };
-        setTriggerMsg(`Failed: ${d.error?.message ?? `HTTP ${resp.status}`}`);
+      if (!resp.ok) {
+        const d = (await resp.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        throw new AutopilotTriggerRefusedError(
+          d.error?.message ?? `HTTP ${resp.status}`,
+        );
       }
-    } catch (err) {
-      setTriggerMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
-    } finally {
-      setTriggering(false);
-    }
-    // The flagged "error" below is `d.error` (from the `as { error?: ... }`
-    // cast above), not the `error` state. @babel/eslint-parser has no
-    // TypeScript type info, so exhaustive-deps' scope analysis can't tell the
-    // cast's property name apart from the same-named outer binding.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [authHeaders, isAuthenticated, triggerFlowId, fetchRuns]);
+      return "Autopilot cycle started.";
+    },
+    onSuccess: (message) => {
+      setTriggerMsg(message);
+      void runsQuery.refetch();
+    },
+    onError: (err) => {
+      setTriggerMsg(
+        err instanceof AutopilotTriggerRefusedError
+          ? `Failed: ${err.message}`
+          : `Error: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    },
+  });
+
+  const runs = runsQuery.data?.runs ?? [];
+  const governance = governanceQuery.data ?? null;
+  const loading = runsQuery.isPending;
+  /** Set when the backend reports the feature as unavailable (503). */
+  const unavailable =
+    runsQuery.error instanceof AutopilotUnavailableError
+      ? runsQuery.error.message
+      : null;
+  const error =
+    runsQuery.error && !(runsQuery.error instanceof AutopilotUnavailableError)
+      ? runsQuery.error.message
+      : null;
+  const triggering = triggerMutation.isPending;
+
+  const handleTrigger = (): void => {
+    if (!isAuthenticated || !triggerFlowId.trim()) return;
+    setTriggerMsg(null);
+    triggerMutation.mutate(triggerFlowId.trim());
+  };
 
   return (
     <div className="flex flex-col gap-3 text-sm">
@@ -300,7 +299,7 @@ export function AutopilotPanel({
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => void fetchRuns()}
+          onClick={() => void runsQuery.refetch()}
           aria-label="Refresh autopilot runs"
         >
           ↻
@@ -368,7 +367,7 @@ export function AutopilotPanel({
           </Button>
         </div>
         {triggerMsg && (
-          <p className={`text-[10px] ${triggerMsg.startsWith("Failed") || triggerMsg.startsWith("Error") ? "text-red-600" : "text-green-600"}`}>
+          <p className={`text-[10px] ${triggerMsg.startsWith("Failed") || triggerMsg.startsWith("Error") ? "text-danger" : "text-success"}`}>
             {triggerMsg}
           </p>
         )}
@@ -378,7 +377,7 @@ export function AutopilotPanel({
       {unavailable ? null : loading ? (
         <div className="text-xs text-muted-foreground">Loading…</div>
       ) : error ? (
-        <div className="text-xs text-red-600">{error}</div>
+        <div className="text-xs text-danger">{error}</div>
       ) : runs.length === 0 ? (
         <div className="text-xs text-muted-foreground">
           No autopilot runs yet. Trigger one manually or enable RED_TEAM_ENABLED

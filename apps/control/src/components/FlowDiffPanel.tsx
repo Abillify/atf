@@ -19,8 +19,8 @@
  */
 
 import type React from "react";
-import { useEffect, useState, useCallback } from "react";
-import { backendUrl } from "../lib/backend-url";
+import { useQuery } from "@tanstack/react-query";
+import { request } from "../lib/control-api";
 import { DiffView } from "./FormulaEditor";
 
 // ---------------------------------------------------------------------------
@@ -95,10 +95,10 @@ function Badge({
   color: "green" | "red" | "yellow" | "blue" | "gray";
 }) {
   const cls = {
-    green: "bg-green-100 text-green-700",
-    red: "bg-red-100 text-red-700",
-    yellow: "bg-amber-100 text-amber-700",
-    blue: "bg-blue-100 text-blue-700",
+    green: "bg-success-soft text-success",
+    red: "bg-danger-soft text-danger",
+    yellow: "bg-warning-soft text-warning",
+    blue: "bg-info-soft text-info",
     gray: "bg-muted text-muted-foreground",
   }[color];
   return (
@@ -112,7 +112,7 @@ const pretty = (v: unknown): string => (typeof v === "string" ? v : JSON.stringi
 
 /** One changed value: a word-level diff for changes, the value for additions/removals. */
 function ValueDetail({ change }: { change: ValueChange }): React.JSX.Element {
-  const badge = { added: "text-green-700", removed: "text-red-700", changed: "text-amber-700" }[change.kind];
+  const badge = { added: "text-success", removed: "text-danger", changed: "text-warning" }[change.kind];
   return (
     <div className="space-y-0.5" data-testid="diff-value">
       <div className="flex items-baseline gap-1.5 text-[10px]">
@@ -133,8 +133,8 @@ function ValueBlock({ value, kind }: { value: unknown; kind: "added" | "removed"
     <pre
       className={`max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border p-2 font-mono text-[11px] ${
         kind === "added"
-          ? "border-green-200 bg-green-50/60 text-green-900 dark:border-green-900 dark:bg-green-950/30 dark:text-green-200"
-          : "border-red-200 bg-red-50/60 text-red-900 line-through decoration-red-400/60 dark:border-red-900 dark:bg-red-950/30 dark:text-red-200"
+          ? "border-success-border bg-success-soft text-success dark:border-success-border dark:bg-success-soft dark:text-success"
+          : "border-danger-border bg-danger-soft text-danger line-through decoration-danger/60 dark:border-danger-border dark:bg-danger-soft dark:text-danger"
       }`}
     >
       {pretty(value)}
@@ -155,10 +155,10 @@ function DiffRow({
   children?: React.ReactNode;
 }) {
   const config = {
-    added: { color: "bg-green-50 border-green-200", badge: "green" as const, prefix: "+" },
-    removed: { color: "bg-red-50 border-red-200", badge: "red" as const, prefix: "−" },
-    changed: { color: "bg-amber-50 border-amber-200", badge: "yellow" as const, prefix: "~" },
-    meta: { color: "bg-blue-50 border-blue-200", badge: "blue" as const, prefix: "M" },
+    added: { color: "bg-success-soft border-success-border", badge: "green" as const, prefix: "+" },
+    removed: { color: "bg-danger-soft border-danger-border", badge: "red" as const, prefix: "−" },
+    changed: { color: "bg-warning-soft border-warning-border", badge: "yellow" as const, prefix: "~" },
+    meta: { color: "bg-info-soft border-info-border", badge: "blue" as const, prefix: "M" },
   }[kind];
 
   const head = (
@@ -222,17 +222,19 @@ export function FlowDiffPanel({
   fromVersion,
   toVersion,
 }: FlowDiffPanelProps): React.JSX.Element {
-  const [response, setResponse] = useState<DiffResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const fetchDiff = useCallback(async () => {
-    if (!flowId) return;
-    setLoading(true);
-    setError(null);
-
-    try {
-      let url = backendUrl(`/flows/${encodeURIComponent(flowId)}/diff`);
+  // Req 9.2: TanStack Query + lib/control-api instead of fetch/useState.
+  const diffQuery = useQuery<DiffResponse, Error>({
+    queryKey: [
+      "flow-diff",
+      flowId,
+      token ?? null,
+      draftMode,
+      fromVersion ?? null,
+      toVersion ?? null,
+    ],
+    enabled: !!flowId,
+    retry: false,
+    queryFn: async () => {
       const params = new URLSearchParams();
       if (draftMode) {
         params.set("draft", "true");
@@ -241,37 +243,23 @@ export function FlowDiffPanel({
         if (toVersion !== undefined) params.set("to", String(toVersion));
       }
       const qs = params.toString();
-      if (qs) url += `?${qs}`;
-
-      const resp = await fetch(url, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-
+      const path = `/flows/${encodeURIComponent(flowId)}/diff${qs ? `?${qs}` : ""}`;
+      const resp = await request(path, { target: "backend", token });
       if (!resp.ok) {
-        const data = (await resp.json().catch(() => ({}))) as { error?: { message?: string } };
-        setError(data.error?.message ?? `HTTP ${resp.status}`);
-        setResponse(null);
-        return;
+        const data = (await resp.json().catch(() => ({}))) as {
+          error?: { message?: string };
+        };
+        throw new Error(data.error?.message ?? `HTTP ${resp.status}`);
       }
+      return (await resp.json()) as DiffResponse;
+    },
+  });
 
-      const data = (await resp.json()) as DiffResponse;
-      setResponse(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      setResponse(null);
-    } finally {
-      setLoading(false);
-    }
-    // The flagged "error" below is `data.error` (from the `as { error?: ... }`
-    // cast above), not the `error` state. @babel/eslint-parser has no
-    // TypeScript type info, so exhaustive-deps' scope analysis can't tell the
-    // cast's property name apart from the same-named outer binding.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [flowId, token, draftMode, fromVersion, toVersion]);
-
-  useEffect(() => {
-    void fetchDiff();
-  }, [fetchDiff]);
+  const response = diffQuery.data ?? null;
+  // Without a flowId the query is disabled (isPending would stay true); then
+  // show "No diff available." as before.
+  const loading = !!flowId && diffQuery.isPending;
+  const error = diffQuery.error ? diffQuery.error.message : null;
 
   if (loading) {
     return (
@@ -283,7 +271,7 @@ export function FlowDiffPanel({
 
   if (error) {
     return (
-      <div className="rounded border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+      <div className="rounded border border-danger-border bg-danger-soft px-3 py-2 text-xs text-danger">
         {error}
       </div>
     );
@@ -316,7 +304,7 @@ export function FlowDiffPanel({
           {fromLabel} → {toLabel}
         </span>
         <button
-          onClick={() => void fetchDiff()}
+          onClick={() => void diffQuery.refetch()}
           className="ml-auto text-accent hover:text-accent/80"
           title="Refresh diff"
           aria-label="Refresh diff"

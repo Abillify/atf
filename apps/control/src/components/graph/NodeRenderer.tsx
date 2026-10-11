@@ -75,7 +75,7 @@ export interface NodeCardProps {
 
 /** Ring of a node the traced run passed through. */
 const USED_RING =
-  "ring-[3px] ring-offset-2 ring-offset-background ring-emerald-400 dark:ring-emerald-300";
+  "ring-[3px] ring-offset-2 ring-offset-background ring-success";
 
 /**
  * The presentational node card — everything about how a node LOOKS (colour,
@@ -107,7 +107,7 @@ export function NodeCard({
   // a lift (shadow + slight scale) so it's unmistakable even on the coloured,
   // ring-carrying cards. Unselected nodes keep their status/approval ring.
   const ringClass = selected
-    ? "ring-4 ring-offset-2 ring-offset-background ring-sky-500 dark:ring-sky-400"
+    ? "ring-4 ring-offset-2 ring-offset-background ring-info"
     : statusRing || (emphasis === "used" ? USED_RING : "");
   const badge = state.approval ? approvalBadge(state.approval) : null;
   const Icon = isTool ? Wrench : nodeTypeIcon(state.nodeType);
@@ -120,9 +120,9 @@ export function NodeCard({
         ? "opacity-50"
         : "";
   const liftClass = selected
-    ? "z-10 scale-[1.03] shadow-xl shadow-sky-500/30 brightness-110"
+    ? "z-10 scale-[1.03] shadow-xl shadow-info/30 brightness-110"
     : emphasis === "used"
-      ? "shadow-lg shadow-emerald-500/40"
+      ? "shadow-lg shadow-success/40"
       : "shadow-md";
 
   // Full error recording (type, message, diagnostics, failing tool result)
@@ -140,8 +140,8 @@ export function NodeCard({
       onClick={() => onClick?.(state)}
       onKeyDown={(e) => e.key === "Enter" && onClick?.(state)}
       className={`
-        relative w-full rounded-xl border-2 ${compact ? "px-2.5 py-1.5" : "px-3 py-2"} text-white cursor-pointer
-        hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-white
+        relative w-full rounded-xl border-2 ${compact ? "px-2.5 py-1.5" : "px-3 py-2"} text-on-solid cursor-pointer
+        hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-on-solid
         transition-all duration-150 select-none
         ${isTool ? "border-dashed" : ""}
         ${liftClass}
@@ -158,7 +158,7 @@ export function NodeCard({
       {isTimeline && barWidth != null && !isPending && (
         <div
           aria-hidden
-          className="pointer-events-none absolute left-0 top-0 h-1.5 rounded-tl-md rounded-br-md bg-white/85"
+          className="pointer-events-none absolute left-0 top-0 h-1.5 rounded-tl-md rounded-br-md bg-card/85"
           style={{ width: Math.max(3, barWidth) }}
         />
       )}
@@ -168,7 +168,7 @@ export function NodeCard({
         <div
           aria-hidden
           data-testid="node-type-icon"
-          className={`flex shrink-0 items-center justify-center rounded-lg bg-black/20 ring-1 ring-inset ring-white/20 ${
+          className={`flex shrink-0 items-center justify-center rounded-lg bg-black/20 ring-1 ring-inset ring-on-solid/20 ${
             compact ? "h-9 w-9" : "h-10 w-10"
           }`}
         >
@@ -248,7 +248,7 @@ export function NodeCard({
                 <span>↓{state.output_tokens}</span>
               )}
               {state.cost != null && (
-                <span className="font-semibold text-emerald-200">
+                <span className="font-semibold text-success">
                   ~{formatCost(state.cost)}
                 </span>
               )}
@@ -258,7 +258,7 @@ export function NodeCard({
           {/* Error snippet — hover (the card or this line) for the full recording */}
           {state.status === "error" && state.error_message && (
             <div
-              className="mt-1 cursor-help text-[10px] bg-red-800/80 rounded px-1.5 py-0.5 line-clamp-2 break-words"
+              className="mt-1 cursor-help text-[10px] bg-danger-solid/80 rounded px-1.5 py-0.5 line-clamp-2 break-words"
               title={errorTooltip}
               data-testid="node-error-snippet"
             >
@@ -309,7 +309,7 @@ export function CustomNode({ data, selected }: NodeProps<CustomFlowNode>) {
         type="source"
         position={sourcePos}
         id="tool-output"
-        className="!bg-teal-500"
+        className="!bg-subflow-solid"
         style={isTimeline ? { top: "50%" } : { left: "50%" }}
       />
       <NodeCard

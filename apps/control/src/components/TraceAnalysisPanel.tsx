@@ -61,9 +61,9 @@ function Metric({
 }): React.JSX.Element {
   const valueClass =
     accent === "error"
-      ? "text-red-600 dark:text-red-400"
+      ? "text-danger"
       : accent === "cost"
-        ? "text-emerald-700 dark:text-emerald-400"
+        ? "text-success"
         : "text-foreground";
   return (
     <div className="rounded-md border border-border bg-background px-3 py-2">
@@ -205,7 +205,7 @@ export function TraceAnalysisPanel({
       {!isAnalyzing && error && (
         <p
           role="alert"
-          className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
+          className="rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning dark:border-warning-border dark:bg-warning-soft dark:text-warning"
         >
           {error}
         </p>
@@ -218,11 +218,11 @@ export function TraceAnalysisPanel({
 
           {/* Root cause */}
           {analysis.rootCause && (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 dark:border-red-900 dark:bg-red-950/30">
-              <div className="text-[11px] font-semibold uppercase tracking-wide text-red-700 dark:text-red-400">
+            <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 dark:border-danger-border dark:bg-danger-soft">
+              <div className="text-[11px] font-semibold uppercase tracking-wide text-danger">
                 Root cause
               </div>
-              <p className="text-sm text-red-800 dark:text-red-300">
+              <p className="text-sm text-danger">
                 {analysis.rootCause}
               </p>
             </div>
@@ -325,7 +325,7 @@ export function TraceAnalysisPanel({
               {variantError && (
                 <p
                   role="alert"
-                  className="mb-1.5 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300"
+                  className="mb-1.5 rounded-md border border-warning-border bg-warning-soft px-3 py-2 text-xs text-warning dark:border-warning-border dark:bg-warning-soft dark:text-warning"
                 >
                   {variantError}
                 </p>

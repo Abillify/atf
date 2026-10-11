@@ -115,7 +115,7 @@ function TestFirePanel({
         </p>
       </div>
       {result && (
-        <div className={`rounded border px-3 py-2 text-sm ${result.status === "error" ? "border-red-200 bg-red-50 text-red-700" : "border-green-200 bg-green-50 text-green-800"}`}>
+        <div className={`rounded border px-3 py-2 text-sm ${result.status === "error" ? "border-danger-border bg-danger-soft text-danger" : "border-success-border bg-success-soft text-success"}`}>
           {result.status === "error" ? (
             <span>✗ {result.error}</span>
           ) : (
@@ -188,7 +188,7 @@ export default function TriggersPage() {
       </div>
 
       {error && (
-        <div role="alert" className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div role="alert" className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
           {error}
         </div>
       )}

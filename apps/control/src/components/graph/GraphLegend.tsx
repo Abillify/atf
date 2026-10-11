@@ -37,7 +37,7 @@ export function GraphLegend({ present }: GraphLegendProps) {
   const types = LEGEND_TYPES.filter((t) => present.has(t.type));
   if (types.length === 0) return null;
   return (
-    <div className="absolute top-2 left-2 z-10 rounded-lg border border-border bg-white/90 px-3 py-2 text-[11px] shadow-sm backdrop-blur-sm">
+    <div className="absolute top-2 left-2 z-10 rounded-lg border border-border bg-card/90 px-3 py-2 text-[11px] shadow-sm backdrop-blur-sm">
       <div className="mb-1 font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">
         Node type
       </div>

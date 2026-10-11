@@ -71,7 +71,7 @@ export function PiiVaultPanel(): React.JSX.Element {
       {loading ? (
         <div className="text-xs text-muted-foreground">Loading…</div>
       ) : error ? (
-        <div className="text-xs text-red-600">{error}</div>
+        <div className="text-xs text-danger">{error}</div>
       ) : status === null ? null : !status.enabled ? (
         <div className="rounded border border-dashed border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
           Disabled. Set <code className="font-mono">PII_VAULT_ENABLED=true</code>{" "}
@@ -79,14 +79,14 @@ export function PiiVaultPanel(): React.JSX.Element {
           tokenize PII in outbound prompts before any LLM sees it.
         </div>
       ) : (
-        <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-xs space-y-2">
-          <div className="flex items-center gap-2 font-medium text-green-800">
+        <div className="rounded border border-success-border bg-success-soft px-3 py-2 text-xs space-y-2">
+          <div className="flex items-center gap-2 font-medium text-success">
             <span>✓ Active</span>
             <Badge variant={status.durable ? "default" : "warning"}>
               {status.durable ? "durable, encrypted" : "in-memory, per-replica"}
             </Badge>
           </div>
-          <p className="text-green-700">
+          <p className="text-success">
             Detected PII is replaced with an encrypted placeholder before any
             LLM provider sees the prompt, and transparently restored in the
             streamed response.
@@ -96,7 +96,7 @@ export function PiiVaultPanel(): React.JSX.Element {
               (t) => (
                 <span
                   key={t}
-                  className="rounded bg-card border border-green-200 px-1.5 py-0.5 text-[10px] font-mono text-green-700"
+                  className="rounded bg-card border border-success-border px-1.5 py-0.5 text-[10px] font-mono text-success"
                 >
                   {t}
                 </span>
@@ -105,11 +105,11 @@ export function PiiVaultPanel(): React.JSX.Element {
           </div>
           {status.detectors !== undefined && status.detectors.length > 0 && (
             <div className="flex flex-wrap items-center gap-1">
-              <span className="text-[10px] text-green-700">detectors:</span>
+              <span className="text-[10px] text-success">detectors:</span>
               {status.detectors.map((d) => (
                 <span
                   key={d}
-                  className="rounded bg-card border border-green-200 px-1.5 py-0.5 text-[10px] font-mono text-green-700"
+                  className="rounded bg-card border border-success-border px-1.5 py-0.5 text-[10px] font-mono text-success"
                 >
                   {d}
                 </span>
@@ -117,7 +117,7 @@ export function PiiVaultPanel(): React.JSX.Element {
             </div>
           )}
           {!status.durable && (
-            <p className="text-amber-700">
+            <p className="text-warning">
               ⚠ No database configured — vault mappings are per-replica and
               lost on restart. Set <code className="font-mono">DATABASE_URL</code>{" "}
               for durable, encrypted storage.

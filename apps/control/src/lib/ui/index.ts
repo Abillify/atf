@@ -49,11 +49,21 @@ export type {
 export { Dialog } from "./Dialog";
 export type { DialogProps } from "./Dialog";
 
+export { ConfirmProvider, useConfirm } from "./ConfirmDialog";
+export type {
+  ConfirmApi,
+  ConfirmOptions,
+  PromptOptions,
+} from "./ConfirmDialog";
+
 export { ToastProvider, useToast } from "./Toast";
 export type { ToastItem, ToastVariant } from "./Toast";
 
 export { Skeleton, SkeletonBlock } from "./Skeleton";
 export type { SkeletonProps, SkeletonBlockProps } from "./Skeleton";
+
+export { EmptyState } from "./EmptyState";
+export type { EmptyStateProps } from "./EmptyState";
 
 export { CommandPalette } from "./CommandPalette";
 export type { CommandPaletteProps, CommandItem } from "./CommandPalette";

@@ -2,10 +2,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useSyncExternalStore, useCallback } from "react";
 import type { NodeExecutionEvent } from "../types/monitoring";
 import { backendUrl } from "../lib/backend-url";
 import { request } from "../lib/control-api";
+import { MonitoringEventStore } from "../lib/monitoring-event-store";
 import { useDocumentVisibility } from "./useDocumentVisibility";
 
 export type TransportType = "sse" | "websocket";
@@ -22,9 +23,10 @@ export interface UseMonitoringEventsOptions {
   /**
    * Endpoint that exchanges the operator token (sent as a normal POST header)
    * for a short-lived ticket carried in the stream URL, so the reusable token
-   * never lands in access/proxy logs. Default `/monitoring/ticket`. When the
-   * endpoint is not available (ticketing disabled → 404) the hook transparently
-   * falls back to the legacy token-in-URL path.
+   * never lands in access/proxy logs. Default `/monitoring/ticket`. Over plain
+   * HTTP the hook falls back to the legacy token-in-URL path when the endpoint
+   * is unavailable; over HTTPS it never does (Req. 8.3) and surfaces a
+   * connection error instead.
    */
   ticketUrl?: string;
   /**
@@ -58,6 +60,16 @@ export interface UseMonitoringEventsResult {
   clearEvents: () => void;
 }
 
+/** True when the page itself is served over TLS — the switch for the
+ *  no-token-in-URL rule (Req. 8.3). SSR-safe: without a window there is no
+ *  browser log to protect, and the effect only runs client-side anyway. */
+function isHttpsPage(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    window.location.protocol === "https:"
+  );
+}
+
 /**
  * React hook that opens an SSE or WebSocket connection to the backend
  * /monitoring/events endpoint, accumulates incoming NodeExecutionEvents in
@@ -69,7 +81,14 @@ export interface UseMonitoringEventsResult {
  * the parent to renew it via `onSessionExpired` instead of retrying forever with
  * a dead token.
  *
- * Requirements: 9.7
+ * Performance (Req. 9.1): incoming events are NOT pushed into React state per
+ * message. They are written into a {@link MonitoringEventStore} backed by a
+ * ring buffer and handed to React at most once per 200 ms via
+ * `useSyncExternalStore`, so a token-by-token stream cannot re-render the
+ * dashboard on every single chunk. The snapshot reference is stable between
+ * flushes; `events` is always the last `maxEvents` events in input order.
+ *
+ * Requirements: 9.1, 9.7
  */
 export function useMonitoringEvents(
   options?: UseMonitoringEventsOptions,
@@ -84,7 +103,31 @@ export function useMonitoringEvents(
   const maxReconnectDelay = options?.maxReconnectDelayMs ?? 30_000;
   const maxEvents = options?.maxEvents ?? 2_000;
 
-  const [events, setEvents] = useState<NodeExecutionEvent[]>([]);
+  // External event store (Req. 9.1): ring buffer + throttled flush. Created
+  // lazily in a ref (not useMemo, which React may discard) so buffered events
+  // survive effect restarts (reconnect, visibility change, token renew). A
+  // changed maxEvents capacity rebuilds the store — the cap is a hard memory
+  // bound, so shrinking it must take effect immediately.
+  const storeRef = useRef<MonitoringEventStore<NodeExecutionEvent> | null>(
+    null,
+  );
+  if (storeRef.current === null || storeRef.current.capacity !== maxEvents) {
+    storeRef.current?.destroy();
+    storeRef.current = new MonitoringEventStore<NodeExecutionEvent>(maxEvents);
+  }
+  const store = storeRef.current;
+
+  // React only ever sees the store's cached snapshot, updated at most every
+  // flush interval (200 ms) — never one render per stream message.
+  const events = useSyncExternalStore(
+    store.subscribe,
+    store.getSnapshot,
+    store.getSnapshot,
+  );
+
+  // Detach subscribers / cancel a pending flush on unmount.
+  useEffect(() => () => store.destroy(), [store]);
+
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -141,9 +184,8 @@ export function useMonitoringEvents(
           if (typeof data.ticket === "string" && data.ticket !== "") {
             return { streamToken: data.ticket };
           }
-          return { streamToken: token }; // unexpected body — fall back to token
-        }
-        if (res.status === 401) {
+          // Unexpected body — treat like an unavailable ticket endpoint.
+        } else if (res.status === 401) {
           // Operator token expired. Try a silent renew; on success the parent
           // updates the token and this effect re-runs, so stop here. On failure
           // stop reconnecting and surface the expiry (no dead-token loop).
@@ -156,26 +198,39 @@ export function useMonitoringEvents(
         }
         // Ticketing not enabled (404) or a transient server error.
         // SECURITY: putting the token in the URL means it appears in proxy/access
-        // logs and browser history. In production this is a security risk.
-        // We warn in the console; the connection proceeds so development/staging
-        // deployments without a ticket endpoint are not broken.
-        if (typeof window !== "undefined" && window.location.protocol === "https:") {
-          console.warn(
-            "[aiperator] Monitoring ticket endpoint unavailable — falling back to token-in-URL. " +
-              "This exposes the operator token in proxy/access logs. " +
-              "Configure MONITORING_TICKET_SECRET on the backend to enable secure ticket exchange.",
+        // logs and browser history. Over HTTPS the hook refuses the fallback
+        // outright (Req. 8.3): surface a connection error and retry with backoff
+        // instead of leaking the reusable operator token. Over plain HTTP the
+        // fallback stays (development only) with a console warning.
+        if (isHttpsPage()) {
+          setIsConnected(false);
+          setError(
+            "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
           );
+          scheduleReconnect();
+          return { stop: true };
         }
+        console.warn(
+          "[aiperator] Monitoring ticket endpoint unavailable — falling back to token-in-URL. " +
+            "This exposes the operator token in proxy/access logs. " +
+            "Configure MONITORING_TICKET_SECRET on the backend to enable secure ticket exchange.",
+        );
         return { streamToken: token };
       } catch {
-        // Network error reaching the ticket endpoint — fall back to the token.
-        // Same security trade-off as the 404 path; warn in production.
-        if (typeof window !== "undefined" && window.location.protocol === "https:") {
-          console.warn(
-            "[aiperator] Could not reach monitoring ticket endpoint — falling back to token-in-URL. " +
-              "This exposes the operator token in proxy/access logs.",
+        // Network error reaching the ticket endpoint. Same policy as the 404
+        // path: no token-in-URL over HTTPS (Req. 8.3), warn + fall back on HTTP.
+        if (isHttpsPage()) {
+          setIsConnected(false);
+          setError(
+            "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
           );
+          scheduleReconnect();
+          return { stop: true };
         }
+        console.warn(
+          "[aiperator] Could not reach monitoring ticket endpoint — falling back to token-in-URL. " +
+            "This exposes the operator token in proxy/access logs.",
+        );
         return { streamToken: token };
       }
     }
@@ -212,12 +267,9 @@ export function useMonitoringEvents(
         if (ev.lastEventId) lastEventIdRef.current = ev.lastEventId;
         try {
           const parsed = JSON.parse(ev.data as string) as NodeExecutionEvent;
-          setEvents((prev) => {
-            const next = [...prev, parsed];
-            return next.length > maxEvents
-              ? next.slice(next.length - maxEvents)
-              : next;
-          });
+          // Buffered, not setState: the store flushes to React at most every
+          // 200 ms (Req. 9.1), coalescing bursts into a single re-render.
+          store.push(parsed);
         } catch {
           // Malformed JSON from the stream — ignore silently
         }
@@ -261,12 +313,7 @@ export function useMonitoringEvents(
         if (destroyed) return;
         try {
           const parsed = JSON.parse(ev.data as string) as NodeExecutionEvent;
-          setEvents((prev) => {
-            const next = [...prev, parsed];
-            return next.length > maxEvents
-              ? next.slice(next.length - maxEvents)
-              : next;
-          });
+          store.push(parsed);
         } catch {
           // Malformed JSON — ignore silently
         }
@@ -330,10 +377,14 @@ export function useMonitoringEvents(
     onSessionExpired,
     baseReconnectDelay,
     maxReconnectDelay,
-    maxEvents,
+    // `maxEvents` is not read inside the effect — a changed capacity rebuilds
+    // `store` above, and the store dependency restarts this effect by itself.
+    store,
   ]);
 
-  const clearEvents = () => setEvents([]);
+  const clearEvents = useCallback(() => {
+    store.clear();
+  }, [store]);
 
   return { events, isConnected, error, clearEvents };
 }

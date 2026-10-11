@@ -16,7 +16,8 @@ export interface TokenSettingsProps {
 /**
  * Header control to set the monitoring token used for `/monitoring/*` (and the
  * control plane) when `MONITORING_AUTH=true`. Persisted via the parent's
- * `useToken` hook (localStorage), so no env rebuild is needed in production.
+ * `useAuth` context (sessionStorage), so no env rebuild is needed in
+ * production.
  */
 export function TokenSettings({
   token,
@@ -79,7 +80,7 @@ export function TokenSettings({
       >
         <span
           className={`inline-block h-2 w-2 rounded-full ${
-            hasToken ? "bg-green-500" : "bg-muted-foreground/30"
+            hasToken ? "bg-success-solid" : "bg-muted-foreground/30"
           }`}
         />
         Token

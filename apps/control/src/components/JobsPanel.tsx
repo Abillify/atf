@@ -26,6 +26,7 @@ import { authFetch } from "../lib/auth-fetch";
 import { parseJobView, type JobStatus, type JobView } from "../contracts/jobs";
 import { Badge, Button, Panel } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
+import { formatDateTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Wire contract is centralized in ../contracts/jobs.
@@ -143,7 +144,7 @@ export function JobsPanel({
           Looking up {jobId}…
         </div>
       ) : error ? (
-        <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+        <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
           {error.message}
         </div>
       ) : job === undefined ? (
@@ -172,11 +173,11 @@ export function JobsPanel({
             </div>
             <div>
               <dt className="text-muted-foreground">Created</dt>
-              <dd className="text-foreground">{new Date(job.created_at).toLocaleString()}</dd>
+              <dd className="text-foreground">{formatDateTime(job.created_at)}</dd>
             </div>
             <div>
               <dt className="text-muted-foreground">Updated</dt>
-              <dd className="text-foreground">{new Date(job.updated_at).toLocaleString()}</dd>
+              <dd className="text-foreground">{formatDateTime(job.updated_at)}</dd>
             </div>
           </dl>
           {job.result !== undefined && (
@@ -190,7 +191,7 @@ export function JobsPanel({
             </div>
           )}
           {job.error !== undefined && (
-            <div className="rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+            <div className="rounded-md border border-danger-border bg-danger-soft p-3 text-sm text-danger">
               {job.error}
             </div>
           )}

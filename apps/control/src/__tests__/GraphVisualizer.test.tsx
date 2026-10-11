@@ -99,7 +99,7 @@ describe("GraphVisualizer", () => {
       render(<GraphVisualizer events={[makeEvent("node-a", "running")]} />);
       const nodeEl = screen.getByTestId("node-node-a");
       expect(nodeEl.querySelector(".node-running-border")).toBeTruthy();
-      expect(nodeEl.querySelector(".bg-sky-400")).toBeNull();
+      expect(nodeEl.querySelector(".bg-info-solid")).toBeNull();
     });
 
     test("renders a green dot for a completed node", () => {
@@ -107,7 +107,7 @@ describe("GraphVisualizer", () => {
         <GraphVisualizer events={[makeEvent("node-b", "completed", 120)]} />,
       );
       const nodeEl = screen.getByTestId("node-node-b");
-      expect(nodeEl.querySelector(".bg-green-400")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-success-solid")).toBeTruthy();
     });
 
     test("renders a red dot for an error node", () => {
@@ -117,7 +117,7 @@ describe("GraphVisualizer", () => {
         />,
       );
       const nodeEl = screen.getByTestId("node-node-c");
-      expect(nodeEl.querySelector(".bg-red-500")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-danger-solid")).toBeTruthy();
     });
   });
 
@@ -137,7 +137,7 @@ describe("GraphVisualizer", () => {
         />,
       );
       const nodeEl = screen.getByTestId("node-llm-node");
-      expect(nodeEl.querySelector(".bg-indigo-600")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-node-llm")).toBeTruthy();
     });
 
     test("colours a retrieval node differently from an LLM node", () => {
@@ -153,8 +153,8 @@ describe("GraphVisualizer", () => {
         />,
       );
       const nodeEl = screen.getByTestId("node-rag-node");
-      expect(nodeEl.querySelector(".bg-cyan-700")).toBeTruthy();
-      expect(nodeEl.querySelector(".bg-indigo-600")).toBeFalsy();
+      expect(nodeEl.querySelector(".bg-node-retrieval")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-node-llm")).toBeFalsy();
     });
   });
 
@@ -267,7 +267,7 @@ describe("GraphVisualizer", () => {
         />,
       );
       const nodeEl = screen.getByTestId("node-router");
-      expect(nodeEl.querySelector(".bg-green-400")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-success-solid")).toBeTruthy();
       expect(nodeEl.querySelector(".node-running-border")).toBeFalsy();
     });
 
@@ -361,7 +361,7 @@ describe("GraphVisualizer", () => {
       act(() => vi.advanceTimersByTime(200));
 
       const nodeEl = screen.getByTestId("node-burst-node");
-      expect(nodeEl.querySelector(".bg-green-400")).toBeTruthy();
+      expect(nodeEl.querySelector(".bg-success-solid")).toBeTruthy();
       expect(screen.getByText("99ms")).toBeInTheDocument();
     });
   });

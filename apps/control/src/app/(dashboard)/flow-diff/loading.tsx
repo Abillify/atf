@@ -26,7 +26,7 @@ export default function FlowDiffLoading() {
         {[0, 1, 2, 3, 4, 5].map((i) => (
           <div
             key={i}
-            className={`h-4 animate-pulse px-3 py-0.5 ${i % 3 === 0 ? "bg-green-50" : i % 3 === 1 ? "bg-red-50" : "bg-card"}`}
+            className={`h-4 animate-pulse px-3 py-0.5 ${i % 3 === 0 ? "bg-success-soft" : i % 3 === 1 ? "bg-danger-soft" : "bg-card"}`}
           >
             <Skeleton width="w-3/4" height="h-3" />
           </div>

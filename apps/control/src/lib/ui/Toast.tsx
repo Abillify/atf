@@ -79,8 +79,8 @@ export function useToast(): Omit<ToastContextValue, "toasts"> {
 
 const variantClasses: Record<ToastVariant, string> = {
   default: "bg-popover border-border text-popover-foreground",
-  success: "bg-emerald-950 border-emerald-700 text-emerald-100",
-  warning: "bg-amber-950 border-amber-600 text-amber-100",
+  success: "bg-success-soft border-success-border text-success",
+  warning: "bg-warning-soft border-warning-border text-warning",
   destructive: "bg-destructive border-destructive text-destructive-foreground",
 };
 

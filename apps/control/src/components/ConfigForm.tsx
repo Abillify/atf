@@ -107,7 +107,7 @@ export function ListInput({
               data-list-item={it}
               {...(highlight === it ? { "data-highlighted": "true" } : {})}
               className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 font-mono text-[11px] ${
-                highlight === it ? "bg-sky-500/20 ring-2 ring-sky-500" : "bg-muted"
+                highlight === it ? "bg-info-solid/20 ring-2 ring-info" : "bg-muted"
               }`}
             >
               {it}
@@ -240,7 +240,7 @@ function FieldControl({
             ((field.min !== undefined && value < field.min) ||
               (field.max !== undefined && value > field.max) ||
               (field.integer && !Number.isInteger(value))) && (
-              <p className="mt-0.5 text-[10px] text-amber-600">
+              <p className="mt-0.5 text-[10px] text-warning">
                 Outside the allowed range{field.integer ? " / not an integer" : ""} — the runtime may reject or ignore it.
               </p>
             )}

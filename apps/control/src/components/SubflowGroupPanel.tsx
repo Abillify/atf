@@ -47,7 +47,7 @@ export function SubflowGroupPanel({
           {dirty && (
             <span
               title="Unsaved changes in this sub-flow"
-              className="rounded bg-amber-100 px-1 py-0.5 text-[10px] font-medium text-amber-800 dark:bg-amber-900 dark:text-amber-200"
+              className="rounded bg-warning-soft px-1 py-0.5 text-[10px] font-medium text-warning dark:bg-warning-soft dark:text-warning"
             >
               unsaved
             </span>

@@ -34,5 +34,28 @@
   },
   "formatter": {
     "enabled": true
-  }
+  },
+  "overrides": [
+    {
+      "includes": [
+        "apps/control/src/components/**",
+        "apps/control/src/app/**",
+        "!apps/control/src/app/api/**"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedGlobals": {
+              "level": "error",
+              "options": {
+                "deniedGlobals": {
+                  "fetch": "Direct fetch calls are only allowed in lib/control-api (Req 9.2)."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

@@ -335,7 +335,7 @@ function TimeRuler({ meta }: { meta: LayoutMeta | null }) {
           className="absolute top-0 h-full border-l border-dashed border-border"
           style={{ left }}
         >
-          <span className="absolute left-1 top-0.5 whitespace-nowrap rounded bg-white/70 px-1 text-[10px] font-medium text-muted-foreground backdrop-blur-sm">
+          <span className="absolute left-1 top-0.5 whitespace-nowrap rounded bg-card/70 px-1 text-[10px] font-medium text-muted-foreground backdrop-blur-sm">
             {formatAxisTime(ms)}
           </span>
         </div>
@@ -683,18 +683,18 @@ export function GraphVisualizer({
       const order = execOrder.get(key);
 
       const baseStroke = e.boundary
-        ? "#2563eb"
+        ? "var(--edge-boundary)"
         : e.tool
-          ? "#14b8a6"
+          ? "var(--edge-tool)"
           : e.parallel
-            ? "#c4b5fd"
-            : "#94a3b8";
+            ? "var(--edge-parallel-light)"
+            : "var(--edge-idle)";
 
       const stroke = isActive
-        ? "#f59e0b"
+        ? "var(--edge-active)"
         : isTraversed
           ? baseStroke
-          : "#d1d5db";
+          : "var(--edge-idle-soft)";
       const strokeWidth = isActive
         ? 2.5
         : isTraversed
@@ -779,7 +779,7 @@ export function GraphVisualizer({
           elementsSelectable
           deleteKeyCode={null}
         >
-          <Background gap={20} color="#e5e7eb" />
+          <Background gap={20} color="var(--canvas-dots)" />
           {viewMode === "timeline" && <TimeRuler meta={layoutMeta} />}
           <Controls showInteractive={false} />
           <MiniMap

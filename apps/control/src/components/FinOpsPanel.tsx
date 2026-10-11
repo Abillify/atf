@@ -33,6 +33,7 @@ import {
   TableCell,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
+import { formatNumber } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirror src/observability/finops.ts)
@@ -122,8 +123,8 @@ function statusVariant(status: BudgetForecast["status"]): BadgeVariant {
 // ---------------------------------------------------------------------------
 
 export function FinOpsPanel(): React.JSX.Element {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym).
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously).
   const { token, ready, isAuthenticated } = useAuth();
   const [tenantId, setTenantId] = useState("default");
   const [submittedTenant, setSubmittedTenant] = useState("default");
@@ -183,7 +184,7 @@ export function FinOpsPanel(): React.JSX.Element {
           </p>
         )}
         {forecastError && (
-          <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
             Failed to load forecast: {forecastError.message}
           </div>
         )}
@@ -253,7 +254,7 @@ export function FinOpsPanel(): React.JSX.Element {
           </p>
         )}
         {co2Error && (
-          <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+          <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
             Failed to load CO2 report: {co2Error.message}
           </div>
         )}
@@ -268,7 +269,7 @@ export function FinOpsPanel(): React.JSX.Element {
               </div>
               <div className="flex flex-col">
                 <span className="text-xs text-muted-foreground">Est. emissions</span>
-                <span className="text-2xl font-bold text-emerald-700">
+                <span className="text-2xl font-bold text-success">
                   {co2Report.totalEstimatedKgCo2e.toFixed(3)} kg CO2e
                 </span>
               </div>
@@ -306,12 +307,12 @@ export function FinOpsPanel(): React.JSX.Element {
                         {m.provider}/{m.model}
                       </TableCell>
                       <TableCell className="text-right tabular-nums text-muted-foreground">
-                        {(m.promptTokens + m.completionTokens).toLocaleString()}
+                        {formatNumber((m.promptTokens + m.completionTokens))}
                       </TableCell>
                       <TableCell className="text-right tabular-nums">
                         {m.estimatedKwh.toFixed(4)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums text-emerald-700">
+                      <TableCell className="text-right tabular-nums text-success">
                         {m.estimatedKgCo2e.toFixed(4)}
                       </TableCell>
                     </TableRow>

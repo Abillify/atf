@@ -48,11 +48,11 @@ function statusBadge(e: SloReportEntry): { label: string; cls: string } {
   if (!e.proven)
     return {
       label: "unproven",
-      cls: "border-slate-200 bg-slate-50 text-slate-600",
+      cls: "border-border bg-muted text-muted-foreground",
     };
   return e.attained
-    ? { label: "attained", cls: "border-green-200 bg-green-50 text-green-700" }
-    : { label: "breached", cls: "border-red-300 bg-red-50 text-red-700" };
+    ? { label: "attained", cls: "border-success-border bg-success-soft text-success" }
+    : { label: "breached", cls: "border-danger-border bg-danger-soft text-danger" };
 }
 
 export function SloPanel(): React.JSX.Element {
@@ -104,13 +104,13 @@ export function SloPanel(): React.JSX.Element {
       </div>
 
       {error && (
-        <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
           {error}
         </div>
       )}
 
       {data && !data.enabled && (
-        <div className="rounded border border-amber-200 bg-amber-50 px-4 py-2 text-xs text-amber-800">
+        <div className="rounded border border-warning-border bg-warning-soft px-4 py-2 text-xs text-warning">
           No SLOs declared. Create <code className="font-mono">flows/slo.json</code>{" "}
           with entries like{" "}
           <code className="font-mono">
@@ -141,7 +141,7 @@ export function SloPanel(): React.JSX.Element {
                 </div>
                 <div className="mt-1 grid grid-cols-2 gap-2 text-[11px]">
                   {e.target.minQualityScore !== undefined && (
-                    <div className={e.meetsQuality ? "text-green-700" : "text-red-700"}>
+                    <div className={e.meetsQuality ? "text-success" : "text-danger"}>
                       quality:{" "}
                       {e.observedQuality !== undefined
                         ? (e.observedQuality * 100).toFixed(0) + "%"
@@ -153,7 +153,7 @@ export function SloPanel(): React.JSX.Element {
                     </div>
                   )}
                   {e.target.maxCostUsdPerRequest !== undefined && (
-                    <div className={e.meetsCost ? "text-green-700" : "text-red-700"}>
+                    <div className={e.meetsCost ? "text-success" : "text-danger"}>
                       cost/req:{" "}
                       {e.observedCostUsd !== undefined
                         ? formatCost(e.observedCostUsd, 5)

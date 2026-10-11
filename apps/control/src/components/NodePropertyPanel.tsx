@@ -2,59 +2,50 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+/**
+ * Req 9.3: split out of NodePropertyPanel.tsx: edge details, flow settings,
+ * model provenance, model section, classifier, parallel and tool sections
+ * live under ./nodepanel/; this file holds the panel composition. The
+ * import paths (NodePropertyPanel, FlowSettingsPanel, EdgeSelection,
+ * renameFlowVariable, JsonEditor) stay unchanged, without behavior
+ * change.
+ */
+
 import type React from "react";
-import { useEffect, useRef, useState } from "react";
-import {
-  parallelChildId,
-  type FlowDefinition,
-  type FlowNode,
-  type Provider,
-} from "../types/flow";
+import { useEffect, useState } from "react";
+import type { FlowNode } from "../types/flow";
 import { Button } from "../lib/ui";
 import type { NodeTypeCatalog } from "../lib/node-types";
 import { nodeDocKeyForPath } from "../lib/json-key-path";
 import { ConfigForm, ListInput } from "./ConfigForm";
 import { FormulaInput, FormulaTextarea } from "./FormulaEditor";
 import { PromptFileEditor } from "./PromptFileEditor";
-import {
-  type EvaluatedVariables,
-  VariablesEditor,
-  countVarUsages,
-  varRefRe,
-} from "./VariablesEditor";
 import type { TopLevelField } from "../lib/node-types";
-import type { EdgeFlowItem, EdgeFlowRecord } from "../lib/run-samples";
-import {
-  CHANNEL_COLORS,
-  CHANNEL_KIND_LABEL,
-  CHANNEL_STATUS_BADGE,
-  CHANNEL_STATUS_LABEL,
-} from "../lib/edge-channels";
 import {
   Field,
   Section,
   inputCls,
   numberOrUndefined,
-  NumberOrVarInput,
   compact,
   JsonEditor,
 } from "./form-controls";
+import {
+  EdgeDetailsPanel,
+  type EdgeSelection,
+} from "./nodepanel/EdgeDetailsPanel";
+import { NodeIdHeading } from "./nodepanel/NodeIdHeading";
+import { NodeModelSection } from "./nodepanel/NodeModelSection";
+import { NodeClassifierSection } from "./nodepanel/NodeClassifierSection";
+import { NodeParallelSection } from "./nodepanel/NodeParallelSection";
+import { ToolArgsList } from "./nodepanel/ToolArgsList";
+import { TOOL_SECTION_FLASH, UnreadFieldNotice } from "./nodepanel/shared";
 
 export { JsonEditor } from "./form-controls";
-
-export interface EdgeSelection {
-  id: string;
-  conditions: string;
-  label: string;
-  /**
-   * Data flow of the traced run over this edge (newest traversal). The panel
-   * lists every payload with its type and content. Empty/undefined when the
-   * edge wasn't part of a traced run.
-   */
-  flows?: EdgeFlowRecord[];
-  /** Implicit start/end link: shown read-only (it is not part of the flow). */
-  readOnly?: boolean;
-}
+export type { EdgeSelection } from "./nodepanel/EdgeDetailsPanel";
+export {
+  FlowSettingsPanel,
+  renameFlowVariable,
+} from "./nodepanel/FlowSettingsPanel";
 
 export interface NodePropertyPanelProps {
   node: FlowNode | null;
@@ -98,566 +89,6 @@ export interface NodePropertyPanelProps {
    * was clicked). A new `nonce` jumps again, e.g. on a second click.
    */
   focusTool?: { tool: string; nonce: number } | undefined;
-}
-
-/**
- * One payload of the traced run's edge data flow: colored kind dot, label,
- * status badge and the content (images: media type/size/reference instead).
- */
-function EdgeFlowItemRow({ item }: { item: EdgeFlowItem }): React.JSX.Element {
-  const meta =
-    item.kind === "image"
-      ? [item.media_type, item.bytes !== undefined ? `${item.bytes.toLocaleString("de-DE")} Bytes` : undefined]
-          .filter((s): s is string => s !== undefined)
-          .join(" · ")
-      : item.kind === "tool" && item.tool_name !== undefined
-        ? item.tool_name
-        : "";
-  return (
-    <li className="rounded border border-border bg-muted/40 px-2 py-1.5">
-      <div className="flex items-center gap-1.5">
-        <span
-          aria-hidden
-          className="h-2 w-2 shrink-0 rounded-full"
-          style={{ backgroundColor: CHANNEL_COLORS[item.kind] }}
-        />
-        <span className="truncate text-xs font-medium text-foreground" title={item.label}>
-          {item.label}
-        </span>
-        <span
-          className={`ml-auto shrink-0 rounded border px-1 py-px text-[10px] ${CHANNEL_STATUS_BADGE[item.status]}`}
-        >
-          {CHANNEL_STATUS_LABEL[item.status]}
-        </span>
-        <span className="shrink-0 text-[10px] uppercase tracking-wide text-muted-foreground">
-          {CHANNEL_KIND_LABEL[item.kind]}
-        </span>
-      </div>
-      {meta !== "" && (
-        <div className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={meta}>
-          {meta}
-        </div>
-      )}
-      {item.content !== undefined && item.content !== "" && (
-        <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-background/70 px-1.5 py-1 font-mono text-[10px] leading-relaxed text-muted-foreground">
-          {item.content}
-        </pre>
-      )}
-    </li>
-  );
-}
-
-/**
- * Static arguments per tool (`config.toolArgs[ref]`), next to the tool list
- * they belong to. The same map is editable as a whole under Settings →
- * "Forced tool arguments"; this is the per-tool view of it.
- */
-function ToolArgsList({
-  node,
-  highlight,
-  onChange,
-  onFocus,
-}: {
-  node: FlowNode;
-  highlight: string | undefined;
-  onChange: (config: Record<string, unknown> | undefined) => void;
-  onFocus: () => void;
-}): React.JSX.Element {
-  const config = (node.config ?? {}) as Record<string, unknown>;
-  const { toolArgs: raw, args: defaultArgs, ...rest } = config;
-  const toolArgs =
-    raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
-  const refs = [...new Set(node.tools ?? [])];
-  const isToolNode = node.type === "tool";
-  const defaults = isToolNode ? defaultArgs : undefined;
-  const orphans = Object.keys(toolArgs).filter((k) => !refs.includes(k));
-
-  const setArgs = (ref: string, value: unknown): void => {
-    const { [ref]: _old, ...others } = toolArgs;
-    const nextArgs = value === undefined ? others : { ...others, [ref]: value };
-    const next: Record<string, unknown> = {
-      ...rest,
-      ...(defaultArgs !== undefined ? { args: defaultArgs } : {}),
-      ...(Object.keys(nextArgs).length > 0 ? { toolArgs: nextArgs } : {}),
-    };
-    onChange(Object.keys(next).length > 0 ? next : undefined);
-  };
-
-  return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: focus is only reported to the docs panel
-    <div className="space-y-1.5" onFocus={onFocus} data-testid="tool-args-list">
-      <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Static arguments <code className="normal-case text-[10px] text-muted-foreground/70">config.toolArgs</code>
-      </div>
-      <p className="text-[10px] leading-snug text-muted-foreground">
-        {isToolNode
-          ? "The complete arguments of each call (no model involved)."
-          : "Fixed per tool and merged over what the model supplies — the model still fills the rest."}{" "}
-        Templates like {"{{query}}"} or {"{{classification.<field>}}"} are resolved against the run.
-      </p>
-      {isToolNode && defaults !== undefined && (
-        <p className="text-[10px] text-muted-foreground">
-          Tools without an entry get <code>config.args</code>: <code className="break-all">{JSON.stringify(defaults)}</code>
-        </p>
-      )}
-      <ul className="space-y-1">
-        {refs.map((ref) => {
-          const args = toolArgs[ref];
-          const keys = args !== null && typeof args === "object" && !Array.isArray(args) ? Object.keys(args) : [];
-          const hot = highlight === ref;
-          return (
-            <li key={ref}>
-              <details
-                data-tool-args={ref}
-                // Opened by the jump (focusTool effect) or by hand — deliberately not bound
-                // to `hot`, which would close it again when the highlight fades.
-                className={`rounded border px-2 py-1 transition-shadow ${
-                  hot ? "border-sky-500 ring-2 ring-sky-500/60" : "border-border"
-                }`}
-              >
-                <summary className="flex cursor-pointer items-center gap-1.5 text-[11px]">
-                  <code className="min-w-0 flex-1 truncate font-mono text-foreground">{ref}</code>
-                  <span className="shrink-0 text-[10px] text-muted-foreground">
-                    {keys.length > 0
-                      ? `📌 ${keys.join(", ")}`
-                      : isToolNode
-                        ? defaults !== undefined
-                          ? "config.args"
-                          : "no arguments"
-                        : "model decides all"}
-                  </span>
-                </summary>
-                <div className="mt-1">
-                  <JsonEditor
-                    label={`Static arguments for ${ref}`}
-                    formulaKind="template"
-                    rows={Math.min(8, Math.max(3, JSON.stringify(args ?? {}, null, 2).split("\n").length + 1))}
-                    value={args}
-                    onChange={(v) => setArgs(ref, v)}
-                  />
-                  {args === undefined && (
-                    <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      e.g. <code>{'{ "collection": "cases" }'}</code> — empty: nothing fixed.
-                    </p>
-                  )}
-                </div>
-              </details>
-            </li>
-          );
-        })}
-      </ul>
-      {orphans.length > 0 && (
-        <p className="text-[10px] text-amber-700 dark:text-amber-400">
-          Arguments for tools not in the list (no effect): {orphans.join(", ")} — edit them under Settings → Forced tool
-          arguments.
-        </p>
-      )}
-    </div>
-  );
-}
-
-/** Classes that briefly frame the Tools section after a jump to it. */
-const TOOL_SECTION_FLASH = ["ring-2", "ring-sky-500", "ring-offset-2", "ring-offset-background"];
-
-const PROVIDERS: Provider[] = [
-  "openai",
-  "google",
-  "ollama",
-  "azure",
-  "bedrock",
-  "anthropic",
-];
-
-const REASONING_EFFORTS = ["", "none", "minimal", "low", "medium", "high"];
-
-/**
- * Shown when a node carries a field its type does not read. The field stays
- * editable on purpose: hiding it would leave a value in the file that looks
- * effective and never is, with no way to notice or delete it from the Studio.
- */
-function UnreadFieldNotice({
-  field,
-  type,
-}: {
-  field: string;
-  type: string;
-}): React.JSX.Element {
-  return (
-    <p className="rounded border border-amber-500/40 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-700 dark:text-amber-400">
-      A <span className="font-mono">{type}</span> node does not read{" "}
-      <span className="font-mono">{field}</span>. It is set here but has no
-      effect — clear it unless you are about to change the node type.
-    </p>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Flow-level settings (shown when nothing is selected)
-// ---------------------------------------------------------------------------
-
-/** Top-level keys owned by the canvas or edited by dedicated fields. */
-const FLOW_OWNED_KEYS = new Set([
-  "id",
-  "name",
-  "description",
-  "variables",
-  "nodes",
-  "edges",
-  "metadata",
-]);
-
-/**
- * Renames a flow variable, keeping its position in the map, and rewrites every
- * `vars.<old>` reference in nodes, edges and the other flow fields.
- */
-export function renameFlowVariable(
-  flow: FlowDefinition,
-  from: string,
-  to: string,
-): FlowDefinition {
-  const re = varRefRe(from);
-  // Walks the flow key by key so the top-level order (and thus the YAML diff)
-  // stays as it was.
-  return Object.fromEntries(
-    Object.entries(flow).map(([key, value]) => [
-      key,
-      key === "variables"
-        ? Object.fromEntries(
-            Object.entries(value as Record<string, unknown>).map(([k, v]) => [
-              k === from ? to : k,
-              v,
-            ]),
-          )
-        : value === undefined
-          ? value
-          : JSON.parse(JSON.stringify(value).replace(re, `vars.${to}`)),
-    ]),
-  ) as FlowDefinition;
-}
-
-export function FlowSettingsPanel({
-  flow,
-  idEditable,
-  onChange,
-  catalog,
-  evaluateVariables,
-}: {
-  flow: FlowDefinition;
-  /** Runtime evaluation of the variables map (formula previews). */
-  evaluateVariables?: (
-    variables: Record<string, unknown>,
-  ) => Promise<EvaluatedVariables>;
-  /** Node type catalog — its model shortcuts/models feed the variables' ƒx. */
-  catalog?: NodeTypeCatalog;
-  /** Only a brand-new flow may still pick its id. */
-  idEditable: boolean;
-  onChange: (next: FlowDefinition) => void;
-}): React.JSX.Element {
-  const extra = Object.fromEntries(
-    Object.entries(flow).filter(([k]) => !FLOW_OWNED_KEYS.has(k)),
-  );
-  const { variables: _vars, ...referencing } = flow;
-  const usages = countVarUsages(
-    Object.keys(flow.variables ?? {}),
-    JSON.stringify(referencing),
-  );
-
-  return (
-    <div className="space-y-3">
-      <h4 className="text-sm font-semibold text-foreground">Flow settings</h4>
-      <p className="text-[10px] text-muted-foreground">
-        Nothing selected — select a node or edge on the canvas to edit it.
-      </p>
-      <Field
-        label="Flow id"
-        hint={idEditable ? "Lowercase letters, digits and dashes." : undefined}
-      >
-        <input
-          className={`${inputCls} font-mono`}
-          value={flow.id}
-          disabled={!idEditable}
-          onChange={(e) =>
-            onChange({
-              ...flow,
-              id: e.target.value.toLowerCase().replace(/[^a-z0-9-_]/g, "-"),
-            })
-          }
-        />
-      </Field>
-      <Field label="Name">
-        <FormulaInput
-          kind="vars"
-          ariaLabel="Name"
-          className={inputCls}
-          value={flow.name}
-          onChange={(v) => onChange({ ...flow, name: v })}
-        />
-      </Field>
-      <Field label="Description">
-        <FormulaTextarea
-          kind="vars"
-          ariaLabel="Description"
-          title="Flow description"
-          className={`${inputCls} w-full resize-y`}
-          rows={3}
-          value={flow.description ?? ""}
-          onChange={(v) =>
-            onChange(
-              compact({
-                ...flow,
-                description: v || undefined,
-              }),
-            )
-          }
-        />
-      </Field>
-      <VariablesEditor
-        value={flow.variables}
-        usages={usages}
-        onChange={(v) =>
-          onChange(
-            compact({
-              ...flow,
-              variables: v as FlowDefinition["variables"],
-            }),
-          )
-        }
-        onRename={(from, to) => onChange(renameFlowVariable(flow, from, to))}
-        nodes={flow.nodes}
-        {...(catalog ? { catalog } : {})}
-        {...(evaluateVariables ? { evaluate: evaluateVariables } : {})}
-      />
-      <JsonEditor
-        label="Other flow fields"
-        hint="pricing, dataClasses, recovery, … — everything not edited above."
-        rows={10}
-        value={extra}
-        onChange={(v) => {
-          if (v === undefined || typeof v !== "object" || Array.isArray(v)) {
-            return;
-          }
-          const owned = Object.fromEntries(
-            Object.entries(flow).filter(([k]) => FLOW_OWNED_KEYS.has(k)),
-          );
-          onChange({ ...(v as object), ...owned } as FlowDefinition);
-        }}
-      />
-    </div>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Node id heading with inline rename
-// ---------------------------------------------------------------------------
-
-type ModelSource = "shortcut" | "explicit";
-
-/**
- * Where a node's model comes from: a shortcut from flows/model-shortcuts.yaml
- * OR an explicit provider + model — never both (the parser expands the
- * shortcut over provider/model, the flow schema rejects the mix). Switching
- * removes the other side from the node; it is kept here so switching back
- * during the session restores it.
- */
-function ModelSourceFields({
-  node,
-  setLlm,
-  shortcuts,
-  onFocusField,
-}: {
-  node: FlowNode;
-  setLlm: (patch: Record<string, unknown>) => void;
-  shortcuts?: string[] | undefined;
-  /** Reports the focused model sub-field (`llm.shortcut`, …) for the docs. */
-  onFocusField?: (key: string) => void;
-}): React.JSX.Element {
-  const llm = node.llm;
-  const hasShortcut = !!llm?.shortcut;
-  const hasExplicit = !!llm?.provider || !!llm?.model;
-  const [mode, setMode] = useState<ModelSource>(
-    hasShortcut ? "shortcut" : hasExplicit ? "explicit" : (shortcuts?.length ?? 0) > 0 ? "shortcut" : "explicit",
-  );
-  const stash = useRef<{ shortcut?: string; provider?: string; model?: string }>({});
-
-  const switchTo = (next: ModelSource): void => {
-    if (next === mode) return;
-    if (next === "explicit") {
-      if (llm?.shortcut) stash.current.shortcut = llm.shortcut;
-      setLlm({ shortcut: undefined, provider: stash.current.provider, model: stash.current.model });
-    } else {
-      if (llm?.provider) stash.current.provider = llm.provider;
-      if (llm?.model) stash.current.model = llm.model;
-      setLlm({ provider: undefined, model: undefined, shortcut: stash.current.shortcut });
-    }
-    setMode(next);
-  };
-
-  const tab = (m: ModelSource, label: string, title: string) => (
-    <button
-      type="button"
-      role="tab"
-      aria-selected={mode === m}
-      onClick={() => switchTo(m)}
-      title={title}
-      className={`flex-1 px-2 py-1 text-[11px] ${
-        mode === m ? "bg-muted font-medium text-foreground" : "text-muted-foreground hover:text-foreground"
-      }`}
-    >
-      {label}
-    </button>
-  );
-
-  return (
-    <div className="space-y-2">
-      <div role="tablist" aria-label="Model source" className="flex overflow-hidden rounded border border-border">
-        {tab("shortcut", "Shortcut", "A named preset from flows/model-shortcuts.yaml (provider, model and parameters)")}
-        {tab("explicit", "Provider + model", "Name the provider and model directly")}
-      </div>
-      {mode === "shortcut" ? (
-        <Field
-          label="Shortcut"
-          hint="A name from flows/model-shortcuts.yaml or {{vars.…}}. It sets provider, model and the preset's parameters; parameters below override the preset's."
-        >
-          <FormulaInput
-            kind="vars"
-            replace
-            ariaLabel="Shortcut"
-            title="Model shortcut"
-            className={`${inputCls} font-mono text-xs`}
-            value={llm?.shortcut ?? ""}
-            placeholder="e.g. fast-pool or {{vars.model_main}}"
-            list={`shortcuts-${node.id}`}
-            onFocus={() => onFocusField?.("llm.shortcut")}
-            onChange={(v) => setLlm({ shortcut: v || undefined })}
-          />
-          {shortcuts && (
-            <datalist id={`shortcuts-${node.id}`}>
-              {shortcuts.map((sc) => (
-                <option key={sc} value={sc} />
-              ))}
-            </datalist>
-          )}
-        </Field>
-      ) : (
-        <div className="flex gap-2">
-          <Field label="Provider">
-            <FormulaInput
-              kind="vars"
-              replace
-              ariaLabel="Provider"
-              className={inputCls}
-              list="studio-provider-options"
-              value={llm?.provider ?? ""}
-              onFocus={() => onFocusField?.("llm.provider")}
-              onChange={(v) => setLlm({ provider: v || undefined })}
-            />
-            <datalist id="studio-provider-options">
-              {PROVIDERS.map((p) => (
-                <option key={p} value={p} />
-              ))}
-            </datalist>
-          </Field>
-          <Field label="Model">
-            <FormulaInput
-              kind="vars"
-              replace
-              ariaLabel="Model"
-              className={inputCls}
-              value={llm?.model ?? ""}
-              onFocus={() => onFocusField?.("llm.model")}
-              onChange={(v) => setLlm({ model: v || undefined })}
-            />
-          </Field>
-        </div>
-      )}
-      {mode === "shortcut" && hasExplicit && (
-        <p role="alert" className="flex items-start gap-2 text-[11px] text-amber-600">
-          <span>
-            This node also sets provider/model ({[llm?.provider, llm?.model].filter(Boolean).join(" · ")}), which the
-            shortcut overwrites.
-          </span>
-          <button
-            type="button"
-            onClick={() => setLlm({ provider: undefined, model: undefined })}
-            className="shrink-0 rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-muted"
-          >
-            Remove
-          </button>
-        </p>
-      )}
-    </div>
-  );
-}
-
-function NodeIdHeading({
-  id,
-  onRename,
-}: {
-  id: string;
-  onRename?: (next: string) => string | null;
-}): React.JSX.Element {
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(id);
-  const [error, setError] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
-  useEffect(() => {
-    if (editing) inputRef.current?.focus();
-  }, [editing]);
-
-  if (!editing) {
-    return (
-      <h4 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground">
-        Node
-        <span className="truncate font-mono text-xs text-muted-foreground">{id}</span>
-        {onRename && (
-          <button
-            type="button"
-            onClick={() => {
-              setDraft(id);
-              setError(null);
-              setEditing(true);
-            }}
-            title="Rename this node — edges and references in other nodes are updated too"
-            className="rounded px-1 text-[10px] font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
-          >
-            rename
-          </button>
-        )}
-      </h4>
-    );
-  }
-
-  const apply = (): void => {
-    const err = onRename?.(draft) ?? null;
-    if (err) setError(err);
-    else setEditing(false);
-  };
-
-  return (
-    <div className="min-w-0 flex-1">
-      <div className="flex items-center gap-1">
-        <input
-          ref={inputRef}
-          aria-label="Node id"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") apply();
-            if (e.key === "Escape") setEditing(false);
-          }}
-          className={`${inputCls} font-mono text-xs ${error ? "border-red-400" : ""}`}
-        />
-        <button
-          type="button"
-          onClick={apply}
-          className="rounded border border-border px-1.5 py-0.5 text-[11px] hover:bg-muted"
-        >
-          OK
-        </button>
-      </div>
-      {error && <p className="mt-0.5 text-[10px] text-red-600">{error}</p>}
-    </div>
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -721,70 +152,12 @@ export function NodePropertyPanel({
   }, [focusNonce, focusToolName]);
 
   if (edge !== null) {
-    const flow = edge.flows?.[edge.flows.length - 1];
     return (
-      <div className="space-y-3">
-        <h4 className="text-sm font-semibold text-foreground">Edge</h4>
-        {edge.readOnly ? (
-          <p className="text-xs text-muted-foreground">
-            Impliziter Start-/Ende-Übergang — gehört nicht zur Flow-Definition
-            und kann nicht bearbeitet werden.
-          </p>
-        ) : (
-          <>
-            <Field
-              label="Condition (routing expression)"
-              hint="Empty = unconditional edge."
-            >
-              <FormulaTextarea
-                kind="condition"
-                ariaLabel="Condition (routing expression)"
-                title="Edge condition"
-                className={`${inputCls} resize-y font-mono text-xs`}
-                rows={3}
-                value={edge.conditions}
-                placeholder="classification.route == 'RETOURE'"
-                onChange={(v) => onEdgeChange({ ...edge, conditions: v })}
-              />
-            </Field>
-            <Field label="Label">
-              <FormulaInput
-                kind="vars"
-                ariaLabel="Edge label"
-                className={inputCls}
-                value={edge.label}
-                onChange={(v) => onEdgeChange({ ...edge, label: v })}
-              />
-            </Field>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() => onDeleteEdge(edge.id)}
-            >
-              Delete edge
-            </Button>
-          </>
-        )}
-        {flow !== undefined && flow.items.length > 0 && (
-          <section aria-label="Weitergegebene Daten" className="space-y-1.5">
-            <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Weitergegebene Daten
-            </h5>
-            <p className="text-[11px] text-muted-foreground">
-              Beim letzten Run über diese Kante ({flow.source} → {flow.target}).
-            </p>
-            <ul className="space-y-1.5">
-              {flow.items.map((item, index) => (
-                <EdgeFlowItemRow
-                  // biome-ignore lint/suspicious/noArrayIndexKey: items have no id; the recorded order is fixed per traversal
-                  key={`${index}:${item.kind}:${item.status}:${item.label}:${item.tool_name ?? ""}`}
-                  item={item}
-                />
-              ))}
-            </ul>
-          </section>
-        )}
-      </div>
+      <EdgeDetailsPanel
+        edge={edge}
+        onEdgeChange={onEdgeChange}
+        onDeleteEdge={onDeleteEdge}
+      />
     );
   }
 
@@ -849,18 +222,6 @@ export function NodePropertyPanel({
   );
   const showPriority = usesField("priority", true);
   const showOverrides = usesField("overrides", false);
-  const params = node.llm?.parameters ?? {};
-  const knownParams = new Set([
-    "temperature",
-    "maxTokens",
-    "reasoningEffort",
-    "contextLength",
-  ]);
-  const extraParams = Object.fromEntries(
-    Object.entries(params).filter(([k]) => !knownParams.has(k)),
-  );
-  const parallel = node.parallelNodes ?? [];
-  const parallelHasConditions = parallel.some((p) => typeof p !== "string");
 
   return (
     <div className="space-y-3">
@@ -981,106 +342,14 @@ export function NodePropertyPanel({
           )}
 
           {showLlm && (
-            <Section title="Model">
-              {isUnread("llm") && (
-                <UnreadFieldNotice field="llm" type={node.type} />
-              )}
-              <ModelSourceFields
-                key={node.id}
-                node={node}
-                setLlm={setLlm}
-                shortcuts={catalog?.shortcuts}
-                {...(onFocusField ? { onFocusField } : {})}
-              />
-              <div className="flex gap-2">
-                <NumberOrVarInput
-                  label="Temperature"
-                  value={params.temperature}
-                  onFocus={() => onFocusField?.("llm.parameters.temperature")}
-                  onChange={(v) => setParam("temperature", v)}
-                />
-                <NumberOrVarInput
-                  label="Max tokens"
-                  value={params.maxTokens}
-                  onFocus={() => onFocusField?.("llm.parameters.maxTokens")}
-                  onChange={(v) => setParam("maxTokens", v)}
-                />
-              </div>
-              <div className="flex gap-2">
-                <Field label="Reasoning effort">
-                  <select
-                    className={inputCls}
-                    onFocus={() =>
-                      onFocusField?.("llm.parameters.reasoningEffort")
-                    }
-                    value={String(params.reasoningEffort ?? "")}
-                    onChange={(e) =>
-                      setParam("reasoningEffort", e.target.value || undefined)
-                    }
-                  >
-                    {REASONING_EFFORTS.map((r) => (
-                      <option key={r} value={r}>
-                        {r || "—"}
-                      </option>
-                    ))}
-                    {params.reasoningEffort !== undefined &&
-                      !REASONING_EFFORTS.includes(
-                        String(params.reasoningEffort),
-                      ) && (
-                        <option value={String(params.reasoningEffort)}>
-                          {String(params.reasoningEffort)}
-                        </option>
-                      )}
-                  </select>
-                </Field>
-                <NumberOrVarInput
-                  label="Context length"
-                  value={params.contextLength}
-                  onFocus={() => onFocusField?.("llm.parameters.contextLength")}
-                  onChange={(v) => setParam("contextLength", v)}
-                />
-              </div>
-              <JsonEditor
-                key={`${node.id}-params`}
-                label="Other model parameters"
-                hint="chatTemplateKwargs, extraBody, visionInput, …"
-                rows={4}
-                {...(onFocusField
-                  ? { onCursorKey: (): void => onFocusField("llm.parameters") }
-                  : {})}
-                value={
-                  Object.keys(extraParams).length > 0 ? extraParams : undefined
-                }
-                onChange={(v) => {
-                  const known = Object.fromEntries(
-                    Object.entries(params).filter(([k]) => knownParams.has(k)),
-                  );
-                  setLlm({
-                    parameters: {
-                      ...known,
-                      ...((v as Record<string, unknown> | undefined) ?? {}),
-                    },
-                  });
-                }}
-              />
-              <JsonEditor
-                key={`${node.id}-pool`}
-                label="Model pool"
-                hint="{ strategy, candidates: [{ provider, model }, …] } — first candidate should match the model above."
-                rows={4}
-                {...(onFocusField
-                  ? { onCursorKey: (): void => onFocusField("llm.pool") }
-                  : {})}
-                value={node.llm?.pool}
-                onChange={(v) =>
-                  setLlm(
-                    compact({
-                      pool: v as NonNullable<FlowNode["llm"]>["pool"],
-                    }),
-                  )
-                }
-              />
-            </Section>
+            <NodeModelSection
+              node={node}
+              setLlm={setLlm}
+              setParam={setParam}
+              isUnread={isUnread}
+              {...(catalog ? { catalog } : {})}
+              {...(onFocusField ? { onFocusField } : {})}
+            />
           )}
 
           {showPrompt && (
@@ -1153,90 +422,19 @@ export function NodePropertyPanel({
           )}
 
           {node.type === "classifier" && (
-            <Section title="Classifier">
-              <fieldset
-                className="m-0 min-w-0 border-0 p-0"
-                onFocus={() => onFocusField?.("classifierSchema")}
-              >
-                <Field label="Class key">
-                  <input
-                    className={inputCls}
-                    onFocus={() => onFocusField?.("classifierSchema")}
-                    value={node.classifierSchema?.classKey ?? ""}
-                    onChange={(e) =>
-                      set({
-                        classifierSchema: {
-                          schema: node.classifierSchema?.schema ?? {
-                            type: "object",
-                            properties: {},
-                          },
-                          classKey: e.target.value,
-                        },
-                      })
-                    }
-                  />
-                </Field>
-                <JsonEditor
-                  key={`${node.id}-schema`}
-                  label="Output schema (JSON Schema)"
-                  rows={8}
-                  allowEmpty={false}
-                  value={node.classifierSchema?.schema ?? {}}
-                  onChange={(v) =>
-                    set({
-                      classifierSchema: {
-                        classKey: node.classifierSchema?.classKey ?? "",
-                        schema: v as Record<string, unknown>,
-                      },
-                    })
-                  }
-                />
-              </fieldset>
-            </Section>
+            <NodeClassifierSection
+              node={node}
+              set={set}
+              {...(onFocusField ? { onFocusField } : {})}
+            />
           )}
 
           {node.type === "parallel" && (
-            <Section title="Parallel children">
-              <fieldset
-                className="m-0 min-w-0 border-0 p-0"
-                onFocus={() => onFocusField?.("parallelNodes")}
-              >
-                {parallelHasConditions ? (
-                  <JsonEditor
-                    key={`${node.id}-parallel`}
-                    label="Children"
-                    hint='Plain ids or { "node": id, "condition": expr }.'
-                    rows={6}
-                    value={parallel}
-                    onChange={(v) =>
-                      set({
-                        parallelNodes: Array.isArray(v)
-                          ? (v as FlowNode["parallelNodes"])
-                          : undefined,
-                      })
-                    }
-                  />
-                ) : (
-                  <Field
-                    label="Child node ids (one per line)"
-                    hint={`${parallel.map(parallelChildId).length} child(ren)`}
-                  >
-                    <textarea
-                      className={`${inputCls} h-20 resize-y font-mono text-xs`}
-                      value={parallel.map(parallelChildId).join("\n")}
-                      onChange={(e) =>
-                        set({
-                          parallelNodes: e.target.value
-                            .split("\n")
-                            .map((s) => s.trim())
-                            .filter((s) => s.length > 0),
-                        })
-                      }
-                    />
-                  </Field>
-                )}
-              </fieldset>
-            </Section>
+            <NodeParallelSection
+              node={node}
+              set={set}
+              {...(onFocusField ? { onFocusField } : {})}
+            />
           )}
 
           <Section

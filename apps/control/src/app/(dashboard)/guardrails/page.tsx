@@ -83,10 +83,10 @@ function SectionBadge({
 }
 
 export default function GuardrailsPage() {
-  // isAuthenticated (= !authRequired || !!token) statt !!token, damit die Seite
-  // auch bei deaktivierter Operator-Auth (AUTHN_MODE=disabled) laedt: dann wird
-  // kein Token ausgestellt, aber das Backend bedient die Operator-Plane anonym.
-  // authFetch laesst den Authorization-Header bei undefined-Token weg.
+  // isAuthenticated (= !authRequired || !!token) instead of !!token, so the page
+  // also loads with operator auth disabled (AUTHN_MODE=disabled): then no token
+  // is issued, but the backend serves the operator plane anonymously.
+  // authFetch omits the Authorization header for an undefined token.
   const { token, ready, isAuthenticated } = useAuth();
 
   const { data, isLoading, error } = useQuery<GuardrailsResponse, Error>({
@@ -114,7 +114,7 @@ export default function GuardrailsPage() {
       {error && (
         <div
           role="alert"
-          className="rounded-md bg-red-50 p-4 text-sm text-red-700"
+          className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
           Failed to load guardrails: {error.message}
         </div>

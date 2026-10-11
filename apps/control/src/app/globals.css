@@ -42,6 +42,162 @@
     --ring: 221 83% 53%;
 
     --radius: 0.5rem;
+
+    /*
+     * Semantic status colors (UI-STYLE-GUIDE.md §3, Task 13.7 / Req 9.8).
+     * Replace hard-coded Tailwind palettes (red/green/amber/sky/…).
+     * "danger" is for status displays (text, soft surfaces, borders);
+     * "destructive" stays reserved for controls (buttons).
+     * Values follow the previous palettes (light: 600 text, 50 surface,
+     * 200 border; dark: 400 text, 950 surface), with *-foreground tuned to
+     * the solid variant (WCAG AA).
+     */
+    /* DEFAULT = text/accent value, -solid = solid fill (white -foreground),
+       -soft = background surface, -border = border. */
+    --success: 142 72% 32%;
+    --success-solid: 142 71% 45%;
+    --success-solid-hover: 142 71% 35%;
+    --success-foreground: 0 0% 100%;
+    --success-soft: 138 76% 97%;
+    --success-border: 138 76% 80%;
+
+    --warning: 32 95% 44%;
+    --warning-solid: 38 92% 50%;
+    --warning-solid-hover: 32 95% 44%;
+    --warning-foreground: 0 0% 100%;
+    --warning-soft: 48 96% 95%;
+    --warning-border: 48 96% 78%;
+
+    --danger: 0 72% 44%;
+    --danger-solid: 0 72% 51%;
+    --danger-solid-hover: 0 72% 44%;
+    --danger-foreground: 0 0% 100%;
+    --danger-soft: 0 86% 97%;
+    --danger-border: 0 93% 82%;
+
+    --info: 200 98% 39%;
+    --info-solid: 199 89% 48%;
+    --info-solid-hover: 200 98% 39%;
+    --info-foreground: 0 0% 100%;
+    --info-soft: 204 100% 97%;
+    --info-border: 202 93% 82%;
+
+    /* Category colors: Copilot/Optimizer (violet), sub-flows (petrol),
+       operator category "text" (magenta). */
+    --copilot: 271 81% 56%;
+    --copilot-solid: 262 83% 58%;
+    --copilot-solid-hover: 271 81% 46%;
+    --copilot-foreground: 0 0% 100%;
+    --copilot-soft: 270 100% 98%;
+    --copilot-border: 269 90% 88%;
+
+    --subflow: 175 80% 31%;
+    --subflow-solid: 173 80% 40%;
+    --subflow-solid-hover: 175 80% 31%;
+    --subflow-foreground: 0 0% 100%;
+    --subflow-soft: 173 80% 96%;
+    --subflow-border: 175 83% 78%;
+
+    --accent-2: 330 81% 50%;
+    --accent-2-solid: 330 81% 50%;
+    --accent-2-solid-hover: 330 81% 40%;
+    --accent-2-foreground: 0 0% 100%;
+    --accent-2-soft: 327 73% 97%;
+    --accent-2-border: 328 85% 85%;
+
+    /*
+     * Node category colors (graph canvas, legend, MiniMap). Identical in
+     * both themes: saturated mid tones work on light and dark surfaces.
+     * nodeTypeColor()/nodeTypeHex() read exactly these variables, one
+     * source of truth for the canvas and DOM rendering.
+     */
+    /* Text on saturated solid fills (chips, dots, nodes). */
+    --on-solid: 0 0% 100%;
+    --node-llm: 243 75% 59%;
+    --node-llm-border: 239 59% 40%;
+    --node-classifier: 271 81% 56%;
+    --node-classifier-border: 272 72% 32%;
+    --node-router: 38 92% 50%;
+    --node-router-border: 35 92% 33%;
+    --node-parallel: 262 83% 58%;
+    --node-parallel-border: 263 70% 38%;
+    --node-retrieval: 195 100% 31%;
+    --node-retrieval-border: 199 63% 24%;
+    --node-memory: 295 69% 49%;
+    --node-memory-border: 297 70% 33%;
+    --node-tool: 175 84% 32%;
+    --node-tool-border: 178 69% 23%;
+    --node-agent-harness: 347 77% 50%;
+    --node-agent-harness-border: 341 79% 35%;
+    --node-transform: 84 78% 27%;
+    --node-transform-border: 85 60% 20%;
+    --node-trigger: 21 90% 48%;
+    --node-trigger-border: 18 79% 34%;
+    --node-assistant: 201 96% 39%;
+    --node-assistant-border: 201 90% 27%;
+    --node-boundary: 215 28% 35%;
+    --node-boundary-border: 217 33% 17%;
+    --node-default: 220 9% 46%;
+    --node-default-border: 220 9% 27%;
+
+    /* Category color slots (e.g. sub-flow boxes in Studio): pure
+       grouping colors without status semantics. Tuned per theme. */
+    --cat-1: 173 80% 40%;
+    --cat-1-soft: 173 80% 96%;
+    --cat-1-border: 175 83% 78%;
+    --cat-2: 262 83% 58%;
+    --cat-2-soft: 270 100% 98%;
+    --cat-2-border: 269 90% 88%;
+    --cat-3: 38 92% 50%;
+    --cat-3-soft: 48 96% 95%;
+    --cat-3-border: 48 96% 78%;
+    --cat-4: 199 89% 48%;
+    --cat-4-soft: 204 100% 97%;
+    --cat-4-border: 202 93% 82%;
+    --cat-5: 347 77% 50%;
+    --cat-5-soft: 0 86% 97%;
+    --cat-5-border: 0 93% 82%;
+    --cat-6: 160 84% 39%;
+    --cat-6-soft: 138 76% 97%;
+    --cat-6-border: 138 76% 80%;
+
+    /*
+     * Chart and canvas colors (Recharts, React Flow, SVG). Read at runtime
+     * from these variables via src/lib/theme/palette.ts (SVG/canvas cannot
+     * use var() in attributes).
+     */
+    --chart-grid: 218 11% 85%;
+    --chart-tooltip-bg: 0 0% 100%;
+    --chart-tooltip-label: 215 20% 40%;
+    --chart-tooltip-item: 222 47% 11%;
+    --chart-1: 221 83% 53%;
+    --chart-2: 262 83% 58%;
+    --chart-3: 192 91% 36%;
+    --chart-4: 142 71% 35%;
+    --chart-5: 45 93% 32%;
+    --chart-6: 0 72% 51%;
+    --chart-run: 217 91% 60%;
+    --chart-cost: 38 92% 50%;
+    --chart-prompt-light: 213 97% 78%;
+
+    --edge-used: 160 84% 39%;
+    --edge-parallel: 258 90% 66%;
+    --edge-parallel-light: 255 86% 82%;
+    --edge-verifies: 347 77% 50%;
+    --edge-delegates: 175 84% 32%;
+    --edge-tool: 173 80% 40%;
+    --edge-boundary: 221 83% 53%;
+    --edge-active: 38 92% 50%;
+    --edge-idle: 215 20% 65%;
+    --edge-idle-soft: 218 11% 85%;
+    --edge-added: 142 71% 35%;
+    --edge-removed: 0 91% 71%;
+    --edge-error: 0 72% 51%;
+    --canvas-dots: 220 13% 91%;
+
+    /* Running node: a light arc travelling around the card. */
+    --running-glow: 199 95% 60%;
+    --running-arc: 199 89% 48%;
   }
 
   .dark {
@@ -72,6 +228,79 @@
     --border: 217 33% 17%;
     --input: 217 33% 17%;
     --ring: 224 76% 48%;
+
+    /* Status tokens in the dark theme: text/accent values light, surfaces dark.
+       *-solid and *-foreground stay theme-fixed (white text on
+       solid fills/dots works in both themes). */
+    --success: 142 69% 58%;
+    --success-soft: 145 80% 10%;
+    --success-border: 143 64% 24%;
+
+    --warning: 43 96% 56%;
+    --warning-soft: 26 83% 14%;
+    --warning-border: 28 73% 26%;
+
+    --danger: 0 91% 71%;
+    --danger-soft: 0 93% 15%;
+    --danger-border: 0 74% 35%;
+
+    --info: 199 89% 60%;
+    --info-soft: 201 80% 16%;
+    --info-border: 204 80% 28%;
+
+    --copilot: 268 85% 67%;
+    --copilot-soft: 274 87% 21%;
+    --copilot-border: 269 61% 38%;
+
+    --subflow: 172 66% 64%;
+    --subflow-soft: 180 78% 10%;
+    --subflow-border: 176 54% 26%;
+
+    --accent-2: 330 81% 75%;
+    --accent-2-soft: 336 85% 17%;
+    --accent-2-border: 333 71% 38%;
+
+    /* Category slots in the dark theme (lighter, darker surfaces). */
+    --cat-1: 172 66% 50%;
+    --cat-1-soft: 180 78% 10%;
+    --cat-1-border: 176 54% 30%;
+    --cat-2: 268 85% 67%;
+    --cat-2-soft: 274 87% 21%;
+    --cat-2-border: 269 61% 40%;
+    --cat-3: 43 96% 56%;
+    --cat-3-soft: 26 83% 14%;
+    --cat-3-border: 28 73% 28%;
+    --cat-4: 199 89% 60%;
+    --cat-4-soft: 201 80% 16%;
+    --cat-4-border: 204 80% 30%;
+    --cat-5: 350 89% 60%;
+    --cat-5-soft: 0 93% 15%;
+    --cat-5-border: 0 74% 38%;
+    --cat-6: 158 64% 52%;
+    --cat-6-soft: 145 80% 10%;
+    --cat-6-border: 143 64% 26%;
+
+    /* Chart colors in the dark theme (grid/tooltip dark, series light). */
+    --chart-grid: 215 28% 17%;
+    --chart-tooltip-bg: 217 33% 17%;
+    --chart-tooltip-label: 220 9% 46%;
+    --chart-tooltip-item: 220 14% 96%;
+    --chart-1: 217 91% 60%;
+    --chart-2: 268 85% 67%;
+    --chart-3: 199 89% 48%;
+    --chart-4: 142 69% 58%;
+    --chart-5: 43 96% 56%;
+    --chart-6: 0 91% 71%;
+    --chart-run: 217 91% 60%;
+    --chart-cost: 43 96% 56%;
+    --chart-prompt-light: 213 97% 78%;
+
+    --edge-idle: 215 16% 47%;
+    --edge-idle-soft: 220 9% 46%;
+    --canvas-dots: 217 33% 17%;
+
+    --running-glow: 199 95% 60%;
+    --running-arc: 199 89% 48%;
   }
 }
 
@@ -146,11 +375,11 @@
        bright arc sweeping over it. */
     background: conic-gradient(
       from var(--node-spin-angle),
-      rgb(56 189 248 / 0.35) 0turn,
-      rgb(56 189 248 / 0.35) 0.45turn,
-      rgb(14 165 233) 0.75turn,
-      rgb(255 255 255) 0.8turn,
-      rgb(56 189 248 / 0.35) 0.85turn
+      hsl(var(--running-glow) / 0.35) 0turn,
+      hsl(var(--running-glow) / 0.35) 0.45turn,
+      hsl(var(--running-arc)) 0.75turn,
+      hsl(var(--running-glow) / 0.9) 0.8turn,
+      hsl(var(--running-glow) / 0.35) 0.85turn
     );
     mask:
       linear-gradient(#000 0 0) content-box exclude,
@@ -166,7 +395,7 @@
 
     .node-running-border {
       animation: none;
-      background: rgb(56 189 248);
+      background: hsl(var(--running-arc));
     }
   }
 }

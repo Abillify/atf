@@ -14,6 +14,8 @@
 
 import type { NodeType } from "../../types/flow";
 import { withCurrency } from "../../lib/currency";
+import type { NodePalette } from "../../lib/theme/palette";
+import { nodeTypeVarColor } from "../../lib/theme/palette";
 import type {
   NodeExecutionEvent,
   NodeToolCall,
@@ -105,65 +107,73 @@ export interface NodeState {
 export function nodeTypeColor(type: NodeVisualType | undefined): string {
   switch (type) {
     case "llm":
-      return "bg-indigo-600 border-indigo-800";
+      return "bg-node-llm border-node-llm-border";
     case "classifier":
-      return "bg-purple-600 border-purple-800";
+      return "bg-node-classifier border-node-classifier-border";
     case "router":
-      return "bg-amber-500 border-amber-700";
+      return "bg-node-router border-node-router-border";
     case "parallel":
-      return "bg-violet-600 border-violet-800";
+      return "bg-node-parallel border-node-parallel-border";
     case "retrieval":
-      return "bg-cyan-700 border-cyan-900";
+      return "bg-node-retrieval border-node-retrieval-border";
     case "memory":
-      return "bg-fuchsia-600 border-fuchsia-800";
+      return "bg-node-memory border-node-memory-border";
     case "tool":
-      return "bg-teal-600 border-teal-800";
+      return "bg-node-tool border-node-tool-border";
     case "agent-harness":
-      return "bg-rose-600 border-rose-800";
+      return "bg-node-agent-harness border-node-agent-harness-border";
     case "transform":
-      return "bg-lime-700 border-lime-900";
+      return "bg-node-transform border-node-transform-border";
     case "trigger":
-      return "bg-orange-600 border-orange-800";
+      return "bg-node-trigger border-node-trigger-border";
     case "assistant-context":
     case "assistant-learn":
-      return "bg-sky-600 border-sky-800";
+      return "bg-node-assistant border-node-assistant-border";
     case "boundary":
-      return "bg-slate-600 border-slate-800";
+      return "bg-node-boundary border-node-boundary-border";
     default:
-      return "bg-gray-500 border-gray-700";
+      return "bg-node-default border-node-default-border";
   }
 }
 
-export function nodeTypeHex(type: NodeVisualType | undefined): string {
+function nodePaletteKey(type: NodeVisualType | undefined): keyof NodePalette {
   switch (type) {
     case "llm":
-      return "#4f46e5";
+      return "llm";
     case "classifier":
-      return "#9333ea";
+      return "classifier";
     case "router":
-      return "#f59e0b";
+      return "router";
     case "parallel":
-      return "#7c3aed";
+      return "parallel";
     case "retrieval":
-      return "#0e7490";
+      return "retrieval";
     case "memory":
-      return "#c026d3";
+      return "memory";
     case "tool":
-      return "#0d9488";
+      return "tool";
     case "agent-harness":
-      return "#e11d48";
+      return "agentHarness";
     case "transform":
-      return "#4d7c0f";
+      return "transform";
     case "trigger":
-      return "#ea580c";
+      return "trigger";
     case "assistant-context":
     case "assistant-learn":
-      return "#0284c7";
+      return "assistant";
     case "boundary":
-      return "#475569";
+      return "boundary";
     default:
-      return "#6b7280";
+      return "default";
   }
+}
+
+/**
+ * Resolved category color (from the `--node-*` token) for SVG attributes
+ * and inline styles (MiniMap, legend). See `lib/theme/palette.ts`.
+ */
+export function nodeTypeHex(type: NodeVisualType | undefined): string {
+  return nodeTypeVarColor(nodePaletteKey(type));
 }
 
 export function nodeTypeLabel(type: NodeVisualType | undefined): string {
@@ -191,28 +201,28 @@ export function statusIndicator(status: NodeState["status"]): {
   switch (status) {
     case "completed":
       return {
-        dot: "bg-green-400 border-green-700 text-green-900",
+        dot: "bg-success-solid border-success-solid-hover text-on-solid",
         glyph: "✓",
         ring: "",
         label: "completed",
       };
     case "running":
       return {
-        dot: "bg-sky-400 border-sky-600 animate-pulse",
+        dot: "bg-info-solid border-info-solid-hover animate-pulse",
         glyph: "",
         ring: "",
         label: "running",
       };
     case "error":
       return {
-        dot: "bg-red-500 border-red-800 text-white",
+        dot: "bg-danger-solid border-danger-solid-hover text-on-solid",
         glyph: "✕",
-        ring: "ring-2 ring-offset-1 ring-red-500",
+        ring: "ring-2 ring-offset-1 ring-danger",
         label: "error",
       };
     case "pending":
       return {
-        dot: "bg-white border-gray-400",
+        dot: "bg-background border-muted-foreground/50",
         glyph: "",
         ring: "",
         label: "pending",
@@ -223,11 +233,11 @@ export function statusIndicator(status: NodeState["status"]): {
 export function approvalRing(approval: ApprovalState | undefined): string {
   switch (approval) {
     case "pending":
-      return "ring-2 ring-offset-1 ring-blue-500";
+      return "ring-2 ring-offset-1 ring-info";
     case "approved":
-      return "ring-2 ring-offset-1 ring-green-500";
+      return "ring-2 ring-offset-1 ring-success";
     case "rejected":
-      return "ring-2 ring-offset-1 ring-red-500";
+      return "ring-2 ring-offset-1 ring-danger";
     default:
       return "";
   }
@@ -239,11 +249,11 @@ export function approvalBadge(approval: ApprovalState): {
 } {
   switch (approval) {
     case "pending":
-      return { label: "⏳ approval", className: "bg-blue-100 text-blue-700" };
+      return { label: "⏳ approval", className: "bg-info-soft text-info" };
     case "approved":
-      return { label: "✓ approved", className: "bg-green-100 text-green-700" };
+      return { label: "✓ approved", className: "bg-success-soft text-success" };
     case "rejected":
-      return { label: "✕ denied", className: "bg-red-100 text-red-700" };
+      return { label: "✕ denied", className: "bg-danger-soft text-danger" };
   }
 }
 

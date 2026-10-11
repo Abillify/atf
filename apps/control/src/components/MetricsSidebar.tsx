@@ -20,6 +20,8 @@ import type { NodeExecutionEvent } from "../types/monitoring";
 import type { ExecutionPickerItem } from "./ExecutionPicker";
 import { Button } from "../lib/ui";
 import { FlowPicker } from "./FlowPicker";
+import { formatTime } from "../lib/i18n";
+import { useChartPalette } from "../lib/theme/palette";
 
 export interface MetricsSidebarProps {
   events: NodeExecutionEvent[];
@@ -153,7 +155,7 @@ function buildTimeseries(
 
   const sorted = [...buckets.entries()].sort((a, b) => a[0] - b[0]);
   return sorted.map(([ts, data]) => ({
-    time: new Date(ts).toLocaleTimeString([], {
+    time: formatTime(ts, {
       hour: "2-digit",
       minute: "2-digit",
     }),
@@ -206,6 +208,7 @@ function FullscreenChart({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
+  const chart = useChartPalette();
 
   return (
     <div
@@ -239,21 +242,38 @@ function FullscreenChart({
         </h3>
         <ResponsiveContainer width="100%" height="85%">
           <LineChart data={data}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.3} />
+            <CartesianGrid
+              strokeDasharray="3 3"
+              stroke={chart.grid}
+              opacity={0.3}
+            />
             <XAxis dataKey="time" tick={{ fontSize: 11 }} />
-            <YAxis yAxisId="left" allowDecimals={false} tick={{ fontSize: 11 }} />
-            <YAxis yAxisId="right" orientation="right" tick={{ fontSize: 11 }} unit="ms" />
+            <YAxis
+              yAxisId="left"
+              allowDecimals={false}
+              tick={{ fontSize: 11 }}
+            />
+            <YAxis
+              yAxisId="right"
+              orientation="right"
+              tick={{ fontSize: 11 }}
+              unit="ms"
+            />
             <Tooltip
-              contentStyle={{ backgroundColor: "#1f2937", border: "none", borderRadius: 8 }}
-              labelStyle={{ color: "#9ca3af" }}
-              itemStyle={{ color: "#e5e7eb" }}
+              contentStyle={{
+                backgroundColor: chart.tooltipBg,
+                border: "none",
+                borderRadius: 8,
+              }}
+              labelStyle={{ color: chart.tooltipLabel }}
+              itemStyle={{ color: chart.tooltipItem }}
             />
             <Legend />
             <Line
               yAxisId="left"
               type="monotone"
               dataKey="requests"
-              stroke="#3b82f6"
+              stroke={chart.run}
               strokeWidth={2}
               dot={false}
               name="Requests"
@@ -262,7 +282,7 @@ function FullscreenChart({
               yAxisId="right"
               type="monotone"
               dataKey="avgDuration"
-              stroke="#f59e0b"
+              stroke={chart.cost}
               strokeWidth={2}
               dot={false}
               name="Avg Duration (ms)"
@@ -294,6 +314,7 @@ export function MetricsSidebar({
   const [timeRange, setTimeRange] = useState<TimeRange>("1h");
   const [flowFilter, setFlowFilter] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
+  const chart = useChartPalette();
 
   const metrics = aggregateMetrics(events);
 
@@ -313,17 +334,19 @@ export function MetricsSidebar({
   );
 
   const chartData = [
-    { name: "Run", value: metrics.activeRequests, color: "#ca8a04" },
-    { name: "Done", value: metrics.completed, color: "#16a34a" },
-    { name: "Err", value: metrics.errors, color: "#dc2626" },
+    { name: "Run", value: metrics.activeRequests, color: chart.cost },
+    { name: "Done", value: metrics.completed, color: chart.c4 },
+    { name: "Err", value: metrics.errors, color: chart.c6 },
   ];
 
   return (
-    <aside className={
-      embedded
-        ? "flex flex-col gap-3 p-4 overflow-y-auto"
-        : "flex h-full w-72 shrink-0 flex-col gap-3 border-l border-border bg-muted p-4 overflow-y-auto"
-    }>
+    <aside
+      className={
+        embedded
+          ? "flex flex-col gap-3 p-4 overflow-y-auto"
+          : "flex h-full w-72 shrink-0 flex-col gap-3 border-l border-border bg-muted p-4 overflow-y-auto"
+      }
+    >
       <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground">
         Live Metrics
       </h2>
@@ -347,9 +370,21 @@ export function MetricsSidebar({
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-2">
-        <StatCard label="Active Requests" value={metrics.activeRequests} valueClassName="text-yellow-600" />
-        <StatCard label="Completed" value={metrics.completed} valueClassName="text-green-600" />
-        <StatCard label="Errors" value={metrics.errors} valueClassName="text-red-600" />
+        <StatCard
+          label="Active Requests"
+          value={metrics.activeRequests}
+          valueClassName="text-warning"
+        />
+        <StatCard
+          label="Completed"
+          value={metrics.completed}
+          valueClassName="text-success"
+        />
+        <StatCard
+          label="Errors"
+          value={metrics.errors}
+          valueClassName="text-danger"
+        />
         <StatCard label="Total Nodes" value={metrics.totalNodes} />
       </div>
 
@@ -389,7 +424,10 @@ export function MetricsSidebar({
         {flowIds.length > 1 && (
           <div className="mb-1">
             <FlowPicker
-              flows={flowIds.map((id) => ({ id, name: flowNames?.get(id) ?? id }))}
+              flows={flowIds.map((id) => ({
+                id,
+                name: flowNames?.get(id) ?? id,
+              }))}
               value={flowFilter ?? ""}
               onChange={(id) => setFlowFilter(id === "" ? null : id)}
               emptyOption="All flows"
@@ -407,20 +445,43 @@ export function MetricsSidebar({
             title="Click to expand"
           >
             <LineChart width={embedded ? 460 : 230} height={100} data={tsData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" opacity={0.2} />
-              <XAxis dataKey="time" tick={{ fontSize: 8 }} interval="preserveStartEnd" />
-              <YAxis yAxisId="left" allowDecimals={false} width={18} tick={{ fontSize: 8 }} />
-              <YAxis yAxisId="right" orientation="right" width={24} tick={{ fontSize: 8 }} />
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke={chart.grid}
+                opacity={0.2}
+              />
+              <XAxis
+                dataKey="time"
+                tick={{ fontSize: 8 }}
+                interval="preserveStartEnd"
+              />
+              <YAxis
+                yAxisId="left"
+                allowDecimals={false}
+                width={18}
+                tick={{ fontSize: 8 }}
+              />
+              <YAxis
+                yAxisId="right"
+                orientation="right"
+                width={24}
+                tick={{ fontSize: 8 }}
+              />
               <Tooltip
-                contentStyle={{ backgroundColor: "#1f2937", border: "none", borderRadius: 6, fontSize: 10 }}
-                labelStyle={{ color: "#9ca3af" }}
-                itemStyle={{ color: "#e5e7eb" }}
+                contentStyle={{
+                  backgroundColor: chart.tooltipBg,
+                  border: "none",
+                  borderRadius: 6,
+                  fontSize: 10,
+                }}
+                labelStyle={{ color: chart.tooltipLabel }}
+                itemStyle={{ color: chart.tooltipItem }}
               />
               <Line
                 yAxisId="left"
                 type="monotone"
                 dataKey="requests"
-                stroke="#3b82f6"
+                stroke={chart.run}
                 strokeWidth={1.5}
                 dot={false}
                 name="Requests"
@@ -429,7 +490,7 @@ export function MetricsSidebar({
                 yAxisId="right"
                 type="monotone"
                 dataKey="avgDuration"
-                stroke="#f59e0b"
+                stroke={chart.cost}
                 strokeWidth={1.5}
                 dot={false}
                 name="Avg ms"
@@ -444,7 +505,9 @@ export function MetricsSidebar({
       </div>
 
       {/* Fullscreen overlay */}
-      {fullscreen && <FullscreenChart data={tsData} onClose={() => setFullscreen(false)} />}
+      {fullscreen && (
+        <FullscreenChart data={tsData} onClose={() => setFullscreen(false)} />
+      )}
     </aside>
   );
 }

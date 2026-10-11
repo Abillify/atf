@@ -5,6 +5,7 @@
 import type React from "react";
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { Workflow } from "lucide-react";
 import { useFlows } from "../hooks/useFlows";
 import { useFlowStats } from "../hooks/useFlowStats";
 import { formatCost } from "../lib/currency";
@@ -12,12 +13,14 @@ import {
   Button,
   Badge,
   type BadgeVariant,
+  EmptyState,
   Table,
   TableHead,
   TableBody,
   TableRow,
   TableHeaderCell,
   TableCell,
+  useConfirm,
 } from "../lib/ui";
 import type { FlowDefinition, FlowListEntry } from "../types/flow";
 
@@ -91,6 +94,8 @@ export function FlowsTab({
   const [err, setErr] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [range, setRange] = useState<StatsRange>("1d");
+  // Req 9.5: confirmations through the dialog primitive instead of window.confirm.
+  const { confirm: confirmDialog } = useConfirm();
   // Window start is frozen per range change (not per render) so the stats
   // query key stays stable while the table re-renders.
   const sinceIso = useMemo(
@@ -119,9 +124,12 @@ export function FlowsTab({
 
   const deleteFlow = async (id: string): Promise<void> => {
     if (
-      !window.confirm(
-        `Delete flow "${id}"? This removes its draft, published version and history.`,
-      )
+      !(await confirmDialog({
+        title: "Delete flow",
+        message: `Delete flow "${id}"? This removes its draft, published version and history.`,
+        confirmLabel: "Delete",
+        destructive: true,
+      }))
     ) {
       return;
     }
@@ -152,7 +160,12 @@ export function FlowsTab({
     }
     if (
       actions.flows.some((f) => f.id === id) &&
-      !window.confirm(`Flow "${id}" exists. Replace its draft with the imported flow?`)
+      !(await confirmDialog({
+        title: "Replace existing flow",
+        message: `Flow "${id}" exists. Replace its draft with the imported flow?`,
+        confirmLabel: "Replace",
+        destructive: true,
+      }))
     ) {
       return;
     }
@@ -160,7 +173,9 @@ export function FlowsTab({
       await actions.saveDraft(id, def);
       window.location.assign(studioHref(id));
     } catch (e) {
-      setErr(e instanceof Error ? `Import failed: ${e.message}` : "Import failed");
+      setErr(
+        e instanceof Error ? `Import failed: ${e.message}` : "Import failed",
+      );
     }
   };
 
@@ -175,9 +190,7 @@ export function FlowsTab({
         </h3>
         <div className="flex items-center gap-2">
           {(err || actions.error) && (
-            <span className="text-xs text-red-600 dark:text-red-400">
-              {err ?? actions.error}
-            </span>
+            <span className="text-xs text-danger">{err ?? actions.error}</span>
           )}
           {/* Stats window — same preset-button style as the /limits panel. */}
           {/* biome-ignore lint/a11y/useSemanticElements: toolbar of toggle buttons, not a form control — <fieldset> would be wrong here */}
@@ -245,9 +258,24 @@ export function FlowsTab({
       )}
 
       {actions.flows.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">
-          {actions.isLoading ? "Loading…" : "No flows yet."}
-        </p>
+        actions.isLoading ? (
+          <p className="py-10 text-center text-sm text-muted-foreground">
+            Loading…
+          </p>
+        ) : (
+          <EmptyState
+            icon={Workflow}
+            title="No flows yet."
+            description="Flows describe how requests are routed through nodes and edges. Create one in Studio or import a flow JSON file."
+            action={
+              actions.onlineEditing ? (
+                <Link href={studioHref()} className={LINK_PRIMARY}>
+                  + New flow
+                </Link>
+              ) : undefined
+            }
+          />
+        )
       ) : (
         <Table>
           <TableHead>
@@ -349,7 +377,7 @@ export function FlowsTab({
                             size="sm"
                             onClick={() => void deleteFlow(f.id)}
                             disabled={busyId === f.id}
-                            className="text-red-600 dark:text-red-400"
+                            className="text-danger"
                           >
                             Delete
                           </Button>

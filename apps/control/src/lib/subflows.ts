@@ -72,14 +72,14 @@ export function subflowColorIndex(path: string, all: string[]): number {
   return (i < 0 ? 0 : i) % SUBFLOW_COLORS.length;
 }
 
-/** Box styles (border / background / label) per colour slot. */
+/** Box styles (border / background / label) per colour slot (design tokens, theme dependent). */
 export const SUBFLOW_COLORS = [
-  { box: "border-teal-400/70 bg-teal-50/60 dark:bg-teal-950/25", label: "bg-teal-100 text-teal-800 dark:bg-teal-900 dark:text-teal-200" },
-  { box: "border-violet-400/70 bg-violet-50/60 dark:bg-violet-950/25", label: "bg-violet-100 text-violet-800 dark:bg-violet-900 dark:text-violet-200" },
-  { box: "border-amber-400/70 bg-amber-50/60 dark:bg-amber-950/25", label: "bg-amber-100 text-amber-800 dark:bg-amber-900 dark:text-amber-200" },
-  { box: "border-sky-400/70 bg-sky-50/60 dark:bg-sky-950/25", label: "bg-sky-100 text-sky-800 dark:bg-sky-900 dark:text-sky-200" },
-  { box: "border-rose-400/70 bg-rose-50/60 dark:bg-rose-950/25", label: "bg-rose-100 text-rose-800 dark:bg-rose-900 dark:text-rose-200" },
-  { box: "border-emerald-400/70 bg-emerald-50/60 dark:bg-emerald-950/25", label: "bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200" },
+  { box: "border-cat-1-border bg-cat-1-soft", label: "bg-cat-1/15 text-cat-1" },
+  { box: "border-cat-2-border bg-cat-2-soft", label: "bg-cat-2/15 text-cat-2" },
+  { box: "border-cat-3-border bg-cat-3-soft", label: "bg-cat-3/15 text-cat-3" },
+  { box: "border-cat-4-border bg-cat-4-soft", label: "bg-cat-4/15 text-cat-4" },
+  { box: "border-cat-5-border bg-cat-5-soft", label: "bg-cat-5/15 text-cat-5" },
+  { box: "border-cat-6-border bg-cat-6-soft", label: "bg-cat-6/15 text-cat-6" },
 ];
 
 export interface SubflowBox {

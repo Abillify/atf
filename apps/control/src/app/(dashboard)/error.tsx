@@ -16,6 +16,7 @@
 import React, { useEffect } from "react";
 
 import { Button } from "../../lib/ui";
+import { reportClientError } from "../../lib/telemetry";
 
 export interface ErrorProps {
   /** The error that was thrown. */
@@ -26,10 +27,16 @@ export interface ErrorProps {
 
 export default function DashboardError({ error, reset }: ErrorProps) {
   // Log to the browser console so developers can see the full stack trace
-  // without opening DevTools. In production you would send this to your
-  // error-tracking service here.
+  // without opening DevTools, and report to the configurable telemetry
+  // endpoint (Req 9.6) — fire-and-forget, never blocking the recovery UI.
   useEffect(() => {
     console.error("[DashboardError]", error);
+    reportClientError({
+      message: error.message ?? "Unknown error",
+      stack: error.stack,
+      digest: error.digest,
+      source: "error-boundary",
+    });
   }, [error]);
 
   return (
@@ -38,13 +45,13 @@ export default function DashboardError({ error, reset }: ErrorProps) {
       aria-live="assertive"
       className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center"
     >
-      <div className="rounded-full bg-red-100 p-4">
+      <div className="rounded-full bg-danger-soft p-4">
         {/* Simple warning icon — no icon library required */}
         <svg
           xmlns="http://www.w3.org/2000/svg"
           viewBox="0 0 24 24"
           fill="currentColor"
-          className="h-8 w-8 text-red-600 dark:text-red-400"
+          className="h-8 w-8 text-danger"
           aria-hidden="true"
         >
           <path

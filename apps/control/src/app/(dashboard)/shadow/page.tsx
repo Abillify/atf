@@ -18,6 +18,7 @@ import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Badge, Button, Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell } from "../../../lib/ui";
+import { formatTime } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -66,8 +67,8 @@ interface Comparison {
 
 function deltaColor(delta: number | undefined): string {
   if (delta === undefined) return "text-muted-foreground";
-  if (delta > 0) return "text-green-600";
-  if (delta < 0) return "text-red-600";
+  if (delta > 0) return "text-success";
+  if (delta < 0) return "text-danger";
   return "text-muted-foreground";
 }
 
@@ -154,14 +155,14 @@ export default function ShadowPage() {
       </div>
 
       {error && (
-        <div role="alert" className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">
+        <div role="alert" className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
           {error}
         </div>
       )}
 
       {/* Feature status */}
       {overview && (
-        <div className={`rounded border px-4 py-3 text-sm ${isEnabled ? "border-green-200 bg-green-50 text-green-800" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+        <div className={`rounded border px-4 py-3 text-sm ${isEnabled ? "border-success-border bg-success-soft text-success" : "border-warning-border bg-warning-soft text-warning"}`}>
           {isEnabled
             ? `✓ Shadow runner active — ${overview.configured} flow pair(s) configured.`
             : "Shadow runner is not active on this deployment. Set SHADOW_ENABLED=true and configure shadow-flow pairs in your flow YAML to enable."}
@@ -227,7 +228,7 @@ export default function ShadowPage() {
                   { label: "Avg Δ score", value: flowStats.avgDelta !== undefined ? fmt(flowStats.avgDelta, 3) : "—", color: deltaColor(flowStats.avgDelta) },
                 ].map(({ label, value, red, green, color }) => (
                   <div key={label} className="rounded border border-border bg-background p-3 text-center">
-                    <div className={`text-xl font-bold tabular-nums ${red ? "text-red-600" : green ? "text-green-600" : (color ?? "text-foreground")}`}>{value}</div>
+                    <div className={`text-xl font-bold tabular-nums ${red ? "text-danger" : green ? "text-success" : (color ?? "text-foreground")}`}>{value}</div>
                     <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
                   </div>
                 ))}
@@ -277,7 +278,7 @@ export default function ShadowPage() {
                       </Badge>
                     </TableCell>
                     <TableCell className="text-xs text-muted-foreground whitespace-nowrap">
-                      {c.createdAt ? new Date(c.createdAt).toLocaleTimeString() : "—"}
+                      {c.createdAt ? formatTime(c.createdAt) : "—"}
                     </TableCell>
                   </TableRow>
                 ))}

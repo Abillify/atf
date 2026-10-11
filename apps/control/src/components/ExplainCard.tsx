@@ -23,6 +23,7 @@ import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
 import { Badge, Button } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
+import { formatDateTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirror src/observability/explain.ts)
@@ -244,7 +245,7 @@ export function ExplainCard({
 
   if (error) {
     return (
-      <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+      <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
         Failed to load explainability card: {error.message}
       </div>
     );
@@ -269,7 +270,7 @@ export function ExplainCard({
           <p className="mt-0.5 text-xs text-muted-foreground">
             {card.flowId ?? "(unknown flow)"} ·{" "}
             {card.userName ?? "anonymous"} ·{" "}
-            {new Date(card.startedAt).toLocaleString()}
+            {formatDateTime(card.startedAt)}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -407,7 +408,7 @@ export function ExplainCard({
                 </div>
               )}
               {step.errorMessage !== undefined && (
-                <p className="mt-1 text-red-600">⚠️ {step.errorMessage}</p>
+                <p className="mt-1 text-danger">⚠️ {step.errorMessage}</p>
               )}
             </li>
           ))}
@@ -493,7 +494,7 @@ export function ExplainCard({
           <ul className="flex flex-col gap-1 text-sm">
             {card.auditEntries.map((a) => (
               <li key={a.id} className="text-muted-foreground">
-                {new Date(a.at).toLocaleString()} — <b className="text-foreground">{a.actor}</b>{" "}
+                {formatDateTime(a.at)} — <b className="text-foreground">{a.actor}</b>{" "}
                 {a.action} ({a.outcome ?? "success"})
               </li>
             ))}
@@ -502,7 +503,7 @@ export function ExplainCard({
       </div>
 
       {card.degraded.length > 0 && (
-        <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-700">
+        <div className="rounded-lg border border-warning-border bg-warning-soft p-3 text-xs text-warning">
           {card.degraded.map((d, i) => (
             <p key={i}>⚠️ {d}</p>
           ))}

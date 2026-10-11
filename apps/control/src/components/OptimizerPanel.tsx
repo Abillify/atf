@@ -13,6 +13,7 @@ import type {
   VariantEvalResult,
   OptimizerRunOptions,
 } from "../types/optimizer";
+import { formatTime } from "../lib/i18n";
 
 export interface OptimizerFlowOption {
   id: string;
@@ -35,12 +36,12 @@ export interface OptimizerPanelProps {
 
 const STATUS_STYLE: Record<OptimizationRunStatus, string> = {
   pending: "bg-muted text-muted-foreground",
-  mining: "bg-blue-100 text-blue-700",
-  generating: "bg-blue-100 text-blue-700",
-  evaluating: "bg-amber-100 text-amber-700",
-  promoting: "bg-purple-100 text-purple-700",
-  done: "bg-green-100 text-green-700",
-  error: "bg-red-100 text-red-700",
+  mining: "bg-info-soft text-info",
+  generating: "bg-info-soft text-info",
+  evaluating: "bg-warning-soft text-warning",
+  promoting: "bg-copilot-soft text-copilot",
+  done: "bg-success-soft text-success",
+  error: "bg-danger-soft text-danger",
   skipped: "bg-muted text-muted-foreground",
 };
 
@@ -65,9 +66,9 @@ function scoreDelta(
   const d = variant - baseline;
   const cls =
     d > 0.001
-      ? "text-green-600"
+      ? "text-success"
       : d < -0.001
-        ? "text-red-600"
+        ? "text-danger"
         : "text-muted-foreground";
   const sign = d > 0 ? "+" : "";
   return (
@@ -115,7 +116,7 @@ function CaseComparison({
                 </div>
                 <p className="whitespace-pre-wrap break-words text-foreground">
                   {bc?.error ? (
-                    <span className="text-red-600 dark:text-red-400">error: {bc.error}</span>
+                    <span className="text-danger">error: {bc.error}</span>
                   ) : (
                     bc?.responseText || <em className="text-muted-foreground">—</em>
                   )}
@@ -132,7 +133,7 @@ function CaseComparison({
                 </div>
                 <p className="whitespace-pre-wrap break-words text-foreground">
                   {vc.error ? (
-                    <span className="text-red-600 dark:text-red-400">error: {vc.error}</span>
+                    <span className="text-danger">error: {vc.error}</span>
                   ) : (
                     vc.responseText || <em className="text-muted-foreground">—</em>
                   )}
@@ -267,7 +268,7 @@ function RunCard({
           <span className="tabular-nums">
             baseline {pct(run.baselineScore)}
           </span>
-          <span>{new Date(run.startedAt).toLocaleTimeString()}</span>
+          <span>{formatTime(run.startedAt)}</span>
           {run.promotedVariant && (
             <Badge variant="success">
               → {run.promotedVariant} (v{run.promotedVersion})
@@ -279,7 +280,7 @@ function RunCard({
       {open && (
         <div className="border-t border-border p-3">
           {run.error && (
-            <p className="mb-2 rounded bg-red-50 px-2 py-1 text-xs text-red-600">
+            <p className="mb-2 rounded bg-danger-soft px-2 py-1 text-xs text-danger">
               {run.error}
             </p>
           )}
@@ -435,7 +436,7 @@ export function OptimizerPanel({
         <h3 className="text-sm font-semibold text-foreground">
           Self-optimizing flows
         </h3>
-        {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+        {error && <span className="text-xs text-danger">{error}</span>}
       </div>
 
       <div className="flex items-center gap-2">

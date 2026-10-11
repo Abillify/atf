@@ -162,7 +162,7 @@ function PromptFileCard({
           {status.kind === "saving" && <span>saving…</span>}
           {status.kind === "saved" && !dirty && <span>saved</span>}
           {dirty && status.kind !== "saving" && (
-            <span className="text-amber-600 dark:text-amber-400">
+            <span className="text-warning">
               unsaved changes
             </span>
           )}

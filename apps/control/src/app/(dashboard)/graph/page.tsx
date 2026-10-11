@@ -14,6 +14,7 @@
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import { Workflow } from "lucide-react";
+import { EmptyState } from "../../../lib/ui";
 import { studioRunHref } from "../../../lib/run-attach";
 import { useMemo, useState, useCallback } from "react";
 import { ExecutionPicker } from "../../../components/ExecutionPicker";
@@ -202,21 +203,13 @@ export default function GraphPage() {
         <div className="mb-2 flex items-center gap-2 text-sm">
           <span
             className={`inline-block h-2 w-2 rounded-full ${
-              isConnected ? "bg-green-500" : "bg-red-400"
+              isConnected ? "bg-success-solid" : "bg-danger-solid"
             }`}
           />
-          <span
-            className={
-              isConnected ? "text-green-600" : "text-red-600 dark:text-red-400"
-            }
-          >
+          <span className={isConnected ? "text-success" : "text-danger"}>
             {isConnected ? "Connected" : "Disconnected"}
           </span>
-          {error && (
-            <span className="text-xs text-red-600 dark:text-red-400">
-              {error}
-            </span>
-          )}
+          {error && <span className="text-xs text-danger">{error}</span>}
           {studioHref !== null && (
             <Link
               href={studioHref}
@@ -230,8 +223,30 @@ export default function GraphPage() {
         </div>
 
         {scoping.pickerItems.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <p>No execution events yet. Send a chat request to get started.</p>
+          /* First-Run guidance (Req. 9.9): no executions recorded yet — point
+             at the two steps that produce the first graph. */
+          <div className="flex h-full items-center justify-center">
+            <EmptyState
+              icon={Workflow}
+              title="No execution events yet."
+              description="Send a chat request to watch it flow through the graph node by node — or set up a provider first if none is configured yet."
+              action={
+                <>
+                  <Link
+                    href="/studio"
+                    className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground shadow-sm hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Open Studio
+                  </Link>
+                  <Link
+                    href="/providers"
+                    className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Configure providers
+                  </Link>
+                </>
+              }
+            />
           </div>
         ) : scoping.displayEvents.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">
@@ -285,7 +300,7 @@ export default function GraphPage() {
               <div className="p-4">
                 {/* Node header */}
                 <div
-                  className={`mb-4 rounded-lg px-4 py-3 text-white ${nodeTypeColor(selectedNode.nodeType)}`}
+                  className={`mb-4 rounded-lg px-4 py-3 text-on-solid ${nodeTypeColor(selectedNode.nodeType)}`}
                 >
                   <div className="font-semibold text-sm truncate">
                     {selectedNode.label}

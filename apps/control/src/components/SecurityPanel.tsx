@@ -13,6 +13,7 @@ import type {
   ToolAuthzPolicyView,
   McpServerInfo,
 } from "../types/security";
+import { formatDateTime } from "../lib/i18n";
 
 export interface SecurityPanelProps {
   posture: PostureResponse | null;
@@ -37,15 +38,15 @@ export interface SecurityPanelProps {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 0.9) return "text-green-600";
-  if (score >= 0.7) return "text-amber-600";
-  return "text-red-600";
+  if (score >= 0.9) return "text-success";
+  if (score >= 0.7) return "text-warning";
+  return "text-danger";
 }
 
 function scoreBg(score: number): string {
-  if (score >= 0.9) return "bg-green-500";
-  if (score >= 0.7) return "bg-amber-500";
-  return "bg-red-500";
+  if (score >= 0.9) return "bg-success-solid";
+  if (score >= 0.7) return "bg-warning-solid";
+  return "bg-danger-solid";
 }
 
 const CATEGORY_LABELS: Record<string, string> = {
@@ -127,7 +128,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
         <h2 className="text-base font-semibold text-foreground">
           AI Security Posture
         </h2>
-        {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+        {error && <span className="text-xs text-danger">{error}</span>}
       </div>
 
       {/* Sub-navigation — a segmented control. Content is rendered below by
@@ -171,7 +172,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
       {section === "posture" && (
         <div className="space-y-5">
           {!redTeamEnabled && (
-            <div className="rounded-lg border border-dashed border-amber-300 bg-amber-50 p-4 text-sm text-amber-800">
+            <div className="rounded-lg border border-dashed border-warning-border bg-warning-soft p-4 text-sm text-warning">
               The red-team engine is disabled. Set{" "}
               <code className="font-mono">RED_TEAM_ENABLED=true</code> to run
               adversarial tests, or configure{" "}
@@ -268,7 +269,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                       </span>
                       <span className="ml-2 text-xs text-muted-foreground">
                         {run.triggeredBy} ·{" "}
-                        {new Date(run.startedAt).toLocaleString()}
+                        {formatDateTime(run.startedAt)}
                       </span>
                     </div>
                     <div className="flex items-center gap-3 text-xs">
@@ -317,9 +318,9 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                     key={t.id}
                     className={`rounded border p-2 text-xs ${
                       t.verdict === "bypassed"
-                        ? "border-red-200 bg-red-50"
+                        ? "border-danger-border bg-danger-soft"
                         : t.verdict === "blocked"
-                          ? "border-green-200 bg-green-50"
+                          ? "border-success-border bg-success-soft"
                           : "border-border bg-muted"
                     }`}
                   >
@@ -379,7 +380,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                     {CATEGORY_LABELS[a.category] ?? a.category}
                   </span>
                   <span
-                    className={`font-semibold ${a.severity >= 0.85 ? "text-red-600" : "text-amber-600"}`}
+                    className={`font-semibold ${a.severity >= 0.85 ? "text-danger" : "text-warning"}`}
                   >
                     sev {a.severity.toFixed(2)}
                   </span>
@@ -426,10 +427,10 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                 value={draft}
                 onChange={(e) => setDraft(e.target.value)}
                 spellCheck={false}
-                className="h-80 w-full rounded border border-border bg-muted p-3 font-mono text-xs text-green-600 dark:text-green-300"
+                className="h-80 w-full rounded border border-border bg-muted p-3 font-mono text-xs text-success"
               />
               {saveError && (
-                <div className="rounded border border-red-200 bg-red-50 p-2 text-xs text-red-700">
+                <div className="rounded border border-danger-border bg-danger-soft p-2 text-xs text-danger">
                   {saveError}
                 </div>
               )}
@@ -467,8 +468,8 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                 <span
                   className={`font-semibold ${
                     toolAuthz.defaultAction === "deny"
-                      ? "text-red-600"
-                      : "text-green-600"
+                      ? "text-danger"
+                      : "text-success"
                   }`}
                 >
                   {toolAuthz.defaultAction}
@@ -518,7 +519,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
             <p className="text-sm text-foreground">
               Every published flow is callable as an MCP tool at:
             </p>
-            <code className="mt-1 block rounded bg-muted px-3 py-2 font-mono text-sm text-green-600 dark:text-green-400">
+            <code className="mt-1 block rounded bg-muted px-3 py-2 font-mono text-sm text-success">
               POST {mcp.endpoint}
             </code>
             <p className="mt-2 text-xs text-muted-foreground">

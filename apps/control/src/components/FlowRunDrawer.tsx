@@ -215,8 +215,8 @@ export function FlowRunDrawer({
     contentStartedRef.current = false;
   }, []);
 
-  // isAuthenticated statt !!token: bei AUTHN_MODE=disabled gibt es kein
-  // Token, der Event-Stream ist trotzdem erreichbar.
+  // isAuthenticated instead of !!token: with AUTHN_MODE=disabled there is no
+  // token, the event stream is still reachable.
   const { events } = useMonitoringEvents({
     enabled: !!flowId && isAuthenticated,
     token: token ?? undefined,
@@ -605,7 +605,7 @@ export function FlowRunDrawer({
 
       {hasOutput && (
         <div className="flex max-h-[75vh] min-h-0 flex-col gap-1.5 overflow-auto rounded border border-border bg-muted p-2 text-xs">
-          {notice && <p className="text-amber-600">{notice}</p>}
+          {notice && <p className="text-warning">{notice}</p>}
           {attached && (
             <p className="text-muted-foreground" data-testid="attached-run">
               Request <code className="font-mono">{attached.slice(0, 8)}</code>{" "}
@@ -654,7 +654,7 @@ export function FlowRunDrawer({
             </div>
           )}
           {error ? (
-            <p className="text-red-600" role="alert">
+            <p className="text-danger" role="alert">
               {error}
             </p>
           ) : (
@@ -694,7 +694,7 @@ export function FlowRunDrawer({
                   flow SHOULD answer. Evals compare future runs against it.
                 </p>
                 {evalForm.error && (
-                  <p role="alert" className="text-[11px] text-red-600">
+                  <p role="alert" className="text-[11px] text-danger">
                     {evalForm.error}
                   </p>
                 )}
@@ -792,7 +792,7 @@ export function FlowRunDrawer({
                 </button>
               )}
               {pinState.state === "error" && (
-                <span role="alert" className="text-red-600">
+                <span role="alert" className="text-danger">
                   Not pinned: {pinState.message}
                 </span>
               )}
@@ -817,11 +817,11 @@ export function FlowRunDrawer({
                 evalForm.state === "removing") && (
                 <span className="ml-auto flex items-center gap-2">
                   {evalForm.error ? (
-                    <span role="alert" className="text-red-600">
+                    <span role="alert" className="text-danger">
                       {evalForm.error}
                     </span>
                   ) : (
-                    <span className="text-green-700">
+                    <span className="text-success">
                       Saved to the eval dataset.
                     </span>
                   )}

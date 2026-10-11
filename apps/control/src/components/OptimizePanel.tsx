@@ -17,7 +17,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
 import { Button } from "../lib/ui";
-import { backendUrl } from "../lib/backend-url";
+import { request } from "../lib/control-api";
 import type { FlowDefinition } from "../types/flow";
 
 export interface RoutingRecommendation {
@@ -47,20 +47,23 @@ async function readAdvice(resp: Response): Promise<RoutingAdvice> {
   return (await resp.json()) as RoutingAdvice;
 }
 
-const authHeaders = (token: string | undefined): Record<string, string> =>
-  token ? { Authorization: `Bearer ${token}` } : {};
-
+// Req 9.2: transport through lib/control-api; the functions are already the
+// queryFn bodies of the panel queries.
 export async function fetchRoutingAdvice(token: string | undefined): Promise<RoutingAdvice> {
-  return readAdvice(await fetch(backendUrl("/optimizer/routing-advice"), { headers: authHeaders(token) }));
+  return readAdvice(
+    await request("/optimizer/routing-advice", { target: "backend", token }),
+  );
 }
 
 export async function fetchCanvasRoutingAdvice(
   definition: FlowDefinition,
   token: string | undefined,
 ): Promise<RoutingAdvice> {
-  const resp = await fetch(backendUrl("/optimizer/routing-advice"), {
+  const resp = await request("/optimizer/routing-advice", {
     method: "POST",
-    headers: { "Content-Type": "application/json", ...authHeaders(token) },
+    target: "backend",
+    token,
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ definition }),
   });
   if (resp.status === 404 || resp.status === 405) {
@@ -204,7 +207,7 @@ export function OptimizePanel({
             {advice.isFetching ? "Checking…" : advice.data ? "Check again" : "Check routing recommendations"}
           </Button>
 
-          {advice.error && <p className="text-xs text-red-600">{advice.error.message}</p>}
+          {advice.error && <p className="text-xs text-danger">{advice.error.message}</p>}
 
           {advice.data && results.length === 0 && (
             <p className="rounded border border-dashed border-border bg-muted p-2 text-xs text-muted-foreground">
@@ -227,10 +230,10 @@ export function OptimizePanel({
                 Node <span className="font-mono">{r.nodeId}</span>
               </div>
               <div className="font-mono text-[11px]">
-                {r.currentModel} → <span className="text-green-700">{r.suggestedModel}</span>
+                {r.currentModel} → <span className="text-success">{r.suggestedModel}</span>
               </div>
               <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                <span className="text-green-700">−{r.expectedCostSavingPct.toFixed(0)}% cost</span>
+                <span className="text-success">−{r.expectedCostSavingPct.toFixed(0)}% cost</span>
                 <span>−{r.expectedQualityLossPct.toFixed(1)}% quality</span>
                 <span>({r.source})</span>
               </div>

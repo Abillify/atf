@@ -2,8 +2,17 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { render, screen, within } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, test, expect, vi, afterEach } from "vitest";
 import { FlowDiffPanel } from "../components/FlowDiffPanel";
+
+// Req 9.2: Das Panel nutzt TanStack Query — frischer Client pro Test.
+function renderPanel(ui: React.ReactElement): void {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+  });
+  render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 function mockDiff(diff: unknown): void {
   global.fetch = vi.fn().mockResolvedValue({
@@ -41,7 +50,7 @@ describe("FlowDiffPanel details", () => {
         ],
       },
     });
-    render(<FlowDiffPanel flowId="n8n" draftMode />);
+    renderPanel(<FlowDiffPanel flowId="n8n" draftMode />);
     const row = (await screen.findByText("node: n8n-responder")).closest("details");
     expect(row).not.toBeNull();
     const values = within(row as HTMLElement).getAllByTestId("diff-value");
@@ -59,7 +68,7 @@ describe("FlowDiffPanel details", () => {
       nodes: { added: ["extra"], removed: [], changed: [{ id: "old", changedFields: ["label"] }] },
       values: { nodes: { added: { extra: { id: "extra", type: "tool" } }, removed: {} }, edges: { added: {}, removed: {} } },
     });
-    render(<FlowDiffPanel flowId="n8n" draftMode />);
+    renderPanel(<FlowDiffPanel flowId="n8n" draftMode />);
     const added = (await screen.findByText("node: extra")).closest("details");
     expect(added).toHaveTextContent('"type": "tool"');
     expect(screen.getByText("node: old").closest("details")).toBeNull();

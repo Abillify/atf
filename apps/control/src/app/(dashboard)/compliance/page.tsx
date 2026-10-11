@@ -29,6 +29,7 @@ import {
   Badge,
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
 } from "../../../lib/ui";
+import { formatDateTime, formatTime } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -77,7 +78,7 @@ interface EvalResult {
 }
 
 function StatCard({ label, value, color = "gray" }: { label: string; value: string | number; color?: "gray"|"green"|"red"|"blue"|"amber" }) {
-  const cls = { gray:"text-foreground", green:"text-green-700", red:"text-red-700", blue:"text-blue-700", amber:"text-amber-700" }[color];
+  const cls = { gray:"text-foreground", green:"text-success", red:"text-danger", blue:"text-info", amber:"text-warning" }[color];
   return (
     <div className="rounded border border-border bg-card p-3 text-center">
       <div className={`text-xl font-bold ${cls}`}>{value}</div>
@@ -139,7 +140,7 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-4">
       <h2 className="text-sm font-semibold text-foreground">Data Retention &amp; RTBF</h2>
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
 
       {/* Retention targets */}
       {status && status.targets.length > 0 && (
@@ -161,10 +162,10 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
           {sweeping ? "Running sweep…" : "Run sweep now"}
         </Button>
         {sweepResult && (
-          <div className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800 space-y-1">
+          <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success space-y-1">
             <p className="font-medium">Sweep complete — {sweepResult.purged} record(s) purged</p>
             {sweepResult.report.map(e => (
-              <p key={e.target} className="text-xs">{e.target}: {e.error ? <span className="text-red-600">{e.error}</span> : `${e.purged} purged`}</p>
+              <p key={e.target} className="text-xs">{e.target}: {e.error ? <span className="text-danger">{e.error}</span> : `${e.purged} purged`}</p>
             ))}
           </div>
         )}
@@ -190,10 +191,10 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
           {forgetting ? "Erasing…" : "Erase subject data"}
         </Button>
         {forgetResult && (
-          <div className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800 space-y-1">
+          <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success space-y-1">
             <p className="font-medium">{forgetResult.erased} record(s) erased for {Object.entries(forgetResult.subject).map(([k,v])=>`${k}=${v}`).join(", ")}</p>
             {forgetResult.report.map(e => (
-              <p key={e.target} className="text-xs">{e.target}: {e.error ? <span className="text-red-600">{e.error}</span> : `${e.erased} erased`}</p>
+              <p key={e.target} className="text-xs">{e.target}: {e.error ? <span className="text-danger">{e.error}</span> : `${e.erased} erased`}</p>
             ))}
           </div>
         )}
@@ -241,9 +242,9 @@ function AuditAnchorPanel({ token }: { token: string | undefined }) {
           </Button>
         </div>
       </div>
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {anchor && !anchor.active && (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="rounded border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning">
           {anchor.reason ?? "Audit anchoring is not configured (set AUDIT_ANCHOR_SECRET)."}
         </div>
       )}
@@ -255,7 +256,7 @@ function AuditAnchorPanel({ token }: { token: string | undefined }) {
             </Badge>
             {anchor.createdAt && (
               <span className="text-xs text-muted-foreground">
-                Last anchor: {new Date(anchor.createdAt).toLocaleString()}
+                Last anchor: {formatDateTime(anchor.createdAt)}
               </span>
             )}
           </div>
@@ -296,15 +297,15 @@ function PolicySummaryPanel({ token }: { token: string | undefined }) {
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
       <h2 className="text-sm font-semibold text-foreground">Policy Summary</h2>
       {!cfg.enabled ? (
-        <div className="rounded border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+        <div className="rounded border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning">
           {cfg.message ?? "No compliance-policy.yaml found. Create one in FLOWS_DIR to enable enforcement."}
         </div>
       ) : (
         <>
-          <div className="rounded border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-800 flex flex-wrap items-center gap-2">
+          <div className="rounded border border-success-border bg-success-soft px-3 py-2 text-sm text-success flex flex-wrap items-center gap-2">
             <span className="font-medium">✓ Policy active (v{cfg.version})</span>
             {cfg.failClosed && <Badge variant="destructive">fail-closed</Badge>}
-            {cfg.description && <span className="text-green-700 text-xs">{cfg.description}</span>}
+            {cfg.description && <span className="text-success text-xs">{cfg.description}</span>}
           </div>
           {cfg.rules && (
             <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -349,9 +350,9 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
     finally { setLoading(false); }
   };
 
-  const decisionColor = result?.result.decision === "allow" ? "text-green-700"
-    : result?.result.decision === "deny" ? "text-red-700"
-    : "text-amber-700";
+  const decisionColor = result?.result.decision === "allow" ? "text-success"
+    : result?.result.decision === "deny" ? "text-danger"
+    : "text-warning";
 
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
@@ -371,7 +372,7 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
           </div>
         ))}
       </div>
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <Button variant="outline" size="sm" onClick={() => void evaluate()} disabled={loading}>
         {loading ? "Evaluating…" : "Evaluate"}
       </Button>
@@ -379,20 +380,20 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
         <div className="rounded border border-border bg-muted p-3 space-y-1 text-sm">
           <p><span className="font-medium">Decision: </span>
             <span className={`font-bold uppercase ${decisionColor}`}>{result.result.decision}</span>
-            {!result.policyLoaded && <span className="ml-2 text-xs text-amber-600">(no policy loaded — default allow)</span>}
+            {!result.policyLoaded && <span className="ml-2 text-xs text-warning">(no policy loaded — default allow)</span>}
           </p>
           {result.result.violations.length > 0 && (
             <ul className="list-disc pl-5 text-xs text-muted-foreground">
               {result.result.violations.map((violation, index) => (
                 <li key={`${violation.rule}-${index}`}>
                   <span className="font-medium">{violation.rule}</span>: {violation.message}
-                  {violation.blocking === false && <span className="ml-1 text-amber-700">(advisory)</span>}
+                  {violation.blocking === false && <span className="ml-1 text-warning">(advisory)</span>}
                 </li>
               ))}
             </ul>
           )}
           {result.result.policyAbsent && (
-            <p className="text-xs text-amber-700">No policy was loaded; the simulator used the compatibility allow result.</p>
+            <p className="text-xs text-warning">No policy was loaded; the simulator used the compatibility allow result.</p>
           )}
         </div>
       )}
@@ -487,21 +488,21 @@ function AuditReportSection({ token }: { token: string | undefined }) {
           </Button>
         </div>
       </div>
-      {error && <div className="rounded border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{error}</div>}
+      {error && <div className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">{error}</div>}
       {report && (
         <>
           {!report.policy ? (
-            <div className="rounded border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            <div className="rounded border border-warning-border bg-warning-soft px-4 py-3 text-sm text-warning">
               <strong>No policy loaded.</strong> Create <code className="font-mono">flows/compliance-policy.yaml</code> to enable enforcement.
             </div>
           ) : (
-            <div className="rounded border border-green-200 bg-green-50 px-4 py-3 text-sm">
-              <div className="flex items-center gap-2 font-medium text-green-800">
+            <div className="rounded border border-success-border bg-success-soft px-4 py-3 text-sm">
+              <div className="flex items-center gap-2 font-medium text-success">
                 <span>✓ Policy active (v{report.policy.version})</span>
-                {report.policy.failClosed && <span className="rounded bg-red-100 px-1.5 py-0.5 text-[10px] font-medium text-red-700">fail-closed</span>}
+                {report.policy.failClosed && <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger">fail-closed</span>}
               </div>
-              {report.policy.description && <p className="text-green-700 text-xs mt-1">{report.policy.description}</p>}
-              <div className="flex flex-wrap gap-3 mt-2 text-xs text-green-700">
+              {report.policy.description && <p className="text-success text-xs mt-1">{report.policy.description}</p>}
+              <div className="flex flex-wrap gap-3 mt-2 text-xs text-success">
                 {(["dataRules","modelRules","approvalRules","retentionRules","auditRules"] as const).map(k => (
                   <span key={k}>{report.policy![k]} {k.replace("Rules","").replace(/([A-Z])/g," $1").toLowerCase()} rules</span>
                 ))}
@@ -550,7 +551,7 @@ function AuditReportSection({ token }: { token: string | undefined }) {
                 <TableBody>
                   {report.violations.recent.map((v, i) => (
                     <TableRow key={i}>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">{new Date(v.at).toLocaleTimeString()}</TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">{formatTime(v.at)}</TableCell>
                       <TableCell>{v.actor}</TableCell>
                       <TableCell className="font-mono text-xs">{v.action}</TableCell>
                       <TableCell className="text-muted-foreground text-xs">{v.target ?? "—"}</TableCell>

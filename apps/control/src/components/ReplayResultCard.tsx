@@ -29,7 +29,7 @@ export function ReplayResultCard({
   }
   if (error) {
     return (
-      <div className="mb-4 flex items-center justify-between rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+      <div className="mb-4 flex items-center justify-between rounded-lg border border-danger-border bg-danger-soft p-4 text-sm text-danger">
         <span>Replay failed: {error}</span>
         {onClear && (
           <Button variant="ghost" size="sm" onClick={onClear} className="underline">

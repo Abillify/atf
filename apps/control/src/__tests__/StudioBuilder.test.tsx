@@ -7,6 +7,22 @@ import type React from "react";
 import { StudioBuilder } from "../components/StudioBuilder";
 import type { FlowDefinition, FlowListEntry } from "../types/flow";
 
+import { ConfirmProvider } from "../lib/ui";
+
+/**
+ * Req 9.5: the builder asks for confirmations through useConfirm(), so every
+ * test mounts the ConfirmProvider; rerender keeps it.
+ */
+function renderWithConfirm(ui: React.ReactElement) {
+  const result = render(<ConfirmProvider>{ui}</ConfirmProvider>);
+  return {
+    ...result,
+    rerender: (next: React.ReactElement): void => {
+      result.rerender(<ConfirmProvider>{next}</ConfirmProvider>);
+    },
+  };
+}
+
 // AUTHN_MODE=disabled: no token, but the operator plane is open.
 vi.mock("../lib/auth/useAuth", () => ({
   useAuth: () => ({
@@ -147,7 +163,7 @@ describe("StudioBuilder", () => {
 
   test("loads the selected flow onto the canvas without an auth token", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     expect(screen.getByText("router")).toBeInTheDocument();
     expect(screen.getByText("file")).toBeInTheDocument();
@@ -155,7 +171,7 @@ describe("StudioBuilder", () => {
 
   test("the properties panel only appears while something is selected", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     // Nothing selected: no panel at all.
     expect(
@@ -178,7 +194,7 @@ describe("StudioBuilder", () => {
 
   test("the Flow settings button opens the panel without a selection", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     const toggle = screen.getByRole("button", { name: "Flow settings" });
     expect(toggle).toHaveAttribute("aria-pressed", "false");
@@ -206,7 +222,7 @@ describe("StudioBuilder", () => {
   test("Save draft stores the canvas via PUT /draft and keeps flow-level fields", async () => {
     const fetchMock = mockBackend();
     const onSaved = vi.fn();
-    render(<StudioBuilder flow={entry} onlineEditing onSaved={onSaved} />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing onSaved={onSaved} />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
@@ -226,7 +242,7 @@ describe("StudioBuilder", () => {
   test("a freshly opened flow is not reported as having unsaved changes", async () => {
     mockBackend();
     const onDirtyChange = vi.fn();
-    const { rerender } = render(
+    const { rerender } = renderWithConfirm(
       <StudioBuilder flow={null} onlineEditing onDirtyChange={onDirtyChange} />,
     );
     await waitFor(() => expect(screen.getByText("llm-1")).toBeInTheDocument());
@@ -240,7 +256,7 @@ describe("StudioBuilder", () => {
 
   test("hides draft/publish when the backend has no flow store", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Save draft" })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Write to file" })).toBeInTheDocument();
@@ -277,7 +293,7 @@ describe("StudioBuilder", () => {
       }
       return base?.(url, init);
     });
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
     // The Subflows section lists the file; its Include button places it.
@@ -288,8 +304,13 @@ describe("StudioBuilder", () => {
     await waitFor(() => expect(screen.getByText("recall")).toBeInTheDocument());
     expect(screen.getByText("edge:answer->recall")).toBeInTheDocument();
 
-    vi.spyOn(window, "confirm").mockReturnValue(true); // "write into casework.yaml?"
     fireEvent.click(screen.getByRole("button", { name: "Write to file" }));
+    // Req 9.5: the confirmation is now a dialog; confirm by clicking.
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Write to file",
+      }),
+    );
     await waitFor(() =>
       expect(fetchMock.mock.calls.some(([u]) => String(u).endsWith("/flows/write"))).toBe(true),
     );
@@ -301,7 +322,7 @@ describe("StudioBuilder", () => {
 
   test("offers no file write when the runtime has file writing disabled", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     expect(screen.queryByRole("button", { name: "Write to file" })).not.toBeInTheDocument();
   });
@@ -331,7 +352,7 @@ describe("StudioBuilder", () => {
       return Promise.resolve({ ok: true, status: 200, json: async () => body });
     });
     const onSaved = vi.fn();
-    render(<StudioBuilder flow={entry} onlineEditing onSaved={onSaved} />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing onSaved={onSaved} />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     fireEvent.click(screen.getByRole("button", { name: "Save draft" }));
     await waitFor(() => expect(onSaved).toHaveBeenCalled());
@@ -348,7 +369,7 @@ describe("StudioBuilder", () => {
 
   test("renaming a node follows edges and parallel references", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     fireEvent.click(screen.getByText("answer"));
     fireEvent.click(await screen.findByRole("button", { name: "rename" }));
@@ -362,7 +383,7 @@ describe("StudioBuilder", () => {
 
   test("rejects a rename to an existing id", async () => {
     mockBackend();
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     fireEvent.click(screen.getByText("answer"));
     fireEvent.click(await screen.findByRole("button", { name: "rename" }));
@@ -377,7 +398,7 @@ describe("StudioBuilder", () => {
     const outside = document.createElement("p");
     outside.textContent = "sidebar text";
     document.body.appendChild(outside);
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
     const canvas = () => within(screen.getByTestId("canvas"));
@@ -418,7 +439,7 @@ describe("StudioBuilder", () => {
           })
         : base(url, init),
     );
-    render(<StudioBuilder flow={entry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing />);
     await waitFor(() =>
       expect(screen.getByText("1 MCP server(s) not connected")).toBeInTheDocument(),
     );
@@ -476,7 +497,7 @@ describe("StudioBuilder", () => {
 
   test("dropping a sub-flow card onto the canvas includes it at the drop position", async () => {
     mockBackendWithSubflows();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     await screen.findByText("📄 lib.yaml");
     fireEvent.click(screen.getByText("drop-subflow"));
@@ -486,7 +507,7 @@ describe("StudioBuilder", () => {
 
   test("selecting a sub-flow group shows its action panel", async () => {
     mockBackendWithSubflows();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     await includeAndSelectGroup();
     const panel = within(screen.getByTestId("subflow-group-panel"));
@@ -497,7 +518,7 @@ describe("StudioBuilder", () => {
 
   test("clicking the single node of a one-node sub-flow edits the node, not the group", async () => {
     mockBackendWithSubflows();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
 
     // Include the one-node sub-flow (its only node is "recall").
@@ -517,7 +538,7 @@ describe("StudioBuilder", () => {
 
   test("selecting a group then clicking a node inside it returns to the node panel", async () => {
     mockBackendWithSubflows();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     await includeAndSelectGroup();
     expect(screen.getByTestId("subflow-group-panel")).toBeInTheDocument();
@@ -530,7 +551,7 @@ describe("StudioBuilder", () => {
 
   test("Save this sub-flow writes just its file via /flows/subflows/write", async () => {
     const fetchMock = mockBackendWithSubflows();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     await includeAndSelectGroup();
 
@@ -553,7 +574,7 @@ describe("StudioBuilder", () => {
 
   test("Remove from this flow drops the group's nodes but keeps the parent", async () => {
     mockBackendWithSubflows();
-    render(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
+    renderWithConfirm(<StudioBuilder flow={entry} onlineEditing={false} fileWriting />);
     await waitFor(() => expect(screen.getByText("answer")).toBeInTheDocument());
     await includeAndSelectGroup();
     const canvas = () => within(screen.getByTestId("canvas"));
@@ -637,7 +658,7 @@ describe("StudioBuilder", () => {
 
   test("loads the draft and offers a Draft↔Live switch for online flows", async () => {
     mockOnlineDraftBackend();
-    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={onlineEntry} onlineEditing />);
     // The draft (with its extra node) is what opens.
     await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
     expect(screen.getByText("draft")).toBeInTheDocument();
@@ -655,7 +676,7 @@ describe("StudioBuilder", () => {
 
   test("saving from the live view stages the content into the active draft", async () => {
     const fetchMock = mockOnlineDraftBackend();
-    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={onlineEntry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "View live" }));
@@ -678,7 +699,7 @@ describe("StudioBuilder", () => {
 
   test("the draft selector switches to a named draft and saves to it", async () => {
     const fetchMock = mockOnlineDraftBackend();
-    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={onlineEntry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
 
     fireEvent.change(draftSelect(), { target: { value: "exp-1" } });
@@ -699,14 +720,19 @@ describe("StudioBuilder", () => {
 
   test("publish sends the active draftId", async () => {
     const fetchMock = mockOnlineDraftBackend();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={onlineEntry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
 
     fireEvent.change(draftSelect(), { target: { value: "exp-1" } });
     await waitFor(() => expect(screen.getByText("exp-one")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Publish" }));
+    // Req 9.5: the publish confirmation is a dialog; confirm by clicking.
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Publish",
+      }),
+    );
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(([u, i]) => {
@@ -724,14 +750,19 @@ describe("StudioBuilder", () => {
 
   test("deleting the active named draft falls back to the default draft", async () => {
     const fetchMock = mockOnlineDraftBackend();
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<StudioBuilder flow={onlineEntry} onlineEditing />);
+    renderWithConfirm(<StudioBuilder flow={onlineEntry} onlineEditing />);
     await waitFor(() => expect(screen.getByText("wip")).toBeInTheDocument());
 
     fireEvent.change(draftSelect(), { target: { value: "exp-1" } });
     await waitFor(() => expect(screen.getByText("exp-one")).toBeInTheDocument());
 
     fireEvent.click(screen.getByRole("button", { name: "Delete draft" }));
+    // Req 9.5: the delete confirmation is a dialog; confirm by clicking.
+    fireEvent.click(
+      within(screen.getByRole("dialog")).getByRole("button", {
+        name: "Delete",
+      }),
+    );
     await waitFor(() =>
       expect(
         fetchMock.mock.calls.some(
@@ -753,7 +784,7 @@ describe("StudioBuilder", () => {
       copilot: false,
       runTrace: false,
     };
-    const { rerender } = render(
+    const { rerender } = renderWithConfirm(
       <StudioBuilder flow={entry} onlineEditing panels={off} />,
     );
     await waitFor(() => expect(screen.getByTestId("canvas")).toBeInTheDocument());
@@ -774,7 +805,7 @@ describe("StudioBuilder", () => {
   test("the toolbar toggles switch Copilot and Run & Trace individually", async () => {
     mockBackend();
     const onTogglePanel = vi.fn();
-    render(
+    renderWithConfirm(
       <StudioBuilder
         flow={entry}
         onlineEditing
@@ -792,7 +823,7 @@ describe("StudioBuilder", () => {
 
   test("stacks Copilot above Run & Trace instead of side by side", async () => {
     mockBackend();
-    render(
+    renderWithConfirm(
       <StudioBuilder
         flow={entry}
         onlineEditing

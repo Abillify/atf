@@ -17,13 +17,13 @@ export default function ApprovalsLoading() {
       {[0, 1, 2].map((i) => (
         <div
           key={i}
-          className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm"
+          className="rounded-lg border border-warning-border bg-warning-soft p-4 shadow-sm"
         >
-          <div className="mb-2 h-4 w-48 animate-pulse rounded bg-amber-200" />
-          <div className="h-3 w-full animate-pulse rounded bg-amber-100" />
+          <div className="mb-2 h-4 w-48 animate-pulse rounded bg-warning-soft" />
+          <div className="h-3 w-full animate-pulse rounded bg-warning-soft" />
           <div className="mt-3 flex gap-2">
-            <div className="h-8 w-20 animate-pulse rounded bg-green-200" />
-            <div className="h-8 w-20 animate-pulse rounded bg-red-200" />
+            <div className="h-8 w-20 animate-pulse rounded bg-success-soft" />
+            <div className="h-8 w-20 animate-pulse rounded bg-danger-soft" />
           </div>
         </div>
       ))}

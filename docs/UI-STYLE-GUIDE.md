@@ -43,8 +43,13 @@ rules, and the accessibility baseline for the operator dashboard.
 
 ## 3. Design tokens
 
-Use these Tailwind color utilities **exclusively**. Never hardcode a gray/white
-shade. Each token is defined for light and dark in `globals.css`.
+Use these Tailwind color utilities **exclusively**. Never hardcode a palette
+shade (`*-500` …), a named color (`white`, `black`) or a hex value in
+components — Req 9.8. Every color flows through the design tokens below, which
+are defined as CSS variables in `src/app/globals.css` (light `:root` + `.dark`
+overrides) and exposed as Tailwind colors in `tailwind.config.ts`.
+
+**Surface / text tokens:**
 
 | Token (Tailwind)            | Role                                             |
 | --------------------------- | ------------------------------------------------ |
@@ -59,13 +64,43 @@ shade. Each token is defined for light and dark in `globals.css`.
 | `border-border`             | All borders and dividers (`divide-border`)       |
 | `ring-ring`                 | Focus ring                                       |
 
-Semantic **status** colors (the only place raw palette shades are allowed, and
-only through the `Badge` variants or small status dots):
+**Semantic status tokens** (`success`, `warning`, `danger`, `info`, plus
+`copilot`, `subflow`, `accent-2`). Each family has six slots — use these
+instead of raw shades everywhere, including badges and status dots:
 
-- success → `success` badge / `emerald`
-- warning → `warning` badge / `amber`
-- error/danger → `destructive` badge / `red`
-- neutral/info → `secondary`/`outline` badge
+| Slot              | Example            | Use                                        |
+| ----------------- | ------------------ | ------------------------------------------ |
+| DEFAULT           | `text-info`        | Text, icons, rings, outlines               |
+| `solid`           | `bg-info-solid`    | Filled buttons/dots (theme-fixed, readable) |
+| `solid-hover`     | `bg-info-solid-hover` | Hover for solid surfaces                 |
+| `foreground`      | `text-info-foreground` | Text on `solid` backgrounds            |
+| `soft`            | `bg-warning-soft`  | Subtle tinted backgrounds (theme-aware)    |
+| `border`          | `border-danger-border` | Tinted borders                         |
+
+`*-solid` and `*-foreground` are intentionally theme-**fixed** (identical in
+light and dark); DEFAULT/`soft`/`border` adapt via `.dark`. Text on any solid
+surface uses `text-on-solid` (`--on-solid`).
+
+**Domain token families:**
+
+- `node-*` — graph node category fills (`bg-node-llm`,
+  `border-node-llm-border`, … 13 kinds + `default`); mapping in
+  `graphUtils.nodeTypeColor()`.
+- `cat-1..6` — sub-flow category slots (DEFAULT/`soft`/`border`), used by
+  `SUBFLOW_COLORS` in `lib/subflows.ts`.
+- `chart-*`, `edge-*`, `canvas-dots` — chart grid/tooltip/series and canvas
+  edge colors (`--edge-used`, `--edge-active`, `--edge-error`, …).
+
+**Non-className color contexts** (SVG/inline styles):
+
+- React Flow props (`markerEnd.color`, edge `style.stroke`, MiniMap
+  `nodeColor`, `<Background color>`) accept plain `"var(--token)"` strings —
+  React Flow applies them via inline styles/CSS custom properties.
+- Recharts `stroke`/`fill` are SVG presentation attributes and cannot resolve
+  `var()`. Use the hooks in `src/lib/theme/palette.ts`
+  (`useChartPalette()`, `useEdgePalette()`, `useNodePalette()`), which resolve
+  the current theme's tokens to `hsl(...)` strings (with hex fallbacks for
+  SSR/jsdom) and re-render on theme change.
 
 **Radius:** `--radius = 0.5rem`. Use `rounded-md` (controls), `rounded-lg`
 (cards/panels), `rounded-full` (badges/dots).
@@ -136,20 +171,28 @@ Mandatory:
 
 ## 7. Navigation (grouped + responsive burger)
 
-The dashboard nav is grouped into **four** sections. Item labels are unchanged;
-group headers organize them:
+The dashboard nav is grouped into **four** sections. Labels are i18n keys
+(§Req 9.7); group headers organize them:
 
-| Group (header)              | Destinations                                                        |
-| --------------------------- | ------------------------------------------------------------------- |
-| **Recherche & Optimierung** | Studio, RAG, Memory, Eval, Optimizer, Canary, Autopilot             |
-| **Monitoring**              | Live Graph, Traces, History, Approvals, Security                    |
-| **Konfiguration**           | Flows, Flow Diff, Providers, Guardrails, PII Vault, Compliance, MCP |
-| **Budgetierung**            | Cost & Tokens, Limits, Tenants                                      |
+| Group (header)    | Destinations                                                                    |
+| ----------------- | ------------------------------------------------------------------------------- |
+| **Research**      | Studio, Memory, Eval, Optimizer, Canary, Autopilot                              |
+| **Monitoring**    | Live Graph, Traces, History, Approvals, Shadow, Security, Providers             |
+| **Configuration** | Flows, Triggers, Assistants, Guardrails, PII Vault, Compliance, MCP             |
+| **Budgeting**     | Cost & Tokens, Limits, Tenants, Models, Jobs                                    |
 
 The grouping, labels, and icons live in ONE source of truth —
 `src/lib/nav.ts` (`NAV_GROUPS` / `NAV_ITEMS`) — consumed by the sidebar, drawer,
 command palette, and breadcrumbs so they never drift. Each item carries a
 `lucide-react` icon.
+**Consolidation (Req 9.9):** feature pages that were separate top-level
+destinations live as tabs inside their host page — the provider test bench is
+`/providers?tab=testing`, the flow version diff is `/flows?tab=diff`. The old
+URLs `/provider-testing` and `/flow-diff` are server-side `redirect()` stubs
+that forward to the tab deep-link, so bookmarks keep working; they are gone
+from `NAV_GROUPS` (and from the ⌘K palette, which is fed by it). New features
+should follow this pattern — prefer a tab on the owning page over a new nav
+entry.
 
 Behavior:
 
@@ -243,6 +286,14 @@ enter/exit animation. Pair transitions with `motion-reduce:transition-none`.
 Loading placeholders (already `animate-pulse bg-muted rounded-md`). Use in every
 `loading.tsx` and inline loading region. `SkeletonBlock lines={n}` for text.
 
+### EmptyState
+First-run / no-data placeholder (`border-dashed border-border bg-card` card).
+Props: `icon` (a `LucideIcon`, rendered in a muted circle, `aria-hidden`),
+`title` (required, one short sentence), `description` (optional, what to do
+next), `action` (optional `ReactNode` — a `Button` or `Link` to the primary
+next step). Use it whenever a list, panel, or canvas would otherwise render
+blank — see §9 "Empty state & First-Run".
+
 ### Toast (ToastProvider / useToast)
 Transient feedback for mutations (save/delete/errors). `variant`: `default` ·
 `success` · `warning` · `destructive`. Prefer a toast over an inline banner for
@@ -271,8 +322,23 @@ export default function ExamplePage() {
 **Loading (`loading.tsx`)** — Skeletons mirroring the real layout, wrapped with
 `aria-busy` + `aria-label`.
 
-**Empty state** — centered muted message inside the container; offer the primary
-action when relevant.
+**Empty state & First-Run** — never render a blank container: use the
+`<EmptyState/>` primitive (§8) with a concrete `title`, a `description` that
+names the next step, and an `action` when one exists. The guided first-run
+lives on `/graph`: while no execution events exist it shows an `EmptyState`
+that links to Studio (send a request) and Providers (configure a key) instead
+of an empty canvas. Data-list empties (approvals, flows, provider keys) use
+the same primitive without a first-run funnel.
+
+**Tabbed consolidation pages** — when a page hosts several views of one
+domain (e.g. `/cost`, `/providers`, `/flows`), use the `Tabs` primitives in a
+controlled shell: `useState<Tab>` + `<TabsList className="mb-4">` + one
+`<TabsContent>` per view that mounts its panel only while active
+(`{tab === "…" && <Panel/>}`, so inactive panels issue no queries). The active
+tab is deep-linkable via `?tab=<id>` read in a `useEffect` (matching the
+`?flow=` precedent on `/optimizer`); redirect stubs map removed routes onto the
+correct tab. Heavy panels load via `next/dynamic` (`ssr: false`). Panel bodies
+keep their own `<h2>` — the page `<h1>`/breadcrumb stays the host route.
 
 **Error** — `role="alert"` with `text-destructive`; a retry `Button` when
 recoverable. Route-level `error.tsx` for uncaught render errors.

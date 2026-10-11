@@ -228,7 +228,7 @@ export function JsonEditor({
       <textarea
         ref={areaRef}
         {...(label ? {} : { "aria-label": "JSON" })}
-        className={`${inputCls} resize-y pr-9 font-mono text-xs ${error ? "border-red-400" : ""}`}
+        className={`${inputCls} resize-y pr-9 font-mono text-xs ${error ? "border-danger-border" : ""}`}
         rows={rows}
         spellCheck={false}
         value={text}
@@ -267,7 +267,7 @@ export function JsonEditor({
       <div>
         {area}
         {(error ?? hint) && (
-          <span className={`mt-0.5 block text-[10px] ${error ? "text-red-600" : "text-muted-foreground"}`}>
+          <span className={`mt-0.5 block text-[10px] ${error ? "text-danger" : "text-muted-foreground"}`}>
             {error ?? hint}
           </span>
         )}

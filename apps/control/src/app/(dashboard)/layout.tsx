@@ -13,7 +13,13 @@
  *   - AuthGuard: redirects to /auth when auth is ready and unauthenticated.
  */
 
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
@@ -32,6 +38,7 @@ import { useAuth } from "../../lib/auth/useAuth";
 import { logout as oidcLogout } from "../../lib/oidc";
 import { useTheme } from "../../lib/theme/ThemeProvider";
 import { useDensity } from "../../lib/theme/DensityProvider";
+import { LOCALES, useI18n } from "../../lib/i18n";
 import {
   Button,
   Badge,
@@ -48,14 +55,16 @@ const SIDEBAR_KEY = "aiperator_sidebar_collapsed";
 /** Header control to toggle between light and dark color schemes. */
 function ThemeToggle() {
   const { colorScheme, toggle } = useTheme();
+  const { t } = useI18n();
   const isDark = colorScheme === "dark";
+  const label = isDark ? t("chrome.theme.light") : t("chrome.theme.dark");
   return (
     <Button
       variant="outline"
       size="sm"
       onClick={toggle}
-      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      aria-label={label}
+      title={label}
     >
       {isDark ? (
         <Sun className="h-4 w-4" aria-hidden="true" />
@@ -69,24 +78,42 @@ function ThemeToggle() {
 /** Header control to toggle UI density (comfortable ⇄ compact). */
 function DensityToggle() {
   const { density, toggle } = useDensity();
+  const { t } = useI18n();
   const isCompact = density === "compact";
+  const label = isCompact
+    ? t("chrome.density.comfortable")
+    : t("chrome.density.compact");
   return (
     <Button
       variant="outline"
       size="sm"
       onClick={toggle}
-      aria-label={
-        isCompact ? "Switch to comfortable density" : "Switch to compact density"
-      }
-      title={
-        isCompact ? "Switch to comfortable density" : "Switch to compact density"
-      }
+      aria-label={label}
+      title={label}
     >
       {isCompact ? (
         <StretchVertical className="h-4 w-4" aria-hidden="true" />
       ) : (
         <Rows3 className="h-4 w-4" aria-hidden="true" />
       )}
+    </Button>
+  );
+}
+
+/** Header control to switch the UI language (de ⇄ en, Req 9.7). */
+function LocaleToggle() {
+  const { locale, setLocale } = useI18n();
+  const { t } = useI18n();
+  const next = LOCALES.find((l) => l !== locale) ?? "en";
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      onClick={() => setLocale(next)}
+      aria-label={t("chrome.language")}
+      title={t("chrome.language")}
+    >
+      {next.toUpperCase()}
     </Button>
   );
 }
@@ -103,20 +130,25 @@ function SidebarNav({
   onNavigate?: () => void;
   firstLinkRef?: React.Ref<HTMLAnchorElement>;
 }) {
+  const { t } = useI18n();
   let linkIndex = 0;
   return (
-    <nav aria-label="Dashboard sections" className="flex flex-col gap-3 p-2">
-      {NAV_GROUPS.map(({ group, items }) => (
-        <div key={group} role="group" aria-label={group}>
+    <nav aria-label={t("chrome.sections")} className="flex flex-col gap-3 p-2">
+      {NAV_GROUPS.map(({ groupKey, items }) => (
+        <div key={groupKey} role="group" aria-label={t(groupKey)}>
           {collapsed ? (
-            <div className="mx-auto my-1 h-px w-6 bg-border" aria-hidden="true" />
+            <div
+              className="mx-auto my-1 h-px w-6 bg-border"
+              aria-hidden="true"
+            />
           ) : (
             <p className="px-3 pb-1 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              {group}
+              {t(groupKey)}
             </p>
           )}
           <div className="flex flex-col gap-0.5">
-            {items.map(({ href, label, icon: Icon }) => {
+            {items.map(({ href, labelKey, icon: Icon }) => {
+              const label = t(labelKey);
               const active = isActivePath(pathname, href);
               const isFirst = linkIndex === 0;
               linkIndex += 1;
@@ -149,14 +181,6 @@ function SidebarNav({
   );
 }
 
-const PALETTE_ITEMS: CommandItem[] = NAV_ITEMS.map((i) => ({
-  id: i.href,
-  label: i.label,
-  hint: i.hint,
-  group: i.group,
-  icon: i.icon,
-}));
-
 export default function DashboardLayout({
   children,
 }: {
@@ -165,6 +189,21 @@ export default function DashboardLayout({
   const { isAuthenticated, ready, role, clearToken } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
+  const { t } = useI18n();
+
+  // Palette entries follow the active language (Req 9.7) — rebuilt when `t`
+  // changes, which happens on every locale switch.
+  const paletteItems = useMemo<CommandItem[]>(
+    () =>
+      NAV_ITEMS.map((i) => ({
+        id: i.href,
+        label: t(i.labelKey),
+        hint: t(i.hintKey),
+        group: t(i.groupKey),
+        icon: i.icon,
+      })),
+    [t],
+  );
 
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -243,9 +282,9 @@ export default function DashboardLayout({
       <div
         className="flex h-screen items-center justify-center bg-background"
         aria-busy="true"
-        aria-label="Loading"
+        aria-label={t("chrome.loading")}
       >
-        <span className="sr-only">Loading…</span>
+        <span className="sr-only">{t("chrome.loading")}…</span>
         <div className="h-8 w-8 animate-spin rounded-full border-4 border-accent border-t-transparent motion-reduce:animate-none" />
       </div>
     );
@@ -265,7 +304,7 @@ export default function DashboardLayout({
             variant="ghost"
             size="sm"
             className="shrink-0 lg:hidden"
-            aria-label="Open navigation menu"
+            aria-label={t("chrome.openMenu")}
             aria-expanded={drawerOpen}
             // Only reference the drawer while it is actually mounted — a dangling
             // aria-controls IDREF (drawer closed) is an invalid ARIA value.
@@ -278,7 +317,7 @@ export default function DashboardLayout({
             href="/graph"
             className="truncate text-lg font-semibold text-foreground transition-colors hover:text-accent"
           >
-            Aiperator
+            {t("chrome.brand")}
           </Link>
           <Breadcrumbs
             pathname={pathname}
@@ -294,11 +333,11 @@ export default function DashboardLayout({
               variant="outline"
               size="sm"
               onClick={() => setPaletteOpen(true)}
-              aria-label="Open command palette"
+              aria-label={t("chrome.palette")}
               className="gap-2 text-muted-foreground"
             >
               <Search className="h-4 w-4" aria-hidden="true" />
-              <span>Search…</span>
+              <span>{t("chrome.search")}</span>
               <kbd className="rounded border border-border px-1 text-[10px] font-medium">
                 ⌘K
               </kbd>
@@ -309,7 +348,7 @@ export default function DashboardLayout({
               variant="ghost"
               size="sm"
               onClick={() => setPaletteOpen(true)}
-              aria-label="Open command palette"
+              aria-label={t("chrome.palette")}
             >
               <Search className="h-5 w-5" aria-hidden="true" />
             </Button>
@@ -324,14 +363,15 @@ export default function DashboardLayout({
             <DensityToggle />
           </span>
           <ThemeToggle />
+          <LocaleToggle />
           <Button
             variant="outline"
             size="sm"
             onClick={handleSignOut}
-            aria-label="Sign out"
+            aria-label={t("chrome.signOut")}
           >
             <LogOut className="h-4 w-4 sm:hidden" aria-hidden="true" />
-            <span className="hidden sm:inline">Sign out</span>
+            <span className="hidden sm:inline">{t("chrome.signOut")}</span>
           </Button>
         </div>
       </header>
@@ -356,16 +396,28 @@ export default function DashboardLayout({
               variant="ghost"
               size="sm"
               onClick={toggleCollapsed}
-              aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
-              className={collapsed ? "w-full justify-center" : "w-full justify-start gap-2"}
+              aria-label={
+                collapsed
+                  ? t("chrome.sidebar.expand")
+                  : t("chrome.sidebar.collapse")
+              }
+              title={
+                collapsed
+                  ? t("chrome.sidebar.expand")
+                  : t("chrome.sidebar.collapse")
+              }
+              className={
+                collapsed
+                  ? "w-full justify-center"
+                  : "w-full justify-start gap-2"
+              }
             >
               {collapsed ? (
                 <PanelLeftOpen className="h-4 w-4" aria-hidden="true" />
               ) : (
                 <>
                   <PanelLeftClose className="h-4 w-4" aria-hidden="true" />
-                  <span>Collapse</span>
+                  <span>{t("chrome.collapse")}</span>
                 </>
               )}
             </Button>
@@ -389,7 +441,7 @@ export default function DashboardLayout({
               ref={drawerRef}
               role="dialog"
               aria-modal="true"
-              aria-label="Navigation"
+              aria-label={t("chrome.navigation")}
               className={[
                 "fixed inset-y-0 left-0 z-50 flex w-72 max-w-[85vw] flex-col overflow-y-auto border-r border-border bg-card shadow-xl",
                 "transition-transform duration-200 motion-reduce:transition-none",
@@ -398,12 +450,12 @@ export default function DashboardLayout({
             >
               <div className="flex items-center justify-between border-b border-border px-4 py-3">
                 <span className="text-sm font-semibold text-foreground">
-                  Menu
+                  {t("chrome.menu")}
                 </span>
                 <Button
                   variant="ghost"
                   size="sm"
-                  aria-label="Close navigation menu"
+                  aria-label={t("chrome.closeMenu")}
                   onClick={closeDrawer}
                 >
                   <X className="h-5 w-5" aria-hidden="true" />
@@ -434,7 +486,7 @@ export default function DashboardLayout({
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
-        items={PALETTE_ITEMS}
+        items={paletteItems}
         onSelect={(item) => router.push(item.id)}
       />
     </div>

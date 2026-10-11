@@ -27,12 +27,13 @@ import { useState, useCallback, useEffect, useMemo } from "react";
 import dynamic from "next/dynamic";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
-import { backendUrl } from "../../../lib/backend-url";
+import { json, request } from "../../../lib/control-api";
 import { formatCost } from "../../../lib/currency";
 import { Badge, Button, Tabs, TabsList, TabsTrigger } from "../../../lib/ui";
 import type { BadgeVariant } from "../../../lib/ui";
 import type { NodeExecutionEvent, NodeToolCall } from "../../../types/monitoring";
 import type { PendingApproval, ResolvedApproval } from "../../../types/control";
+import { formatTime } from "../../../lib/i18n";
 
 // Heavy detail panel — loaded client-side only.
 const ExplainCard = dynamic(
@@ -65,21 +66,20 @@ type TabId = "steps" | "waterfall" | "explain";
 // Fetch helpers
 // ---------------------------------------------------------------------------
 
+// Req 9.2: all data queries go through lib/control-api; direct
+// fetch calls are no longer allowed here.
 async function fetchNodeEvents(executionId: string, token: string | undefined): Promise<NodeExecutionEvent[]> {
-  const resp = await fetch(backendUrl(`/monitoring/history/${encodeURIComponent(executionId)}`), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  const data = (await resp.json()) as { events: NodeExecutionEvent[] };
+  const data = await json<{ events?: NodeExecutionEvent[] }>(
+    `/monitoring/history/${encodeURIComponent(executionId)}`,
+    { target: "backend", token },
+  );
   return data.events ?? [];
 }
 
 async function fetchOtelSpans(executionId: string, token: string | undefined): Promise<OtelTracesResponse> {
-  const resp = await fetch(`/api/traces/${encodeURIComponent(executionId)}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  return json<OtelTracesResponse>(`/api/traces/${encodeURIComponent(executionId)}`, {
+    token,
   });
-  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-  return resp.json() as Promise<OtelTracesResponse>;
 }
 
 interface ApprovalsResponse {
@@ -88,12 +88,11 @@ interface ApprovalsResponse {
 }
 
 async function fetchApprovals(token: string | undefined): Promise<ApprovalsResponse> {
-  const resp = await fetch(backendUrl("/monitoring/approvals"), {
-    headers: token ? { Authorization: `Bearer ${token}` } : {},
-  });
-  // Approvals endpoint may not be configured — degrade silently.
+  // Approvals endpoint may not be configured — degrade silently (only on an
+  // HTTP error status; network errors stay visible as before).
+  const resp = await request("/monitoring/approvals", { target: "backend", token });
   if (!resp.ok) return { pending: [], resolved: [] };
-  return resp.json() as Promise<ApprovalsResponse>;
+  return (await resp.json()) as ApprovalsResponse;
 }
 
 // ---------------------------------------------------------------------------
@@ -157,7 +156,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
     if (resolved.timedOut) {
       return (
         <span className="inline-flex flex-wrap items-center gap-1.5" aria-label="Approval auto-closed by timeout">
-          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+          <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning">
             ⏱ auto-closed
           </span>
           {waitMs !== null && waitMs >= 0 && (
@@ -172,7 +171,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
     if (resolved.approved) {
       return (
         <span className="inline-flex flex-wrap items-center gap-1.5" aria-label="Approval granted">
-          <span className="inline-flex items-center gap-1 rounded-full bg-green-100 px-2 py-0.5 text-[11px] font-semibold text-green-700">
+          <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">
             ✓ approved
           </span>
           {resolved.by !== undefined && (
@@ -190,7 +189,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
     // denied
     return (
       <span className="inline-flex flex-wrap items-center gap-1.5" aria-label="Approval denied">
-        <span className="inline-flex items-center gap-1 rounded-full bg-red-100 px-2 py-0.5 text-[11px] font-semibold text-red-700">
+        <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger">
           ✕ denied
         </span>
         {resolved.by !== undefined && (
@@ -422,7 +421,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
             {nodeApprovals.map((a) => {
               const { resolved, pending } = a;
               const tool = a.tool ?? "unknown tool";
-              // Strip server prefix for display: "parking/cancel_booking" → "cancel_booking"
+              // Strip server prefix for display: "crm/cancel_booking" → "cancel_booking"
               const displayTool = tool.includes("/") ? tool.split("/").slice(1).join("/") : tool;
               const requestedAt = resolved?.requestedAt ?? pending?.requestedAt;
               const waitMs =
@@ -462,7 +461,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
                   )}
                   {requestedAt && (
                     <span className="text-[11px] text-muted-foreground" title="When approval was requested">
-                      requested {new Date(requestedAt).toLocaleTimeString()}
+                      requested {formatTime(requestedAt)}
                     </span>
                   )}
                   {waitMs !== null && waitMs >= 0 && (
@@ -542,14 +541,14 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
 
       {/* Routing decision */}
       {event.routing_decision && (
-        <div className="rounded-md border border-amber-100 bg-card">
-          <div className="border-b border-amber-100 px-3 py-2 text-xs font-semibold text-amber-600">
+        <div className="rounded-md border border-warning-border bg-card">
+          <div className="border-b border-warning-border px-3 py-2 text-xs font-semibold text-warning">
             Routing Decision → {event.routing_decision.target ?? "end"}
           </div>
           <div className="divide-y divide-border">
             {event.routing_decision.candidates?.map((c, i) => (
-              <div key={i} className={`flex items-center gap-2 px-3 py-1.5 text-xs ${c.matched ? "bg-amber-50" : ""}`}>
-                <span className={`w-4 ${c.matched ? "text-green-600" : "text-muted-foreground"}`}>
+              <div key={i} className={`flex items-center gap-2 px-3 py-1.5 text-xs ${c.matched ? "bg-warning-soft" : ""}`}>
+                <span className={`w-4 ${c.matched ? "text-success" : "text-muted-foreground"}`}>
                   {c.matched ? "✓" : "○"}
                 </span>
                 <span className="font-mono text-foreground">{c.target}</span>
@@ -587,10 +586,10 @@ function StepNavigator({
         const isActive = i === activeIdx;
         const dot =
           e.status === "running"
-            ? "bg-yellow-400"
+            ? "bg-warning-solid"
             : e.status === "error"
-              ? "bg-red-400"
-              : "bg-green-400";
+              ? "bg-danger-solid"
+              : "bg-success-solid";
 
         // Check whether this node had any approval activity.
         const nodeResolved = resolvedApprovals.filter(
@@ -604,11 +603,11 @@ function StepNavigator({
         const anyApproved = nodeResolved.some((r) => r.approved);
         const anyPending = nodePending.length > 0;
         const approvalDot = anyPending
-          ? "bg-blue-400"
+          ? "bg-info-solid"
           : anyDenied
-            ? "bg-red-400"
+            ? "bg-danger-solid"
             : anyApproved
-              ? "bg-green-400"
+              ? "bg-success-solid"
               : null;
 
         return (
@@ -659,7 +658,7 @@ function SpanBar({
 }) {
   const left = totalDuration > 0 ? ((span.startTime - minTime) / totalDuration) * 100 : 0;
   const width = totalDuration > 0 ? ((span.endTime - span.startTime) / totalDuration) * 100 : 2;
-  const color = span.status === "error" ? "bg-red-400" : "bg-blue-400";
+  const color = span.status === "error" ? "bg-danger-solid" : "bg-info-solid";
   const durationMs = span.endTime - span.startTime;
   return (
     <div className="flex items-center gap-2 py-1 text-sm">
@@ -675,7 +674,7 @@ function SpanBar({
         />
       </div>
       <div className="w-20 shrink-0 text-right text-xs text-muted-foreground">{durationMs} ms</div>
-      <div className={`w-14 shrink-0 rounded px-1 py-0.5 text-center text-xs font-medium ${span.status === "error" ? "bg-red-100 text-red-700" : "bg-green-100 text-green-700"}`}>
+      <div className={`w-14 shrink-0 rounded px-1 py-0.5 text-center text-xs font-medium ${span.status === "error" ? "bg-danger-soft text-danger" : "bg-success-soft text-success"}`}>
         {span.status}
       </div>
     </div>
@@ -858,7 +857,7 @@ export default function TracesPage() {
       {tab === "steps" && submittedId && !loadingEvents && (
         <>
           {eventsError && (
-            <div role="alert" className="rounded-md bg-red-50 p-3 text-sm text-red-700">
+            <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
               Failed to load events: {eventsError.message}
             </div>
           )}
@@ -952,9 +951,9 @@ export default function TracesPage() {
       {tab === "waterfall" && submittedId && !loadingSpans && (
         <>
           {spansError && (
-            <div role="alert" className="rounded-md bg-amber-50 p-3 text-sm text-amber-700">
+            <div role="alert" className="rounded-md bg-warning-soft p-3 text-sm text-warning">
               OTel spans unavailable: {spansError.message}.
-              <span className="ml-1 text-amber-500">
+              <span className="ml-1 text-warning">
                 Ensure TRACING_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT is configured.
               </span>
             </div>

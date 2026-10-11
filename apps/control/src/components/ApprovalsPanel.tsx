@@ -3,8 +3,9 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import React, { useState } from "react";
+import { Inbox } from "lucide-react";
 import type { PendingApproval } from "../types/control";
-import { Badge, Button } from "../lib/ui";
+import { Badge, Button, EmptyState } from "../lib/ui";
 
 export interface ApprovalsPanelProps {
   pending: PendingApproval[];
@@ -44,7 +45,7 @@ function ApprovalCard({
   };
 
   return (
-    <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 shadow-sm">
+    <div className="rounded-lg border border-warning-border bg-warning-soft p-4 shadow-sm">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -85,7 +86,7 @@ function ApprovalCard({
         </div>
       </div>
       {Object.keys(item.args).length > 0 && (
-        <pre className="mt-3 max-h-40 overflow-auto rounded bg-white/70 p-2 text-xs text-foreground">
+        <pre className="mt-3 max-h-40 overflow-auto rounded bg-card/70 p-2 text-xs text-foreground">
           {JSON.stringify(item.args, null, 2)}
         </pre>
       )}
@@ -108,21 +109,22 @@ export function ApprovalsPanel({
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">
           Pending approvals{" "}
-          <span className="font-normal text-muted-foreground">({pending.length})</span>
+          <span className="font-normal text-muted-foreground">
+            ({pending.length})
+          </span>
         </h3>
-        {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+        {error && <span className="text-xs text-danger">{error}</span>}
       </div>
       {isLoading && pending.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Loading…</p>
+        <p className="py-10 text-center text-sm text-muted-foreground">
+          Loading…
+        </p>
       ) : pending.length === 0 ? (
-        <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card py-12 text-center">
-          <p className="text-sm text-muted-foreground">
-            No tool calls are awaiting approval.
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Flagged consequential tools will appear here for review.
-          </p>
-        </div>
+        <EmptyState
+          icon={Inbox}
+          title="No tool calls are awaiting approval."
+          description="Flagged consequential tools will appear here for review."
+        />
       ) : (
         <div className="space-y-3">
           {pending.map((p) => (

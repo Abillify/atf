@@ -75,7 +75,7 @@ export function CanaryPanel({
             ({deployments.length})
           </span>
         </h3>
-        {error && <span className="text-xs text-red-600 dark:text-red-400">{error}</span>}
+        {error && <span className="text-xs text-danger">{error}</span>}
       </div>
 
       {isLoading && deployments.length === 0 ? (
@@ -127,7 +127,7 @@ export function CanaryPanel({
                 <VariantStats
                   label="Candidate"
                   stats={d.canary}
-                  accent="text-blue-600"
+                  accent="text-info"
                 />
               </div>
             </div>

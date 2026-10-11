@@ -22,19 +22,12 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../lib/ui";
+import { formatNumber } from "../lib/i18n";
+import { useChartPalette } from "../lib/theme/palette";
 
 export interface CostPanelProps {
   summary: MetricsSummary;
 }
-
-const BAR_COLORS = [
-  "#2563eb",
-  "#7c3aed",
-  "#0891b2",
-  "#16a34a",
-  "#ca8a04",
-  "#dc2626",
-];
 
 /**
  * Cost & token breakdown by model, plus per-tenant daily spend against the
@@ -42,6 +35,15 @@ const BAR_COLORS = [
  * view operators need for a multi-tenant B2B deployment.
  */
 export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
+  const chart = useChartPalette();
+  const barColors = [
+    chart.c1,
+    chart.c2,
+    chart.c3,
+    chart.c4,
+    chart.c5,
+    chart.c6,
+  ];
   const costData = Object.entries(summary.costByModel)
     .map(([model, amount]) => ({
       model,
@@ -109,12 +111,10 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                 width={140}
                 tick={{ fontSize: 10 }}
               />
-              <Tooltip
-                formatter={(v) => formatCost(Number(v ?? 0), 5)}
-              />
+              <Tooltip formatter={(v) => formatCost(Number(v ?? 0), 5)} />
               <Bar dataKey="amount">
                 {costData.map((_, i) => (
-                  <Cell key={i} fill={BAR_COLORS[i % BAR_COLORS.length]} />
+                  <Cell key={i} fill={barColors[i % barColors.length]} />
                 ))}
               </Bar>
             </BarChart>
@@ -149,11 +149,16 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                 tick={{ fontSize: 10 }}
               />
               <Tooltip />
-              <Bar dataKey="prompt" stackId="t" fill="#93c5fd" name="prompt" />
+              <Bar
+                dataKey="prompt"
+                stackId="t"
+                fill={chart.promptLight}
+                name="prompt"
+              />
               <Bar
                 dataKey="completion"
                 stackId="t"
-                fill="#2563eb"
+                fill={chart.c1}
                 name="completion"
               />
             </BarChart>
@@ -170,27 +175,29 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
           <div className="mb-3 flex items-center gap-4">
             <div className="flex flex-col">
               <span className="text-xs text-muted-foreground">Hit rate</span>
-              <span className="text-2xl font-bold text-emerald-600">
+              <span className="text-2xl font-bold text-success">
                 {cacheHitRatePct}%
               </span>
             </div>
             <div className="flex flex-col">
-              <span className="text-xs text-muted-foreground">Total requests</span>
+              <span className="text-xs text-muted-foreground">
+                Total requests
+              </span>
               <span className="text-2xl font-bold text-foreground">
-                {totalCacheRequests.toLocaleString()}
+                {formatNumber(totalCacheRequests)}
               </span>
             </div>
             <div className="flex flex-col">
               <span className="text-xs text-muted-foreground">Hits saved</span>
               <span className="text-2xl font-bold text-accent">
-                {summary.cacheHits.toLocaleString()}
+                {formatNumber(summary.cacheHits)}
               </span>
             </div>
           </div>
           {/* Hit/miss bar */}
           <div className="mb-3 h-3 w-full overflow-hidden rounded-full bg-muted">
             <div
-              className="h-full rounded-full bg-emerald-500 transition-all duration-500"
+              className="h-full rounded-full bg-success-solid transition-all duration-500"
               style={{ width: `${cacheHitRatePct}%` }}
             />
           </div>
@@ -208,12 +215,12 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                 {
                   label: "Exact match",
                   hits: summary.cacheExactHits,
-                  color: "bg-blue-500",
+                  color: "bg-info-solid",
                 },
                 {
                   label: "Semantic (near-dup)",
                   hits: summary.cacheSemanticHits,
-                  color: "bg-violet-500",
+                  color: "bg-copilot-solid",
                 },
               ].map(({ label, hits, color }) => (
                 <TableRow key={label}>
@@ -224,7 +231,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                     <span className="text-foreground">{label}</span>
                   </TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {hits.toLocaleString()}
+                    {formatNumber(hits)}
                   </TableCell>
                   <TableCell className="text-right tabular-nums text-muted-foreground">
                     {summary.cacheHits > 0
@@ -236,7 +243,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
               <TableRow className="font-medium">
                 <TableCell className="text-muted-foreground">Misses</TableCell>
                 <TableCell className="text-right tabular-nums">
-                  {summary.cacheMisses.toLocaleString()}
+                  {formatNumber(summary.cacheMisses)}
                 </TableCell>
                 <TableCell className="text-right tabular-nums text-muted-foreground">
                   {totalCacheRequests > 0
@@ -271,9 +278,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
             <TableBody>
               {tenants.map((t) => {
                 const pct =
-                  t.cap > 0
-                    ? Math.min(100, (t.spent / t.cap) * 100)
-                    : 0;
+                  t.cap > 0 ? Math.min(100, (t.spent / t.cap) * 100) : 0;
                 const over = t.cap > 0 && t.spent >= t.cap;
                 return (
                   <TableRow key={t.tenant}>
@@ -290,12 +295,14 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                       {t.cap > 0 ? (
                         <div className="h-2 w-full overflow-hidden rounded bg-muted">
                           <div
-                            className={`h-full ${over ? "bg-red-500" : "bg-emerald-500"}`}
+                            className={`h-full ${over ? "bg-danger-solid" : "bg-success-solid"}`}
                             style={{ width: `${pct}%` }}
                           />
                         </div>
                       ) : (
-                        <span className="text-xs text-muted-foreground">unlimited</span>
+                        <span className="text-xs text-muted-foreground">
+                          unlimited
+                        </span>
                       )}
                     </TableCell>
                   </TableRow>
@@ -330,7 +337,10 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                   maxUserSpend > 0 ? (u.spent / maxUserSpend) * 100 : 0;
                 return (
                   <TableRow key={u.userId}>
-                    <TableCell className="text-xs text-foreground" title={u.userId}>
+                    <TableCell
+                      className="text-xs text-foreground"
+                      title={u.userId}
+                    >
                       {u.label}
                     </TableCell>
                     <TableCell className="text-right tabular-nums">
@@ -385,7 +395,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                     <TableCell className="pl-3">
                       <div className="h-2 w-full overflow-hidden rounded bg-muted">
                         <div
-                          className="h-full bg-cyan-500"
+                          className="h-full bg-info-solid"
                           style={{ width: `${pct}%` }}
                         />
                       </div>

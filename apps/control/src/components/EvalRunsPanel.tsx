@@ -20,6 +20,7 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../lib/ui";
+import { formatDateTime } from "../lib/i18n";
 
 interface AssertionResult {
   assertion: { type: string };
@@ -155,9 +156,9 @@ function statusVariant(status: MatrixStatus): "default" | "secondary" | "destruc
 }
 
 function scoreColor(score: number): string {
-  if (score >= 0.9) return "text-green-600";
-  if (score >= 0.7) return "text-amber-600";
-  return "text-red-600";
+  if (score >= 0.9) return "text-success";
+  if (score >= 0.7) return "text-warning";
+  return "text-danger";
 }
 
 function TraceDetail({ runId, cell, token }: {
@@ -189,7 +190,7 @@ function TraceDetail({ runId, cell, token }: {
         {enabled ? "Close trace" : "Open trace"}
       </Button>
       {enabled && isLoading && <p className="mt-2 text-xs text-muted-foreground">Loading trace…</p>}
-      {enabled && error && <p className="mt-2 text-xs text-red-600">Failed to load trace: {error.message}</p>}
+      {enabled && error && <p className="mt-2 text-xs text-danger">Failed to load trace: {error.message}</p>}
       {enabled && data && (
         <pre className="mt-2 max-h-96 overflow-auto rounded bg-muted p-3 text-[11px] text-foreground">
           {JSON.stringify(data.trace, null, 2)}
@@ -231,7 +232,7 @@ function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string | undef
                     <span>Cost: {cell.cost === undefined ? "—" : formatCost(cell.cost)}</span>
                   </div>
                   {cell.executionId && <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">Execution: {cell.executionId}</div>}
-                  {cell.error && <div className="mt-2 text-xs text-red-600">{cell.error}</div>}
+                  {cell.error && <div className="mt-2 text-xs text-danger">{cell.error}</div>}
                   <div className="mt-3 text-[11px] font-semibold uppercase text-muted-foreground">Response</div>
                   <p className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap text-sm text-foreground">
                     {cell.responseText || (cell.status === "running" ? "Flow running…" : "Not started yet")}
@@ -269,7 +270,7 @@ function MatrixRunCard({ run, token }: { run: MatrixRun; token: string | undefin
           <div>
             <div className="font-semibold text-foreground">{run.name}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {run.tasks.length} tasks × {run.flows.length} flows · {new Date(run.createdAt).toLocaleString()}
+              {run.tasks.length} tasks × {run.flows.length} flows · {formatDateTime(run.createdAt)}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -282,7 +283,7 @@ function MatrixRunCard({ run, token }: { run: MatrixRun; token: string | undefin
         </div>
       </summary>
       {expanded && isLoading && <p className="border-t border-border p-4 text-xs text-muted-foreground">Loading details…</p>}
-      {expanded && error && <p className="border-t border-border p-4 text-xs text-red-600">Failed to load details: {error.message}</p>}
+      {expanded && error && <p className="border-t border-border p-4 text-xs text-danger">Failed to load details: {error.message}</p>}
       {expanded && detail && <MatrixRunDetail run={detail} token={token} />}
     </details>
   );
@@ -300,9 +301,9 @@ function MatrixRuns({ runs, token }: { runs: MatrixRun[]; token: string | undefi
 }
 
 function passRateColor(rate: number): string {
-  if (rate >= 0.9) return "text-green-600";
-  if (rate >= 0.7) return "text-amber-600";
-  return "text-red-600";
+  if (rate >= 0.9) return "text-success";
+  if (rate >= 0.7) return "text-warning";
+  return "text-danger";
 }
 
 function RunRow({ run, expanded, onToggle }: {
@@ -323,7 +324,7 @@ function RunRow({ run, expanded, onToggle }: {
         <TableCell className="text-muted-foreground">{report.avgLatencyMs.toFixed(0)}ms</TableCell>
         <TableCell className="text-muted-foreground">{formatCost(report.totalCost)}</TableCell>
         <TableCell className="text-muted-foreground">{report.avgScore !== undefined ? `${(report.avgScore * 100).toFixed(0)}%` : "—"}</TableCell>
-        <TableCell className="text-muted-foreground">{new Date(run.recordedAt).toLocaleString()}</TableCell>
+        <TableCell className="text-muted-foreground">{formatDateTime(run.recordedAt)}</TableCell>
       </TableRow>
       {expanded && failedCases.length > 0 && (
         <TableRow>
@@ -333,9 +334,9 @@ function RunRow({ run, expanded, onToggle }: {
               {failedCases.map((evalCase) => (
                 <div key={evalCase.id} className="rounded border border-border bg-card px-2 py-1.5 text-xs">
                   <div className="font-mono text-muted-foreground">{evalCase.id} ({evalCase.flow})</div>
-                  {evalCase.error && <div className="text-red-600">error: {evalCase.error}</div>}
+                  {evalCase.error && <div className="text-danger">error: {evalCase.error}</div>}
                   {evalCase.assertions.filter((assertion) => !assertion.passed).map((assertion, index) => (
-                    <div key={index} className="text-red-600">✗ {assertion.assertion.type}: {assertion.detail ?? "failed"}</div>
+                    <div key={index} className="text-danger">✗ {assertion.assertion.type}: {assertion.detail ?? "failed"}</div>
                   ))}
                 </div>
               ))}
@@ -352,9 +353,9 @@ export interface EvalRunsPanelProps {
 }
 
 export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Element {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
-  // Authorization-Header bei undefined-Token weg.
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously). authFetch omits
+  // the Authorization header for an undefined token.
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
   const [expandedId, setExpandedId] = React.useState<string | null>(null);
@@ -433,7 +434,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
           Tasks and perfect answers (JSON)
           <textarea value={tasksJson} onChange={(event) => setTasksJson(event.target.value)} rows={12} spellCheck={false} className="mt-1 w-full rounded-md border border-border bg-background p-3 font-mono text-xs" />
         </label>
-        {formError && <div role="alert" className="mt-3 rounded bg-red-50 p-3 text-xs text-red-700">{formError}</div>}
+        {formError && <div role="alert" className="mt-3 rounded bg-danger-soft p-3 text-xs text-danger">{formError}</div>}
         <Button type="button" className="mt-4" loading={startMutation.isPending} onClick={() => startMutation.mutate()}>
           Start matrix ({selectedFlows.length} flows)
         </Button>
@@ -441,7 +442,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
 
       <section>
         <h2 className="mb-3 text-sm font-semibold text-foreground">Asynchronous matrix runs</h2>
-        {matrixError && <div role="alert" className="mb-3 rounded bg-red-50 p-3 text-xs text-red-700">Failed to load matrix runs: {matrixError.message}</div>}
+        {matrixError && <div role="alert" className="mb-3 rounded bg-danger-soft p-3 text-xs text-danger">Failed to load matrix runs: {matrixError.message}</div>}
         <MatrixRuns runs={matrixRuns} token={token ?? ""} />
       </section>
 
@@ -449,7 +450,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
         <h2 className="text-sm font-semibold text-foreground">Recorded Eval Runs</h2>
         <p className="text-xs text-muted-foreground">Results from replaying an eval dataset against a flow (<code className="font-mono">bun run src/eval/run.ts</code>, typically CI). Click a row to see failed cases.</p>
         {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true"><div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />Loading eval runs…</div>}
-        {error && <div role="alert" className="rounded-md bg-red-50 p-4 text-sm text-red-700">Failed to load eval runs: {error.message}</div>}
+        {error && <div role="alert" className="rounded-md bg-danger-soft p-4 text-sm text-danger">Failed to load eval runs: {error.message}</div>}
         {!isLoading && !error && runs.length === 0 && <div className="rounded-lg border border-dashed border-border bg-card py-8 text-center text-sm text-muted-foreground">No eval runs recorded yet. Record one with <code className="font-mono text-xs">POST /admin/eval/runs</code> (see the eval:regression CI job).</div>}
         {runs.length > 0 && (
           <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">

@@ -17,7 +17,7 @@
 
 import type React from "react";
 import { useEffect, useState } from "react";
-import { backendUrl } from "../lib/backend-url";
+import { request } from "../lib/control-api";
 import { Button } from "../lib/ui";
 import { buildProposalOverlay, type DiffOverlay } from "../lib/flow-diff-view";
 import type { RFNode, RFEdge } from "../lib/flow-graph";
@@ -118,14 +118,15 @@ export function FlowCopilotPanel({
     onPreviewChange(undefined);
 
     try {
-      const resp = await fetch(
-        backendUrl(`/flows/${encodeURIComponent(flowId)}/copilot`),
+      // Req 9.2: lib/control-api; request() instead of json() because the structured
+      // {ok:...} body must also be read for a non-2xx status.
+      const resp = await request(
+        `/flows/${encodeURIComponent(flowId)}/copilot`,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
+          target: "backend",
+          token,
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             definition: getDefinition(),
             instruction,
@@ -186,17 +187,17 @@ export function FlowCopilotPanel({
   };
 
   return (
-    <div className="flex flex-col gap-2 rounded-lg border border-purple-200 dark:border-purple-900 bg-purple-50/40 dark:bg-purple-950/20 p-2.5">
+    <div className="flex flex-col gap-2 rounded-lg border border-copilot-border bg-copilot-soft p-2.5">
       <div className="flex items-center gap-2">
         <button
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
           aria-label={expanded ? "Collapse copilot" : "Expand copilot"}
-          className="text-xs text-purple-400 hover:text-purple-700 dark:hover:text-purple-200"
+          className="text-xs text-copilot hover:text-copilot"
         >
           {expanded ? "▾" : "▸"}
         </button>
-        <span className="text-xs font-semibold text-purple-700 dark:text-purple-300">
+        <span className="text-xs font-semibold text-copilot">
           ✨ Copilot
         </span>
         <input
@@ -213,7 +214,7 @@ export function FlowCopilotPanel({
           }
           disabled={isLoading}
           aria-label="Copilot instruction"
-          className="min-w-0 flex-1 rounded border border-purple-200 dark:border-purple-800 bg-card px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="min-w-0 flex-1 rounded border border-copilot-border bg-card px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <Button
           variant="primary"
@@ -236,7 +237,7 @@ export function FlowCopilotPanel({
       )}
 
       {expanded && error && (
-        <div className="rounded border border-red-200 bg-red-50 px-2 py-1.5 text-xs text-red-700">
+        <div className="rounded border border-danger-border bg-danger-soft px-2 py-1.5 text-xs text-danger">
           <p role="alert">{error}</p>
           {validationDetail && (
             <ul className="mt-1 space-y-0.5 pl-3 list-disc">
@@ -251,7 +252,7 @@ export function FlowCopilotPanel({
       )}
 
       {expanded && proposal && (
-        <div className="max-h-48 overflow-auto rounded border border-purple-200 dark:border-purple-800 bg-card px-2.5 py-2 text-xs space-y-2">
+        <div className="max-h-48 overflow-auto rounded border border-copilot-border bg-card px-2.5 py-2 text-xs space-y-2">
           <p className="text-foreground">{proposal.explanation}</p>
           <p className="italic text-muted-foreground">{proposal.summary}</p>
           <div className="flex items-center gap-2">

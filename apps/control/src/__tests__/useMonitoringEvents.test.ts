@@ -14,6 +14,22 @@ function setVisibilityState(state: "visible" | "hidden"): void {
   });
 }
 
+/**
+ * Pretends the page is served over the given protocol (jsdom default is
+ * http). Returns a restore function — jsdom's `location` is an own property,
+ * so `delete` would destroy it for later tests.
+ */
+function setPageProtocol(protocol: "https:" | "http:"): () => void {
+  const original = Object.getOwnPropertyDescriptor(window, "location");
+  Object.defineProperty(window, "location", {
+    configurable: true,
+    value: { protocol },
+  });
+  return () => {
+    if (original) Object.defineProperty(window, "location", original);
+  };
+}
+
 const sampleEvent = (nodeId: string): NodeExecutionEvent => ({
   execution_id: "exec-1",
   node_id: nodeId,
@@ -140,7 +156,9 @@ describe("useMonitoringEvents (SSE)", () => {
   test("pauses the stream while the tab is hidden and reconnects when visible again", () => {
     setVisibilityState("hidden");
     try {
-      renderHook(() => useMonitoringEvents({ url: "http://x/monitoring/events" }));
+      renderHook(() =>
+        useMonitoringEvents({ url: "http://x/monitoring/events" }),
+      );
       // Hidden at mount time — no connection is opened.
       expect(FakeEventSource.last).toBeNull();
 
@@ -156,9 +174,9 @@ describe("useMonitoringEvents (SSE)", () => {
   });
 
   test("exchanges the operator token for a stream ticket via the API layer", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(
-      Response.json({ ticket: "short-lived" }),
-    );
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(Response.json({ ticket: "short-lived" }));
     vi.stubGlobal("fetch", fetchMock);
 
     renderHook(() =>
@@ -194,6 +212,119 @@ describe("useMonitoringEvents (SSE)", () => {
     expect(es.closed).toBe(true);
     unmount();
     setVisibilityState("visible");
+  });
+
+  // Req. 8.3: over HTTPS there is no token-in-URL fallback when the ticket
+  // endpoint is unavailable — the hook surfaces a connection error instead.
+  test("HTTPS: refuses token-in-URL when the ticket endpoint 404s", async () => {
+    const restoreLocation = setPageProtocol("https:");
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ error: "not found" }, { status: 404 }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { result } = renderHook(() =>
+        useMonitoringEvents({
+          url: "https://x/monitoring/events",
+          ticketUrl: "https://x/monitoring/ticket",
+          token: "operator-token",
+        }),
+      );
+
+      await waitFor(() =>
+        expect(result.current.error).toBe(
+          "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
+        ),
+      );
+      expect(result.current.isConnected).toBe(false);
+      // No connection was opened at all — the reusable token never enters a URL.
+      expect(FakeEventSource.last).toBeNull();
+    } finally {
+      restoreLocation();
+    }
+  });
+
+  test("HTTPS: refuses token-in-URL when the ticket request fails", async () => {
+    const restoreLocation = setPageProtocol("https:");
+    try {
+      const fetchMock = vi.fn().mockRejectedValue(new Error("network down"));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { result } = renderHook(() =>
+        useMonitoringEvents({
+          url: "https://x/monitoring/events",
+          ticketUrl: "https://x/monitoring/ticket",
+          token: "operator-token",
+        }),
+      );
+
+      await waitFor(() =>
+        expect(result.current.error).toBe(
+          "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
+        ),
+      );
+      expect(FakeEventSource.last).toBeNull();
+    } finally {
+      restoreLocation();
+    }
+  });
+
+  test("HTTPS: an ok response without a ticket is not a token-in-URL fallback", async () => {
+    const restoreLocation = setPageProtocol("https:");
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(Response.json({ unexpected: true }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      const { result } = renderHook(() =>
+        useMonitoringEvents({
+          url: "https://x/monitoring/events",
+          ticketUrl: "https://x/monitoring/ticket",
+          token: "operator-token",
+        }),
+      );
+
+      await waitFor(() =>
+        expect(result.current.error).toBe(
+          "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
+        ),
+      );
+      expect(FakeEventSource.last).toBeNull();
+    } finally {
+      restoreLocation();
+    }
+  });
+
+  test("plain HTTP keeps the development token-in-URL fallback", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValue(
+          Response.json({ error: "not found" }, { status: 404 }),
+        );
+      vi.stubGlobal("fetch", fetchMock);
+
+      renderHook(() =>
+        useMonitoringEvents({
+          url: "http://x/monitoring/events",
+          ticketUrl: "http://x/monitoring/ticket",
+          token: "operator-token",
+        }),
+      );
+
+      await waitFor(() => expect(FakeEventSource.last).not.toBeNull());
+      expect(FakeEventSource.last?.url).toBe(
+        "http://x/monitoring/events?token=operator-token",
+      );
+      expect(warnSpy).toHaveBeenCalled();
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
 

@@ -23,6 +23,7 @@ import {
   Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent,
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
 } from "../../../lib/ui";
+import { formatNumber, formatDate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -141,7 +142,7 @@ function TenantForm({
 
   return (
     <div className="space-y-3">
-      {error && <p role="alert" className="text-sm text-red-600">{error}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
           { label: "Name *", value: name, onChange: setName, placeholder: "ACME Corp" },
@@ -195,7 +196,7 @@ function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefi
   return (
     <div className="space-y-4">
       {revealed && (
-        <div className="rounded border border-green-200 bg-green-50 p-3 text-sm text-green-800">
+        <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success">
           <p className="font-medium mb-1">Key created — copy it now, it won&apos;t be shown again.</p>
           <code className="break-all font-mono text-xs">{revealed}</code>
           <Button variant="secondary" size="sm" className="mt-2" onClick={() => setRevealed(null)}>Dismiss</Button>
@@ -225,8 +226,8 @@ function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefi
               <TableRow key={k.id}>
                 <TableCell className="font-medium">{k.name}</TableCell>
                 <TableCell className="font-mono text-xs text-muted-foreground">{k.id.slice(0, 12)}…</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{new Date(k.createdAt).toLocaleDateString()}</TableCell>
-                <TableCell className="text-xs text-muted-foreground">{k.lastUsedAt ? new Date(k.lastUsedAt).toLocaleDateString() : "—"}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{formatDate(k.createdAt)}</TableCell>
+                <TableCell className="text-xs text-muted-foreground">{k.lastUsedAt ? formatDate(k.lastUsedAt) : "—"}</TableCell>
                 <TableCell className="text-center">
                   <Badge variant={k.revoked ? "destructive" : "success"}>{k.revoked ? "revoked" : "active"}</Badge>
                 </TableCell>
@@ -255,7 +256,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
   });
 
   if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
-  if (error) return <p className="text-sm text-red-600">{error.message}</p>;
+  if (error) return <p className="text-sm text-danger">{error.message}</p>;
   if (!summary) return null;
 
   const fmt = (n: number) => n < 0.01 ? n.toFixed(6) : n.toFixed(4);
@@ -265,11 +266,11 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
       <div className="grid grid-cols-3 gap-3">
         {[
           { label: "Requests", value: String(summary.totalRequests) },
-          { label: "Tokens", value: summary.totalTokens.toLocaleString() },
+          { label: "Tokens", value: formatNumber(summary.totalTokens) },
           { label: "Cost", value: withCurrency(fmt(summary.totalCost)), green: true },
         ].map(({ label, value, green }) => (
           <div key={label} className="rounded border border-border bg-background p-3 text-center">
-            <div className={`text-xl font-bold tabular-nums ${green ? "text-emerald-700" : "text-foreground"}`}>{value}</div>
+            <div className={`text-xl font-bold tabular-nums ${green ? "text-success" : "text-foreground"}`}>{value}</div>
             <div className="text-xs text-muted-foreground mt-0.5">{label}</div>
           </div>
         ))}
@@ -287,8 +288,8 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
               <TableRow key={`${m.provider}/${m.model}`}>
                 <TableCell className="font-mono text-xs">{m.provider}/{m.model}</TableCell>
                 <TableCell className="text-right tabular-nums">{m.requests}</TableCell>
-                <TableCell className="text-right tabular-nums">{m.tokens.toLocaleString()}</TableCell>
-                <TableCell className="text-right tabular-nums text-emerald-700">{withCurrency(fmt(m.cost))}</TableCell>
+                <TableCell className="text-right tabular-nums">{formatNumber(m.tokens)}</TableCell>
+                <TableCell className="text-right tabular-nums text-success">{withCurrency(fmt(m.cost))}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -340,7 +341,7 @@ function BYOKTab({ tenantId, token }: { tenantId: string; token: string | undefi
         Bring-Your-Own-Key (BYOK): override the platform&apos;s shared provider credentials with per-tenant keys.
         Keys are stored encrypted server-side and never returned after setting.
       </p>
-      {opError && <p role="alert" className="text-sm text-red-600">{opError}</p>}
+      {opError && <p role="alert" className="text-sm text-danger">{opError}</p>}
       {editing && (
         <div className="rounded border border-border bg-muted p-3 space-y-2">
           <p className="text-sm font-medium text-foreground">Set key for <span className="font-mono">{editing}</span></p>
@@ -422,7 +423,7 @@ function TenantDetail({
           <Button variant="outline" size="sm" onClick={() => setEditing(true)}>Edit</Button>
           {confirmDelete ? (
             <>
-              <span className="text-xs text-red-600">Delete &quot;{tenant.name}&quot;?</span>
+              <span className="text-xs text-danger">Delete &quot;{tenant.name}&quot;?</span>
               <Button variant="destructive" size="sm" disabled={deleteMutation.isPending}
                 onClick={() => deleteMutation.mutate()}>
                 {deleteMutation.isPending ? "…" : "Confirm delete"}
@@ -454,9 +455,9 @@ function TenantDetail({
 // ---------------------------------------------------------------------------
 
 function TenantList() {
-  // isAuthenticated statt !!token: laedt auch bei AUTHN_MODE=disabled (kein
-  // Token; Backend bedient die Operator-Plane anonym). authFetch laesst den
-  // Authorization-Header bei undefined-Token weg.
+  // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
+  // token; the backend serves the operator plane anonymously). authFetch omits
+  // the Authorization header for an undefined token.
   const { token, ready, isAuthenticated } = useAuth();
   const [search, setSearch] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -499,7 +500,7 @@ function TenantList() {
       )}
 
       {isLoading && <p className="text-sm text-muted-foreground">Loading tenants…</p>}
-      {error && <p role="alert" className="text-sm text-red-600">{error.message}</p>}
+      {error && <p role="alert" className="text-sm text-danger">{error.message}</p>}
       {!isLoading && !error && filtered.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card py-10 text-center text-sm text-muted-foreground">
           {search ? "No tenants match your search." : "No tenants yet. Create one above."}
@@ -519,12 +520,12 @@ function TenantList() {
               <span className="text-xs text-muted-foreground font-mono hidden sm:inline">{t.id.slice(0, 10)}…</span>
               <Badge variant="secondary">{t.plan}</Badge>
               {t.dailyBudget !== undefined && (
-                <span className="text-xs text-emerald-700 tabular-nums">
+                <span className="text-xs text-success tabular-nums">
                   {formatCost(t.dailyBudget, 2)}/day
                 </span>
               )}
               <span className="text-xs text-muted-foreground hidden md:inline">
-                {new Date(t.createdAt).toLocaleDateString()}
+                {formatDate(t.createdAt)}
               </span>
               <svg className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ${expanded === t.id ? "rotate-180" : ""}`}
                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -552,7 +553,7 @@ export default function TenantsPage() {
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">Tenant Administration</h1>
       <RequireRole role="admin" fallback={
-        <div role="alert" className="rounded-lg border border-orange-200 bg-orange-50 p-6 text-center text-sm text-orange-700">
+        <div role="alert" className="rounded-lg border border-warning-border bg-warning-soft p-6 text-center text-sm text-warning">
           Administrator access required to view tenant management.
         </div>
       }>

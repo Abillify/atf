@@ -6,9 +6,14 @@
  * information architecture (UI-STYLE-GUIDE.md §7). Consumed by the desktop
  * sidebar, the mobile drawer, the ⌘K command palette, and the breadcrumb bar,
  * so grouping, labels, and icons never drift between them.
+ *
+ * Req 9.7: labels, hints and group headers are i18n message keys
+ * (`MessageKey`), not literal strings — consumers resolve them through
+ * `useI18n().t()` so the same metadata renders in `de` or `en`.
  */
 
 import type { LucideIcon } from "lucide-react";
+import type { MessageKey } from "./i18n";
 import {
   FlaskConical,
   Brain,
@@ -22,7 +27,6 @@ import {
   Inbox,
   Shield,
   GitBranch,
-  GitCompare,
   Plug,
   ShieldCheck,
   Lock,
@@ -40,72 +44,196 @@ import {
 
 export interface NavItem {
   href: string;
-  label: string;
-  /** Short description surfaced in the command palette. */
-  hint: string;
+  /** i18n key for the destination's display label (Req 9.7). */
+  labelKey: MessageKey;
+  /** i18n key for the short description surfaced in the command palette. */
+  hintKey: MessageKey;
   icon: LucideIcon;
 }
 
 export interface NavGroup {
-  /** Section header shown in the sidebar/drawer and used for breadcrumbs. */
-  group: string;
+  /** i18n key for the section header (sidebar/drawer/breadcrumbs). */
+  groupKey: MessageKey;
   items: NavItem[];
 }
 
 export const NAV_GROUPS: NavGroup[] = [
   {
-    group: "Recherche & Optimierung",
+    groupKey: "nav.group.research",
     items: [
-      { href: "/studio", label: "Studio", hint: "Build & test flows", icon: FlaskConical },
-      { href: "/memory", label: "Memory", hint: "Agent long-term memory", icon: Brain },
-      { href: "/eval", label: "Eval", hint: "Regression eval cases", icon: ClipboardCheck },
-      { href: "/optimizer", label: "Optimizer", hint: "Self-optimizing flow loop", icon: Sparkles },
-      { href: "/canary", label: "Canary", hint: "Runtime rollout & auto-rollback", icon: Bird },
-      { href: "/autopilot", label: "Autopilot", hint: "Continuous safety & quality loop", icon: Bot },
+      {
+        href: "/studio",
+        labelKey: "nav.studio",
+        hintKey: "nav.studio.hint",
+        icon: FlaskConical,
+      },
+      {
+        href: "/memory",
+        labelKey: "nav.memory",
+        hintKey: "nav.memory.hint",
+        icon: Brain,
+      },
+      {
+        href: "/eval",
+        labelKey: "nav.eval",
+        hintKey: "nav.eval.hint",
+        icon: ClipboardCheck,
+      },
+      {
+        href: "/optimizer",
+        labelKey: "nav.optimizer",
+        hintKey: "nav.optimizer.hint",
+        icon: Sparkles,
+      },
+      {
+        href: "/canary",
+        labelKey: "nav.canary",
+        hintKey: "nav.canary.hint",
+        icon: Bird,
+      },
+      {
+        href: "/autopilot",
+        labelKey: "nav.autopilot",
+        hintKey: "nav.autopilot.hint",
+        icon: Bot,
+      },
     ],
   },
   {
-    group: "Monitoring",
+    groupKey: "nav.group.monitoring",
     items: [
-      { href: "/graph", label: "Live Graph", hint: "Real-time node execution", icon: Workflow },
-      { href: "/traces", label: "Traces", hint: "Per-execution span waterfall", icon: Activity },
-      { href: "/history", label: "History", hint: "Past executions", icon: History },
-      { href: "/approvals", label: "Approvals", hint: "Human-in-the-loop inbox", icon: Inbox },
-      { href: "/shadow", label: "Shadow", hint: "Shadow-mode A/B quality comparisons", icon: Layers },
-      { href: "/security", label: "Security", hint: "Red-team posture & tool authz", icon: Shield },
-      { href: "/providers", label: "Providers", hint: "Provider and pool health", icon: Plug },
-      { href: "/provider-testing", label: "Provider Testing", hint: "Test provider models, capabilities & performance", icon: FlaskConical },
+      {
+        href: "/graph",
+        labelKey: "nav.graph",
+        hintKey: "nav.graph.hint",
+        icon: Workflow,
+      },
+      {
+        href: "/traces",
+        labelKey: "nav.traces",
+        hintKey: "nav.traces.hint",
+        icon: Activity,
+      },
+      {
+        href: "/history",
+        labelKey: "nav.history",
+        hintKey: "nav.history.hint",
+        icon: History,
+      },
+      {
+        href: "/approvals",
+        labelKey: "nav.approvals",
+        hintKey: "nav.approvals.hint",
+        icon: Inbox,
+      },
+      {
+        href: "/shadow",
+        labelKey: "nav.shadow",
+        hintKey: "nav.shadow.hint",
+        icon: Layers,
+      },
+      {
+        href: "/security",
+        labelKey: "nav.security",
+        hintKey: "nav.security.hint",
+        icon: Shield,
+      },
+      {
+        href: "/providers",
+        labelKey: "nav.providers",
+        hintKey: "nav.providers.hint",
+        icon: Plug,
+      },
     ],
   },
   {
-    group: "Konfiguration",
+    groupKey: "nav.group.configuration",
     items: [
-      { href: "/flows", label: "Flows", hint: "Flow registry", icon: GitBranch },
-      { href: "/flow-diff", label: "Flow Diff", hint: "Compare flow versions", icon: GitCompare },
-      { href: "/triggers", label: "Triggers", hint: "Webhook-triggered flows", icon: Zap },
-      { href: "/assistants", label: "Assistants", hint: "Per-user assistants & operator constraints", icon: UserCog },
-      { href: "/guardrails", label: "Guardrails", hint: "Input/output/egress policy", icon: ShieldCheck },
-      { href: "/pii-vault", label: "PII Vault", hint: "Reversible PII tokenization", icon: Lock },
-      { href: "/compliance", label: "Compliance", hint: "Policy & evidentiary dossier", icon: Scale },
-      { href: "/mcp", label: "MCP", hint: "Connected MCP servers", icon: Cable },
+      {
+        href: "/flows",
+        labelKey: "nav.flows",
+        hintKey: "nav.flows.hint",
+        icon: GitBranch,
+      },
+      {
+        href: "/triggers",
+        labelKey: "nav.triggers",
+        hintKey: "nav.triggers.hint",
+        icon: Zap,
+      },
+      {
+        href: "/assistants",
+        labelKey: "nav.assistants",
+        hintKey: "nav.assistants.hint",
+        icon: UserCog,
+      },
+      {
+        href: "/guardrails",
+        labelKey: "nav.guardrails",
+        hintKey: "nav.guardrails.hint",
+        icon: ShieldCheck,
+      },
+      {
+        href: "/pii-vault",
+        labelKey: "nav.pii-vault",
+        hintKey: "nav.pii-vault.hint",
+        icon: Lock,
+      },
+      {
+        href: "/compliance",
+        labelKey: "nav.compliance",
+        hintKey: "nav.compliance.hint",
+        icon: Scale,
+      },
+      {
+        href: "/mcp",
+        labelKey: "nav.mcp",
+        hintKey: "nav.mcp.hint",
+        icon: Cable,
+      },
     ],
   },
   {
-    group: "Budgetierung",
+    groupKey: "nav.group.budgeting",
     items: [
-      { href: "/cost", label: "Cost & Tokens", hint: "Spend & token usage", icon: Wallet },
-      { href: "/limits", label: "Limits", hint: "Rate & concurrency overrides", icon: Gauge },
-      { href: "/tenants", label: "Tenants", hint: "Tenants, keys & budgets", icon: Building2 },
-      { href: "/models", label: "Models", hint: "Available flows/models catalog", icon: Package },
-      { href: "/jobs", label: "Jobs", hint: "Async/batch job status lookup", icon: ListChecks },
+      {
+        href: "/cost",
+        labelKey: "nav.cost",
+        hintKey: "nav.cost.hint",
+        icon: Wallet,
+      },
+      {
+        href: "/limits",
+        labelKey: "nav.limits",
+        hintKey: "nav.limits.hint",
+        icon: Gauge,
+      },
+      {
+        href: "/tenants",
+        labelKey: "nav.tenants",
+        hintKey: "nav.tenants.hint",
+        icon: Building2,
+      },
+      {
+        href: "/models",
+        labelKey: "nav.models",
+        hintKey: "nav.models.hint",
+        icon: Package,
+      },
+      {
+        href: "/jobs",
+        labelKey: "nav.jobs",
+        hintKey: "nav.jobs.hint",
+        icon: ListChecks,
+      },
     ],
   },
 ];
-
 /** Flat list of every destination (palette search, breadcrumb lookup). */
-export const NAV_ITEMS: (NavItem & { group: string })[] = NAV_GROUPS.flatMap(
-  (g) => g.items.map((item) => ({ ...item, group: g.group })),
-);
+export const NAV_ITEMS: (NavItem & { groupKey: MessageKey })[] =
+  NAV_GROUPS.flatMap((g) =>
+    g.items.map((item) => ({ ...item, groupKey: g.groupKey })),
+  );
 
 /** True when `pathname` is (or is nested under) `href`. */
 export function isActivePath(pathname: string, href: string): boolean {
@@ -115,7 +243,7 @@ export function isActivePath(pathname: string, href: string): boolean {
 /** Resolves the nav entry (with its group) that best matches a pathname. */
 export function matchNavItem(
   pathname: string,
-): (NavItem & { group: string }) | undefined {
+): (NavItem & { groupKey: MessageKey }) | undefined {
   return (
     NAV_ITEMS.find((i) => i.href === pathname) ??
     NAV_ITEMS.find((i) => isActivePath(pathname, i.href))
