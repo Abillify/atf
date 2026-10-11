@@ -52,9 +52,17 @@ bun run config-reference  # after adding or changing a configuration variable
 
 The root notices and SBOM are the committed Linux x64 workspace reference; do not regenerate
 them on macOS with a Linux platform label. `--platform` records the target and
-`--assert-host-platform` makes native CI fail if the runner is not that platform. CI separately
+`--assert-host-platform` makes native CI fail if the runner is not that platform. The workspace
+inventories additionally ingest the Rust dependency graph of Outpost Desktop from
+`apps/outpost-desktop/src-tauri/Cargo.lock` via `--include-cargo`, which requires cargo on the
+host and a prior `cargo fetch --locked --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml`
+so the crate archives are in the local registry cache. Image inventories stay npm-only because
+the image build containers do not ship cargo. CI separately
 generates commit-specific `linux-x64` and `darwin-arm64` workspace artifacts and inventories
-the five final Quickstart image targets from inside each image. For an intentional local
+the five final Quickstart image targets from inside each image. To refresh the committed Linux
+x64 reference from a macOS host, run the generator inside a `linux/amd64` container with cargo
+(for example `rust:1-bookworm` plus Bun 1.4.0) using the same flags as the CI job, and commit
+the resulting `THIRD_PARTY_NOTICES.md` and `sbom.cdx.json`. For an intentional local
 platform artifact, use an isolated output directory, for example:
 
 ```bash
@@ -202,7 +210,10 @@ bun add --filter @atf/runtime some-package
 bun run supply-chain          # regenerate notices and SBOM
 ```
 
-Commit `bun.lock`, `THIRD_PARTY_NOTICES.md`, and `sbom.cdx.json` together. The license policy in
+Commit `bun.lock`, `THIRD_PARTY_NOTICES.md`, and `sbom.cdx.json` together. For Rust crates,
+change `apps/outpost-desktop/src-tauri/Cargo.toml`, run `cargo update` there, and regenerate the
+workspace inventories with `--include-cargo` (see above); commit the updated `Cargo.lock` with
+the regenerated files. The license policy in
 `scripts/generate-supply-chain.ts` fails the run on strong-copyleft and
 source-available-competitor licenses, and on a weak-copyleft dependency that ships no license
 text. If a dependency you need trips it, raise it in the issue rather than adding an exception
