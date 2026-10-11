@@ -576,62 +576,104 @@ const extractParsed = parseConfigInterface(
 );
 
 const sections: Section[] = [
-	{
-		service: "Runtime",
-		source: "apps/runtime/src/config/schema.ts",
-		intro:
-			"Orchestration, guardrails, policy, approvals, cost control, and the operator API. Everything declared in `EnvSchema` is parsed and validated as a whole at startup. A small number of variables listed below are read directly by subsystems that accept an injectable environment record; those are flagged in the Notes column and are validated where they are used rather than at boot.",
-		variables: [
-			...runtimeParsed,
-			...(await unvalidatedExtras(["apps/runtime/src"], runtimeParsed)),
-		],
-	},
-	{
-		service: "Search",
-		source: "apps/search/src/config.ts",
-		intro:
-			"Retrieval, ingestion, chunking, embedding, and reranking. Search has its own environment contract and does not share Runtime's variables even where names coincide. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member, so they do not appear in the typed configuration object.",
-		variables: [
-			...searchParsed,
-			...(await unvalidatedExtras(["apps/search/src"], searchParsed)),
-		],
-	},
-	{
-		service: "Extract",
-		source: "apps/extract/src/config.ts",
-		intro:
-			"Document-to-Markdown extraction against the `atf-extract` contract. Extract has its own environment contract; only the access-control block (`AUTHN_MODE`, `OIDC_*`, `UI_*`, …) is deliberately identical to Search's so SSO is configured once. `VISION_URL` and `VISION_MODEL` are the only required variables. `SEARCH_URL` and `CONVERTER_URL` are the two halves of the optional Search integration: without `SEARCH_URL` the `/v1/ingest` route is not mounted here, and without `CONVERTER_URL` the `/ingest-file` route is not mounted in Search. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member.",
-		variables: [
-			...extractParsed,
-			...(await unvalidatedExtras(["apps/extract/src"], extractParsed)),
-		],
-	},
-	{
-		service: "Gate",
-		source: "apps/gate/src (environment reads)",
-		intro:
-			"Gate's substantive configuration — tools, backends, scopes, policies — lives in YAML under `MCPGATE_CONFIG_DIR`. The environment covers only process-level concerns, so this table is short by design. See `deploy/examples/gate/config.yaml` for the YAML shape.",
-		variables: await parseEnvReads(["apps/gate/src"]),
-	},
-	{
-		service: "Control",
-		source:
-			"apps/control/src (environment reads) and apps/control/next.config.ts",
-		intro:
-			"Control uses Runtime's HTTP API and SSE stream. Relative same-origin Runtime URLs are the production default; the deployment must provide the reverse-proxy routing because Control has no internal API rewrite. `NEXT_PUBLIC_BACKEND_URL` is an explicit development or cross-origin override frozen into the browser bundle at build time.",
-		variables: [
-			...(await parseEnvReads(["apps/control/src"])),
-			{
-				name: "CONTROL_CSP_MODE",
-				type: "enum",
-				required: false,
-				default: "legacy",
-				allowed: ["legacy", "report-only"],
-				description:
-					"Read by `next.config.ts`. `legacy` emits no CSP header; `report-only` emits only `Content-Security-Policy-Report-Only`. Control never emits an enforcement CSP header",
-			},
-		],
-	},
+  {
+    service: "Runtime",
+    source: "apps/runtime/src/config/schema.ts",
+    intro:
+      "Orchestration, guardrails, policy, approvals, cost control, and the operator API. Everything declared in `EnvSchema` is parsed and validated as a whole at startup. A small number of variables listed below are read directly by subsystems that accept an injectable environment record; those are flagged in the Notes column and are validated where they are used rather than at boot.",
+    variables: [
+      ...runtimeParsed,
+      ...(await unvalidatedExtras(["apps/runtime/src"], runtimeParsed)),
+    ],
+  },
+  {
+    service: "Search",
+    source: "apps/search/src/config.ts",
+    intro:
+      "Retrieval, ingestion, chunking, embedding, and reranking. Search has its own environment contract and does not share Runtime's variables even where names coincide. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member, so they do not appear in the typed configuration object.",
+    variables: [
+      ...searchParsed,
+      ...(await unvalidatedExtras(["apps/search/src"], searchParsed)),
+    ],
+  },
+  {
+    service: "Extract",
+    source: "apps/extract/src/config.ts",
+    intro:
+      "Document-to-Markdown extraction against the `atf-extract` contract. Extract has its own environment contract; only the access-control block (`AUTHN_MODE`, `OIDC_*`, `UI_*`, …) is deliberately identical to Search's so SSO is configured once. `VISION_URL` and `VISION_MODEL` are the only required variables. `SEARCH_URL` and `CONVERTER_URL` are the two halves of the optional Search integration: without `SEARCH_URL` the `/v1/ingest` route is not mounted here, and without `CONVERTER_URL` the `/ingest-file` route is not mounted in Search. Entries flagged in the Notes column are read by `loadConfig` without a corresponding `Config` member.",
+    variables: [
+      ...extractParsed,
+      ...(await unvalidatedExtras(["apps/extract/src"], extractParsed)),
+    ],
+  },
+  {
+    service: "Gate",
+    source: "apps/gate/src (environment reads)",
+    intro:
+      "Gate's substantive configuration — tools, backends, scopes, policies — lives in YAML under `MCPGATE_CONFIG_DIR`. The environment covers only process-level concerns, so this table is short by design. See `deploy/examples/gate/config.yaml` for the YAML shape.",
+    variables: await parseEnvReads(["apps/gate/src"]),
+  },
+  {
+    service: "Control",
+    source:
+      "apps/control/src (environment reads) and apps/control/next.config.ts",
+    intro:
+      "Control uses Runtime's HTTP API and SSE stream. Relative same-origin Runtime URLs are the production default; the deployment must provide the reverse-proxy routing because Control has no internal API rewrite. `NEXT_PUBLIC_BACKEND_URL` is an explicit development or cross-origin override frozen into the browser bundle at build time.",
+    variables: [
+      // CONTROL_CSP_MODE is read by src/proxy.ts (inside the scanned
+      // tree); the enriched manual entry below replaces the scan result.
+      // The BFF variables (Req 8.7) are read by src/lib/session-mode.ts,
+      // src/lib/session-crypto.ts and src/lib/bff-session.ts.
+      ...(await parseEnvReads(["apps/control/src"])).filter(
+        (v) =>
+          v.name !== "CONTROL_CSP_MODE" &&
+          v.name !== "CONTROL_SESSION_MODE" &&
+          v.name !== "CONTROL_SESSION_SECRET" &&
+          v.name !== "CONTROL_BACKEND_URL" &&
+          v.name !== "CONTROL_TELEMETRY_URL",
+      ),
+      {
+        name: "CONTROL_CSP_MODE",
+        type: "enum",
+        required: false,
+        default: "enforce",
+        allowed: ["legacy", "report-only", "enforce"],
+        description:
+          "Read by `src/proxy.ts` per request. `enforce` (default since 0.15) emits `Content-Security-Policy` with a per-request script nonce; `report-only` emits `Content-Security-Policy-Report-Only`; `legacy` emits no CSP header. An invalid value fails every request",
+      },
+      {
+        name: "CONTROL_SESSION_MODE",
+        type: "enum",
+        required: false,
+        default: "token",
+        allowed: ["token", "bff"],
+        description:
+          "`token` (default): the browser holds the Access-Token (sessionStorage). `bff`: the Next.js server holds the token server-side only and the browser receives an encrypted `HttpOnly` `SameSite=Strict` session cookie; API calls are routed through the same-origin BFF proxy `app/api/backend/[...path]`. An invalid value fails every request (fail closed)",
+      },
+      {
+        name: "CONTROL_SESSION_SECRET",
+        type: "string",
+        required: false,
+        description:
+          "Master secret (≥ 32 characters) for the AES-256-GCM sealed session cookie in `bff` mode (SHA-256-derived key). Required when `CONTROL_SESSION_MODE=bff`: without a valid secret the session endpoints return 503 and no cookie is ever issued. Rotating the secret invalidates all sessions",
+      },
+      {
+        name: "CONTROL_BACKEND_URL",
+        type: "string",
+        required: false,
+        default: "http://127.0.0.1:3000",
+        description:
+          "Server-side Runtime origin the BFF proxy forwards to in `bff` mode (falls back to `NEXT_PUBLIC_BACKEND_URL`). Never exposed to the browser; only an `http`/`https` origin is accepted",
+      },
+      {
+        name: "CONTROL_TELEMETRY_URL",
+        type: "string",
+        required: false,
+        description:
+          "Optional external error-telemetry endpoint (Req 9.6). The browser always POSTs client errors to the same-origin route `app/api/telemetry`; when this variable is set, the route forwards each event as JSON to the configured URL with a 5-second timeout. Without it, events are only written to the server log (`console.error`). The route is unauthenticated and therefore only accepts same-origin `application/json` posts (cross-site `Sec-Fetch-Site`/`Origin` → 403, other content types → 415) and strips control characters before logging or forwarding. Never exposed to the browser",
+      },
+    ],
+  },
 ];
 
 const expected = render(sections);

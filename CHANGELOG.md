@@ -18,194 +18,910 @@ releases:
 
 ## [Unreleased]
 
-## [0.14.0] — 2026-10-08
-Platform-Härtung, Phase 1 (Fundament), Phase 3 (Audit-Integrität) und Phase 4
-(Compliance/DSAR). Phase 1 bringt zwei neue interne Contract-/Sicherheitspakete, ohne dass
-sich ein Service geändert verhält; die Migration der Services folgt in den nächsten Phasen.
-Phase 3 härtet die Audit-Kette gegen Abzweigung, Genesis-Neustart nach Ausfall und
-nachträgliche Veränderung, und schreibt Regulierte_Aktionen nur noch nach durablem
-Audit-Erfolg fort. Phase 4 macht DSAR-Löschungen über alle Stores vollständig, idempotent
-und ehrlich: Search, Extract und Gate melden je-Store-Teilergebnisse über den
-Erasure-Contract, die Runtime verteilt als Orchestrator und stellt einen signierten
-Erasure_Receipt aus; ein Outpost-MirrorDelete löst den vollständigen Search-Cascade aus.
-Phase 5 härtet Extract gegen feindselige Dokumente (ZIP-Guard, sicheres XML, Parser- und
-Converter-Isolation, Subprozess-Limits, gehärtetes LibreOffice-Profil) und begrenzt Kosten
-und Speicher (Tagesbudget für Vision-Seiten, `MAX_PAGES`-Default, Upload-Spill auf Platte);
-Phase 6 macht den Tenant-Scope in Search verpflichtend und stimmt das Retrieval ab, abgesichert
-durch ein CI-Qualitäts-Gate gegen echte Modelle.
 ### Added
-- **`@atf/security-kit`** (`packages/security-kit`, privat). Gemeinsame Sicherheitsbausteine:
-  `safeEqual`/`safeEqualBytes` (SHA-256-Digest-Vergleich, timing-sicher), striktes
-  Base64URL (Padding- und Bit-Prüfung, auch als `@atf/security-kit/browser` für Control),
-  `EgressGuard` (Sperrtabelle inkl. 198.18/15, 192.0.0/24, 64:ff9b::/96, 2002::/16,
-  IPv4-mapped/compatible, NAT64 und 6to4; DNS-Pinning über `lookup`, Redirect-Revalidierung,
-  `maxBytes`, `timeoutMs`, `allowPrivateHosts`), JWT-/OIDC-Modul (feste Algorithmen,
-  Multi-Issuer-Routing über unverifiziertes `iss`, Discovery mit Single-Flight,
-  Positiv-Cache aus `Cache-Control` mit 5-min-Untergrenze, Negativ-Cache 30 s exponentiell
-  bis 5 min), Rate-Limit-Kern (GCRA mit Memory-Backend inkl. Eviction und Redis-Backend
-  über atomares Lua, konfigurierbarer Fail-Mode) sowie Prod_Gate-Regelbausteine mit
-  gemeinsamem Reporter (Services behalten ihre eigene `prod-gate.ts`). Tests laufen unter
-  Bun und Node (`test:node`).
-- **`@atf/erasure-contract`** (`packages/erasure-contract`, privat). Normativer
-  DSAR-Vertrag über Service-Grenzen: `ErasureRequestSchema` (idempotent über `requestId`,
-  Scopes `subject`/`tenant`/`reference` mit Querschnittsprüfen), `ErasureStoreResultSchema`
-  (`ok`/`failed`/`not_configured`, nicht-negative Zähler), `ErasureResponseSchema` und der
-  signierbare `ErasureReceiptPayloadSchema` (Subjekt nur als `sha256(tenantId|identifier)`,
-  kanonisches JSON mit rekursiv sortierten Keys als Signatur-Bytes; Signaturalgorithmus im
-  Envelope, nicht im Payload).
-- **Audit-Ketten-Integrität** (`@atf/runtime`, Req 1.1–1.3). Tip-Lesen, ID-Vergabe
-  (`nextval`), Hash-Berechnung und INSERT laufen in einer Transaktion unter
-  `pg_advisory_xact_lock(hashtext('atf:audit_log'))`; der Tip-Cache ist entfallen, die Kette
-  wird ausschließlich aus dem persistierten Zustand fortgeschrieben. Genesis kommt nur bei
-  nachweislich leerer Tabelle zum Einsatz — ein Lese- oder Schreibfehler wird geworfen statt
-  die Kette still neu bei Genesis zu starten; ein Tip ohne Hash (beschädigte Kette) wird
-  abgelehnt.
-- **`recordRequired` / Regulierte_Aktionen** (`@atf/runtime`, Req 1.4–1.5). Neue
-  `AuditLog.recordRequired()` löst erst nach durablem Schreibvorgang auf und wirft bei
-  Fehler. `compliance/regulated-actions.ts` listet die regulierten Aktionen
-  (`flows.publish`/`rollback`/`delete`, `approvals.resolve`, `dsar.self_erasure`,
-  `compliance.forget`, `tenant.delete`, `api_key.create`/`revoke`, `byok.set`); deren Routen
-  beantworten einen Audit-Fehler mit `503 AUDIT_UNAVAILABLE` und melden den Erfolg nicht als
-  abgeschlossen.
-- **Append-only `audit_log`** (`@atf/runtime`, Migration 42/43, Req 1.1/1.5). Trigger
-  `audit_log_immutable` blockiert UPDATE/DELETE (Retention ausschließlich über
-  `audit_log_purge(before_at)` als SECURITY-DEFINER-Funktion mit Vorab-Anker); Migration 42
-  legt die Tabelle `audit_anchors` an, Migration 43 entzieht `aiperator_app` und
-  `aiperator_operator` UPDATE/DELETE auf `audit_log` (auch in `rls-onboarding.ts`, dort
-  tabellenexistenz-gesichert).
-- **Anker, Metrik und Health** (`@atf/runtime`, Req 1.8–1.9). Prod_Gate warnt in Produktion
-  ohne `AUDIT_ANCHOR_FILE`; die Metrik `aiperator_audit_write_failures_total` zählt
-  fehlgeschlagene durable Schreibvorgänge (Hook in `createAuditLog`); `/health/ready` zeigt
-  einen `audit`-Hinweis bei Schreibfehlern (nie 503); der Shutdown lässt die Schreib-Warteschlange
-  in einem Grace-Fenster ablaufen und zählt nicht abgearbeitete Writes auf die Metrik.
-- **DSAR-Löschung in Search** (`@atf/search`, Req 2.5–2.6, Tasks 4.2–4.5). Der
-  Löschpfad über alle Tabellen ist aus `deleteRevisionCascade` extrahiert
-  (`deleteDocumentCascade`) und auf Reference-, Metadaten-Delete und Revisions-Abort
-  umgestellt; die Cache-Invalidierung erfolgt nach COMMIT. `POST /v1/erasure`
-  (Scopes `subject`/`reference`/`tenant`) löscht inkl. Statistiken und
-  Idempotenz-Ledger (Migration `GLOBAL_SCHEMA_VERSION = 9`,
-  `vs_search_stats.query_hash`, `STATS_STORE_RAW_QUERY`); Property-Tests
-  (Property 3) belegen die Vollständigkeit über alle Search-Tabellen.
-- **DSAR-Löschung in Extract** (`@atf/extract`, Req 2.7, Task 4.6).
-  `POST /v1/erasure` (Scope `extract.erasure`) für Jobs, Upload-Sessions,
-  Seitenbilder und verwaiste Quell-Blobs mit Ledger
-  (`extract.erasure_ledger`, DDL v4); der Aufruf löst die Search-Kaskade mit
-  demselben `requestId` aus und meldet sie als Teilergebnis `search.documents`
-  zurück — ohne Search-Ziel `not_configured`, nie Erfolg durch Weglassen.
-  `DELETE /v2/documents` meldet das Ergebnis des Search-Cascade.
-- **Audit-Redaction und Erasure im Gate** (`@atf/gate`, Req 2.8, Task 4.7).
-  Audit-Events werden über `audit.redact` (Pfade und Extra-Keys) geschwärzt,
-  `POST /v1/erasure` (Scope `gate.erasure`) löscht im persistenten Sink
-  idempotent über das Erasure-Ledger mit Tombstones; Fingerprint über
-  kanonisches JSON aus `@atf/erasure-contract`.
-- **Erasure-Orchestrator** (`@atf/runtime`, Req 2.9–2.12, Tasks 4.8–4.13).
-  `compliance/erasure-orchestrator.ts` verteilt DSAR-Löschungen parallel an alle
-  konfigurierten Stores (lokale `RetentionService`-Ziele plus
-  `ERASURE_TARGETS` = `[{service, url, tokenEnv}]`) mit Timeout, drei
-  Versuchen und exponentiellem Backoff; Operationen und Je-Store-Teilergebnisse
-  liegen in `erasure_requests` (Migration 44) und sind idempotent über
-  `requestId` — ein Wiederholungsaufruf replayt das gespeicherte Ergebnis.
-  Retry (`POST /admin/compliance/erasures/:id/retry`) läuft nur die
-  fehlgeschlagenen Stores erneut. Die DSAR-Antwort (`DELETE /v1/me/data`)
-  ist ehrlich: HTTP 200 nur bei Vollerfolg, 207 `ERASURE_PARTIAL` bei
-  Teilergebnis, 502 bei Gesamtausfall; der Erfolgstext erscheint nur bei
-  Vollerfolg (Property 4).
-- **Erasure_Receipt** (`@atf/runtime`, Req 2.11, Tasks 4.11–4.12). Jeder
-  abgeschlossene Löschvorgang erhält einen signierten Beleg über das
-  kanonische JSON des Payloads (Ed25519 über `ERASURE_RECEIPT_SIGNING_KEY`,
-  Fallback HMAC über `AUDIT_ANCHOR_SECRET` mit `alg`-Hinweis im Envelope);
-  das Subjekt erscheint ausschließlich als `sha256(tenantId|identifier)`.
-  `GET /v1/me/data/erasures/{id}` liefert den Beleg nur an das betroffene
-  Subjekt desselben Tenants. Property 5: `verify(sign(receipt)) = true`,
-  jede Bit-Änderung an Payload oder Signatur ergibt `false`.
-- **Systemtest Erasure** (`integration/system/erasure.test.ts`, Task 4.13).
-  Der echte Orchestrator fährt gegen Contract-konforme Stub-Server für
-  Search, Extract und Gate (Verteilung, Je-Store-Ergebnis, Idempotenz,
-  Teilfailure→partial→Retry, Receipt-Verifikation); live env-gated
-  (`OUTPOST_IT_*`) zusätzlich Outpost-MirrorDelete → Extract → Search und die
-  Extract-Kaskade `POST /v1/erasure` mit `search.documents`-Teilergebnis.
-- **ZIP-Guard** (`@atf/extract`). Jeder ZIP-basierte Container (XLSX, VSDX, DOCX, PPTX und
-  in DOCX eingebettete OOXML-Pakete) wird vor dem Entpacken allein anhand des
-  Central Directory geprüft: Eintragsanzahl (`ZIP_MAX_ENTRIES`, 10000), Summe
-  (`ZIP_MAX_TOTAL_BYTES`, 512 MiB) und größte unkomprimierte Größe (`ZIP_MAX_ENTRY_BYTES`,
-  200 MiB) sowie Kompressionsverhältnis je Eintrag (`ZIP_MAX_RATIO`, 100). Ein Verstoß lehnt
-  den Job mit dem neuen, nicht wiederholbaren Fehlercode `DOCUMENT_TOO_COMPLEX` (422) ab.
-- **Sicheres XML** (`@atf/extract`). Alle `fast-xml-parser`-Instanzen entstehen zentral in
-  `pipeline/safe-xml.ts` mit abgeschalteter Entity-Verarbeitung (XXE, Billion Laughs); die
-  fünf vordefinierten XML-Entities werden gezielt dekodiert, sodass `&` in Zellen und
-  Überschriften erhalten bleibt.
-- **Parser-Isolation** (`@atf/extract`). Die nativen Parser (BPMN, XLSX, DOCX, VSDX, E-Mail)
-  laufen in einem Worker-Thread mit Heap-Grenze (`PARSE_ISOLATED`, Default `true`;
-  `PARSE_MEMORY_LIMIT_MB`, Default 512, durchgesetzt unter Node, von Bun ignoriert). Ein
-  Überschreiten endet mit `DOCUMENT_TOO_COMPLEX` statt den Dienst mitzureißen; startet der
-  Worker nicht, folgt `child_process.fork` und zuletzt der In-Process-Aufruf mit Warnung.
-  `MAX_EMBED_DEPTH` (Default 2) begrenzt die Verschachtelung eingebetteter `.msg`-Nachrichten;
-  tiefere werden mit Warnung übersprungen.
-- **Isolierter Converter** (`@atf/extract`). `CONVERTER_MODE=isolated` leitet alle
-  poppler-/LibreOffice-/Tesseract-Aufrufe per zeilenweisem JSON-RPC über einen Unix-Socket
-  (`CONVERTER_SOCKET`, Default `/run/atf-converter/converter.sock`) an einen separaten
-  Converter-Prozess (`node dist/converter/server.js`, gedacht für einen Container ohne
-  Netzwerk, mit schreibgeschütztem Root-Dateisystem und ohne Root-Rechte). Über den Socket
-  gehen nur Kommandozeile und Ausgabe, nie Dokument-Bytes; Ein- und Ausgabeverzeichnisse
-  liegen auf einem gemeinsam gemounteten Volume unter demselben Pfad. Default bleibt `local`.
-  Der Build erzeugt dafür zusätzlich `dist/pipeline/isolate-entry.js` und
-  `dist/converter/server.js`.
-- **Subprozess-Limits und gehärtetes LibreOffice** (`@atf/extract`). Unter Linux mit
-  `prlimit` begrenzen `SUBPROCESS_MEMORY_LIMIT_MB` (`--as`, Default 0 = aus; im Container
-  das cgroup-Limit verwenden) und `SUBPROCESS_CPU_LIMIT_S` (`--cpu`, Default 900) jeden
-  Converter-Aufruf. Jedes private LibreOffice-Profil startet mit deaktivierten Makros,
-  blockierten Links aus nicht vertrauenswürdigen Quellen und ohne Aktualisierung verknüpfter
-  Inhalte.
-- **Tesseract-OCR-Fallback** (`@atf/extract`). Mit `OCR_FALLBACK=tesseract`
-  (`TESSERACT_BIN`, `OCR_LANG`, Default `deu`) erhält eine gescannte Seite bei Ausfall des
-  Vision-Modells OCR-Text mit Warnung an der Seite statt zu scheitern. Default `off`; Binary
-  und Traineddata müssen im Image bzw. im Converter vorhanden sein.
-- **Tagesbudget für Vision-Seiten** (`@atf/extract`, DDL v5). `VISION_BUDGET_PAGES_PER_DAY`
-  begrenzt die VLM-Seiten je Tenant und UTC-Tag über alle Jobs (atomarer Zähler in
-  `extract.vision_daily_usage`); ein Job, der die Grenze überschreiten würde, scheitert mit
-  dem neuen Fehlercode `BUDGET_EXCEEDED` (429, nicht wiederholbar). Default 0 = aus; Prod_Gate
-  warnt dann.
-- **Structured Output für Vision** (`@atf/extract`). Mit `VISION_SUPPORTS_JSON_SCHEMA=true`
-  sendet der Vision-Client `response_format: json_schema` für Seiten- und Pass-2-Anfragen;
-  lehnt der Provider das Feld ab oder ist die Antwort kein konformes JSON, greift der
-  bisherige Tag-Parser. Default `false`.
-- **Upload-Spill auf Platte** (`@atf/extract`). Multipart-Uploads oberhalb
-  `UPLOAD_MEMORY_THRESHOLD_BYTES` (Default 8 MiB, 0 = immer) werden unter `TEMP_DIR/uploads`
-  zwischengespeichert statt im Heap auf einen Konvertierungsplatz zu warten; ein Sweep beim
-  Start räumt Reste nach einem Absturz ab.
-- **Retrieval-Qualitäts-Gate** (CI, `scripts/eval`). Der neue CI-Job `eval` startet
-  `scripts/eval/compose.eval.yaml` (Search, Extract, TEI-CPU-Embedding und Cross-Encoder-
-  Rerank, deterministischer HyDE-Mock), ingestiert den deterministischen Golden-Korpus und
-  scheitert bei Unterschreitung von `scripts/eval/baseline/thresholds.json`; Baseline und
-  Ablationen (dense, rerank, HyDE, Kontext-Header) liegen unter `scripts/eval/baseline/`.
+
+- The supply-chain inventory now also covers the Rust dependencies of
+  Outpost Desktop (Req 10.7, Task 14.4b). With `--include-cargo`,
+  `scripts/generate-supply-chain.ts` reads the crate graph from
+  `apps/outpost-desktop/src-tauri/Cargo.lock` via `cargo metadata --locked`
+  (registry sources only; the local `atf` crate belongs to the project, not
+  to the third parties) and adds the crates as `pkg:cargo/` components to the
+  notices and the CycloneDX SBOM; the header and the SBOM metadata also
+  record the SHA-256 of `Cargo.lock`. License-text resolution follows the
+  existing tiered plan (crate-archive texts, NOTICE files, reviewed
+  declared-license fallbacks under `licenses/` for the crates.io-typical
+  cases in which the archive does not ship a license branch declared in the
+  manifest, without invented copyright holders); crates.io license
+  expressions (`MIT/Apache-2.0` slashes, `WITH` exceptions, LGPL choice) are
+  normalized before the policy check. Strong copyleft licenses (GPL/AGPL,
+  SSPL, BUSL and others) stay blocked and now also fail in the Rust graph.
+  The committed Linux-x64 workspace reference was regenerated in a Linux
+  container with Cargo (1153 package versions: 626 npm + 527 cargo) and is
+  byte-for-byte reproducible; image inventories stay npm-only because the
+  image build containers have no Cargo. CI (`hygiene`,
+  `supply-chain-workspace`) generates and checks the inventories with
+  `--include-cargo` after a preceding `cargo fetch --locked`.
+- `@atf/security-kit` now covers the complete building-block list of
+  Req 11.1: header utilities (`parseBooleanHeader`, `readHeader`,
+  `readListHeader`, `decodeIfBase64`, `sanitizeHeaderValue` including
+  `base64:` prefix decoding), an HTTP rate-limiter middleware around the GCRA
+  core (`createRateLimitMiddleware`, structural request/response types
+  without an Express dependency, `trustProxy`, `rejectBody`, `max: 0`
+  disables it), a synchronous `takeSync` path in the memory backend, and the
+  discovery client's `issuerMatch: "trailing-slash"` option for providers
+  such as Authentik whose document issuer carries a trailing slash.
+- Search and Extract move their duplicated auth building blocks to
+  `@atf/security-kit` (Req 11.2): constant-time comparison runs through
+  `safeEqual` (SHA-256 digest, no length oracle), OIDC discovery through the
+  kit's single-flight client, JWT verification in both apps through the
+  kit's `createJwtVerifier` (JWKS resolution via the discovery document,
+  exact issuer check against `document.issuer`), the rate limiters through
+  the GCRA middleware core, and the header utilities are thin re-exports of
+  the kit. Existing import paths, response formats (including the Extract
+  429 body with `code: "RATE_LIMITED"`) and principal mappings are
+  unchanged; the related behavior tests (Search 107, Extract 25) stay green.
+  Behavior differences compared with the previous local implementations:
+  (1) the rate limiter refills smoothly (GCRA) instead of window-edge based,
+  so there are no double bursts at window boundaries; (2) discovery now
+  rejects a document issuer that does not match (trailing slash tolerated)
+  instead of only warning; (3) Extract JWTs now require an `exp` claim;
+  (4) after a discovery failure a negative cache with backoff applies (30 s,
+  doubling, max. 5 min) instead of an immediate retry. Removed local copies:
+  `fetchDiscovery`/`base64Url`/`timingSafeEqualStr` (both OIDC modules),
+  `safeCompare` (both auth modules), sliding-window limiters (both rate
+  limiters), `fetchJwksUri`/local JWKS verification (both JWT verifiers).
+  The kit's test inventory grows to 214 tests (including header, middleware
+  and `issuerMatch` contracts).
+
+- Contracts instead of own implementations: Runtime and Gate import the
+  identity, transaction and evidence contracts from the contract packages
+  (Req 11.3). Runtime: `TransactionBudget`, `TransactionTrace`,
+  `DelegationHop` and `TransactionEnvelope` are now type aliases of
+  `@atf/transaction-contract` (`TransactionEnvelopeV1` including
+  `TRANSACTION_ENVELOPE_PROTOCOL_VERSION`); envelope validation in
+  `TransactionTokenValidator` runs through `TransactionEnvelopeV1Schema`
+  instead of hand-written field checks. The evidence meta keys,
+  `canonicalJson`/`sha256Hex` and contract serialization come from
+  `@atf/evidence-contract` (`inspectEvidenceActionContract`); the Runtime
+  `EvidenceActionContractMeta` keeps only the deprecated alias `hash`.
+  `AuthPrincipal` is now `RuntimePrincipalInput` from
+  `@atf/identity-contract`. Gate: `ActorContext` is `Actor`, `AuthContext`
+  extends `GatePrincipalInput`, and `actorFromClaim` comes from
+  `@atf/identity-contract` instead of a local copy. All existing import
+  paths and wire field names stay stable through aliases; pack discovery
+  (v1/v2 tool results) stays Runtime-specific.
+- Runtime: edge data-flow traces respect PII redaction and tokenization
+  (Req 7.12). The classifier `classifyEdgeFlow`
+  (`apps/runtime/src/graph/edge-flow.ts`) accepts an optional `redact`
+  callback that scrubs every free-text item content (query, answers,
+  classification/transcription, tool results, client tool names, sources)
+  BEFORE excerpt scoring, so no raw PII lands in the debug trace while output
+  redaction is active, and an excerpt cut can no longer split a PII value in
+  half. The engine path (`recordEdge` in `graph-engine/handler-factories.ts`)
+  passes the same effective output guardrail (including the per-flow
+  override) as the SSE stream; without a guardrail the trace is unchanged
+  (passthrough). Already tokenized content (PII vault, `[[PII:…]]`) matches
+  no detector and stays unchanged, so tokenization is respected instead of
+  processed twice. Tests: unit block in `edge-flow.test.ts` (scrubbing of
+  all channels, redact-before-excerpt, vault passthrough, off mode) plus the
+  integration test `edge-flow-redaction.test.ts` (real engine run with the
+  guardrail on/off against `InMemoryDebugTraceStore`).
+- Runtime: asymmetric transaction tokens and a JWKS route (Req 7.11).
+  `TransactionTokenIssuer`/`-Validator`
+  (`apps/runtime/src/transaction/token.ts`) now support
+  `TRANSACTION_SIGNING_ALG=HS256|ES256|EdDSA` (default: HS256, fully
+  backward compatible); the asymmetric private key comes as a PKCS8 PEM from
+  `TRANSACTION_SIGNING_KEY`. Asymmetrically signed tokens carry a `kid`
+  header (JWK thumbprint of the public key); verification uses the public
+  key derived via node:crypto. New public route
+  `GET /.well-known/atf-transaction-jwks.json`
+  (`apps/runtime/src/routes/transaction-jwks.ts`): with ES256/EdDSA it
+  publishes the public JWK (`kid`, `alg`, `use: "sig"`) with
+  `Cache-Control: public, max-age=300`, with HS256 an empty key set
+  `{"keys":[]}`; an invalid PEM fails closed with 500
+  `transaction_jwks_unavailable`. The Gate needs no code change: it already
+  verifies via `MCPGATE_TRANSACTION_JWKS_URI` (remote JWKS). Prod gate:
+  warning for HS256 signing in production, fatal for a broken signing
+  configuration; `AGENT_TRANSACTION_SECRET` stays configurable as before.
+  Note: Bun 1.4.2 returns non-extractable CryptoKeys, so public-JWK/kid
+  derivation and the verification import use node:crypto instead of
+  `jose.exportJWK`.
+- Runtime: central SQL identifier allowlist (Req 7.10). New module
+  `apps/runtime/src/db/sql-identifier.ts` with `isSafeSqlIdentifier()` and
+  `safeSqlIdentifier()`: a single validation point for all identifiers
+  (table, column, index names) interpolated into SQL at runtime (lowercase
+  `[_a-z][a-z0-9]*`, max. 63 bytes; quotes, semicolons, whitespace, dots and
+  non-ASCII are rejected). Connected call sites: `tenant-manager.ts`
+  (dynamic `SET` columns in `updateTenant`), `vector-store.ts` (table name
+  of `PgVectorStore`, replaces the previous inline regex),
+  `distributed-semaphore.ts` and `postgres-store.ts` (constant table names,
+  fail fast at module load) and `skill-canary.ts` (column prefix
+  `treatment`/`control` in the outcome UPDATE). Values stay parameterized
+  throughout. Tests: `apps/runtime/src/db/__tests__/sql-identifier.test.ts`.
+- Runtime: API key hashing with a server pepper (Req 7.9). New environment
+  variable `API_KEY_PEPPER` (default: empty; empty means "disabled",
+  whitespace counts as unset). When the pepper is set, new API keys are
+  stored with HMAC-SHA-256 (`hash_alg='hmac-sha256'`) instead of unsalted
+  SHA-256. The `hash_alg` column arrives with migration 45
+  (`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS hash_alg TEXT NOT NULL
+  DEFAULT 'sha256'`). The lookup checks the HMAC candidate first, then the
+  SHA-256 fallback; `hash_alg` is part of the SQL predicate, so a migrated
+  row never matches through its old hash. On a SHA-256 hit the lookup
+  migrates the hash lazily to HMAC (awaited, but fault tolerant: a migration
+  error never affects authentication). Both stores (`InMemoryTenantStore`,
+  `PostgresTenantStore`) take the pepper as a constructor option; the value
+  comes from `config.apiKeyPepper` via `bootstrap/persistence.ts`. The
+  production readiness gate warns when `API_KEY_PEPPER` is not set under
+  `APP_ENV=production`. Tests:
+  `apps/runtime/src/graph/__tests__/tenant-manager.test.ts`
+  (generateApiKey + pepper describe block with a fake DB),
+  `apps/runtime/src/config/__tests__/config.test.ts`,
+  `apps/runtime/src/config/__tests__/readiness.test.ts`.
+- Runtime: `policy_stale` metric/health flag and
+  `aiperator_degraded_total{component}` on all fail-open paths (Req 7.7,
+  7.8). The tool-authz loader (`apps/runtime/src/graph/tool-authz-loader.ts`)
+  sets the `policyStale` flag on every failed reload of `tool-authz.json`
+  (parse or read error) and counts `aiperator_policy_stale_total`; a
+  successful reload clears the flag again. A merely missing file still means
+  "no policy configured" and marks nothing as stale. `/health/ready` reports
+  an informational `policy_stale` check (`degraded` with a hint at the
+  last-known-good state, never a trigger for 503; the last valid policy
+  keeps being enforced). All fail-open degradations now count
+  `aiperator_degraded_total{component}`: `rate_limit` (store errors in open
+  mode; closed mode rejects and does not count), `semaphore` (Redis and
+  Postgres limiters), `thread_lock` (Redis errors, aborted or exhausted wait
+  budgets), `rag_compression` (factory/model errors, unparsable model
+  output), `history_summarizer` (factory or model-call errors) and
+  `memory_extractor` (model errors). The metrics instance is created in
+  `index.ts` before `buildCache` and passed through the bootstrap modules
+  (`observability`, `cache`) and optional trailing parameters to all
+  components. New tests: `tool-authz-loader.test.ts` (8), the
+  `policy_stale` describe block in `health.test.ts` (4) and
+  degradation-metric assertions in `rate-limit`, `distributed-semaphore`,
+  `thread-lock`, `memory-extractor`, `history-summarizer` and
+  `rag-compression`.
+- Security_Kit/Runtime/Gate: `jwks_uri` validation in OIDC discovery
+  (Req 7.3, 11.2). After the exact issuer match, `@atf/security-kit`
+  (`src/jwt/discovery.ts`) also checks the `jwks_uri` taken from the
+  discovery document: HTTPS is mandatory as soon as discovery itself is
+  reachable over HTTPS; the host must match the issuer host, the host of the
+  discovery URL itself (for a non-standard `discoveryUrl`) or the allowlist
+  `allowedJwksHosts` (exact entries or `.suffix` subdomains); invalid URLs are
+  rejected. `allowInsecureJwksUri: true` disables the HTTPS requirement
+  locally (development). Four discovery call sites in the Runtime now use the
+  kit client instead of their own implementations:
+  `middleware/jwt-verifier.ts`, `routes/auth-oidc.ts` (a cache instead of the
+  permanent `metadataCache`, now a TTL with a 5-minute floor and negative
+  back-off), `routes/rocketchat-connect.ts` and
+  `assistants/token-minter.ts`; the Gate wrapper in
+  `apps/gate/src/auth/authenticator.ts` was moved onto the kit client. Fixed
+  along the way: Rocket.Chat Connect previously verified `id_token` with a
+  bare `createRemoteJWKSet` (Egress_Guard bypass) and now uses `customFetch`
+  through the guard fetch. 8 new tests in
+  `packages/security-kit/test/discovery.test.ts`.
+- Runtime: Egress_Guard for outbound HTTP traffic (Req 7.1, 7.2). New core
+  `apps/runtime/src/security/egress.ts`: `createRuntimeEgress()` /
+  `initRuntimeEgress()` / `egressFetch` with SSRF protection: private,
+  loopback, link-local and metadata addresses are blocked unless an exact
+  hostname exception is listed in `EGRESS_ALLOW_PRIVATE_HOSTS` (split DNS);
+  always-forbidden ranges (metadata, `0.0.0.0`, CGNAT …) stay closed via
+  `@atf/security-kit` (`isAlwaysForbiddenAddress`). DNS pinning through a
+  connect-time hook (the resolved address set is checked and the first
+  allowed address is pinned, so there is no TOCTOU rebinding), IP literals
+  are validated eagerly (Bun bypasses the lookup hook for literals),
+  redirects are fully revalidated per hop (max. 5 hops), and response sizes
+  are capped at `EGRESS_MAX_RESPONSE_BYTES` (default 64 MiB, 0 = unlimited);
+  optional `EGRESS_TIMEOUT_MS` and `EGRESS_ALLOWED_HOSTS` (suffix entries
+  with `.` are possible). All 22 call sites in the Runtime (JWT
+  verifier/JWKS, OIDC discovery, provider testing, Rocket.Chat, MCP
+  client/Stateless-2026/token minter, eval, tracing, reranker, remote PII
+  detector, SLO, LLM factory, red team) now go through the guard or
+  injectable `fetchFn` seams with a guard default; `initRuntimeEgress()` is
+  installed in `index.ts` after `loadConfig()`. CI hygiene:
+  `scripts/check-raw-fetch.ts` (`bun run check:raw-fetch`) forbids a bare
+  `fetch(` outside the guard and tests and runs as its own step in the CI
+  pipeline.
+- Gate/Runtime: RFC 8693 token exchange for downstream MCP servers
+  (Req 6.13). The complete exchange implementation (`TokenExchanger`,
+  `ActorTokenProvider`, `createTokenEndpointResolver`) now lives in
+  `@atf/security-kit` (`src/auth/token-exchange.ts`, 15 tests), with a
+  structural `ExchangeLogger` so both the Runtime and the Gate logger fit;
+  `apps/runtime/src/auth/token-exchange.ts` is a thin re-export. New Gate
+  config field `server.tokenExchange` on the `mcp-proxy-tool` (mirrors the
+  Runtime schema: `tokenEndpoint`/`issuer`, `clientId`, `clientSecretEnv`,
+  `audience`, optional `scope`, `requestedTokenType`, `timeoutMs` and `actor`
+  for delegation): before every downstream call the executor mints an
+  audience-bound token and sends it instead of the login token. Fail closed:
+  a failed exchange ends the call (`meta.tokenExchangeFailed`), the
+  un-exchanged token is never sent as a fallback; a configured but never
+  resolved `clientSecretEnv` also refuses the call. Token endpoint requests
+  go through `secureOutboundFetch` with the same allowlist as the downstream
+  call (SSRF). The loader resolves `clientSecretEnv` (and
+  `actor.clientSecretEnv`) at startup and throws for a missing/empty
+  variable; `tokenExchange` and `forwardBearerToken` are mutually exclusive.
+- Gate (mcpgate): approval redemptions are now safe across replicas
+  (Req 6.1). New interface `ApprovalConsumptionStore`
+  (`apps/gate/src/mcp/approval-store.ts`) with a Redis implementation
+  (`SET atf:approval:{jti} 1 PXAT exp NX`, i.e. an atomic single-use
+  reservation across all replicas) and a memory implementation that, at its
+  capacity limit, evicts the entry with the earliest `exp` via a min-heap
+  instead of FIFO; expired JTIs are removed lazily. The store is created only
+  when approval rules are configured, shared through the app wiring and
+  reported in readyz as `approvalConsumption: memory|redis`. New prod gate:
+  `MCPGATE_REPLICAS > 1` without Redis (transaction, rate-limit or monitoring
+  URL) is fatal in production; single replicas may still fall back to the
+  memory map (warning).
+- Control: E2E suite for the five operator pages and a contract test against
+  the real Runtime (Req 9.10). `apps/control/e2e/ops-pages.spec.ts`
+  (Playwright, mock backend) checks Studio (flow picker with a loaded flow
+  list), Approvals (pending list, approve POST to `/monitoring/approvals/{id}`
+  with `{ approved: true }`, empty state afterwards), Autopilot
+  (configuration, run history with promotion), Canary (rollout display with
+  traffic percentage, empty state) and Tenants (list, search, detail tabs
+  API Keys/Usage/BYOK). `integration/system/control-runtime-contract.test.ts`
+  boots the real Runtime router factories (`createFlowsRouter`,
+  `createControlRouter` with `createApprovalGate`/`createCanaryManager`,
+  `createTenantsRouter` with `InMemoryTenantStore`) and validates every
+  response against the exact consumer shapes of the Control UI: if the
+  Runtime renames a field, the contract test fails before the Control
+  silently renders empty panels.
+- Control: coverage thresholds in the Vitest configuration (Req 9.11).
+  `vitest.config.ts` now enforces on every `bun run test` (coverage is on by
+  default, `@vitest/coverage-v8`) a minimum of 50 % statements, 45 %
+  branches, 45 % functions and 50 % lines across `src/**`, just below the
+  measured baseline (58/51/52/60 %), so regressions fail immediately.
+  `bun run test:coverage` runs the same suite explicitly.
+
 ### Changed
-- CI-Job `contracts` läuft jetzt zusätzlich `security-kit` und `erasure-contract`;
-  Supply-Chain-Inventare (`THIRD_PARTY_NOTICES.md`, `sbom.cdx.json`) neu generiert.
-- Regulierte Aktionen (Flows, Tenants, Approvals, Compliance/DSAR) auditiert die Runtime über
-  `recordRequired` statt best-effort `record()`; bei Audit-Unverfügbarkeit antworten sie mit
-  `503 AUDIT_UNAVAILABLE` (`AUDIT_UNAVAILABLE` ist ein neuer Fehlercode).
-- **Verpflichtender Tenant-Scope und Retrieval-Abstimmung** (`@atf/search`). Jede
-  Zugriffs-SQL verlangt einen expliziten Scope (Operator-Pfade über `operatorScope()`);
-  `DOCUMENT_ACL_DEFAULT` (Default `allow`, Prod_Gate warnt) und `ACL_REQUIRE_IDENTITY` mit
-  Scope `search.assert-identity` für zugesicherte Identitäts-Header. HNSW mit iterativem Scan
-  (`HNSW_ITERATIVE_SCAN`, Default `relaxed_order`) und `ef_search` ≥ Kandidatenlimit,
-  Sparse-Fusion über FULL OUTER JOIN (`RRF_WEIGHT_SPARSE`, `RRF_MISSING_ZERO`), gemeinsame
-  zeitliche Sichtbarkeits-CTE, `FTS_RANKER` (`ts_rank_cd` oder `bm25`) und
-  `MIN_RERANK_SCORE` mit Enthaltungsfeld. Suchstatistiken speichern nur noch
-  `query_hash` (HMAC mit `STATS_QUERY_PEPPER`); Rohanfragen nur mit `STATS_STORE_RAW_QUERY`.
-- **`MAX_PAGES`-Default 0 → 500** (`@atf/extract`). Ohne explizite Konfiguration lehnt der
-  synchrone v1-Konvertierungspfad Dokumente über 500 Seiten mit `TOO_MANY_PAGES` (422) ab.
-- **Prod_Gate Extract**: `SUBPROCESS_TIMEOUT_MS=0` verhindert jetzt den Start in Produktion;
-  `VISION_BUDGET_PAGES_PER_DAY=0` erzeugt eine Warnung.
+
+- Outpost: the release pipeline `outpost-release.yml` meets the same
+  hardening standard as `release.yml` (Req 10.1, 10.2, Task 14.1). All action
+  references are pinned to commit SHAs with a version comment; `permissions`
+  is set to `{}` globally and granted minimally per job. A new `guard` job
+  enforces, before every release, the exact tag SHA, ancestry to `main`, a
+  successful CI run on exactly that SHA and version equality of the tag with
+  all Outpost packages; the build/sign/release jobs depend on `guard`. A
+  signed build aborts while `plugins.updater.pubkey` in `tauri.conf.json` is
+  a placeholder or no updater endpoint is effective (neither
+  `plugins.updater.endpoints` nor `vars.OUTPOST_UPDATER_REPO`) (Req 10.5,
+  Task 14.3): a real Minisign public key and an updater endpoint are
+  mandatory before signature artifacts are produced.
+- Outpost Desktop: Tauri CSP set (Req 10.3, Task 14.2). Instead of
+  `csp: null` a restrictive policy now applies (`default-src 'self'`, scripts
+  from self only, `object-src 'none'`, `frame-ancestors 'none'`,
+  `base-uri 'self'`, `form-action 'self'`); besides `'self'`, `connect-src`
+  allows only the IPC endpoint and loopback-addressed Control API ports
+  (`http://127.0.0.1:*`), so the desktop client keeps its Control API access.
+  The desktop E2E suite (`tests/a11y.spec.ts`, runs against
+  `VITE_OUTPOST_CONTROL_URL`) still checks the status/config flow and the
+  shell's accessibility.
+- Outpost Desktop: `ATF_OUTPOST_EXECUTABLE` is only honored in debug builds
+  (Req 10.4, Task 14.3). Sidecar resolution in `lib.rs` ignores the
+  environment variable under `#[cfg(not(debug_assertions))]`, so a release
+  build only starts the bundled sidecar and no environment-variable attack
+  can slip in a foreign process; unit tests cover both branches.
+- CI: the Outpost jobs are fully built-out gate jobs (Req 10.6, Task 14.4).
+  The `outpost` job in `ci.yml` now runs `cargo fmt --check`, `cargo test`,
+  `cargo deny check` (new `apps/outpost-desktop/src-tauri/deny.toml` with
+  allowed license lists and a `ring` clarification) and `cargo audit`
+  against `Cargo.lock`; the `test` job of `outpost-release.yml` installs the
+  Tauri system dependencies so `cargo test` also compiles in the release
+  pipeline.
+- Control: the production build runs without `--experimental-build-mode
+  compile` (Req 9.12). The build script in `apps/control/package.json` now
+  calls the regular `next build`; verified with a complete prerender run
+  (32/32 pages), working standalone output (`node apps/control/server.js`
+  serves Studio/Approvals/Tenants with 200) and the deployment sequence from
+  the Dockerfile/CI (`build` + `next build --experimental-build-mode
+  generate`), which still passes unchanged. No ADR is needed because the
+  first alternative of the requirement is met; the E2E suite was also run
+  against the production standalone build (6/6 green).
+
+- Control: consolidated information architecture and a guided first run
+  with empty states (Req 9.9, Task 13.8). The provider test bench moves from
+  the standalone route `/provider-testing` into a "Test bench" tab on
+  `/providers` (Monitoring/Testing as controlled `Tabs`, panels are only
+  mounted for the active tab, heavy panels via `next/dynamic` with
+  `ssr: false`); the flow version diff moves from `/flow-diff` into a "Diff"
+  tab on `/flows` (Registry/Diff). Both old routes stay as server-side
+  `redirect()` stubs and forward to the tab deep link
+  (`/providers?tab=testing`, `/flows?tab=diff`) so bookmarks keep working;
+  each page reads the active tab from `?tab=` via `useEffect` (same
+  convention as `?flow=` on `/optimizer`). `NAV_GROUPS` in `src/lib/nav.ts`
+  loses both entries (and with that, they leave the ⌘K palette), the i18n
+  catalogs `en`/`de` lose their `nav.provider-testing`/`nav.flow-diff` keys;
+  the hints of `nav.providers`/`nav.flows` now describe both tabs. New
+  `EmptyState` primitive in `src/lib/ui` (dashed card, icon in a muted
+  circle, title/description/action slot): wired up as a guided first run on
+  `/graph` (links Studio and Providers while no executions exist) and for
+  the empty states of Approvals, the flow registry and the provider key
+  pool. `docs/UI-STYLE-GUIDE.md` §7/§8/§9 document the consolidated
+  navigation, the primitive and the tab-consolidation/first-run pattern.
+  Tests: `EmptyState.test.tsx`, `ProvidersPage.consolidation.test.tsx`,
+  `FlowsPage.consolidation.test.tsx` (8 new cases; Control suite 110 files /
+  937 tests).
+- Control: hard-coded colors are fully replaced by design tokens (Req 9.8,
+  Task 13.7). `globals.css` defines semantic status families
+  (`success`/`warning`/`danger`/`info` plus `copilot`/`subflow`/`accent-2`)
+  with six slots each (DEFAULT, `solid`, `solid-hover`, `foreground`, `soft`,
+  `border`; `*-solid`/`*-foreground` are deliberately theme-fixed,
+  DEFAULT/`soft`/`border` adapt via `.dark`), `--on-solid` for text on solid
+  surfaces, node category tokens (`--node-*`, 13 kinds + default), subflow
+  slots (`--cat-1..6`), chart tokens (`--chart-*`) and canvas edge tokens
+  (`--edge-*`, `--canvas-dots`), all exposed as Tailwind colors in
+  `tailwind.config.ts`. Bulk conversion: 806 class replacements in 92 files
+  (Tailwind palette shades `*-500` …, `bg-white`, `text-white` and
+  `slate`/`gray` tones → semantic tokens); tokenized by hand:
+  `graphUtils.ts` (node fills, status dots, approval rings/badges),
+  `subflows.ts`, `canvasIds.ts`, `edge-channels.ts`, `LabeledEdge.tsx`,
+  `useCanvasGraph.ts`, `GraphVisualizer.tsx`. For non-className contexts:
+  React Flow props (`markerEnd.color`, edge `style.stroke`, MiniMap
+  `nodeColor`, `<Background color>`) accept `var(--token)` strings (inline
+  style based, verified in RF 12.11.2); Recharts `stroke`/`fill` are SVG
+  presentation attributes and are mapped to the current theme resolution
+  through the new hooks in `src/lib/theme/palette.ts` (`useChartPalette()`,
+  `useEdgePalette()`, `useNodePalette()` + `nodeTypeVarColor()`)
+  (MutationObserver on `<html>`, hex fallback for SSR/jsdom), applied in
+  `MetricsSidebar`, `CostPanel` and `LimitsPanel`. No hex value, no `rgb()`
+  and no palette shade remains outside `palette.ts`/tests;
+  `docs/UI-STYLE-GUIDE.md` §3 documents the tokens and removes the previous
+  raw-palette exception. Visible change: status and edge colors are now
+  dark-mode adaptive and consistent; test assertions follow the new class
+  names (semantics unchanged).
+- Control: new thin i18n layer with the languages `de` and `en` (Req 9.7,
+  Task 13.6). Decision against a library (next-intl, react-intl): the need
+  is a flat key→string catalog without plurals, interpolation or lazy
+  loading, so the in-house layer (`src/lib/i18n/`) stays at a
+  provider/hook, `Intl` formatters and a cookie-based locale switch, with no
+  new runtime dependency and no bundle bloat. New: `LocaleProvider`/
+  `useI18n()` with a type-safe `t(MessageKey)` (the `en` catalog is the
+  source of truth, `de` is enforced by a parity test), the `NEXT_LOCALE`
+  cookie, a dynamic `<html lang>` from the cookie (root layout, read on the
+  server) and `LocaleToggle` in the header. `src/lib/i18n/format.ts`
+  provides locale-aware `Intl` formatters (`formatNumber`,
+  `formatDateTime`, `formatDate`, `formatTime`, `formatCurrency`, including
+  the invalid-date placeholder `—`); ~59 scattered `toLocale*` calls in
+  panels, tables and pages were converted. Instead of fixed German texts,
+  `src/lib/nav.ts` carries `labelKey`/`hintKey`/`groupKey` (`MessageKey`);
+  navigation, breadcrumbs and the command palette render through them.
+  Existing semantic formats (`src/lib/formula.ts`, `src/lib/currency.ts`)
+  are deliberately left untouched.
+- Control: `window.confirm`/`window.prompt` are fully replaced by a
+  `Dialog`-based confirm primitive (Req 9.5, Task 13.5). New:
+  `ConfirmProvider`/`useConfirm()` (`src/lib/ui/ConfirmDialog.tsx`) with
+  `confirm()` (Promise\<boolean\>) and `prompt()` (Promise\<string|null\>),
+  mounted in `layout.tsx` and therefore available on every route. All nine
+  previous call sites (flow switch and save/publish/discard/overwrite in
+  Studio (`useStudioSave`, Studio page), draft create/delete/switch
+  (`useStudioDrafts`) and flow delete and import (`FlowsTab`)) now ask
+  through the accessible dialog primitive (focus, Escape, form submit)
+  instead of the browser dialog. Plus error telemetry (Req 9.6): the new
+  client `src/lib/telemetry.ts` reports errors from error boundaries,
+  deduplicated (30 s window), to the same-origin route
+  `POST /api/telemetry`, which caps event sizes, forwards them with
+  `CONTROL_TELEMETRY_URL` to a configurable external endpoint (5 s timeout,
+  fail open into the server log) and always answers 204.
+  `global-error.tsx`, a root `not-found.tsx` and the missing `loading.tsx`
+  for jobs, models, provider-testing, shadow and triggers complete the route
+  coverage; `error.tsx` and `global-error.tsx` report through the telemetry
+  client. The tests (`StudioBuilder`, `FlowsTab`) mount the
+  `ConfirmProvider` and confirm dialogs explicitly instead of mocking
+  `window.confirm`.
+- Control: the five large Studio components are split into modules and
+  custom hooks below 600 lines (Req 9.3/9.4, Task 13.4), without behavior
+  change. `StudioBuilder` (2,835 lines) becomes a thin composition layer
+  (498 lines); loading, saving, drafts, history, node CRUD, bulk actions,
+  subflows, selection, auto layout, copilot, pinned run and the canvas
+  overlay live in custom hooks under `src/hooks/` (`useStudioBuilder`,
+  `useStudioLoad`, `useStudioSave`, `useStudioDrafts`, `useStudioHistory`,
+  `useStudioNodeCrud`, `useStudioBulkActions`, `useStudioSubflows`,
+  `useStudioSelection`, `useStudioAutoLayout`, `useStudioCopilot`,
+  `useStudioPinnedRun`, `useCanvasGraph`, `useCanvasOverlay`), panels under
+  `src/components/studio/`. `FlowCanvas` (522 lines) uses memoized
+  `nodeTypes` from `components/graph/CustomNodes.tsx` (Req 9.4);
+  `FormulaEditor` becomes a barrel (34 lines) with eleven modules under
+  `components/formula/`; `AssistantsPanel` (71 lines) with six modules under
+  `components/assistants/`; `NodePropertyPanel` (516 lines) with nine
+  sections under `components/nodepanel/`; the graph `NodeDetailPanel`
+  (1,906 lines) becomes a panel composition (396 lines) with nine modules
+  under `components/graph/nodedetail/` (shared building blocks, Markdown
+  renderer, parsers, variable/header tables, error recording, type-specific
+  renderers). Existing import paths (`NodePropertyPanel`,
+  `FlowSettingsPanel`, `EdgeSelection`, `renameFlowVariable`, `JsonEditor`)
+  stay stable through re-exports. The lint baseline drops in the process
+  (192 errors / 650 warnings instead of 200 / 655).
+- Control: the monitoring stream no longer hands events into React state
+  per message (Req 9.1, Task 13.1). `useMonitoringEvents` now writes incoming
+  SSE/WebSocket events into a new fixed-capacity ring buffer
+  (`src/lib/ring-buffer.ts`) and hands them to React through an external
+  store (`src/lib/monitoring-event-store.ts`) at most every 200 ms via
+  `useSyncExternalStore`: the first event of a burst starts the flush timer,
+  later events of the same window ride along in the pending batch. Between
+  flushes the snapshot reference is stable, so a token-by-token stream
+  re-renders the dashboard at most five times per second instead of once per
+  chunk. The public API (`events`, `isConnected`, `error`, `clearEvents`) is
+  unchanged; `events` is always the last `maxEvents` events in arrival
+  order.
+- Control: property test for the SSE buffer (Property 16, Req 9.1,
+  Task 13.2). `src/__tests__/monitoringEventStore.property.test.ts` verifies
+  with fast-check (new devDependency in `apps/control`) for arbitrary event
+  sequences, capacities and flush times: after every flush the rendered list
+  is exactly the last `maxEvents` events in arrival order, including
+  modeling of the flush timer for timed flushes, clear rounds and the bound
+  of at most one React notification per flush window. Additional unit tests
+  for `RingBuffer` and the store (`monitoringEventStore.test.ts`, 13 cases).
+- Control: data queries consistently go through TanStack Query and
+  `lib/control-api` (Req 9.2, Task 13.3). All direct `fetch` calls in
+  components and app pages were migrated: `AutopilotPanel` and
+  `FlowDiffPanel` use `useQuery`/`useMutation` with a central `QueryClient`
+  (staleTime 30 s), `FlowVersionBar` fetches the version list via
+  `useQuery`, and `FlowCopilotPanel`, `FormulaEditor`, `OptimizePanel`,
+  `StudioBuilder`, `studio/page.tsx` and `traces/page.tsx` call the backend
+  only through `request()`/`json()` from `lib/control-api`, with the
+  `Authorization` header only when a token exists. As a permanent rule, a
+  Biome override (`noRestrictedGlobals`) in `biome.json` enforces that
+  `fetch` is an error in `apps/control/src/components/**` and
+  `apps/control/src/app/**` (except the API proxy routes); permitted direct
+  calls stay limited to `lib/`. The component tests (QueryClientProvider
+  around all affected renders) stay green unchanged: 106 files / 914 tests.
+- Control: Playwright coverage of the security hardening (Req 8.1, 8.3,
+  Task 12.6). The new spec `e2e/security-csp.spec.ts` checks against the
+  real Next server: (1) the CSP header is present in enforce mode and
+  carries a nonce in `script-src` that is assigned to a script in the
+  delivered HTML; (2) no inline `<script>` in the HTML lacks that nonce (the
+  response HTML is checked with `DOMParser` because the browser removes the
+  `nonce` attribute from the DOM after execution); (3) the operator token
+  never appears in the EventSource URL, the stream only uses the short-lived
+  ticket from the exchange. This fixed a real bug in `src/proxy.ts`: the
+  nonce branch returned a second `NextResponse.next()`, which dropped all
+  previously set security headers (CSP, X-Frame-Options, …). The headers are
+  now set on the response that carries the forwarded request headers.
+- Control: optional BFF mode keeps access tokens on the server (Req 8.7).
+  With `CONTROL_SESSION_MODE=bff`, Control runs two Next.js route handlers:
+  `app/api/session` (POST exchanges a token handed over by the backend for an
+  AES-256-GCM sealed session, GET returns the auth status and role, DELETE
+  ends the session) and `app/api/backend/[...path]` (same-origin proxy to the
+  Runtime that reads the token only on the server from the session and sets
+  it as the `Authorization` header). The browser only receives an HttpOnly,
+  Secure (over HTTPS), SameSite=Strict cookie (`atf_control_session`), never
+  the token itself; `CONTROL_SESSION_SECRET` (≥ 32 characters) is mandatory,
+  without it the endpoints answer 503 (fail closed). The proxy validates
+  every target path against an allowlist (Runtime API prefixes only, OIDC
+  dance paths excluded, dot segments normalized) and otherwise rejects with
+  404, so there is no SSRF. In the client, `AuthProvider` detects the mode
+  through a server-rendered, nonce-carrying flag and then works with a
+  placeholder sentinel instead of a real token; all `backendUrl()` calls go
+  through the proxy, so the browser only addresses its own origin. The
+  default stays `token` (previous behavior unchanged); an invalid mode value
+  fails every request.
+- Control: `RequireRole mode="disable"` excludes keyboard interaction
+  (Req 8.8). The disabling container also carries the HTML attribute `inert`
+  (React 19): descendants are removed from the tab order and pointer, click
+  and focus events are blocked; `aria-disabled` and `pointer-events: none`
+  alone left buttons and inputs reachable by keyboard. The visual
+  de-emphasis (reduced opacity) is unchanged.
+- Control: hardened logout redirect, shared base64url decoding and the
+  legacy hook removed (Req 8.4, 8.5, 8.6). `logout()` only follows an
+  `endSessionUrl` provided by the backend when it uses HTTPS and its host
+  exactly matches the configured IdP issuer; the Runtime endpoint
+  `GET /monitoring/auth/config` now reports that host as `issuerHost` (older
+  backends without the field: all end-session URLs are discarded, fail
+  closed; a plain local logout is unaffected). The two local ad-hoc JWT
+  decoders (`decodeTokenExpSeconds` in `lib/oidc.ts`, `extractRoleFromToken`
+  in `AuthProvider`) now use the padding-correct, strict
+  `base64UrlDecodeToString` from `@atf/security-kit/browser`, the same
+  decoding as the backend and the kit, with no second `atob`/`Buffer` path
+  that can drift. The outdated `useToken` hook (localStorage, a duplicate of
+  the `AuthProvider` token store) is removed; consumers use `useAuth()`
+  only.
+- Control: no token-in-URL fallback over HTTPS any more (Req 8.3). When the
+  monitoring ticket cannot be obtained (HTTP error, network error or a
+  response without a ticket), `useMonitoringEvents` on an HTTPS page refuses
+  the fallback to `?token=<AccessToken>` in the EventSource/WebSocket URL;
+  the access token would otherwise end up in server logs, proxies and the
+  browser history. Instead, the monitoring and history pages show the
+  connection error and the reconnect backoff keeps running. Over plain HTTP
+  (development only) the fallback stays, with a `console.warn`.
+- Control: CSP enforced instead of report-only (Req 8.1, 8.2). **Upgrade
+  note:** `CONTROL_CSP_MODE` now defaults to `enforce` instead of `legacy`;
+  the old behavior requires an explicit `CONTROL_CSP_MODE=legacy`. The
+  headers are now emitted per request by `src/proxy.ts` (Next 16 middleware)
+  instead of by `next.config.ts` at build time: `enforce` sends
+  `Content-Security-Policy` with a fresh per-request nonce in `script-src`
+  (without `'unsafe-inline'`), which Next adopts for its own inline scripts
+  and which the theme init script in the root layout carries; `style-src`
+  keeps `'unsafe-inline'` (Tailwind/@xyflow inline styles, documented ADR:
+  attribute styles cannot carry a nonce). In every mode the base security
+  headers are added: `X-Content-Type-Options: nosniff`,
+  `Referrer-Policy: strict-origin-when-cross-origin`, `Permissions-Policy`
+  (clipboard stays allowed, the variables editor and trace viewer copy with
+  it), `X-Frame-Options: DENY` and `Strict-Transport-Security` for HTTPS
+  requests only (via `x-forwarded-proto`). An invalid mode value fails every
+  request (fail closed, like the build error before).
+- Runtime: fail mode and chunking of the model-based input guardrail
+  (Req 7.5, 7.6). New `INPUT_GUARDRAIL_MODEL_FAIL_MODE` (`open`/`closed`)
+  with an environment-dependent default: `open` in development, `closed` in
+  production (resolved in `config/load.ts`, an explicit setting wins). On a
+  classifier error, `closed` now returns
+  `{ isInjection: true, reason: "classifier_unavailable" }` (block in
+  `block` mode), `open` returns score 0 as before; the heuristic stays
+  effective in both cases. Every outage (both fail modes) counts
+  `aiperator_input_guardrail_model_degraded_total{fail_mode}` and writes
+  `inputGuardrailClassifierDegraded`/`inputGuardrailClassifierError` as a
+  trace diagnostic into the request params. Inputs longer than
+  `INPUT_GUARDRAIL_MAX_CHARS` (default 8000, 0 disables) are classified in
+  overlapping sections (200 characters) and combined by maximum score
+  instead of risking a timeout; visible through
+  `aiperator_input_guardrail_model_chunked_total` and `inputGuardrailChunks`
+  in the trace.
+- Runtime: `tenantId` is derived only from verified claims (Req 7.4). The
+  legacy mode without `AUTHN_MODE` only decodes JWT payloads unchecked
+  (Base64); these payloads no longer establish a tenant identity.
+  `middleware/auth.ts` only evaluates `resolveTenantClaim` with an active
+  verifier (`verifier.enabled`): with `TENANT_ISOLATION_ENABLED=true` an
+  unverified token with a tenant claim now leads to 401 instead of a tenant
+  takeover; without isolation the deployment default applies. The
+  verifier-less mode already failed fatally at production startup through
+  the production gate (`Production requires AUTHN_MODE=oidc`); this is now
+  pinned by readiness tests. Further seals: `routes/assistant-caller.ts` no
+  longer falls back to `X-Tenant-Id`/`X-Mandant-Id` when a principal exists
+  but carries no tenant (the header fallback remains only for routers
+  without the auth middleware); `buildRequestContext`
+  (`routes/chat/handler.ts`) only takes over `client_id`/`tid` claims with
+  `identityClaimsVerified=true` (`routes/models.ts` now passes the flag as
+  well); `routes/compliance.ts` (DSAR subject) and `routes/memory.ts`
+  (memory scope) only decode with `jwtVerifier.enabled`. Behavior change in
+  legacy deployments without a verifier: requests with a hand-crafted
+  `tenant_id` claim are no longer assigned to the named tenant.
+
+- Gate (mcpgate): transaction envelope and evidence validation import from
+  the contract packages instead of own implementations (Req 11.3).
+  `apps/gate/src/transaction/fabric.ts` no longer defines
+  `TransactionEnvelope` and `TransactionBudget` locally but uses
+  `TransactionEnvelopeConsumerV1Schema` and the types from
+  `@atf/transaction-contract` (consumer variant: opaque delegation hops and
+  `trace.deadlineAt` as a number or ISO string, as the Runtime mints it);
+  the hand-written checks (version/iss/aud/iat/exp/scopes/groups/budget/
+  trace) are replaced by schema validation, while Gate-specific semantics
+  stay: `evidencePackHash` is forbidden as an envelope claim, SHA-256 hashes
+  are lowercased, alias conflicts fail closed.
+  `apps/gate/src/mcp/evidence-contract.ts` now validates the action-contract
+  structure with `EvidenceActionContractV1Schema` from
+  `@atf/evidence-contract` (including `canonicalJson`/`sha256Hex` and the
+  five meta keys re-exported from there); the Gate checks for action binding
+  (tool/argsHash), declared digests, canonical wire form and bundle
+  selection stay with unchanged error messages. Mixed-case hash encoding is
+  normalized before the schema check, so the mixed upper/lower case that was
+  always tolerated on the wire is still accepted.
+
+- Gate (mcpgate): auth, discovery, rate limiting and egress address checks
+  now use `@atf/security-kit` instead of duplicated implementations
+  (Req 6.9, 6.10, 6.11, 6.14, 11.2). The behavior differences were first
+  recorded as characterization tests
+  (`apps/gate/test/unit/characterization-910.test.ts`).
+  - **Auth/discovery (Req 6.10/6.11):** JWT verification runs through
+    `createJwtVerifier`: tokens are mapped to their verifier by the
+    (unverified) `iss` claim, algorithms and clock tolerance are configurable
+    per issuer; OIDC discovery runs through `createDiscoveryClient`
+    (single flight, positive cache ≥ 5 min, negative cache with exponential
+    backoff). Verification errors no longer expose internals of the JWT
+    library, only the generic message "Token verification failed".
+    **Hardening:** tokens without an `exp` claim are now rejected
+    (`requireExpiry` is the kit default).
+  - **Rate limit (Req 6.9):** the per-identity limiter
+    (`identity-rate-limit.ts`) replaces the fixed-window counter with GCRA
+    from the security kit; the Redis backend runs the entire check as an
+    atomic Lua script (no more INCR/PEXPIRE race between replicas). The
+    bucket key is now `Issuer:Tenant:Subject` instead of the subject only.
+    New configuration point `server.rateLimit.perIdentity.failMode`
+    (`open`|`closed`, default `closed`): on a Redis outage requests are
+    rejected (protection first) or let through (availability first).
+  - **Egress (Req 6.14):** the IP address check in `tools/outbound.ts`
+    delegates to the security kit's address catalog. Additionally forbidden:
+    `198.18.0.0/15` (benchmarking), `192.0.0.0/24` (IANA), IPv6 NAT64
+    `64:ff9b::/96` and 6to4 `2002::/16`; embedded IPv4 addresses are
+    evaluated. The split-DNS exception for explicitly allowed private hosts
+    never opens link-local, CGNAT or metadata addresses
+    (`isAlwaysForbiddenAddress`). Response sizes stay capped per tool (http
+    10 MiB, taiga 1 MiB, mcp-proxy configured).
+- Gate (mcpgate): prod gate and edge middleware for egress and Host-header
+  hardening (Req 6.8, Req 6.12). An empty `server.outbound.allowedHosts` is
+  now fatal without exception under `MCPGATE_ENV=production`, regardless of
+  whether http/mcp tools are currently configured, because a tool added
+  later would otherwise inherit unrestricted egress. Database-only
+  deployments declare "no egress" explicitly via a reserved, never-resolving
+  host (e.g. `outbound-disabled.invalid`). `server.trustProxy` is newly
+  configurable (default `1`, overridable with
+  `TRUST_PROXY=true|false|<hops>`); the Express setting `trust proxy`
+  replaces the previous fixed value. The Host-header check always runs:
+  empty or missing Host headers are rejected with 400, and with a configured
+  `server.allowedHosts` unknown hosts additionally get 403. IPv6 literals are
+  parsed bracket-aware (`[::1]:3000` → `::1`); malformed brackets count as
+  empty. Own tests: `apps/gate/test/unit/host-header.test.ts`, loader/prod
+  gate suites, raw-socket integration tests in `backends.test.ts`.
+- Gate (mcpgate): with business authorization disabled
+  (`authorization.enabled=false`) privileged conditions now evaluate to
+  `false` instead of `true` (Req 6.7, ADR-0002). Previously the fallback in
+  `apps/gate/src/tools/database-tool.ts` forced all conditions to `true`, so
+  every caller got every `{{if:privileged}}` SQL branch (act for another
+  person, unmasked data, admin writes). Structurally, every condition whose
+  rules read the `scopes` context is privileged
+  (`privilegedConditionNames` in `apps/gate/src/db/conditions.ts`); these
+  stay closed with authorization disabled, all other conditions are
+  evaluated normally. For redaction guards (`redact[].when`) all guards stay
+  active (fail closed: over-redaction instead of a data leak). `explain()`
+  uses the same logic. All live configurations run with
+  `authorization.enabled: true`, so production behavior does not change.
+- Gate (mcpgate): pagination for database tools is validated at load time
+  and uses HMAC-signed cursors (Req 6.5/6.6). A tool that sets
+  `pagination.enabled` but whose SQL already contains a top-level `LIMIT`,
+  `TOP`, `OFFSET` or `FETCH` is rejected while loading the configuration;
+  the scanner (`apps/gate/src/db/sql-tokens.ts`) skips comments, strings and
+  quoted identifiers, and a `LIMIT` in a subselect stays allowed. Pagination
+  is also only permitted with a configured `pagination.orderBy` (otherwise
+  rows can be skipped or repeated); `orderBy` entries must be plain column
+  references (optionally with `ASC`/`DESC`). `nextCursor` is now an opaque
+  token `base64url(JSON{o,fp,sub}).hmac`
+  (`apps/gate/src/tools/pagination-cursor.ts`), bound to the tool name, the
+  args fingerprint (all args except `cursor`/`pageSize`) and the principal;
+  tampered, foreign or with-other-args reused cursors are rejected with
+  `Invalid pagination cursor`, and a bare decimal offset as before is no
+  longer accepted. New is an optional keyset mode
+  (`pagination.keyset: [col…]`, columns must appear in `orderBy`): instead of
+  `OFFSET` the wrapper generates a dialect-portable seek predicate
+  `WHERE (a > ?) OR (a = ? AND b > ?)` with bound values from the last page.
+  The signing secret comes from `server.pagination.secret`; without
+  configuration it falls back to a random in-process secret (cursors then do
+  not survive a restart and are not valid across replicas). The `autoLimit`
+  pass-through keeps its previous `LIMIT`/`TOP` semantics.
+- Gate (mcpgate): governance policies are compiled once per configuration
+  version (Req 6.2/6.3/6.4). `compilePolicy(config)` produces precompiled
+  RegExp globs, sets for subjects/groups and canonicalized `argumentEquals`
+  values; `GovernancePolicy` takes a `CompiledPolicy` and determines the
+  matching rule per call in a single pass (`evaluate()` returns the effect,
+  rule and evidence requirement together). Groups are read from the
+  configured `oauth.groupClaim` (default `groups`; arrays and comma- or
+  space-separated strings) instead of being hard-wired to `groups`. The
+  compiled policy holder (`GovernancePolicyRef`) is shared across the SSE,
+  Streamable and Stateless transports and swapped on hot reload without
+  recreating open sessions. Approval fingerprints now sort keys by code unit
+  instead of `localeCompare` (`"B" < "a"`); newly issued tokens carry the
+  marker `fp: 2` in the payload, older tokens without the marker are verified
+  against the legacy fingerprint until they expire. Along the way: the SSE
+  and Streamable routers did not pass `approvalStore` to the MCP server and
+  therefore used the module-default in-memory map instead of the shared
+  (possibly Redis) store; fixed.
+- Gate (mcpgate) migrates from zod 3 to zod 4 (4.4.3). The configuration
+  schemas (`apps/gate/src/config/schema.ts`) now use the zod 4 API:
+  `z.record` with an explicit key schema, `code: "custom"` instead of
+  `z.ZodIssueCode.custom`, and `prefault()` instead of `default({})` for
+  object schemas with partial defaults; otherwise partially specified
+  sections (e.g. `server.cors` without `origins`) would lose their field
+  defaults. Validation errors and messages stay identical; prerequisite for
+  adopting the security kit (zod 4).
+
+### Deprecated
+
+- Gate (mcpgate): `server.forwardBearerToken` on the `mcp-proxy-tool` is
+  deprecated (Req 6.13). The downstream receives the caller's login token
+  unchanged, with the gateway's audience (confused deputy). Migration:
+  configure `server.tokenExchange` (RFC 8693), which mints an audience-bound
+  token. The executor logs the usage once per tool with a warning; the prod
+  gate reports it as fatal in production and as a warning otherwise. Setting
+  both fields is a configuration error.
+
+### Security
+
+- Control: the unauthenticated error-telemetry route `POST /api/telemetry`
+  only accepts same-origin JSON posts: requests whose `Sec-Fetch-Site` or
+  `Origin` identify a cross-site sender get 403, non-`application/json`
+  bodies get 415, and ASCII control characters (except newlines in `stack`)
+  are stripped before the event is logged or forwarded to
+  `CONTROL_TELEMETRY_URL`. Same-origin reporting from the Control UI is
+  unchanged.
+- Control: the BFF session endpoint `/api/session` rejects cross-site POST
+  and DELETE requests with 403 (login-CSRF guard) and requires
+  `Content-Type: application/json` for POST (415 otherwise). Both routes
+  share the helper `src/lib/same-origin.ts`.
+- Control: the BFF proxy `app/api/backend/[...path]` now forwards exactly the
+  path the allowlist validated. Decoded segments are re-encoded, so encoded
+  separators (`%2F`, `%5C`) stay inside their segment, and dot segments
+  (including `%2e%2e`) are resolved before the allowlist check
+  (`normalizeBffPath` in `src/lib/bff-allowlist.ts`). Previously the
+  allowlist checked the normalized path while the upstream request used the
+  raw one.
+- Outpost: the "Verify updater configuration" release step reads
+  `tauri.conf.json` as JSON and fails a signed build when
+  `plugins.updater.pubkey` is a placeholder or no updater endpoint is
+  effective (empty `plugins.updater.endpoints` and no
+  `vars.OUTPOST_UPDATER_REPO` from which the build step injects one),
+  completing Req 10.5.
+
+### Fixed
+
+- `bun run verify:spdx` no longer crashes with `ENOENT` on files that are
+  still tracked but already deleted in the working tree.
+- Test fixtures no longer contain literal PEM private-key headers, so the
+  public-tree scanner passes without an allowlist entry.
+
+## [0.14.0] — 2026-10-08
+Platform hardening, phase 1 (foundation), phase 3 (audit integrity) and phase 4
+(compliance/DSAR). Phase 1 adds two new internal contract/security packages without any
+service changing its behavior; the service migrations follow in the next phases. Phase 3
+hardens the audit chain against forks, a genesis restart after an outage and later tampering,
+and only advances regulated actions after a durable audit success. Phase 4 makes DSAR erasure
+complete, idempotent and honest across all stores: Search, Extract and Gate report per-store
+partial results through the erasure contract, the Runtime fans out as the orchestrator and
+issues a signed Erasure_Receipt; an Outpost MirrorDelete triggers the complete Search
+cascade. Phase 5 hardens Extract against hostile documents (ZIP guard, safe XML, parser and
+converter isolation, subprocess limits, hardened LibreOffice profile) and bounds cost and
+memory (daily budget for vision pages, `MAX_PAGES` default, upload spill to disk); phase 6
+makes the tenant scope in Search mandatory and tunes retrieval, backed by a CI quality gate
+against real models.
+### Added
+- **`@atf/security-kit`** (`packages/security-kit`, private). Shared security building
+  blocks: `safeEqual`/`safeEqualBytes` (SHA-256 digest comparison, timing safe), strict
+  Base64URL (padding and bit checks, also as `@atf/security-kit/browser` for Control),
+  `EgressGuard` (block table including 198.18/15, 192.0.0/24, 64:ff9b::/96, 2002::/16,
+  IPv4-mapped/compatible, NAT64 and 6to4; DNS pinning via `lookup`, redirect revalidation,
+  `maxBytes`, `timeoutMs`, `allowPrivateHosts`), a JWT/OIDC module (fixed algorithms,
+  multi-issuer routing via the unverified `iss`, discovery with single flight, positive
+  cache from `Cache-Control` with a 5-minute floor, negative cache 30 s exponential up to
+  5 min), a rate-limit core (GCRA with a memory backend including eviction and a Redis
+  backend via atomic Lua, configurable fail mode) and Prod_Gate rule building blocks with a
+  shared reporter (services keep their own `prod-gate.ts`). Tests run under Bun and Node
+  (`test:node`).
+- **`@atf/erasure-contract`** (`packages/erasure-contract`, private). Normative DSAR
+  contract across service boundaries: `ErasureRequestSchema` (idempotent via `requestId`,
+  scopes `subject`/`tenant`/`reference` with cross-field checks), `ErasureStoreResultSchema`
+  (`ok`/`failed`/`not_configured`, non-negative counters), `ErasureResponseSchema` and the
+  signable `ErasureReceiptPayloadSchema` (subject only as `sha256(tenantId|identifier)`,
+  canonical JSON with recursively sorted keys as the signature bytes; the signature
+  algorithm lives in the envelope, not in the payload).
+- **Audit chain integrity** (`@atf/runtime`, Req 1.1–1.3). Tip read, ID allocation
+  (`nextval`), hash computation and INSERT run in one transaction under
+  `pg_advisory_xact_lock(hashtext('atf:audit_log'))`; the tip cache is gone, the chain is
+  advanced only from the persisted state. Genesis is used only for a provably empty table:
+  a read or write error is thrown instead of silently restarting the chain at genesis; a
+  tip without a hash (corrupted chain) is rejected.
+- **`recordRequired` / regulated actions** (`@atf/runtime`, Req 1.4–1.5). The new
+  `AuditLog.recordRequired()` resolves only after a durable write and throws on failure.
+  `compliance/regulated-actions.ts` lists the regulated actions
+  (`flows.publish`/`rollback`/`delete`, `approvals.resolve`, `dsar.self_erasure`,
+  `compliance.forget`, `tenant.delete`, `api_key.create`/`revoke`, `byok.set`); their routes
+  answer an audit failure with `503 AUDIT_UNAVAILABLE` and do not report success as
+  completed.
+- **Append-only `audit_log`** (`@atf/runtime`, migrations 42/43, Req 1.1/1.5). The trigger
+  `audit_log_immutable` blocks UPDATE/DELETE (retention only through
+  `audit_log_purge(before_at)` as a SECURITY DEFINER function with a prior anchor);
+  migration 42 creates the `audit_anchors` table, migration 43 revokes UPDATE/DELETE on
+  `audit_log` from `aiperator_app` and `aiperator_operator` (also in `rls-onboarding.ts`,
+  guarded there by a table-existence check).
+- **Anchor, metric and health** (`@atf/runtime`, Req 1.8–1.9). Prod_Gate warns in
+  production without `AUDIT_ANCHOR_FILE`; the metric `aiperator_audit_write_failures_total`
+  counts failed durable writes (hook in `createAuditLog`); `/health/ready` shows an `audit`
+  hint on write errors (never 503); shutdown drains the write queue within a grace window
+  and counts unprocessed writes on the metric.
+- **DSAR erasure in Search** (`@atf/search`, Req 2.5–2.6, Tasks 4.2–4.5). The erasure path
+  across all tables is extracted from `deleteRevisionCascade` (`deleteDocumentCascade`) and
+  switched to reference delete, metadata delete and revision abort; cache invalidation
+  happens after COMMIT. `POST /v1/erasure` (scopes `subject`/`reference`/`tenant`) deletes
+  including statistics and the idempotency ledger (migration
+  `GLOBAL_SCHEMA_VERSION = 9`, `vs_search_stats.query_hash`, `STATS_STORE_RAW_QUERY`);
+  property tests (Property 3) prove completeness across all Search tables.
+- **DSAR erasure in Extract** (`@atf/extract`, Req 2.7, Task 4.6). `POST /v1/erasure`
+  (scope `extract.erasure`) for jobs, upload sessions, page images and orphaned source
+  blobs with a ledger (`extract.erasure_ledger`, DDL v4); the call triggers the Search
+  cascade with the same `requestId` and reports it back as the partial result
+  `search.documents`; without a Search target it reports `not_configured`, never success by
+  omission. `DELETE /v2/documents` reports the result of the Search cascade.
+- **Audit redaction and erasure in the Gate** (`@atf/gate`, Req 2.8, Task 4.7). Audit
+  events are redacted via `audit.redact` (paths and extra keys), `POST /v1/erasure` (scope
+  `gate.erasure`) deletes idempotently in the persistent sink via the erasure ledger with
+  tombstones; fingerprint over canonical JSON from `@atf/erasure-contract`.
+- **Erasure orchestrator** (`@atf/runtime`, Req 2.9–2.12, Tasks 4.8–4.13).
+  `compliance/erasure-orchestrator.ts` fans DSAR erasures out in parallel to all configured
+  stores (local `RetentionService` targets plus `ERASURE_TARGETS` =
+  `[{service, url, tokenEnv}]`) with a timeout, three attempts and exponential backoff;
+  operations and per-store partial results live in `erasure_requests` (migration 44) and
+  are idempotent via `requestId`: a repeated call replays the stored result. Retry
+  (`POST /admin/compliance/erasures/:id/retry`) only reruns the failed stores. The DSAR
+  response (`DELETE /v1/me/data`) is honest: HTTP 200 only on full success, 207
+  `ERASURE_PARTIAL` on a partial result, 502 on total failure; the success text only appears
+  on full success (Property 4).
+- **Erasure_Receipt** (`@atf/runtime`, Req 2.11, Tasks 4.11–4.12). Every completed erasure
+  gets a signed receipt over the canonical JSON of the payload (Ed25519 via
+  `ERASURE_RECEIPT_SIGNING_KEY`, fallback HMAC via `AUDIT_ANCHOR_SECRET` with an `alg` hint
+  in the envelope); the subject appears only as `sha256(tenantId|identifier)`.
+  `GET /v1/me/data/erasures/{id}` returns the receipt only to the affected subject of the
+  same tenant. Property 5: `verify(sign(receipt)) = true`, every bit change in payload or
+  signature yields `false`.
+- **Erasure system test** (`integration/system/erasure.test.ts`, Task 4.13). The real
+  orchestrator runs against contract-conformant stub servers for Search, Extract and Gate
+  (fan-out, per-store result, idempotency, partial failure→partial→retry, receipt
+  verification); live and env-gated (`OUTPOST_IT_*`) it additionally covers Outpost
+  MirrorDelete → Extract → Search and the Extract cascade `POST /v1/erasure` with the
+  `search.documents` partial result.
+- **ZIP guard** (`@atf/extract`). Every ZIP-based container (XLSX, VSDX, DOCX, PPTX and
+  OOXML packages embedded in DOCX) is checked from the central directory alone before
+  extraction: entry count (`ZIP_MAX_ENTRIES`, 10000), total (`ZIP_MAX_TOTAL_BYTES`,
+  512 MiB) and largest uncompressed size (`ZIP_MAX_ENTRY_BYTES`, 200 MiB) as well as the
+  compression ratio per entry (`ZIP_MAX_RATIO`, 100). A violation rejects the job with the
+  new, non-retryable error code `DOCUMENT_TOO_COMPLEX` (422).
+- **Safe XML** (`@atf/extract`). All `fast-xml-parser` instances are created centrally in
+  `pipeline/safe-xml.ts` with entity processing disabled (XXE, billion laughs); the five
+  predefined XML entities are decoded explicitly, so `&` in cells and headings is preserved.
+- **Parser isolation** (`@atf/extract`). The native parsers (BPMN, XLSX, DOCX, VSDX, e-mail)
+  run in a worker thread with a heap limit (`PARSE_ISOLATED`, default `true`;
+  `PARSE_MEMORY_LIMIT_MB`, default 512, enforced under Node, ignored by Bun). Exceeding it
+  ends with `DOCUMENT_TOO_COMPLEX` instead of taking the service down; if the worker does not
+  start, `child_process.fork` follows and finally the in-process call with a warning.
+  `MAX_EMBED_DEPTH` (default 2) limits the nesting of embedded `.msg` messages; deeper ones
+  are skipped with a warning.
+- **Isolated converter** (`@atf/extract`). `CONVERTER_MODE=isolated` routes all
+  poppler/LibreOffice/Tesseract calls via line-delimited JSON-RPC over a Unix socket
+  (`CONVERTER_SOCKET`, default `/run/atf-converter/converter.sock`) to a separate converter
+  process (`node dist/converter/server.js`, intended for a container without network, with a
+  read-only root file system and without root privileges). Only the command line and output
+  cross the socket, never document bytes; input and output directories live on a shared
+  volume mounted under the same path. The default stays `local`. The build additionally
+  produces `dist/pipeline/isolate-entry.js` and `dist/converter/server.js` for this.
+- **Subprocess limits and hardened LibreOffice** (`@atf/extract`). On Linux with `prlimit`,
+  `SUBPROCESS_MEMORY_LIMIT_MB` (`--as`, default 0 = off; in containers use the cgroup limit)
+  and `SUBPROCESS_CPU_LIMIT_S` (`--cpu`, default 900) bound every converter call. Every
+  private LibreOffice profile starts with macros disabled, links from untrusted sources
+  blocked and no update of linked content.
+- **Tesseract OCR fallback** (`@atf/extract`). With `OCR_FALLBACK=tesseract`
+  (`TESSERACT_BIN`, `OCR_LANG`, default `deu`) a scanned page gets OCR text with a warning on
+  the page when the vision model fails, instead of failing. Default `off`; the binary and
+  traineddata must be present in the image or in the converter.
+- **Daily budget for vision pages** (`@atf/extract`, DDL v5). `VISION_BUDGET_PAGES_PER_DAY`
+  limits the VLM pages per tenant and UTC day across all jobs (atomic counter in
+  `extract.vision_daily_usage`); a job that would exceed the limit fails with the new error
+  code `BUDGET_EXCEEDED` (429, non-retryable). Default 0 = off; Prod_Gate then warns.
+- **Structured output for vision** (`@atf/extract`). With `VISION_SUPPORTS_JSON_SCHEMA=true`
+  the vision client sends `response_format: json_schema` for page and pass-2 requests; if
+  the provider rejects the field or the response is not conformant JSON, the previous tag
+  parser applies. Default `false`.
+- **Upload spill to disk** (`@atf/extract`). Multipart uploads above
+  `UPLOAD_MEMORY_THRESHOLD_BYTES` (default 8 MiB, 0 = always) are buffered under
+  `TEMP_DIR/uploads` instead of waiting in the heap for a conversion slot; a sweep at startup
+  cleans up leftovers after a crash.
+- **Retrieval quality gate** (CI, `scripts/eval`). The new CI job `eval` starts
+  `scripts/eval/compose.eval.yaml` (Search, Extract, TEI CPU embedding and cross-encoder
+  rerank, deterministic HyDE mock), ingests the deterministic golden corpus and fails when
+  results drop below `scripts/eval/baseline/thresholds.json`; the baseline and ablations
+  (dense, rerank, HyDE, context header) live under `scripts/eval/baseline/`.
+### Changed
+- The CI job `contracts` now also runs `security-kit` and `erasure-contract`; supply-chain
+  inventories (`THIRD_PARTY_NOTICES.md`, `sbom.cdx.json`) regenerated.
+- The Runtime audits regulated actions (flows, tenants, approvals, compliance/DSAR) via
+  `recordRequired` instead of best-effort `record()`; when the audit is unavailable they
+  answer `503 AUDIT_UNAVAILABLE` (`AUDIT_UNAVAILABLE` is a new error code).
+- **Mandatory tenant scope and retrieval tuning** (`@atf/search`). Every access SQL requires
+  an explicit scope (operator paths via `operatorScope()`); `DOCUMENT_ACL_DEFAULT` (default
+  `allow`, Prod_Gate warns) and `ACL_REQUIRE_IDENTITY` with the scope
+  `search.assert-identity` for asserted identity headers. HNSW with iterative scan
+  (`HNSW_ITERATIVE_SCAN`, default `relaxed_order`) and `ef_search` ≥ candidate limit, sparse
+  fusion via FULL OUTER JOIN (`RRF_WEIGHT_SPARSE`, `RRF_MISSING_ZERO`), a shared temporal
+  visibility CTE, `FTS_RANKER` (`ts_rank_cd` or `bm25`) and `MIN_RERANK_SCORE` with an
+  abstention field. Search statistics only store `query_hash` (HMAC with
+  `STATS_QUERY_PEPPER`); raw queries only with `STATS_STORE_RAW_QUERY`.
+- **`MAX_PAGES` default 0 → 500** (`@atf/extract`). Without explicit configuration the
+  synchronous v1 conversion path rejects documents over 500 pages with `TOO_MANY_PAGES`
+  (422).
+- **Prod_Gate Extract**: `SUBPROCESS_TIMEOUT_MS=0` now prevents startup in production;
+  `VISION_BUDGET_PAGES_PER_DAY=0` produces a warning.
 ### Migration
-- Extract: Wer längere Dokumente verarbeitet, setzt `MAX_PAGES` explizit (0 = unbegrenzt).
-  Produktionskonfigurationen mit `SUBPROCESS_TIMEOUT_MS=0` müssen einen positiven Wert setzen.
-- Extract-DDL steigt auf Version 5 (`extract.vision_daily_usage`); die Migration läuft
-  automatisch beim ersten Datenbankzugriff (Advisory-Lock, eine Transaktion) und ist additiv.
-- Für `CONVERTER_MODE=isolated` muss neben Extract ein Converter-Prozess aus dem Extract-Build
-  mit demselben `CONVERTER_SOCKET` und demselben Scratch-Volume (`TEMP_DIR`) laufen; für
-  `OCR_FALLBACK=tesseract` muss `tesseract` samt Sprachdaten installiert sein. Das
-  Beispiel-Image `deploy/examples/Dockerfile` enthält Tesseract nicht.
+- Extract: anyone processing longer documents sets `MAX_PAGES` explicitly (0 = unlimited).
+  Production configurations with `SUBPROCESS_TIMEOUT_MS=0` must set a positive value.
+- The Extract DDL moves to version 5 (`extract.vision_daily_usage`); the migration runs
+  automatically on the first database access (advisory lock, one transaction) and is
+  additive.
+- For `CONVERTER_MODE=isolated` a converter process from the Extract build must run next to
+  Extract with the same `CONVERTER_SOCKET` and the same scratch volume (`TEMP_DIR`); for
+  `OCR_FALLBACK=tesseract`, `tesseract` and its language data must be installed. The
+  example image `deploy/examples/Dockerfile` does not include Tesseract.
 
 ## [0.13.2] — 2026-10-05
 Hardens the LLM tool loop for local models: the `maxToolSteps` budget ends with an answer
