@@ -15,6 +15,13 @@
 
 export { safeEqual, safeEqualBytes } from "./compare.ts";
 export {
+  parseBooleanHeader,
+  readHeader,
+  readListHeader,
+  decodeIfBase64,
+  sanitizeHeaderValue,
+} from "./headers.ts";
+export {
   base64UrlEncode,
   base64UrlEncodePadded,
   base64UrlDecode,
@@ -45,6 +52,7 @@ export {
   createDiscoveryClient,
   DiscoveryError,
   parseMaxAgeMs,
+  validateJwksUri,
   DEFAULT_MIN_POSITIVE_TTL_MS,
   DEFAULT_NEGATIVE_TTL_MS,
   DEFAULT_MAX_NEGATIVE_TTL_MS,
@@ -76,6 +84,13 @@ export {
   type MemoryBackendOptions,
 } from "./rate-limit/memory.ts";
 export {
+  createRateLimitMiddleware,
+  type RateLimitMiddleware,
+  type RateLimitMiddlewareOptions,
+  type RateLimitRequest,
+  type RateLimitResponse,
+} from "./rate-limit/middleware.ts";
+export {
   createRedisRateLimitBackend,
   GCRA_LUA,
   type RedisBackendOptions,
@@ -99,3 +114,20 @@ export {
   type ReportSink,
   type ReportOutcome,
 } from "./prod-gate/reporter.ts";
+
+export {
+  TokenExchanger,
+  ActorTokenProvider,
+  createTokenEndpointResolver,
+  EXCHANGE_EXPIRY_MARGIN_MS,
+  TOKEN_TYPE_ACCESS_TOKEN,
+  TOKEN_TYPE_JWT,
+  type ActorClientCredentialsConfig,
+  type ClientAuthMethod,
+  type ExchangeLogger,
+  type ExchangeResult,
+  type ExchangedToken,
+  type FetchLike,
+  type TokenEndpointResolver,
+  type TokenExchangeConfig,
+} from "./auth/token-exchange.ts";

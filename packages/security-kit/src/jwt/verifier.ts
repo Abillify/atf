@@ -45,6 +45,13 @@ export interface IssuerConfig {
   jwks?: { keys: JWK[] };
   /** Override the discovery client (tests / guarded fetch). */
   discovery?: DiscoveryClient;
+  /**
+   * Per-issuer algorithm allowlist; overrides the global `algorithms` of
+   * {@link JwtVerifierOptions} for tokens routed to this issuer.
+   */
+  algorithms?: readonly string[];
+  /** Per-issuer clock tolerance in seconds; overrides the global value. */
+  clockToleranceSec?: number;
 }
 
 export interface JwtVerifierOptions {
@@ -131,6 +138,11 @@ export function createJwtVerifier(options: JwtVerifierOptions): JwtVerifier {
     if (byIssuer.has(config.issuer)) {
       throw new Error(`duplicate issuer configuration for "${config.issuer}"`);
     }
+    if (config.algorithms?.some((alg) => alg.toLowerCase() === "none")) {
+      throw new Error(
+        `the algorithm allowlist for issuer "${config.issuer}" must never include "none"`,
+      );
+    }
     byIssuer.set(config.issuer, config);
   }
 
@@ -170,11 +182,13 @@ export function createJwtVerifier(options: JwtVerifierOptions): JwtVerifier {
     } catch {
       throw new JwtVerificationError("key_unavailable", "verification keys are unavailable");
     }
+    const clockToleranceSec =
+      config.clockToleranceSec ?? options.clockToleranceSec;
     const verifyOptions: JWTVerifyOptions = {
       issuer: config.issuer,
-      algorithms: [...algorithms],
-      ...(options.clockToleranceSec !== undefined
-        ? { clockTolerance: options.clockToleranceSec }
+      algorithms: [...(config.algorithms ?? algorithms)],
+      ...(clockToleranceSec !== undefined
+        ? { clockTolerance: clockToleranceSec }
         : {}),
       ...(config.audiences && config.audiences.length > 0
         ? { audience: [...config.audiences] }

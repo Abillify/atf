@@ -12,6 +12,7 @@ import {
   createDiscoveryClient,
   DiscoveryError,
   parseMaxAgeMs,
+  validateJwksUri,
 } from "../src/index.js";
 
 const ISSUER = "https://id.example.com/realms/atf";
@@ -85,8 +86,14 @@ describe("createDiscoveryClient", () => {
 
   test("Cache-Control max-age extends the positive TTL beyond the floor", () => {
     let nowMs = 1_000_000;
-    const { fetchImpl, callCount } = fakeFetch(() => ({ ok: true, maxAge: "public, max-age=3600" }));
-    const client = createDiscoveryClient(ISSUER, { fetchImpl, now: () => nowMs });
+    const { fetchImpl, callCount } = fakeFetch(() => ({
+      ok: true,
+      maxAge: "public, max-age=3600",
+    }));
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      now: () => nowMs,
+    });
     return (async () => {
       await client.getMetadata();
       nowMs += 10 * 60_000; // past the 5-min floor, inside the 60-min max-age
@@ -113,7 +120,11 @@ describe("createDiscoveryClient", () => {
         };
       },
     });
-    const results = Promise.all([client.getMetadata(), client.getMetadata(), client.getMetadata()]);
+    const results = Promise.all([
+      client.getMetadata(),
+      client.getMetadata(),
+      client.getMetadata(),
+    ]);
     await new Promise((resolve) => setTimeout(resolve, 10)); // let the calls start
     expect(calls).toBe(1); // one shared request for three callers
     resolveFirst();
@@ -123,8 +134,14 @@ describe("createDiscoveryClient", () => {
 
   test("negative cache: failure is remembered and backs off exponentially", () => {
     let nowMs = 1_000_000;
-    const { fetchImpl, callCount } = fakeFetch(() => ({ ok: false, status: 500 }));
-    const client = createDiscoveryClient(ISSUER, { fetchImpl, now: () => nowMs });
+    const { fetchImpl, callCount } = fakeFetch(() => ({
+      ok: false,
+      status: 500,
+    }));
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      now: () => nowMs,
+    });
     return (async () => {
       await expect(client.getMetadata()).rejects.toBeInstanceOf(DiscoveryError);
       expect(callCount()).toBe(1);
@@ -149,12 +166,17 @@ describe("createDiscoveryClient", () => {
   test("negative TTL is capped at the maximum", () => {
     let nowMs = 1_000_000;
     const { fetchImpl } = fakeFetch(() => ({ ok: false, status: 500 }));
-    const client = createDiscoveryClient(ISSUER, { fetchImpl, now: () => nowMs });
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      now: () => nowMs,
+    });
     return (async () => {
       // Drive the failure count high enough that 30s * 2^n exceeds 5 min.
       for (let i = 0; i < 8; i++) {
         nowMs += 6 * 60_000;
-        await expect(client.getMetadata()).rejects.toBeInstanceOf(DiscoveryError);
+        await expect(client.getMetadata()).rejects.toBeInstanceOf(
+          DiscoveryError,
+        );
       }
       // After the last failure the window is capped at 5 min, not 8 * 2^7 * 30s.
       nowMs += 4 * 60_000;
@@ -168,7 +190,10 @@ describe("createDiscoveryClient", () => {
     const { fetchImpl, callCount } = fakeFetch(() =>
       mode === "fail" ? { ok: false, status: 500 } : { ok: true },
     );
-    const client = createDiscoveryClient(ISSUER, { fetchImpl, now: () => nowMs });
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      now: () => nowMs,
+    });
     return (async () => {
       await expect(client.getMetadata()).rejects.toBeInstanceOf(DiscoveryError);
       nowMs += 31_000;
@@ -189,15 +214,155 @@ describe("createDiscoveryClient", () => {
   test("rejects a document whose issuer does not match", () => {
     const { fetchImpl } = fakeFetch(() => ({
       ok: true,
-      body: { issuer: "https://evil.example.com", jwks_uri: "https://evil.example.com/certs" },
+      body: {
+        issuer: "https://evil.example.com",
+        jwks_uri: "https://evil.example.com/certs",
+      },
     }));
     const client = createDiscoveryClient(ISSUER, { fetchImpl });
     return expect(client.getMetadata()).rejects.toBeInstanceOf(DiscoveryError);
   });
 
   test("rejects a document missing jwks_uri", () => {
-    const { fetchImpl } = fakeFetch(() => ({ ok: true, body: { issuer: ISSUER } }));
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: ISSUER },
+    }));
     const client = createDiscoveryClient(ISSUER, { fetchImpl });
     return expect(client.getMetadata()).rejects.toBeInstanceOf(DiscoveryError);
+  });
+
+  // Req 7.3 — jwks_uri validation.
+  test("rejects a non-HTTPS jwks_uri when discovery is HTTPS", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: ISSUER, jwks_uri: "http://id.example.com/certs" },
+    }));
+    const client = createDiscoveryClient(ISSUER, { fetchImpl });
+    return expect(client.getMetadata()).rejects.toThrow(/must use HTTPS/);
+  });
+
+  test("rejects a jwks_uri host that is neither issuer nor allowlisted", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: ISSUER, jwks_uri: "https://evil.example.net/certs" },
+    }));
+    const client = createDiscoveryClient(ISSUER, { fetchImpl });
+    return expect(client.getMetadata()).rejects.toThrow(/allowlist/);
+  });
+
+  test("accepts an allowlisted jwks_uri host (subdomain entry)", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: ISSUER, jwks_uri: "https://keys.cdn.example.com/certs" },
+    }));
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      allowedJwksHosts: [".cdn.example.com"],
+    });
+    return expect(client.getMetadata()).resolves.toHaveProperty(
+      "jwks_uri",
+      "https://keys.cdn.example.com/certs",
+    );
+  });
+
+  test("allowInsecureJwksUri permits plaintext for development", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: ISSUER, jwks_uri: "http://id.example.com/certs" },
+    }));
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      allowInsecureJwksUri: true,
+    });
+    return expect(client.getMetadata()).resolves.toBeDefined();
+  });
+
+  test("a plain-HTTP issuer may hand out a plain-HTTP jwks_uri", () => {
+    const httpIssuer = "http://localhost:8080/realms/dev";
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: {
+        issuer: httpIssuer,
+        jwks_uri: "http://localhost:8080/certs",
+      },
+    }));
+    const client = createDiscoveryClient(httpIssuer, { fetchImpl });
+    return expect(client.getMetadata()).resolves.toBeDefined();
+  });
+
+  test("rejects a malformed jwks_uri", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: ISSUER, jwks_uri: "not a url" },
+    }));
+    const client = createDiscoveryClient(ISSUER, { fetchImpl });
+    return expect(client.getMetadata()).rejects.toThrow(/not a valid URL/);
+  });
+
+  test("issuerMatch trailing-slash tolerates a document issuer slash difference", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: `${ISSUER}/`, jwks_uri: `${ISSUER}/certs` },
+    }));
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      issuerMatch: "trailing-slash",
+    });
+    return expect(client.getMetadata()).resolves.toHaveProperty(
+      "issuer",
+      `${ISSUER}/`,
+    );
+  });
+
+  test("exact mode (default) rejects a trailing-slash document issuer", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: { issuer: `${ISSUER}/`, jwks_uri: `${ISSUER}/certs` },
+    }));
+    const client = createDiscoveryClient(ISSUER, { fetchImpl });
+    return expect(client.getMetadata()).rejects.toThrow(/does not match/);
+  });
+
+  test("issuerMatch trailing-slash still rejects a different issuer", () => {
+    const { fetchImpl } = fakeFetch(() => ({
+      ok: true,
+      body: {
+        issuer: "https://other.example.com/realms/atf",
+        jwks_uri: `${ISSUER}/certs`,
+      },
+    }));
+    const client = createDiscoveryClient(ISSUER, {
+      fetchImpl,
+      issuerMatch: "trailing-slash",
+    });
+    return expect(client.getMetadata()).rejects.toThrow(/does not match/);
+  });
+});
+
+describe("validateJwksUri", () => {
+  const DISCOVERY = `${ISSUER}/.well-known/openid-configuration`;
+
+  test("accepts issuer-host HTTPS jwks_uri", () => {
+    expect(() =>
+      validateJwksUri("https://id.example.com/certs", ISSUER, DISCOVERY),
+    ).not.toThrow();
+  });
+
+  test("trusts the discovery host itself (non-standard discoveryUrl)", () => {
+    const discoveryUrl = "https://gateway.example.net/oidc/.well-known/config";
+    expect(() =>
+      validateJwksUri(
+        "https://gateway.example.net/certs",
+        ISSUER,
+        discoveryUrl,
+      ),
+    ).not.toThrow();
+  });
+
+  test("rejects host mismatch", () => {
+    expect(() =>
+      validateJwksUri("https://evil.example.com/certs", ISSUER, DISCOVERY),
+    ).toThrow(DiscoveryError);
   });
 });

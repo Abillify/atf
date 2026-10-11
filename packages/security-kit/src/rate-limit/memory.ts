@@ -20,7 +20,15 @@ export interface MemoryBackendOptions {
   nowUs?: () => number;
 }
 
-export function createMemoryRateLimitBackend(options: MemoryBackendOptions = {}): RateLimitBackend & {
+export function createMemoryRateLimitBackend(
+  options: MemoryBackendOptions = {},
+): RateLimitBackend & {
+  /**
+   * Synchronous variant of {@link RateLimitBackend.take}. The memory backend
+   * is single-threaded JS anyway, so this is the same code path without the
+   * microtask — HTTP middleware that must answer in the current tick uses it.
+   */
+  takeSync(key: string, config: GcraConfig, cost?: number): RateLimitResult;
   /** Number of tracked keys (tests/metrics). */
   size(): number;
   /** Drop all state (tests). */
@@ -30,7 +38,11 @@ export function createMemoryRateLimitBackend(options: MemoryBackendOptions = {})
   const nowUs = options.nowUs ?? ((): number => Date.now() * 1000);
   const states = new Map<string, { state: GcraState; expiresAtUs: number }>();
 
-  const take = async (key: string, config: GcraConfig, cost = 1): Promise<RateLimitResult> => {
+  const takeSync = (
+    key: string,
+    config: GcraConfig,
+    cost = 1,
+  ): RateLimitResult => {
     const now = nowUs();
     // Opportunistic cleanup of expired entries keeps memory bounded without a timer.
     if (states.size > 1024) {
@@ -39,13 +51,23 @@ export function createMemoryRateLimitBackend(options: MemoryBackendOptions = {})
       }
     }
     const existing = states.get(key);
-    const decision = gcraCheck(config, existing === undefined ? null : existing.state, now, cost);
+    const decision = gcraCheck(
+      config,
+      existing === undefined ? null : existing.state,
+      now,
+      cost,
+    );
     // Entry can be dropped once its bucket is full again — nobody can tell it
     // apart from a never-seen key at that point.
-    states.set(key, { state: decision.state, expiresAtUs: decision.state.tatUs });
+    states.set(key, {
+      state: decision.state,
+      expiresAtUs: decision.state.tatUs,
+    });
     if (states.size > maxKeys) {
       // Evict the 10 % oldest (lowest TAT = fullest/cheapest buckets).
-      const sorted = [...states.entries()].sort((a, b) => a[1].state.tatUs - b[1].state.tatUs);
+      const sorted = [...states.entries()].sort(
+        (a, b) => a[1].state.tatUs - b[1].state.tatUs,
+      );
       const drop = Math.ceil(maxKeys * 0.1);
       for (let i = 0; i < drop && i < sorted.length; i++) {
         const entry = sorted[i];
@@ -61,8 +83,15 @@ export function createMemoryRateLimitBackend(options: MemoryBackendOptions = {})
     };
   };
 
+  const take = async (
+    key: string,
+    config: GcraConfig,
+    cost = 1,
+  ): Promise<RateLimitResult> => takeSync(key, config, cost);
+
   return {
     take,
+    takeSync,
     size: () => states.size,
     clear: () => states.clear(),
   };
