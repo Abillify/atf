@@ -8,27 +8,22 @@
  * mapping, tool building, execution orchestration) and the createGraphEngine
  * factory function.
  *
- * NOTE: This file exceeds the 800-line target. The _executeFlowInternal method
- * constructs ~20 tightly-coupled closure callbacks that share local state
- * (Maps, counters, spans). The two pieces whose state genuinely stood alone —
- * SSE token/reasoning streaming and citation numbering — are extracted into
- * sse-emitter.ts / citation-registry.ts. The rest (tool-call tracking,
- * per-node monitoring, debug-trace capture) share ~10 Maps and call into each
- * other (e.g. emitNodeEnd reads nodeModels/nodeInputTokens/nodeToolCalls
- * alongside spans, guardrail flush, and the debug store in one step); splitting
- * those further would mean threading that shared state through constructors
- * rather than reducing coupling. Documented exception per design.md §1.1.
+ * The per-execution closure callbacks that _executeFlowInternal used to build
+ * inline are factored into sibling modules (Req 13.6, behaviour unchanged):
+ * tool-usage.ts (tool-reported usage + provider-attempt summary), run-state.ts
+ * (the shared mutable per-run state object + debug-trace opening),
+ * run-tool-callbacks.ts (tool-call streaming, telemetry and the approval
+ * widget) and run-node-lifecycle.ts (node start/end events, edge-flow capture
+ * and groundedness). Shared Maps are passed by reference through the state
+ * object; mutable scalars live on it as fields so writes stay visible across
+ * modules. SSE streaming and citation numbering remain in sse-emitter.ts /
+ * citation-registry.ts.
  */
 
 import crypto from "node:crypto";
 import type { BaseMessage } from "@langchain/core/messages";
-import type { FlowDefinition, FlowNode } from "../../types/flow.js";
-import type {
-  RequestContext,
-  NodeExecutionEvent,
-  RoutingDecision,
-} from "../../types/monitoring.js";
-import { FLOW_END_NODE_ID } from "../../types/monitoring.js";
+import type { FlowDefinition } from "../../types/flow.js";
+import type { RequestContext } from "../../types/monitoring.js";
 import type {
   StreamError,
   ChatCompletionChunk,
@@ -40,18 +35,13 @@ import type { FlowRegistry } from "../flow-parser.js";
 import { applyFlowVariables } from "../flow-parser.js";
 import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 import { createLlmProvider } from "../llm-factory.js";
-import {
-  chatMessageToBaseMessage,
-  isToolErrorOutput,
-  sanitizeToolResultOutput,
-} from "../message-mapping.js";
+import { chatMessageToBaseMessage } from "../message-mapping.js";
 import type { ModelQualityRegistry } from "../model-quality.js";
 import type { ResponseCache } from "../response-cache.js";
 import type { SemanticCache } from "../semantic-cache.js";
 import type { Embedder } from "../semantic-cache.js";
 import type { VectorStore } from "../vector-store.js";
 import type { Reranker } from "../reranker.js";
-import { parseVectorSearchResults } from "../reranker.js";
 import { ToolIndex } from "../tool-index.js";
 import { createToolLoopState } from "../tool-loop-detection.js";
 import type { ToolGroupSummarizer } from "../tool-group-summary.js";
@@ -60,14 +50,11 @@ import type { MediaStore } from "../media-store.js";
 import { decodeBase64Bytes, mediaExtension } from "../media-store.js";
 import { HashedImageRefRegistry } from "../image-reference.js";
 import { HashRefHandleRegistry } from "../ref-handles.js";
-import { classifyEdgeFlow } from "../edge-flow.js";
-import type { EdgeFlowCounters } from "../edge-flow.js";
 import type { OutputGuardrail } from "../output-guardrails.js";
 import type { ToolEgressGuardrail } from "../output-guardrails.js";
 import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
-import type { ApprovalRegistry, PendingApproval } from "../approval-gate.js";
-import { signApprovalLinkToken } from "../approval-link.js";
-import type { GroundednessGate, GroundednessReport } from "../groundedness.js";
+import type { ApprovalRegistry } from "../approval-gate.js";
+import type { GroundednessGate } from "../groundedness.js";
 import type { DistributedConcurrencyLimiter } from "../distributed-semaphore.js";
 import type { GlobalSlot } from "../distributed-semaphore.js";
 import {
@@ -83,22 +70,16 @@ import type { ThreadLock } from "../thread-lock.js";
 import { InProcessThreadLock } from "../thread-lock.js";
 import type { MonitoringServiceInterface } from "../../monitoring/monitoring-service.js";
 import type { DebugTraceStore } from "../../monitoring/debug-trace-store.js";
-import { sanitizeJwtClaims } from "../../monitoring/trace-claims.js";
 import type {
-  DebugToolCall,
   DebugToolSelection,
   DebugClassifierOutput,
   DebugStreamError,
-  DebugNodeDiagnostic,
-  DebugNodeAttemptContext,
-  DebugNodeTrace,
   DebugHistoryReconciliation,
 } from "../../types/debug-trace.js";
 import { reconcileThreadedHistory } from "./history-contract.js";
 import type { Metrics } from "../../observability/metrics.js";
 import { createMetrics } from "../../observability/metrics.js";
 import type { SpendRecorder } from "../../observability/cost.js";
-import { estimateCost } from "../../observability/cost.js";
 import type { Tracer } from "../../observability/tracing.js";
 import { NOOP_TRACER } from "../../observability/tracing.js";
 import { createFlowSpanManager } from "./spans.js";
@@ -107,11 +88,7 @@ import {
   setGenAiRequestAttributes,
   setGenAiResponseAttributes,
 } from "../../observability/gen-ai-semconv.js";
-import {
-  makeToolCallChunk,
-  makeErrorChunk,
-  batchBySerializedBytes,
-} from "../exec-runtime.js";
+import { makeErrorChunk, batchBySerializedBytes } from "../exec-runtime.js";
 import type {
   ExecRuntime,
   UsageAccumulator,
@@ -136,91 +113,20 @@ import {
 } from "./compile.js";
 import { SseEmitter } from "./sse-emitter.js";
 import { CitationRegistry } from "./citation-registry.js";
+import { createRunState, startDebugTrace } from "./run-state.js";
+import { createToolCallbacks } from "./run-tool-callbacks.js";
+import { createNodeLifecycle } from "./run-node-lifecycle.js";
+import type { ExecutionEventMeta } from "../../monitoring/execution-store.js";
 
 // ---------------------------------------------------------------------------
-// Provider-attempt summary for the debug trace
+// Provider-attempt summary + tool-reported usage — extracted to tool-usage.ts
+// (Req 13.6). Re-exported here so existing importers keep working.
 // ---------------------------------------------------------------------------
-
-/**
- * Summarises the `llm_provider_attempt_completed` diagnostics of one node
- * attempt into the trace field `provider_attempts`. The node-level `attempt`
- * counts GRAPH attempts only, so without this an LLM node that needed two
- * provider calls looked like a single clean call in the trace. Returns
- * `undefined` when no provider attempt was recorded (non-LLM nodes, cache
- * hits), so the field stays absent.
- */
-export function providerAttemptsSummary(
-  diagnostics: readonly DebugNodeDiagnostic[] | undefined,
-): { provider_attempts: NonNullable<DebugNodeTrace["provider_attempts"]> } | undefined {
-  const completed = (diagnostics ?? []).filter(
-    (d) => d.code === "llm_provider_attempt_completed",
-  );
-  const last = completed.at(-1);
-  if (last === undefined) return undefined;
-  const failed = completed.filter((d) => d.details?.outcome !== "ok").length;
-  const lastAttempt = last.details?.attempt;
-  return {
-    provider_attempts: {
-      total: completed.length,
-      failed,
-      final_attempt:
-        typeof lastAttempt === "number" ? lastAttempt : completed.length,
-      final_outcome: last.details?.outcome === "ok" ? "ok" : "error",
-    },
-  };
-}
-
-// ---------------------------------------------------------------------------
-// Tool-reported usage/cost extraction
-// ---------------------------------------------------------------------------
-
-export interface ToolReportedUsage {
-  inputTokens: number;
-  outputTokens: number;
-  cost: number;
-}
-
-/**
- * Extracts a tool-reported `usage` block from a raw MCP tool result, when
- * present (e.g. vectorsearch's `search`/`ingest` tools report their own
- * embedding/rerank spend as `{ usage: { input_tokens, output_tokens,
- * cost, model_costs } }`). Handles the MCP text-content wrapper
- * (`[{type:"text", text:"<json>"}]`), a raw JSON string, or an
- * already-parsed object. Returns undefined for any tool result that isn't
- * shaped this way — safe to call on any tool's result.
- */
-export function extractToolUsage(
-  content: unknown,
-): ToolReportedUsage | undefined {
-  let parsed: unknown = content;
-  try {
-    if (
-      Array.isArray(parsed) &&
-      parsed.length > 0 &&
-      typeof parsed[0] === "object" &&
-      parsed[0] !== null &&
-      "text" in (parsed[0] as Record<string, unknown>)
-    ) {
-      parsed = JSON.parse((parsed[0] as { text: string }).text);
-    } else if (typeof parsed === "string") {
-      parsed = JSON.parse(parsed);
-    }
-  } catch {
-    return undefined;
-  }
-  if (parsed === null || typeof parsed !== "object") return undefined;
-  const usage = (parsed as Record<string, unknown>).usage;
-  if (usage === null || typeof usage !== "object") return undefined;
-  const u = usage as Record<string, unknown>;
-  const cost = u.cost;
-  if (typeof cost !== "number" || !Number.isFinite(cost))
-    return undefined;
-  const inputTokens =
-    typeof u.input_tokens === "number" ? u.input_tokens : 0;
-  const outputTokens =
-    typeof u.output_tokens === "number" ? u.output_tokens : 0;
-  return { inputTokens, outputTokens, cost };
-}
+export {
+  extractToolUsage,
+  providerAttemptsSummary,
+  type ToolReportedUsage,
+} from "./tool-usage.js";
 
 // ---------------------------------------------------------------------------
 // GraphEngineService implementation
@@ -713,7 +619,6 @@ class GraphEngineServiceImpl implements GraphEngineService {
       tenantId: ctx.clientId,
       parentContext: ctx.traceContext,
     });
-    let flowErrored = false;
 
     // Per-execution handler for `node.config.errorStrategy` (Req. 5.2). Bound to
     // THIS run's span manager, so it must be created here and handed to the
@@ -760,840 +665,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
     const citations = new CitationRegistry(onChunk, model);
     const { registerCitations, onCitations, citationAt } = citations;
 
-    // Tracks in-flight tool calls so onToolResult can build the <details> block
-    const _pendingToolCallIds = new Map<
-      string,
-      { name: string; argsJson: string }
-    >();
-
-    // -----------------------------------------------------------------------
-    // Synthetic "tool" nodes
-    // -----------------------------------------------------------------------
-    const toolNodes = new Map<
-      string,
-      { nodeId: string; parentId: string; startTime: string; sequence: number }
-    >();
-    /**
-     * Captured input (args) and output (result) per tool call, so the synthetic
-     * tool node in the live graph can show what a tool (e.g. vectorsearch) was
-     * called with and what it returned — not just its timing/token/cost.
-     */
-    const toolNodeArgs = new Map<string, string>();
-    const toolNodeResults = new Map<string, string>();
-    const TOOL_IO_LIMIT = 16_000;
-    const truncateToolIo = (s: string): string =>
-      s.length > TOOL_IO_LIMIT
-        ? `${s.slice(0, TOOL_IO_LIMIT)}…[truncated]`
-        : s;
-    /**
-     * Effective tool-call arguments (after forced flow args, ref-handle
-     * resolution and egress DLP), reported by `onToolEffectiveArgs` from
-     * inside the tool execution. `onToolCall` only ever sees the RAW model
-     * output, which is pre-DLP and therefore reduced to `argument_keys` for
-     * telemetry — which left operators unable to see the actual search query
-     * a tool ran with. The effective arguments are exactly what the tool
-     * received (in redact mode already scrubbed), so they may be surfaced
-     * wherever the full tool RESULT is already shown: the live graph node,
-     * the debug trace and the reasoning `<details>` block.
-     */
-    const toolEffectiveArgs = new Map<string, string>();
-    /**
-     * Builds the display "response" text for a tool node. Any tool result that
-     * parses as a vectorsearch-style payload (`{ results: [...] }`, incl. the
-     * MCP text-content wrapper) is normalised into a compact
-     * `{ totalMatches, findings:[{id,title,score,url}] }` shape the dashboard
-     * renders as a findings table — this is name-agnostic, so it works for
-     * vectorsearch, retrieval, and any other tool returning that shape.
-     * `parseVectorSearchResults` returns `[]` for anything else, in which case
-     * the raw result JSON is used. Returns undefined when there is nothing to
-     * show.
-     */
-    const buildToolResultDisplay = (content: unknown): string | undefined => {
-      const chunks = parseVectorSearchResults(content);
-      if (chunks.length > 0) {
-        return JSON.stringify({
-          totalMatches: chunks.length,
-          findings: chunks.map((c) => ({
-            id: c.id,
-            title: c.title,
-            score: c.retrievalScore,
-            ...(c.url !== "" ? { url: c.url } : {}),
-          })),
-        });
-      }
-      try {
-        return typeof content === "string" ? content : JSON.stringify(content);
-      } catch {
-        return undefined;
-      }
-    };
-    /** Emits the "running" event for a synthetic tool node. */
-    const emitToolNodeStart = (toolCallId: string, toolName: string): void => {
-      if (!monitoring) return;
-      const parentId = lastActiveNodeId ?? "";
-      const nodeId = `${parentId}::tool::${toolCallId}`;
-      const startTime = new Date().toISOString();
-      nodeSequence += 1;
-      const sequence = nodeSequence;
-      toolNodes.set(toolCallId, { nodeId, parentId, startTime, sequence });
-      monitoring.emitNodeEvent(
-        executionId,
-        {
-          execution_id: executionId,
-          node_id: nodeId,
-          kind: "tool",
-          ...(parentId !== "" ? { parent_node_id: parentId } : {}),
-          label: toolName,
-          status: "running",
-          start_time: startTime,
-          end_time: null,
-          latency_ms: null,
-          sequence,
-          // Identity fields, stamped like regular node events (see
-          // userPromptPreview below): a live picker row built solely from
-          // tool-node events (e.g. when the dashboard joined mid-run and
-          // missed the parent node's events) would otherwise show no user
-          // or prompt until the parent node finally completes.
-          ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
-          ...(userPromptPreview !== undefined
-            ? { user_prompt: userPromptPreview }
-            : {}),
-          flow_id: flowId,
-        },
-        monitoringMeta,
-      );
-    };
-    /** Emits the terminal (completed/error) event for a synthetic tool node. */
-    const emitToolNodeEnd = (
-      toolCallId: string,
-      execTimeSec: number,
-      errorMessage?: string,
-    ): void => {
-      if (!monitoring) return;
-      const info = toolNodes.get(toolCallId);
-      if (info === undefined) return;
-      toolNodes.delete(toolCallId);
-      let toolCost: number | undefined = nodeToolCostOverride.get(toolCallId);
-      nodeToolCostOverride.delete(toolCallId);
-      const toolModelKey = nodeModels.get(toolCallId);
-      if (toolCost === undefined && toolModelKey !== undefined) {
-        const slash = toolModelKey.indexOf("/");
-        const provider =
-          slash >= 0 ? toolModelKey.slice(0, slash) : toolModelKey;
-        const modelName =
-          slash >= 0 ? toolModelKey.slice(slash + 1) : toolModelKey;
-        const inp = nodeInputTokens.get(toolCallId) ?? 0;
-        const out = nodeOutputTokens.get(toolCallId) ?? 0;
-        if (inp > 0 || out > 0) {
-          toolCost = estimateCost(
-            provider,
-            modelName,
-            { prompt_tokens: inp, completion_tokens: out },
-            this.appConfig.llmPricing,
-          );
-        }
-      }
-      monitoring.emitNodeEvent(
-        executionId,
-        {
-          execution_id: executionId,
-          node_id: info.nodeId,
-          kind: "tool",
-          ...(info.parentId !== "" ? { parent_node_id: info.parentId } : {}),
-          status: errorMessage !== undefined ? "error" : "completed",
-          start_time: info.startTime,
-          end_time: new Date().toISOString(),
-          latency_ms: Math.round(execTimeSec * 1000),
-          ...(errorMessage !== undefined
-            ? { error_message: errorMessage }
-            : {}),
-          sequence: info.sequence,
-          ...(toolModelKey !== undefined ? { model: toolModelKey } : {}),
-          ...(nodeInputTokens.has(toolCallId)
-            ? { input_tokens: nodeInputTokens.get(toolCallId) }
-            : {}),
-          ...(nodeOutputTokens.has(toolCallId)
-            ? { output_tokens: nodeOutputTokens.get(toolCallId) }
-            : {}),
-          ...(toolCost !== undefined ? { cost: toolCost } : {}),
-          ...(toolNodeArgs.has(toolCallId)
-            ? { prompt: toolNodeArgs.get(toolCallId) }
-            : {}),
-          ...(toolNodeResults.has(toolCallId)
-            ? { response: toolNodeResults.get(toolCallId) }
-            : {}),
-          // See emitToolNodeStart: keep identity fields on every tool event.
-          ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
-          ...(userPromptPreview !== undefined
-            ? { user_prompt: userPromptPreview }
-            : {}),
-          flow_id: flowId,
-        },
-        monitoringMeta,
-      );
-      toolNodeArgs.delete(toolCallId);
-      toolNodeResults.delete(toolCallId);
-    };
-
-    // --- Tool streaming callbacks (Req 6.2, 6.3) ---
-    type ToolTraceMetadata = NonNullable<DebugToolCall["coverage_search"]>;
-    const pendingToolTraceMetadata = new Map<string, ToolTraceMetadata>();
-    const toolCallOwnerNodeIds = new Map<string, string>();
-    const mergeToolTraceMetadata = (
-      toolCallId: string,
-      metadata: ToolTraceMetadata,
-    ): void => {
-      const previous = pendingToolTraceMetadata.get(toolCallId);
-      const merged: ToolTraceMetadata = {
-        ...previous,
-        ...metadata,
-        ...(previous?.dedupe !== undefined || metadata.dedupe !== undefined
-          ? { dedupe: { ...previous?.dedupe, ...metadata.dedupe } as ToolTraceMetadata["dedupe"] }
-          : {}),
-      };
-      pendingToolTraceMetadata.set(toolCallId, merged);
-      if (this.debugStore === undefined) return;
-      const ownerNodeId = toolCallOwnerNodeIds.get(toolCallId);
-      const call =
-        ownerNodeId === undefined
-          ? undefined
-          : nodeDebugToolCalls
-              .get(ownerNodeId)
-              ?.findLast((item) => item.id === toolCallId);
-      if (call !== undefined) {
-        call.coverage_search = merged;
-        pendingToolTraceMetadata.delete(toolCallId);
-      }
-    };
-
-    const onToolCall = async (
-      toolCallId: string,
-      toolName: string,
-      argsJson: string,
-      ownerNodeId?: string,
-    ): Promise<void> => {
-      let safeArgsJson = '{"argument_keys":[]}';
-      try {
-        const args = JSON.parse(argsJson) as unknown;
-        const keys =
-          args !== null && typeof args === "object" && !Array.isArray(args)
-            ? Object.keys(args as Record<string, unknown>).sort()
-            : [];
-        safeArgsJson = JSON.stringify({ argument_keys: keys });
-      } catch {
-        // Invalid arguments are represented by an empty key list, never raw.
-      }
-      // Tool arguments are pre-DLP model output. Telemetry records shape only;
-      // execution receives the original value through the AI SDK tool closure.
-      // The SDK can start the tool's execute BEFORE this stream consumer
-      // reaches the tool-call part, so effective args may already exist —
-      // surface them immediately instead of the key-only placeholder.
-      const preEffective = toolEffectiveArgs.get(toolCallId);
-      const visibleArgsJson = preEffective ?? safeArgsJson;
-      toolNodeArgs.set(toolCallId, visibleArgsJson);
-      if (!_pendingToolCallIds.has(toolCallId)) {
-        _pendingToolCallIds.set(toolCallId, {
-          name: toolName,
-          argsJson: safeArgsJson,
-        });
-      }
-      emitToolNodeStart(toolCallId, toolName);
-      const activeNodeId = ownerNodeId ?? lastActiveNodeId;
-      if (activeNodeId !== undefined) {
-        toolCallOwnerNodeIds.set(toolCallId, activeNodeId);
-        const existing = nodeToolCalls.get(activeNodeId) ?? [];
-        existing.push({
-          id: toolCallId,
-          name: toolName,
-          args_json: visibleArgsJson,
-        });
-        nodeToolCalls.set(activeNodeId, existing);
-      }
-      if (this.debugStore !== undefined && activeNodeId !== undefined) {
-        let debugArguments: unknown;
-        try {
-          debugArguments = JSON.parse(visibleArgsJson) as unknown;
-        } catch {
-          // Truncated effective args are not valid JSON — fall back to the
-          // key-only placeholder rather than failing the whole call.
-          debugArguments = JSON.parse(safeArgsJson) as unknown;
-        }
-        const debugCalls = nodeDebugToolCalls.get(activeNodeId) ?? [];
-        debugCalls.push({
-          id: toolCallId,
-          name: toolName,
-          arguments: debugArguments,
-          result: null,
-          is_error: false,
-          called_at: new Date().toISOString(),
-          ...(pendingToolTraceMetadata.has(toolCallId)
-            ? { coverage_search: pendingToolTraceMetadata.get(toolCallId) }
-            : {}),
-        });
-        pendingToolTraceMetadata.delete(toolCallId);
-        nodeDebugToolCalls.set(activeNodeId, debugCalls);
-      }
-      // The initial line carries NO argument payload: at this moment only the
-      // raw pre-DLP model output exists, and showing just its keys
-      // (`argument_keys`) carried no value for operators. It stays as the
-      // "call started" marker (still shown when a tool errors before its
-      // effective args exist — approval denial, missing required params,
-      // egress block). The full key-value JSON follows on the next
-      // `🔧 Tool:` line from `onToolEffectiveArgs`. When the effective args
-      // already arrived BEFORE this callback (a fast tool execute racing the
-      // stream consumer), that line was emitted already — skip this one.
-      if (preEffective === undefined) {
-        await emitReasoningStep(`🔧 Tool: **${toolName}**\n`);
-      }
-    };
-
-    /**
-     * Receives the final server-bound arguments once the tool execution
-     * derives them (forced args + ref handles + egress DLP applied). Replaces
-     * the key-only placeholder on every surface that renders AFTER this point:
-     * the live graph node prompt (read at node completion), the owning node's
-     * `tool_calls` telemetry (the dashboard's Tool Calls accordion), the
-     * debug-trace tool call, and the `<details>` block built by
-     * `onToolResult`. It also emits the follow-up `🔧 Tool:` reasoning line
-     * carrying the FULL key-value JSON — the effective args are exactly what
-     * the tool received (already egress-DLP scrubbed), so they are safe to
-     * stream wherever the full tool RESULT is shown.
-     */
-    const onToolEffectiveArgs = async (
-      toolCallId: string,
-      toolName: string,
-      argsJson: string,
-    ): Promise<void> => {
-      // Prefer the name `onToolCall` used for the first `🔧 Tool:` line so the
-      // follow-up matches it exactly (MCP reports the `server/tool` ref there,
-      // while the call line shows the AI-SDK tool key).
-      const displayName =
-        _pendingToolCallIds.get(toolCallId)?.name ?? toolName;
-      const safe = truncateToolIo(argsJson);
-      toolEffectiveArgs.set(toolCallId, safe);
-      toolNodeArgs.set(toolCallId, safe);
-      let parsedValid = false;
-      try {
-        JSON.parse(argsJson);
-        parsedValid = true;
-      } catch {
-        /* invalid JSON stays key-only on every user-facing surface */
-      }
-      const ownerNodeId = toolCallOwnerNodeIds.get(toolCallId);
-      const call =
-        ownerNodeId === undefined
-          ? undefined
-          : nodeDebugToolCalls
-              .get(ownerNodeId)
-              ?.findLast((item) => item.id === toolCallId);
-      if (call !== undefined && parsedValid) {
-        call.arguments = JSON.parse(argsJson) as unknown;
-      }
-      if (ownerNodeId !== undefined && parsedValid) {
-        const tc = nodeToolCalls
-          .get(ownerNodeId)
-          ?.findLast(
-            (item) =>
-              item.id === toolCallId && item.exec_time_seconds === undefined,
-          );
-        if (tc !== undefined) tc.args_json = safe;
-      }
-      if (parsedValid) {
-        try {
-          await emitReasoningStep(
-            `🔧 Tool: **${displayName}** (arguments: ${safe})\n`,
-          );
-        } catch {
-          /* client disconnect — telemetry must never break tool execution */
-        }
-      }
-    };
-
-    // --- Client tool-call passthrough callback ---
-    let clientToolCallIndex = 0;
-    const onClientToolCall = async (
-      toolCallId: string,
-      toolName: string,
-      argsJson: string,
-    ): Promise<void> => {
-      const activeNodeId = lastActiveNodeId;
-      if (activeNodeId !== undefined) {
-        const existing = nodeToolCalls.get(activeNodeId) ?? [];
-        existing.push({ id: toolCallId, name: toolName, args_json: argsJson });
-        nodeToolCalls.set(activeNodeId, existing);
-      }
-      await onChunk(
-        makeToolCallChunk(
-          crypto.randomUUID(),
-          model,
-          toolCallId,
-          toolName,
-          argsJson,
-          clientToolCallIndex++,
-        ),
-      );
-      // A client tool has no server-side execute, so nothing ever fires
-      // `onToolEffectiveArgs` for it and the node would show no INPUT at all.
-      // The raw args are already handed to the client verbatim above and
-      // recorded in `nodeToolCalls`, so surfacing them on the node is not a
-      // new exposure — it just makes the live graph consistent with the
-      // server-side tools, whose effective key-value args are visible there.
-      // Must be set BEFORE the end-emit: `emitToolNodeEnd` deletes the entry.
-      toolNodeArgs.set(toolCallId, truncateToolIo(argsJson));
-      emitToolNodeStart(toolCallId, toolName);
-      emitToolNodeEnd(toolCallId, 0);
-    };
-
-    const onToolError = (
-      toolCallId: string,
-      _errorMessage: string,
-      execTimeSec: number,
-    ): void => {
-      const safeMessage = "Tool execution failed.";
-      const visibleContent = {
-        isError: true,
-        error: {
-          name: "ToolExecutionError",
-          message: safeMessage,
-        },
-      };
-      toolNodeResults.set(toolCallId, JSON.stringify(visibleContent));
-      const activeNodeId =
-        toolCallOwnerNodeIds.get(toolCallId) ?? lastActiveNodeId;
-      if (activeNodeId !== undefined) {
-        const calls = nodeToolCalls.get(activeNodeId);
-        const call = calls?.findLast(
-          (item) =>
-            item.id === toolCallId && item.exec_time_seconds === undefined,
-        );
-        if (call !== undefined) {
-          call.exec_time_seconds = Math.round(execTimeSec * 1000) / 1000;
-        }
-        const debugCalls = nodeDebugToolCalls.get(activeNodeId);
-        const debugCall = debugCalls?.findLast(
-          (item) => item.id === toolCallId && item.result === null,
-        );
-        if (debugCall !== undefined) {
-          debugCall.result = visibleContent;
-          debugCall.exec_time_seconds =
-            Math.round(execTimeSec * 1000) / 1000;
-          debugCall.is_error = true;
-        }
-      }
-      toolCallOwnerNodeIds.delete(toolCallId);
-      _pendingToolCallIds.delete(toolCallId);
-      emitToolNodeEnd(toolCallId, execTimeSec, safeMessage);
-    };
-
-    const onToolResult = async (
-      toolCallId: string,
-      content: unknown,
-      execTimeSec: number,
-      options?: { streamDetails?: boolean },
-    ): Promise<void> => {
-      // The model was shown ref-handles in place of long document references
-      // (config.refHandles). Everything below — the client `tool_calls` details
-      // block, the live-graph findings table, and the debug trace — is a
-      // USER/OPERATOR surface, so map the handles back to real references
-      // first. No-op when the flow has no refHandles.
-      const visibleContent =
-        refHandles !== undefined
-          ? refHandles.unmapContent(sanitizeToolResultOutput(content))
-          : sanitizeToolResultOutput(content);
-      const errorMessage = isToolErrorOutput(content)
-        ? "Tool execution failed."
-        : undefined;
-      // Error envelopes are untrusted provider/tool output. Preserve successful
-      // results, but expose only a stable error object to monitoring, debug
-      // traces, and client reasoning streams.
-      const toolUsage = extractToolUsage(content);
-      if (toolUsage !== undefined) {
-        nodeToolCostOverride.set(toolCallId, toolUsage.cost);
-        nodeInputTokens.set(
-          toolCallId,
-          (nodeInputTokens.get(toolCallId) ?? 0) + toolUsage.inputTokens,
-        );
-        nodeOutputTokens.set(
-          toolCallId,
-          (nodeOutputTokens.get(toolCallId) ?? 0) + toolUsage.outputTokens,
-        );
-      }
-      // Capture the tool's output for its synthetic node's detail view — a
-      // vectorsearch-style payload normalises to a findings table shape.
-      const resultDisplay = buildToolResultDisplay(visibleContent);
-      if (resultDisplay !== undefined) {
-        toolNodeResults.set(toolCallId, truncateToolIo(resultDisplay));
-      }
-      emitToolNodeEnd(toolCallId, execTimeSec, errorMessage);
-      const activeNodeId =
-        toolCallOwnerNodeIds.get(toolCallId) ?? lastActiveNodeId;
-      if (activeNodeId !== undefined) {
-        const calls = nodeToolCalls.get(activeNodeId);
-        if (calls !== undefined) {
-          const tc = calls.findLast(
-            (call) =>
-              call.id === toolCallId && call.exec_time_seconds === undefined,
-          );
-          if (tc !== undefined)
-            tc.exec_time_seconds = Math.round(execTimeSec * 1000) / 1000;
-        }
-      }
-      if (this.debugStore !== undefined && activeNodeId !== undefined) {
-        const debugCalls = nodeDebugToolCalls.get(activeNodeId);
-        if (debugCalls !== undefined) {
-          const dtc = debugCalls.findLast(
-            (call) => call.id === toolCallId && call.result === null,
-          );
-          if (dtc !== undefined) {
-            dtc.result = visibleContent;
-            dtc.exec_time_seconds = Math.round(execTimeSec * 1000) / 1000;
-            dtc.is_error = errorMessage !== undefined;
-          }
-        }
-      }
-      toolCallOwnerNodeIds.delete(toolCallId);
-
-      const callMeta = _pendingToolCallIds.get(toolCallId);
-      _pendingToolCallIds.delete(toolCallId);
-
-      const toolName = callMeta?.name ?? "unknown";
-      // Fold a tool-reported cost (e.g. vectorsearch's own embedding/rerank
-      // spend) into tenant/user/flow rolling-window spend tracking — mirrors
-      // the LLM-backed synthetic tools (agent-tools.ts, agent-harness/tools.ts),
-      // and runs independent of `monitoring` since budget enforcement must not
-      // depend on whether the live dashboard is enabled.
-      if (toolUsage !== undefined && toolUsage.cost > 0) {
-        const slash = toolName.indexOf("/");
-        this.costTracker?.record(ctx.clientId, toolUsage.cost, {
-          provider: slash >= 0 ? toolName.slice(0, slash) : toolName,
-          model: toolName,
-          promptTokens: toolUsage.inputTokens,
-          completionTokens: toolUsage.outputTokens,
-        });
-      }
-      // Prefer the effective (post forced-args / ref-handle / egress-DLP)
-      // arguments over the key-only placeholder captured at call time, so the
-      // details block shows the ACTUAL query a search ran with — the result
-      // body below is far more revealing than these args already.
-      const argsJson =
-        toolEffectiveArgs.get(toolCallId) ?? callMeta?.argsJson ?? "{}";
-      toolEffectiveArgs.delete(toolCallId);
-
-      // The tool call itself was already streamed by onToolCall. Private
-      // delegated workers can suppress the potentially large/sensitive result
-      // block while all monitoring, timing, cost and error bookkeeping above
-      // remains intact.
-      if (options?.streamDetails === false) return;
-
-      // Render as Open WebUI <details type="tool_calls"> content block.
-      let displayResult: unknown = visibleContent;
-      try {
-        const raw =
-          typeof visibleContent === "string"
-            ? JSON.parse(visibleContent)
-            : visibleContent;
-        if (
-          Array.isArray(raw) &&
-          raw.length > 0 &&
-          typeof raw[0] === "object" &&
-          raw[0] !== null &&
-          "text" in raw[0]
-        ) {
-          const inner = JSON.parse((raw[0] as { text: string }).text);
-          displayResult = inner;
-        } else {
-          displayResult = raw;
-        }
-        if (
-          displayResult !== null &&
-          typeof displayResult === "object" &&
-          "results" in (displayResult as Record<string, unknown>)
-        ) {
-          const results = (displayResult as { results: unknown[] }).results;
-          if (Array.isArray(results)) {
-            const mapped = results.map((r: unknown) => {
-              const item = r as Record<string, unknown>;
-              const meta =
-                (item.metadata as Record<string, unknown> | undefined) ?? {};
-              const rawTags = item.tags ?? meta.tags ?? meta.tag;
-              const tag = Array.isArray(rawTags)
-                ? rawTags.join(", ")
-                : (rawTags ?? undefined);
-              return {
-                title:
-                  item.title ??
-                  meta.title ??
-                  meta.name ??
-                  item.id ??
-                  "–",
-                score:
-                  typeof item.score === "number"
-                    ? Math.round(item.score * 1000) / 1000
-                    : item.score,
-                tag,
-                collection:
-                  item.collection ?? meta.collection ?? undefined,
-                url:
-                  item.link ??
-                  item.url ??
-                  meta.url ??
-                  meta.link ??
-                  undefined,
-              };
-            });
-            const byDoc = new Map<
-              string,
-              Record<string, unknown> & { _chunks: number }
-            >();
-            for (const m of mapped) {
-              const key =
-                typeof m.url === "string" && m.url.length > 0
-                  ? m.url
-                  : String(m.title);
-              const existing = byDoc.get(key);
-              if (existing === undefined) {
-                byDoc.set(key, { ...m, _chunks: 1 });
-              } else {
-                existing._chunks += 1;
-                if (
-                  typeof m.score === "number" &&
-                  (typeof existing.score !== "number" ||
-                    m.score > existing.score)
-                ) {
-                  existing.score = m.score;
-                }
-              }
-            }
-            displayResult = Array.from(byDoc.values()).sort((a, b) => {
-              const sa = typeof a.score === "number" ? a.score : -Infinity;
-              const sb = typeof b.score === "number" ? b.score : -Infinity;
-              return sb - sa;
-            });
-          }
-        }
-      } catch {
-        displayResult = visibleContent;
-      }
-
-      const formatVectorHits = (val: unknown): string | undefined => {
-        if (!Array.isArray(val) || val.length === 0) return undefined;
-        const entries: Record<string, unknown>[] = [];
-        for (const entry of val) {
-          if (entry === null || typeof entry !== "object") return undefined;
-          const e = entry as Record<string, unknown>;
-          if (!("title" in e) || !("score" in e)) return undefined;
-          entries.push(e);
-        }
-        let maxScore = 0;
-        for (const e of entries) {
-          const s =
-            typeof e.score === "number" ? (e.score as number) : NaN;
-          if (Number.isFinite(s) && s > maxScore) maxScore = s;
-        }
-        const lines: string[] = [];
-        for (const e of entries) {
-          const scoreNum =
-            typeof e.score === "number" ? (e.score as number) : NaN;
-          const pct = Number.isFinite(scoreNum)
-            ? maxScore > 0
-              ? `${Math.round((scoreNum / maxScore) * 100)}%`
-              : `${Math.round(scoreNum * 100)}%`
-            : String(e.score ?? "");
-          const pctCol = pct.padStart(4, " ");
-          const title = String(e.title ?? "–");
-          const url = typeof e.url === "string" ? e.url : "";
-          const chunkCount =
-            typeof e._chunks === "number" ? (e._chunks as number) : 1;
-          const chunkSuffix = chunkCount > 1 ? `  ·  ${chunkCount} Chunks` : "";
-          lines.push(`${pctCol}  ${title}${chunkSuffix}`);
-          if (url.length > 0) lines.push(`      ${url}`);
-        }
-        return lines.join("\n");
-      };
-
-      const vectorHitsFormatted =
-        typeof displayResult === "string"
-          ? undefined
-          : formatVectorHits(displayResult);
-      const resultIsHtml = false;
-      const resultStr =
-        typeof displayResult === "string"
-          ? displayResult
-          : (vectorHitsFormatted ?? JSON.stringify(displayResult, null, 2));
-
-      let displayName = toolName;
-      try {
-        const a = JSON.parse(argsJson) as {
-          collection?: unknown;
-          filter?: { tag?: unknown };
-        };
-        const hitCount = Array.isArray(displayResult)
-          ? displayResult.length
-          : undefined;
-        const labelParts: string[] = [];
-        if (typeof a.collection === "string" && a.collection.length > 0)
-          labelParts.push(a.collection);
-        if (
-          a.filter &&
-          typeof a.filter.tag === "string" &&
-          a.filter.tag.length > 0
-        )
-          labelParts.push(`tag=${a.filter.tag}`);
-        if (hitCount !== undefined) labelParts.push(`${hitCount} Treffer`);
-        if (labelParts.length > 0)
-          displayName = `${toolName} · ${labelParts.join(" · ")}`;
-      } catch {
-        /* keep the bare tool name */
-      }
-
-      const escapeAttr = (s: string): string =>
-        s
-          .replace(/&/g, "&amp;")
-          .replace(/"/g, "&quot;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;");
-      const escapedArgs = escapeAttr(argsJson);
-      const escapedName = escapeAttr(displayName);
-      const escapedResult = resultIsHtml
-        ? resultStr
-        : resultStr
-            .replace(/&/g, "&amp;")
-            .replace(/</g, "&lt;")
-            .replace(/>/g, "&gt;");
-
-      const detailsBlock =
-        `<details type="tool_calls" done="true" ` +
-        `id="${toolCallId}" name="${escapedName}" ` +
-        `arguments="${escapedArgs}">\n` +
-        `<summary>${escapedName} (${Math.round(execTimeSec * 1000)}ms)</summary>\n` +
-        `${escapedResult}\n` +
-        `</details>\n`;
-
-      try {
-        await emitReasoningStep(detailsBlock);
-      } catch {
-        /* client disconnected */
-      }
-    };
-
-    // --- Approval-required callback (human-in-the-loop).
-    const onApprovalRequired = (pending: PendingApproval): void => {
-      const base = (runtime.appConfig.approvalBaseUrl ?? "").replace(/\/$/, "");
-      const linkSecret = runtime.appConfig.oidcSessionSecret;
-      const linkToken =
-        linkSecret !== undefined
-          ? signApprovalLinkToken(
-              pending.id,
-              linkSecret,
-              Date.now() + 3_600_000,
-            )
-          : undefined;
-      const decideTokenQuery =
-        linkToken !== undefined
-          ? `&token=${encodeURIComponent(linkToken)}`
-          : "";
-      const approveUrl = `${base}/monitoring/approvals/${pending.id}/decide?decision=approved${decideTokenQuery}`;
-      const denyUrl = `${base}/monitoring/approvals/${pending.id}/decide?decision=denied${decideTokenQuery}`;
-
-      const toolLabel = pending.tool.split("/").pop() ?? pending.tool;
-      const argEntries = Object.entries(pending.args ?? {});
-      const argSummary =
-        argEntries.length > 0
-          ? argEntries
-              .map(([k, v]) => `**${k}**: ${JSON.stringify(v)}`)
-              .join(", ")
-          : "_keine Argumente_";
-
-      const widgetTokenQuery =
-        linkToken !== undefined
-          ? `?token=${encodeURIComponent(linkToken)}`
-          : "";
-      const widgetUrl = `${base}/monitoring/approvals/${pending.id}/widget${widgetTokenQuery}`;
-      const approvalMessage =
-        base.length > 0
-          ? `\n\n<iframe src="${widgetUrl}" title="Freigabe erforderlich: ${toolLabel}" ` +
-            `style="width:100%;max-width:520px;height:172px;border:1px solid rgba(127,127,127,.3);` +
-            `border-radius:8px;background:transparent" loading="lazy"></iframe>\n\n`
-          : `\n\n> ⏳ **Freigabe erforderlich:** \`${toolLabel}\`\n` +
-            `>\n` +
-            `> Argumente: ${argSummary}\n` +
-            `>\n` +
-            `> [✅ Genehmigen](${approveUrl}) | [🚫 Ablehnen](${denyUrl})\n\n`;
-
-      void (async () => {
-        try {
-          await runtime.onToken(
-            lastActiveNodeId ?? "approval",
-            approvalMessage,
-          );
-        } catch {
-          /* client disconnected */
-        }
-        await onChunk({
-          id: crypto.randomUUID(),
-          object: "chat.completion.chunk",
-          created: Math.floor(Date.now() / 1000),
-          model,
-          choices: [{ index: 0, delta: {}, finish_reason: null }],
-          approval_required: {
-            id: pending.id,
-            execution_id: pending.executionId,
-            node_id: pending.nodeId,
-            tool: pending.tool,
-            args: pending.args,
-            ...(pending.tenantId !== undefined
-              ? { tenant_id: pending.tenantId }
-              : {}),
-            requested_at: pending.requestedAt,
-          },
-        } as ChatCompletionChunk);
-      })();
-    };
-
-    // --- Groundedness callback.
-    /**
-     * Captured groundedness reports keyed by node id — read by the debug
-     * trace's `upsertNode` call so `GET /monitoring/explain/:executionId`
-     * (Decision-Provenance Explainability Card) can cite the exact score the
-     * live `groundedness` SSE chunk already reported, instead of re-deriving
-     * it (or having nothing to show once the run has finished).
-     */
-    const nodeGroundedness = new Map<
-      string,
-      import("../../types/debug-trace.js").DebugGroundedness
-    >();
-    const onGroundedness = async (
-      nodeId: string,
-      report: GroundednessReport,
-    ): Promise<void> => {
-      nodeGroundedness.set(nodeId, {
-        score: report.score,
-        passed: report.passed,
-        checked_sentences: report.checkedSentences,
-        unsupported: report.unsupported.map((u) => ({
-          sentence: u.sentence,
-          support: u.support,
-        })),
-      });
-      await onChunk({
-        id: crypto.randomUUID(),
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: { content: null }, finish_reason: null }],
-        groundedness: {
-          node_id: nodeId,
-          score: report.score,
-          passed: report.passed,
-          checked_sentences: report.checkedSentences,
-          unsupported: report.unsupported.map((u) => ({
-            sentence: u.sentence,
-            support: u.support,
-          })),
-        },
-      } as ChatCompletionChunk);
-    };
-    const monitoringMeta = {
+    const monitoringMeta: ExecutionEventMeta = {
       flowId,
       ...(ctx.clientId !== undefined ? { tenantId: ctx.clientId } : {}),
       ...(typeof ctx.requestParams?.conversation_id === "string"
@@ -1602,52 +674,6 @@ class GraphEngineServiceImpl implements GraphEngineService {
       ...(ctx.chatId !== undefined ? { chatId: ctx.chatId } : {}),
       ...(ctx.sessionId !== undefined ? { sessionId: ctx.sessionId } : {}),
     };
-    /** Track the most recently started node for tool-call attribution. */
-    let lastActiveNodeId: string | undefined;
-    const nodeStartTimes = new Map<string, string>();
-    // Start timestamps are historical timing data, not lifecycle state. Keep a
-    // separate active set until every terminal side effect (trace, progress and
-    // monitoring) has completed, and coalesce concurrent end notifications.
-    const activeNodeIds = new Set<string>();
-    const nodeFinalizationPromises = new Map<string, Promise<void>>();
-    /** Per-node execution metadata accumulated during the run for monitoring detail. */
-    const nodeModels = new Map<string, string>();
-    const nodeInputTokens = new Map<string, number>();
-    const nodeOutputTokens = new Map<string, number>();
-    /**
-     * Cost a tool call REPORTED for itself (e.g. vectorsearch's embedding +
-     * rerank spend), keyed by toolCallId. Takes precedence over the
-     * nodeModels/estimateCost derivation in emitToolNodeEnd, since no
-     * single provider/model price fits a blended embedding+rerank call.
-     */
-    const nodeToolCostOverride = new Map<string, number>();
-    const nodeToolCalls = new Map<
-      string,
-      import("../../types/monitoring.js").NodeToolCall[]
-    >();
-    const nodePrompts = new Map<string, string>();
-    const nodeResponses = new Map<string, string>();
-    const nodeRoutingDecisions = new Map<string, RoutingDecision>();
-    /** Upper bound on captured prompt/response length to keep events bounded. */
-    const IO_CAPTURE_LIMIT = 16_000;
-    const truncateIo = (s: string): string =>
-      s.length > IO_CAPTURE_LIMIT
-        ? s.slice(0, IO_CAPTURE_LIMIT) +
-          `\n… [truncated ${s.length - IO_CAPTURE_LIMIT} chars]`
-        : s;
-    /** Sequence counter: order in which node attempts were started (1-based). */
-    let nodeSequence = 0;
-    const nodeSequences = new Map<string, number>();
-    const nodeAttempts = new Map<string, number>();
-    const nodeAttemptContexts = new Map<string, DebugNodeAttemptContext>();
-    const nodeLabels = new Map<string, string>(
-      (resolvedFlow.nodes ?? []).map((n) => [n.id, n.label ?? n.id]),
-    );
-    const nodeTypes = new Map<string, string>(
-      (resolvedFlow.nodes ?? []).map((n) => [n.id, n.type]),
-    );
-
-    // -----------------------------------------------------------------------
     // User attribution — derived once per execution and stamped on every node
     // event so the Live Graph and History view can show the requester even when
     // only the "running" event has arrived (agent-harness delegated nodes would
@@ -1662,102 +688,125 @@ class GraphEngineServiceImpl implements GraphEngineService {
         : undefined;
 
     // -----------------------------------------------------------------------
-    // Debug trace accumulators
-    // -----------------------------------------------------------------------
-    const nodeFullPrompts = new Map<string, string>();
-    const nodeFullResponses = new Map<string, string>();
-    const nodeFullReasoning = new Map<string, string>();
-    const nodeDebugToolCalls = new Map<string, DebugToolCall[]>();
-    const nodeToolSelections = new Map<string, DebugToolSelection>();
-    const nodeClassifications = new Map<string, DebugClassifierOutput>();
-    // Per-node diagnostics timeline (retries, fallbacks, salvages, aborts) and
-    // the structured error (type/details) of the first error that failed a node
-    // — both surfaced in the debug trace to make failures traceable.
-    const nodeDiagnostics = new Map<string, DebugNodeDiagnostic[]>();
-    const recordNodeDiagnostic = (
-      nodeId: string,
-      diagnostic: Omit<DebugNodeDiagnostic, "at">,
-    ): void => {
-      const list = nodeDiagnostics.get(nodeId) ?? [];
-      // Cap per node so a pathological retry storm can't grow the trace
-      // unbounded (the timeline stays a summary, not a firehose).
-      if (list.length < 200) {
-        list.push({ at: new Date().toISOString(), ...diagnostic });
-        nodeDiagnostics.set(nodeId, list);
-      }
-      // Diagnostics are already operator-facing and content-free by contract
-      // (no prompts, tool arguments or secrets), so they can be mirrored to
-      // the server log. Info-level entries stay trace-only to keep volume low.
-      if (
-        (diagnostic.level === "warn" || diagnostic.level === "error") &&
-        this.logger !== undefined
-      ) {
-        const fields = {
-          execution_id: executionId,
-          flow_id: flowId,
-          flow_version: flowVersion,
-          node_id: nodeId,
-          code: diagnostic.code,
-          ...(diagnostic.details !== undefined ? { details: diagnostic.details } : {}),
-        };
-        if (diagnostic.level === "error") this.logger.error(diagnostic.message, fields);
-        else this.logger.warn(diagnostic.message, fields);
-      }
-    };
-    const nodeErrorInfo = new Map<
-      string,
-      { type?: string; details?: Record<string, unknown> }
-    >();
-    const clearNodeAttemptState = (nodeId: string): void => {
-      nodeModels.delete(nodeId);
-      nodeInputTokens.delete(nodeId);
-      nodeOutputTokens.delete(nodeId);
-      nodeToolCalls.delete(nodeId);
-      nodePrompts.delete(nodeId);
-      nodeResponses.delete(nodeId);
-      nodeRoutingDecisions.delete(nodeId);
-      nodeFullPrompts.delete(nodeId);
-      nodeFullResponses.delete(nodeId);
-      nodeFullReasoning.delete(nodeId);
-      nodeDebugToolCalls.delete(nodeId);
-      nodeToolSelections.delete(nodeId);
-      nodeClassifications.delete(nodeId);
-      nodeDiagnostics.delete(nodeId);
-      nodeErrorInfo.delete(nodeId);
-      nodeGroundedness.delete(nodeId);
-      nodeAttemptContexts.delete(nodeId);
-    };
+
+    // Run-scoped image references, created once so the edge-flow capture and
+    // the node handlers share ONE registry: the `img-N` refs the edge records
+    // are exactly the refs the model sees in the prompt.
+    const runImageRefs =
+      this.mediaStore !== undefined
+        ? new HashedImageRefRegistry({ store: this.mediaStore })
+        : undefined;
+
+
+    const st = createRunState({
+      resolvedFlow,
+      logger: this.logger,
+      executionId,
+      flowId,
+      flowVersion,
+    });
+    const {
+      nodePrompts,
+      nodeResponses,
+      nodeRoutingDecisions,
+      nodeFullPrompts,
+      nodeFullResponses,
+      nodeFullReasoning,
+      nodeModels,
+      nodeInputTokens,
+      nodeOutputTokens,
+      nodeToolSelections,
+      nodeClassifications,
+      nodeErrorInfo,
+      activeNodeIds,
+    } = st;
+
+    const toolCb = createToolCallbacks({
+      monitoring,
+      monitoringMeta,
+      executionId,
+      flowId,
+      model,
+      ctx,
+      st,
+      userPromptPreview,
+      emitReasoningStep,
+      onChunk,
+      refHandles,
+      llmPricing: this.appConfig.llmPricing,
+      costTracker: this.costTracker,
+      getDebugStore: () => this.debugStore,
+      getRuntime: () => runtime,
+    });
+    const {
+      toolNodes,
+      emitToolNodeEnd,
+      mergeToolTraceMetadata,
+      onToolCall,
+      onToolEffectiveArgs,
+      onClientToolCall,
+      onToolResult,
+      onToolError,
+      onApprovalRequired,
+    } = toolCb;
+
+    /** Upper bound on captured prompt/response length to keep events bounded. */
+    const IO_CAPTURE_LIMIT = 16_000;
+    const truncateIo = (s: string): string =>
+      s.length > IO_CAPTURE_LIMIT
+        ? s.slice(0, IO_CAPTURE_LIMIT) +
+          `\n… [truncated ${s.length - IO_CAPTURE_LIMIT} chars]`
+        : s;
     const debugErrors: DebugStreamError[] = [];
     // ---------------------------------------------------------------------
-    // Edge data-flow capture (Studio canvas: solid active edges + colored
-    // channel lines + payload list in the property panel).
-    //
-    // `withNodeErrorStrategy` (compile.ts) calls `onNodeEntry` at the start of
-    // every graph-node execution. At that moment `state.currentNodeId` is the
-    // node that ran immediately before (every handler returns it), so the state
-    // the node received is exactly the payload that crossed the edge
-    // currentNodeId → this node. The first node of a run has no predecessor in
-    // the state — its incoming edge starts at `__start__`.
-    //
-    // Capturing at node ENTRY (rather than at routing decisions) covers
-    // conditional and unconditional edges uniformly, including parallel
-    // fan-out, and needs no edge-topology bookkeeping in the stream loop.
-    // The final edge into `__end__` is recorded after the stream loop from the
-    // last node's entry baseline.
-    // ---------------------------------------------------------------------
-    const edgeFlowNodeMap = new Map<string, FlowNode>(
-      (resolvedFlow.nodes ?? []).map((n) => [n.id, n]),
-    );
-    /** Per-node counters captured at entry — the "produced since" baseline. */
-    const edgeFlowBaselines = new Map<string, EdgeFlowCounters>();
-    /** Global edge traversal counter (1-based). */
-    let edgeSequence = 0;
+    /**
+     * Outcome of the threaded-history contract for this turn. Only known once
+     * the thread lock is held and the checkpoint has been read, so it is patched
+     * onto the trace context afterwards rather than passed to `startTrace`.
+     */
+    let historyReconciliation: DebugHistoryReconciliation | undefined;
+    startDebugTrace({
+      getDebugStore: () => this.debugStore,
+      executionId,
+      flowId,
+      flowVersion,
+      ctx,
+      messages,
+    });
+    const lifecycle = createNodeLifecycle({
+      monitoring,
+      monitoringMeta,
+      executionId,
+      flowId,
+      model,
+      ctx,
+      st,
+      userPromptPreview,
+      resolvedFlow,
+      sse,
+      citations,
+      guardrail,
+      metrics: this.metrics,
+      spanManager,
+      pricingOverrides,
+      flowProgressEnabled,
+      formatProgressDuration,
+      emitReasoningStep,
+      onChunk,
+      runImageRefs,
+      getDebugStore: () => this.debugStore,
+    });
+    const {
+      captureEdgeFlow,
+      recordEdge,
+      edgeFlowBaselines,
+      onNodeStart,
+      emitNodeEnd,
+      emitFlowEnd,
+      onGroundedness,
+    } = lifecycle;
     /** Last node that completed without error — source of the `__end__` edge. */
     let lastCompletedNodeId: string | undefined;
-    let edgeFlowInspectionAnnounced = false;
-    let edgeFlowImagesConsumed = false;
-    /** Id of the node that consumed the run's images (vision/transcription). */
-    let edgeFlowImageConsumerId: string | undefined;
     /**
      * Running merge of every node's state update (same reducer semantics as
      * LangGraph). The entry state of a node lacks that node's OWN writes, so
@@ -1766,509 +815,6 @@ class GraphEngineServiceImpl implements GraphEngineService {
      * before the stream loop (once the thread-reconciled messages are final).
      */
     let mergedEdgeState: AgentState;
-    const countersOf = (
-      state: AgentState,
-    ): EdgeFlowCounters => ({
-      messageCount: (state.messages ?? []).length,
-      toolResultCount: (state.toolResults ?? []).length,
-      citationCount: (state.citations ?? []).length,
-      imageRefCount: runImageRefs?.list().length ?? 0,
-      classificationJson:
-        state.classification && Object.keys(state.classification).length > 0
-          ? JSON.stringify(state.classification)
-          : "",
-    });
-    const recordEdge = (
-      source: string,
-      target: string,
-      state: AgentState,
-      baseline: EdgeFlowCounters | undefined,
-    ): void => {
-      if (this.debugStore === undefined) return;
-      edgeSequence += 1;
-      const result = classifyEdgeFlow({
-        source,
-        target,
-        sequence: edgeSequence,
-        state,
-        baseline,
-        nodeMap: edgeFlowNodeMap,
-        imageRefs: runImageRefs?.list() ?? [],
-        inspectionToolAnnounced: edgeFlowInspectionAnnounced,
-        imageConsumedUpstream: edgeFlowImagesConsumed,
-        imageConsumerId: edgeFlowImageConsumerId,
-        // Req 7.12: the debug trace is a persisted copy of what crossed the
-        // edge — while output redaction is active it must not hold raw PII.
-        // The SAME effective guardrail as the SSE stream applies (per-flow
-        // override already resolved into `guardrail`); content the PII vault
-        // has already tokenized (`[[PII:...]]`) matches no detector and passes
-        // through, so tokenization is respected rather than double-processed.
-        ...(guardrail !== undefined
-          ? { redact: (text: string): string => guardrail.redact(text).text }
-          : {}),
-      });
-      edgeFlowInspectionAnnounced = result.inspectionToolAnnounced;
-      edgeFlowImagesConsumed = result.imageConsumedUpstream;
-      edgeFlowImageConsumerId = result.imageConsumerId;
-      this.debugStore.upsertEdgeFlow(executionId, result.record);
-    };
-    const captureEdgeFlow = (
-      nodeId: string,
-      state: AgentState,
-    ): void => {
-      if (this.debugStore === undefined) return;
-      const source = state.currentNodeId ?? "__start__";
-      // The first node of a run has no graph predecessor: its incoming edge
-      // starts at `__start__`. Nothing was "produced" by the start itself —
-      // the baseline is the entry state, so only the query/images/tools show
-      // as passed along (threaded checkpoints carry old AI messages, which
-      // must NOT masquerade as freshly produced content).
-      const baseline =
-        source === "__start__" ? countersOf(state) : edgeFlowBaselines.get(source);
-      recordEdge(source, nodeId, state, baseline);
-      // Baseline for what THIS node produces: counters of the state it
-      // received (its own writes land after this point).
-      edgeFlowBaselines.set(nodeId, countersOf(state));
-    };
-    /**
-     * Outcome of the threaded-history contract for this turn. Only known once
-     * the thread lock is held and the checkpoint has been read, so it is patched
-     * onto the trace context afterwards rather than passed to `startTrace`.
-     */
-    let historyReconciliation: DebugHistoryReconciliation | undefined;
-    if (this.debugStore !== undefined) {
-      this.debugStore.startTrace({
-        execution_id: executionId,
-        flow_id: flowId,
-        flow_version: flowVersion,
-        status: "running",
-        started_at: new Date().toISOString(),
-        finished_at: null,
-        context: {
-          ...(ctx.chatId !== undefined ? { chat_id: ctx.chatId } : {}),
-          ...(ctx.sessionId !== undefined ? { session_id: ctx.sessionId } : {}),
-          ...(ctx.messageId !== undefined ? { message_id: ctx.messageId } : {}),
-          ...(ctx.userId !== undefined ? { user_id: ctx.userId } : {}),
-          ...(ctx.userEmail !== undefined ? { user_email: ctx.userEmail } : {}),
-          ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
-          ...(ctx.clientId !== undefined ? { client_id: ctx.clientId } : {}),
-          ...(ctx.language !== undefined ? { language: ctx.language } : {}),
-          ...(ctx.role !== undefined ? { role: ctx.role } : {}),
-          ...(ctx.plan !== undefined ? { plan: ctx.plan } : {}),
-          ...(ctx.claims !== undefined
-            ? { jwt_claims: sanitizeJwtClaims(ctx.claims) }
-            : {}),
-          ...(ctx.traceContext !== undefined
-            ? { trace_id: ctx.traceContext.traceId }
-            : {}),
-        },
-        input_messages: messages.map((m) => ({
-          role: m.role as "system" | "user" | "assistant" | "tool",
-          content: m.content,
-          ...(m.tool_call_id !== undefined
-            ? { tool_call_id: m.tool_call_id }
-            : {}),
-          ...(m.name !== undefined ? { name: m.name } : {}),
-          ...(m.tool_calls !== undefined && m.tool_calls.length > 0
-            ? { tool_calls: m.tool_calls }
-            : {}),
-        })),
-        nodes: [],
-        usage: { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0 },
-        errors: [],
-      });
-    }
-
-    const onNodeStart = (
-      nodeId: string,
-      context?: DebugNodeAttemptContext,
-    ): void => {
-      // Delegation can announce a target immediately before the target handler
-      // announces itself. Both callbacks describe the same live attempt.
-      if (activeNodeIds.has(nodeId)) return;
-
-      clearNodeAttemptState(nodeId);
-      nodeAttemptContexts.set(nodeId, context ?? { trigger: "graph-lifecycle" });
-      const attempt = (nodeAttempts.get(nodeId) ?? 0) + 1;
-      nodeAttempts.set(nodeId, attempt);
-      const startTime = new Date().toISOString();
-      nodeStartTimes.set(nodeId, startTime);
-      activeNodeIds.add(nodeId);
-      lastActiveNodeId = nodeId;
-      nodeSequence += 1;
-      nodeSequences.set(nodeId, nodeSequence);
-
-      const nodeType = nodeTypes.get(nodeId);
-      const progress = (
-        resolvedFlow.nodes.find((node) => node.id === nodeId)?.config as
-          | {
-              progress?: {
-                start?: unknown;
-                complete?: unknown;
-                error?: unknown;
-              };
-            }
-          | undefined
-      )?.progress;
-      const progressStart =
-        typeof progress?.start === "string" && progress.start.trim().length > 0
-          ? progress.start.trim()
-          : undefined;
-      if (nodeType !== "router" && nodeType !== "parallel") {
-        const label = progressStart ?? nodeLabels.get(nodeId) ?? nodeId;
-        const icon =
-          nodeType === "classifier"
-            ? "🧭"
-            : nodeType === "retrieval"
-              ? "📚"
-              : nodeType === "memory"
-                ? "🧠"
-                : nodeType === "tool"
-                  ? "🔧"
-                  : "⚙️";
-        void emitReasoningStep(`${icon} ${label}…\n`);
-      }
-      spanManager.startNodeSpan(nodeId);
-      // Live progress in the debug trace: register the node as "running" the
-      // moment it starts, so GET /monitoring/debug/:id shows what a long run
-      // is doing right now instead of only the nodes that already finished.
-      // The final upsert from emitNodeEnd replaces this stub (same attempt
-      // number); a retried attempt appends its own entry.
-      this.debugStore?.upsertNode(executionId, {
-        node_id: nodeId,
-        ...(nodeTypes.has(nodeId) ? { node_type: nodeTypes.get(nodeId) } : {}),
-        status: "running",
-        started_at: startTime,
-        finished_at: null,
-        latency_ms: null,
-        ...(nodeAttempts.has(nodeId)
-          ? { attempt: nodeAttempts.get(nodeId) }
-          : {}),
-        ...(nodeSequences.has(nodeId)
-          ? { sequence: nodeSequences.get(nodeId) }
-          : {}),
-        tool_calls: [],
-      });
-      monitoring?.emitNodeEvent(
-        executionId,
-        {
-          execution_id: executionId,
-          node_id: nodeId,
-          status: "running",
-          start_time: startTime,
-          end_time: null,
-          latency_ms: null,
-          label: nodeLabels.get(nodeId),
-          ...(nodeSequences.has(nodeId)
-            ? { sequence: nodeSequences.get(nodeId) }
-            : {}),
-          ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
-          ...(userPromptPreview !== undefined
-            ? { user_prompt: userPromptPreview }
-            : {}),
-          flow_id: flowId,
-        },
-        monitoringMeta,
-      );
-    };
-
-    const emitNodeEnd = (
-      nodeId: string,
-      errorMessage?: string,
-    ): Promise<void> => {
-      const existingFinalization = nodeFinalizationPromises.get(nodeId);
-      if (existingFinalization !== undefined) return existingFinalization;
-      if (!activeNodeIds.has(nodeId)) return Promise.resolve();
-
-      const finalization = (async (): Promise<void> => {
-        const startTime =
-          nodeStartTimes.get(nodeId) ?? new Date().toISOString();
-        const latencyMs = Date.now() - new Date(startTime).getTime();
-
-        let nodeCost: number | undefined;
-      const nodeModelKey = nodeModels.get(nodeId);
-      if (
-        nodeModelKey !== undefined &&
-        (nodeInputTokens.has(nodeId) || nodeOutputTokens.has(nodeId))
-      ) {
-        const slash = nodeModelKey.indexOf("/");
-        const provider = slash >= 0 ? nodeModelKey.slice(0, slash) : "";
-        const modelName =
-          slash >= 0 ? nodeModelKey.slice(slash + 1) : nodeModelKey;
-        nodeCost = estimateCost(
-          provider,
-          modelName,
-          {
-            prompt_tokens: nodeInputTokens.get(nodeId) ?? 0,
-            completion_tokens: nodeOutputTokens.get(nodeId) ?? 0,
-          },
-          pricingOverrides,
-        );
-      }
-
-      // Release any ref-handle hold-back tail BEFORE the guardrail flush so
-      // the released text still passes through the guardrail stream (whose own
-      // tail flush follows). No-op when the flow has no refHandles.
-      await sse.flushRefHandlesForNode(nodeId);
-
-      if (guardrail !== undefined) {
-        const findings = await sse.flushGuardrailForNode(nodeId);
-        for (const [type, count] of Object.entries(findings)) {
-          this.metrics.recordGuardrail(type, count);
-        }
-      }
-
-      this.metrics.recordNode(
-        flowId,
-        nodeId,
-        errorMessage !== undefined ? "error" : "completed",
-        latencyMs,
-      );
-      spanManager.endNodeSpan(
-        nodeId,
-        errorMessage !== undefined ? "error" : "ok",
-        errorMessage,
-        { "aiperator.latency_ms": latencyMs },
-      );
-      if (errorMessage !== undefined) flowErrored = true;
-
-      // Citation safety net: sources were registered (and streamed to the
-      // client) but this node's answer references none of them via `[n]`. The
-      // client filter maps citations ONLY from `[n]` markers, so such an answer
-      // shows zero citations even though the source panel was filled — a silent
-      // regression that unit tests cannot catch. Surfaced as a trace diagnostic
-      // (no behaviour change) so it is visible in the execution trace.
-      if (errorMessage === undefined && citations.size > 0) {
-        const nodeType = nodeTypes.get(nodeId);
-        const responseText = nodeFullResponses.get(nodeId);
-        if (
-          (nodeType === "llm" || nodeType === "agent-harness") &&
-          typeof responseText === "string" &&
-          responseText.trim().length > 0
-        ) {
-          const markers = [...responseText.matchAll(/\[(\d+)\]/g)].map(
-            (match) => Number(match[1]),
-          );
-          if (markers.length === 0) {
-            recordNodeDiagnostic(nodeId, {
-              level: "warn",
-              code: "answer_without_citation_markers",
-              message:
-                `${citations.size} source(s) were registered for this stream, but ` +
-                "the node response contains no [n] citation marker — the client " +
-                "will display no citations.",
-              details: {
-                registered_sources: citations.size,
-                response_chars: responseText.length,
-              },
-            });
-          } else {
-            // A marker outside 1..registered is one the model invented (or
-            // carried over from a stale numbering): the client renders it as
-            // a dead reference. Round 1 showed exactly this — `[151]` cited
-            // while far fewer sources existed.
-            const outOfRange = [
-              ...new Set(
-                markers.filter(
-                  (n) => !Number.isFinite(n) || n < 1 || n > citations.size,
-                ),
-              ),
-            ].sort((a, b) => a - b);
-            if (outOfRange.length > 0) {
-              recordNodeDiagnostic(nodeId, {
-                level: "warn",
-                code: "citation_marker_out_of_range",
-                message:
-                  `The node response cites [n] markers outside the registered ` +
-                  `range 1..${citations.size}: ${outOfRange
-                    .map((n) => `[${n}]`)
-                    .join(
-                      ", ",
-                    )} — those citations are unresolvable for the client.`,
-                details: {
-                  registered_sources: citations.size,
-                  out_of_range_markers: outOfRange,
-                  response_chars: responseText.length,
-                },
-              });
-            }
-          }
-        }
-      }
-
-      if (this.debugStore !== undefined) {
-        const errInfo = nodeErrorInfo.get(nodeId);
-        this.debugStore.upsertNode(executionId, {
-          node_id: nodeId,
-          ...(nodeTypes.has(nodeId)
-            ? { node_type: nodeTypes.get(nodeId) }
-            : {}),
-          status: errorMessage !== undefined ? "error" : "completed",
-          started_at: startTime,
-          finished_at: new Date().toISOString(),
-          latency_ms: latencyMs,
-          ...(nodeAttempts.has(nodeId)
-            ? { attempt: nodeAttempts.get(nodeId) }
-            : {}),
-          ...(providerAttemptsSummary(nodeDiagnostics.get(nodeId)) ?? {}),
-          ...(nodeAttemptContexts.has(nodeId)
-            ? {
-                attempt_trigger: nodeAttemptContexts.get(nodeId)?.trigger,
-                ...(nodeAttemptContexts.get(nodeId)?.parent_node_id !== undefined
-                  ? {
-                      parent_node_id:
-                        nodeAttemptContexts.get(nodeId)?.parent_node_id,
-                    }
-                  : {}),
-                ...(nodeAttemptContexts.get(nodeId)?.delegation_id !== undefined
-                  ? {
-                      delegation_id:
-                        nodeAttemptContexts.get(nodeId)?.delegation_id,
-                    }
-                  : {}),
-              }
-            : {}),
-          ...(nodeSequences.has(nodeId)
-            ? { sequence: nodeSequences.get(nodeId) }
-            : {}),
-          ...(nodeModels.has(nodeId) ? { model: nodeModels.get(nodeId) } : {}),
-          ...(nodeInputTokens.has(nodeId)
-            ? { input_tokens: nodeInputTokens.get(nodeId) }
-            : {}),
-          ...(nodeOutputTokens.has(nodeId)
-            ? { output_tokens: nodeOutputTokens.get(nodeId) }
-            : {}),
-          ...(nodeCost !== undefined ? { cost: nodeCost } : {}),
-          ...(nodeFullPrompts.has(nodeId)
-            ? { full_prompt: nodeFullPrompts.get(nodeId) }
-            : {}),
-          ...(nodeFullResponses.has(nodeId)
-            ? { full_response: nodeFullResponses.get(nodeId) }
-            : {}),
-          ...(nodeFullReasoning.has(nodeId)
-            ? { full_reasoning: nodeFullReasoning.get(nodeId) }
-            : {}),
-          ...(nodeGroundedness.has(nodeId)
-            ? { groundedness: nodeGroundedness.get(nodeId) }
-            : {}),
-          tool_calls: nodeDebugToolCalls.get(nodeId) ?? [],
-          ...(nodeToolSelections.has(nodeId)
-            ? { tool_selection: nodeToolSelections.get(nodeId) }
-            : {}),
-          ...(nodeClassifications.has(nodeId)
-            ? { classifier: nodeClassifications.get(nodeId) }
-            : {}),
-          ...(nodeDiagnostics.has(nodeId)
-            ? { diagnostics: nodeDiagnostics.get(nodeId) }
-            : {}),
-          ...(errorMessage !== undefined
-            ? { error_message: errorMessage }
-            : {}),
-          ...(errorMessage !== undefined && errInfo?.type !== undefined
-            ? { error_type: errInfo.type }
-            : {}),
-          ...(errorMessage !== undefined && errInfo?.details !== undefined
-            ? { error_details: errInfo.details }
-            : {}),
-        });
-      }
-      if (flowProgressEnabled) {
-        const progress = (
-          resolvedFlow.nodes.find((node) => node.id === nodeId)?.config as
-            | {
-                progress?: {
-                  complete?: unknown;
-                  error?: unknown;
-                };
-              }
-            | undefined
-        )?.progress;
-        const message =
-          errorMessage !== undefined
-            ? (typeof progress?.error === "string" && progress.error.trim().length > 0
-                ? progress.error.trim()
-                : `${nodeLabels.get(nodeId) ?? nodeId} fehlgeschlagen`)
-            : (typeof progress?.complete === "string" &&
-                  progress.complete.trim().length > 0
-                ? progress.complete.trim()
-                : `${nodeLabels.get(nodeId) ?? nodeId} abgeschlossen`);
-        await emitReasoningStep(
-          `⚙️ ${message} · ${formatProgressDuration(latencyMs)}\n`,
-        );
-      }
-      if (!monitoring) return;
-      const event: NodeExecutionEvent = {
-        execution_id: executionId,
-        node_id: nodeId,
-        status: errorMessage !== undefined ? "error" : "completed",
-        start_time: startTime,
-        end_time: new Date().toISOString(),
-        latency_ms: latencyMs,
-        ...(errorMessage !== undefined ? { error_message: errorMessage } : {}),
-        ...(nodeModels.has(nodeId) ? { model: nodeModels.get(nodeId) } : {}),
-        ...(nodeInputTokens.has(nodeId)
-          ? { input_tokens: nodeInputTokens.get(nodeId) }
-          : {}),
-        ...(nodeOutputTokens.has(nodeId)
-          ? { output_tokens: nodeOutputTokens.get(nodeId) }
-          : {}),
-        ...(nodeCost !== undefined ? { cost: nodeCost } : {}),
-        ...((nodeToolCalls.get(nodeId)?.length ?? 0) > 0
-          ? { tool_calls: nodeToolCalls.get(nodeId) }
-          : {}),
-        ...(nodePrompts.has(nodeId) ? { prompt: nodePrompts.get(nodeId) } : {}),
-        ...(nodeResponses.has(nodeId)
-          ? { response: nodeResponses.get(nodeId) }
-          : {}),
-        ...(nodeRoutingDecisions.has(nodeId)
-          ? { routing_decision: nodeRoutingDecisions.get(nodeId) }
-          : {}),
-        ...(nodeSequences.has(nodeId)
-          ? { sequence: nodeSequences.get(nodeId) }
-          : {}),
-        label: nodeLabels.get(nodeId),
-        ...(ctx.userName !== undefined ? { user_name: ctx.userName } : {}),
-        ...(userPromptPreview !== undefined
-          ? { user_prompt: userPromptPreview }
-          : {}),
-        flow_id: flowId,
-      };
-        monitoring.emitNodeEvent(executionId, event, monitoringMeta);
-      })().finally(() => {
-        // A node remains active until every terminal side effect has either
-        // completed or failed. Timeout cleanup can therefore neither miss it
-        // nor emit a second terminal event while finalization is in flight.
-        activeNodeIds.delete(nodeId);
-        nodeStartTimes.delete(nodeId);
-        nodeFinalizationPromises.delete(nodeId);
-      });
-      nodeFinalizationPromises.set(nodeId, finalization);
-      return finalization;
-    };
-
-    // Synthetic terminal marker for the execution rollup (see
-    // FLOW_END_NODE_ID). Emitted exactly once, at the same place the debug
-    // trace is sealed, so the history status flips to its real terminal value
-    // only when the whole flow is done — not on the first finished node.
-    let flowEndEmitted = false;
-    const emitFlowEnd = (status: "completed" | "error"): void => {
-      if (flowEndEmitted || monitoring === undefined) return;
-      flowEndEmitted = true;
-      const now = new Date().toISOString();
-      monitoring.emitNodeEvent(
-        executionId,
-        {
-          execution_id: executionId,
-          node_id: FLOW_END_NODE_ID,
-          status,
-          start_time: now,
-          end_time: now,
-          latency_ms: 0,
-          flow_id: flowId,
-        },
-        monitoringMeta,
-      );
-    };
 
     // --- Content processing + multimodal conversion (Req 8.x) ---
     const contentErrors: StreamError[] = [];
@@ -2278,14 +824,6 @@ class GraphEngineServiceImpl implements GraphEngineService {
     for (const err of contentErrors) {
       await onChunk(makeErrorChunk(model, err));
     }
-
-    // Run-scoped image references, created once so the edge-flow capture and
-    // the node handlers share ONE registry: the `img-N` refs the edge records
-    // are exactly the refs the model sees in the prompt.
-    const runImageRefs =
-      this.mediaStore !== undefined
-        ? new HashedImageRefRegistry({ store: this.mediaStore })
-        : undefined;
 
     const usage: UsageAccumulator = {
       promptTokens: 0,
@@ -2361,7 +899,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
             ) => {
               nodeClassifications.set(nodeId, output);
             },
-            onNodeDiagnostic: recordNodeDiagnostic,
+            onNodeDiagnostic: st.recordNodeDiagnostic,
           }
         : {}),
       setGenAiAttributes: (nodeId, req, res) => {
@@ -2440,9 +978,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
         : {}),
       // Per-user assistant subsystem. Absent on deployments that do not run
       // assistants, in which case the assistant node types pass their turn through.
-      ...(this.assistants !== undefined
-        ? { assistants: this.assistants }
-        : {}),
+      ...(this.assistants !== undefined ? { assistants: this.assistants } : {}),
       ...(this.assistantReviewScheduler !== undefined
         ? { assistantReviewScheduler: this.assistantReviewScheduler }
         : {}),
@@ -2749,7 +1285,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       }
     } catch (err) {
       if (controller.signal.aborted) {
-        flowErrored = true;
+        st.flowErrored = true;
         const timeoutMessage =
           `Flow "${flowId}" execution exceeded the ${timeoutMs}ms timeout and was aborted.`;
         // graph.stream() can abort before it yields a terminal update for the
@@ -2812,11 +1348,13 @@ class GraphEngineServiceImpl implements GraphEngineService {
     }
 
     // Close the flow span (success or handled timeout).
-    spanManager.endFlow(flowErrored ? "error" : "ok");
+    spanManager.endFlow(st.flowErrored ? "error" : "ok");
 
     try {
       if (flowProgressEnabled) {
-        const outcome = flowErrored ? "mit Fehlern beendet" : "abgeschlossen";
+        const outcome = st.flowErrored
+          ? "mit Fehlern beendet"
+          : "abgeschlossen";
         await emitReasoningStep(
           `⚙️ Recherche ${outcome} · Gesamtlaufzeit ${formatProgressDuration(
             Date.now() - flowProgressStartedAt,
@@ -2825,7 +1363,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       }
 
       if (
-        !flowErrored &&
+        !st.flowErrored &&
         finalResponse !== undefined &&
         onFinalResponse !== undefined
       ) {
@@ -2853,7 +1391,7 @@ class GraphEngineServiceImpl implements GraphEngineService {
       if (this.debugStore !== undefined) {
         this.debugStore.finishTrace(
           executionId,
-          flowErrored ? "error" : "completed",
+          st.flowErrored ? "error" : "completed",
           {
             prompt_tokens: usage.promptTokens,
             completion_tokens: usage.completionTokens,
@@ -2861,11 +1399,14 @@ class GraphEngineServiceImpl implements GraphEngineService {
           },
           debugErrors,
           finalResponse !== undefined
-            ? { response: finalResponse, ...(finalNodeId !== undefined ? { nodeId: finalNodeId } : {}) }
+            ? {
+                response: finalResponse,
+                ...(finalNodeId !== undefined ? { nodeId: finalNodeId } : {}),
+              }
             : undefined,
         );
       }
-      emitFlowEnd(flowErrored ? "error" : "completed");
+      emitFlowEnd(st.flowErrored ? "error" : "completed");
     } catch (err) {
       // The flow itself finished but delivering the result failed (e.g. the
       // client disconnected in `onDone`). Without a terminal marker the

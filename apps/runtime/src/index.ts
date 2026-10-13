@@ -22,30 +22,8 @@
  * Requirements: 10.5, 10.6, 11.5
  */
 
-import { Hono } from "hono";
-import type { MiddlewareHandler } from "hono";
-import { cors } from "hono/cors";
-import { bodyLimit } from "hono/body-limit";
-import { secureHeaders } from "hono/secure-headers";
 import { loadConfig, checkProductionReadiness } from "./config/index.js";
-import {
-  authMiddleware,
-  TRACE_CONTEXT_KEY,
-  type AuthContext,
-} from "./middleware/auth.js";
-import { resolveApiKey } from "./middleware/api-key-auth.js";
-import { approvalWidgetEmbeddingMiddleware } from "./middleware/approval-widget-embedding.js";
-import { csrfProtection } from "./middleware/csrf-protection.js";
-import {
-  rateLimitMiddleware,
-  preAuthRateLimitMiddleware,
-  postAuthRateLimitMiddleware,
-  createStoreBackedRateLimitStore,
-  createRedisRateLimitStore,
-} from "./middleware/rate-limit.js";
 import { buildOperatorAuthentication } from "./bootstrap/operator-auth.js";
-import { createOidcAuthRouter } from "./routes/auth-oidc.js";
-import { createOidcSessionStore } from "./routes/oidc-session-store.js";
 import { createFlowParserService } from "./graph/flow-parser.js";
 import {
   auditFlowIdentityForwarding,
@@ -64,42 +42,11 @@ import { createSloRegistry, parseSloTargets } from "./graph/slo.js";
 import { parseFlowFile, resolveConfigFile } from "./util/parse-flow-file.js";
 import {
   createMonitoringService,
-  createMonitoringRouter,
   createRedisPubSub,
 } from "./monitoring/monitoring-service.js";
 import { createLogger } from "./observability/logger.js";
 import { createMetrics } from "./observability/metrics.js";
-import { createTracer, parseTraceparent } from "./observability/tracing.js";
-import { createChatRouter } from "./routes/chat.js";
-import { createResponsesRouter } from "./routes/responses.js";
-import { createHealthRouter } from "./routes/health.js";
-import { createTransactionJwksRouter } from "./routes/transaction-jwks.js";
-import { createMetricsRouter } from "./routes/metrics.js";
-import { createLimitsRouter } from "./routes/limits.js";
-import { createModelsRouter } from "./routes/models.js";
-import { createMediaRouter } from "./routes/media.js";
-import { createRagRouter } from "./routes/rag.js";
-import { createMemoryRouter } from "./routes/memory.js";
-import { createControlRouter } from "./routes/control.js";
-import { createFlowsRouter } from "./routes/flows.js";
-import { createMcpRouter } from "./routes/mcp.js";
-import { createJobsRouter } from "./routes/jobs.js";
-import { createComplianceRouter } from "./routes/compliance.js";
-import { createErasureOrchestrator } from "./compliance/erasure-orchestrator.js";
-import {
-  ed25519ReceiptKey,
-  hmacReceiptKey,
-} from "./compliance/erasure-receipt.js";
-import { createTenantsRouter } from "./routes/tenants.js";
-import { createProviderKeysRouter } from "./routes/provider-keys.js";
-import { createProviderMonitoringRouter } from "./routes/provider-monitoring.js";
-import { createProviderTestingRouter } from "./routes/provider-testing.js";
-import { createGuardrailsRouter } from "./routes/guardrails.js";
-import { createEvalRouter } from "./routes/eval.js";
-import { createAnalysisArtifactsRouter } from "./routes/analysis-artifacts.js";
-import { AnalysisArtifactService } from "./artifacts/analysis-artifacts.js";
-import { createEvalCaseStore } from "./eval/eval-case-store.js";
-import { createDebugRouter } from "./routes/debug.js";
+import { createTracer } from "./observability/tracing.js";
 import {
   createDbFlowSource,
   createCompositeRegistry,
@@ -110,35 +57,35 @@ import { createStudioTestRegistry } from "./graph/flow-registry-studio.js";
 import { createAbManager, type AbManager } from "./graph/flow-ab.js";
 import { createToolAuthzLoader } from "./graph/tool-authz-loader.js";
 import { createFlowMcpServer } from "./mcp/flow-mcp-server.js";
-import { createFlowMcpRouter } from "./routes/flow-mcp.js";
 import { initRuntimeEgress } from "./security/egress.js";
-import { createRedTeamEngine } from "./security/red-team-engine.js";
-import { createRedTeamScheduler } from "./security/red-team-scheduler.js";
-import { createRedTeamRouter } from "./routes/red-team.js";
 // ── Bootstrap modules ─────────────────────────────────────────────────────
 import { buildPersistence } from "./bootstrap/persistence.js";
 import { withPiiVault } from "./graph/pii-vault-engine.js";
+import { withDecisionReceipts } from "./receipts/receipts-engine-decorator.js";
+import { InMemoryReceiptStore } from "./receipts/receipt-store.js";
+import { parseReceiptSigningKey } from "./receipts/signing-key.js";
+import { InMemoryTransparencyLog } from "./receipts/transparency-log.js";
+import { PostgresReceiptLogSink } from "./receipts/receipt-log-sink.js";
+import { createTreeHeadSealer } from "./receipts/tree-head-sealer.js";
 import { buildObservability } from "./bootstrap/observability.js";
 import { buildCache } from "./bootstrap/cache.js";
 import { buildMcp } from "./bootstrap/mcp.js";
 import { buildGuardrails } from "./bootstrap/guardrails.js";
 import { buildEngine } from "./bootstrap/engine.js";
 import { buildAssistants } from "./bootstrap/assistants.js";
-import { createAssistantsRouter } from "./routes/assistants.js";
-import { createRocketChatRouter } from "./routes/rocketchat.js";
-import { createRocketChatConnectRouter } from "./routes/rocketchat-connect.js";
+import { registerAssistantRunDispatcher } from "./bootstrap/assistant-run-dispatch.js";
+import { buildRedTeam } from "./bootstrap/red-team.js";
+import { createHttpMiddleware } from "./bootstrap/http-middleware.js";
+import { registerInferenceRoutes } from "./bootstrap/routes-inference.js";
+import { registerManagementRoutes } from "./bootstrap/routes-management.js";
 import {
-  REQUEST_NODE_ID,
-  RESPONSE_NODE_ID,
-  emitBoundaryNode,
-} from "./routes/chat/handler.js";
+  buildOpenApiSpec,
+  buildOpenApiYaml,
+  resolveOpenApiServerUrl,
+} from "./openapi.js";
 import { ensureBunGlobals } from "./bun-globals.js";
-import crypto from "node:crypto";
 import { createLlmProvider } from "./graph/llm-factory.js";
-import {
-  ExecutionAdmissionService,
-  requireExecutionAdmission,
-} from "./graph/execution-admission.js";
+import { ExecutionAdmissionService } from "./graph/execution-admission.js";
 
 if (import.meta.main) {
   // 0. Bun globals (SQL / RedisClient on globalThis).
@@ -733,229 +680,90 @@ if (import.meta.main) {
     }
   }
 
-  function rocketChatProgressMessage(raw: string): string | undefined {
-    const toolDetails = Array.from(
-      raw.matchAll(
-        /<details\b(?=[^>]*\btype=["']tool_calls["'])[^>]*\bname=["']([^"']+)["']/gi,
-      ),
+  // Decision_Receipts (Req 15): the receipt decorator wraps the RAW engine
+  // (INSIDE the PII vault), so it reads the sealed Debug_Trace while the
+  // vault's per-execution action summary is still readable and the trace
+  // content already carries vault placeholders instead of raw PII.
+  if (
+    config.decisionReceiptsEnabled === true &&
+    config.receiptSigningKey === undefined
+  ) {
+    throw new Error(
+      "DECISION_RECEIPTS_ENABLED=true requires RECEIPT_SIGNING_KEY (Ed25519 PEM or base64 32-byte seed)",
     );
-    const toolName =
-      toolDetails.at(-1)?.[1] ??
-      Array.from(raw.matchAll(/🔧\s*Tool:\s*\*\*([^*]+)\*\*/gi)).at(-1)?.[1];
-    if (toolName !== undefined) {
-      const readable = toolName.split(" · ")[0]?.replaceAll("__", "/").trim();
-      if (readable !== undefined && readable.length > 0) {
-        return `Working …\n\nQuerying the ${readable} tool …`;
-      }
-    }
-    const structured = raw
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => /^(?:🧭|📚|⚙️|🧠)\s+/.test(line))
-      .at(-1);
-    if (structured === undefined) return undefined;
-    return `Working …\n\n${structured.slice(0, 240)}`;
   }
+  const receiptStore = new InMemoryReceiptStore();
+  // RFC-6962 transparency log (Req 15.3): the in-memory tree answers
+  // inclusion proofs; with a database the Postgres sink mirrors every append
+  // and sealed tree head into the append-only `receipt_log` tables.
+  const receiptSigningKey =
+    config.decisionReceiptsEnabled === true &&
+    config.receiptSigningKey !== undefined
+      ? await parseReceiptSigningKey(config.receiptSigningKey)
+      : undefined;
+  const transparencyLog =
+    receiptSigningKey !== undefined
+      ? new InMemoryTransparencyLog(
+          receiptSigningKey.privateKey,
+          receiptSigningKey.kid,
+          ...(database !== undefined
+            ? [new PostgresReceiptLogSink(database)]
+            : []),
+        )
+      : undefined;
+  // Continue the durable log after a restart instead of starting a new tree
+  // at position 0 (Req 15.3); a no-op without a database.
+  if (transparencyLog !== undefined && database !== undefined) {
+    const hydrated = await transparencyLog.hydrate();
+    logger.info("Decision-receipt transparency log hydrated", {
+      entries: hydrated,
+    });
+  }
+  // Periodic signed tree heads (Req 15.3): sealed on the audit-anchor
+  // interval while audit anchoring is active; persisted in receipt_tree_heads.
+  const treeHeadSealer =
+    transparencyLog !== undefined && auditAnchor !== undefined
+      ? createTreeHeadSealer(
+          transparencyLog,
+          config.auditAnchorIntervalMs ?? 6 * 60 * 60_000,
+          logger.child({ component: "decision-receipts" }),
+        )
+      : undefined;
+  treeHeadSealer?.start();
+  const receiptEngine =
+    receiptSigningKey !== undefined
+      ? withDecisionReceipts(rawGraphEngine, {
+          debugTraceStore,
+          receiptStore,
+          signingKey: receiptSigningKey,
+          logger: logger.child({ component: "decision-receipts" }),
+          getToolAuthzHash: () => toolAuthzLoader.engine.policyHash(),
+          getCompliancePolicy: () => compliancePolicyLoaderRef?.policy,
+          getFlowDefinition: (id) => flowRegistry.get(id),
+          ...(piiVault !== undefined ? { vault: piiVault } : {}),
+          ...(approvalGate !== undefined ? { approvalGate } : {}),
+          transparencyLog,
+        })
+      : rawGraphEngine;
 
   const graphEngine =
     piiVault !== undefined
-      ? withPiiVault(rawGraphEngine, piiVault, piiMultimodalOptions)
-      : rawGraphEngine;
+      ? withPiiVault(receiptEngine, piiVault, piiMultimodalOptions)
+      : receiptEngine;
 
   // Durable assistant work uses the same public engine entry point as triggers.
   // Bootstrap is built before the engine, so this deliberately closes that cycle
   // only after the final (PII-decorated) engine exists.
-  assistantsResult?.setRunDispatcher(async (run) => {
-    const flowId = run.resumePayload.flowId;
-    if (typeof flowId !== "string" || flowId.length === 0) {
-      throw new Error("Assistant run payload requires a non-empty flowId.");
-    }
-    const message =
-      typeof run.resumePayload.message === "string"
-        ? run.resumePayload.message
-        : JSON.stringify(run.resumePayload);
-    const conversationId =
-      typeof run.resumePayload.conversationId === "string"
-        ? run.resumePayload.conversationId
-        : undefined;
-    const runTrigger = run.origin === "schedule" ? "schedule" : "message";
-    const userName =
-      typeof run.resumePayload.userName === "string" &&
-      run.resumePayload.userName.trim().length > 0
-        ? run.resumePayload.userName.trim()
-        : run.scope.userId;
-    const authority = await assistantsResult.resolveRunAuthority({
-      scope: run.scope,
-      trigger: runTrigger,
-      userInitiated: run.origin === "rocket-chat",
+  if (assistantsResult !== undefined) {
+    registerAssistantRunDispatcher({
+      assistantsResult,
+      graphEngine,
+      monitoringService,
+      jwtVerifier,
+      getExecutionAdmission: () => executionAdmission,
+      logger,
     });
-    let authorityClaims: Record<string, unknown> | undefined;
-    if (authority.token.length > 0) {
-      if (!(await jwtVerifier.verify(authority.token))) {
-        throw new Error(
-          "Resolved assistant authority token failed JWT verification.",
-        );
-      }
-      authorityClaims = jwtVerifier.decodePayload(authority.token) ?? undefined;
-      if (authorityClaims === undefined) {
-        throw new Error(
-          "Resolved assistant authority token has no decodable JWT payload.",
-        );
-      }
-    }
-    const responseParts: string[] = [];
-    let finalResponse = "";
-    const rocketChat =
-      run.resumePayload.delivery === "rocket-chat"
-        ? assistantsResult.rocketChat
-        : undefined;
-    let reasoning = "";
-    let lastProgress = "";
-    let lastProgressAt = 0;
-    const boundaryMeta = {
-      flowId,
-      tenantId: run.scope.tenantId,
-    };
-    const executionContext = {
-      ssoToken: authority.token,
-      // Durable assistant runs bypass the HTTP auth middleware. Verify the
-      // resolved bearer above and preserve its complete JWT payload so custom
-      // permission claims (for example `tools`) can be attested by the signed
-      // transaction envelope instead of being reduced to the OAuth response's
-      // generic `scope` string.
-      ...(authorityClaims !== undefined ? { claims: authorityClaims } : {}),
-      executionId: run.id,
-      clientId: run.scope.tenantId,
-      userId: run.scope.userId,
-      userName,
-      ...(conversationId !== undefined ? { chatId: conversationId } : {}),
-      requestParams: {
-        trigger: runTrigger,
-        assistant_id: run.scope.assistantId,
-        assistant_run_id: run.id,
-        ...(conversationId !== undefined
-          ? { conversation_id: conversationId }
-          : {}),
-        ...(authority.notice !== undefined
-          ? { authority_notice: authority.notice }
-          : {}),
-      },
-    };
-    emitBoundaryNode(monitoringService, run.id, boundaryMeta, {
-      nodeId: REQUEST_NODE_ID,
-      sequence: 0,
-      userName,
-      userId: run.scope.userId,
-      userPrompt: message.slice(0, 500),
-      prompt: JSON.stringify({
-        origin: run.origin,
-        trigger: runTrigger,
-        flowId,
-        assistantId: run.scope.assistantId,
-        conversationId: conversationId ?? null,
-      }),
-    });
-
-    try {
-      await requireExecutionAdmission(
-        executionAdmission,
-        flowId,
-        executionContext,
-      );
-      await graphEngine.executeFlow(
-        flowId,
-        [{ role: "user", content: message }],
-        executionContext,
-        async (chunk) => {
-          const delta = chunk.choices[0]?.delta;
-          if (typeof delta?.content === "string")
-            responseParts.push(delta.content);
-          if (
-            rocketChat !== undefined &&
-            typeof delta?.reasoning_content === "string"
-          ) {
-            reasoning = `${reasoning}${delta.reasoning_content}`.slice(-8_000);
-            const progress = rocketChatProgressMessage(reasoning);
-            const now = Date.now();
-            const reachedBoundary = /[.!?…]\s*$|\n/.test(
-              delta.reasoning_content,
-            );
-            if (
-              progress !== undefined &&
-              progress !== lastProgress &&
-              (reachedBoundary || now - lastProgressAt >= 1_000)
-            ) {
-              lastProgress = progress;
-              lastProgressAt = now;
-              try {
-                const queued = await rocketChat.outbox.enqueueRunProgress(
-                  run,
-                  progress,
-                );
-                if (queued !== undefined) await rocketChat.flushOutbox();
-              } catch (error) {
-                logger.warn(
-                  "Rocket.Chat progress update failed; the durable run continues",
-                  {
-                    runId: run.id,
-                    error:
-                      error instanceof Error ? error.message : String(error),
-                  },
-                );
-              }
-            }
-          }
-        },
-        async () => {},
-        monitoringService,
-        undefined,
-        async (response) => {
-          finalResponse = response;
-        },
-      );
-    } catch (error) {
-      emitBoundaryNode(monitoringService, run.id, boundaryMeta, {
-        nodeId: RESPONSE_NODE_ID,
-        hadError: true,
-        response: error instanceof Error ? error.message : String(error),
-      });
-      throw error;
-    }
-    const streamedResponse = responseParts.join("");
-    const responseText =
-      streamedResponse.trim().length > 0 ? streamedResponse : finalResponse;
-    emitBoundaryNode(monitoringService, run.id, boundaryMeta, {
-      nodeId: RESPONSE_NODE_ID,
-      response: responseText,
-    });
-    if (run.resumePayload.delivery === "rocket-chat") {
-      if (rocketChat === undefined) {
-        throw new Error(
-          "Rocket.Chat delivery was requested but the channel is unavailable.",
-        );
-      }
-      const queued = await rocketChat.outbox.enqueueRunResult(
-        run,
-        responseText,
-      );
-      if (queued === undefined) {
-        throw new Error(
-          "Rocket.Chat delivery was requested but no active binding or response was available.",
-        );
-      }
-      try {
-        await rocketChat.flushOutbox();
-      } catch (error) {
-        logger.warn(
-          "Immediate Rocket.Chat final delivery failed; durable outbox will retry",
-          {
-            runId: run.id,
-            error: error instanceof Error ? error.message : String(error),
-          },
-        );
-      }
-    }
-  });
+  }
 
   // Wire tool authorization policy engine (hot-reload).
   graphEngine.setToolAuthzEngine?.(toolAuthzLoader.engine);
@@ -1049,123 +857,19 @@ if (import.meta.main) {
   });
   flowMcpServerRef = flowMcpServer;
 
-  // ── Red-Team / AI Security Posture ────────────────────────────────────────
-  // Build the RedTeamEngine and optional scheduler when RED_TEAM_ENABLED=true.
-  // The executor wraps the graphEngine + inputGuardrail so attacks go through
-  // the exact same pipeline as real user requests.
-  let redTeamEngine:
-    | import("./security/red-team-engine.js").RedTeamEngine
-    | undefined;
-  let redTeamScheduler:
-    | import("./security/red-team-scheduler.js").RedTeamScheduler
-    | undefined;
-
-  if (config.redTeamEnabled === true) {
-    // Boot the attack registry (with optional remote hot-updates) BEFORE the engine.
-    const { createAttackRegistry } =
-      await import("./security/red-team-attack-registry.js");
-    createAttackRegistry({
-      remoteUrl: config.redTeamAttacksUrl,
-      pollIntervalMs: config.redTeamAttacksPollIntervalMs,
-      logger,
-    });
-    if (config.redTeamAttacksUrl !== undefined) {
-      logger.info("Red-team attack library remote updates enabled", {
-        url: config.redTeamAttacksUrl,
-        pollIntervalMs: config.redTeamAttacksPollIntervalMs,
-      });
-    }
-
-    const redTeamJudgeModel = config.redTeamJudgeModel;
-    const redTeamJudgeLlm =
-      redTeamJudgeModel !== undefined
-        ? (() => {
-            try {
-              return createLlmProvider(redTeamJudgeModel, config);
-            } catch {
-              return undefined;
-            }
-          })()
-        : config.defaultLlm !== undefined
-          ? createLlmProvider(config.defaultLlm, config)
-          : undefined;
-
-    const { createLlmJudge } = await import("./eval/llm-judge.js");
-    redTeamEngine = createRedTeamEngine({
-      attacksPerRun: config.redTeamAttacksPerRun,
-      ...(redTeamJudgeLlm !== undefined
-        ? { judge: createLlmJudge(redTeamJudgeLlm) }
-        : {}),
-      judgePassThreshold: config.redTeamJudgeThreshold ?? 0.7,
-      autoTune: config.redTeamAutoTune ?? false,
-      autoTuneBypassCeiling: config.redTeamAutoTuneCeiling ?? 0.1,
-      postureAlertThreshold: config.redTeamPostureAlertThreshold ?? 0.7,
-      alertWebhookUrl:
-        config.redTeamAlertWebhookUrl ?? config.budgetAlertWebhookUrl,
-      ...(_engineResult.replayStore !== undefined
-        ? { replayStore: _engineResult.replayStore }
-        : {}),
-      logger,
-    });
-    logger.info(
-      "Red-team / security posture engine enabled at /security/red-team/*",
-    );
-
-    // Build the executor: runs an attack through the guardrail + graphEngine.
-    const redTeamExecutor = async (
-      flowId: string,
-      payload: string,
-    ): Promise<{ response: string; blocked: boolean; inputScore: number }> => {
-      // Heuristic input score.
-      const { scoreText } = await import("./graph/input-guardrails.js");
-      const scanResult = scoreText(payload, inputGuardrail?.threshold ?? 0.8);
-      const inputScore = scanResult.score;
-
-      // Apply guardrail in "block" mode for the red-team (we want to measure blocks).
-      if (inputGuardrail !== undefined && scanResult.flagged) {
-        return { response: "", blocked: true, inputScore };
-      }
-
-      const parts: string[] = [];
-      const executionContext = {
-        ssoToken: "red-team",
-        executionId: crypto.randomUUID(),
-      };
-      await requireExecutionAdmission(
-        executionAdmission,
-        flowId,
-        executionContext,
-      );
-      await graphEngine.executeFlow(
-        flowId,
-        [{ role: "user", content: payload }],
-        executionContext,
-        async (chunk) => {
-          const delta = chunk.choices[0]?.delta?.content;
-          if (typeof delta === "string") parts.push(delta);
-        },
-        async () => {},
-      );
-      return { response: parts.join(""), blocked: false, inputScore };
-    };
-
-    // Scheduled runs (opt-in).
-    const redTeamScheduleFlows = config.redTeamScheduleFlows;
-    if (redTeamScheduleFlows !== undefined && redTeamScheduleFlows.length > 0) {
-      redTeamScheduler = createRedTeamScheduler(redTeamEngine, {
-        flowIds: redTeamScheduleFlows,
-        intervalMs: config.redTeamIntervalMs ?? 6 * 60 * 60_000,
-        executor: redTeamExecutor,
-        ...(inputGuardrail !== undefined ? { guardrail: inputGuardrail } : {}),
-        logger,
-      });
-      redTeamScheduler.start();
-      logger.info("Red-team scheduler started", {
-        flows: redTeamScheduleFlows,
-        intervalMs: config.redTeamIntervalMs ?? 6 * 60 * 60_000,
-      });
-    }
-  }
+  // ── Red-Team / AI Security Posture ───────────────────────────────────────────
+  const {
+    engine: redTeamEngine,
+    scheduler: redTeamScheduler,
+    executor: redTeamExecutorShared,
+  } = await buildRedTeam({
+    config,
+    logger,
+    graphEngine,
+    inputGuardrail,
+    replayStore,
+    executionAdmission,
+  });
 
   // Pre-validate + cache graphs for all loaded flows
   for (const flow of flowRegistry.list()) {
@@ -1217,1332 +921,147 @@ if (import.meta.main) {
     }
   }
 
-  // 13. Hono app
-  const app = new Hono<AuthContext>();
-
-  const allowAnyOrigin = config.corsOrigins.includes("*");
-  app.use(
-    "*",
-    cors({
-      origin: allowAnyOrigin
-        ? "*"
-        : (origin) => (config.corsOrigins.includes(origin) ? origin : null),
-      allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-      allowHeaders: ["Content-Type", "Authorization"],
-      exposeHeaders: ["Content-Type", "X-Accel-Buffering", "Cache-Control"],
-    }),
-  );
-
-  // Allows the capability-token-protected approval HTML pages to be embedded
-  // by the explicitly allowlisted Open WebUI parent after secureHeaders() has
-  // applied the rest of the response hardening.
-  app.use("*", approvalWidgetEmbeddingMiddleware);
-
-  // Security response headers (CSP omitted deliberately — this is a JSON API
-  // plus a separately-deployed dashboard, not an HTML-serving origin here, so
-  // a restrictive `default-src 'none'` would need per-route tuning to avoid
-  // breaking the OIDC callback / approval-widget HTML responses; those set
-  // their own minimal inline styles and are reviewed individually). Every
-  // other header Hono's `secureHeaders()` sets by default — HSTS,
-  // X-Content-Type-Options, X-Frame-Options, Referrer-Policy,
-  // Cross-Origin-*-Policy, X-DNS-Prefetch-Control, X-Download-Options,
-  // X-Permitted-Cross-Domain-Policies — applies with no per-route exceptions.
-  app.use("*", secureHeaders());
-
-  // CSRF protection for form-submittable POSTs — see csrf-protection.ts.
-  app.use("*", csrfProtection());
-
-  // Request logging + tracing
-  app.use("*", async (ctx, next) => {
-    const requestId = crypto.randomUUID();
-    ctx.header("X-Request-Id", requestId);
-    const start = Date.now();
-    const routeLabelForSpan = ctx.req.routePath ?? ctx.req.path;
-    const inbound = parseTraceparent(ctx.req.header("traceparent"));
-    const serverSpan = tracer.startSpan(
-      `${ctx.req.method} ${routeLabelForSpan}`,
-      {
-        kind: "server",
-        ...(inbound !== undefined ? { parent: inbound } : {}),
-        attributes: {
-          "http.method": ctx.req.method,
-          "http.route": routeLabelForSpan,
-          "aiperator.request_id": requestId,
-        },
-      },
-    );
-    if (tracer.enabled) ctx.set(TRACE_CONTEXT_KEY, serverSpan.spanContext());
-    await next();
-    const durationMs = Date.now() - start;
-    logger.info("request", {
-      requestId,
-      method: ctx.req.method,
-      path: ctx.req.path,
-      status: ctx.res.status,
-      durationMs,
-    });
-    serverSpan
-      .setAttribute("http.status_code", ctx.res.status)
-      .setStatus(ctx.res.status >= 500 ? "error" : "ok")
-      .end();
-    const routeLabel = ctx.req.routePath ?? ctx.req.path;
-    const isInternalRoute =
-      routeLabel === "/metrics" ||
-      routeLabel.startsWith("/monitoring/") ||
-      routeLabel.startsWith("/health");
-    if (!isInternalRoute)
-      metrics.recordRequest(routeLabel, ctx.res.status, durationMs);
+  // 13. Hono app + middleware stack (CORS, security headers, CSRF, request
+  // logging/tracing, body limit, rate limits, auth) — see bootstrap/http-middleware.ts.
+  const { app, apiKeyResolver } = createHttpMiddleware({
+    config,
+    logger,
+    tracer,
+    metrics,
+    storeFactory,
+    jwtVerifier,
+    tenantStore,
   });
 
-  // Auth + rate limiting on /v1/*
-  const maxBodyBytes = config.maxRequestBodyBytes ?? 26_214_400;
-  const exceptMedia =
-    (mw: MiddlewareHandler): MiddlewareHandler =>
-    (ctx, next) =>
-      ctx.req.path.startsWith("/v1/media/") ? next() : mw(ctx, next);
-
-  const rateLimitPerMinute = config.rateLimitPerMinute ?? 0;
-  const rateLimitPerUserPerMinute = config.rateLimitPerUserPerMinute ?? 0;
-  const rateLimitPreAuthPerMinute = config.rateLimitPreAuthPerMinute ?? 0;
-  const rateLimitPostAuthPerMinute = config.rateLimitPostAuthPerMinute ?? 0;
-  const anyRateLimitEnabled =
-    rateLimitPerMinute > 0 ||
-    rateLimitPerUserPerMinute > 0 ||
-    rateLimitPreAuthPerMinute > 0 ||
-    rateLimitPostAuthPerMinute > 0;
-  // Prefer the true sliding-window Redis limiter when Redis is configured — it
-  // weights the previous window and avoids the ~2× burst a fixed-window counter
-  // allows at the boundary. Fall back to the StoreFactory-backed (fixed-window)
-  // counter when Redis is unavailable or not configured.
-  const rateLimitStore = anyRateLimitEnabled
-    ? ((config.redisUrl !== undefined
-        ? createRedisRateLimitStore(config.redisUrl, logger)
-        : undefined) ??
-      createStoreBackedRateLimitStore(
-        storeFactory.counter<string>("rate-limit"),
-      ))
-    : undefined;
-  if (rateLimitStore !== undefined)
-    logger.info("Rate limiting enabled", {
-      backing: storeFactory.backing(),
-      window:
-        config.redisUrl !== undefined ? "sliding (redis)" : "fixed (store)",
-    });
-
-  app.use(
-    "/v1/*",
-    exceptMedia(
-      bodyLimit({
-        maxSize: maxBodyBytes,
-        onError: (ctx) =>
-          ctx.json(
-            {
-              error: {
-                message: `Request body exceeds the ${maxBodyBytes}-byte limit.`,
-                type: "invalid_request_error",
-              },
-            },
-            413,
-          ),
-      }),
-    ),
+  // OpenAPI documents — unauthenticated (auth middleware only guards /v1/*),
+  // so tooling (Swagger UI, codegen, compat checks) can fetch them without a
+  // credential. The inventory is parsed from the real router tree at request
+  // time, so the document cannot drift from the mounted routes (requirement 14.5).
+  app.get("/openapi.json", (c) =>
+    c.json(buildOpenApiSpec(resolveOpenApiServerUrl(c.req.url))),
   );
-  // Additive abuse gate: network identity only, deliberately before auth.
-  app.use(
-    "/v1/*",
-    exceptMedia(
-      preAuthRateLimitMiddleware(
-        rateLimitPreAuthPerMinute,
-        rateLimitStore,
-        logger,
-        config.rateLimitFailMode ?? "open",
-        metrics,
-      ),
-    ),
-  );
-  // Legacy token/IP + optional user limiter remains in its historical position
-  // and keeps its existing headers/status contract.
-  app.use(
-    "/v1/*",
-    exceptMedia(
-      rateLimitMiddleware(
-        rateLimitPerMinute,
-        rateLimitStore,
-        logger,
-        config.rateLimitFailMode ?? "open",
-        rateLimitPerUserPerMinute,
-        metrics,
-      ),
-    ),
-  );
-  // Managed API keys (`aip-…`) authenticate the inference plane only when tenant
-  // management is on — that is what issues the keys in the first place. Without
-  // the resolver the middleware rejects such a key with an explicit "not
-  // enabled" message instead of the misleading "invalid token format".
-  const apiKeyResolver =
-    config.authnMode !== "oidc" &&
-    config.authnMode !== "disabled" &&
-    config.tenantManagementEnabled === true &&
-    tenantStore !== undefined
-      ? (rawKey: string) => resolveApiKey(rawKey, tenantStore, logger)
-      : undefined;
-  if (apiKeyResolver !== undefined) {
-    logger.info("API key authentication enabled for /v1/* (aip-… keys)");
-  }
-  app.use(
-    "/v1/*",
-    exceptMedia(
-      authMiddleware(jwtVerifier, apiKeyResolver, {
-        mode: config.authnMode,
-        tenantIsolationEnabled: config.tenantIsolationEnabled,
-        defaultTenantId: config.defaultTenantId ?? "default",
-      }),
-    ),
-  );
-  // Additive authenticated gate: only the verified principal/tenant established
-  // above contributes to the key; no client identity header is consulted.
-  app.use(
-    "/v1/*",
-    exceptMedia(
-      postAuthRateLimitMiddleware(
-        rateLimitPostAuthPerMinute,
-        rateLimitStore,
-        logger,
-        config.rateLimitFailMode ?? "open",
-        metrics,
-      ),
-    ),
+  app.get("/openapi.yaml", (c) =>
+    c.text(buildOpenApiYaml(resolveOpenApiServerUrl(c.req.url)), 200, {
+      "Content-Type": "text/yaml; charset=utf-8",
+    }),
   );
 
   // ── Routes ─────────────────────────────────────────────────────────────────
-  app.route(
-    "/",
-    createAnalysisArtifactsRouter(
-      new AnalysisArtifactService(analysisArtifactStore),
-    ),
-  );
-  let healthRedisClient:
-    | import("./routes/health.js").RedisProbeClient
-    | undefined;
-  if (config.redisUrl !== undefined) {
-    const { createRedisClient } = await import("./util/redis-client.js");
-    const rc = createRedisClient<{ ping: () => Promise<unknown> }>(
-      config.redisUrl,
-      "Readiness probe",
-      logger,
-    );
-    if (rc !== undefined && typeof rc.ping === "function") {
-      const rcPing = rc.ping.bind(rc);
-      healthRedisClient = { ping: () => rcPing() };
-    }
-  }
-  app.route(
-    "/",
-    createHealthRouter(flowRegistry, {
-      database,
-      ...(healthRedisClient !== undefined
-        ? { redisClient: healthRedisClient }
-        : {}),
-      redisRequired: config.redisUrl !== undefined,
-      probeTimeoutMs: config.healthProbeTimeoutMs,
-      // Req 1.9: surface failed durable audit writes as a degraded (never 503)
-      // readiness hint.
-      audit: auditLog,
-      // Req 7.7: a failed tool-authz.json reload surfaces as a degraded
-      // (never 503) policy_stale hint — the last-known-good policy still holds.
-      toolAuthz: toolAuthzLoader,
-    }),
-  );
-  // Req 7.11: public JWKS for asymmetrically signed transaction tokens
-  // (TRANSACTION_SIGNING_ALG=ES256|EdDSA). Unauthenticated by design — it only
-  // ever serves public key material; HS256 mode returns an empty key set.
-  app.route("/", createTransactionJwksRouter());
-  app.route(
-    "/",
-    createModelsRouter(flowRegistry, {
-      jwtVerifier,
-      authorizer: flowAuthorizer,
-      authzEnabled: config.authzEnabled ?? true,
-      flowScopeClaims: config.flowScopeClaims,
-      // Lets a user SEE their own assistants in the model picker. Without it the
-      // `assistant-<id>` selector exists in the dispatcher and nowhere a person looks.
-      ...(assistantsResult !== undefined
-        ? { assistants: assistantsResult.runtime.stores.assistants }
-        : {}),
-    }),
-  );
-  app.route("/", createMediaRouter(mediaStore));
-  // Durable Agent Runtime opt-in for async/batch jobs (JOB_RECOVERY_ENABLED).
-  // Requires a job store — recovery has nothing to recover without one.
-  const executionContextSecret = process.env.AGENT_TRANSACTION_SECRET;
-  const jobRecoveryOptions:
-    | { maxAttempts: number; leaseMs: number; contextSecret?: string }
-    | undefined =
-    jobStore !== undefined && config.jobRecoveryEnabled === true
-      ? {
-          maxAttempts: config.jobRecoveryMaxAttempts ?? 3,
-          leaseMs: config.jobRecoveryLeaseMs ?? 300_000,
-          ...(executionContextSecret !== undefined &&
-          executionContextSecret.length > 0
-            ? { contextSecret: executionContextSecret }
-            : {}),
-        }
-      : undefined;
-  // Shared option set for the OpenAI-compatible inference endpoints. Both the
-  // Chat Completions (`/v1/chat/completions`) and Responses (`/v1/responses`)
-  // routers wire into the same services, so the options are built once and
-  // passed to both — keeping their admission/execution behaviour identical.
-  const inferenceRouterOptions = {
-    admission: executionAdmission,
-    costTracker: budgetService,
+  // All HTTP routers are registered by two focused bootstrap modules, mounted
+  // in the original single-file order: inference plane first, management
+  // plane second (see bootstrap/routes-inference.ts / routes-management.ts).
+  await registerInferenceRoutes({
+    app,
+    config,
+    logger,
+    flowRegistry,
+    database,
+    analysisArtifactStore,
+    auditLog,
+    toolAuthzLoader,
+    jwtVerifier,
+    flowAuthorizer,
+    assistantsResult,
+    mediaStore,
+    jobStore,
+    executionAdmission,
+    budgetService,
     metrics,
-    llmStreamFallbackPolicy: config.llmStreamFallbackPolicy,
-    budgetDailyPerTenant: config.budgetDailyPerTenant ?? 0,
-    limitEnforcer: tokenLimitEnforcer,
-    authorizer: flowAuthorizer,
-    flowScopeClaims: config.flowScopeClaims,
-    ...(canaryManager.enabled ? { canaryManager } : {}),
-    ...(replayService !== undefined ? { replayService } : {}),
-    ...(canaryJudge !== undefined ? { canaryJudge } : {}),
+    tokenLimitEnforcer,
+    canaryManager,
+    replayService,
+    canaryJudge,
     modelQuality,
     sloRegistry,
-    ...(byokResolver !== undefined ? { byokResolver } : {}),
-    ...(idempotencyStore !== undefined ? { idempotencyStore } : {}),
-    ...(jobStore !== undefined ? { jobStore } : {}),
-    ...(jobRecoveryOptions !== undefined
-      ? { jobRecovery: jobRecoveryOptions }
-      : {}),
-    ...(executionContextSecret !== undefined &&
-    executionContextSecret.length > 0
-      ? { executionContextSecret }
-      : {}),
-    ...(inputGuardrail !== undefined
-      ? {
-          inputGuardrail,
-          inputGuardrailMode: config.inputGuardrailMode ?? "flag",
-          ...(inputGuardrailClassify !== undefined
-            ? {
-                inputGuardrailClassify,
-                inputGuardrailModelMinScore:
-                  config.inputGuardrailModelMinScore ?? 0.3,
-              }
-            : {}),
-        }
-      : {}),
+    byokResolver,
+    idempotencyStore,
+    inputGuardrail,
+    inputGuardrailClassify,
     guardrailPolicy,
     flowGuardrailResolver,
-    clientToolsEnabled: config.clientToolsEnabled ?? true,
-    trustedIdentityHeaders: config.trustedIdentityHeaders ?? false,
-    strictIdentityHeaders: config.strictIdentityHeaders ?? false,
-    ...(memoryStore !== undefined
+    memoryStore,
+    memoryExtractor,
+    abManager,
+    shadowModeService,
+    graphEngine,
+    monitoringService,
+    flowDispatcher,
+    getCompliancePolicy: () => compliancePolicyLoaderRef?.policy,
+    // Decision_Receipts (Req 15.4): receipt lookup, inclusion proofs, JWKS.
+    ...(receiptSigningKey !== undefined
       ? {
-          memoryStore,
-          memoryAutoCapture: memoryExtractor !== undefined,
-          ...(memoryExtractor !== undefined ? { memoryExtractor } : {}),
+          receiptStore,
+          ...(transparencyLog !== undefined ? { transparencyLog } : {}),
+          receiptSigningKey,
         }
       : {}),
-    ...(abManager?.enabled ? { abManager } : {}),
-    captureRequestTokens: config.debugCaptureRequestTokens,
-    shadowModeService,
-    // Lazy — the real loader is constructed later (Compliance Policy-as-Code
-    // section below); this proxy defers to compliancePolicyLoaderRef so the
-    // router only reads it at request time, once bootstrap has finished.
-    compliancePolicyLoader: {
-      get policy() {
-        return compliancePolicyLoaderRef?.policy;
-      },
-    },
-    auditLog,
-    ...(config.sseHeartbeatMs !== undefined
-      ? { sseHeartbeatMs: config.sseHeartbeatMs }
-      : {}),
-  };
-
-  app.route(
-    "/",
-    createChatRouter(
-      flowRegistry,
-      graphEngine,
-      monitoringService,
-      jwtVerifier,
-      flowDispatcher,
-      inferenceRouterOptions,
-    ),
-  );
-
-  // OpenAI Responses API (`POST /v1/responses`) — same pipeline as chat, with a
-  // translation layer for the Responses request/response shapes. Clients like
-  // n8n's OpenAI node target this endpoint instead of chat completions.
-  app.route(
-    "/",
-    createResponsesRouter(
-      flowRegistry,
-      graphEngine,
-      monitoringService,
-      jwtVerifier,
-      flowDispatcher,
-      inferenceRouterOptions,
-    ),
-  );
-
-  if (jobStore !== undefined) {
-    app.route("/", createJobsRouter(jobStore));
-    logger.info("Async job status API enabled at /v1/jobs/:id");
-  }
-
-  // Durable Agent Runtime — recovery sweeper (see job-store.ts /
-  // job-recovery-sweeper.ts module doc comments). Only meaningful with a
-  // job store AND JOB_RECOVERY_ENABLED; otherwise async jobs keep their
-  // pre-existing (non-recoverable) behaviour.
-  let jobRecoverySweeper:
-    | import("./graph/job-recovery-sweeper.js").JobRecoverySweeper
-    | undefined;
-  if (jobStore !== undefined && jobRecoveryOptions !== undefined) {
-    const { createJobRecoverySweeper } =
-      await import("./graph/job-recovery-sweeper.js");
-    const { createJobRetryRunner } = await import("./routes/chat/metering.js");
-    jobRecoverySweeper = createJobRecoverySweeper(
-      { intervalMs: config.jobRecoverySweepIntervalMs ?? 60_000 },
-      {
-        jobStore,
-        retry: createJobRetryRunner({
-          graphEngine,
-          jobStore,
-          admission: executionAdmission,
-          leaseMs: jobRecoveryOptions.leaseMs,
-          ...(jobRecoveryOptions.contextSecret !== undefined
-            ? { contextSecret: jobRecoveryOptions.contextSecret }
-            : {}),
-        }),
-        logger,
-      },
-    );
-    jobRecoverySweeper.start();
-    logger.info(
-      "Durable Agent Runtime enabled — async jobs recover from a crash",
-      {
-        maxAttempts: jobRecoveryOptions.maxAttempts,
-        leaseMs: jobRecoveryOptions.leaseMs,
-        sweepIntervalMs: config.jobRecoverySweepIntervalMs ?? 60_000,
-      },
-    );
-  }
-
-  // Flow-as-MCP-Server: POST/GET/DELETE /mcp. Unlike /v1 routes it is mounted
-  // at the root, so it must receive the same verified credential explicitly.
-  app.use(
-    "/mcp",
-    authMiddleware(jwtVerifier, apiKeyResolver, {
-      mode: config.authnMode,
-      tenantIsolationEnabled: config.tenantIsolationEnabled,
-      defaultTenantId: config.defaultTenantId ?? "default",
-    }),
-  );
-  app.route("/", createFlowMcpRouter({ flowMcpServer }));
-  logger.info("Flow-as-MCP-Server enabled at /mcp", {
-    flows: flowRegistry.list().map((f) => f.id),
   });
-
-  // Red-Team / AI Security Posture: /security/red-team/* + /security/tool-authz + /security/mcp
-  // The router is always mounted so the tool-authz and MCP-tools views work
-  // even when the red-team engine is disabled; the red-team endpoints return
-  // 503 when RED_TEAM_ENABLED is not set.
-  {
-    const redTeamExecutorForRoute =
-      redTeamEngine !== undefined
-        ? async (
-            flowId: string,
-            payload: string,
-          ): Promise<{
-            response: string;
-            blocked: boolean;
-            inputScore: number;
-          }> => {
-            const { scoreText } = await import("./graph/input-guardrails.js");
-            const scanResult = scoreText(
-              payload,
-              inputGuardrail?.threshold ?? 0.8,
-            );
-            if (inputGuardrail !== undefined && scanResult.flagged) {
-              return {
-                response: "",
-                blocked: true,
-                inputScore: scanResult.score,
-              };
-            }
-            const parts: string[] = [];
-            const executionContext = {
-              ssoToken: "red-team",
-              executionId: crypto.randomUUID(),
-            };
-            await requireExecutionAdmission(
-              executionAdmission,
-              flowId,
-              executionContext,
-            );
-            await graphEngine.executeFlow(
-              flowId,
-              [{ role: "user", content: payload }],
-              executionContext,
-              async (chunk) => {
-                const delta = chunk.choices[0]?.delta?.content;
-                if (typeof delta === "string") parts.push(delta);
-              },
-              async () => {},
-            );
-            return {
-              response: parts.join(""),
-              blocked: false,
-              inputScore: scanResult.score,
-            };
-          }
-        : undefined;
-    app.route(
-      "/",
-      createRedTeamRouter({
-        ...(redTeamEngine !== undefined ? { engine: redTeamEngine } : {}),
-        ...(redTeamExecutorForRoute !== undefined
-          ? { executor: redTeamExecutorForRoute }
-          : {}),
-        ...(inputGuardrail !== undefined ? { guardrail: inputGuardrail } : {}),
-        operatorAuth,
-        auditLog,
-        toolAuthzLoader,
-        flowRegistry,
-      }),
-    );
-    logger.info(
-      "Security API enabled at /security/* (red-team, tool-authz, mcp-tools)",
-      {
-        redTeam: redTeamEngine !== undefined,
-      },
-    );
-  }
-  if (vectorStore !== undefined && ragEmbedder !== undefined) {
-    app.route("/", createRagRouter(vectorStore, ragEmbedder, logger));
-    logger.info("RAG ingestion API enabled at /v1/rag/*");
-  }
-  if (memoryStore !== undefined) {
-    app.route("/", createMemoryRouter(memoryStore, jwtVerifier, operatorAuth));
-    logger.info("Long-term memory API enabled at /v1/memory/*");
-  }
-  if (assistantsResult !== undefined) {
-    // Vectorsearch is optional. The session API stays available without it,
-    // while hybrid search returns an explicit 503 rather than falling back to
-    // an unscoped local scan.
-    const vectorsearchConfigured = config.mcpServers.some(
-      (server) => server.name === "vectorsearch",
-    );
-    const sessionIndex = vectorsearchConfigured
-      ? new (
-          await import("./assistants/session-index.js")
-        ).McpAssistantSessionIndex(mcpWrapper)
-      : undefined;
-    assistantsResult.runtime.setSessionIndex(sessionIndex);
-    // Mounted on the `/v1` plane so it runs behind the same auth middleware as the
-    // chat path: every route scopes itself to the AUTHENTICATED user, which only
-    // works if the request has been authenticated.
-    app.route(
-      "/",
-      createAssistantsRouter({
-        runtime: assistantsResult.runtime,
-        authorizationEnabled: config.authzEnabled ?? true,
-        ...(assistantsResult.rocketChat !== undefined
-          ? { rocketChat: assistantsResult.rocketChat }
-          : {}),
-        ...(sessionIndex !== undefined ? { sessionIndex } : {}),
-        logger,
-      }),
-    );
-    logger.info("Assistant management API enabled at /v1/assistants/*");
-
-    // Rocket.Chat's webhook is mounted once, after the optional end-user OIDC
-    // connect configuration has been resolved below. Mounting a legacy router
-    // here as well would consume every matching request before the configured
-    // connect router can create and return a self-service link.
-
-    // The operator plane. Separate router because it authenticates differently:
-    // an operator role that spans users, versus a user's own identity. It owns the
-    // `constraints` soul write class, which no user-plane route can reach.
-    const { createAssistantsAdminRouter } =
-      await import("./routes/assistants-admin.js");
-    app.route(
-      "/",
-      createAssistantsAdminRouter({
-        runtime: assistantsResult.runtime,
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-        logger,
-        auditLog,
-      }),
-    );
-    logger.info("Assistant operator plane enabled at /admin/assistants/*");
-  }
-
-  // Compliance router (retention/RTBF + DSAR + compliance dossier) is mounted
-  // further down, AFTER the compliance-policy loader and red-team engine are
-  // constructed, so /admin/compliance/dossier can cite the active policy and
-  // security posture. See the "Compliance Policy-as-Code" section below.
-
-  // ── GitOps Webhook ────────────────────────────────────────────────────────
-  if (config.gitopsEnabled === true) {
-    const { createGitopsRouter } = await import("./routes/gitops.js");
-    app.route(
-      "/",
-      createGitopsRouter({
-        reloadFlows: async () => {
-          // Restart the parser service to force a full rescan of FLOWS_DIR.
-          // This picks up any new/modified/deleted flow files that arrived
-          // via the git push without waiting for chokidar's file-watch debounce.
-          await flowParserService.stop();
-          await flowParserService.start();
-          logger.info("[GitOps] Flow registry rescanned after git push");
-        },
-        auditLog,
-        logger,
-        requireSignature: config.gitopsRequireSignature ?? true,
-        ...(config.gitopsWebhookSecret !== undefined
-          ? { webhookSecret: config.gitopsWebhookSecret }
-          : {}),
-        ...(config.gitopsBranch !== undefined
-          ? { triggerBranches: config.gitopsBranch }
-          : {}),
-      }),
-    );
-    logger.info("GitOps webhook endpoint enabled at POST /webhooks/git", {
-      branches: config.gitopsBranch ?? "main,master",
-      signatureVerification: config.gitopsWebhookSecret !== undefined,
-    });
-  }
-  app.route(
-    "/",
-    createProviderKeysRouter({
-      providerKeyPool,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-  app.route(
-    "/",
-    createProviderMonitoringRouter({
-      metrics,
+  const { optimizerScheduler, triggerScheduler } =
+    await registerManagementRoutes({
+      app,
       config,
-      providerCircuitBreaker: _engineResult.providerCircuitBreaker,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-  app.route(
-    "/",
-    createProviderTestingRouter({
-      config,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-  app.route(
-    "/",
-    createGuardrailsRouter({
-      guardrailPolicy,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-  {
-    const { createPiiVaultRouter } = await import("./routes/pii-vault.js");
-    app.route(
-      "/",
-      createPiiVaultRouter({
-        enabled: piiVault !== undefined,
-        durable: piiVaultStore !== undefined && database !== undefined,
-        piiTypes: config.piiVaultTypes ?? [],
-        ...(config.piiDetectors !== undefined
-          ? { detectors: config.piiDetectors }
-          : {}),
-        multimodalMode: config.piiVaultMultimodalMode ?? "off",
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-      }),
-    );
-  }
-  app.route(
-    "/",
-    createEvalRouter({
-      store: createEvalCaseStore(),
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-  if (config.tenantManagementEnabled === true) {
-    app.route(
-      "/",
-      createTenantsRouter({
-        tenantStore,
-        usageMeter,
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-        auditLog,
-        ...(providerKeyStore !== undefined ? { providerKeyStore } : {}),
-        ...(byokResolver !== undefined ? { byokResolver } : {}),
-      }),
-    );
-    logger.info("Tenant management enabled at /admin/tenants/*");
-  } else if (config.byokEnabled === true) {
-    logger.warn(
-      "BYOK_ENABLED is set but TENANT_MANAGEMENT_ENABLED is not — BYOK admin endpoints not mounted.",
-    );
-  }
-  if (
-    approvalGate !== undefined ||
-    replayService !== undefined ||
-    canaryManager.enabled
-  ) {
-    app.route(
-      "/",
-      createControlRouter({
-        ...(approvalGate !== undefined ? { approvalGate } : {}),
-        ...(replayService !== undefined ? { replayService } : {}),
-        ...(canaryManager.enabled ? { canaryManager } : {}),
-        authRequired: config.monitoringAuthRequired,
-        approvalFrameAncestors:
-          (config.approvalFrameAncestors?.length ?? 0) > 0
-            ? config.approvalFrameAncestors
-            : config.corsOrigins.filter((origin) => origin !== "*"),
-        ...(config.oidcSessionSecret !== undefined
-          ? { approvalLinkSecret: config.oidcSessionSecret }
-          : {}),
-        operatorAuth,
-        auditLog,
-      }),
-    );
-  }
-  if (config.mcpServers.length > 0) {
-    app.route(
-      "/",
-      createMcpRouter({
-        mcpWrapper,
-        knownToolIds,
-        serverNames: new Set(config.mcpServers.map((s) => s.name)),
-        serverConfigs: config.mcpServers,
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-        auditLog,
-      }),
-    );
-  }
-  // Always mounted: routing advice (Studio "Optimize") and trace analysis don't
-  // need the self-optimizing loop; its own endpoints answer 501 without it.
-  {
-    const { createOptimizerRouter } = await import("./routes/optimizer.js");
-    app.route(
-      "/optimizer",
-      createOptimizerRouter({
-        ...(flowOptimizer !== undefined ? { optimizer: flowOptimizer } : {}),
-        operatorAuth,
-        auditLog,
-        ...(traceAnalyzer !== undefined ? { traceAnalyzer } : {}),
-        // Enables GET /optimizer/routing-advice (cost/quality model advice).
-        flowRegistry,
-        // POST /optimizer/routing-advice resolves a canvas definition like a flow file.
-        flowsDir: config.flowsDir,
-        ...(config.defaultLlm !== undefined
-          ? { defaultLlm: config.defaultLlm }
-          : {}),
-        ...(modelQuality !== undefined ? { modelQuality } : {}),
-      }),
-    );
-  }
-
-  // ── Compliance Policy-as-Code ─────────────────────────────────────────────
-  // Always mount — the loader returns undefined when no policy file exists, and
-  // the route responds gracefully. Hot-reload is wired via onComplianceChange.
-  const { createCompliancePolicyLoader } =
-    await import("./compliance/policy-loader.js");
-  const { createCompliancePolicyRouter } =
-    await import("./routes/compliance-policy.js");
-  const compliancePolicyLoader = createCompliancePolicyLoader(
-    config.flowsDir,
-    logger,
-  );
-  compliancePolicyLoaderRef = compliancePolicyLoader;
-  graphEngine.setCompliancePolicy?.(compliancePolicyLoader.policy);
-  if (compliancePolicyLoader.hasPolicy) {
-    logger.info(
-      "Compliance policy loaded (compliance-policy.yaml) — policy enforcement active",
-    );
-    if (
-      (compliancePolicyLoader.policy?.approvalRules?.length ?? 0) > 0 &&
-      approvalGate === undefined
-    ) {
-      logger.warn(
-        "compliance-policy.yaml declares approvalRules, but the human-in-the-loop " +
-          "approval gate is not enabled (APPROVAL_GATE_ENABLED / APPROVAL_REQUIRE_TOOLS " +
-          "not set) — these rules have no pause/notify/resolve mechanism to run on and " +
-          "are NOT enforced. Enable the approval gate to activate them.",
-      );
-    }
-  } else {
-    logger.info(
-      "No compliance-policy.yaml found — compliance enforcement inactive (create one in FLOWS_DIR to enable)",
-    );
-  }
-  app.route(
-    "/admin/compliance-policy",
-    createCompliancePolicyRouter({
-      policyLoader: compliancePolicyLoader,
-      operatorAuth,
-      auditLog,
-    }),
-  );
-  logger.info("Compliance Policy API enabled at /admin/compliance-policy/*");
-
-  // ── Compliance (retention/RTBF + DSAR + auto-generated dossier) ───────────
-  // Mounted here (not earlier) so the dossier route can cite the just-loaded
-  // compliance policy, and — when RED_TEAM_ENABLED — the security posture
-  // engine constructed above. evalRunHistory has a durable home only when a
-  // database is configured; otherwise it's a per-replica in-memory ring.
-  // evalRunHistory has a durable home only when a database is configured;
-  // otherwise it's a per-replica in-memory ring. Shared by the compliance
-  // dossier (cites the latest run per dataset) and the /admin/eval/runs API
-  // (lets CI or an operator record a completed eval run).
-  const { createEvalRunHistory } = await import("./eval/eval-run-history.js");
-  const evalRunHistory = createEvalRunHistory(database, logger);
-  const { createEvalMatrixRunStore, EvalMatrixService } =
-    await import("./eval/eval-matrix.js");
-  const evalMatrix = new EvalMatrixService({
-    store: createEvalMatrixRunStore(database, logger),
-    graphEngine,
-    flowRegistry,
-    debugTraceStore,
-    monitoring: monitoringService,
-    logger,
-    admit: async (flowId, context) => {
-      await requireExecutionAdmission(executionAdmission, flowId, context);
-    },
-  });
-  try {
-    const recoveredEvalMatrices = await evalMatrix.recoverInterruptedRuns();
-    if (recoveredEvalMatrices > 0) {
-      logger.warn(
-        "Marked interrupted eval matrices as failed after runtime restart",
-        {
-          count: recoveredEvalMatrices,
-        },
-      );
-    }
-  } catch (error) {
-    // Recovery is best-effort maintenance. A permission/transient database
-    // failure must not take the entire chat/runtime API into a restart loop;
-    // matrix endpoints will surface the store problem as 503 until repaired.
-    logger.warn("Eval matrix recovery skipped; runtime startup continues", {
-      error: error instanceof Error ? error.message : String(error),
-      degraded: "eval_matrix_recovery",
-    });
-  }
-  const { createEvalRunsRouter } = await import("./routes/eval-runs.js");
-  app.route(
-    "/",
-    createEvalRunsRouter({
-      history: evalRunHistory,
-      matrix: evalMatrix,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-      auditLog,
       logger,
-    }),
-  );
-  logger.info("Eval run history API enabled at /admin/eval/runs");
-
-  if (retentionService !== undefined) {
-    // DSAR erasure orchestrator (Req 2.9): fans erasures out to the local
-    // retention targets plus the remote ERASURE_TARGETS services and
-    // persists every operation in erasure_requests (idempotent, retryable).
-    // Erasure_Receipt signing (Req 2.11): Ed25519 via
-    // ERASURE_RECEIPT_SIGNING_KEY, documented fallback is the audit-anchor
-    // HMAC secret — the algorithm is recorded in the envelope's `alg`.
-    const receiptKey =
-      ed25519ReceiptKey(config.erasureReceiptSigningKey) ??
-      hmacReceiptKey(config.auditAnchorSecret);
-    const erasureOrchestrator = createErasureOrchestrator({
-      retention: retentionService,
-      ...(config.erasureTargets !== undefined
-        ? { targets: config.erasureTargets }
-        : {}),
-      ...(database !== undefined ? { database } : {}),
-      ...(logger !== undefined ? { logger } : {}),
-      ...(receiptKey !== undefined ? { receiptKey } : {}),
-    });
-    app.route(
-      "/",
-      createComplianceRouter({
-        retention: retentionService,
-        erasureOrchestrator,
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-        auditLog,
-        policyLoader: compliancePolicyLoader,
-        evalRunHistory,
-        ...(redTeamEngine !== undefined ? { redTeamEngine } : {}),
-        ...(auditAnchor !== undefined ? { auditAnchor } : {}),
-        flowRegistry,
-        ...(config.piiRecallDataset !== undefined
-          ? { piiRecallDatasetPath: config.piiRecallDataset }
-          : {}),
-        ...(config.providerRegions !== undefined
-          ? { providerRegions: config.providerRegions }
-          : {}),
-        ...(config.localProviders !== undefined
-          ? { localProviders: config.localProviders }
-          : {}),
-        piiVaultPosture: {
-          enabled: piiVault !== undefined,
-          durable: piiVaultStore !== undefined && database !== undefined,
-          detectors: config.piiDetectors ?? [],
-          piiTypes:
-            config.piiVaultTypes !== undefined &&
-            config.piiVaultTypes.length > 0
-              ? config.piiVaultTypes
-              : "all",
-          multimodalMode: config.piiVaultMultimodalMode ?? "off",
-        },
-      }),
-    );
-    logger.info(
-      "Compliance API enabled at /admin/compliance/* (incl. dossier)",
-    );
-  }
-
-  // ── Continuous Safety & Quality Autopilot ─────────────────────────────────
-  // Wires RedTeamEngine + FlowOptimizer + CanaryManager into a closed loop.
-  // Extracted to bootstrap/autopilot.ts (ADR-0004 style split) — see that
-  // module for the canary registrar, judge-model resolution, the
-  // red-team-run hook, the `/autopilot/*` router, and the health-signal
-  // poller.
-  const { buildAutopilot } = await import("./bootstrap/autopilot.js");
-  await buildAutopilot({
-    config,
-    app,
-    logger,
-    auditLog,
-    database,
-    operatorAuth,
-    monitoringService,
-    modelQuality,
-    canaryManager,
-    redTeamEngine,
-    flowOptimizer,
-    flowStore,
-  });
-
-  // ── Optimizer Scheduler (autonomous periodic optimization) ────────────────
-  let optimizerScheduler:
-    | import("./graph/optimizer-scheduler.js").OptimizerScheduler
-    | undefined;
-  const optimizerScheduleFlows = config.optimizerScheduleFlows;
-  const activeReplayStore = replayStore;
-  if (
-    flowOptimizer !== undefined &&
-    config.optimizerScheduleEnabled === true &&
-    optimizerScheduleFlows !== undefined &&
-    optimizerScheduleFlows.length > 0 &&
-    activeReplayStore !== undefined
-  ) {
-    const { createOptimizerScheduler } =
-      await import("./graph/optimizer-scheduler.js");
-    const intervalMs = config.optimizerScheduleIntervalMs ?? 86_400_000;
-    optimizerScheduler = createOptimizerScheduler(
-      {
-        flows: optimizerScheduleFlows,
-        intervalMs,
-        minNewSamples: config.optimizerScheduleMinNewSamples ?? 50,
-        cooldownMs: config.optimizerScheduleCooldownMs ?? intervalMs,
-        autoPromote: config.optimizerScheduleAutoPromote ?? true,
-        variantCount: config.optimizerScheduleVariantCount ?? 3,
-        minScoreImprovement:
-          config.optimizerScheduleMinScoreImprovement ?? 0.05,
-        ...(config.optimizerScheduleGoal !== undefined
-          ? { optimizationGoal: config.optimizerScheduleGoal }
-          : {}),
-      },
-      {
-        optimizer: flowOptimizer,
-        // SnapshotCounter: count how many snapshots the ReplayStore holds for a flow.
-        countSnapshots: async (flowId) => {
-          const all = await activeReplayStore.list(10_000);
-          return all.filter((s) => s.flowId === flowId).length;
-        },
-        logger,
-        auditLog,
-      },
-    );
-    const started = optimizerScheduler.start();
-    if (started) {
-      logger.info("Optimizer scheduler started", {
-        flows: config.optimizerScheduleFlows,
-        intervalMs,
-        minNewSamples: config.optimizerScheduleMinNewSamples ?? 50,
-        autoPromote: config.optimizerScheduleAutoPromote ?? true,
-      });
-    }
-  }
-  app.route(
-    "/",
-    createFlowsRouter({
+      auditLog,
+      database,
+      flowRegistry,
       fileRegistry,
-      logger,
-      sourceDir: config.flowsDir,
       studioTests,
-      // Enables POST /flows/write (Studio "Write to file"): writes go back into
-      // the flow's own file under FLOWS_DIR (comment-preserving, source form)
-      // and are picked up by the hot-reload watcher. Guarded by flows:write.
-      flowsDir: config.flowsDir,
-      ...(flowStore !== undefined ? { store: flowStore } : {}),
-      ...(dbFlowSource !== undefined ? { dbSource: dbFlowSource } : {}),
-      ...(knownToolIds.size > 0 ? { knownToolIds } : {}),
-      authRequired: config.monitoringAuthRequired,
-      ...(abManager !== undefined ? { abManager } : {}),
-      operatorAuth,
-      auditLog,
-      appConfig: config,
-      getCompliancePolicy: () => compliancePolicyLoaderRef?.policy,
-      ...(replayStore !== undefined
-        ? {
-            simulation: {
-              mcpWrapper,
-              ...(_engineResult.llmProviderFactory !== undefined
-                ? { llmProviderFactory: _engineResult.llmProviderFactory }
-                : {}),
-              replayStore,
-              flowAuthorizer,
-              getCompliancePolicy: () => compliancePolicyLoaderRef?.policy,
-            },
-          }
-        : {}),
-    }),
-  );
-  app.route(
-    "/",
-    createMonitoringRouter(monitoringService, {
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-      auditLog,
-      ...(config.monitoringTicketSecret !== undefined
-        ? {
-            ticketSecret: config.monitoringTicketSecret,
-            ticketTtlSeconds: config.monitoringTicketTtlSeconds ?? 60,
-          }
-        : {}),
-    }),
-  );
-  app.route(
-    "/",
-    createDebugRouter({
-      debugStore: debugTraceStore,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-  {
-    const { createExplainRouter } = await import("./routes/explain.js");
-    // Evidence-bundle signing reuses the audit-anchor secret when no
-    // dedicated one is set — see routes/explain.ts's doc comment on why a
-    // deployment that already anchors its audit chain should not need a
-    // second secret just to sign evidence bundles.
-    const evidenceBundleSecret =
-      config.evidenceBundleSecret ?? config.auditAnchorSecret;
-    app.route(
-      "/",
-      createExplainRouter({
-        history: {
-          listRecent: (limit) => monitoringService.getHistory(limit),
-          listEvents: (executionId) =>
-            monitoringService.getExecutionEvents(executionId),
-        },
-        debugTraceStore,
-        ...(piiVault !== undefined ? { piiVault } : {}),
-        auditLog,
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-        ...(auditAnchor !== undefined ? { auditAnchor } : {}),
-        ...(evidenceBundleSecret !== undefined ? { evidenceBundleSecret } : {}),
-      }),
-    );
-    logger.info(
-      "Decision-Provenance Explainability Card enabled at GET /monitoring/explain/:executionId",
-    );
-    if (evidenceBundleSecret !== undefined) {
-      logger.info(
-        "Verifiable Evidence Bundle enabled at GET /monitoring/explain/:executionId/bundle",
-      );
-    }
-  }
-  if (config.metricsEnabled ?? true) {
-    app.route(
-      "/",
-      createMetricsRouter(metrics, {
-        metricsAuthRequired: metricsAuthRequiredFlag,
-        monitoringAuthRequired: config.monitoringAuthRequired,
-        costTracker: budgetService,
-        usageAnalytics,
-        operatorAuth,
-        metricsOperatorAuth,
-      }),
-    );
-  }
-  app.route(
-    "/",
-    createLimitsRouter({
-      service: tokenLimitService,
-      store: tokenLimitStore,
-      analytics: usageAnalytics,
-      operatorAuth,
-      auditLog,
-    }),
-  );
-
-  // OIDC BFF login for operator plane
-  if (
-    config.oidcIssuer !== undefined &&
-    config.oidcClientId !== undefined &&
-    config.oidcClientSecret !== undefined &&
-    config.oidcSessionSecret !== undefined
-  ) {
-    app.route(
-      "/",
-      createOidcAuthRouter({
-        config: {
-          issuer: config.oidcIssuer,
-          clientId: config.oidcClientId,
-          clientSecret: config.oidcClientSecret,
-          sessionSecret: config.oidcSessionSecret,
-          sessionTtlSeconds: config.oidcSessionTtlSeconds ?? 3600,
-          // Was previously omitted, so OIDC_REFRESH_SESSION_TTL_SECONDS was
-          // loaded from the environment and then silently dropped — every
-          // deployment ran on the 30-day default no matter what it configured.
-          ...(config.oidcRefreshSessionTtlSeconds !== undefined
-            ? {
-                refreshSessionTtlSeconds: config.oidcRefreshSessionTtlSeconds,
-              }
-            : {}),
-          scopes: config.oidcScopes ?? "openid profile email",
-          autoLogin: config.oidcAutoLogin ?? false,
-          ...(config.oidcAudience !== undefined
-            ? { audience: config.oidcAudience }
-            : {}),
-          ...(config.oidcRedirectUri !== undefined
-            ? { redirectUri: config.oidcRedirectUri }
-            : {}),
-          ...(config.oidcDashboardUrl !== undefined
-            ? { dashboardUrl: config.oidcDashboardUrl }
-            : {}),
-          roleClaim: config.operatorRoleClaim ?? "role",
-          ...(config.operatorGroupsClaim !== undefined
-            ? { groupsClaim: config.operatorGroupsClaim }
-            : {}),
-          ...(config.operatorRoleMap !== undefined
-            ? { roleMap: config.operatorRoleMap }
-            : {}),
-          ...(config.operatorDefaultRole !== undefined
-            ? { defaultRole: config.operatorDefaultRole }
-            : {}),
-        },
-        sessionStore: createOidcSessionStore(config.redisUrl, logger),
-        logger,
-      }),
-    );
-    logger.info("OIDC operator login (BFF) enabled at /monitoring/auth/*", {
-      issuer: config.oidcIssuer,
-      autoLogin: config.oidcAutoLogin ?? false,
-    });
-  } else {
-    // The dashboard must know that an intentionally open operator plane does
-    // not require a synthetic browser token. Keep this endpoint available even
-    // when the optional OIDC router is not mounted.
-    app.get("/monitoring/auth/config", (ctx) =>
-      ctx.json({
-        enabled: false,
-        autoLogin: false,
-        required: config.monitoringAuthRequired || operatorAuth.rbacEnabled,
-      }),
-    );
-  }
-
-  // Rocket.Chat inbound webhook and separate end-user connect-link OIDC flow.
-  // These deliberately do not share the operator OIDC session.
-  if (assistantsResult?.rocketChat !== undefined) {
-    const connectIssuer = process.env.ROCKETCHAT_CONNECT_OIDC_ISSUER;
-    const connectClientId = process.env.ROCKETCHAT_CONNECT_OIDC_CLIENT_ID;
-    const connectClientSecret =
-      process.env.ROCKETCHAT_CONNECT_OIDC_CLIENT_SECRET;
-    const delegationClientSecret = config.assistantDelegationClientSecret;
-    const connectSessionSecret = process.env.ROCKETCHAT_CONNECT_SESSION_SECRET;
-    const connectPublicUrl = process.env.ROCKETCHAT_CONNECT_PUBLIC_URL;
-    const delegation = assistantsResult.rocketChatDelegation;
-    const sameIssuer =
-      connectIssuer !== undefined &&
-      delegation !== undefined &&
-      connectIssuer.replace(/\/$/, "") === delegation.issuer.replace(/\/$/, "");
-    const sameClient =
-      connectClientId !== undefined &&
-      delegation !== undefined &&
-      connectClientId === delegation.clientId;
-    const sameClientSecret =
-      connectClientSecret !== undefined &&
-      delegationClientSecret !== undefined &&
-      connectClientSecret === delegationClientSecret;
-    const connectReady =
-      database !== undefined &&
-      connectIssuer !== undefined &&
-      connectClientId !== undefined &&
-      connectClientSecret !== undefined &&
-      connectSessionSecret !== undefined &&
-      connectPublicUrl !== undefined &&
-      delegation !== undefined &&
-      sameIssuer &&
-      sameClient &&
-      sameClientSecret;
-    app.route(
-      "/",
-      createRocketChatRouter({
-        channel: assistantsResult.rocketChat,
-        ...(connectReady
-          ? {
-              connect: {
-                db: database as NonNullable<typeof database>,
-                publicUrl: connectPublicUrl as string,
-                requestTtlSeconds: Number(
-                  process.env.ROCKETCHAT_CONNECT_REQUEST_TTL_SECONDS ?? "900",
-                ),
-              },
-            }
-          : {}),
-        logger,
-      }),
-    );
-    if (connectReady && delegation !== undefined) {
-      app.route(
-        "/",
-        createRocketChatConnectRouter({
-          db: database as NonNullable<typeof database>,
-          channel: assistantsResult.rocketChat,
-          runtime: assistantsResult.runtime,
-          delegation,
-          logger,
-          config: {
-            issuer: connectIssuer as string,
-            clientId: connectClientId as string,
-            clientSecret: delegationClientSecret as string,
-            sessionSecret: connectSessionSecret as string,
-            publicUrl: connectPublicUrl as string,
-            defaultFlowId:
-              process.env.ROCKETCHAT_CONNECT_DEFAULT_FLOW_ID ?? "assistant",
-            scopes: config.rocketChatConnectOidcScopes,
-            tenantId: process.env.ROCKETCHAT_CONNECT_TENANT_ID,
-          },
-        }),
-      );
-      logger.info(
-        "Rocket.Chat self-service connect flow enabled at /connect/rocketchat/*",
-      );
-    } else {
-      logger.warn(
-        "Rocket.Chat legacy webhook enabled; self-service connect requires an encrypted delegation bridge and identical connect/delegation OIDC issuer, client and secret",
-        {
-          sameIssuer,
-          sameClient,
-          sameClientSecret,
-          delegation: delegation !== undefined,
-        },
-      );
-    }
-  }
-
-  // Cost/quality SLO reporting route
-  {
-    const { createSloRouter } = await import("./routes/slo.js");
-    app.route(
-      "/",
-      createSloRouter({
-        registry: sloRegistry,
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-      }),
-    );
-    logger.info("SLO reporting enabled at GET /monitoring/slo");
-  }
-
-  // FinOps forecasting + CO2/ESG accounting route
-  {
-    const { createFinopsRouter } = await import("./routes/finops.js");
-    app.route(
-      "/",
-      createFinopsRouter({
-        budgetService,
-        metrics,
-        ...(config.co2GridCarbonIntensity !== undefined
-          ? { co2GridCarbonIntensity: config.co2GridCarbonIntensity }
-          : {}),
-        ...(config.co2EnergyFactors !== undefined
-          ? { co2EnergyFactors: config.co2EnergyFactors }
-          : {}),
-        authRequired: config.monitoringAuthRequired,
-        operatorAuth,
-      }),
-    );
-    logger.info(
-      "FinOps forecasting + CO2/ESG accounting enabled at /admin/finops/*",
-    );
-  }
-
-  // Shadow mode monitoring route
-  const { createShadowRouter } = await import("./routes/shadow.js");
-  app.route(
-    "/",
-    createShadowRouter({
-      shadowService: shadowModeService,
-      authRequired: config.monitoringAuthRequired,
-      operatorAuth,
-    }),
-  );
-
-  // ── Webhook + Schedule Triggers ──────────────────────────────────────────
-  // The triggers route enables external systems to fire flows via signed HTTP
-  // POST. The scheduler starts any `trigger` nodes configured with mode=schedule.
-  const { createTriggersRouter } = await import("./routes/triggers.js");
-  app.route(
-    "/",
-    createTriggersRouter({
-      flowRegistry,
       graphEngine,
-      monitoring: monitoringService,
-      requireSignature: config.triggersRequireSignature ?? true,
-      authorizationEnabled: config.authzEnabled ?? true,
-      flowScopeClaims: config.flowScopeClaims,
-      admission: executionAdmission,
-    }),
-  );
-  logger.info("Webhook trigger route enabled at /triggers/:flowId");
-
-  const { createTriggerScheduler } =
-    await import("./graph/trigger-scheduler.js");
-  const triggerScheduler = createTriggerScheduler(
-    flowRegistry,
-    graphEngine,
-    monitoringService,
-    logger,
-    // Supplies credentials for scheduled runs. Without it the scheduler passes a
-    // non-credential placeholder and every protected tool call in a fired flow is
-    // refused — invisibly, until someone schedules a flow that touches one.
-    {
+      monitoringService,
       jwtVerifier,
-      flowScopeClaims: config.flowScopeClaims,
-      admission: executionAdmission,
-      ...(assistantsResult !== undefined
-        ? { resolveAuthority: assistantsResult.resolveScheduledAuthority }
-        : {}),
-    },
-  );
-  triggerScheduler.start();
+      apiKeyResolver,
+      operatorAuth,
+      metricsOperatorAuth,
+      metricsAuthRequiredFlag,
+      toolAuthzLoader,
+      flowAuthorizer,
+      flowMcpServer,
+      redTeamEngine,
+      redTeamExecutorShared,
+      inputGuardrail,
+      vectorStore,
+      ragEmbedder,
+      memoryStore,
+      assistantsResult,
+      mcpWrapper,
+      knownToolIds,
+      flowParserService,
+      providerKeyPool,
+      providerCircuitBreaker: _engineResult.providerCircuitBreaker,
+      llmProviderFactory: _engineResult.llmProviderFactory,
+      piiVault,
+      piiVaultStore,
+      guardrailPolicy,
+      tenantStore,
+      usageMeter,
+      providerKeyStore,
+      byokResolver,
+      approvalGate,
+      replayService,
+      replayStore,
+      canaryManager,
+      flowOptimizer,
+      traceAnalyzer,
+      debugTraceStore,
+      executionAdmission,
+      modelQuality,
+      getCompliancePolicy: () => compliancePolicyLoaderRef?.policy,
+      onCompliancePolicyLoader: (loader) => {
+        compliancePolicyLoaderRef = loader;
+      },
+      retentionService,
+      auditAnchor,
+      budgetService,
+      metrics,
+      usageAnalytics,
+      tokenLimitService,
+      tokenLimitStore,
+      sloRegistry,
+      shadowModeService,
+      abManager,
+      flowStore,
+      dbFlowSource,
+    });
   triggerSchedulerRef = triggerScheduler;
 
   // 14. HTTP Server
@@ -2573,6 +1092,7 @@ if (import.meta.main) {
       },
       () => {
         auditAnchor?.stop();
+        treeHeadSealer?.stop();
       },
       () => {
         dbFlowSource?.stop();
