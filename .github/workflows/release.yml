@@ -131,9 +131,84 @@ jobs:
           path: release/quickstart-images-linux-x64-${{ github.sha }}
           retention-days: 14
 
+  # Production container images (Requirement 13.1): every service image is
+  # pushed to GHCR, signed with cosign keyless (the OIDC id-token is the
+  # identity — no long-lived signing key), and carries SLSA build provenance
+  # plus a CycloneDX SBOM attestation in the registry. Images are tagged with
+  # the release version and the exact SHA; the digest is what gets signed and
+  # attested, so a retag can never invalidate the signature.
+  container-images:
+    name: Container images (${{ matrix.service }})
+    needs: guard
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [runtime, search, gate, extract, control]
+    env:
+      IMAGE: ghcr.io/abillify/atf-${{ matrix.service }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: deploy/images/Dockerfile.${{ matrix.service }}
+          platforms: linux/amd64
+          push: true
+          tags: >-
+            ${{ env.IMAGE }}:${{ needs.guard.outputs.version }},
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha,scope=release-${{ matrix.service }}
+          cache-to: type=gha,scope=release-${{ matrix.service }},mode=max
+          provenance: false
+          sbom: false
+      - uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
+      - name: Sign image (keyless)
+        run: cosign sign --yes "${{ env.IMAGE }}@${{ steps.push.outputs.digest }}"
+      - name: Attest SLSA build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+      - name: Generate CycloneDX SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.push.outputs.digest }}
+          format: cyclonedx-json
+          output-file: atf-${{ matrix.service }}.cdx.json
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Attest SBOM
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          sbom-path: atf-${{ matrix.service }}.cdx.json
+          push-to-registry: true
+
   publish:
     name: Publish supply-chain bundle
-    needs: [guard, workspace, images]
+    needs: [guard, workspace, images, container-images]
     runs-on: ubuntu-latest
     environment: release
     permissions:
