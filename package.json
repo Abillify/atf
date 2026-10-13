@@ -69,9 +69,13 @@
 	},
 	"overrides": {
 		"adm-zip": "0.6.1",
-		"fast-uri": "3.1.6",
+		"esbuild": "0.28.2",
+		"fast-uri": "3.1.7",
 		"postcss": "8.5.26",
-		"sharp": "0.35.5"
+		"proxy-addr": "2.0.8",
+		"sharp": "0.35.5",
+		"source-map-js": "1.2.2",
+		"zod": "4.4.3"
 	},
 	"engines": {
 		"bun": ">=1.4.0 <2",

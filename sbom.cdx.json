@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "f818054e95f3465711c37a1331090950621f4dcd33ba84d711d3d81920a4b023"
+        "value": "1025614d0f76995e9772aa8b50d99a1cce3297dcb2c298e779bb98d5496859c5"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -1330,16 +1330,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40esbuild%2Flinux-x64@0.25.12",
+      "bom-ref": "pkg:npm/%40esbuild%2Flinux-x64@0.28.2",
       "group": "@esbuild",
       "name": "linux-x64",
-      "version": "0.25.12",
+      "version": "0.28.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40esbuild%2Flinux-x64@0.25.12",
+      "purl": "pkg:npm/%40esbuild%2Flinux-x64@0.28.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1710,16 +1710,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.30.0",
+      "bom-ref": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.31.0",
       "group": "@modelcontextprotocol",
       "name": "sdk",
-      "version": "1.30.0",
+      "version": "1.31.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.30.0",
+      "purl": "pkg:npm/%40modelcontextprotocol%2Fsdk@1.31.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -7828,15 +7828,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/esbuild@0.25.12",
+      "bom-ref": "pkg:npm/esbuild@0.28.2",
       "name": "esbuild",
-      "version": "0.25.12",
+      "version": "0.28.2",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/esbuild@0.25.12",
+      "purl": "pkg:npm/esbuild@0.28.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8224,15 +8224,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/fast-uri@3.1.6",
+      "bom-ref": "pkg:npm/fast-uri@3.1.7",
       "name": "fast-uri",
-      "version": "3.1.6",
+      "version": "3.1.7",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
         }
       ],
-      "purl": "pkg:npm/fast-uri@3.1.6",
+      "purl": "pkg:npm/fast-uri@3.1.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9655,24 +9655,6 @@
         }
       ],
       "purl": "pkg:cargo/hex@0.4.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/hono@4.13.2",
-      "name": "hono",
-      "version": "4.13.2",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/hono@4.13.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -14398,15 +14380,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/proxy-addr@2.0.7",
+      "bom-ref": "pkg:npm/proxy-addr@2.0.8",
       "name": "proxy-addr",
-      "version": "2.0.7",
+      "version": "2.0.8",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/proxy-addr@2.0.7",
+      "purl": "pkg:npm/proxy-addr@2.0.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16720,15 +16702,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/source-map-js@1.2.1",
+      "bom-ref": "pkg:npm/source-map-js@1.2.2",
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "licenses": [
         {
           "expression": "BSD-3-Clause"
         }
       ],
-      "purl": "pkg:npm/source-map-js@1.2.1",
+      "purl": "pkg:npm/source-map-js@1.2.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18664,15 +18646,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/undici@6.23.0",
+      "bom-ref": "pkg:npm/undici@6.28.1",
       "name": "undici",
-      "version": "6.23.0",
+      "version": "6.28.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/undici@6.23.0",
+      "purl": "pkg:npm/undici@6.28.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18682,15 +18664,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/undici@7.29.0",
+      "bom-ref": "pkg:npm/undici@7.29.1",
       "name": "undici",
-      "version": "7.29.0",
+      "version": "7.29.1",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/undici@7.29.0",
+      "purl": "pkg:npm/undici@7.29.1",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -19024,15 +19006,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/vite@7.1.7",
+      "bom-ref": "pkg:npm/vite@7.3.7",
       "name": "vite",
-      "version": "7.1.7",
+      "version": "7.3.7",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/vite@7.1.7",
+      "purl": "pkg:npm/vite@7.3.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -21211,24 +21193,6 @@
         }
       ],
       "purl": "pkg:npm/zod@4.4.3",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/zod@4.6.6",
-      "name": "zod",
-      "version": "4.6.6",
-      "licenses": [
-        {
-          "expression": "MIT"
-        }
-      ],
-      "purl": "pkg:npm/zod@4.6.6",
       "properties": [
         {
           "name": "atf:compliance:classification",

@@ -28,6 +28,23 @@ releases:
   CVE-2026-96889); transitively `@img/sharp-*` 0.35.4 → 0.35.5 and
   `@img/sharp-libvips-*` 1.3.3 → 1.3.4. Third-party notices and the SBOM are
   regenerated.
+- **Gate, Runtime, Search** (`@atf/gate`, `@atf/runtime`, `@atf/search`):
+  `@modelcontextprotocol/sdk` 1.30.0 → 1.31.0 (CVE-2026-104850). A new root
+  override pins `zod` to 4.4.3 so the SDK uses the same zod version as the
+  workspaces and the MCP tool types stay compatible.
+- **Security kit** (`@atf/security-kit`): `undici` 7.29.0 → 7.29.1 (CVE-2026-19534,
+  CVE-2026-84961); the `undici` copy used by `@ai-sdk/provider-utils` moves to
+  7.29.1 as well.
+- **Outpost core** (`@atf/outpost-core`): `undici` 6.23.0 → 6.28.1 (CVE-2026-12151,
+  CVE-2026-1526, CVE-2026-1528, CVE-2026-19534, CVE-2026-2229); stays on the 6.x line.
+- **Outpost desktop** (`@atf/outpost-desktop`): `vite` 7.1.7 → 7.3.7 (CVE-2026-39363,
+  CVE-2026-39364, CVE-2026-53571); `esbuild` 0.25.12 → 0.28.2 via root `overrides`,
+  its binary is built with Go 1.26.5 instead of Go 1.23.12 (CVE-2025-68121 and further
+  Go standard library findings).
+- **Workspace overrides** (root `overrides`): `fast-uri` 3.1.6 → 3.1.7 (CVE-2026-84292,
+  CVE-2026-84394); new pins `proxy-addr` 2.0.8 (CVE-2026-90711, via `express`) and
+  `source-map-js` 1.2.2 (CVE-2026-93749). Third-party notices and the SBOM are
+  regenerated.
 
 ## [0.15.0] — 2026-10-13
 

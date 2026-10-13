@@ -25,7 +25,7 @@
         "@atf/observability": "workspace:1.0.0",
         "@atf/security-kit": "workspace:1.0.0",
         "@aws-sdk/client-bedrock-runtime": "3.1136.0",
-        "@modelcontextprotocol/sdk": "1.30.0",
+        "@modelcontextprotocol/sdk": "1.31.0",
         "express": "5.2.1",
         "jose": "6.2.12",
         "pg": "8.23.0",
