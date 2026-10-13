@@ -270,11 +270,23 @@ export async function buildPersistence(
         operatorUrl: config.databaseOperatorUrl,
       });
       if (database !== undefined) {
-        const result = await runMigrations(database, logger);
-        logger.info("Schema migration complete", {
-          version: result.toVersion,
-          applied: result.applied,
-        });
+        // Requirement 12.4: production defaults to dedicated migration Jobs
+        // (`bun run migrate`); the advisory lock inside the migrator keeps
+        // both paths safe to overlap. `loadConfig()` always fills the flag —
+        // an unset value (hand-built config) keeps the legacy always-migrate
+        // behaviour.
+        if (config.migrateOnStart !== false) {
+          const result = await runMigrations(database, logger);
+          logger.info("Schema migration complete", {
+            version: result.toVersion,
+            applied: result.applied,
+          });
+        } else {
+          logger.info(
+            "MIGRATE_ON_START is disabled — schema migrations are not applied " +
+              "at boot; run `bun run migrate` (or the migration Job) first",
+          );
+        }
       }
     } catch (err) {
       logger.error("Failed to initialise PostgreSQL persistence", {

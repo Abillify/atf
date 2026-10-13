@@ -184,6 +184,10 @@ export function loadConfig(): AppConfig {
     ...(env.ERASURE_RECEIPT_SIGNING_KEY !== undefined
       ? { erasureReceiptSigningKey: env.ERASURE_RECEIPT_SIGNING_KEY }
       : {}),
+    decisionReceiptsEnabled: env.DECISION_RECEIPTS_ENABLED,
+    ...(env.RECEIPT_SIGNING_KEY !== undefined
+      ? { receiptSigningKey: env.RECEIPT_SIGNING_KEY }
+      : {}),
     evidenceBundleSecret: env.EVIDENCE_BUNDLE_SECRET,
     piiRecallDataset: env.PII_RECALL_DATASET,
     sloAlertWebhookUrl: env.SLO_ALERT_WEBHOOK_URL,
@@ -216,6 +220,9 @@ export function loadConfig(): AppConfig {
     redisUrl: env.REDIS_URL,
     databaseUrl: env.DATABASE_URL,
     databasePoolMax: env.DATABASE_POOL_MAX,
+    // Requirement 12.4: dev keeps the convenient migrate-on-boot, production
+    // defaults to dedicated migration Jobs (`bun run migrate`) instead.
+    migrateOnStart: env.MIGRATE_ON_START ?? env.APP_ENV !== "production",
     tenantRlsEnabled: env.TENANT_RLS_ENABLED,
     tenantRlsRequired: env.TENANT_RLS_REQUIRED,
     clusterStateOptOut: env.CLUSTER_STATE_OPT_OUT,

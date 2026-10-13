@@ -239,6 +239,34 @@ describe("loadConfig() — valid configurations", () => {
     );
   });
 
+  // Requirement 12.4: migrations run at boot outside production by default;
+  // production defaults to dedicated migration Jobs (`bun run migrate`).
+  test("migrateOnStart defaults to true outside production", () => {
+    expect(expectConfigSuccess().migrateOnStart).toBe(true);
+    expect(expectConfigSuccess({ APP_ENV: "development" }).migrateOnStart).toBe(
+      true,
+    );
+  });
+
+  test("migrateOnStart defaults to false in production", () => {
+    expect(expectConfigSuccess({ APP_ENV: "production" }).migrateOnStart).toBe(
+      false,
+    );
+  });
+
+  test("MIGRATE_ON_START explicit override wins over APP_ENV", () => {
+    expect(
+      expectConfigSuccess({ APP_ENV: "production", MIGRATE_ON_START: "true" })
+        .migrateOnStart,
+    ).toBe(true);
+    expect(
+      expectConfigSuccess({
+        APP_ENV: "development",
+        MIGRATE_ON_START: "false",
+      }).migrateOnStart,
+    ).toBe(false);
+  });
+
   // Requirement 7.6: classifier character budget for chunked classification.
   test("input guardrail max chars defaults to 8000 and parses overrides", () => {
     expect(expectConfigSuccess().inputGuardrailMaxChars).toBe(8000);

@@ -246,6 +246,18 @@ export interface AppConfig {
    */
   erasureReceiptSigningKey?: string;
   /**
+   * Master switch for Decision_Receipts (Req 15.1). When true, every chat
+   * completion and every tool call yields a signed COSE_Sign1 receipt.
+   * Requires `receiptSigningKey` — enabling without a key fails at startup.
+   */
+  decisionReceiptsEnabled?: boolean;
+  /**
+   * Ed25519 private key (PEM or raw 32-byte base64 seed) signing
+   * Decision_Receipts (Req 15.3). No HMAC fallback: receipts must be
+   * verifiable offline via JWKS, so the key must be asymmetric.
+   */
+  receiptSigningKey?: string;
+  /**
    * HMAC secret for signing Verifiable Evidence Bundles
    * (`GET /monitoring/explain/:executionId/bundle`). Falls back to
    * `auditAnchorSecret` when unset — see `routes/explain.ts`.
@@ -293,6 +305,13 @@ export interface AppConfig {
   redisUrl?: string;
   databaseUrl?: string;
   databasePoolMax?: number;
+  /**
+   * Effective value of MIGRATE_ON_START — `loadConfig()` always fills it
+   * (requirement 12.4: true outside production, false in production unless
+   * set explicitly). Optional like the other database fields so hand-built
+   * test configs stay valid; boot code treats it through `loadConfig()`.
+   */
+  migrateOnStart?: boolean;
   tenantRlsEnabled?: boolean;
   tenantRlsRequired?: boolean;
   clusterStateOptOut?: boolean;
@@ -894,6 +913,11 @@ export const EnvSchema = z.object({
     .transform((raw): boolean => raw === "true" || raw === "1"),
   MONITORING_TICKET_SECRET: z.string().min(16).optional(),
   AUDIT_ANCHOR_SECRET: z.string().min(16).optional(),
+  /**
+   * Interval between automatic audit-chain anchors (default 6 h). While
+   * anchoring is active it also drives periodic signed Decision_Receipt tree
+   * heads, persisted in `receipt_tree_heads`.
+   */
   AUDIT_ANCHOR_INTERVAL_MS: z.coerce.number().int().min(60_000).optional(),
   AUDIT_ANCHOR_FILE: z.string().optional(),
   // Remote erasure targets for the DSAR orchestrator (Req 2.9): a JSON array
@@ -936,6 +960,14 @@ export const EnvSchema = z.object({
   // (Req 2.11). When absent the orchestrator falls back to an audit-anchor
   // HMAC and records the algorithm in the receipt envelope.
   ERASURE_RECEIPT_SIGNING_KEY: z.string().min(16).optional(),
+  // Decision_Receipts (Req 15): master switch + Ed25519 signing key. When the
+  // switch is on but the key is missing, startup fails — receipts without a
+  // verifiable signature would be worse than no receipts at all.
+  DECISION_RECEIPTS_ENABLED: z
+    .string()
+    .optional()
+    .transform((raw): boolean => raw === "true" || raw === "1"),
+  RECEIPT_SIGNING_KEY: z.string().min(16).optional(),
   EVIDENCE_BUNDLE_SECRET: z.string().min(16).optional(),
   PII_RECALL_DATASET: z.string().optional(),
   SLO_ALERT_WEBHOOK_URL: z.string().url().optional(),
@@ -1103,6 +1135,21 @@ export const EnvSchema = z.object({
   REDIS_URL: z.string().optional(),
   DATABASE_URL: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(1000).default(10),
+  /**
+   * Apply schema migrations during boot. Unset means: true outside
+   * production, false when APP_ENV=production (requirement 12.4) — a
+   * production rollout runs the standalone `bun run migrate` command as a
+   * one-shot Job instead of doing DDL on the boot path of every replica.
+   * The effective default is computed in `load.ts` from APP_ENV.
+   */
+  MIGRATE_ON_START: z
+    .string()
+    .optional()
+    .transform((raw): boolean | undefined =>
+      raw === undefined || raw === ""
+        ? undefined
+        : raw === "true" || raw === "1",
+    ),
   TENANT_RLS_ENABLED: z
     .string()
     .optional()
