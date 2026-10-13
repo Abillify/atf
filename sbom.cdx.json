@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "7c5c2c4697caf1668e4b45ed6417086327d896316d9fa70200bb23de2951571c"
+        "value": "f818054e95f3465711c37a1331090950621f4dcd33ba84d711d3d81920a4b023"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -1444,16 +1444,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.3",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.4",
       "group": "@img",
       "name": "sharp-libvips-linux-x64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "licenses": [
         {
           "expression": "LGPL-3.0-or-later"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.3",
+      "purl": "pkg:npm/%40img%2Fsharp-libvips-linux-x64@1.3.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1463,16 +1463,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.3",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.4",
       "group": "@img",
       "name": "sharp-libvips-linuxmusl-x64",
-      "version": "1.3.3",
+      "version": "1.3.4",
       "licenses": [
         {
           "expression": "LGPL-3.0-or-later"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.3",
+      "purl": "pkg:npm/%40img%2Fsharp-libvips-linuxmusl-x64@1.3.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1482,16 +1482,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.4",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.5",
       "group": "@img",
       "name": "sharp-linux-x64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.4",
+      "purl": "pkg:npm/%40img%2Fsharp-linux-x64@0.35.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1501,16 +1501,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.4",
+      "bom-ref": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.5",
       "group": "@img",
       "name": "sharp-linuxmusl-x64",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.4",
+      "purl": "pkg:npm/%40img%2Fsharp-linuxmusl-x64@0.35.5",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1748,16 +1748,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.6",
+      "bom-ref": "pkg:npm/%40next%2Fenv@16.3.8",
       "group": "@next",
       "name": "env",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fenv@16.3.6",
+      "purl": "pkg:npm/%40next%2Fenv@16.3.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1767,16 +1767,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.6",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.8",
       "group": "@next",
       "name": "swc-linux-x64-gnu",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.6",
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-gnu@16.3.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -1786,16 +1786,16 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.6",
+      "bom-ref": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.8",
       "group": "@next",
       "name": "swc-linux-x64-musl",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.6",
+      "purl": "pkg:npm/%40next%2Fswc-linux-x64-musl@16.3.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -4912,24 +4912,6 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/baseline-browser-mapping@2.11.14",
-      "name": "baseline-browser-mapping",
-      "version": "2.11.14",
-      "licenses": [
-        {
-          "expression": "Apache-2.0"
-        }
-      ],
-      "purl": "pkg:npm/baseline-browser-mapping@2.11.14",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
       "bom-ref": "pkg:npm/baseline-browser-mapping@2.11.26",
       "name": "baseline-browser-mapping",
       "version": "2.11.26",
@@ -5501,24 +5483,6 @@
         {
           "name": "atf:compliance:classification",
           "value": "Standard notice"
-        }
-      ]
-    },
-    {
-      "type": "library",
-      "bom-ref": "pkg:npm/caniuse-lite@1.0.30001809",
-      "name": "caniuse-lite",
-      "version": "1.0.30001809",
-      "licenses": [
-        {
-          "expression": "CC-BY-4.0"
-        }
-      ],
-      "purl": "pkg:npm/caniuse-lite@1.0.30001809",
-      "properties": [
-        {
-          "name": "atf:compliance:classification",
-          "value": "CC-BY attribution"
         }
       ]
     },
@@ -12274,15 +12238,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/next@16.3.6",
+      "bom-ref": "pkg:npm/next@16.3.8",
       "name": "next",
-      "version": "16.3.6",
+      "version": "16.3.8",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/next@16.3.6",
+      "purl": "pkg:npm/next@16.3.8",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -16324,15 +16288,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/sharp@0.35.4",
+      "bom-ref": "pkg:npm/sharp@0.35.5",
       "name": "sharp",
-      "version": "0.35.4",
+      "version": "0.35.5",
       "licenses": [
         {
           "expression": "Apache-2.0"
         }
       ],
-      "purl": "pkg:npm/sharp@0.35.4",
+      "purl": "pkg:npm/sharp@0.35.5",
       "properties": [
         {
           "name": "atf:compliance:classification",

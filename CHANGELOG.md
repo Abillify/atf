@@ -18,6 +18,17 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **Control** (`@atf/control`): `next` 16.3.6 → 16.3.8 (CVE-2026-94483, SSRF and
+  information disclosure in Image Optimization); transitively `@next/env` and
+  `@next/swc-*` 16.3.6 → 16.3.8.
+- **Extract, Search, workspace override** (`@atf/extract`, `@atf/search`, root
+  `overrides`): `sharp` 0.35.4 → 0.35.5 (GHSA-wq5f-xc86-pv6w, bundled librsvg
+  CVE-2026-96889); transitively `@img/sharp-*` 0.35.4 → 0.35.5 and
+  `@img/sharp-libvips-*` 1.3.3 → 1.3.4. Third-party notices and the SBOM are
+  regenerated.
+
 ## [0.15.0] — 2026-10-13
 
 ### Added
