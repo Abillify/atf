@@ -23,6 +23,7 @@ import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { downloadAuthenticated } from "../../../lib/authenticated-download";
 import { DossierPanel } from "../../../components/DossierPanel";
+import { PolicyReplayPanel } from "../../../components/PolicyReplayPanel";
 import { RoPAPanel } from "../../../components/RoPAPanel";
 import {
   Button,
@@ -75,6 +76,11 @@ interface EvalResult {
   decision: "allow" | "deny" | "require-approval";
   violations: PolicyViolation[];
   policyAbsent: boolean;
+}
+
+/** Slug for labelling generated form fields (a11y: label htmlFor/id pairing). */
+function slugify(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
 }
 
 function StatCard({ label, value, color = "gray" }: { label: string; value: string | number; color?: "gray"|"green"|"red"|"blue"|"amber" }) {
@@ -139,16 +145,29 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
 
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-4">
-      <h2 className="text-sm font-semibold text-foreground">Data Retention &amp; RTBF</h2>
-      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+      <h2 className="text-sm font-semibold text-foreground">
+        Data Retention &amp; RTBF
+      </h2>
+      {error && (
+        <p role="alert" className="text-sm text-danger">
+          {error}
+        </p>
+      )}
 
       {/* Retention targets */}
       {status && status.targets.length > 0 && (
         <div className="space-y-1">
-          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Configured targets ({status.targets.length})</p>
+          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Configured targets ({status.targets.length})
+          </p>
           <div className="flex flex-wrap gap-2">
-            {status.targets.map(t => (
-              <span key={t.name} className="rounded border border-border bg-muted px-2 py-0.5 text-xs font-mono">{t.name}</span>
+            {status.targets.map((t) => (
+              <span
+                key={t.name}
+                className="rounded border border-border bg-muted px-2 py-0.5 text-xs font-mono"
+              >
+                {t.name}
+              </span>
             ))}
           </div>
         </div>
@@ -156,16 +175,35 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
 
       {/* Sweep */}
       <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Retention sweep</p>
-        <p className="text-xs text-muted-foreground">Purge data older than its configured retention window across all targets.</p>
-        <Button variant="outline" size="sm" onClick={() => void runSweep()} disabled={sweeping}>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Retention sweep
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Purge data older than its configured retention window across all
+          targets.
+        </p>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => void runSweep()}
+          disabled={sweeping}
+        >
           {sweeping ? "Running sweep…" : "Run sweep now"}
         </Button>
         {sweepResult && (
           <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success space-y-1">
-            <p className="font-medium">Sweep complete — {sweepResult.purged} record(s) purged</p>
-            {sweepResult.report.map(e => (
-              <p key={e.target} className="text-xs">{e.target}: {e.error ? <span className="text-danger">{e.error}</span> : `${e.purged} purged`}</p>
+            <p className="font-medium">
+              Sweep complete — {sweepResult.purged} record(s) purged
+            </p>
+            {sweepResult.report.map((e) => (
+              <p key={e.target} className="text-xs">
+                {e.target}:{" "}
+                {e.error ? (
+                  <span className="text-danger">{e.error}</span>
+                ) : (
+                  `${e.purged} purged`
+                )}
+              </p>
             ))}
           </div>
         )}
@@ -173,28 +211,72 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
 
       {/* Forget (RTBF) */}
       <div className="space-y-2">
-        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Right to be forgotten (Art. 17 GDPR)</p>
-        <p className="text-xs text-muted-foreground">Erase all data for a subject. Requires at least one of tenantId / userId.</p>
+        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Right to be forgotten (Art. 17 GDPR)
+        </p>
+        <p className="text-xs text-muted-foreground">
+          Erase all data for a subject. Requires at least one of tenantId /
+          userId.
+        </p>
         <div className="flex flex-wrap gap-2">
           {[
-            { label: "Tenant ID", value: forgetTenantId, set: setForgetTenantId, placeholder: "tenant-uuid" },
-            { label: "User ID / email", value: forgetUserId, set: setForgetUserId, placeholder: "user@example.com" },
+            {
+              label: "Tenant ID",
+              value: forgetTenantId,
+              set: setForgetTenantId,
+              placeholder: "tenant-uuid",
+            },
+            {
+              label: "User ID / email",
+              value: forgetUserId,
+              set: setForgetUserId,
+              placeholder: "user@example.com",
+            },
           ].map(({ label, value, set, placeholder }) => (
             <div key={label}>
-              <label className="block text-xs text-muted-foreground mb-1">{label}</label>
-              <input value={value} onChange={e => set(e.target.value)} placeholder={placeholder}
-                className="rounded border border-border bg-background px-3 py-1.5 text-sm w-56 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+              <label
+                htmlFor={`forget-${slugify(label)}`}
+                className="block text-xs text-muted-foreground mb-1"
+              >
+                {label}
+              </label>
+              <input
+                id={`forget-${slugify(label)}`}
+                value={value}
+                onChange={(e) => set(e.target.value)}
+                placeholder={placeholder}
+                className="rounded border border-border bg-background px-3 py-1.5 text-sm w-56 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
             </div>
           ))}
         </div>
-        <Button variant="destructive" size="sm" onClick={() => void runForget()} disabled={forgetting || (!forgetTenantId.trim() && !forgetUserId.trim())}>
+        <Button
+          variant="destructive"
+          size="sm"
+          onClick={() => void runForget()}
+          disabled={
+            forgetting || (!forgetTenantId.trim() && !forgetUserId.trim())
+          }
+        >
           {forgetting ? "Erasing…" : "Erase subject data"}
         </Button>
         {forgetResult && (
           <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success space-y-1">
-            <p className="font-medium">{forgetResult.erased} record(s) erased for {Object.entries(forgetResult.subject).map(([k,v])=>`${k}=${v}`).join(", ")}</p>
-            {forgetResult.report.map(e => (
-              <p key={e.target} className="text-xs">{e.target}: {e.error ? <span className="text-danger">{e.error}</span> : `${e.erased} erased`}</p>
+            <p className="font-medium">
+              {forgetResult.erased} record(s) erased for{" "}
+              {Object.entries(forgetResult.subject)
+                .map(([k, v]) => `${k}=${v}`)
+                .join(", ")}
+            </p>
+            {forgetResult.report.map((e) => (
+              <p key={e.target} className="text-xs">
+                {e.target}:{" "}
+                {e.error ? (
+                  <span className="text-danger">{e.error}</span>
+                ) : (
+                  `${e.erased} erased`
+                )}
+              </p>
             ))}
           </div>
         )}
@@ -356,44 +438,102 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
 
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-foreground">Policy Dry-Run Evaluate</h2>
-      <p className="text-xs text-muted-foreground">Test a request context against the loaded policy without executing anything.</p>
+      <h2 className="text-sm font-semibold text-foreground">
+        Policy Dry-Run Evaluate
+      </h2>
+      <p className="text-xs text-muted-foreground">
+        Test a request context against the loaded policy without executing
+        anything.
+      </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
-          { label: "Action *", value: action, set: setAction, placeholder: "chat.completion" },
-          { label: "Tenant ID", value: tenantId, set: setTenantId, placeholder: "optional" },
-          { label: "Model", value: model, set: setModel, placeholder: "openai/gpt-4o" },
-          { label: "Data class", value: dataClass, set: setDataClass, placeholder: "personal" },
+          {
+            label: "Action *",
+            value: action,
+            set: setAction,
+            placeholder: "chat.completion",
+          },
+          {
+            label: "Tenant ID",
+            value: tenantId,
+            set: setTenantId,
+            placeholder: "optional",
+          },
+          {
+            label: "Model",
+            value: model,
+            set: setModel,
+            placeholder: "openai/gpt-4o",
+          },
+          {
+            label: "Data class",
+            value: dataClass,
+            set: setDataClass,
+            placeholder: "personal",
+          },
         ].map(({ label, value, set, placeholder }) => (
           <div key={label}>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
-            <input value={value} onChange={e => set(e.target.value)} placeholder={placeholder}
-              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+            <label
+              htmlFor={`policy-${slugify(label)}`}
+              className="block text-xs font-medium text-muted-foreground mb-1"
+            >
+              {label}
+            </label>
+            <input
+              id={`policy-${slugify(label)}`}
+              value={value}
+              onChange={(e) => set(e.target.value)}
+              placeholder={placeholder}
+              className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
           </div>
         ))}
       </div>
-      {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-      <Button variant="outline" size="sm" onClick={() => void evaluate()} disabled={loading}>
+      {error && (
+        <p role="alert" className="text-sm text-danger">
+          {error}
+        </p>
+      )}
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={() => void evaluate()}
+        disabled={loading}
+      >
         {loading ? "Evaluating…" : "Evaluate"}
       </Button>
       {result && (
         <div className="rounded border border-border bg-muted p-3 space-y-1 text-sm">
-          <p><span className="font-medium">Decision: </span>
-            <span className={`font-bold uppercase ${decisionColor}`}>{result.result.decision}</span>
-            {!result.policyLoaded && <span className="ml-2 text-xs text-warning">(no policy loaded — default allow)</span>}
+          <p>
+            <span className="font-medium">Decision: </span>
+            <span className={`font-bold uppercase ${decisionColor}`}>
+              {result.result.decision}
+            </span>
+            {!result.policyLoaded && (
+              <span className="ml-2 text-xs text-warning">
+                (no policy loaded — default allow)
+              </span>
+            )}
           </p>
           {result.result.violations.length > 0 && (
             <ul className="list-disc pl-5 text-xs text-muted-foreground">
               {result.result.violations.map((violation, index) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: violations have no unique id; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                 <li key={`${violation.rule}-${index}`}>
-                  <span className="font-medium">{violation.rule}</span>: {violation.message}
-                  {violation.blocking === false && <span className="ml-1 text-warning">(advisory)</span>}
+                  <span className="font-medium">{violation.rule}</span>:{" "}
+                  {violation.message}
+                  {violation.blocking === false && (
+                    <span className="ml-1 text-warning">(advisory)</span>
+                  )}
                 </li>
               ))}
             </ul>
           )}
           {result.result.policyAbsent && (
-            <p className="text-xs text-warning">No policy was loaded; the simulator used the compatibility allow result.</p>
+            <p className="text-xs text-warning">
+              No policy was loaded; the simulator used the compatibility allow
+              result.
+            </p>
           )}
         </div>
       )}
@@ -473,9 +613,16 @@ function AuditReportSection({ token }: { token: string | undefined }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold text-foreground">Audit Report (last 24 h)</h2>
+        <h2 className="text-sm font-semibold text-foreground">
+          Audit Report (last 24 h)
+        </h2>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => void fetchReport()} disabled={loading}>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => void fetchReport()}
+            disabled={loading}
+          >
             {loading ? "Loading…" : "↻ Refresh"}
           </Button>
           <Button
@@ -488,32 +635,77 @@ function AuditReportSection({ token }: { token: string | undefined }) {
           </Button>
         </div>
       </div>
-      {error && <div className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">{error}</div>}
+      {error && (
+        <div className="rounded border border-danger-border bg-danger-soft px-4 py-2 text-sm text-danger">
+          {error}
+        </div>
+      )}
       {report && (
         <>
           {!report.policy ? (
             <div className="rounded border border-warning-border bg-warning-soft px-4 py-3 text-sm text-warning">
-              <strong>No policy loaded.</strong> Create <code className="font-mono">flows/compliance-policy.yaml</code> to enable enforcement.
+              <strong>No policy loaded.</strong> Create{" "}
+              <code className="font-mono">flows/compliance-policy.yaml</code> to
+              enable enforcement.
             </div>
           ) : (
             <div className="rounded border border-success-border bg-success-soft px-4 py-3 text-sm">
               <div className="flex items-center gap-2 font-medium text-success">
                 <span>✓ Policy active (v{report.policy.version})</span>
-                {report.policy.failClosed && <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger">fail-closed</span>}
+                {report.policy.failClosed && (
+                  <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger">
+                    fail-closed
+                  </span>
+                )}
               </div>
-              {report.policy.description && <p className="text-success text-xs mt-1">{report.policy.description}</p>}
+              {report.policy.description && (
+                <p className="text-success text-xs mt-1">
+                  {report.policy.description}
+                </p>
+              )}
               <div className="flex flex-wrap gap-3 mt-2 text-xs text-success">
-                {(["dataRules","modelRules","approvalRules","retentionRules","auditRules"] as const).map(k => (
-                  <span key={k}>{report.policy![k]} {k.replace("Rules","").replace(/([A-Z])/g," $1").toLowerCase()} rules</span>
+                {(
+                  [
+                    "dataRules",
+                    "modelRules",
+                    "approvalRules",
+                    "retentionRules",
+                    "auditRules",
+                  ] as const
+                ).map((k) => (
+                  <span key={k}>
+                    {report.policy?.[k]}{" "}
+                    {k
+                      .replace("Rules", "")
+                      .replace(/([A-Z])/g, " $1")
+                      .toLowerCase()}{" "}
+                    rules
+                  </span>
                 ))}
               </div>
             </div>
           )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <StatCard label="Violations" value={report.violations.total} color={report.violations.total > 0 ? "red" : "green"} />
-            <StatCard label="Denied" value={report.violations.denied} color={report.violations.denied > 0 ? "red" : "gray"} />
-            <StatCard label="Required approval" value={report.violations.requireApproval} color="amber" />
-            <StatCard label="Approvals" value={report.approvals.total} color="blue" />
+            <StatCard
+              label="Violations"
+              value={report.violations.total}
+              color={report.violations.total > 0 ? "red" : "green"}
+            />
+            <StatCard
+              label="Denied"
+              value={report.violations.denied}
+              color={report.violations.denied > 0 ? "red" : "gray"}
+            />
+            <StatCard
+              label="Required approval"
+              value={report.violations.requireApproval}
+              color="amber"
+            />
+            <StatCard
+              label="Approvals"
+              value={report.approvals.total}
+              color="blue"
+            />
           </div>
           {report.modelUsage.length > 0 && (
             <div className="rounded border border-border bg-card overflow-hidden">
@@ -521,16 +713,22 @@ function AuditReportSection({ token }: { token: string | undefined }) {
                 <TableHead className="uppercase">
                   <TableRow>
                     <TableHeaderCell>Provider / Model</TableHeaderCell>
-                    <TableHeaderCell className="text-right">Requests</TableHeaderCell>
+                    <TableHeaderCell className="text-right">
+                      Requests
+                    </TableHeaderCell>
                     <TableHeaderCell>Tenants</TableHeaderCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
-                  {report.modelUsage.map(m => (
+                  {report.modelUsage.map((m) => (
                     <TableRow key={`${m.provider}/${m.model}`}>
-                      <TableCell className="font-mono text-xs">{m.provider}/{m.model}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {m.provider}/{m.model}
+                      </TableCell>
                       <TableCell className="text-right">{m.requests}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{m.tenants.join(", ") || "—"}</TableCell>
+                      <TableCell className="text-muted-foreground text-xs">
+                        {m.tenants.join(", ") || "—"}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -550,11 +748,18 @@ function AuditReportSection({ token }: { token: string | undefined }) {
                 </TableHead>
                 <TableBody>
                   {report.violations.recent.map((v, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: recent-violation rows have no unique id; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                     <TableRow key={i}>
-                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">{formatTime(v.at)}</TableCell>
+                      <TableCell className="text-muted-foreground whitespace-nowrap text-xs">
+                        {formatTime(v.at)}
+                      </TableCell>
                       <TableCell>{v.actor}</TableCell>
-                      <TableCell className="font-mono text-xs">{v.action}</TableCell>
-                      <TableCell className="text-muted-foreground text-xs">{v.target ?? "—"}</TableCell>
+                      <TableCell className="font-mono text-xs">
+                        {v.action}
+                      </TableCell>
+                      <TableCell className="text-muted-foreground text-xs">
+                        {v.target ?? "—"}
+                      </TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -585,9 +790,12 @@ export default function CompliancePage() {
   return (
     <div className="p-4 sm:p-6 max-w-4xl space-y-6">
       <div>
-        <h1 className="text-lg font-semibold text-foreground">Policy-as-Code Compliance</h1>
+        <h1 className="text-lg font-semibold text-foreground">
+          Policy-as-Code Compliance
+        </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Declarative data-residency, model, approval and retention policies. Last 24 hours.
+          Declarative data-residency, model, approval and retention policies.
+          Last 24 hours.
         </p>
       </div>
 
@@ -596,6 +804,9 @@ export default function CompliancePage() {
 
       {/* Evaluate dry-run */}
       <EvaluatePanel token={token} />
+
+      {/* Policy replay simulator (Req 16, task 22.3) */}
+      <PolicyReplayPanel token={token} />
 
       {/* Audit report */}
       <AuditReportSection token={token} />
