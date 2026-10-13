@@ -33,6 +33,14 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
+import type { Server as HttpsServer } from "node:https";
+import { createServerWithOptionalTls } from "@atf/security-kit";
+import {
+  createTracer,
+  formatTraceparent,
+  parseTraceparent,
+  type Tracer,
+} from "@atf/observability";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { EXTRACT_CONTRACT_ID as EXTRACT_CONTRACT_ID_V2 } from "@atf/extract-contract";
@@ -58,7 +66,12 @@ import { toErrorBody } from "./errors.js";
 import { createConvertHandler } from "./handlers/convert.js";
 import { createDocumentsRouter } from "./handlers/documents.js";
 import { createErasureHandler } from "./handlers/erasure.js";
-import { createHealthHandler, type HealthProbe } from "./handlers/health.js";
+import {
+  createHealthHandler,
+  createLivenessHandler,
+  createReadinessHandler,
+  type HealthProbe,
+} from "./handlers/health.js";
 import { createIngestHandler } from "./handlers/ingest.js";
 import { createIngestV2Handler } from "./handlers/ingest-v2.js";
 import { createJobsRouter } from "./handlers/jobs.js";
@@ -209,6 +222,8 @@ export interface CreatedApp {
   app: Express;
   /** Stop background timers. Call during graceful shutdown. */
   cleanup: () => void;
+  /** Shared OTel tracer (@atf/observability). Flushed on graceful shutdown. */
+  tracer: Tracer;
   /**
    * The v2 job worker, when a store is configured; null otherwise. Exposed so
    * an integration test can drive `tick()` deterministically and `main` can
@@ -297,15 +312,55 @@ export function createApp(
     });
   });
 
-  app.use((req: Request, _res: Response, next: NextFunction) => {
-    const traceparent = req.headers["traceparent"];
-    const tracestate = req.headers["tracestate"];
+  // ── OTel server spans + W3C Trace Context propagation ────────────────────
+  // Shared tracer implementation (@atf/observability, Req 11.6): every request
+  // gets a server span, parented to an inbound traceparent when present. The
+  // span's context doubles as the AsyncLocalStorage traceparent so downstream
+  // HTTP clients (vision, OCR, …) join this service's trace even when the
+  // caller sent no traceparent at all.
+  const tracer: Tracer = createTracer(
+    {
+      tracingEnabled: config.tracingEnabled,
+      ...(config.otelExporterOtlpEndpoint !== null
+        ? { otelExporterOtlpEndpoint: config.otelExporterOtlpEndpoint }
+        : {}),
+      otelServiceName: config.otelServiceName,
+    },
+    logger,
+  );
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    const tp = req.headers["traceparent"];
+    const ts = req.headers["tracestate"];
+    const inbound = parseTraceparent(typeof tp === "string" ? tp : undefined);
+    const serverSpan = tracer.startSpan(
+      `${req.method} ${req.route?.path ?? req.path}`,
+      {
+        kind: "server",
+        ...(inbound !== undefined ? { parent: inbound } : {}),
+        attributes: {
+          "http.method": req.method,
+          "http.route": req.route?.path ?? req.path,
+          "http.target": req.originalUrl ?? req.path,
+        },
+      },
+    );
     traceContextStorage.run(
       {
-        traceparent: typeof traceparent === "string" ? traceparent : undefined,
-        tracestate: typeof tracestate === "string" ? tracestate : undefined,
+        traceparent: formatTraceparent(serverSpan.spanContext()),
+        tracestate: typeof ts === "string" ? ts : undefined,
       },
-      next,
+      () => {
+        res.on("finish", () => {
+          // Rename once routing resolved the parameterised path: keeps span
+          // names low-cardinality (e.g. "POST /jobs/:id").
+          serverSpan.updateName(`${req.method} ${req.route?.path ?? req.path}`);
+          serverSpan
+            .setAttribute("http.status_code", res.statusCode)
+            .setStatus(res.statusCode >= 500 ? "error" : "ok")
+            .end();
+        });
+        next();
+      },
     );
   });
 
@@ -411,6 +466,7 @@ export function createApp(
       authzEnabled: config.authzEnabled,
       tenantIsolationEnabled: config.tenantIsolationEnabled,
       defaultTenantId: config.defaultTenantId,
+      apiTokenNext: config.apiTokenNext,
     },
   );
   // Composed into the auth middleware rather than added per route: a route added
@@ -648,7 +704,26 @@ export function createApp(
 
   // ── Routes ────────────────────────────────────────────────────────────────
   // Unauthenticated, so an orchestrator and API tooling need no credential.
+  // /health/live never touches a dependency (process liveness only);
+  // /health/ready gates the load balancer on the converter binaries and the
+  // vision endpoint (requirement 12.5); /health stays the composite
+  // diagnostic probe for back-compat.
   app.get("/health", healthHandler);
+  app.get("/health/live", createLivenessHandler());
+  app.get(
+    "/health/ready",
+    createReadinessHandler({
+      vision,
+      logger,
+      ...(overrides.probeBinary !== undefined
+        ? { probeBinary: overrides.probeBinary }
+        : {}),
+      config: {
+        popplerBinDir: config.popplerBinDir,
+        tempDir: config.tempDir,
+      },
+    }),
+  );
   app.get("/openapi.json", (req: Request, res: Response) => {
     res.status(200).json(
       buildOpenApiSpec({
@@ -903,6 +978,7 @@ export function createApp(
               token: config.search.token,
               collection: config.search.collection,
               timeoutMs: config.search.timeoutMs,
+              caCertFile: config.search.caCertFile,
             },
             logger,
           )
@@ -1214,13 +1290,17 @@ export function createApp(
   function cleanup(): void {
     rateLimiter.close();
     renderRateLimiter.close();
+    // Best-effort: flush buffered spans before the pool closes under us.
+    void tracer.shutdown().catch((err) => {
+      logger.warn({ err }, "Tracer shutdown during cleanup failed");
+    });
     if (worker !== null) void worker.stop();
     // Close the pool only when this app opened it; an injected test store is
     // owned by the test.
     if (ownsStore && store !== null) void store.close();
   }
 
-  return { app, cleanup, worker };
+  return { app, cleanup, worker, tracer };
 }
 
 async function main(): Promise<void> {
@@ -1340,9 +1420,17 @@ async function main(): Promise<void> {
     }
   }
 
-  const { app, cleanup } = createApp(config, { logger, startWorker: true });
+  const { app, cleanup, tracer } = createApp(config, {
+    logger,
+    startWorker: true,
+  });
 
-  const server: Server = app.listen(config.port, () => {
+  // Optional TLS/mTLS listener (Req 11.8): plain HTTP when config.tls is null.
+  const server: Server | HttpsServer = createServerWithOptionalTls(
+    app,
+    config.tls,
+  );
+  server.listen(config.port, () => {
     logger.info(
       {
         port: config.port,
@@ -1352,7 +1440,7 @@ async function main(): Promise<void> {
         renderDpi: config.renderDpi,
         figureDpi: config.figureDpi,
       },
-      `extract listening on port ${config.port}`,
+      `extract listening on port ${config.port}${config.tls !== null ? " (TLS)" : ""}`,
     );
   });
 
@@ -1371,7 +1459,10 @@ async function main(): Promise<void> {
     cleanup();
     server.close(() => {
       logger.info("All in-flight requests completed");
-      process.exit(0);
+      void (async () => {
+        await tracer.shutdown().catch(() => undefined);
+        process.exit(0);
+      })();
     });
     // Long enough for a page in flight to finish and short enough that an
     // orchestrator's SIGKILL does not arrive first.

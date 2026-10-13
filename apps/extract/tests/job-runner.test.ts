@@ -50,7 +50,6 @@ import type { VisionClient } from "../src/vision/client.js";
 import type { ResumeDecision } from "../src/jobs/snapshot.js";
 import type { JobRow } from "../src/persistence/types.js";
 import { visionUnavailable } from "../src/errors.js";
-import type { OcrClient } from "../src/pipeline/ocr.js";
 
 const REFERENCE = "tests/handbuch.pdf";
 const SOURCE_SHA = "a".repeat(64);

@@ -19,7 +19,13 @@ import {
   RevisionTransientError,
 } from "../src/revision-client.js";
 
-const CONFIG = { url: "http://search.internal", token: "t0ken", collection: "documents", timeoutMs: 5000 };
+const CONFIG = {
+  url: "http://search.internal",
+  token: "t0ken",
+  collection: "documents",
+  timeoutMs: 5000,
+  caCertFile: null,
+};
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {

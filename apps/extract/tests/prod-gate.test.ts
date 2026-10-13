@@ -67,14 +67,22 @@ describe("checkProductionReadiness", () => {
           API_SERVICE_SCOPES: "extract.convert,extract.ingest",
         }),
       );
-      expect(report.fatal.join(" ")).toContain("Production requires AUTHN_MODE=oidc");
+      expect(report.fatal.join(" ")).toContain(
+        "Production requires AUTHN_MODE=oidc",
+      );
     });
 
     it("refuses a leftover static token in the production profile", () => {
       const report = checkProductionReadiness(
-        prodConfig({ AUTHN_MODE: "token_or_oidc", API_TOKEN: "t".repeat(40), API_SERVICE_TENANT_ID: "acme" }),
+        prodConfig({
+          AUTHN_MODE: "token_or_oidc",
+          API_TOKEN: "t".repeat(40),
+          API_SERVICE_TENANT_ID: "acme",
+        }),
       );
-      expect(report.fatal.join(" ")).toContain("API_TOKEN and MONITOR_TOKEN must be unset");
+      expect(report.fatal.join(" ")).toContain(
+        "API_TOKEN, API_TOKEN_NEXT and MONITOR_TOKEN must be unset",
+      );
     });
 
     it("flags a low-entropy token", () => {
@@ -82,16 +90,67 @@ describe("checkProductionReadiness", () => {
         loadTestConfig({ AUTHN_MODE: "token", API_TOKEN: "short" }),
         "development",
       );
-      expect(report.warnings.join(" ")).toContain("API_TOKEN is shorter than 32 characters");
+      expect(report.warnings.join(" ")).toContain(
+        "API_TOKEN is shorter than 32 characters",
+      );
     });
 
     it("flags a shared UI and API credential", () => {
       const shared = "s".repeat(40);
       const report = checkProductionReadiness(
-        loadTestConfig({ AUTHN_MODE: "token", API_TOKEN: shared, MONITOR_TOKEN: shared }),
+        loadTestConfig({
+          AUTHN_MODE: "token",
+          API_TOKEN: shared,
+          MONITOR_TOKEN: shared,
+        }),
         "development",
       );
-      expect(report.warnings.join(" ")).toContain("cannot then be rotated or revoked independently");
+      expect(report.warnings.join(" ")).toContain(
+        "cannot then be rotated or revoked independently",
+      );
+    });
+
+    // Req 11.8: the rotation token is held to the same standards as API_TOKEN.
+    it("flags a low-entropy rotation token", () => {
+      const report = checkProductionReadiness(
+        loadTestConfig({
+          AUTHN_MODE: "token",
+          API_TOKEN: "x".repeat(40),
+          API_TOKEN_NEXT: "short",
+        }),
+        "development",
+      );
+      expect(report.warnings.join(" ")).toContain(
+        "API_TOKEN_NEXT is shorter than 32 characters",
+      );
+    });
+
+    it("flags a rotation token identical to the primary token", () => {
+      const same = "x".repeat(40);
+      const report = checkProductionReadiness(
+        loadTestConfig({
+          AUTHN_MODE: "token",
+          API_TOKEN: same,
+          API_TOKEN_NEXT: same,
+        }),
+        "development",
+      );
+      expect(report.warnings.join(" ")).toContain(
+        "API_TOKEN and API_TOKEN_NEXT are identical",
+      );
+    });
+
+    it("refuses a leftover rotation token in the production profile", () => {
+      const report = checkProductionReadiness(
+        prodConfig({
+          AUTHN_MODE: "token_or_oidc",
+          API_TOKEN_NEXT: "y".repeat(40),
+          API_SERVICE_TENANT_ID: "acme",
+        }),
+      );
+      expect(report.fatal.join(" ")).toContain(
+        "API_TOKEN, API_TOKEN_NEXT and MONITOR_TOKEN must be unset",
+      );
     });
   });
 

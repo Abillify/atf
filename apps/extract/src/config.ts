@@ -16,6 +16,7 @@
 
 import { PAGE_LABELS, type PageLabel } from "@atf/extract-contract/v1";
 import { figureKindSchema, type FigureKind } from "@atf/extract-contract/v2";
+import type { ServerTlsConfig } from "@atf/security-kit";
 
 export interface UiBffConfig {
   /** Server-selected tenant for every verified browser session. */
@@ -96,6 +97,15 @@ export interface ExtractDatabaseConfig {
    * never pin a pool connection forever. 0 disables it. Default: 30 000.
    */
   statementTimeoutMs: number;
+  /**
+   * MIGRATE_ON_START — apply the extract schema migrations during store init.
+   * Unset means: true outside production, false when NODE_ENV=production
+   * (requirement 12.4) — production rollouts run the standalone
+   * `bun run migrate` command as a one-shot Job instead of doing DDL on the
+   * boot path of every replica. Optional so existing callers that construct
+   * the config by hand keep the previous always-migrate behaviour.
+   */
+  migrateOnStart?: boolean;
 }
 
 /**
@@ -313,6 +323,11 @@ export interface SearchTargetConfig {
   url: string;
   /** SEARCH_TOKEN — Bearer credential presented to Search. */
   token: string | null;
+  /**
+   * SEARCH_CA_CERT_FILE — PEM file with additional trusted CAs for the
+   * Search endpoint (private CA / SPIFFE bundle). null = platform default.
+   */
+  caCertFile: string | null;
   /** SEARCH_COLLECTION — target collection. */
   collection: string;
   /** SEARCH_TIMEOUT_MS — per-request timeout. */
@@ -326,6 +341,12 @@ export interface Config {
   port: number; // PORT (default: 3004)
   nodeEnv: string; // NODE_ENV (default: "development")
   logLevel: string; // LOG_LEVEL (default: "info")
+  /** TRACING_ENABLED — export OTel spans via the shared @atf/observability tracer. */
+  tracingEnabled: boolean; // TRACING_ENABLED (default: false)
+  /** OTEL_EXPORTER_OTLP_ENDPOINT — OTLP/HTTP collector URL; log-only when unset. */
+  otelExporterOtlpEndpoint: string | null; // OTEL_EXPORTER_OTLP_ENDPOINT (optional)
+  /** OTEL_SERVICE_NAME — service.name resource attribute for exported spans. */
+  otelServiceName: string; // OTEL_SERVICE_NAME (default: "atf-extract")
   /** PUBLIC_URL — external base URL, used for OIDC redirects behind a proxy. */
   publicUrl: string | null; // PUBLIC_URL
 
@@ -670,6 +691,13 @@ export interface Config {
    * initialises lazily from this.
    */
   database: ExtractDatabaseConfig | null;
+  /**
+   * Apply schema migrations during boot (also carried into the database
+   * config below). Unset means: true outside production, false when
+   * NODE_ENV=production (requirement 12.4) — production runs the standalone
+   * `bun run migrate` command as a one-shot Job instead.
+   */
+  migrateOnStart: boolean; // MIGRATE_ON_START (default: true, false when NODE_ENV=production)
 
   // ── Job worker ────────────────────────────────────────────────────────────
   /** Lease/heartbeat/poll tunables for the persistent job worker loop. */
@@ -698,7 +726,19 @@ export interface Config {
   // ── Access ────────────────────────────────────────────────────────────────
   authnMode: AuthnMode; // AUTHN_MODE (inferred from credentials)
   apiToken: string | null; // API_TOKEN
+  /**
+   * Optional rotation token: while both `API_TOKEN` and `API_TOKEN_NEXT` are
+   * set, either one authenticates (Requirement 11.8). Runbook: deploy the new
+   * token as `API_TOKEN_NEXT`, roll all clients over, then promote it to
+   * `API_TOKEN` and unset `API_TOKEN_NEXT`.
+   */
+  apiTokenNext: string | null; // API_TOKEN_NEXT (optional, rotation)
   monitorToken: string | null; // MONITOR_TOKEN
+  /**
+   * Optional TLS material for the HTTP listener. `null` keeps plain HTTP;
+   * when set, `clientCaFile` additionally enables mTLS client verification.
+   */
+  tls: ServerTlsConfig | null; // TLS_CERT_FILE + TLS_KEY_FILE (+ TLS_CLIENT_CA_FILE)
   apiOidcIssuers: ApiOidcIssuerConfig[]; // API_OIDC_ISSUERS (JSON array)
   authzEnabled: boolean; // AUTHZ_ENABLED (default: true)
   tenantIsolationEnabled: boolean; // TENANT_ISOLATION_ENABLED (default: true)
@@ -979,6 +1019,7 @@ export function loadConfig(): Config {
         "EXTRACT_DB_STATEMENT_TIMEOUT_MS",
         30_000,
       ),
+      migrateOnStart,
     };
   }
 
@@ -1102,6 +1143,7 @@ export function loadConfig(): Config {
     return {
       url: url.replace(/\/+$/, ""),
       token: optionalString("SEARCH_TOKEN"),
+      caCertFile: optionalString("SEARCH_CA_CERT_FILE"),
       collection: optionalString("SEARCH_COLLECTION") ?? "documents",
       timeoutMs: parseNonNegIntEnv("SEARCH_TIMEOUT_MS", 120_000),
       uploadAssets: parseBoolEnv("SEARCH_UPLOAD_ASSETS", true),
@@ -1148,7 +1190,19 @@ export function loadConfig(): Config {
   // ── Server ──────────────────────────────────────────────────────────────────
   const port = parseIntEnv("PORT", 3004, { min: 1, max: 65_535 });
   const nodeEnv = process.env["NODE_ENV"] || "development";
+  // Requirement 12.4: dev keeps the convenient migrate-on-boot, production
+  // defaults to dedicated migration Jobs (`bun run migrate`) instead.
+  const migrateOnStart = parseBoolEnv(
+    "MIGRATE_ON_START",
+    nodeEnv !== "production",
+  );
   const logLevel = process.env["LOG_LEVEL"] || "info";
+  const tracingEnabled = parseBoolEnv("TRACING_ENABLED", false);
+  const otelExporterOtlpEndpoint = optionalString(
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+  );
+  const otelServiceName =
+    process.env["OTEL_SERVICE_NAME"]?.trim() || "atf-extract";
   const publicUrl = optionalString("PUBLIC_URL");
 
   // ── Vision model ────────────────────────────────────────────────────────────
@@ -1341,7 +1395,24 @@ export function loadConfig(): Config {
 
   // ── Access ──────────────────────────────────────────────────────────────────
   const apiToken = optionalString("API_TOKEN");
+  const apiTokenNext = optionalString("API_TOKEN_NEXT");
   const monitorToken = optionalString("MONITOR_TOKEN");
+
+  // ── Server TLS (opt-in — enabled when TLS_CERT_FILE + TLS_KEY_FILE are set) ─
+  const tlsCertFile = optionalString("TLS_CERT_FILE");
+  const tlsKeyFile = optionalString("TLS_KEY_FILE");
+  if ((tlsCertFile === null) !== (tlsKeyFile === null)) {
+    throw new Error("TLS_CERT_FILE and TLS_KEY_FILE must be set together");
+  }
+  const tls: ServerTlsConfig | null =
+    tlsCertFile !== null && tlsKeyFile !== null
+      ? {
+          certFile: tlsCertFile,
+          keyFile: tlsKeyFile,
+          clientCaFile: optionalString("TLS_CLIENT_CA_FILE"),
+        }
+      : null;
+
   const apiOidcIssuers = parseApiOidcIssuers();
   const authzEnabled = parseBoolEnv("AUTHZ_ENABLED", true);
   const tenantIsolationEnabled = parseBoolEnv("TENANT_ISOLATION_ENABLED", true);
@@ -1378,12 +1449,15 @@ export function loadConfig(): Config {
   // deployment that sets AUTHN_MODE=oidc but forgets API_OIDC_ISSUERS would
   // otherwise start with an auth middleware that can never succeed — or worse,
   // with a mode that silently falls through.
+  // `API_TOKEN_NEXT` alone also enables token auth: during a rotation the
+  // old token may already have been withdrawn while the new one is set.
+  const tokenConfigured = apiToken !== null || apiTokenNext !== null;
   const inferredAuthnMode: AuthnMode =
-    apiToken !== null && apiOidcIssuers.length > 0
+    tokenConfigured && apiOidcIssuers.length > 0
       ? "token_or_oidc"
       : apiOidcIssuers.length > 0
         ? "oidc"
-        : apiToken !== null
+        : tokenConfigured
           ? "token"
           : "disabled";
   const authnMode = parseEnumEnv(
@@ -1393,7 +1467,7 @@ export function loadConfig(): Config {
   );
   if (
     (authnMode === "token" || authnMode === "token_or_oidc") &&
-    apiToken === null
+    !tokenConfigured
   ) {
     throw new Error(`API_TOKEN is required when AUTHN_MODE=${authnMode}`);
   }
@@ -1432,6 +1506,9 @@ export function loadConfig(): Config {
     port,
     nodeEnv,
     logLevel,
+    tracingEnabled,
+    otelExporterOtlpEndpoint,
+    otelServiceName,
     publicUrl,
     visionUrl,
     visionModel,
@@ -1491,6 +1568,7 @@ export function loadConfig(): Config {
     sourceStore,
     sourceUrl,
     database,
+    migrateOnStart,
     jobWorker,
     queueLane,
     emitter,
@@ -1498,7 +1576,9 @@ export function loadConfig(): Config {
     summary,
     authnMode,
     apiToken,
+    apiTokenNext,
     monitorToken,
+    tls,
     apiOidcIssuers,
     authzEnabled,
     tenantIsolationEnabled,

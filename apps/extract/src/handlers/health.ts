@@ -65,6 +65,15 @@ export type HealthProbe = (
   home: string,
 ) => Promise<DependencyState>;
 
+function binaryPathFor(
+  config: { popplerBinDir: string | null },
+  name: string,
+): string {
+  return config.popplerBinDir === null
+    ? name
+    : `${config.popplerBinDir}/${name}`;
+}
+
 export interface HealthHandlerDeps {
   queue: WorkQueue;
   vision: VisionClient;
@@ -92,11 +101,33 @@ export interface HealthHandlerDeps {
   }>;
 }
 
+/**
+ * TTL-keyed probe cache, shared by the composite `/health` handler and the
+ * `/health/ready` probe so each handler re-probes on its own schedule without
+ * an orchestrator's poll spawning `pdfinfo` or LibreOffice every few seconds.
+ */
+function createProbeCache() {
+  const cache = new Map<string, CachedProbe>();
+  return async function cached(
+    key: string,
+    ttlMs: number,
+    probe: () => Promise<DependencyState>,
+    force: boolean,
+  ): Promise<DependencyState> {
+    const hit = cache.get(key);
+    if (!force && hit !== undefined && Date.now() - hit.checkedAt < ttlMs)
+      return hit.state;
+    const state = await probe();
+    cache.set(key, { state, checkedAt: Date.now() });
+    return state;
+  };
+}
+
 export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
   const { queue, vision, searchClient, config, logger } = deps;
   const runBinaryProbe = deps.probeBinary ?? probeBinary;
   const runBboxLayoutProbe = deps.probeBboxLayout ?? probeBboxLayout;
-  const cache = new Map<string, CachedProbe>();
+  const cached = createProbeCache();
   // The `-bbox-layout` capability is a property of the binary, so it is cached
   // for the life of the process rather than re-probed per request.
   let bboxLayoutCap: {
@@ -105,21 +136,8 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
     reason?: string;
   } | null = null;
 
-  async function cached(
-    key: string,
-    ttlMs: number,
-    probe: () => Promise<DependencyState>,
-    force: boolean,
-  ): Promise<DependencyState> {
-    const hit = cache.get(key);
-    if (!force && hit !== undefined && Date.now() - hit.checkedAt < ttlMs) return hit.state;
-    const state = await probe();
-    cache.set(key, { state, checkedAt: Date.now() });
-    return state;
-  }
-
   function binaryPath(name: string): string {
-    return config.popplerBinDir === null ? name : `${config.popplerBinDir}/${name}`;
+    return binaryPathFor(config, name);
   }
 
   return (req, res) => {
@@ -128,40 +146,53 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
       // than for the orchestrator's poll.
       const force = req.query["deep"] === "1" || req.query["deep"] === "true";
 
-      const [pdfinfo, pdftotext, pdftoppm, libreoffice, visionState, searchState] =
-        await Promise.all([
-          cached(
-            "pdfinfo",
-            BINARY_TTL_MS,
-            () => runBinaryProbe(binaryPath("pdfinfo"), ["-v"], config.tempDir),
-            force,
-          ),
-          cached(
-            "pdftotext",
-            BINARY_TTL_MS,
-            () => runBinaryProbe(binaryPath("pdftotext"), ["-v"], config.tempDir),
-            force,
-          ),
-          cached(
-            "pdftoppm",
-            BINARY_TTL_MS,
-            () => runBinaryProbe(binaryPath("pdftoppm"), ["-v"], config.tempDir),
-            force,
-          ),
-          cached(
-            "libreoffice",
-            BINARY_TTL_MS,
-            () => runBinaryProbe(config.libreofficeBin, ["--version"], config.tempDir),
-            force,
-          ),
-          cached("vision", NETWORK_TTL_MS, () => vision.probe(), force),
-          searchClient === null
-            ? Promise.resolve<DependencyState>({ available: true })
-            : cached("search", NETWORK_TTL_MS, () => searchClient.probe(), force),
-        ]);
+      const [
+        pdfinfo,
+        pdftotext,
+        pdftoppm,
+        libreoffice,
+        visionState,
+        searchState,
+      ] = await Promise.all([
+        cached(
+          "pdfinfo",
+          BINARY_TTL_MS,
+          () => runBinaryProbe(binaryPath("pdfinfo"), ["-v"], config.tempDir),
+          force,
+        ),
+        cached(
+          "pdftotext",
+          BINARY_TTL_MS,
+          () => runBinaryProbe(binaryPath("pdftotext"), ["-v"], config.tempDir),
+          force,
+        ),
+        cached(
+          "pdftoppm",
+          BINARY_TTL_MS,
+          () => runBinaryProbe(binaryPath("pdftoppm"), ["-v"], config.tempDir),
+          force,
+        ),
+        cached(
+          "libreoffice",
+          BINARY_TTL_MS,
+          () =>
+            runBinaryProbe(
+              config.libreofficeBin,
+              ["--version"],
+              config.tempDir,
+            ),
+          force,
+        ),
+        cached("vision", NETWORK_TTL_MS, () => vision.probe(), force),
+        searchClient === null
+          ? Promise.resolve<DependencyState>({ available: true })
+          : cached("search", NETWORK_TTL_MS, () => searchClient.probe(), force),
+      ]);
 
       const poppler = { pdfinfo, pdftotext, pdftoppm };
-      const popplerAvailable = Object.values(poppler).every((state) => state.available);
+      const popplerAvailable = Object.values(poppler).every(
+        (state) => state.available,
+      );
 
       // The `-bbox-layout` capability the deterministic page analysis (S2)
       // depends on (requirement 7.1). Probed once and cached for the process,
@@ -239,6 +270,117 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
       res
         .status(503)
         .json({ status: "unhealthy", error: "The health check failed" });
+    });
+  };
+}
+
+/**
+ * Liveness probe (requirement 12.5): is the process alive and able to serve?
+ *
+ * Checks nothing but the event loop on purpose — restarting a container
+ * because the vision model is slow turns a dependency outage into a full
+ * outage, and the restart fixes nothing.
+ */
+export function createLivenessHandler(): RequestHandler {
+  return (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      uptime_seconds: Math.round(process.uptime()),
+    });
+  };
+}
+
+export interface ReadinessHandlerDeps {
+  vision: VisionClient;
+  logger: Logger;
+  config: {
+    popplerBinDir: string | null;
+    tempDir: string;
+  };
+  /** Injectable for tests, which must not spawn processes. */
+  probeBinary?: HealthProbe;
+}
+
+/**
+ * Readiness probe (requirement 12.5): can this replica do its job?
+ *
+ * The gate mirrors the fatal part of `/health` — the poppler binaries and the
+ * vision endpoint — and nothing else: LibreOffice absence degrades only
+ * Office formats, and Search is a downstream service whose outage must not
+ * remove this container from rotation. Probes are cached on the same TTLs as
+ * `/health`, so an orchestrator's poll does not spawn LibreOffice every five
+ * seconds.
+ */
+export function createReadinessHandler(deps: ReadinessHandlerDeps): RequestHandler {
+  const { vision, logger } = deps;
+  const runBinaryProbe = deps.probeBinary ?? probeBinary;
+  const cached = createProbeCache();
+
+  return (req, res) => {
+    void (async () => {
+      const force = req.query["deep"] === "1" || req.query["deep"] === "true";
+      const [pdfinfo, pdftotext, pdftoppm, visionState] = await Promise.all([
+        cached(
+          "pdfinfo",
+          BINARY_TTL_MS,
+          () =>
+            runBinaryProbe(
+              binaryPathFor(deps.config, "pdfinfo"),
+              ["-v"],
+              deps.config.tempDir,
+            ),
+          force,
+        ),
+        cached(
+          "pdftotext",
+          BINARY_TTL_MS,
+          () =>
+            runBinaryProbe(
+              binaryPathFor(deps.config, "pdftotext"),
+              ["-v"],
+              deps.config.tempDir,
+            ),
+          force,
+        ),
+        cached(
+          "pdftoppm",
+          BINARY_TTL_MS,
+          () =>
+            runBinaryProbe(
+              binaryPathFor(deps.config, "pdftoppm"),
+              ["-v"],
+              deps.config.tempDir,
+            ),
+          force,
+        ),
+        cached("vision", NETWORK_TTL_MS, () => vision.probe(), force),
+      ]);
+
+      const failures: Record<string, string> = {};
+      for (const [name, state] of Object.entries({
+        pdfinfo,
+        pdftotext,
+        pdftoppm,
+      })) {
+        if (!state.available) failures[name] = state.error ?? "unavailable";
+      }
+      if (!visionState.available) {
+        failures.vision = visionState.error ?? "unavailable";
+      }
+
+      const ready = Object.keys(failures).length === 0;
+      if (!ready) {
+        logger.warn(
+          { failures },
+          "Readiness check failed: a required dependency is unavailable",
+        );
+      }
+      res
+        .status(ready ? 200 : 503)
+        .json({ status: ready ? "ready" : "unready", checks: failures });
+    })().catch((error: unknown) => {
+      logger.error({ err: error }, "Readiness check itself failed");
+      res.status(503).json({ status: "unready", error: "The probe failed" });
     });
   };
 }

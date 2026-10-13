@@ -47,6 +47,7 @@ import {
   encodeHeaderValue,
   type IngestHeaderOptions,
 } from "@atf/extract-contract/v1";
+import { createClientTlsInit } from "@atf/security-kit";
 import type { Logger } from "pino";
 import { ingestFailed } from "./errors.js";
 import { injectTraceHeaders } from "./trace-context.js";
@@ -58,6 +59,8 @@ export interface SearchClientConfig {
   collection: string;
   timeoutMs: number;
   uploadAssets: boolean;
+  /** Optional CA bundle for trusting a self-signed Search TLS certificate. */
+  caCertFile: string | null;
 }
 
 /** A rendered crop ready to store. */
@@ -146,6 +149,10 @@ export function createSearchClient(
   config: SearchClientConfig,
   logger: Logger,
 ): SearchClient {
+  // Empty unless SEARCH_CA_CERT_FILE is set; spread into every fetch so the
+  // custom CA applies to ingest, delete, erasure, and the health probe alike.
+  const tlsInit = createClientTlsInit({ caCertFile: config.caCertFile });
+
   function authHeaders(): Record<string, string> {
     const headers: Record<string, string> = {};
     if (config.token !== null)
@@ -176,6 +183,7 @@ export function createSearchClient(
     try {
       return await fetch(`${config.url}${path}`, {
         ...init,
+        ...(tlsInit ?? {}),
         signal: controller.signal,
       });
     } finally {
@@ -436,6 +444,7 @@ export function createSearchClient(
     const timeout = setTimeout(() => controller.abort(), 5_000);
     try {
       const response = await fetch(`${config.url}/health`, {
+        ...(tlsInit ?? {}),
         signal: controller.signal,
       });
       if (response.ok) return { available: true };

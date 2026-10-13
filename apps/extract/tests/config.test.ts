@@ -183,6 +183,27 @@ describe("loadConfig", () => {
       );
     });
 
+    // Req 11.8: API_TOKEN_NEXT is the additive rotation token.
+    it("infers token from API_TOKEN_NEXT alone", () => {
+      const config = loadTestConfig({
+        AUTHN_MODE: undefined,
+        API_TOKEN_NEXT: "y".repeat(40),
+      });
+      expect(config.authnMode).toBe("token");
+      expect(config.apiToken).toBeNull();
+      expect(config.apiTokenNext).toBe("y".repeat(40));
+    });
+
+    it("loads both tokens during a rotation", () => {
+      const config = loadTestConfig({
+        AUTHN_MODE: undefined,
+        API_TOKEN: "x".repeat(40),
+        API_TOKEN_NEXT: "y".repeat(40),
+      });
+      expect(config.apiToken).toBe("x".repeat(40));
+      expect(config.apiTokenNext).toBe("y".repeat(40));
+    });
+
     it("refuses tenant isolation with no way to establish a tenant", () => {
       expect(() =>
         loadTestConfig({
@@ -276,6 +297,47 @@ describe("loadConfig", () => {
         collection: "specs",
         timeoutMs: 120_000,
         uploadAssets: true,
+        caCertFile: null,
+      });
+    });
+
+    it("reads SEARCH_CA_CERT_FILE for trusting a self-signed Search TLS", () => {
+      const config = loadTestConfig({
+        SEARCH_URL: "https://search:3002",
+        SEARCH_CA_CERT_FILE: "/etc/tls/search-ca.pem",
+      });
+      expect(config.search?.caCertFile).toBe("/etc/tls/search-ca.pem");
+    });
+  });
+
+  // Req 11.8: optional server TLS, enabled by TLS_CERT_FILE + TLS_KEY_FILE.
+  describe("server TLS", () => {
+    it("is null by default", () => {
+      expect(loadTestConfig().tls).toBeNull();
+    });
+
+    it("refuses TLS_CERT_FILE without TLS_KEY_FILE", () => {
+      expect(() =>
+        loadTestConfig({ TLS_CERT_FILE: "/etc/tls/server.crt" }),
+      ).toThrow(/TLS_CERT_FILE and TLS_KEY_FILE must be set together/);
+    });
+
+    it("refuses TLS_KEY_FILE without TLS_CERT_FILE", () => {
+      expect(() =>
+        loadTestConfig({ TLS_KEY_FILE: "/etc/tls/server.key" }),
+      ).toThrow(/TLS_CERT_FILE and TLS_KEY_FILE must be set together/);
+    });
+
+    it("loads cert, key and optional client CA for mTLS", () => {
+      const config = loadTestConfig({
+        TLS_CERT_FILE: "/etc/tls/server.crt",
+        TLS_KEY_FILE: "/etc/tls/server.key",
+        TLS_CLIENT_CA_FILE: "/etc/tls/client-ca.pem",
+      });
+      expect(config.tls).toEqual({
+        certFile: "/etc/tls/server.crt",
+        keyFile: "/etc/tls/server.key",
+        clientCaFile: "/etc/tls/client-ca.pem",
       });
     });
   });
@@ -389,6 +451,52 @@ describe("loadConfig", () => {
       });
       expect(custom.tesseractBin).toBe("/usr/local/bin/tesseract");
       expect(custom.ocrLang).toBe("eng+deu");
+    });
+  });
+
+  // Req 12.4: migrations run at boot outside production by default;
+  // production defaults to dedicated migration Jobs (`bun run migrate`).
+  describe("MIGRATE_ON_START (requirement 12.4)", () => {
+    it("defaults to true outside production", () => {
+      expect(loadTestConfig().migrateOnStart).toBe(true);
+      expect(loadTestConfig({ NODE_ENV: "development" }).migrateOnStart).toBe(
+        true,
+      );
+    });
+
+    it("defaults to false in production", () => {
+      expect(loadTestConfig({ NODE_ENV: "production" }).migrateOnStart).toBe(
+        false,
+      );
+    });
+
+    it("lets an explicit value win over NODE_ENV", () => {
+      expect(
+        loadTestConfig({
+          NODE_ENV: "production",
+          MIGRATE_ON_START: "true",
+        }).migrateOnStart,
+      ).toBe(true);
+      expect(
+        loadTestConfig({
+          NODE_ENV: "development",
+          MIGRATE_ON_START: "false",
+        }).migrateOnStart,
+      ).toBe(false);
+    });
+
+    it("is carried into the database config when one is configured", () => {
+      const dbUrl = "postgresql://user:pass@localhost:5432/extract";
+      expect(
+        loadTestConfig({
+          EXTRACT_DATABASE_URL: dbUrl,
+          NODE_ENV: "production",
+        }).database?.migrateOnStart,
+      ).toBe(false);
+      expect(
+        loadTestConfig({ EXTRACT_DATABASE_URL: dbUrl }).database
+          ?.migrateOnStart,
+      ).toBe(true);
     });
   });
 

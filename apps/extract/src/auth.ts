@@ -19,7 +19,7 @@
  * model for the whole fabric.
  */
 
-import { safeEqual } from "@atf/security-kit";
+import { createStaticTokenMatcher, safeEqual } from "@atf/security-kit";
 import type { Request, RequestHandler } from "express";
 import type { AuthnMode } from "./config.js";
 import type { JwtVerifier } from "./jwt-verifier.js";
@@ -126,6 +126,11 @@ export interface ApiAuthOptions {
   authzEnabled?: boolean;
   tenantIsolationEnabled?: boolean;
   defaultTenantId?: string;
+  /**
+   * Optional rotation token (Req 11.8): while set, both this and the primary
+   * `API_TOKEN` authenticate, allowing clients to roll over without downtime.
+   */
+  apiTokenNext?: string | null;
 }
 
 /**
@@ -142,14 +147,24 @@ export interface ApiAuthOptions {
 export function createAuthMiddleware(
   apiToken: string | null,
   jwtVerifier: JwtVerifier | null,
-  servicePrincipal: Pick<RequestPrincipal, "scopes" | "tenantId"> = SERVICE_PRINCIPAL,
+  servicePrincipal: Pick<
+    RequestPrincipal,
+    "scopes" | "tenantId"
+  > = SERVICE_PRINCIPAL,
   options: ApiAuthOptions = {},
 ): RequestHandler {
+  // Req 11.8: during a rotation both tokens are valid; the matcher ignores
+  // null/empty entries, so a single-token setup behaves exactly as before.
+  const tokenMatcher = createStaticTokenMatcher([
+    apiToken,
+    options.apiTokenNext,
+  ]);
+  const anyTokenConfigured = apiToken !== null || options.apiTokenNext != null;
   const mode: AuthnMode =
     options.mode ??
-    (apiToken !== null && jwtVerifier
+    (anyTokenConfigured && jwtVerifier
       ? "token_or_oidc"
-      : apiToken !== null
+      : anyTokenConfigured
         ? "token"
         : jwtVerifier
           ? "oidc"
@@ -168,7 +183,9 @@ export function createAuthMiddleware(
     // WWW-Authenticate so a CLI or SDK can discover the scheme instead of
     // guessing from a bare 401.
     res.setHeader("WWW-Authenticate", 'Bearer realm="atf-extract"');
-    res.status(401).json({ error: "Unauthorized", code: "UNAUTHORIZED", retryable: false });
+    res
+      .status(401)
+      .json({ error: "Unauthorized", code: "UNAUTHORIZED", retryable: false });
   };
 
   return (req, res, next) => {
@@ -187,7 +204,9 @@ export function createAuthMiddleware(
     }
 
     const authHeader = req.headers["authorization"];
-    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : null;
     if (bearerToken === null) {
       unauthorized(res);
       return;
@@ -195,8 +214,7 @@ export function createAuthMiddleware(
 
     if (
       (mode === "token" || mode === "token_or_oidc") &&
-      apiToken !== null &&
-      safeEqual(bearerToken, apiToken)
+      tokenMatcher(bearerToken)
     ) {
       const asserted = readAssertedIdentity(req);
       const base =
@@ -231,11 +249,14 @@ export function createAuthMiddleware(
             req,
             normalize({
               userId: principal.userId,
-              userGroups: principal.groups.length > 0 ? principal.groups : undefined,
+              userGroups:
+                principal.groups.length > 0 ? principal.groups : undefined,
               tenantId: principal.tenantId,
               ...(principal.scopes.length ? { scopes: principal.scopes } : {}),
               issuer: principal.iss,
-              ...(principal.audience !== undefined ? { audience: principal.audience } : {}),
+              ...(principal.audience !== undefined
+                ? { audience: principal.audience }
+                : {}),
               ...(principal.clientId ? { clientId: principal.clientId } : {}),
               ...(principal.jti ? { credentialId: principal.jti } : {}),
               source: "jwt",

@@ -227,6 +227,77 @@ describe("GET /health", () => {
   });
 });
 
+describe("GET /health/live (requirement 12.5)", () => {
+  it("returns 200 even when every dependency is down", async () => {
+    // Liveness must never probe: restarting a container because the vision
+    // model is slow turns a dependency outage into a full outage.
+    const missing = vi.fn(async () => ({ available: false, error: "ENOENT" }));
+    const response = await request(
+      await app({}, { vision: stubVisionClient(false), probeBinary: missing }),
+    ).get("/health/live");
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("ok");
+    expect(typeof response.body.uptime_seconds).toBe("number");
+  });
+});
+
+describe("GET /health/ready (requirement 12.5)", () => {
+  it("is ready when poppler and vision are available", async () => {
+    const response = await request(await app({})).get("/health/ready");
+    expect(response.status).toBe(200);
+    expect(response.body.status).toBe("ready");
+  });
+
+  it("is unready when the vision endpoint is down", async () => {
+    const response = await request(
+      await app({}, { vision: stubVisionClient(false) }),
+    ).get("/health/ready");
+    expect(response.status).toBe(503);
+    expect(response.body.status).toBe("unready");
+    expect(response.body.checks.vision).toBeDefined();
+  });
+
+  it("is unready when poppler is missing", async () => {
+    const missing = vi.fn(async (command: string) =>
+      command.includes("pdf")
+        ? { available: false, error: "ENOENT" }
+        : { available: true, version: "stub" },
+    );
+    const response = await request(await app({}, { probeBinary: missing })).get(
+      "/health/ready",
+    );
+    expect(response.status).toBe(503);
+    expect(response.body.checks.pdfinfo).toBe("ENOENT");
+  });
+
+  it("stays ready when only LibreOffice is missing", async () => {
+    // Office formats degrade; the service itself still converts PDFs and images.
+    const missing = vi.fn(async (command: string) =>
+      command.includes("libreoffice")
+        ? { available: false, error: "ENOENT" }
+        : { available: true, version: "stub" },
+    );
+    const response = await request(await app({}, { probeBinary: missing })).get(
+      "/health/ready",
+    );
+    expect(response.status).toBe(200);
+  });
+
+  it("stays ready when only Search is unreachable", async () => {
+    const search: RecordingSearchClient = {
+      ...stubSearchClient(),
+      probe: async () => ({ available: false, error: "connection refused" }),
+    };
+    const response = await request(
+      await app(
+        { SEARCH_URL: "http://search.test", SEARCH_TOKEN: "s" },
+        { searchClient: search },
+      ),
+    ).get("/health/ready");
+    expect(response.status).toBe(200);
+  });
+});
+
 describe("GET /openapi.json", () => {
   it("is served without a credential so tooling can read it", async () => {
     const response = await request(

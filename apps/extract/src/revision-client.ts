@@ -56,6 +56,7 @@ import {
   type CommitResult,
   type Visibility,
 } from "@atf/extract-contract/v2";
+import { createClientTlsInit } from "@atf/security-kit";
 import { injectTraceHeaders } from "./trace-context.js";
 import { encodeHeaderValue } from "@atf/extract-contract/v1";
 
@@ -65,6 +66,8 @@ export interface RevisionClientConfig {
   token: string | null;
   collection: string;
   timeoutMs: number;
+  /** Optional CA bundle for trusting a self-signed Search TLS certificate. */
+  caCertFile: string | null;
 }
 
 /** A crop ready to store, addressed by its asset id. */
@@ -193,6 +196,10 @@ export function createRevisionClient(
   config: RevisionClientConfig,
   logger: Logger,
 ): RevisionClient {
+  // Empty unless SEARCH_CA_CERT_FILE is set; spread into every fetch so the
+  // custom CA covers the whole revision outbox protocol.
+  const tlsInit = createClientTlsInit({ caCertFile: config.caCertFile });
+
   function baseHeaders(collection: string): Record<string, string> {
     const headers: Record<string, string> = { "x-collection": collection };
     if (config.token !== null) headers.authorization = `Bearer ${config.token}`;
@@ -208,11 +215,17 @@ export function createRevisionClient(
   ): Promise<Response> {
     const controller = new AbortController();
     const timeout =
-      config.timeoutMs > 0 ? setTimeout(() => controller.abort(), config.timeoutMs) : null;
+      config.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), config.timeoutMs)
+        : null;
     const onAbort = (): void => controller.abort();
     signal?.addEventListener("abort", onAbort, { once: true });
     try {
-      return await fetch(`${config.url}${path}`, { ...init, signal: controller.signal });
+      return await fetch(`${config.url}${path}`, {
+        ...init,
+        ...(tlsInit ?? {}),
+        signal: controller.signal,
+      });
     } catch (error) {
       // A thrown fetch is always transient: DNS, connection reset, or the
       // timeout above. The caller retries with backoff, then reconciles.
@@ -226,7 +239,10 @@ export function createRevisionClient(
   }
 
   /** A 5xx (and 429) is transient; any other non-2xx is permanent. */
-  async function classifyError(response: Response, what: string): Promise<never> {
+  async function classifyError(
+    response: Response,
+    what: string,
+  ): Promise<never> {
     const body = await response.text().catch(() => "");
     let code: string | undefined;
     try {
@@ -253,14 +269,19 @@ export function createRevisionClient(
         ...baseHeaders(collection),
         "idempotency-key": args.idempotencyKey,
       };
-      if (args.visibility !== undefined) headers["x-visibility"] = args.visibility;
+      if (args.visibility !== undefined)
+        headers["x-visibility"] = args.visibility;
       if (args.sourceId !== undefined) headers["x-source-id"] = args.sourceId;
       if (args.acl !== undefined) {
         if (args.acl.allowedUsers.length > 0) {
-          headers["x-allowed-users"] = encodeHeaderValue(args.acl.allowedUsers.join(","));
+          headers["x-allowed-users"] = encodeHeaderValue(
+            args.acl.allowedUsers.join(","),
+          );
         }
         if (args.acl.allowedGroups.length > 0) {
-          headers["x-allowed-groups"] = encodeHeaderValue(args.acl.allowedGroups.join(","));
+          headers["x-allowed-groups"] = encodeHeaderValue(
+            args.acl.allowedGroups.join(","),
+          );
         }
       }
       const response = await request(
@@ -300,7 +321,8 @@ export function createRevisionClient(
         },
         args.signal,
       );
-      if (!response.ok) await classifyError(response, `putBatch(seq=${args.seq})`);
+      if (!response.ok)
+        await classifyError(response, `putBatch(seq=${args.seq})`);
       const json: unknown = await response.json().catch(() => ({}));
       return batchAckSchema.parse(json);
     },
@@ -311,7 +333,10 @@ export function createRevisionClient(
         `/v2/assets/${encodeURIComponent(args.assetId)}?collection=${encodeURIComponent(collection)}`,
         {
           method: "HEAD",
-          headers: { ...baseHeaders(collection), "x-revision-id": args.revisionId },
+          headers: {
+            ...baseHeaders(collection),
+            "x-revision-id": args.revisionId,
+          },
         },
         args.signal,
       );
@@ -340,7 +365,8 @@ export function createRevisionClient(
         },
         args.signal,
       );
-      if (!response.ok) await classifyError(response, `putAsset(${asset.assetId})`);
+      if (!response.ok)
+        await classifyError(response, `putAsset(${asset.assetId})`);
     },
 
     async commitSegment(args) {
@@ -354,9 +380,13 @@ export function createRevisionClient(
       // so the emitter can send the gap and retry rather than fail the job.
       if (response.status === 409) {
         const json: unknown = await response.json().catch(() => ({}));
-        return commitResultSchema.parse({ ...(json as object), committed: false });
+        return commitResultSchema.parse({
+          ...(json as object),
+          committed: false,
+        });
       }
-      if (!response.ok) await classifyError(response, `commitSegment(${args.segment})`);
+      if (!response.ok)
+        await classifyError(response, `commitSegment(${args.segment})`);
       const json: unknown = await response.json().catch(() => ({}));
       return commitResultSchema.parse(json);
     },
@@ -367,7 +397,10 @@ export function createRevisionClient(
         "/v2/sources/identify",
         {
           method: "POST",
-          headers: { ...baseHeaders(collection), "content-type": "application/json" },
+          headers: {
+            ...baseHeaders(collection),
+            "content-type": "application/json",
+          },
           body: JSON.stringify(args.request),
         },
         args.signal,
@@ -388,8 +421,14 @@ export function createRevisionClient(
       );
       if (response.status === 409) {
         const json: unknown = await response.json().catch(() => ({}));
-        logger.warn({ revisionId: args.revisionId }, "Final commit rejected: batches still missing");
-        return commitResultSchema.parse({ ...(json as object), committed: false });
+        logger.warn(
+          { revisionId: args.revisionId },
+          "Final commit rejected: batches still missing",
+        );
+        return commitResultSchema.parse({
+          ...(json as object),
+          committed: false,
+        });
       }
       if (!response.ok) await classifyError(response, "commit");
       const json: unknown = await response.json().catch(() => ({}));

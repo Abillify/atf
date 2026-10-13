@@ -573,12 +573,21 @@ export function createExtractStore(
 	async function init(): Promise<void> {
 		if (initPromise === null) {
 			initPromise = (async () => {
-				const version = await runExtractMigrations(
-					getPool(),
-					toMigrationLogger(logger),
-				);
-				logger.info({ schemaVersion: version }, "Extract persistence ready");
-			})().catch((err) => {
+        // Requirement 12.4: production defaults to dedicated migration Jobs
+        // (`bun run migrate`); the advisory lock inside the migrator keeps
+        // both paths safe to overlap.
+        if (config.migrateOnStart === false) {
+          logger.info(
+            "MIGRATE_ON_START is disabled — extract schema migrations are not applied at startup; run `bun run migrate` (or the migration Job) first",
+          );
+          return;
+        }
+        const version = await runExtractMigrations(
+          getPool(),
+          toMigrationLogger(logger),
+        );
+        logger.info({ schemaVersion: version }, "Extract persistence ready");
+      })().catch((err) => {
 				// Reset so a transient startup failure can be retried on the next call
 				// rather than being cached forever.
 				initPromise = null;
