@@ -8,6 +8,7 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch run src/index.ts",
+    "migrate": "bun run scripts/migrate.ts",
     "test": "bun test src scripts",
     "test:integration:models": "bun test src/graph/__tests__/integration/",
     "eval:run": "bun run src/eval/run.ts",
@@ -36,6 +37,7 @@
     "@atf/evidence-contract": "workspace:1.1.0",
     "@atf/erasure-contract": "workspace:1.0.0",
     "@atf/identity-contract": "workspace:1.2.0",
+    "@atf/observability": "workspace:1.0.0",
     "@atf/schema-compatibility": "workspace:1.0.0",
     "@atf/security-kit": "workspace:1.0.0",
     "@atf/transaction-contract": "workspace:1.1.0",

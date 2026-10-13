@@ -40,6 +40,9 @@ function recordingSpan(): { span: Span; attrs: Record<string, unknown> } {
     recordException() {
       return this;
     },
+    updateName() {
+      return this;
+    },
     end() {
       /* no-op */
     },
