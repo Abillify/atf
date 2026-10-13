@@ -1,0 +1,806 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Aiperator Trust Fabric Gate",
+    "version": "0.14.0",
+    "description": "The ATF Gate is the MCP security gateway: it exposes governed tools over the SSE, streamable-HTTP and stateless (2026-07-28) MCP transports with OIDC authentication, policy authorization, rate limiting and a tamper-evident audit trail. Health probes, RFC 9728 protected-resource metadata and the service-auth erasure endpoint are mounted before rate limiting. Inbound webhook receivers are declared per tool configuration, so their paths are dynamic and not enumerated here; each verifies its request signature. Conditional routers carry an `x-enabled-when` extension."
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:3003"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health"
+    },
+    {
+      "name": "MCP"
+    },
+    {
+      "name": "Monitor"
+    },
+    {
+      "name": "Monitoring"
+    },
+    {
+      "name": "Security"
+    }
+  ],
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness probe (never rate-limited)",
+        "operationId": "get__healthz",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Readiness probe: database, ledger and optional stores",
+        "operationId": "get__readyz",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/.well-known/oauth-protected-resource": {
+      "get": {
+        "tags": [
+          "Security"
+        ],
+        "summary": "OAuth protected-resource metadata (RFC 9728) for MCP clients",
+        "operationId": "get__well_known_oauth_protected_resource",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/erasure": {
+      "post": {
+        "tags": [
+          "Security"
+        ],
+        "summary": "Subject erasure (DSAR) for the persistent audit sink",
+        "operationId": "post__v1_erasure",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "serviceAuth": []
+          }
+        ]
+      }
+    },
+    "/metrics": {
+      "get": {
+        "tags": [
+          "Monitoring"
+        ],
+        "summary": "Prometheus metrics (path configurable via server.metrics.path)",
+        "operationId": "get__metrics",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/plain; version=0.0.4": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "server.metrics.enabled"
+      }
+    },
+    "/sse": {
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP SSE transport: opens the server-sent-events stream",
+        "operationId": "get__sse",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "always (path = server.ssePath)"
+      }
+    },
+    "/messages": {
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP SSE transport: JSON-RPC message channel for a session",
+        "operationId": "post__messages",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "always (path = server.messagePath)"
+      }
+    },
+    "/mcp": {
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP streamable HTTP transport: JSON-RPC requests",
+        "operationId": "post__mcp",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "always (path = server.mcpPath)"
+      },
+      "get": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP streamable HTTP transport: server-to-client SSE stream",
+        "operationId": "get__mcp",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "always (path = server.mcpPath)"
+      },
+      "delete": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "MCP streamable HTTP transport: terminate a session",
+        "operationId": "delete__mcp",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "always (path = server.mcpPath)"
+      }
+    },
+    "/mcp/v2026": {
+      "post": {
+        "tags": [
+          "MCP"
+        ],
+        "summary": "Native stateless MCP 2026-07-28 endpoint (GET/DELETE answer 405)",
+        "operationId": "post__mcp_v2026",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "server.mcp2026.enabled (path = server.mcp2026.path)"
+      }
+    },
+    "/": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Operator monitor dashboard (HTML)",
+        "operationId": "get__",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/login": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Start the operator OIDC login flow",
+        "operationId": "get__monitor_login",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/callback": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "OIDC redirect callback establishing the monitor session",
+        "operationId": "get__monitor_callback",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/logout": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "End the monitor session",
+        "operationId": "get__monitor_logout",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/stream": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Live event stream (SSE) for the monitor dashboard",
+        "operationId": "get__monitor_stream",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/instructions": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Current server instructions shown to MCP clients",
+        "operationId": "get__monitor_instructions",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/tools": {
+      "get": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Registered tool catalog with governance metadata",
+        "operationId": "get__monitor_tools",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
+    "/monitor/tools/{name}/run": {
+      "post": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Tool playground: execute a registered tool",
+        "operationId": "post__monitor_tools_name_run",
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "sessionCookie": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "OAuth2/OIDC access token validated by the configured authenticator (auth.mode oauth|both)."
+      },
+      "serviceAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "service-token",
+        "description": "Internal service credential used by the orchestrator for the shared erasure contract."
+      },
+      "sessionCookie": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "atf_monitor_session",
+        "description": "Operator browser session established via /monitor/login (OIDC BFF)."
+      },
+      "webhookSignature": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Hub-Signature-256",
+        "description": "HMAC request signature verified against the webhook tool's secret."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "error"
+        ]
+      }
+    }
+  }
+}

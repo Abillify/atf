@@ -1,0 +1,17 @@
+# CodeQL configuration for the TypeScript workspaces (Requirement 13.3).
+# Analysis runs without a build (build-mode: none); generated code, build
+# outputs and vendored artifacts are excluded.
+name: ATF CodeQL (TypeScript)
+
+languages:
+  - javascript-typescript
+
+paths-ignore:
+  - "**/node_modules"
+  - "**/dist"
+  - "**/.next"
+  - "**/build"
+  - "**/src-tauri/target"
+  - artifacts
+  - reports
+  - docs

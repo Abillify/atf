@@ -1,0 +1,78 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "rules": {
+    "unlisted": "off",
+    "unresolved": "error",
+    "exports": "off",
+    "types": "off",
+    "nsExports": "off",
+    "nsTypes": "off",
+    "enumMembers": "off",
+    "duplicates": "off"
+  },
+  "ignoreBinaries": [
+    "prlimit",
+    "pdftotext",
+    "openssl"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "scripts/*.ts",
+        "scripts/eval/*.ts",
+        "scripts/eval/golden-set/*.ts"
+      ]
+    },
+    "apps/runtime": {
+      "entry": [
+        "scripts/*.ts"
+      ],
+      "ignoreFiles": [
+        "src/assistants/assistant-tools.ts"
+      ]
+    },
+    "apps/search": {
+      "entry": [
+        "scripts/*.ts"
+      ]
+    },
+    "apps/extract": {
+      "entry": [
+        "src/pipeline/isolate-entry.ts",
+        "src/converter/server.ts",
+        "scripts/*.ts"
+      ]
+    },
+    "apps/gate": {
+      "entry": [
+        "scripts/*.ts"
+      ],
+      "ignoreDependencies": [
+        "pg",
+        "mysql2"
+      ]
+    },
+    "apps/outpost": {
+      "entry": [
+        "scripts/*.ts"
+      ],
+      "ignoreDependencies": [
+        "postject"
+      ]
+    },
+    "apps/outpost-desktop": {},
+    "apps/control": {
+      "ignoreDependencies": [
+        "@swc/helpers"
+      ],
+      "ignoreFiles": [
+        "src/lib/auth/index.ts"
+      ]
+    },
+    "integration/system": {
+      "entry": [
+        "*.test.ts"
+      ]
+    }
+  }
+}

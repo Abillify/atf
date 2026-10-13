@@ -1,0 +1,3009 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "ATF Extract",
+    "version": "1.1.0",
+    "summary": "Document-to-Markdown extraction against the atf-extract contract",
+    "description": "Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into the canonical Markdown defined by `atf-extract/1.1.0`: `## Seite N` page markers, `<figure id bbox page>` entries with normalised geometry, per-page `<summary>` blocks, and HTML tables that preserve merged cells.\n\nEach page is rendered and passed to a vision model together with its text layer. The text layer is authoritative for wording; the rendered page is authoritative for structure.",
+    "license": {
+      "name": "Elastic-2.0"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://127.0.0.1:3003"
+    }
+  ],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "Static API_TOKEN or an OIDC JWT, depending on AUTHN_MODE. Browser sessions are not API credentials; the UI uses the /ui/* boundary with a cookie."
+      }
+    },
+    "schemas": {
+      "BoundingBox": {
+        "type": "array",
+        "minItems": 4,
+        "maxItems": 4,
+        "items": {
+          "type": "number"
+        },
+        "description": "[x1, y1, x2, y2] normalised to [0,1], origin top-left. Normalised rather than pixels so geometry survives re-rendering the page at a different DPI."
+      },
+      "Figure": {
+        "type": "object",
+        "required": [
+          "id",
+          "page",
+          "description",
+          "bbox",
+          "assetId",
+          "mimeType"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Document-unique, `p<page>-f<ordinal>`.",
+            "examples": [
+              "p3-f1"
+            ]
+          },
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "description": {
+            "type": "string",
+            "description": "Self-contained prose; the only retrievable text for the figure."
+          },
+          "bbox": {
+            "$ref": "#/components/schemas/BoundingBox"
+          },
+          "assetId": {
+            "type": "string",
+            "description": "sha256(reference \\n id) — the id Search stores the crop under."
+          },
+          "mimeType": {
+            "type": "string",
+            "enum": [
+              "image/png",
+              "image/jpeg",
+              "image/webp",
+              "image/gif"
+            ]
+          },
+          "bytes": {
+            "type": "integer"
+          },
+          "checksum": {
+            "type": "string"
+          },
+          "dataBase64": {
+            "type": "string",
+            "description": "Only present when X-Include-Figure-Data is set."
+          }
+        }
+      },
+      "Page": {
+        "type": "object",
+        "required": [
+          "page",
+          "markdown",
+          "figures",
+          "warnings"
+        ],
+        "properties": {
+          "page": {
+            "type": "integer",
+            "minimum": 1
+          },
+          "markdown": {
+            "type": "string",
+            "description": "Body only; the page marker is added by the serializer."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "figures": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Figure"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ConvertResponse": {
+        "type": "object",
+        "required": [
+          "contract",
+          "reference",
+          "source",
+          "pipeline",
+          "pageCount",
+          "pages",
+          "markdown"
+        ],
+        "properties": {
+          "contract": {
+            "type": "string",
+            "examples": [
+              "atf-extract/1.1.0"
+            ]
+          },
+          "reference": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "source": {
+            "type": "object",
+            "required": [
+              "filename",
+              "mimeType",
+              "bytes",
+              "sha256"
+            ],
+            "properties": {
+              "filename": {
+                "type": "string"
+              },
+              "mimeType": {
+                "type": "string"
+              },
+              "bytes": {
+                "type": "integer"
+              },
+              "sha256": {
+                "type": "string",
+                "description": "Checksum of the uploaded bytes; the only proof two ingests match."
+              }
+            }
+          },
+          "pipeline": {
+            "type": "object",
+            "required": [
+              "extractor",
+              "ocr"
+            ],
+            "properties": {
+              "extractor": {
+                "type": "string",
+                "examples": [
+                  "poppler",
+                  "libreoffice+poppler",
+                  "sharp"
+                ]
+              },
+              "renderer": {
+                "type": "string"
+              },
+              "visionModel": {
+                "type": "string"
+              },
+              "ocr": {
+                "type": "boolean",
+                "description": "True when at least one page had no text layer, so its text came from the image."
+              },
+              "dpi": {
+                "type": "integer"
+              }
+            }
+          },
+          "pageCount": {
+            "type": "integer"
+          },
+          "pageLabel": {
+            "type": "string",
+            "enum": [
+              "Seite",
+              "Page"
+            ]
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Page"
+            }
+          },
+          "usage": {
+            "type": "object",
+            "required": [
+              "requests",
+              "promptTokens",
+              "completionTokens",
+              "totalTokens"
+            ],
+            "properties": {
+              "requests": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "promptTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "completionTokens": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "totalTokens": {
+                "type": "integer",
+                "minimum": 0
+              }
+            }
+          },
+          "timings": {
+            "type": "object",
+            "required": [
+              "totalMs",
+              "extractionMs",
+              "visionMs",
+              "renderMs"
+            ],
+            "description": "Pipeline timings through page assembly; serialization and network delivery are excluded.",
+            "properties": {
+              "totalMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "extractionMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "visionMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "renderMs": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "timeToFirstPageMs": {
+                "type": "integer",
+                "minimum": 0,
+                "description": "Extraction plus processing of the first page emitted in reading order."
+              },
+              "avgVisionMsPerPage": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "perPageVisionMs": {
+                "type": "array",
+                "items": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              }
+            }
+          },
+          "markdown": {
+            "type": "string",
+            "description": "The serialized canonical document."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "Error": {
+        "type": "object",
+        "required": [
+          "error",
+          "code",
+          "retryable",
+          "errorId"
+        ],
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean",
+            "description": "Whether repeating the identical request can succeed."
+          },
+          "errorId": {
+            "type": "string",
+            "description": "Correlation id; the full message is in the service log under it."
+          },
+          "detail": {
+            "type": "string",
+            "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+          }
+        }
+      }
+    }
+  },
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Liveness and dependency state",
+        "description": "503 when the poppler binaries or the vision endpoint are unavailable. Search being unreachable is reported but not fatal, because it only degrades /v1/ingest. `?deep=1` forces a re-probe instead of using the cached result.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "deep",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Healthy"
+          },
+          "503": {
+            "description": "A required dependency is unavailable"
+          }
+        }
+      }
+    },
+    "/health/live": {
+      "get": {
+        "summary": "Liveness probe",
+        "description": "Process liveness only — never checks dependencies, so a slow vision endpoint does not cause restart loops (requirement 12.5). Always 200.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Process alive"
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "summary": "Readiness probe",
+        "description": "Gates the load balancer on the poppler binaries and the vision endpoint — the same fatal gate as /health, without the LibreOffice and Search reporting (requirement 12.5). `?deep=1` forces a re-probe.",
+        "security": [],
+        "parameters": [
+          {
+            "name": "deep",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ready to serve"
+          },
+          "503": {
+            "description": "A required dependency is unavailable"
+          }
+        }
+      }
+    },
+    "/metrics": {
+      "get": {
+        "summary": "Prometheus metrics",
+        "description": "Includes conversion-specific series: pages, vision requests, token spend, truncations, figure counts and queue depth.",
+        "responses": {
+          "200": {
+            "description": "Prometheus text exposition",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/whoami": {
+      "get": {
+        "summary": "Echo the authenticated identity and instance capabilities",
+        "description": "Authenticates with the same chain as every machine route but requires no scope: the answer is the caller's own identity. A client (the Outpost) uses it to validate its configuration before the first upload — a 401 means the credential is rejected, a missing `extract.ingest` scope is a configuration error, and `features.deleteByReference` plus `extract.delete` decide whether mirror-delete can work at all. `limits.maxUploadBytes` is the per-upload ceiling, so an oversized file can be rejected without transferring it.",
+        "responses": {
+          "200": {
+            "description": "The resolved principal and feature/limit advertisement",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "source",
+                    "scopes",
+                    "service",
+                    "features",
+                    "limits"
+                  ],
+                  "properties": {
+                    "subject": {
+                      "type": "string",
+                      "description": "principal.userId, when any."
+                    },
+                    "tenantId": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "jwt",
+                        "asserted",
+                        "service",
+                        "anonymous"
+                      ]
+                    },
+                    "issuer": {
+                      "type": "string"
+                    },
+                    "audience": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    },
+                    "scopes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "service": {
+                      "type": "object",
+                      "required": [
+                        "name",
+                        "version"
+                      ],
+                      "properties": {
+                        "name": {
+                          "type": "string",
+                          "const": "atf-extract"
+                        },
+                        "version": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "features": {
+                      "type": "object",
+                      "required": [
+                        "ingest",
+                        "resumableUploads",
+                        "deleteByReference",
+                        "ownJobRead"
+                      ],
+                      "properties": {
+                        "ingest": {
+                          "type": "boolean"
+                        },
+                        "resumableUploads": {
+                          "type": "boolean"
+                        },
+                        "deleteByReference": {
+                          "type": "boolean"
+                        },
+                        "ownJobRead": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "limits": {
+                      "type": "object",
+                      "required": [
+                        "maxUploadBytes"
+                      ],
+                      "properties": {
+                        "maxUploadBytes": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
+          }
+        }
+      }
+    },
+    "/v1/convert": {
+      "post": {
+        "summary": "Convert a document to canonical Markdown",
+        "description": "The response mode is selected by request headers.\n\n- `X-Callback-URL` present: 202 immediately, the result is POSTed to the callback.\n- `Accept: text/event-stream`: pages stream in reading order as they complete.\n- otherwise: one response at the end, JSON by default, Markdown for `Accept: text/markdown`.\n\nOutput conforms to `atf-extract/1.1.0`; see packages/extract-contract.",
+        "parameters": [
+          {
+            "name": "X-Reference",
+            "in": "header",
+            "required": false,
+            "description": "Stable document identity. Figure asset ids are derived from it. Defaults to the filename for conversion; required for ingest.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Title",
+            "in": "header",
+            "required": false,
+            "description": "Overrides the document title. May be `base64:`-encoded.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Filename",
+            "in": "header",
+            "required": false,
+            "description": "Filename for the raw-body form, where none is otherwise available.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Include-Figure-Data",
+            "in": "header",
+            "required": false,
+            "description": "Embed figure crops as base64 in the JSON response. Off by default: a document with many figures produces a multi-megabyte body.",
+            "schema": {
+              "type": "boolean",
+              "default": false
+            }
+          },
+          {
+            "name": "X-Callback-URL",
+            "in": "header",
+            "required": false,
+            "description": "Switches to asynchronous delivery. Restricted by CALLBACK_ALLOWED_HOSTS; link-local and metadata addresses are always refused. Without an allowlist the host must resolve to public addresses only (private/loopback receivers must be allowlisted); delivery connects to the validated, pinned address.",
+            "schema": {
+              "type": "string",
+              "format": "uri"
+            }
+          },
+          {
+            "name": "X-Callback-Events",
+            "in": "header",
+            "required": false,
+            "description": "Set to `extract`, `progress`, or `all` to receive queued, converting, progress, heartbeat and error callback POSTs before the unchanged final callback. Intermediate bodies carry `type`, `jobId` and `job_id`, are serialized per job, best-effort and not retried; they do not block conversion work. One in-flight event and the latest pending event are retained, so slow receivers may miss intermediate progress without creating an unbounded backlog. The terminal completed/failed callback retains CALLBACK_MAX_RETRIES.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "extract",
+                "progress",
+                "all"
+              ]
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Either multipart/form-data with a `document` field, or the raw file with its own Content-Type. The raw form is intended for service-to-service callers.",
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "document"
+                ],
+                "properties": {
+                  "document": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            },
+            "application/pdf": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "text/html": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/msword": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.ms-excel": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.ms-visio.drawing": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/bpmn+xml": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.ms-outlook": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "message/rfc822": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/gif": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/tiff": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/bmp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Conversion complete",
+            "headers": {
+              "X-Extract-Contract": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Contract id"
+              },
+              "X-Page-Count": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Figure-Count": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Token-Usage": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "X-Model": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "X-Vision-Model": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Compatibility alias for X-Model."
+              },
+              "X-Extract-Warnings": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConvertResponse"
+                }
+              },
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Ordered accepted, queued, converting, progress, heartbeat, error and done events. Clients must ignore unknown event names for forward compatibility."
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted for asynchronous conversion",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "job_id": {
+                      "type": "string"
+                    },
+                    "reference": {
+                      "type": "string"
+                    },
+                    "callback_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing the extract.convert scope"
+          },
+          "413": {
+            "description": "Upload exceeds MAX_UPLOAD_BYTES"
+          },
+          "415": {
+            "description": "Unsupported or mismatched file type",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Document exceeds MAX_PAGES"
+          },
+          "502": {
+            "description": "The vision endpoint failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "The conversion queue is full"
+          }
+        }
+      }
+    },
+    "/v1/ingest": {
+      "post": {
+        "summary": "Convert a document and index it in Search",
+        "description": "When a database and a Search target are both configured, this route is a wrapper around the v2 job path: the upload is stored in the content-addressed source store, a v2 job is created, and its emitter streams the revision **and figure assets** into Search. A small document is driven inline and answered **200** with the completed result (the historical synchronous shape, now including `job_id` and `revision_id`); a large one is answered **202** with the job id to poll at `/v2/jobs/{id}`. Without a database the route falls back to the original synchronous convert→forward path.\n\n`X-Allowed-Users` and `X-Allowed-Groups` may only *narrow* the caller's own identity; they cannot widen it.\n\nOn the v2 job path every ingest is identified first: a file already indexed in the collection (same bytes, same normalised text, or — for the same reference without file extension — a near-identical text of the same version) is **skipped** and answered `status: skipped` with `duplicate_of`; it is recorded as an additional source of the indexed document. Another format of an indexed document is ingested as a new revision of it (`resolved_reference`), and only a newer version becomes the latest. Without `X-Version` the version is read from the first page (label, then date), else from `X-Source-Modified`. E-mails (`.eml`) are threaded; their attachments are ingested as documents of their own.",
+        "parameters": [
+          {
+            "name": "X-Reference",
+            "in": "header",
+            "required": true,
+            "description": "Row key in Search. Required, so two uploads named the same do not collide.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Title",
+            "in": "header",
+            "required": false,
+            "description": "Overrides the document title. May be `base64:`-encoded.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Filename",
+            "in": "header",
+            "required": false,
+            "description": "Filename for the raw-body form, where none is otherwise available.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Collection",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Source",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Link",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Tags",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Allowed-Users",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Allowed-Groups",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Version",
+            "in": "header",
+            "required": false,
+            "description": "Explicit document version (`2.1`, `Rev. C`, or a date `YYYY-MM-DD`). Skips version detection; orders the document's revisions in Search.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200
+            }
+          },
+          {
+            "name": "X-Source-Modified",
+            "in": "header",
+            "required": false,
+            "description": "The source file's modification time (RFC 3339 with time zone): the version fallback when the first page states none.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "X-Dedup",
+            "in": "header",
+            "required": false,
+            "description": "`auto` (default): skip exact duplicates and same-version near-duplicates of the same document; `exact`: skip only byte/text-identical duplicates; `off`: never skip.",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "auto",
+                "exact",
+                "off"
+              ]
+            }
+          },
+          {
+            "name": "X-Valid-From",
+            "in": "header",
+            "required": false,
+            "description": "RFC 3339 validity start; timezone is required and the value is forwarded to Search.",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "name": "X-Version-Mode",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "replace",
+                "version"
+              ]
+            }
+          },
+          {
+            "name": "X-Metadata",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Fts-Language",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Chunk-Size",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "X-Chunk-Overlap",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "X-Semantic-Chunking",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "description": "Either multipart/form-data with a `document` field, or the raw file with its own Content-Type. The raw form is intended for service-to-service callers.",
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "document"
+                ],
+                "properties": {
+                  "document": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            },
+            "application/pdf": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "text/html": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/msword": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.ms-excel": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.openxmlformats-officedocument.presentationml.presentation": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.ms-visio.drawing": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/bpmn+xml": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "application/vnd.ms-outlook": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "message/rfc822": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/png": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/jpeg": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/gif": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/tiff": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/bmp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            },
+            "image/webp": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Converted and indexed (small document, driven inline). Figure assets are stored when the v2 job path is active.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok",
+                        "skipped"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "`duplicate` when `status` is `skipped`."
+                    },
+                    "reference": {
+                      "type": "string"
+                    },
+                    "resolved_reference": {
+                      "type": "string",
+                      "description": "The reference the document was ingested under when it differs from X-Reference (another format of an indexed document)."
+                    },
+                    "duplicate_of": {
+                      "type": "object",
+                      "description": "The indexed source a skipped upload duplicates.",
+                      "additionalProperties": true
+                    },
+                    "version": {
+                      "type": "object",
+                      "description": "The version the document was ingested with, and where it came from.",
+                      "additionalProperties": true
+                    },
+                    "collection": {
+                      "type": "string"
+                    },
+                    "contract": {
+                      "type": "string"
+                    },
+                    "page_count": {
+                      "type": "integer"
+                    },
+                    "figure_count": {
+                      "type": "integer"
+                    },
+                    "assets_stored": {
+                      "type": "integer"
+                    },
+                    "assets_failed": {
+                      "type": "integer"
+                    },
+                    "job_id": {
+                      "type": "string",
+                      "description": "Present on the v2 job path."
+                    },
+                    "revision_id": {
+                      "type": "string",
+                      "description": "Present on the v2 job path."
+                    },
+                    "warnings": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Accepted (v2 job path, large document). The body carries the job id and a poll path; the Location header points at the job.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string"
+                    },
+                    "job_id": {
+                      "type": "string"
+                    },
+                    "reference": {
+                      "type": "string"
+                    },
+                    "collection": {
+                      "type": "string"
+                    },
+                    "page_count": {
+                      "type": "integer"
+                    },
+                    "poll": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request, or X-Reference missing"
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing the extract.ingest scope"
+          },
+          "502": {
+            "description": "Search rejected the ingest, or the job failed"
+          },
+          "503": {
+            "description": "The conversion queue is full"
+          }
+        }
+      }
+    },
+    "/v2/uploads": {
+      "post": {
+        "summary": "Open a resumable upload session, or pull a source_url in one shot",
+        "description": "A JSON body with `source_url` pulls the source in one request (SSRF-guarded by `SOURCE_URL_ALLOWED_HOSTS`; hosts resolving to private, loopback, link-local, ULA, CGNAT or metadata addresses are always refused, the connection is pinned to the validated IP, and redirects are re-validated per hop) and answers **201** `completed`. Any other request opens a resumable session and answers **201** `open` with an `upload_id` and offset 0. A `reference` is required (X-Reference header or `reference` field); the whole-file sha256 may be declared here (`X-Checksum-Sha256`) or at complete time.",
+        "parameters": [
+          {
+            "name": "X-Reference",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Checksum-Sha256",
+            "in": "header",
+            "required": false,
+            "description": "Expected whole-file sha256; a bare or `sha256:`-prefixed 64-char hex digest.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reference": {
+                    "type": "string"
+                  },
+                  "size": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "description": "Declared total size; rejected past MAX_UPLOAD_BYTES."
+                  },
+                  "sha256": {
+                    "type": "string"
+                  },
+                  "source_url": {
+                    "type": "string",
+                    "format": "uri",
+                    "description": "http(s) only; no credentials in the URL."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session opened, or source_url pulled and stored.",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "Session URL for a resumable open."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing reference, bad digest, or a rejected source_url",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing the extract.ingest scope"
+          },
+          "413": {
+            "description": "Declared size exceeds MAX_UPLOAD_BYTES"
+          },
+          "502": {
+            "description": "The source_url pull failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/uploads/{id}": {
+      "head": {
+        "summary": "Report the confirmed resume offset",
+        "description": "Returns the last confirmed byte offset in `Upload-Offset` (and `Upload-Status`, `Upload-Length`), so a client resuming after an abort knows exactly where to continue.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session state",
+            "headers": {
+              "Upload-Offset": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "The last confirmed byte offset — the point a resume must continue from."
+              },
+              "Upload-Status": {
+                "schema": {
+                  "type": "string"
+                }
+              },
+              "Upload-Length": {
+                "schema": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          }
+        }
+      },
+      "patch": {
+        "summary": "Append one chunk",
+        "description": "`Upload-Offset` must equal the confirmed offset — a mismatch is a **409** carrying the true offset, never a silently misplaced write. The chunk is streamed to disk, its per-chunk sha256 (`X-Chunk-Checksum-Sha256`, optional) is verified, and only then is the offset advanced. A crash before the advance leaves the chunk re-sendable.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "Upload-Offset",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          {
+            "name": "X-Chunk-Checksum-Sha256",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Chunk confirmed",
+            "headers": {
+              "Upload-Offset": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "The last confirmed byte offset — the point a resume must continue from."
+              }
+            }
+          },
+          "400": {
+            "description": "Missing/invalid Upload-Offset or a chunk checksum mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "Upload-Offset does not match the confirmed offset",
+            "headers": {
+              "Upload-Offset": {
+                "schema": {
+                  "type": "integer",
+                  "minimum": 0
+                },
+                "description": "The last confirmed byte offset — the point a resume must continue from."
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/uploads/{id}/complete": {
+      "post": {
+        "summary": "Finalize a session and move it into the source store",
+        "description": "Verifies the whole-file sha256 and moves the assembled file into the content-addressed SourceStore. Idempotent: completing an already-completed session returns the stored digest. A whole-file checksum mismatch reopens the session at offset 0 so the client can re-send.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Checksum-Sha256",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Whole-file checksum mismatch (session reopened)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such session"
+          },
+          "409": {
+            "description": "Session incomplete or inconsistent",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/jobs": {
+      "post": {
+        "summary": "Create a persistent extraction job",
+        "description": "Creates a durable job over an already-stored source (referenced by sha256). The job carries a config/pipeline/prompt-hash snapshot, a token budget, and a lease; a worker with a valid lease epoch drives it through `queued → preparing → processing → emitting → committing → completed`, resuming from the first unfinished unit after a crash.\n\n`allowedUsers` / `allowedGroups` set the document's readers, narrowed to the caller's own identity like the `/v1/ingest` headers; Search writes them onto every unit and asset check.\n\n`filename` (optional) types the source by its extension; omitted, the reference stands in for it. `collection` must follow Search's naming rule (a letter, then letters, digits or underscores), otherwise the request is a 400.\n\nOptional identity fields: `version` (explicit document version), `sourceModifiedAt` (RFC 3339 file time, the version fallback) and `dedup` (`auto` | `exact` | `off`). A job whose source is already indexed completes without extracting anything; its status carries `duplicateOf`. `resolvedReference` names the indexed document another format was ingested into, `version` the version it was ingested with.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Job created",
+            "headers": {
+              "Location": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            },
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing the extract.ingest scope"
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}": {
+      "get": {
+        "summary": "Job status",
+        "description": "Per-stage progress, warnings, accumulated cost, and a remaining-time estimate, plus the paused reason when the job is `paused(reason=dependency|budget)`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Job state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}/pause": {
+      "post": {
+        "summary": "Job control: pause",
+        "description": "Pause a running job; a heartbeat keeps its revision TTL alive.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          },
+          "409": {
+            "description": "The job is not in a state that accepts this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}/resume": {
+      "post": {
+        "summary": "Job control: resume",
+        "description": "Resume a paused job at the first unfinished unit.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          },
+          "409": {
+            "description": "The job is not in a state that accepts this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}/cancel": {
+      "post": {
+        "summary": "Job control: cancel",
+        "description": "Cancel a job; already-committed segments remain.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          },
+          "409": {
+            "description": "The job is not in a state that accepts this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}/retry-failed": {
+      "post": {
+        "summary": "Job control: retry-failed",
+        "description": "Retry only the units marked failed, leaving completed units untouched (Requirement 4.10).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          },
+          "409": {
+            "description": "The job is not in a state that accepts this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}/reparse": {
+      "post": {
+        "summary": "Job control: reparse",
+        "description": "Re-apply the parser to the persisted raw model responses without any new model calls (Requirement 4.6).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Applied",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          },
+          "409": {
+            "description": "The job is not in a state that accepts this action",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/jobs/{id}/figures": {
+      "get": {
+        "summary": "Figures of a job",
+        "description": "The figure blocks of the job's staged page records in page order (`figureId`, `page`, normalised `bbox`, `kind`, `caption`, `description`, `assetId`), plus the job's `sourceSha256`. Crop bytes are not stored; a client renders them through `POST /v2/render` with the figure's bbox.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Figures",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": true
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such job"
+          }
+        }
+      }
+    },
+    "/v2/render": {
+      "post": {
+        "summary": "Render a page or region on demand",
+        "description": "Renders a full page, or a normalised bbox region of it, ON DEMAND from the content-addressed source — full-resolution page images are never pre-stored (Requirement 6.8). Search, which carries no poppler, calls this for zoom / full-resolution and caches the result as an asset variant (Requirement 14.4). The output area is PIXEL-LIMITED (`RENDER_MAX_PIXELS`): a large `targetPixels` or a poster-sized crop has its render resolution clamped DOWN, and the response reports the actual size via `X-Render-Width/Height/Dpi` and `X-Render-Clamped`. The endpoint has its own rate limit (`RENDER_RATE_LIMIT`). Rendering the same `(source, page, bbox, targetPixels)` is deterministic.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "source",
+                  "page"
+                ],
+                "properties": {
+                  "source": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "sha256 of the already-stored source."
+                  },
+                  "page": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "1-based page number."
+                  },
+                  "bbox": {
+                    "type": "array",
+                    "items": {
+                      "type": "number",
+                      "minimum": 0,
+                      "maximum": 1
+                    },
+                    "minItems": 4,
+                    "maxItems": 4,
+                    "description": "Optional normalised crop [x0,y0,x1,y1] in [0,1]; omitted renders the whole page."
+                  },
+                  "targetPixels": {
+                    "type": "integer",
+                    "minimum": 16,
+                    "description": "Desired long-edge pixel count; clamped to RENDER_MAX_PIXELS."
+                  },
+                  "filename": {
+                    "type": "string",
+                    "description": "Optional filename hint for the source format."
+                  }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The rendered PNG. Size/dpi are in the X-Render-* headers.",
+            "headers": {
+              "X-Render-Width": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Render-Height": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Render-Dpi": {
+                "schema": {
+                  "type": "integer"
+                }
+              },
+              "X-Render-Clamped": {
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "0",
+                    "1"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "image/png": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed request or page out of range",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing the extract.admin scope"
+          },
+          "404": {
+            "description": "No stored source for the given sha256",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Render rate limit exceeded"
+          }
+        }
+      }
+    },
+    "/v2/documents/{reference}": {
+      "delete": {
+        "summary": "Delete a document by reference (E2)",
+        "description": "Removes the document (all versions of the base reference) from Search. Every non-terminal job of the same reference and collection is cancelled first, so an in-flight emit cannot re-create the document after the delete. The caller's identity is forwarded to Search, which applies the caller's ACL: a caller can only delete documents they could also read.\n\nIdempotent for a client: `200` and `404` both mean the reference is gone afterwards; `404` distinguishes \"this collection never held it\" (`deleted` would be 0).",
+        "parameters": [
+          {
+            "name": "reference",
+            "in": "path",
+            "required": true,
+            "description": "The document reference, percent-encoded.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "X-Collection",
+            "in": "header",
+            "required": false,
+            "description": "Target collection; defaults to the instance default.",
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-zA-Z][a-zA-Z0-9_]*$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted (deleted >= 1)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "reference",
+                    "collection",
+                    "deleted"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "const": "deleted"
+                    },
+                    "reference": {
+                      "type": "string"
+                    },
+                    "collection": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid collection name or empty reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing the extract.delete scope",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The collection never held this reference",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Search could not be reached or rejected the delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v1/erasure": {
+      "post": {
+        "summary": "Erase subject data (DSAR, requirement 2.7)",
+        "description": "Removes subject-related data from Extract: jobs (with their staged page, figure, tile, and outbox rows via FK cascade), resumable upload sessions, and content-addressed source blobs that no remaining job references any more. Afterwards the Search cascade runs with the same `requestId`, so a retry stays idempotent on both sides (requirement 2.12).\n\nIdempotent over `requestId`: a repeat of a committed request replays the stored response; the same id with a different payload is rejected `409`. `dryRun` counts what would be removed and deletes nothing. A store result is honest: `failed` carries the error, `not_configured` marks a target this instance does not have — never a silent success.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "requestId",
+                  "tenantId",
+                  "scope"
+                ],
+                "properties": {
+                  "requestId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Idempotency key."
+                  },
+                  "tenantId": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "subject": {
+                    "type": "object",
+                    "properties": {
+                      "userId": {
+                        "type": "string"
+                      },
+                      "email": {
+                        "type": "string"
+                      },
+                      "externalIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "description": "Required for scope=subject: at least one identifier."
+                  },
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "subject",
+                      "tenant",
+                      "reference"
+                    ]
+                  },
+                  "references": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Required for scope=reference."
+                  },
+                  "dryRun": {
+                    "type": "boolean",
+                    "default": false
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Every applicable store succeeded (or is not_configured).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "requestId",
+                    "service",
+                    "results"
+                  ],
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service": {
+                      "type": "string",
+                      "const": "extract"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "store",
+                          "status",
+                          "erased"
+                        ],
+                        "properties": {
+                          "store": {
+                            "type": "string",
+                            "description": "extract.jobs, extract.uploads, extract.sources, or a search.* store merged from the cascade."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "failed",
+                              "not_configured"
+                            ]
+                          },
+                          "erased": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "207": {
+            "description": "Some stores failed; the response lists each result.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "requestId",
+                    "service",
+                    "results"
+                  ],
+                  "properties": {
+                    "requestId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "service": {
+                      "type": "string",
+                      "const": "extract"
+                    },
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "store",
+                          "status",
+                          "erased"
+                        ],
+                        "properties": {
+                          "store": {
+                            "type": "string",
+                            "description": "extract.jobs, extract.uploads, extract.sources, or a search.* store merged from the cascade."
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ok",
+                              "failed",
+                              "not_configured"
+                            ]
+                          },
+                          "erased": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid erasure request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Unauthenticated"
+          },
+          "403": {
+            "description": "Missing extract.erasure, or tenant mismatch",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "requestId reused with a different payload, or still in flight",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Every store failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "error",
+                    "code",
+                    "retryable",
+                    "errorId"
+                  ],
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "code": {
+                      "type": "string"
+                    },
+                    "retryable": {
+                      "type": "boolean",
+                      "description": "Whether repeating the identical request can succeed."
+                    },
+                    "errorId": {
+                      "type": "string",
+                      "description": "Correlation id; the full message is in the service log under it."
+                    },
+                    "detail": {
+                      "type": "string",
+                      "description": "Only present when EXPOSE_ERROR_DETAIL is enabled."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

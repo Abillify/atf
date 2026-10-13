@@ -1,0 +1,34 @@
+# Gitleaks configuration (Requirement 13.3).
+#
+# The CI job scans the full git history, so the allowlist below is the only
+# place where synthetic credentials may appear. It is deliberately narrow:
+# only test directories and the exact fixture values verified by hand as
+# non-secret. A real credential pasted into source code, or a new synthetic
+# value outside these paths, still fails the scan.
+title = "ATF gitleaks configuration"
+
+[extend]
+# Built-in rules (generic-api-key, jwt, private keys, …).
+useDefault = true
+
+[allowlist]
+description = "Synthetic fixtures in tests and generated docs"
+paths = [
+  # Unit/integration/E2E fixtures: the matched literals are hand-written fake
+  # keys and self-signed JWTs with no issuer behind them (verified by hand,
+  # 2026-10). Production source stays fully scanned.
+  '''(^|/)(?:__tests__|tests?|e2e)/''',
+]
+regexes = [
+  # Placeholder tokens used across the test suite (fixed strings, no issuer).
+  '''sk-proj-abcdef1234567890''',
+  '''sk-secret-123456''',
+  '''sk-test1234567890abcdef''',
+  '''test-secret-at-least-(?:16|32)-chars-long(?:-0+)?''',
+  '''test-cursor-secret-0123456789''',
+  '''anchor-secret-1234567890''',
+  # Self-signed HS256 JWTs with hand-written payloads (sub "123456789"/"user1").
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiIxMjM0NTY3ODkifQ\.''',
+  '''eyJhbGciOiJIUzI1NiJ9\.eyJzdWIiOiJ1c2VyMSJ9\.''',
+  '''eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9\.eyJpZCI6ImRiN2ExZWQ1In0\.''',
+]

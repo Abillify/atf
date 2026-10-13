@@ -101,16 +101,53 @@ jobs:
       - name: Flow reference and flow schema are current
         run: bun run flow-reference:check
 
+      # Req 14.3: the Runtime route-group table in ARCHITECTURE.md is generated
+      # from the real router tree and must not drift.
+      - name: Runtime route reference is current
+        run: bun run route-reference:check
+
+      # Req 11.7: the committed OpenAPI baselines under docs/openapi/ are
+      # regenerated from the live builders and compared for breaking changes.
+      - name: OpenAPI compatibility
+        run: bun run openapi:check
+
       # A regression gate, not a zero-findings gate. The tree carries pre-existing Biome
       # findings recorded in .biome-baseline.json; this fails only when they grow. The formatter
       # is intentionally excluded — see scripts/check-lint-baseline.ts.
       - name: Lint regression gate
         run: bun run lint:baseline
 
+      # Req 13.8: knip keeps the dependency graph honest — unreachable files and
+      # undeclared/unused dependencies fail the build. Unused-export reporting is
+      # off by design (see knip.json); exported APIs are consumed by tests and
+      # external code.
+      - name: Unused files and dependencies (knip)
+        run: bun run knip
+
       # Req 7.1/7.2: every outbound call in the runtime must go through the
       # Egress_Guard; a bare global fetch() would bypass SSRF protection.
       - name: No raw fetch outside the Egress_Guard
         run: bun run check:raw-fetch
+
+      # Req 14.2: README/ARCHITECTURE must state the real workspace counts and
+      # name every app and package — a new workspace fails CI until the docs
+      # catch up (the Outpost apps were missing from both documents once).
+      - name: README and ARCHITECTURE match the workspaces
+        run: bun run check:workspace-counts
+
+      # Req 14.9: relative links and anchors in Markdown must resolve; a moved
+      # or renamed document fails CI instead of rotting silently. External URLs
+      # are not fetched (CI stays network-independent for this gate).
+      - name: Markdown links resolve
+        run: bun run check:links
+
+      # Req 15.5: the atf-verify CLI checks receipt signatures and Merkle
+      # inclusion proofs fully offline; the end-to-end tests spawn the script
+      # against generated fixtures and assert the exit codes.
+      - name: atf-verify CLI tests and types
+        run: |
+          bun run atf-verify:test
+          bun run atf-verify:typecheck
 
       - name: Flow examples validate
         working-directory: apps/runtime
@@ -172,6 +209,15 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run --filter ${{ matrix.workspace }} test
 
+      # Req 13.7: per-file coverage gate for the security-critical runtime
+      # modules (auth middleware, audit log, PII vault, tool authorization,
+      # production readiness gate). Bun cannot report branch coverage, so the
+      # gate enforces >= 90 % lines AND functions per file as a proxy — see
+      # scripts/check-security-coverage.ts for the documented limitation.
+      - name: Security module coverage gate
+        if: matrix.workspace == '@atf/runtime'
+        run: bun run coverage:security
+
   contracts:
     name: Contract packages
     runs-on: ubuntu-latest
@@ -186,9 +232,16 @@ jobs:
         run: |
           for package in identity-contract transaction-contract evidence-contract \
                          schema-compatibility contract-adapter extract-contract \
-                         security-kit erasure-contract; do
+                         security-kit erasure-contract observability; do
             bun run --filter "@atf/$package" test
           done
+      # Task 1.3: the egress-blockade property (Property 12) and the client
+      # TLS test also run under Node, which strips TypeScript types itself.
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Security kit under Node
+        run: bun run --filter @atf/security-kit test:node
       - name: Cross-contract lifecycle
         run: bun run test:contracts
 
@@ -245,9 +298,12 @@ jobs:
         run: cargo fmt --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml -- --check
       - name: cargo test
         run: cargo test --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml
-      - uses: taiki-e/install-action@3eb90b20bc1fe55dfbf30d81d4a7e0ef8dd34caa # v2.36.0
-        with:
-          tool: cargo-deny,cargo-audit
+      # The repository's Actions allow-list only admits GitHub-owned and
+      # verified actions, so the tools are installed from crates.io with
+      # pinned versions and the committed lockfiles instead of a third-party
+      # installer action.
+      - name: Install cargo-deny and cargo-audit
+        run: cargo install --locked cargo-deny@0.20.2 cargo-audit@0.22.2
       - name: cargo deny
         run: >
           cargo deny
@@ -379,9 +435,103 @@ jobs:
           retention-days: 90
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
+          name: quickstart-extract-linux-x64-${{ github.sha }}
+          path: artifacts/images-linux-x64-${{ github.sha }}/extract
+          retention-days: 90
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
           name: quickstart-image-index-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/index.json
           retention-days: 90
+
+  # Helm chart (task 16.4, requirement 12.3): lint the umbrella chart and
+  # validate every rendered manifest against the Kubernetes API schemas with
+  # kubeconform in strict mode. Both tools are pinned by checksum, matching
+  # the pinned-version style of the other supply-chain jobs.
+  helm:
+    name: Helm chart
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      HELM_VERSION: 4.3.0
+      HELM_SHA256: 86584a54def73570558f66f5111cc53dfed56689637ae32c1201205d494f54fb
+      KUBECONFORM_VERSION: 0.8.0
+      KUBECONFORM_SHA256: 9bc2bffbf71f261128533edaf912153948b7ff238f9a531ae6d34466ec287883
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Install helm (pinned by checksum)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/helm.tar.gz \
+            "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz"
+          echo "${HELM_SHA256}  /tmp/helm.tar.gz" | sha256sum --check
+          tar -xzf /tmp/helm.tar.gz -C /tmp linux-amd64/helm
+          install -m 0755 /tmp/linux-amd64/helm /usr/local/bin/helm
+          helm version --short
+
+      - name: Install kubeconform (pinned by checksum)
+        run: |
+          set -euo pipefail
+          curl -fsSL -o /tmp/kubeconform.tar.gz \
+            "https://github.com/yannh/kubeconform/releases/download/v${KUBECONFORM_VERSION}/kubeconform-linux-amd64.tar.gz"
+          echo "${KUBECONFORM_SHA256}  /tmp/kubeconform.tar.gz" | sha256sum --check
+          tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+
+      - name: helm lint
+        run: helm lint deploy/helm/atf
+
+      - name: Render and validate with kubeconform (strict)
+        run: |
+          set -euo pipefail
+          helm template atf deploy/helm/atf --namespace atf \
+            --set global.secrets.runtime=atf-runtime \
+            --set global.secrets.gate=atf-gate \
+            --set global.secrets.search=atf-search \
+            --set global.secrets.extract=atf-extract \
+            --set global.secrets.control=atf-control \
+            --set runtime.flowsConfigMap=atf-flows \
+            --set gate.configMap=atf-gate-config \
+            > /tmp/atf-rendered.yaml
+          kubeconform -strict -summary /tmp/atf-rendered.yaml
+
+      - name: Render autoscaling variant and validate
+        run: |
+          set -euo pipefail
+          helm template atf deploy/helm/atf --namespace atf \
+            --set global.secrets.runtime=atf-runtime \
+            --set global.secrets.gate=atf-gate \
+            --set global.secrets.search=atf-search \
+            --set global.secrets.extract=atf-extract \
+            --set global.secrets.control=atf-control \
+            --set runtime.autoscaling.enabled=true \
+            --set search.autoscaling.enabled=true \
+            > /tmp/atf-autoscaling.yaml
+          kubeconform -strict -summary /tmp/atf-autoscaling.yaml
+          grep -q 'kind: HorizontalPodAutoscaler' /tmp/atf-autoscaling.yaml
+
+      - name: Render service TLS variant and validate
+        run: |
+          set -euo pipefail
+          helm template atf deploy/helm/atf --namespace atf \
+            --set global.secrets.runtime=atf-runtime \
+            --set global.secrets.gate=atf-gate \
+            --set global.secrets.search=atf-search \
+            --set global.secrets.extract=atf-extract \
+            --set global.secrets.control=atf-control \
+            --set search.config.tls.secretName=atf-search-tls \
+            --set extract.config.tls.secretName=atf-extract-tls \
+            --set extract.config.searchTls=true \
+            > /tmp/atf-tls.yaml
+          kubeconform -strict -summary /tmp/atf-tls.yaml
+          grep -q 'name: TLS_CERT_FILE' /tmp/atf-tls.yaml
+          grep -q 'scheme: HTTPS' /tmp/atf-tls.yaml
+          grep -q 'https://atf-search.atf.svc.cluster.local' /tmp/atf-tls.yaml
 
   compose:
     name: Quickstart stack
@@ -411,6 +561,49 @@ jobs:
             http://127.0.0.1:3000/v1/chat/completions \
             -H 'Content-Type: application/json' \
             -d '{"model":"quickstart","messages":[{"role":"user","content":"Confirm the quickstart."}]}'
+
+      # Task 16.5 (requirements 12.6/12.7): the converter is part of the
+      # quickstart, so the smoke must prove an end-to-end conversion, not just
+      # a healthy port. A minimal one-page PDF goes through Extract's
+      # /v1/convert (poppler text path, no vision needed for text output) and
+      # through Search's /ingest-file proxy, which starts an Extract v2 job —
+      # covering the Search -> Extract hop the documented stack relies on.
+      - name: Smoke the conversion path
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          def obj(n, body):
+              return f"{n} 0 obj\n{body}\nendobj\n".encode()
+
+          text = b"BT /F1 24 Tf 72 720 Td (Quickstart conversion smoke) Tj ET"
+          stream_body = b"<< /Length " + str(len(text)).encode() + b" >>\nstream\n" + text + b"\nendstream"
+          header = b"%PDF-1.4\n"
+          objs = [
+              obj(1, "<< /Type /Catalog /Pages 2 0 R >>"),
+              obj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"),
+              obj(3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+                     "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>"),
+              obj(4, stream_body.decode("latin-1")),
+              obj(5, "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>"),
+          ]
+          out = header + b"".join(objs)
+          xref_pos = len(out)
+          xref = b"xref\n0 6\n0000000000 65535 f \n"
+          offset = len(header)
+          for o in objs:
+              xref += b"%010d 00000 n \n" % offset
+              offset += len(o)
+          out += xref + b"trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + str(xref_pos).encode() + b"\n%%EOF\n"
+          open("/tmp/smoke.pdf", "wb").write(out)
+          PY
+          curl --fail-with-body --silent --show-error \
+            http://127.0.0.1:3004/v1/convert \
+            -H 'Content-Type: application/pdf' -H 'Accept: text/markdown' \
+            --data-binary @/tmp/smoke.pdf | grep -qi 'Quickstart conversion smoke'
+          curl --fail-with-body --silent --show-error \
+            http://127.0.0.1:3002/ingest-file \
+            -H 'Content-Type: application/pdf' \
+            --data-binary @/tmp/smoke.pdf
 
       - name: Logs on failure
         if: failure()
@@ -505,3 +698,134 @@ jobs:
         if: always()
         run: >-
           docker compose -f scripts/eval/compose.eval.yaml down --volumes
+
+  # Requirement 13.3: secret scanning over the full git history. The binary is
+  # pinned by version and checksum instead of a third-party action, matching
+  # the pinned-tool style of the other supply-chain jobs. The allowlist in
+  # .gitleaks.toml covers only hand-verified synthetic test fixtures.
+  secrets:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Install gitleaks (pinned by checksum)
+        run: |
+          set -euo pipefail
+          version=8.30.1
+          expected=551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+          archive=gitleaks_${version}_linux_x64.tar.gz
+          curl -fsSL -o "$archive" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${version}/${archive}"
+          echo "${expected}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" gitleaks
+          sudo install gitleaks /usr/local/bin/gitleaks
+          gitleaks version
+
+      - name: Scan git history
+        run: gitleaks git . --config .gitleaks.toml --redact --no-banner
+
+  # Requirement 13.2: the five production images are built from the same
+  # Dockerfiles the release workflow publishes and scanned with Trivy; the
+  # job fails on critical CVEs. ignore-unfixed is enabled deliberately:
+  # distroless/slim bases frequently carry criticals with no released fix,
+  # which cannot be actioned in a PR. Unfixed criticals are handled by the
+  # Dependabot digest bumps on the pinned base images, and the release
+  # workflow's signed SBOMs give the full inventory for audits.
+  image-scan:
+    name: Image scan (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [runtime, search, gate, extract, control]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      - name: Build image
+        run: >-
+          docker build --platform linux/amd64
+          --file deploy/images/Dockerfile.${{ matrix.service }}
+          --tag atf-scan-${{ matrix.service }}:latest .
+
+      - name: Install Trivy (pinned by checksum)
+        run: |
+          set -euo pipefail
+          version=0.75.0
+          expected=c6e65abddb348e25f10549df887045629cf28cc72453cd1c63acb717316b3f3f
+          archive=trivy_${version}_Linux-64bit.tar.gz
+          curl -fsSL -o "$archive" \
+            "https://github.com/aquasecurity/trivy/releases/download/v${version}/${archive}"
+          echo "${expected}  ${archive}" | sha256sum -c -
+          tar -xzf "$archive" trivy
+          sudo install trivy /usr/local/bin/trivy
+          trivy --version
+
+      - name: Scan image (fail on critical CVEs)
+        run: >-
+          trivy image --scanners vuln --severity CRITICAL
+          --exit-code 1 --ignore-unfixed --slow --timeout 20m
+          atf-scan-${{ matrix.service }}:latest
+
+  # Requirement 13.3: SAST over the TypeScript workspaces and the Rust
+  # Tauri core. Both run build-mode none (the only mode CodeQL supports for
+  # Rust); the Rust extractor still runs the crates' build scripts through
+  # rust-analyzer, so the GTK/WebKit prerequisites mirror the outpost job.
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        # CodeQL language identifiers: `javascript-typescript` is the
+        # upstream alias for the JavaScript/TypeScript extractor.
+        language: [javascript-typescript, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Assert exact checkout
+        run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+
+      # One language per job (the matrix); the paths come from the
+      # per-language config file. `languages` and `build-mode` are inputs of
+      # the init action — the repository-root action is only a failing stub.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+          config-file: .github/codeql/codeql-${{ matrix.language == 'rust' && 'rust' || 'typescript' }}.yml
+
+      - name: Install Tauri system dependencies
+        if: matrix.language == 'rust'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libjavascriptcoregtk-4.1-dev libsoup-3.0-dev \
+            libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev \
+            libssl-dev
+
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@24c54180a607b1449ed407dd24f251e4e9147c8d # v4.38.3
+        with:
+          category: /language:${{ matrix.language }}

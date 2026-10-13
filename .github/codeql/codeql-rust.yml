@@ -1,0 +1,10 @@
+# CodeQL configuration for the Rust Tauri core (Requirement 13.3). Analysed
+# with build-mode none, the only mode CodeQL supports for Rust (see the codeql
+# job in ci.yml).
+name: ATF CodeQL (Rust)
+
+languages:
+  - rust
+
+paths:
+  - apps/outpost-desktop/src-tauri
