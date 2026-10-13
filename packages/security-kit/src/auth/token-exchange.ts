@@ -261,9 +261,13 @@ export class ActorTokenProvider {
   private readonly timeoutMs: number;
   private readonly endpointResolver: TokenEndpointResolver | undefined;
   private readonly issuer: string | undefined;
+  // No TypeScript parameter properties in this file: Node's strip-only
+  // type-stripping (`node --test`) cannot parse them and this module is
+  // reachable from the barrel export used by the Node test runner.
+  private readonly config: ActorClientCredentialsConfig;
 
   constructor(
-    private readonly config: ActorClientCredentialsConfig,
+    config: ActorClientCredentialsConfig,
     endpoint: string | undefined,
     options: {
       fetchImpl?: FetchLike;
@@ -274,18 +278,23 @@ export class ActorTokenProvider {
       issuer?: string;
     } = {},
   ) {
-    this.fetchImpl = options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+    this.config = config;
+    this.fetchImpl =
+      options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
     this.now = options.now ?? (() => Date.now());
     this.timeoutMs = options.timeoutMs ?? DEFAULT_EXCHANGE_TIMEOUT_MS;
     this.endpointResolver = options.endpointResolver;
     this.issuer = options.issuer;
-    this.resolvedEndpoint = endpoint !== undefined && endpoint.trim() !== "" ? endpoint : undefined;
+    this.resolvedEndpoint =
+      endpoint !== undefined && endpoint.trim() !== "" ? endpoint : undefined;
   }
 
   private async endpoint(): Promise<string> {
     if (this.resolvedEndpoint !== undefined) return this.resolvedEndpoint;
     if (this.issuer === undefined || this.endpointResolver === undefined) {
-      throw new Error("Actor token provider has no token endpoint and no issuer resolver");
+      throw new Error(
+        "Actor token provider has no token endpoint and no issuer resolver",
+      );
     }
     const resolved = await this.endpointResolver(this.issuer);
     this.resolvedEndpoint = resolved;
@@ -295,7 +304,10 @@ export class ActorTokenProvider {
   /** Returns a valid actor access token, minting one when the cache is cold/stale. */
   async token(): Promise<ExchangeResult> {
     const now = this.now();
-    if (this.cached !== undefined && this.cached.expiresAt - EXCHANGE_EXPIRY_MARGIN_MS > now) {
+    if (
+      this.cached !== undefined &&
+      this.cached.expiresAt - EXCHANGE_EXPIRY_MARGIN_MS > now
+    ) {
       return { ok: true, token: this.cached };
     }
     if (this.inFlight !== undefined) return this.inFlight;
@@ -307,7 +319,9 @@ export class ActorTokenProvider {
   }
 
   private async mint(): Promise<ExchangeResult> {
-    const body = new URLSearchParams({ grant_type: GRANT_TYPE_CLIENT_CREDENTIALS });
+    const body = new URLSearchParams({
+      grant_type: GRANT_TYPE_CLIENT_CREDENTIALS,
+    });
     const headers: Record<string, string> = {
       "Content-Type": "application/x-www-form-urlencoded",
       Accept: "application/json",
@@ -320,7 +334,8 @@ export class ActorTokenProvider {
       this.config.clientAuth ?? "client_secret_post",
     );
     if (this.config.scope !== undefined) body.set("scope", this.config.scope);
-    if (this.config.audience !== undefined) body.set("audience", this.config.audience);
+    if (this.config.audience !== undefined)
+      body.set("audience", this.config.audience);
 
     let endpoint: string;
     try {
@@ -375,9 +390,10 @@ export class TokenExchanger {
 
   private readonly endpointResolver: TokenEndpointResolver | undefined;
   private resolvedEndpoint: string | undefined;
+  private readonly config: TokenExchangeConfig;
 
   constructor(
-    private readonly config: TokenExchangeConfig,
+    config: TokenExchangeConfig,
     options: {
       fetchImpl?: FetchLike;
       now?: () => number;
@@ -387,20 +403,25 @@ export class TokenExchanger {
       endpointResolver?: TokenEndpointResolver;
     } = {},
   ) {
+    this.config = config;
     if (
       config.clientId.trim() === "" ||
       (config.clientSecret ?? "").trim() === "" ||
       config.audience.trim() === ""
     ) {
-      throw new Error("Token exchange requires a non-empty clientId, clientSecret and audience");
+      throw new Error(
+        "Token exchange requires a non-empty clientId, clientSecret and audience",
+      );
     }
     if (
-      (config.tokenEndpoint === undefined || config.tokenEndpoint.trim() === "") &&
+      (config.tokenEndpoint === undefined ||
+        config.tokenEndpoint.trim() === "") &&
       config.issuer === undefined
     ) {
       throw new Error("Token exchange requires either tokenEndpoint or issuer");
     }
-    this.fetchImpl = options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
+    this.fetchImpl =
+      options.fetchImpl ?? (globalThis.fetch as unknown as FetchLike);
     this.now = options.now ?? (() => Date.now());
     this.timeoutMs = config.timeoutMs ?? DEFAULT_EXCHANGE_TIMEOUT_MS;
     this.logger = options.logger;
@@ -418,9 +439,13 @@ export class TokenExchanger {
             // fall back to issuer discovery only when neither is a concrete URL.
             config.actor.tokenEndpoint ?? config.tokenEndpoint,
             {
-              ...(options.fetchImpl !== undefined ? { fetchImpl: options.fetchImpl } : {}),
+              ...(options.fetchImpl !== undefined
+                ? { fetchImpl: options.fetchImpl }
+                : {}),
               ...(options.now !== undefined ? { now: options.now } : {}),
-              ...(options.logger !== undefined ? { logger: options.logger } : {}),
+              ...(options.logger !== undefined
+                ? { logger: options.logger }
+                : {}),
               ...(options.endpointResolver !== undefined
                 ? { endpointResolver: options.endpointResolver }
                 : {}),
@@ -434,8 +459,13 @@ export class TokenExchanger {
   /** Resolves and memoises the token endpoint (via discovery when only an issuer is set). */
   private async endpoint(): Promise<string> {
     if (this.resolvedEndpoint !== undefined) return this.resolvedEndpoint;
-    if (this.config.issuer === undefined || this.endpointResolver === undefined) {
-      throw new Error("Token exchange has no token endpoint and no issuer resolver");
+    if (
+      this.config.issuer === undefined ||
+      this.endpointResolver === undefined
+    ) {
+      throw new Error(
+        "Token exchange has no token endpoint and no issuer resolver",
+      );
     }
     const resolved = await this.endpointResolver(this.config.issuer);
     this.resolvedEndpoint = resolved;
@@ -447,7 +477,10 @@ export class TokenExchanger {
     return this.actorProvider !== undefined;
   }
 
-  private cacheKey(subjectToken: string, actorToken: string | undefined): string {
+  private cacheKey(
+    subjectToken: string,
+    actorToken: string | undefined,
+  ): string {
     // The subject token, target and requested scope determine the result; the
     // actor token participates because a different actor yields a different
     // `act` claim. Hash the credentials so no raw token becomes a live map key.
@@ -465,7 +498,11 @@ export class TokenExchanger {
    */
   async exchange(subjectToken: string): Promise<ExchangeResult> {
     if (subjectToken.trim() === "") {
-      return { ok: false, transient: false, detail: "no subject token to exchange." };
+      return {
+        ok: false,
+        transient: false,
+        detail: "no subject token to exchange.",
+      };
     }
 
     let actorToken: string | undefined;
@@ -485,7 +522,10 @@ export class TokenExchanger {
 
     const key = this.cacheKey(subjectToken, actorToken);
     const cached = this.cache.get(key);
-    if (cached !== undefined && cached.token.expiresAt - EXCHANGE_EXPIRY_MARGIN_MS > this.now()) {
+    if (
+      cached !== undefined &&
+      cached.token.expiresAt - EXCHANGE_EXPIRY_MARGIN_MS > this.now()
+    ) {
       return { ok: true, token: cached.token };
     }
     this.cache.delete(key);
@@ -493,9 +533,11 @@ export class TokenExchanger {
     const pending = this.inFlight.get(key);
     if (pending !== undefined) return pending;
 
-    const attempt = this.performExchange(subjectToken, actorToken).finally(() => {
-      this.inFlight.delete(key);
-    });
+    const attempt = this.performExchange(subjectToken, actorToken).finally(
+      () => {
+        this.inFlight.delete(key);
+      },
+    );
     this.inFlight.set(key, attempt);
     return attempt;
   }
@@ -507,7 +549,8 @@ export class TokenExchanger {
     const body = new URLSearchParams({
       grant_type: GRANT_TYPE_TOKEN_EXCHANGE,
       subject_token: subjectToken,
-      subject_token_type: this.config.subjectTokenType ?? TOKEN_TYPE_ACCESS_TOKEN,
+      subject_token_type:
+        this.config.subjectTokenType ?? TOKEN_TYPE_ACCESS_TOKEN,
       audience: this.config.audience,
     });
     if (this.config.scope !== undefined) body.set("scope", this.config.scope);
@@ -550,7 +593,10 @@ export class TokenExchanger {
       this.now,
     );
     if (result.ok) {
-      const token: ExchangedToken = { ...result.token, delegated: actorToken !== undefined };
+      const token: ExchangedToken = {
+        ...result.token,
+        delegated: actorToken !== undefined,
+      };
       this.evictIfFull();
       this.cache.set(this.cacheKey(subjectToken, actorToken), { token });
       this.logger?.debug("Token exchange succeeded", {
@@ -596,7 +642,8 @@ export class TokenExchanger {
     if (this.cache.size < MAX_CACHE_ENTRIES) return;
     const now = this.now();
     for (const [key, entry] of this.cache) {
-      if (entry.token.expiresAt - EXCHANGE_EXPIRY_MARGIN_MS <= now) this.cache.delete(key);
+      if (entry.token.expiresAt - EXCHANGE_EXPIRY_MARGIN_MS <= now)
+        this.cache.delete(key);
     }
     if (this.cache.size < MAX_CACHE_ENTRIES) return;
     const oldest = this.cache.keys().next();

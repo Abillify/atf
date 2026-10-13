@@ -14,6 +14,45 @@
  */
 
 export { safeEqual, safeEqualBytes } from "./compare.ts";
+export { createStaticTokenMatcher } from "./auth/static-token.ts";
+export {
+  cborEncode,
+  cborDecode,
+  cborTagged,
+  cborMap,
+  CborEncodeError,
+  CborDecodeError,
+  type CborValue,
+  type CborTagged,
+  type CborMap,
+} from "./cbor/index.ts";
+export {
+  COSE_ALG_EDDSA,
+  ED25519_PUB_KEY_BYTES,
+  ED25519_SIG_BYTES,
+  coseSign1,
+  coseSign1Verify,
+  cborEncodeSign1,
+  cborDecodeSign1,
+  decodeProtectedHeader,
+  importEd25519PrivateKeySeed,
+  exportEd25519RawPublicKey,
+  ed25519RawKeyToJwk,
+  jwkToEd25519RawKey,
+  type CoseSign1,
+  type CoseSign1Options,
+  type Ed25519PublicJwk,
+} from "./cose/index.ts";
+export {
+  createServerWithOptionalTls,
+  TlsServerConfigError,
+  type ServerTlsConfig,
+} from "./server/tls-server.ts";
+export {
+  createClientTlsInit,
+  ClientTlsConfigError,
+  type ClientTlsOptions,
+} from "./http/client-tls.ts";
 export {
   parseBooleanHeader,
   readHeader,
