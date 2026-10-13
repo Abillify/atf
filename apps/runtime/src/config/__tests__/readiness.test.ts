@@ -970,3 +970,210 @@ describe("checkProductionReadiness — TRUSTED_IDENTITY_HEADERS", () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// OIDC-only mode invariants (Req 13.7 coverage completion)
+// ---------------------------------------------------------------------------
+
+describe("checkProductionReadiness — OIDC-only mode invariants", () => {
+  test("oidc mode without audience is fatal in production", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({ oidcAudience: undefined }),
+    );
+    expect(
+      fatal.some((f) => f.includes("requires both OIDC_ISSUER and OIDC_AUDIENCE")),
+    ).toBe(true);
+  });
+
+  test("oidc mode without audience is a warning in development", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      baseConfig({
+        appEnv: "development",
+        authnMode: "oidc",
+        oidcIssuer: "https://idp.example.com",
+        oidcAudience: undefined,
+        jwtSecret: undefined,
+      }),
+    );
+    expect(
+      fatal.some((f) => f.includes("requires both OIDC_ISSUER and OIDC_AUDIENCE")),
+    ).toBe(false);
+    expect(
+      warnings.some((w) =>
+        w.includes("requires both OIDC_ISSUER and OIDC_AUDIENCE"),
+      ),
+    ).toBe(true);
+  });
+
+  test("raw OPERATOR_TOKENS in oidc production are fatal", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({
+        operatorTokens: [{ token: "tok", role: "admin" }],
+      }),
+    );
+    expect(fatal.some((f) => f.includes("must not configure OPERATOR_TOKENS"))).toBe(
+      true,
+    );
+  });
+
+  test("JWT_SECRET alongside oidc is fatal in production", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({ jwtSecret: "shhh" }),
+    );
+    expect(fatal.some((f) => f.includes("ignores JWT_SECRET"))).toBe(true);
+  });
+
+  test("JWT_JWKS_URL alongside oidc is a warning in development", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      baseConfig({
+        appEnv: "development",
+        authnMode: "oidc",
+        oidcIssuer: "https://idp.example.com",
+        oidcAudience: "aiperator",
+        jwtSecret: undefined,
+        jwtJwksUrl: "https://idp.example.com/.well-known/jwks.json",
+        jwtIssuer: "https://idp.example.com",
+        jwtAudience: "aiperator",
+      }),
+    );
+    expect(fatal.some((f) => f.includes("ignores JWT_SECRET"))).toBe(false);
+    expect(warnings.some((w) => w.includes("ignores JWT_SECRET"))).toBe(true);
+  });
+
+  test("additional issuer without audience is fatal in oidc production", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({
+        inferenceExtraOidcIssuers: [{ issuer: "https://other.example.com" }],
+      }),
+    );
+    expect(
+      fatal.some((f) => f.includes("JWT_ADDITIONAL_ISSUERS[0] must configure audience")),
+    ).toBe(true);
+  });
+
+  test("additional issuer without audience is a warning in oidc development", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      baseConfig({
+        appEnv: "development",
+        authnMode: "oidc",
+        oidcIssuer: "https://idp.example.com",
+        oidcAudience: "aiperator",
+        jwtSecret: undefined,
+        inferenceExtraOidcIssuers: [{ issuer: "https://other.example.com" }],
+      }),
+    );
+    expect(
+      fatal.some((f) => f.includes("must configure audience")),
+    ).toBe(false);
+    expect(
+      warnings.some((w) => w.includes("must configure audience")),
+    ).toBe(true);
+  });
+
+  test("unbound JWT_JWKS_URL is fatal in production", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({ jwtJwksUrl: "https://idp.example.com/jwks.json" }),
+    );
+    expect(
+      fatal.some((f) => f.includes("must be bound to both JWT_ISSUER and JWT_AUDIENCE")),
+    ).toBe(true);
+  });
+
+  test("unbound JWT_JWKS_URL is a warning in development", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      baseConfig({
+        appEnv: "development",
+        jwtSecret: undefined,
+        jwtJwksUrl: "https://idp.example.com/jwks.json",
+      }),
+    );
+    expect(
+      fatal.some((f) => f.includes("must be bound to both JWT_ISSUER and JWT_AUDIENCE")),
+    ).toBe(false);
+    expect(
+      warnings.some((w) =>
+        w.includes("must be bound to both JWT_ISSUER and JWT_AUDIENCE"),
+      ),
+    ).toBe(true);
+  });
+
+  test("tenant-isolated production without RLS is fatal", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({
+        tenantRlsEnabled: undefined,
+        tenantRlsRequired: undefined,
+      }),
+    );
+    expect(
+      fatal.some((f) => f.includes("requires TENANT_RLS_ENABLED=true")),
+    ).toBe(true);
+  });
+
+  test("public /metrics is fatal in production", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({ metricsAuthRequired: false }),
+    );
+    expect(fatal.some((f) => f.includes("METRICS_AUTH is disabled"))).toBe(true);
+  });
+
+  test("public /metrics is a warning in development", () => {
+    const { fatal, warnings } = checkProductionReadiness(
+      baseConfig({ appEnv: "development", metricsAuthRequired: false }),
+    );
+    expect(fatal.some((f) => f.includes("METRICS_AUTH is disabled"))).toBe(false);
+    expect(warnings.some((w) => w.includes("METRICS_AUTH is disabled"))).toBe(
+      true,
+    );
+  });
+
+  test("monitoring auth without ticket secret is fatal in production", () => {
+    const { fatal } = checkProductionReadiness(
+      productionConfig({ monitoringTicketSecret: undefined }),
+    );
+    expect(
+      fatal.some((f) => f.includes("MONITORING_TICKET_SECRET is not set")),
+    ).toBe(true);
+  });
+
+  test("production database without RLS warns when not opted out", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        databaseUrl: "postgres://app@example.com/db",
+        tenantRlsEnabled: undefined,
+        tenantRlsRequired: undefined,
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("TENANT_RLS_ENABLED is not set")),
+    ).toBe(true);
+  });
+
+  test("explicit RLS opt-out silences the database warning", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        tenantIsolationEnabled: false,
+        databaseUrl: "postgres://app@example.com/db",
+        tenantRlsEnabled: undefined,
+        tenantRlsRequired: false,
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("TENANT_RLS_ENABLED is not set")),
+    ).toBe(false);
+  });
+
+  test("PLUGINS_DIR warns in production and development", () => {
+    const prod = checkProductionReadiness(
+      productionConfig({ pluginsDir: "./plugins" }),
+    );
+    expect(prod.warnings.some((w) => w.includes("PLUGINS_DIR is set"))).toBe(
+      true,
+    );
+    const dev = checkProductionReadiness(
+      baseConfig({ appEnv: "development", pluginsDir: "./plugins" }),
+    );
+    expect(dev.warnings.some((w) => w.includes("PLUGINS_DIR is set"))).toBe(
+      true,
+    );
+  });
+});
