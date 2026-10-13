@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
 import {
   BarChart,
   Bar,
@@ -114,6 +114,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
               <Tooltip formatter={(v) => formatCost(Number(v ?? 0), 5)} />
               <Bar dataKey="amount">
                 {costData.map((_, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: the index selects the repeating bar colour and is rebuilt atomically with the data
                   <Cell key={i} fill={barColors[i % barColors.length]} />
                 ))}
               </Bar>

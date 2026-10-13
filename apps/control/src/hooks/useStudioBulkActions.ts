@@ -60,7 +60,7 @@ export function useStudioBulkActions({
       }
       const newIds = clones.map((c) => c.id);
       setSelectedNodeIds(newIds);
-      setSelNode(newIds.length === 1 ? newIds[0]! : null);
+      setSelNode(newIds.length === 1 ? newIds[0] : null);
       return [...ns.map((n) => ({ ...n, selected: false })), ...clones];
     });
   }, []);
@@ -91,7 +91,7 @@ export function useStudioBulkActions({
       }
       const newIds = clones.map((c) => c.id);
       setSelectedNodeIds(newIds);
-      setSelNode(newIds.length === 1 ? newIds[0]! : null);
+      setSelNode(newIds.length === 1 ? newIds[0] : null);
       return [...ns.map((n) => ({ ...n, selected: false })), ...clones];
     });
   }, []);

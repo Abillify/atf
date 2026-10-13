@@ -88,7 +88,7 @@ describe("FlowCanvas connection validation", () => {
 
     expect(onInvalidConnection).not.toHaveBeenCalled();
     expect(onEdgesChange).toHaveBeenCalledTimes(1);
-    const next = onEdgesChange.mock.calls[0]![0] as RFEdge[];
+    const next = onEdgesChange.mock.calls[0][0] as RFEdge[];
     expect(next).toHaveLength(1);
     expect(next[0]).toMatchObject({ source: "a", target: "b" });
   });
@@ -101,7 +101,7 @@ describe("FlowCanvas connection validation", () => {
 
     expect(onEdgesChange).not.toHaveBeenCalled();
     expect(onInvalidConnection).toHaveBeenCalledTimes(1);
-    expect(onInvalidConnection.mock.calls[0]![0]).toMatch(/cannot connect to itself/);
+    expect(onInvalidConnection.mock.calls[0][0]).toMatch(/cannot connect to itself/);
   });
 
   test("rejects an edge into a parallel child", () => {
@@ -115,7 +115,7 @@ describe("FlowCanvas connection validation", () => {
     captured.onConnect?.({ source: "a", target: "c", sourceHandle: null, targetHandle: null });
 
     expect(onEdgesChange).not.toHaveBeenCalled();
-    expect(onInvalidConnection.mock.calls[0]![0]).toMatch(/runs inside the parallel node “p”/);
+    expect(onInvalidConnection.mock.calls[0][0]).toMatch(/runs inside the parallel node “p”/);
   });
 
   test("rejects a duplicate connection", () => {
@@ -125,7 +125,7 @@ describe("FlowCanvas connection validation", () => {
     captured.onConnect?.({ source: "a", target: "b", sourceHandle: null, targetHandle: null });
 
     expect(onEdgesChange).not.toHaveBeenCalled();
-    expect(onInvalidConnection.mock.calls[0]![0]).toMatch(/already connected/);
+    expect(onInvalidConnection.mock.calls[0][0]).toMatch(/already connected/);
   });
 
   test("isValidConnection agrees with the reject decision", () => {

@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function GraphLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading Live Graph"
       className="flex h-full overflow-hidden"

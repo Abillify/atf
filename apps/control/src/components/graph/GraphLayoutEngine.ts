@@ -192,9 +192,9 @@ export function computeChronologicalLayout(
   const untimed = nodes.filter((n) => n.start == null);
 
   if (timed.length === 0) {
-    nodes.forEach((n, i) =>
-      positions.set(n.id, { x: 0, y: laneY(i), width: NODE_W, barWidth: 0 }),
-    );
+    nodes.forEach((n, i) => {
+      positions.set(n.id, { x: 0, y: laneY(i), width: NODE_W, barWidth: 0 });
+    });
     return { positions, meta: null };
   }
 
@@ -224,7 +224,7 @@ export function computeChronologicalLayout(
       laneIdx = lanes.length;
       lanes.push({ rightX: -Infinity });
     }
-    lanes[laneIdx]!.rightX = x + width;
+    lanes[laneIdx].rightX = x + width;
     positions.set(n.id, { x, y: laneY(laneIdx), width, barWidth });
   }
 
@@ -233,14 +233,14 @@ export function computeChronologicalLayout(
     ...[...positions.values()].map((p) => p.x + p.width),
   );
   const untimedX = maxRight + 120;
-  untimed.forEach((n, i) =>
+  untimed.forEach((n, i) => {
     positions.set(n.id, {
       x: untimedX,
       y: laneY(i),
       width: NODE_W,
       barWidth: 0,
-    }),
-  );
+    });
+  });
 
   return { positions, meta: { t0, pxPerMs, spanMs } };
 }

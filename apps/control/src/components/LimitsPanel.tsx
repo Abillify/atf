@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useMemo, useState } from "react";
+import type React from "react";
+import { useMemo, useState } from "react";
 import {
   LineChart,
   Line,
@@ -154,7 +155,7 @@ export function LimitsPanel({
             {/* Range presets */}
             <div className="flex overflow-hidden rounded border border-border">
               {(["24h", "7d", "30d", "custom"] as RangePreset[]).map((p) => (
-                <button
+                <button type="button"
                   key={p}
                   onClick={() => setPreset(p)}
                   className={`px-2 py-1 ${

@@ -2,11 +2,11 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, {
+import type React from "react";
+import {
   createContext,
   useCallback,
   useContext,
-  useId,
   useReducer,
   useEffect,
   useRef,
@@ -119,7 +119,7 @@ function ToastEntry({
     >
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm font-semibold">{title}</p>
-        <button
+        <button type="button"
           aria-label="Dismiss notification"
           onClick={() => removeToast(id)}
           className={[
@@ -159,14 +159,13 @@ function ToastViewport({
   removeToast,
 }: ToastViewportProps): React.JSX.Element {
   return (
-    <div
-      role="region"
+    <section
       aria-label="Notifications"
       className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2 sm:bottom-6 sm:right-6"
     >
       {toasts.map((t) => (
         <ToastEntry key={t.id} toast={t} removeToast={removeToast} />
       ))}
-    </div>
+    </section>
   );
 }

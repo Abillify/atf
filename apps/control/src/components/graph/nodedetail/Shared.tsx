@@ -13,7 +13,7 @@ import React, { useState } from "react";
 /** Chevron icon for collapsible sections */
 export function ChevronIcon({ open }: { open: boolean }) {
   return (
-    <svg
+    <svg aria-hidden="true" focusable="false"
       viewBox="0 0 20 20"
       fill="currentColor"
       className={`h-3 w-3 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`}
@@ -42,7 +42,7 @@ export function AccordionSection({
   const [open, setOpen] = useState(defaultOpen);
   return (
     <section className="border border-border rounded-lg overflow-hidden">
-      <button
+      <button type="button"
         onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between px-3 py-2 bg-muted hover:bg-muted text-left"
       >
@@ -70,6 +70,7 @@ export function KvGrid({ data }: { data: Array<[string, React.ReactNode]> }) {
   return (
     <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
       {data.map(([k, v], i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: keys may repeat in a key/value grid; the grid is replaced atomically with the node detail
         <React.Fragment key={`${k}-${i}`}>
           <span className="text-muted-foreground font-mono whitespace-nowrap">
             {k}
@@ -124,7 +125,7 @@ export function JsonTree({
     }
     return (
       <div className="ml-2">
-        <button
+        <button type="button"
           onClick={() => setExpanded((v) => !v)}
           className="text-muted-foreground hover:text-foreground"
         >
@@ -133,6 +134,7 @@ export function JsonTree({
         {expanded && (
           <div className="ml-3 border-l border-border pl-2 space-y-0.5">
             {data.map((item, i) => (
+              // biome-ignore lint/suspicious/noArrayIndexKey: array items have no identity; the index shown next to each entry is the key
               <div key={i} className="flex gap-1">
                 <span className="text-muted-foreground shrink-0">{i}:</span>
                 <JsonTree data={item} depth={depth + 1} maxDepth={maxDepth} />
@@ -152,7 +154,7 @@ export function JsonTree({
     }
     return (
       <div className="ml-2">
-        <button
+        <button type="button"
           onClick={() => setExpanded((v) => !v)}
           className="text-muted-foreground hover:text-foreground"
         >

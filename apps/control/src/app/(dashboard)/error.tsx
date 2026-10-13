@@ -13,7 +13,7 @@
  * provide more contextual recovery options.
  */
 
-import React, { useEffect } from "react";
+import { useEffect } from "react";
 
 import { Button } from "../../lib/ui";
 import { reportClientError } from "../../lib/telemetry";

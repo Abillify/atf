@@ -252,6 +252,7 @@ export function DossierPanel(): React.JSX.Element {
                   </TableHead>
                   <TableBody>
                     {dossier.rtbfEvidence.operations.slice(0, 20).map((op, i) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: operations have no unique id; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                       <TableRow key={`${op.at}-${i}`}>
                         <TableCell className="text-muted-foreground whitespace-nowrap">
                           {formatDateTime(op.at)}

@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function PiiVaultLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading PII vault status"
       className="flex flex-col gap-3 p-6 max-w-2xl"

@@ -246,6 +246,7 @@ export function StudioToolbar({
 
       {/* Undo/redo: a bordered button group with icon + label so it reads
         as controls, not as decoration. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: toolbar of toggle buttons, not a form control — <fieldset> would be wrong here */}
       <div
         className="flex items-center overflow-hidden rounded-md border border-border bg-card shadow-sm"
         role="group"

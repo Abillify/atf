@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function FlowsLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading flows"
       className="flex h-full overflow-hidden p-6"

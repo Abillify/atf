@@ -189,6 +189,7 @@ function DiffRow({
 /** Detail list for a changed entity, or nothing (an older runtime sends none). */
 function detailsOf(details: ValueChange[] | undefined): React.ReactNode {
   if (!details || details.length === 0) return undefined;
+  // biome-ignore lint/suspicious/noArrayIndexKey: the same path can change several times per entity; details are replaced atomically with the diff
   return details.map((c, i) => <ValueDetail key={`${c.path}-${i}`} change={c} />);
 }
 
@@ -198,7 +199,7 @@ function detailProps(details: ValueChange[] | undefined): { detail?: string } {
 }
 
 /** Full definition of an added/removed entity, or nothing when not sent. */
-function valueOf(value: unknown, kind: "added" | "removed"): React.ReactNode {
+function entityValue(value: unknown, kind: "added" | "removed"): React.ReactNode {
   return value === undefined ? undefined : <ValueBlock value={value} kind={kind} />;
 }
 
@@ -303,7 +304,7 @@ export function FlowDiffPanel({
         <span>
           {fromLabel} → {toLabel}
         </span>
-        <button
+        <button type="button"
           onClick={() => void diffQuery.refetch()}
           className="ml-auto text-accent hover:text-accent/80"
           title="Refresh diff"
@@ -346,12 +347,12 @@ export function FlowDiffPanel({
           {/* Node changes */}
           {diff.nodes.added.map((id) => (
             <DiffRow key={`na-${id}`} kind="added" label={`node: ${id}`}>
-              {valueOf(diff.values?.nodes.added[id], "added")}
+              {entityValue(diff.values?.nodes.added[id], "added")}
             </DiffRow>
           ))}
           {diff.nodes.removed.map((id) => (
             <DiffRow key={`nr-${id}`} kind="removed" label={`node: ${id}`}>
-              {valueOf(diff.values?.nodes.removed[id], "removed")}
+              {entityValue(diff.values?.nodes.removed[id], "removed")}
             </DiffRow>
           ))}
           {diff.nodes.changed.map((nc) => (
@@ -368,12 +369,12 @@ export function FlowDiffPanel({
           {/* Edge changes */}
           {diff.edges.added.map((key) => (
             <DiffRow key={`ea-${key}`} kind="added" label={`edge: ${key}`}>
-              {valueOf(diff.values?.edges.added[key], "added")}
+              {entityValue(diff.values?.edges.added[key], "added")}
             </DiffRow>
           ))}
           {diff.edges.removed.map((key) => (
             <DiffRow key={`er-${key}`} kind="removed" label={`edge: ${key}`}>
-              {valueOf(diff.values?.edges.removed[key], "removed")}
+              {entityValue(diff.values?.edges.removed[key], "removed")}
             </DiffRow>
           ))}
           {diff.edges.changed.map((ec) => (

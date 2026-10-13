@@ -150,7 +150,7 @@ describe("FlowCopilotPanel — selection", () => {
     fireEvent.click(screen.getByText("Ask"));
   };
   const sentBody = () =>
-    JSON.parse(String(((global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0]![1] as RequestInit).body));
+    JSON.parse(String(((global.fetch as unknown as { mock: { calls: unknown[][] } }).mock.calls[0][1] as RequestInit).body));
 
   test("shows and sends the selection", async () => {
     mockFetchOnce({ ok: false, message: "No change" }, false);

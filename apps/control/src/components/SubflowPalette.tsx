@@ -251,7 +251,9 @@ export function SubflowPalette({
             <input
               aria-label="New sub-flow name"
               value={name}
-              autoFocus
+              // Focus on mount (the field only exists while creating): replaces
+              // autoFocus, which Biome flags (WCAG 3.2.2).
+              ref={(el) => el?.focus()}
               onChange={(e) => {
                 setName(e.target.value);
                 setError(null);

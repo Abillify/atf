@@ -73,7 +73,7 @@ describe("RequireRole", () => {
     it("renders children when user has sufficient role", () => {
       mockRole = "operator";
       render(
-        <RequireRole role="operator">
+        <RequireRole minRole="operator">
           <span>Secret Button</span>
         </RequireRole>,
       );
@@ -83,7 +83,7 @@ describe("RequireRole", () => {
     it("renders nothing when user has insufficient role", () => {
       mockRole = "viewer";
       const { container } = render(
-        <RequireRole role="operator">
+        <RequireRole minRole="operator">
           <span>Secret Button</span>
         </RequireRole>,
       );
@@ -94,7 +94,7 @@ describe("RequireRole", () => {
     it("renders fallback when user has insufficient role and fallback is provided", () => {
       mockRole = "viewer";
       render(
-        <RequireRole role="operator" fallback={<span>No access</span>}>
+        <RequireRole minRole="operator" fallback={<span>No access</span>}>
           <span>Secret Button</span>
         </RequireRole>,
       );
@@ -105,7 +105,7 @@ describe("RequireRole", () => {
     it("renders children when user role exceeds required (admin > operator)", () => {
       mockRole = "admin";
       render(
-        <RequireRole role="operator">
+        <RequireRole minRole="operator">
           <span>Admin Sees This</span>
         </RequireRole>,
       );
@@ -117,8 +117,8 @@ describe("RequireRole", () => {
     it("renders children in disabled container when role is insufficient", () => {
       mockRole = "viewer";
       render(
-        <RequireRole role="operator" mode="disable">
-          <button>Delete</button>
+        <RequireRole minRole="operator" mode="disable">
+          <button type="button">Delete</button>
         </RequireRole>,
       );
       const wrapper = screen.getByTestId("require-role-disabled");
@@ -135,8 +135,8 @@ describe("RequireRole", () => {
     it("renders children normally (no wrapper) when role is sufficient", () => {
       mockRole = "operator";
       render(
-        <RequireRole role="operator" mode="disable">
-          <button>Delete</button>
+        <RequireRole minRole="operator" mode="disable">
+          <button type="button">Delete</button>
         </RequireRole>,
       );
       expect(
@@ -150,7 +150,7 @@ describe("RequireRole", () => {
     it("hides children when role is undefined", () => {
       mockRole = undefined;
       const { container } = render(
-        <RequireRole role="viewer">
+        <RequireRole minRole="viewer">
           <span>Content</span>
         </RequireRole>,
       );
@@ -161,7 +161,7 @@ describe("RequireRole", () => {
     it("disables children when role is undefined and mode=disable", () => {
       mockRole = undefined;
       render(
-        <RequireRole role="viewer" mode="disable">
+        <RequireRole minRole="viewer" mode="disable">
           <span>Content</span>
         </RequireRole>,
       );

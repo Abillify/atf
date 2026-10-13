@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useId, useRef } from "react";
+import type React from "react";
+import { useId, useRef } from "react";
 import { useModalBehavior, usePresence } from "./useModalBehavior";
 
 export interface DialogProps {
@@ -40,6 +41,8 @@ export function Dialog({
 
   return (
     /* Backdrop */
+    /* biome-ignore lint/a11y/useKeyWithClickEvents: click-outside-to-close on the backdrop; Escape is handled by useModalBehavior and focus is trapped in the panel */
+    /* biome-ignore lint/a11y/noStaticElementInteractions: transparent backdrop surface, not a control — the dialog panel itself carries the interactive semantics */
     <div
       className={[
         "fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4",
@@ -79,7 +82,7 @@ export function Dialog({
               </p>
             )}
           </div>
-          <button
+          <button type="button"
             aria-label="Close dialog"
             onClick={onClose}
             className={[

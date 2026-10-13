@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { Badge, Button } from "../lib/ui";
 import { FlowPicker } from "./FlowPicker";
 import type {
@@ -134,6 +135,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
       {/* Sub-navigation — a segmented control. Content is rendered below by
           `section` state (not as ARIA tab panels), so plain buttons with
           `aria-current` are used rather than the tab/panel primitive. */}
+      {/* biome-ignore lint/a11y/useSemanticElements: group of navigation buttons — <fieldset> is for form controls and would be wrong here */}
       <div
         role="group"
         aria-label="Security sections"
@@ -256,7 +258,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
             ) : (
               <div className="space-y-2">
                 {runs.map((run) => (
-                  <button
+                  <button type="button"
                     key={run.id}
                     onClick={() =>
                       void onViewRun(run.id).then((r) => setExpandedRun(r))

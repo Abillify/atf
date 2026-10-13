@@ -31,7 +31,6 @@ import { useMonitoringEvents } from "../../../hooks/useMonitoringEvents";
 import { useHistory } from "../../../hooks/useHistory";
 import { useHistoryFacets } from "../../../hooks/useHistoryFacets";
 import { useApprovals } from "../../../hooks/useApprovals";
-import { useSessionRenew } from "../../../hooks/useSessionRenew";
 import { useFlows } from "../../../hooks/useFlows";
 import { useExecutionScoping } from "../../../hooks/useExecutionScoping";
 import { useFlowTopology } from "../../../hooks/useFlowTopology";
@@ -271,7 +270,7 @@ export default function GraphPage() {
       <aside className="flex max-h-[70vh] w-full shrink-0 flex-col overflow-hidden border-t border-border bg-muted lg:h-full lg:max-h-none lg:w-[540px] lg:border-l lg:border-t-0">
         {/* Tab bar */}
         <div className="flex shrink-0 border-b border-border">
-          <button
+          <button type="button"
             onClick={() => setSidebarTab("details")}
             className={`flex-1 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
               sidebarTab === "details"
@@ -281,7 +280,7 @@ export default function GraphPage() {
           >
             Details
           </button>
-          <button
+          <button type="button"
             onClick={() => setSidebarTab("metrics")}
             className={`flex-1 px-4 py-2.5 text-xs font-semibold uppercase tracking-wide transition-colors ${
               sidebarTab === "metrics"

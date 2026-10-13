@@ -11,7 +11,7 @@
  *   - Right sidebar: an accordion with one section expanded at a time —
  *     Nodes (the palette), Optimize, Diff, Autopilot and Documentation
  *
- * Write/mutation controls are gated with <RequireRole role="operator"> (Req. 21.1).
+ * Write/mutation controls are gated with <RequireRole minRole="operator"> (Req. 21.1).
  *
  * Heavy components are lazy-loaded (code-splitting, Req. 12.3).
  */
@@ -22,7 +22,7 @@ import { OptimizePanel } from "../../../components/OptimizePanel";
 import type { FlowDefinition } from "../../../types/flow";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { RequireRole } from "../../../lib/auth/RequireRole";
-import { Button, useConfirm } from "../../../lib/ui";
+import { useConfirm } from "../../../lib/ui";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import type { FlowListEntry } from "../../../types/flow";
 import type { PlaygroundResult } from "../../../lib/studio-run";
@@ -608,7 +608,7 @@ export default function StudioPage() {
             {/* Builder canvas — write controls gated by operator role (Req. 21.1) */}
             <div className="flex-1 min-h-0">
               <RequireRole
-                role="operator"
+                minRole="operator"
                 mode="disable"
                 fallback={
                   <div className="flex h-64 items-center justify-center rounded border border-dashed border-border text-xs text-muted-foreground">

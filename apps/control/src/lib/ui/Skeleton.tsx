@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
 
 export interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Explicit width (e.g. "w-32") — defaults to w-full */
@@ -50,6 +50,7 @@ export function SkeletonBlock({
   return (
     <div className={["flex flex-col gap-2", className].join(" ")}>
       {Array.from({ length: lines }).map((_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: decorative placeholder lines have no identity; the block is replaced when data arrives
         <Skeleton key={i} width={i === lines - 1 ? "w-3/4" : "w-full"} />
       ))}
     </div>

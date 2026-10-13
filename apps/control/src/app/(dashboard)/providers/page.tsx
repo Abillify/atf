@@ -13,7 +13,8 @@
  * which now redirects here).
  */
 
-import React, { useEffect, useState } from "react";
+import type React from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { KeyRound } from "lucide-react";
 import { useAuth } from "../../../lib/auth/useAuth";

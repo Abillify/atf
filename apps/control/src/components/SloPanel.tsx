@@ -120,7 +120,7 @@ export function SloPanel(): React.JSX.Element {
         </div>
       )}
 
-      {data && data.enabled && (
+      {data?.enabled && (
         <div className="flex flex-col gap-2">
           {data.slos.map((e) => {
             const b = statusBadge(e);

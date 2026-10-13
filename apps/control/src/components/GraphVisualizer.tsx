@@ -17,7 +17,7 @@
  * Requirements: 11.1, 11.2
  */
 
-import React, { useMemo, useState, useCallback, useEffect } from "react";
+import { useMemo, useState, useCallback, useEffect } from "react";
 import {
   ReactFlow,
   type Node,
@@ -42,7 +42,6 @@ import {
   computeDagreLayout,
   computeChronologicalLayout,
   NODE_W,
-  NODE_H,
   type LayoutTiming,
   type LayoutMeta,
 } from "./graph/GraphLayoutEngine";
@@ -272,7 +271,7 @@ function ViewToggle({
 }) {
   return (
     <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-0 rounded-full border border-border bg-card shadow-sm overflow-hidden text-xs font-medium">
-      <button
+      <button type="button"
         onClick={() => onChange("flow")}
         className={`px-3 py-1.5 transition-colors ${
           mode === "flow"
@@ -283,7 +282,7 @@ function ViewToggle({
       >
         ⬇ Flow
       </button>
-      <button
+      <button type="button"
         onClick={() => onChange("timeline")}
         className={`px-3 py-1.5 transition-colors ${
           mode === "timeline"
@@ -458,7 +457,7 @@ export function GraphVisualizer({
         if (nodeStates.get(id)?.kind === "tool") continue;
         const match = DYNAMIC_RAG_CHILD.exec(id);
         if (match === null) continue;
-        const parentId = match[1]!;
+        const parentId = match[1];
         if (!allNodeIds.includes(parentId)) continue;
         const key = `${parentId}->${id}`;
         if (existingEdgeKeys.has(key)) continue;
@@ -552,7 +551,7 @@ export function GraphVisualizer({
       for (const id of allNodeIds) {
         const m = ragChildParent.exec(id);
         if (m) {
-          const p = m[1]!;
+          const p = m[1];
           const arr = ragParents.get(p) ?? [];
           arr.push(id);
           ragParents.set(p, arr);
@@ -825,7 +824,7 @@ function buildExecutionEdges(
     );
   const edges: Array<{ source: string; target: string }> = [];
   for (let i = 0; i < ordered.length - 1; i++) {
-    edges.push({ source: ordered[i]!, target: ordered[i + 1]! });
+    edges.push({ source: ordered[i], target: ordered[i + 1] });
   }
   return edges;
 }
@@ -842,7 +841,7 @@ function buildExecutionOrder(
     .sort((a, b) => (a.sequence ?? 0) - (b.sequence ?? 0));
 
   for (let i = 0; i < completed.length - 1; i++) {
-    const key = `${completed[i]!.node_id}->${completed[i + 1]!.node_id}`;
+    const key = `${completed[i].node_id}->${completed[i + 1].node_id}`;
     if (!map.has(key)) map.set(key, i + 1);
   }
   return map;

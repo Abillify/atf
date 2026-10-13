@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useState, useRef, useEffect } from "react";
+import type React from "react";
+import { useState, useRef, useEffect } from "react";
 import { beginLogin, logout } from "../lib/oidc";
 import { Button } from "../lib/ui";
 
@@ -27,10 +28,17 @@ export function TokenSettings({
   const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState(token);
   const popoverRef = useRef<HTMLDivElement>(null);
+  const tokenInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setDraft(token);
   }, [token]);
+
+  // Focus the token field when the popover opens (replaces the deprecated
+  // autoFocus attribute; WCAG 3.2.2 — focus moves are triggered by user action).
+  useEffect(() => {
+    if (open) tokenInputRef.current?.focus();
+  }, [open]);
 
   // Close on outside click.
   useEffect(() => {
@@ -90,9 +98,9 @@ export function TokenSettings({
         <div className="absolute right-0 z-20 mt-2 w-80 rounded-lg border border-border bg-card p-3 shadow-lg">
           {oidcEnabled && (
             <div className="mb-3 border-b border-border pb-3">
-              <label className="block text-xs font-medium text-muted-foreground">
+              <span className="block text-xs font-medium text-muted-foreground">
                 Single sign-on
-              </label>
+              </span>
               <p className="mb-2 mt-0.5 text-[11px] leading-snug text-muted-foreground">
                 Authenticate with your identity provider (OIDC). The issued
                 token is verified against the provider&apos;s JWKS.
@@ -118,7 +126,7 @@ export function TokenSettings({
               )}
             </div>
           )}
-          <label className="block text-xs font-medium text-muted-foreground">
+          <label htmlFor="monitoring-token-input" className="block text-xs font-medium text-muted-foreground">
             {oidcEnabled ? "Or paste a token" : "Monitoring token"}
           </label>
           <p className="mb-2 mt-0.5 text-[11px] leading-snug text-muted-foreground">
@@ -128,6 +136,8 @@ export function TokenSettings({
             this browser only.
           </p>
           <input
+            id="monitoring-token-input"
+            ref={tokenInputRef}
             type="password"
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -136,7 +146,6 @@ export function TokenSettings({
             }}
             placeholder="eyJhbGc…"
             className="w-full rounded border border-border px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            autoFocus
           />
           <div className="mt-2 flex justify-end gap-2">
             <Button

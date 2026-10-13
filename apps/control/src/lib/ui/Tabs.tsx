@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, {
+import type React from "react";
+import {
   createContext,
   useCallback,
   useContext,
@@ -200,6 +201,7 @@ export function TabsContent({
       id={`${tabListId}-panel-${value}`}
       aria-labelledby={`${tabListId}-tab-${value}`}
       hidden={!isActive}
+      // biome-ignore lint/a11y/noNoninteractiveTabindex: the active tab panel is focusable per the ARIA tabs pattern so keyboard users land in the panel after activating a tab
       tabIndex={0}
       className={[
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",

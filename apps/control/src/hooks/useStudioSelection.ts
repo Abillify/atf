@@ -56,10 +56,10 @@ export function useStudioSelection({
         setSelectedSubflowPath(null);
       }
       if (nodeIds.length === 1) {
-        setSelNode(nodeIds[0]!);
+        setSelNode(nodeIds[0]);
         setSelEdge(null);
       } else if (edgeIds.length === 1 && nodeIds.length === 0) {
-        setSelEdge(edgeIds[0]!);
+        setSelEdge(edgeIds[0]);
         setSelNode(null);
       } else {
         setSelNode(null);

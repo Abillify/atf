@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must go
 const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f]/;
 
 /** Returns an internal application target or the supplied safe fallback. */
@@ -9,8 +10,7 @@ export function safeReturnTo(
   fallback = "/graph",
 ): string {
   if (
-    !candidate ||
-    !candidate.startsWith("/") ||
+    !candidate?.startsWith("/") ||
     candidate.startsWith("//") ||
     candidate.includes("\\") ||
     CONTROL_CHARACTERS.test(candidate)

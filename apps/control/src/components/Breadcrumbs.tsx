@@ -43,6 +43,7 @@ export function Breadcrumbs({
     <nav aria-label={t("chrome.breadcrumb")} className={className}>
       <ol className="flex items-center gap-1.5 text-sm">
         {crumbs.map((c, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the same label can appear twice in a path, so the position disambiguates; crumbs are rebuilt atomically
           <React.Fragment key={`${c.labelKey}-${i}`}>
             {i > 0 && (
               <li aria-hidden="true">

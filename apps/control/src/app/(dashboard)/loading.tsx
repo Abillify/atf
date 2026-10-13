@@ -17,6 +17,7 @@ import { Skeleton } from "../../lib/ui";
 export default function DashboardLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading content"
       className="flex h-full flex-col gap-4 p-6"

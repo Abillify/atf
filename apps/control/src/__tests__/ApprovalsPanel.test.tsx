@@ -85,7 +85,7 @@ describe("ApprovalsPanel", () => {
     });
     // Resolve the action — buttons re-enable.
     await act(async () => {
-      resolveOuter!();
+      resolveOuter();
       await pending;
     });
     await waitFor(() => {
@@ -141,7 +141,7 @@ describe("ApprovalsPanel", () => {
     expect(screen.getByText("db/delete_record")).toBeInTheDocument();
     // Click Approve on the second card
     const approveBtns = screen.getAllByText("Approve");
-    fireEvent.click(approveBtns[1]!);
+    fireEvent.click(approveBtns[1]);
     expect(onResolve).toHaveBeenCalledWith("ap-2", true, expect.anything());
   });
 });

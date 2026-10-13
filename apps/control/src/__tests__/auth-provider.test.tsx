@@ -3,7 +3,6 @@
 
 import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, act, waitFor } from "@testing-library/react";
-import React from "react";
 
 import {
   AuthProvider,

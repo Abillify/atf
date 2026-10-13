@@ -9,7 +9,7 @@
  * Uses the auth context to determine if the user meets the minimum required role.
  */
 
-import React from "react";
+import type React from "react";
 import { useAuth } from "./useAuth";
 import type { AuthRole } from "./types";
 
@@ -40,7 +40,7 @@ export function hasMinimumRole(
 
 export interface RequireRoleProps {
   /** Minimum required role to render children normally. */
-  role: AuthRole;
+  minRole: AuthRole;
   children: React.ReactNode;
   /** Shown when role is insufficient (default: nothing). */
   fallback?: React.ReactNode;
@@ -60,20 +60,20 @@ export interface RequireRoleProps {
  *
  * @example
  * ```tsx
- * <RequireRole role="operator">
+ * <RequireRole minRole="operator">
  *   <DeleteButton />
  * </RequireRole>
  * ```
  */
 export function RequireRole({
-  role,
+  minRole,
   children,
   fallback = null,
   mode = "hide",
 }: RequireRoleProps) {
   const { role: userRole } = useAuth();
 
-  const authorized = hasMinimumRole(userRole, role);
+  const authorized = hasMinimumRole(userRole, minRole);
 
   if (authorized) {
     return <>{children}</>;

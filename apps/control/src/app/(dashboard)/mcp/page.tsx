@@ -8,7 +8,6 @@
  * Lists registered MCP servers and their tool authorizations via GET /mcp/servers.
  */
 
-import React from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
@@ -99,8 +98,12 @@ export default function McpPage() {
           >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
               <div>
-                <span className="font-medium text-foreground">{server.name}</span>
-                <code className="ml-2 text-xs text-muted-foreground">{server.url}</code>
+                <span className="font-medium text-foreground">
+                  {server.name}
+                </span>
+                <code className="ml-2 text-xs text-muted-foreground">
+                  {server.url}
+                </code>
               </div>
               <Badge variant={STATUS_VARIANT[server.status]}>
                 {server.status}
@@ -111,7 +114,9 @@ export default function McpPage() {
                 Tools
               </p>
               {server.tools.length === 0 && (
-                <p className="text-sm text-muted-foreground">No tools registered.</p>
+                <p className="text-sm text-muted-foreground">
+                  No tools registered.
+                </p>
               )}
               <div className="space-y-1">
                 {server.tools.map((tool) => (
@@ -131,9 +136,6 @@ export default function McpPage() {
                     </div>
                     <span
                       className={`text-xs font-medium ${tool.authorized ? "text-success" : "text-danger"}`}
-                      aria-label={
-                        tool.authorized ? "Authorized" : "Not authorized"
-                      }
                     >
                       {tool.authorized ? "✓ authorized" : "✗ blocked"}
                     </span>

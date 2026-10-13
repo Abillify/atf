@@ -12,7 +12,8 @@
  * script (kept in sync via STORAGE_KEY) to avoid a flash.
  */
 
-import React, {
+import type React from "react";
+import {
   createContext,
   useCallback,
   useContext,

@@ -91,12 +91,13 @@ export default async function RootLayout({
       <head>
         <script
           nonce={nonce}
+          // biome-ignore lint/security/noDangerouslySetInnerHtml: server-provided, nonce-protected theme/density bootstrap (Req 9.7); the content is a fixed literal, covered by the CSP nonce
           dangerouslySetInnerHTML={{ __html: themeInitScript }}
         />
         {bff ? (
-          // biome-ignore lint/security/noDangerouslySetInnerHtml: server-provided, nonce-protected session-mode flag (Req 8.7); the content is a fixed literal, covered by the CSP nonce
           <script
             nonce={nonce}
+            // biome-ignore lint/security/noDangerouslySetInnerHtml: server-provided, nonce-protected session-mode flag (Req 8.7); the content is a fixed literal, covered by the CSP nonce
             dangerouslySetInnerHTML={{ __html: sessionModeFlagScript() }}
           />
         ) : null}

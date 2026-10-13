@@ -43,6 +43,7 @@ export function useHistoryFacets(
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the refresh trigger; the effect body intentionally does not read it
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;

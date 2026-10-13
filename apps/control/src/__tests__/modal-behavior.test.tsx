@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { describe, it, expect, vi, afterEach } from "vitest";
-import React, { useRef } from "react";
+import { useRef } from "react";
 import { render, screen, cleanup, fireEvent, waitFor } from "@testing-library/react";
 import { useModalBehavior, usePresence } from "../lib/ui/useModalBehavior";
 
@@ -20,7 +20,7 @@ function TrapHarness({
   if (!open) return null;
   return (
     <div ref={ref} data-testid="panel">
-      <button>Inside</button>
+      <button type="button">Inside</button>
     </div>
   );
 }

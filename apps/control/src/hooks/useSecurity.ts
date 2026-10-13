@@ -83,6 +83,7 @@ export function useSecurity(options?: UseSecurityOptions): UseSecurityResult {
   }, []);
 
   // Static data — fetched once (and on refresh): attacks, tool-authz, mcp.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the refresh trigger; the effect body intentionally does not read it
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
@@ -116,6 +117,7 @@ export function useSecurity(options?: UseSecurityOptions): UseSecurityResult {
   }, [enabled, nonce, getJson]);
 
   // Polled data — posture + runs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the refresh trigger; the effect body intentionally does not read it
   useEffect(() => {
     if (!enabled || !isVisible) return;
     let cancelled = false;

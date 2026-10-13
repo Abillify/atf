@@ -17,7 +17,8 @@
  * `window.confirm`), `prompt` with the text or `null` on cancel.
  */
 
-import React, {
+import type React from "react";
+import {
   createContext,
   useCallback,
   useContext,

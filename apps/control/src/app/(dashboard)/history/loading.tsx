@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function HistoryLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading execution history"
       className="flex flex-col gap-3 p-6"

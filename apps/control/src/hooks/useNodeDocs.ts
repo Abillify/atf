@@ -23,6 +23,7 @@ export function useNodeDocs(
 } {
   const [closedFor, setClosedFor] = useState<string | null>(null);
   const nodeId = inspect?.nodeId;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nodeId is the selection-change trigger; the effect body intentionally does not read it
   useEffect(() => {
     setClosedFor(null);
   }, [nodeId]);

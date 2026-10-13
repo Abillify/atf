@@ -51,9 +51,7 @@ test.describe("Compliance page", () => {
 });
 
 test.describe("DSAR self-service (API level)", () => {
-  test("GET /v1/me/data returns data summary with 401 when no token", async ({
-    request,
-  }) => {
+  test("GET /v1/me/data returns data summary with 401 when no token", async () => {
     // This test verifies the backend API shape without mocking.
     // Since we have no real backend in E2E, we just verify the route exists
     // in the frontend mock setup — actual backend coverage is via unit tests.

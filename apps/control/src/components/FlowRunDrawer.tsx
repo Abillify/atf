@@ -270,6 +270,7 @@ export function FlowRunDrawer({
 
   // Lock onto the execution this run started (see module doc), then keep the
   // reported live-state map fresh as further events for it arrive.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reportStates is a stable prop; the effect must re-run only on event data
   useEffect(() => {
     if (awaitingExecutionRef.current && activeExecutionIdRef.current === null) {
       let candidate: { id: string; start: number } | null = null;
@@ -455,6 +456,7 @@ export function FlowRunDrawer({
     setImages((prev) => prev.filter((i) => i.id !== id));
 
   const targetBtn = (t: RunTarget, label: string, title: string) => (
+    /* biome-ignore lint/a11y/useSemanticElements: segmented control rendered as buttons; <input type="radio"> cannot carry the button styling/labels used here */
     <button
       type="button"
       role="radio"

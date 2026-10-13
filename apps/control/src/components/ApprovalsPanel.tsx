@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { Inbox } from "lucide-react";
 import type { PendingApproval } from "../types/control";
 import { Badge, Button, EmptyState } from "../lib/ui";
@@ -11,11 +12,14 @@ export interface ApprovalsPanelProps {
   pending: PendingApproval[];
   isLoading?: boolean;
   error?: string | null;
+  // The panel awaits the call but never inspects the result, so the return
+  // type stays `void`: both `() => Promise<boolean>` (the hook) and plain
+  // void callbacks (tests) are assignable.
   onResolve: (
     id: string,
     approved: boolean,
     opts?: { reason?: string; by?: string },
-  ) => Promise<boolean> | void;
+  ) => void;
 }
 
 function age(iso: string): string {

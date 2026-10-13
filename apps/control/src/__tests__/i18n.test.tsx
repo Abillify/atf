@@ -21,6 +21,7 @@ afterEach(() => {
   cleanup();
   // Reset global state so tests stay independent.
   setActiveLocale("en");
+  // biome-ignore lint/suspicious/noDocumentCookie: test cleanup for the non-sensitive locale cookie
   document.cookie = `${LOCALE_COOKIE}=; path=/; max-age=0`;
   document.documentElement.lang = "";
 });

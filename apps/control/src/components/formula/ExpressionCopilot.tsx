@@ -175,9 +175,17 @@ export function ExpressionCopilot({
           title="Send the cursor / selection so “here” or “this part” refer to it"
           data-testid="expression-copilot-selection"
         >
-          <input type="checkbox" checked={useSelection} onChange={(e) => setUseSelection(e.target.checked)} />
+          <input
+            type="checkbox"
+            checked={useSelection}
+            onChange={(e) => setUseSelection(e.target.checked)}
+          />
           <span className="shrink-0">Refers to:</span>
-          <span className={`truncate ${useSelection ? "text-foreground" : "line-through"}`}>{selectionLabel}</span>
+          <span
+            className={`truncate ${useSelection ? "text-foreground" : "line-through"}`}
+          >
+            {selectionLabel}
+          </span>
         </label>
       )}
       {st.state === "error" && (
@@ -186,12 +194,19 @@ export function ExpressionCopilot({
         </p>
       )}
       {st.state === "proposal" && (
-        <div className="mt-2 space-y-1.5" aria-label="Copilot proposal">
+        // biome-ignore lint/a11y/useSemanticElements: labelled proposal container — <fieldset> is for form controls and would be wrong here
+        <div
+          className="mt-2 space-y-1.5"
+          aria-label="Copilot proposal"
+          role="group"
+        >
           <p className="text-[11px] text-foreground">{st.explanation}</p>
           {st.changed ? (
             <DiffView before={base.current} after={st.expression} />
           ) : (
-            <p className="text-[11px] italic text-muted-foreground">No change proposed.</p>
+            <p className="text-[11px] italic text-muted-foreground">
+              No change proposed.
+            </p>
           )}
           <div className="flex justify-end gap-2">
             <button
@@ -217,7 +232,8 @@ export function ExpressionCopilot({
           </div>
           {current !== base.current && (
             <p className="text-[10px] text-warning">
-              The field changed since you asked — Accept replaces it with the proposal.
+              The field changed since you asked — Accept replaces it with the
+              proposal.
             </p>
           )}
         </div>

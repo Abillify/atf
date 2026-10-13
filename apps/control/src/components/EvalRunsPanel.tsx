@@ -336,6 +336,7 @@ function RunRow({ run, expanded, onToggle }: {
                   <div className="font-mono text-muted-foreground">{evalCase.id} ({evalCase.flow})</div>
                   {evalCase.error && <div className="text-danger">error: {evalCase.error}</div>}
                   {evalCase.assertions.filter((assertion) => !assertion.passed).map((assertion, index) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: assertion texts are not unique; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                     <div key={index} className="text-danger">✗ {assertion.assertion.type}: {assertion.detail ?? "failed"}</div>
                   ))}
                 </div>

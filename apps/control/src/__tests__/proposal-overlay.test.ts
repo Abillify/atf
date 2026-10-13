@@ -36,12 +36,12 @@ describe("buildProposalOverlay", () => {
   test("draws added nodes/edges as ghosts and badges removals in place", () => {
     const { nodes, edges } = flowToGraph(current);
     // the operator moved llm-1 somewhere far away
-    nodes[0]!.position = { x: 5000, y: 3000 };
+    nodes[0].position = { x: 5000, y: 3000 };
     const overlay = buildProposalOverlay(nodes, edges, proposed, diff);
 
     expect(overlay.ghostNodes.map((n) => [n.id, n.ghostKind])).toEqual([["retrieval-1", "added"]]);
     // placed relative to the real llm-1, i.e. above it (it feeds into it)
-    const ghost = overlay.ghostNodes[0]!;
+    const ghost = overlay.ghostNodes[0];
     expect(ghost.position.y).toBeLessThan(3000);
     expect(Math.abs(ghost.position.x - 5000)).toBeLessThan(400);
 
@@ -50,6 +50,6 @@ describe("buildProposalOverlay", () => {
     ]);
     expect(overlay.nodeDiff.get("old")).toEqual({ status: "removed" });
     expect(overlay.nodeDiff.get("llm-1")).toEqual({ status: "changed", changedFields: ["label"] });
-    expect(overlay.edgeDiff.get(edges[0]!.id)).toEqual({ status: "removed" });
+    expect(overlay.edgeDiff.get(edges[0].id)).toEqual({ status: "removed" });
   });
 });

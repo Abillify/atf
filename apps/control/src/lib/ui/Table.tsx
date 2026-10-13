@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
 
 export interface TableProps
   extends React.TableHTMLAttributes<HTMLTableElement> {
@@ -21,6 +21,7 @@ export function Table({
     // when the table overflows (WCAG 2.1.1 — scrollable-region-focusable). No
     // role is set: a nameless role="group" only adds SR noise; the table's own
     // semantics (and optional caption) carry the meaning.
+    // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable region must stay keyboard-reachable (WCAG 2.1.1 scrollable-region-focusable)
     <div className="w-full overflow-x-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring" tabIndex={0}>
       <table
         className={["w-full caption-bottom text-sm", className].join(" ")}

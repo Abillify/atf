@@ -101,6 +101,7 @@ export function FlowCopilotPanel({
     { proposed: FlowDefinition; explanation: string; summary: string } | null
   >(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: prefill.nonce is the new-prefill trigger; instruction is read at trigger time
   useEffect(() => {
     if (!prefill) return;
     setInstruction(prefill.instruction);
@@ -189,7 +190,7 @@ export function FlowCopilotPanel({
   return (
     <div className="flex flex-col gap-2 rounded-lg border border-copilot-border bg-copilot-soft p-2.5">
       <div className="flex items-center gap-2">
-        <button
+        <button type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
           aria-label={expanded ? "Collapse copilot" : "Expand copilot"}
@@ -242,6 +243,7 @@ export function FlowCopilotPanel({
           {validationDetail && (
             <ul className="mt-1 space-y-0.5 pl-3 list-disc">
               {validationDetail.errors.map((issue, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: validation issues have no unique id; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                 <li key={i}>
                   {issue.path}: {issue.message}
                 </li>

@@ -49,7 +49,7 @@ describe("FlowCanvas selection-change render loop (regression)", () => {
       const onSelectionChange = useCallback(
         (nodeIds: string[]): void => {
           setSelectedNodeIds(nodeIds);
-          setSelNode(nodeIds.length === 1 ? nodeIds[0]! : null);
+          setSelNode(nodeIds.length === 1 ? nodeIds[0] : null);
         },
         [],
       );

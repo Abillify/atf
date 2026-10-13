@@ -21,9 +21,9 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
   // Tokenize on the supported inline constructs.
   const re = /(\*\*([^*]+)\*\*|\*([^*]+)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let last = 0;
-  let m: RegExpExecArray | null;
   let i = 0;
-  while ((m = re.exec(text)) !== null) {
+  let m: RegExpExecArray | null = re.exec(text);
+  while (m !== null) {
     if (m.index > last) nodes.push(text.slice(last, m.index));
     const key = `${keyPrefix}-${i++}`;
     if (m[2] !== undefined) {
@@ -56,6 +56,7 @@ function renderInline(text: string, keyPrefix: string): React.ReactNode[] {
       }
     }
     last = m.index + m[0].length;
+    m = re.exec(text);
   }
   if (last < text.length) nodes.push(text.slice(last));
   return nodes;
@@ -72,14 +73,14 @@ export function MarkdownView({ text }: { text: string }) {
   let i = 0;
   let key = 0;
   while (i < lines.length) {
-    const line = lines[i]!;
+    const line = lines[i];
 
     // Fenced code block
     if (line.trim().startsWith("```")) {
       const codeLines: string[] = [];
       i++;
-      while (i < lines.length && !lines[i]!.trim().startsWith("```")) {
-        codeLines.push(lines[i]!);
+      while (i < lines.length && !lines[i].trim().startsWith("```")) {
+        codeLines.push(lines[i]);
         i++;
       }
       i++; // skip closing fence
@@ -94,13 +95,13 @@ export function MarkdownView({ text }: { text: string }) {
     // Heading
     const heading = /^(#{1,6})\s+(.*)$/.exec(line);
     if (heading) {
-      const level = heading[1]!.length;
+      const level = heading[1].length;
       blocks.push(
         <div
           key={key++}
           className={`font-semibold ${level <= 2 ? "text-sm" : "text-xs"} mt-2 mb-0.5 text-foreground`}
         >
-          {renderInline(heading[2]!, `h${key}`)}
+          {renderInline(heading[2], `h${key}`)}
         </div>,
       );
       i++;
@@ -110,8 +111,8 @@ export function MarkdownView({ text }: { text: string }) {
     // List (bullet or numbered) — consume consecutive items
     if (/^\s*([-*]|\d+\.)\s+/.test(line)) {
       const items: React.ReactNode[] = [];
-      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i]!)) {
-        const content = lines[i]!.replace(/^\s*([-*]|\d+\.)\s+/, "");
+      while (i < lines.length && /^\s*([-*]|\d+\.)\s+/.test(lines[i])) {
+        const content = lines[i].replace(/^\s*([-*]|\d+\.)\s+/, "");
         items.push(<li key={key++}>{renderInline(content, `li${key}`)}</li>);
         i++;
       }

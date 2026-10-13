@@ -30,7 +30,7 @@ import {
   TableCell,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
-import { formatDateTime } from "../lib/i18n";
+import { formatDateTime, translate } from "../lib/i18n";
 
 export interface PersistedHistoryProps {
   executions: PersistedExecution[];
@@ -600,8 +600,8 @@ export function PersistedHistory({
                 type="button"
                 onClick={() => setFilterOpen((open) => !open)}
                 aria-expanded={filterOpen}
-                aria-label="Filter: Flows und User"
-                title="Filter: Flows und User"
+                aria-label={translate("executions.filterButton")}
+                title={translate("executions.filterButton")}
                 className={`relative flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
                   filterOpen || activeFilterCount > 0
                     ? "border-accent bg-accent/10 text-accent"
@@ -619,7 +619,7 @@ export function PersistedHistory({
                 <div className="absolute right-0 z-30 mt-1 flex w-64 flex-col gap-2 rounded-md border border-border bg-card p-2 shadow-lg">
                   {onIncludeFlowsChange && (
                     <FlowMultiSelect
-                      label="Flows einschließen"
+                      label={translate("executions.includeFlows")}
                       options={flowOptions ?? []}
                       {...(flowNames !== undefined ? { names: flowNames } : {})}
                       value={includeFlows}
@@ -628,7 +628,7 @@ export function PersistedHistory({
                   )}
                   {onExcludeFlowsChange && (
                     <FlowMultiSelect
-                      label="Flows ausschließen"
+                      label={translate("executions.excludeFlows")}
                       options={flowOptions ?? []}
                       {...(flowNames !== undefined ? { names: flowNames } : {})}
                       value={excludeFlows}

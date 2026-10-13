@@ -117,6 +117,7 @@ export function LlmNodeDetail({ state }: { state: NodeState }) {
               messages ? (
                 <div className="space-y-2 max-h-64 overflow-y-auto">
                   {messages.map((m, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the message position in the prompt is its identity; the list is replaced atomically
                     <MessageBubble key={i} role={m.role} content={m.content} />
                   ))}
                 </div>
@@ -308,6 +309,7 @@ export function RouterNodeDetail({ state }: { state: NodeState }) {
                 </div>
                 {state.routing_decision.candidates.map((c, i) => (
                   <div
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the same target can appear in several rules; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                     key={`${c.target}-${i}`}
                     className={`rounded border px-2 py-1 text-xs ${
                       c.matched
@@ -374,6 +376,7 @@ export function ClassifierNodeDetail({ state }: { state: NodeState }) {
               messages ? (
                 <div className="space-y-2 max-h-48 overflow-y-auto">
                   {messages.map((m, i) => (
+                    // biome-ignore lint/suspicious/noArrayIndexKey: the message position in the prompt is its identity; the list is replaced atomically
                     <MessageBubble key={i} role={m.role} content={m.content} />
                   ))}
                 </div>

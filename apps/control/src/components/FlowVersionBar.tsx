@@ -97,6 +97,7 @@ export function FlowVersionBar({
 
   // Reset the selection when the flow changes (onDiffOverlayChange is a
   // parent callback and must not run in render-phase code, hence useEffect).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reset only when the flow or token changes; callback identity must not re-trigger
   useEffect(() => {
     setSelected(null);
     setConfirmingRollback(false);
@@ -169,7 +170,7 @@ export function FlowVersionBar({
   };
 
   const handleRollback = async (): Promise<void> => {
-    if (!selected || selected.kind !== "version") return;
+    if (selected?.kind !== "version") return;
     setStatus("Rolling back…");
     const result = await fetchJson<{ record: unknown }>(
       `/flows/${encodeURIComponent(flowId)}/rollback`,

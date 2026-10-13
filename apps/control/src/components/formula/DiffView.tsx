@@ -21,19 +21,30 @@ export function DiffView({
 }): React.JSX.Element {
   const parts = useMemo(() => diffText(before, after), [before, after]);
   return (
+    // biome-ignore lint/a11y/useSemanticElements: labelled diff block; <pre> is the semantically correct container for preformatted diff output
     <pre
       aria-label={ariaLabel}
+      role="group"
       className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-background p-2 font-mono text-[11px] leading-relaxed"
     >
       {parts.map((p, i) =>
         p.type === "same" ? (
+          // biome-ignore lint/suspicious/noArrayIndexKey: diff segments carry no identity and are replaced atomically whenever the text changes
           <span key={i}>{p.text}</span>
         ) : p.type === "del" ? (
-          <del key={i} className="bg-danger-soft text-danger decoration-danger dark:bg-danger-soft dark:text-danger">
+          <del
+            // biome-ignore lint/suspicious/noArrayIndexKey: diff segments carry no identity and are replaced atomically whenever the text changes
+            key={i}
+            className="bg-danger-soft text-danger decoration-danger dark:bg-danger-soft dark:text-danger"
+          >
             {p.text}
           </del>
         ) : (
-          <ins key={i} className="bg-success-soft text-success no-underline dark:bg-success-soft dark:text-success">
+          <ins
+            // biome-ignore lint/suspicious/noArrayIndexKey: diff segments carry no identity and are replaced atomically whenever the text changes
+            key={i}
+            className="bg-success-soft text-success no-underline dark:bg-success-soft dark:text-success"
+          >
             {p.text}
           </ins>
         ),

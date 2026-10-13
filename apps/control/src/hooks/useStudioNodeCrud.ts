@@ -209,7 +209,7 @@ export function useStudioNodeCrud({
       setNodeOrigins((o) => {
         if (!(oldId in o)) return o;
         const { [oldId]: origin, ...rest } = o;
-        return { ...rest, [next]: origin! };
+        return { ...rest, [next]: origin };
       });
       // Keep the edge-origin bookkeeping of id-less sub-flow edges ("a->b").
       setBase((b) => {

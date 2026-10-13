@@ -56,7 +56,7 @@ export function FormattedOrRaw({
   return (
     <div>
       <div className="flex justify-end mb-1">
-        <button
+        <button type="button"
           onClick={() => setRaw((v) => !v)}
           className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:bg-muted"
         >

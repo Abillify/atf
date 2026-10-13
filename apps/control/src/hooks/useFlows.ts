@@ -84,6 +84,7 @@ export function useFlows(options?: UseFlowsOptions): UseFlowsResult {
     [base, token],
   );
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the refresh trigger; the effect body intentionally does not read it
   useEffect(() => {
     if (!enabled || !isVisible) return;
     let cancelled = false;

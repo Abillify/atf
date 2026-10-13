@@ -225,7 +225,7 @@ export default function ModelsPage() {
           return (
             <div key={m.id} className="rounded-lg border border-border bg-card shadow-sm">
               {/* Row */}
-              <button
+              <button type="button"
                 onClick={() => setExpanded(expanded === m.id ? null : m.id)}
                 className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted"
                 aria-expanded={expanded === m.id}
@@ -249,7 +249,7 @@ export default function ModelsPage() {
                   <span className="text-xs text-muted-foreground hidden sm:inline">
                     {m.owned_by}
                   </span>
-                  <svg
+                  <svg aria-hidden="true" focusable="false"
                     className={`h-4 w-4 text-muted-foreground transition-transform ${expanded === m.id ? "rotate-180" : ""}`}
                     fill="none" viewBox="0 0 24 24" stroke="currentColor"
                   >

@@ -29,6 +29,7 @@ export function StudioProblemsPanel({
     <div className="max-h-48 overflow-auto rounded border border-border bg-muted p-2 text-xs space-y-1">
       {validation?.errors.map((issue, i) => (
         <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: validation issues have no unique id; the list is rebuilt on every validation run
           key={`err-${i}`}
           className="flex items-center gap-2 text-danger"
         >
@@ -46,6 +47,7 @@ export function StudioProblemsPanel({
       ))}
       {otherWarnings.map((issue, i) => (
         <div
+          // biome-ignore lint/suspicious/noArrayIndexKey: warnings have no unique id; the list is rebuilt on every validation run
           key={`warn-${i}`}
           className="flex items-center gap-2 text-warning"
         >

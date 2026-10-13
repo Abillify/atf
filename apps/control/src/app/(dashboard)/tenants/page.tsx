@@ -150,8 +150,8 @@ function TenantForm({
           { label: "Daily budget ($)", value: budget, onChange: setBudget, placeholder: "e.g. 5.00" },
         ].map(({ label, value, onChange, placeholder }) => (
           <div key={label}>
-            <label className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
-            <input value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+            <label htmlFor={`tenant-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
+            <input id={`tenant-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
               className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           </div>
         ))}
@@ -511,7 +511,7 @@ function TenantList() {
         {filtered.map(t => (
           <div key={t.id} className="rounded-lg border border-border bg-card shadow-sm">
             {/* Row */}
-            <button
+            <button type="button"
               onClick={() => setExpanded(expanded === t.id ? null : t.id)}
               className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-muted"
               aria-expanded={expanded === t.id}
@@ -527,7 +527,7 @@ function TenantList() {
               <span className="text-xs text-muted-foreground hidden md:inline">
                 {formatDate(t.createdAt)}
               </span>
-              <svg className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ${expanded === t.id ? "rotate-180" : ""}`}
+              <svg aria-hidden="true" focusable="false" className={`h-4 w-4 text-muted-foreground transition-transform shrink-0 ${expanded === t.id ? "rotate-180" : ""}`}
                 fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
               </svg>
@@ -552,7 +552,7 @@ export default function TenantsPage() {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">Tenant Administration</h1>
-      <RequireRole role="admin" fallback={
+      <RequireRole minRole="admin" fallback={
         <div role="alert" className="rounded-lg border border-warning-border bg-warning-soft p-6 text-center text-sm text-warning">
           Administrator access required to view tenant management.
         </div>

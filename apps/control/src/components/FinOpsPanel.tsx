@@ -17,7 +17,8 @@
  * accounting killer feature.
  */
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";

@@ -390,8 +390,8 @@ function FlowCanvasInner({
     (sel: { nodes: Node[]; edges: Edge[] }) => {
       // Start/End are not flow nodes: reported on their own channel.
       const boundary =
-        sel.nodes.length === 1 && isBoundaryId(sel.nodes[0]!.id)
-          ? sel.nodes[0]!.id
+        sel.nodes.length === 1 && isBoundaryId(sel.nodes[0].id)
+          ? sel.nodes[0].id
           : null;
       onSelectBoundaryRef.current?.(
         boundary === null ? null : boundary === START_ID ? "start" : "end",
@@ -440,6 +440,7 @@ function FlowCanvasInner({
   });
 
   return (
+    /* biome-ignore lint/a11y/noStaticElementInteractions: HTML5 drag-and-drop drop zone for palette items — the drop target is positional, not a keyboard control; the canvas nodes themselves are interactive */
     <div
       style={{ height }}
       className="rounded-lg border border-border bg-card"

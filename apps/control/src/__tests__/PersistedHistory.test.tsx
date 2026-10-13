@@ -328,7 +328,7 @@ describe("PersistedHistory", () => {
     test("renders no filter button when no filter callbacks are wired", () => {
       render(<PersistedHistory executions={[exec("e1")]} />);
       expect(
-        screen.queryByRole("button", { name: /Filter: Flows und User/ }),
+        screen.queryByRole("button", { name: /Filter: flows and users/ }),
       ).toBeNull();
     });
 
@@ -344,15 +344,15 @@ describe("PersistedHistory", () => {
         />,
       );
       // Closed by default — the filter controls are hidden behind the icon.
-      expect(screen.queryByText("Flows einschließen")).toBeNull();
+      expect(screen.queryByText("Include flows")).toBeNull();
       const button = screen.getByRole("button", {
-        name: /Filter: Flows und User/,
+        name: /Filter: flows and users/,
       });
       expect(button).toHaveAttribute("aria-expanded", "false");
       fireEvent.click(button);
       expect(button).toHaveAttribute("aria-expanded", "true");
-      expect(screen.getByText("Flows einschließen")).toBeInTheDocument();
-      expect(screen.getByText("Flows ausschließen")).toBeInTheDocument();
+      expect(screen.getByText("Include flows")).toBeInTheDocument();
+      expect(screen.getByText("Exclude flows")).toBeInTheDocument();
       expect(
         screen.getByRole("button", { name: "Example User" }),
       ).toBeInTheDocument();
@@ -371,7 +371,7 @@ describe("PersistedHistory", () => {
         />,
       );
       const button = screen.getByRole("button", {
-        name: /Filter: Flows und User/,
+        name: /Filter: flows and users/,
       });
       // 2 flows + 1 user → badge "3".
       expect(button).toHaveTextContent("3");
@@ -387,7 +387,7 @@ describe("PersistedHistory", () => {
         />,
       );
       fireEvent.click(
-        screen.getByRole("button", { name: /Filter: Flows und User/ }),
+        screen.getByRole("button", { name: /Filter: flows and users/ }),
       );
       fireEvent.click(screen.getByRole("button", { name: "Second User" }));
       expect(onUserFilterChange).toHaveBeenCalledWith("Second User");
@@ -402,7 +402,7 @@ describe("PersistedHistory", () => {
         />,
       );
       fireEvent.click(
-        screen.getByRole("button", { name: /Filter: Flows und User/ }),
+        screen.getByRole("button", { name: /Filter: flows and users/ }),
       );
       fireEvent.change(screen.getByLabelText(/User suchen/), {
         target: { value: "second" },
@@ -424,7 +424,7 @@ describe("PersistedHistory", () => {
         />,
       );
       const button = screen.getByRole("button", {
-        name: /Filter: Flows und User/,
+        name: /Filter: flows and users/,
       });
       fireEvent.click(button);
       expect(

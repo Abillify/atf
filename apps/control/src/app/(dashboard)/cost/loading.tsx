@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function CostLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading cost data"
       className="flex flex-col gap-4 p-6"

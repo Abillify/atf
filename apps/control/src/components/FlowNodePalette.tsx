@@ -134,6 +134,7 @@ export function FlowNodePalette({
       <div className="flex h-full w-9 shrink-0 flex-col items-center gap-1 overflow-auto">
         {subflows && <SubflowPalette actions={subflows} collapsed />}
         {NODE_CATALOG.map((n) => (
+          /* biome-ignore lint/a11y/useSemanticElements: draggable palette item with block layout content; <button> cannot host the drag payload markup and would fight the HTML5 drag API */
           <div
             key={n.type}
             draggable
@@ -171,6 +172,7 @@ export function FlowNodePalette({
       <div className="flex-1 space-y-1.5 overflow-auto pr-0.5">
         {subflows && !query.trim() && <SubflowPalette actions={subflows} />}
         {filtered.map((n) => (
+          /* biome-ignore lint/a11y/useSemanticElements: draggable palette item with block layout content; <button> cannot host the drag payload markup and would fight the HTML5 drag API */
           <div
             key={n.type}
             draggable

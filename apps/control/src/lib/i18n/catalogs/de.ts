@@ -98,4 +98,10 @@ export const de: Catalog = {
   "common.delete": "Löschen",
   "common.tokens": "Tokens",
   "common.notFound": "—",
+  "executions.filterPlaceholder": "Requests filtern…",
+  "executions.filterLabel": "Requests nach Stichwort filtern (Request-ID, Prompt, Nutzer, Flow)",
+  "executions.clearKeyword": "Stichwort löschen",
+  "executions.filterButton": "Filter: Flows und User",
+  "executions.includeFlows": "Flows einschließen",
+  "executions.excludeFlows": "Flows ausschließen",
 };

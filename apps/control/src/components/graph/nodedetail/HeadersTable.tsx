@@ -58,6 +58,7 @@ export function HeadersTable({ text }: { text: string }) {
         </TableHead>
         <TableBody>
           {rows.map(([key, value], i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: header names can repeat (e.g. Set-Cookie); rows are replaced atomically with the request
             <TableRow key={`${key}-${i}`}>
               <TableCell className="whitespace-nowrap align-top font-mono text-accent">
                 {key}

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
 import { withCurrency } from "../lib/currency";
 import type {
   Severity,
@@ -310,6 +310,7 @@ export function TraceAnalysisPanel({
               </h4>
               <ul className="space-y-1.5">
                 {analysis.findings.map((f, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: findings have no unique id; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                   <FindingRow key={i} finding={f} />
                 ))}
               </ul>

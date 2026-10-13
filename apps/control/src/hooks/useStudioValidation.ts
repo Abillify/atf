@@ -113,7 +113,7 @@ export function useStudioValidation({
         others.push(w);
         continue;
       }
-      const tool = m[1]!;
+      const tool = m[1];
       const server = tool.includes("/")
         ? tool.slice(0, tool.indexOf("/"))
         : "(no server prefix)";

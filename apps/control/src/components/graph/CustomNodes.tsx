@@ -17,7 +17,7 @@ import {
 } from "@xyflow/react";
 import { Pin, Wrench } from "lucide-react";
 import { NodeCard } from "./NodeRenderer";
-import { nodeTypeHex, type NodeState } from "./graphUtils";
+import type { NodeState } from "./graphUtils";
 import { flowNodeToNodeState, mergeLiveState } from "../../lib/flow-graph";
 import type { DiffInfo } from "../../lib/flow-diff-view";
 import {

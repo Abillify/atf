@@ -121,8 +121,8 @@ describe("OptimizerPanel", () => {
     );
     fireEvent.click(screen.getByText("Run optimization"));
     expect(onRun).toHaveBeenCalledTimes(1);
-    expect(onRun.mock.calls[0]![0]).toBe("helpdesk");
-    expect(onRun.mock.calls[0]![1]).toMatchObject({
+    expect(onRun.mock.calls[0][0]).toBe("helpdesk");
+    expect(onRun.mock.calls[0][1]).toMatchObject({
       variantCount: 3,
       minSamples: 5,
       autoPromote: false,

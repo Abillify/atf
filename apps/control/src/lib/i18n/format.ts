@@ -21,11 +21,11 @@ export type DateTimeFormatOptions = Intl.DateTimeFormatOptions;
 export interface Formatters {
   /** BCP 47 tag of the underlying locale, e.g. `de-DE`. */
   readonly intlTag: string;
-  /** Dezimalzahl mit locale-gerechtem Trennzeichen, z. B. `1.234` / `1,234`. */
+  /** Decimal number with the locale's separators, e.g. `1.234` / `1,234`. */
   formatNumber: (value: number, options?: NumberFormatOptions) => string;
-  /** Datum + Uhrzeit (kurzes Datum, Zeit mit Sekunden). */
+  /** Date and time (short date, time with seconds). */
   formatDateTime: (value: string | number | Date, options?: DateTimeFormatOptions) => string;
-  /** Nur Datum (Kurzform). */
+  /** Date only (short form). */
   formatDate: (value: string | number | Date, options?: DateTimeFormatOptions) => string;
   /** Time only (with seconds). */
   formatTime: (value: string | number | Date, options?: DateTimeFormatOptions) => string;

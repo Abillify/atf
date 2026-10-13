@@ -95,10 +95,11 @@ function TestFirePanel({
         <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
       </div>
       <div>
-        <label className="block text-xs font-medium text-muted-foreground mb-1">
+        <label htmlFor="trigger-test-payload" className="block text-xs font-medium text-muted-foreground mb-1">
           Payload (JSON or plain text)
         </label>
         <textarea
+          id="trigger-test-payload"
           value={payload}
           onChange={(e) => setPayload(e.target.value)}
           rows={4}

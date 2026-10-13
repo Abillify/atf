@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, test, vi } from "vitest";
 import {
   blob,
-  ControlApiError,
+  type ControlApiError,
   json,
   request,
   streamSse,

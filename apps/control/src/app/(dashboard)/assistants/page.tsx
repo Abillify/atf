@@ -10,7 +10,7 @@
  * page is the operator counterpart and owns the `constraints` soul write class.
  */
 
-import React from "react";
+import type React from "react";
 import { AssistantsPanel } from "../../../components/AssistantsPanel";
 
 export default function AssistantsPage(): React.JSX.Element {

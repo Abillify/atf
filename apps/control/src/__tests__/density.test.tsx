@@ -14,8 +14,8 @@ function Probe() {
   return (
     <div>
       <span data-testid="d">{density}</span>
-      <button onClick={toggle}>toggle</button>
-      <button onClick={() => setDensity("compact")}>set-compact</button>
+      <button type="button" onClick={toggle}>toggle</button>
+      <button type="button" onClick={() => setDensity("compact")}>set-compact</button>
     </div>
   );
 }

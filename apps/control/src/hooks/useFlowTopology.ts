@@ -57,6 +57,7 @@ export function useFlowTopology({
   );
 
   // Load all flow definitions once the flow list is available.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: definitions load once per flow-list size; getFlow identity must not re-trigger
   useEffect(() => {
     if (flows.length === 0) return;
     let cancelled = false;

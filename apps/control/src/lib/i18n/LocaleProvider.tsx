@@ -32,6 +32,7 @@ import { de } from "./catalogs/de";
 import { en, type MessageKey } from "./catalogs/en";
 import {
   createFormatters,
+  getActiveLocale,
   setActiveLocale,
   type Formatters,
 } from "./format";
@@ -46,7 +47,7 @@ import {
 const CATALOGS: Record<Locale, Record<MessageKey, string>> = { en, de };
 
 export interface LocaleContextValue {
-  /** Aktive UI-Sprache. */
+  /** Active UI language. */
   locale: Locale;
   /** Sets the language, persists it in the cookie and updates `lang`. */
   setLocale: (locale: Locale) => void;
@@ -122,6 +123,16 @@ export function LocaleProvider({
       <Fragment key={locale}>{children}</Fragment>
     </LocaleContext.Provider>
   );
+}
+
+/**
+ * Translates a key in the active locale without the hook — the counterpart of
+ * the global formatting helpers in ./format for components that render
+ * outside a provider in tests. A language switch remounts the tree under the
+ * provider (see `key={locale}` above), so callers pick up the new language.
+ */
+export function translate(key: MessageKey): string {
+  return CATALOGS[getActiveLocale()][key] ?? en[key] ?? key;
 }
 
 /** Access to the language, `t()` and formatters. Throws without a provider. */

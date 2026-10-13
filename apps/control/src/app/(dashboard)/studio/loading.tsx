@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function StudioLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading studio"
       className="flex h-full gap-3 p-6"

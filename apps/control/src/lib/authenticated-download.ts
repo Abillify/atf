@@ -23,6 +23,7 @@ function filenameFromDisposition(
     candidate = fallback;
   }
 
+  // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must go
   const safe = candidate.trim().replace(/[\\/\u0000-\u001f\u007f]/g, "_");
   return safe || fallback;
 }

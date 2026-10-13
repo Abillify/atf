@@ -205,7 +205,7 @@ export default function MemoryPage() {
             className="rounded-lg border border-border bg-card p-4 shadow-sm"
           >
             <div className="mb-2 flex items-start justify-between">
-              <button
+              <button type="button"
                 className="text-left"
                 onClick={() =>
                   setExpanded(expanded === session.id ? null : session.id)

@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function LimitsLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading limits"
       className="flex flex-col gap-4 p-6"

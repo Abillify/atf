@@ -362,7 +362,7 @@ export function referencedPaths(text: string, kind: FormulaKind): string[] {
     if (!out.includes(p)) out.push(p);
   };
   if (kind !== "condition") {
-    for (const m of text.matchAll(/\{\{\s*([\w.\-[\]]+)\s*\}\}/g)) add(m[1]!);
+    for (const m of text.matchAll(/\{\{\s*([\w.\-[\]]+)\s*\}\}/g)) add(m[1]);
     return out;
   }
   // Strip string literals, then collect dotted identifiers.
@@ -371,7 +371,7 @@ export function referencedPaths(text: string, kind: FormulaKind): string[] {
     let path = m[0];
     if (KEYWORDS.has(path)) continue;
     const segs = path.split(".");
-    while (segs.length > 1 && METHODS.has(segs[segs.length - 1]!.replace(/\[\d+\]$/, ""))) segs.pop();
+    while (segs.length > 1 && METHODS.has(segs[segs.length - 1].replace(/\[\d+\]$/, ""))) segs.pop();
     path = segs.join(".");
     add(path);
   }
@@ -386,8 +386,8 @@ function splitPath(path: string): Array<string | number> {
       out.push(seg);
       continue;
     }
-    out.push(m[1]!);
-    for (const idx of m[2]!.matchAll(/\[(\d+)\]/g)) out.push(Number(idx[1]));
+    out.push(m[1]);
+    for (const idx of m[2].matchAll(/\[(\d+)\]/g)) out.push(Number(idx[1]));
   }
   return out;
 }

@@ -71,8 +71,8 @@ export function useModalBehavior({
         container.focus();
         return;
       }
-      const first = items[0]!;
-      const last = items[items.length - 1]!;
+      const first = items[0];
+      const last = items[items.length - 1];
       const active = document.activeElement;
       if (e.shiftKey) {
         if (active === first || !container.contains(active)) {

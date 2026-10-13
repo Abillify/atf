@@ -311,11 +311,17 @@ describe("expression builder: copilot", () => {
     const added = within(proposal).getByLabelText("Proposed change").querySelectorAll("ins");
     expect([...added].map((n) => n.textContent).join("")).toBe(" || classification.route == 'BETRIEB'");
 
-    const call = fetchMock.mock.calls.find(([u]) => String(u).includes("/flows/expressions/copilot"));
-    const body = JSON.parse(String((call?.[1] as RequestInit).body)) as {
+    const call = fetchMock.mock.calls.find(([u]) =>
+      String(u).includes("/flows/expressions/copilot"),
+    );
+    if (!call) throw new Error("copilot request was never sent");
+    const body = JSON.parse(String((call[1] as RequestInit).body)) as {
       kind: string;
       current: string;
-      vocabulary: Array<{ title: string; entries: Array<{ ref: string; unavailable?: string }> }>;
+      vocabulary: Array<{
+        title: string;
+        entries: Array<{ ref: string; unavailable?: string }>;
+      }>;
       variables: Record<string, unknown>;
     };
     expect(body.kind).toBe("condition");

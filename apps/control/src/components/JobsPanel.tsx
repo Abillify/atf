@@ -19,7 +19,8 @@
  * already survived a crash and was retried automatically.
  */
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";

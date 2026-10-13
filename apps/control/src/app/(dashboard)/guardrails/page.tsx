@@ -11,7 +11,6 @@
  * currently active.
  */
 
-import React from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
 
 /**
  * Route transition (UI-STYLE-GUIDE.md §11). A `template.tsx` re-mounts on every

@@ -6,9 +6,8 @@
  * Validates Requirements 8.3 and 8.5.
  */
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
 import { describe, test, expect, vi, beforeEach } from "vitest";
-import React, { useState } from "react";
+import { useState } from "react";
 
 import { Button } from "../lib/ui/Button";
 import { Card, CardHeader, CardTitle, CardContent } from "../lib/ui/Card";
@@ -399,7 +398,7 @@ describe("Dialog", () => {
     const onClose = vi.fn();
     render(
       <Dialog open onClose={onClose} title="Panel click test">
-        <button>Inner</button>
+        <button type="button">Inner</button>
       </Dialog>,
     );
     fireEvent.click(screen.getByRole("dialog"));
@@ -442,15 +441,17 @@ describe("Dialog", () => {
 // ---------------------------------------------------------------------------
 describe("Toast", () => {
   function TestToastTrigger() {
-    const { addToast, removeToast } = useToast();
+    const { addToast } = useToast();
     return (
       <>
         <button
+          type="button"
           onClick={() => addToast({ title: "Hello", description: "World" })}
         >
           Show toast
         </button>
         <button
+          type="button"
           onClick={() =>
             addToast({ title: "Error occurred", variant: "destructive" })
           }

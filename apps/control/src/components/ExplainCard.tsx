@@ -336,6 +336,7 @@ export function ExplainCard({
         <ol className="flex flex-col gap-2">
           {card.steps.map((step, i) => (
             <li
+              // biome-ignore lint/suspicious/noArrayIndexKey: a node can appear as several steps, so the position disambiguates; the card is replaced atomically
               key={`${step.nodeId}-${i}`}
               className="rounded-md border border-border bg-muted p-2 text-xs"
             >
@@ -393,6 +394,7 @@ export function ExplainCard({
                   {step.objectiveSolver.attempts.length > 0 && (
                     <ul className="mt-1 list-inside list-disc text-muted-foreground">
                       {step.objectiveSolver.attempts.map((a, i) => (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: the same candidate can be attempted twice; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                         <li key={`${a.candidate}-${i}`}>
                           <code>{a.candidate}</code>
                           {a.estimatedCostUsd !== undefined &&
@@ -452,6 +454,7 @@ export function ExplainCard({
           {card.groundedness.unsupported.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
               {card.groundedness.unsupported.slice(0, 5).map((u, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: sentences are not unique; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                 <li key={i}>
                   &ldquo;{u.sentence}&rdquo; (support {(u.support * 100).toFixed(0)}%)
                 </li>
@@ -505,6 +508,7 @@ export function ExplainCard({
       {card.degraded.length > 0 && (
         <div className="rounded-lg border border-warning-border bg-warning-soft p-3 text-xs text-warning">
           {card.degraded.map((d, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: degradation notices are plain strings without ids; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
             <p key={i}>⚠️ {d}</p>
           ))}
         </div>

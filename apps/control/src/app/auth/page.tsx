@@ -11,7 +11,8 @@
  * back to the originally requested page (or /graph).
  */
 
-import React, { Suspense, useEffect, useState } from "react";
+import type React from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useAuth } from "../../lib/auth/useAuth";
 import { beginLogin } from "../../lib/oidc";
@@ -53,8 +54,15 @@ function AuthPageContent(): React.JSX.Element {
     clearAuthError,
   } = useAuth();
   const [draft, setDraft] = useState("");
+  const tokenInputRef = useRef<HTMLInputElement>(null);
 
   const returnTo = safeReturnTo(searchParams.get("returnTo"));
+
+  // Focus the token field on mount when SSO is unavailable (replaces the
+  // autoFocus attribute; WCAG 3.2.2 — focus moves tied to user intent).
+  useEffect(() => {
+    if (!ssoEnabled) tokenInputRef.current?.focus();
+  }, [ssoEnabled]);
 
   // Once authenticated (SSO handoff or manual token), leave the login page.
   useEffect(() => {
@@ -124,11 +132,11 @@ function AuthPageContent(): React.JSX.Element {
             </label>
             <input
               id="operator-token"
+              ref={tokenInputRef}
               type="password"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               placeholder="eyJhbGc…"
-              autoFocus={!ssoEnabled}
               className="rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <Button type="submit" variant="secondary" disabled={draft.trim() === ""}>

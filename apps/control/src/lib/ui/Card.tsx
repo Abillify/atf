@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React from "react";
+import type React from "react";
 
 export interface CardProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Removes default padding */
@@ -16,8 +16,7 @@ export function Card({
   ...props
 }: CardProps): React.JSX.Element {
   return (
-    <div
-      role="region"
+    <section
       className={[
         "rounded-lg border border-border bg-card text-card-foreground shadow-sm",
         noPadding ? "" : "p-[var(--ui-card-p)]",
@@ -26,7 +25,7 @@ export function Card({
       {...props}
     >
       {children}
-    </div>
+    </section>
   );
 }
 

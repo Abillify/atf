@@ -230,7 +230,7 @@ export function decodeTokenExpSeconds(token: string): number | null {
   const parts = token.split(".");
   if (parts.length !== 3) return null;
   try {
-    const payload = JSON.parse(base64UrlDecodeToString(parts[1]!)) as {
+    const payload = JSON.parse(base64UrlDecodeToString(parts[1])) as {
       exp?: unknown;
     };
     return typeof payload.exp === "number" ? payload.exp : null;

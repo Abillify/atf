@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useEffect, useId, useMemo, useRef, useState } from "react";
+import type React from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Search, CornerDownLeft, type LucideIcon } from "lucide-react";
 import { useModalBehavior, usePresence } from "./useModalBehavior";
 
@@ -131,6 +132,7 @@ export function CommandPalette({
   };
 
   // Scroll the active option into view on keyboard navigation.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: optionId is a module-level stable helper
   useEffect(() => {
     if (!mounted) return;
     const el = panelRef.current?.querySelector<HTMLElement>(
@@ -145,6 +147,8 @@ export function CommandPalette({
   if (!mounted) return null;
 
   return (
+    /* biome-ignore lint/a11y/useKeyWithClickEvents: click-outside-to-close on the backdrop; Escape closes via the global key handler */
+    /* biome-ignore lint/a11y/noStaticElementInteractions: transparent backdrop surface, not a control — the palette panel carries the interactive semantics */
     <div
       className={[
         "fixed inset-0 z-50 flex items-start justify-center p-4 pt-[12vh] bg-black/50",
@@ -196,6 +200,7 @@ export function CommandPalette({
         {/* Results (listbox) */}
         <ul
           id={listId}
+          // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: listbox of the combobox pattern — <ul role="listbox"> is the ARIA-recommended structure, keyboard handling lives on the input
           role="listbox"
           aria-label="Results"
           className="max-h-[50vh] overflow-y-auto p-2"
@@ -217,9 +222,12 @@ export function CommandPalette({
                     const Icon = item.icon;
                     const isActive = index === active;
                     return (
+                      // biome-ignore lint/a11y/useKeyWithClickEvents: option selection is also keyboard-driven via the combobox input (ArrowUp/Down + Enter)
+                      // biome-ignore lint/a11y/useFocusableInteractive: options in a listbox are not tabbable by design; the input owns focus and moves the active option with the arrow keys
                       <li
                         key={item.id}
                         id={optionId(index)}
+                        // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: <li role="option"> is the required child of role="listbox" in the ARIA combobox pattern
                         role="option"
                         aria-selected={isActive}
                         onClick={() => commit(item)}

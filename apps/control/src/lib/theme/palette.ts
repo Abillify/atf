@@ -114,6 +114,7 @@ export function useChartPalette(): ChartPalette {
   const [palette, setPalette] = useState<ChartPalette>(() =>
     readAll(CHART_VARS),
   );
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme class is the re-read trigger; the effect body intentionally does not read it
   useEffect(() => {
     setPalette(readAll(CHART_VARS));
   }, [cls]);
@@ -124,6 +125,7 @@ export function useChartPalette(): ChartPalette {
 export function useEdgePalette(): EdgePalette {
   const cls = useThemeClass();
   const [palette, setPalette] = useState<EdgePalette>(() => readAll(EDGE_VARS));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme class is the re-read trigger; the effect body intentionally does not read it
   useEffect(() => {
     setPalette(readAll(EDGE_VARS));
   }, [cls]);
@@ -134,6 +136,7 @@ export function useEdgePalette(): EdgePalette {
 export function useNodePalette(): NodePalette {
   const cls = useThemeClass();
   const [palette, setPalette] = useState<NodePalette>(() => readAll(NODE_VARS));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: theme class is the re-read trigger; the effect body intentionally does not read it
   useEffect(() => {
     setPalette(readAll(NODE_VARS));
   }, [cls]);

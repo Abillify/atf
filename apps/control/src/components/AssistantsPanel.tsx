@@ -27,7 +27,8 @@
  * only holds the tab composition, without behavior change.
  */
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../lib/ui";
 import { AssistantsEstatePanel } from "./assistants/AssistantsEstatePanel";
 import { RevocationConsole } from "./assistants/RevocationConsole";

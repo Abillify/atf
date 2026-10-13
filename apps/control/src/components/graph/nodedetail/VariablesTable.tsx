@@ -17,7 +17,7 @@ import { useState } from "react";
 /** Small clipboard icon. */
 function CopyIcon() {
   return (
-    <svg viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 opacity-60">
+    <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20" fill="currentColor" className="h-3 w-3 opacity-60">
       <path d="M7 4a2 2 0 0 1 2-2h5a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2V4z" />
       <path d="M4 7a1 1 0 0 0-1 1v7a2 2 0 0 0 2 2h6a1 1 0 0 0 1-1H5a1 1 0 0 1-1-1V7z" />
     </svg>
@@ -103,8 +103,8 @@ function parseVariablesSection(text: string): {
     ) {
       const m = /^(\S[\S ]*?)\s*=\s*(.*)$/.exec(trimmed);
       if (!m) continue; // wrapped header continuation / "(none)"
-      const key = m[1]!.trim();
-      let rest = m[2]!;
+      const key = m[1].trim();
+      let rest = m[2];
       let source: string | undefined;
       const arrow = rest.indexOf("←");
       if (arrow >= 0) {

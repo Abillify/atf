@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function TracesLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading traces"
       className="flex flex-col gap-3 p-6"

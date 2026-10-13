@@ -13,7 +13,8 @@
  *   - AuthGuard: redirects to /auth when auth is ready and unauthenticated.
  */
 
-import React, {
+import type React from "react";
+import {
   useCallback,
   useEffect,
   useMemo,
@@ -135,6 +136,7 @@ function SidebarNav({
   return (
     <nav aria-label={t("chrome.sections")} className="flex flex-col gap-3 p-2">
       {NAV_GROUPS.map(({ groupKey, items }) => (
+        /* biome-ignore lint/a11y/useSemanticElements: navigation link group — <fieldset> is for form controls and would be wrong here */
         <div key={groupKey} role="group" aria-label={t(groupKey)}>
           {collapsed ? (
             <div
@@ -242,6 +244,7 @@ export default function DashboardLayout({
   }, [ready, isAuthenticated, pathname, router]);
 
   // Close the mobile drawer on navigation.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pathname is the navigation trigger; the effect body intentionally does not read it
   useEffect(() => {
     setDrawerOpen(false);
   }, [pathname]);
@@ -281,6 +284,7 @@ export default function DashboardLayout({
     return (
       <div
         className="flex h-screen items-center justify-center bg-background"
+        role="status"
         aria-busy="true"
         aria-label={t("chrome.loading")}
       >
@@ -475,6 +479,7 @@ export default function DashboardLayout({
             (WCAG 2.1.1 — scrollable-region-focusable) and doubles as a
             skip-to-content target. */}
         <main
+          // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable region must stay keyboard-reachable (WCAG 2.1.1 scrollable-region-focusable)
           tabIndex={0}
           className="flex-1 overflow-auto focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
         >

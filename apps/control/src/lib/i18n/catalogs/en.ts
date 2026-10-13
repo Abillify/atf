@@ -97,6 +97,12 @@ export const en = {
   "common.delete": "Delete",
   "common.tokens": "Tokens",
   "common.notFound": "—",
+  "executions.filterPlaceholder": "Filter requests…",
+  "executions.filterLabel": "Filter requests by keyword (request ID, prompt, user, flow)",
+  "executions.clearKeyword": "Clear keyword",
+  "executions.filterButton": "Filter: flows and users",
+  "executions.includeFlows": "Include flows",
+  "executions.excludeFlows": "Exclude flows",
 } as const;
 
 export type MessageKey = keyof typeof en;

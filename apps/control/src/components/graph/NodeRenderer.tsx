@@ -132,6 +132,7 @@ export function NodeCard({
   const errorTooltip = nodeErrorTooltip(state);
 
   return (
+    /* biome-ignore lint/a11y/useSemanticElements: draggable React Flow node with block layout content; <button> would break the drag/resize handles */
     <div
       role="button"
       tabIndex={0}

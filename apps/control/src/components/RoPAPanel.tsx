@@ -194,6 +194,7 @@ export function RoPAPanel(): React.JSX.Element {
                   </div>
                 )}
                 {e.warnings.map((w, i) => (
+                  // biome-ignore lint/suspicious/noArrayIndexKey: warning texts are not unique; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                   <div key={i} className="mt-1 text-[11px] text-warning">
                     ⚠ {w}
                   </div>

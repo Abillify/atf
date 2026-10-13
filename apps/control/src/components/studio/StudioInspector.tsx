@@ -161,6 +161,7 @@ export function StudioInspector({
       {/* tabIndex=0 so the scrollable region is keyboard-accessible even when
         it holds no focusable children (empty state) — WCAG 2.1.1. */}
       <aside
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable region must stay keyboard-reachable (WCAG 2.1.1 scrollable-region-focusable)
         tabIndex={0}
         aria-label="Node properties"
         style={{ width: inspectorWidth }}
@@ -247,7 +248,7 @@ export function StudioInspector({
                     selBoundary === "start"
                       ? REQUEST_EVENT_ID
                       : RESPONSE_EVENT_ID,
-                  )!,
+                  ),
                 }
               : {})}
             runExecutionId={

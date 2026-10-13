@@ -44,6 +44,7 @@ export function readLocaleFromDocument(): Locale {
 /** Writes the locale cookie (client only; same-origin, non-sensitive). */
 export function writeLocaleCookie(locale: Locale): void {
   if (typeof document === "undefined") return;
+  // biome-ignore lint/suspicious/noDocumentCookie: locale preference is a non-sensitive, same-origin display setting
   document.cookie = `${LOCALE_COOKIE}=${encodeURIComponent(locale)};path=/;max-age=${LOCALE_COOKIE_MAX_AGE_SECONDS};samesite=lax`;
 }
 

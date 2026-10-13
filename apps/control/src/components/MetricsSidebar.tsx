@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useEffect, useMemo, useState } from "react";
+import type React from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   BarChart,
   Bar,
@@ -211,6 +212,7 @@ function FullscreenChart({
   const chart = useChartPalette();
 
   return (
+    /* biome-ignore lint/a11y/useKeyWithClickEvents: click-outside-to-close on the backdrop; Escape closes via the keydown handler above */
     <div
       className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
       onClick={onClose}
@@ -218,6 +220,8 @@ function FullscreenChart({
       aria-modal="true"
       aria-label="Request timeseries (fullscreen)"
     >
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: click swallowing only — real interaction happens on the controls inside the dialog */}
+      {/* biome-ignore lint/a11y/noStaticElementInteractions: swallows backdrop clicks so clicks inside the dialog do not close it; the dialog itself and its controls carry the interactive semantics */}
       <div
         className="relative w-[90vw] max-w-4xl h-[60vh] bg-card rounded-xl shadow-2xl p-6"
         onClick={(e) => e.stopPropagation()}
@@ -229,7 +233,7 @@ function FullscreenChart({
           className="absolute top-3 right-3"
           aria-label="Close fullscreen chart"
         >
-          <svg viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
+          <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
             <path
               fillRule="evenodd"
               d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
@@ -354,7 +358,7 @@ export function MetricsSidebar({
       {/* Time range selector */}
       <div className="flex flex-wrap gap-1">
         {TIME_RANGE_OPTIONS.map((opt) => (
-          <button
+          <button type="button"
             key={opt.value}
             onClick={() => setTimeRange(opt.value)}
             className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
@@ -439,8 +443,9 @@ export function MetricsSidebar({
         )}
 
         {tsData.length > 0 ? (
-          <div
-            className="cursor-pointer"
+          <button
+            type="button"
+            className="block cursor-pointer"
             onClick={() => setFullscreen(true)}
             title="Click to expand"
           >
@@ -496,7 +501,7 @@ export function MetricsSidebar({
                 name="Avg ms"
               />
             </LineChart>
-          </div>
+          </button>
         ) : (
           <p className="text-[10px] text-muted-foreground py-4 text-center">
             No data in selected range.

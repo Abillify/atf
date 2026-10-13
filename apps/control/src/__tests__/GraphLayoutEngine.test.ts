@@ -12,7 +12,6 @@ import {
   computeDagreLayout,
   computeChronologicalLayout,
   NODE_W,
-  NODE_H,
   type LayoutTiming,
 } from "../components/graph/GraphLayoutEngine";
 

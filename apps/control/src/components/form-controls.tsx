@@ -26,6 +26,7 @@ export function Field({
   // field's accessible name.
   return (
     <div className="min-w-0 flex-1">
+      {/* biome-ignore lint/a11y/noLabelWithoutControl: the control is passed as `children` and nested in the label (implicit association); Biome cannot see through the slot */}
       <label className="block">
         <span className="mb-0.5 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
           {label}

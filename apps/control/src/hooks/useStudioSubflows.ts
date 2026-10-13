@@ -94,7 +94,7 @@ export function useStudioSubflows({
   // `$includeOrigins` entry. Nodes STAY on the canvas — `$include`-composed
   // flows always show their fully merged graph in one view; the tag only
   // controls which file a node's content is written to on save (see
-  // `splitByIncludeOrigin` in `src/routes/flows.ts`). Cross-boundary edges
+  // `splitByIncludeOrigin` in `src/routes/flows-shared.ts`). Cross-boundary edges
   // need no special handling: they stay with the parent and still resolve
   // once the files are re-merged on next load.
   // -------------------------------------------------------------------------

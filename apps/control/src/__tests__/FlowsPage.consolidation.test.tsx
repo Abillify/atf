@@ -6,7 +6,6 @@
  * (formerly /flow-diff) into one tabbed page.
  */
 
-import type React from "react";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { afterEach, describe, expect, test, vi } from "vitest";
 import FlowsPage from "../app/(dashboard)/flows/page";

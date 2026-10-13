@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useEffect, useRef, useState } from "react";
+import type React from "react";
+import { useEffect, useRef, useState } from "react";
 import { Filter, Search, X } from "lucide-react";
 import { Badge, Button } from "../lib/ui";
 import { FlowMultiSelect } from "./FlowMultiSelect";
 import { UserSelectFilter } from "./UserSelectFilter";
-import { formatDate, formatTime } from "../lib/i18n";
+import { formatDate, formatTime, translate } from "../lib/i18n";
 
 export interface ExecutionPickerItem {
   executionId: string;
@@ -137,7 +138,7 @@ export function ExecutionPicker({
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           Requests
         </h3>
-        <button
+        <button type="button"
           onClick={onFollowLive}
           className={`flex items-center gap-1 rounded px-2 py-0.5 text-[11px] font-medium ${
             following
@@ -167,15 +168,15 @@ export function ExecutionPicker({
               <input
                 value={flowQuery}
                 onChange={(e) => onFlowQueryChange(e.target.value)}
-                placeholder="Requests filtern…"
-                aria-label="Requests nach Stichwort filtern (Request-ID, Prompt, Nutzer, Flow)"
+                placeholder={translate("executions.filterPlaceholder")}
+                aria-label={translate("executions.filterLabel")}
                 className="h-8 w-full rounded-md border border-border bg-background pl-7 pr-6 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-accent"
               />
               {flowQuery !== "" && (
                 <button
                   type="button"
                   onClick={() => onFlowQueryChange("")}
-                  aria-label="Stichwort löschen"
+                  aria-label={translate("executions.clearKeyword")}
                   className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                 >
                   <X size={13} aria-hidden />
@@ -189,8 +190,8 @@ export function ExecutionPicker({
                 type="button"
                 onClick={() => setFilterOpen((open) => !open)}
                 aria-expanded={filterOpen}
-                aria-label="Filter: Flows und User"
-                title="Filter: Flows und User"
+                aria-label={translate("executions.filterButton")}
+                title={translate("executions.filterButton")}
                 className={`relative flex h-8 w-8 items-center justify-center rounded-md border transition-colors ${
                   filterOpen || activeFilterCount > 0
                     ? "border-accent bg-accent/10 text-accent"
@@ -208,7 +209,7 @@ export function ExecutionPicker({
                 <div className="absolute right-0 z-30 mt-1 flex w-64 flex-col gap-2 rounded-md border border-border bg-card p-2 shadow-lg">
                   {onIncludeFlowsChange && (
                     <FlowMultiSelect
-                      label="Flows einschließen"
+                      label={translate("executions.includeFlows")}
                       options={flowOptions ?? []}
                       {...(flowNames !== undefined ? { names: flowNames } : {})}
                       value={includeFlows}
@@ -217,7 +218,7 @@ export function ExecutionPicker({
                   )}
                   {onExcludeFlowsChange && (
                     <FlowMultiSelect
-                      label="Flows ausschließen"
+                      label={translate("executions.excludeFlows")}
                       options={flowOptions ?? []}
                       {...(flowNames !== undefined ? { names: flowNames } : {})}
                       value={excludeFlows}
@@ -250,7 +251,7 @@ export function ExecutionPicker({
               const active = !following && it.executionId === selectedId;
               return (
                 <li key={it.executionId}>
-                  <button
+                  <button type="button"
                     onClick={() => onSelect(it.executionId)}
                     className={`flex w-full flex-col gap-0.5 px-3 py-2 text-left transition-colors ${
                       active ? "bg-accent/10" : "hover:bg-muted"

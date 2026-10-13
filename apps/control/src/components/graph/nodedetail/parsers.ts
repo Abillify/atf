@@ -32,11 +32,11 @@ export function parseRequestSections(
   const sections: Record<string, string> = {};
   const parts = text.split(SECTION_RE);
   // parts[0] is leading text (if any), then alternating: name, content, name, content…
-  if (parts[0] && parts[0].trim()) {
+  if (parts[0]?.trim()) {
     sections["Preamble"] = parts[0].trim();
   }
   for (let i = 1; i < parts.length - 1; i += 2) {
-    const name = parts[i]!.trim();
+    const name = parts[i].trim();
     const content = (parts[i + 1] ?? "").trim();
     sections[name] = content;
   }
@@ -62,11 +62,11 @@ export function parseLlmMessages(
   // `coreMessagesToText` always begins with `<role>: …`, so a first match at a
   // non-zero index means we matched a role-looking word inside free text (e.g.
   // a prompt that mentions "User:" mid-sentence) — treat that as not-messages.
-  if (matches.length >= 1 && matches[0]!.index === 0) {
+  if (matches.length >= 1 && matches[0].index === 0) {
     const msgs: Array<{ role: string; content: string }> = [];
     for (let i = 0; i < matches.length; i++) {
-      const role = matches[i]![1]!.toLowerCase();
-      const start = matches[i]!.index! + matches[i]![0]!.length;
+      const role = matches[i][1]!.toLowerCase();
+      const start = matches[i].index! + matches[i][0]!.length;
       const end = matches[i + 1]?.index ?? text.length;
       msgs.push({ role, content: text.slice(start, end).trim() });
     }
@@ -79,8 +79,8 @@ export function parseLlmMessages(
   if (altMatches.length >= 2) {
     const msgs: Array<{ role: string; content: string }> = [];
     for (let i = 0; i < altMatches.length; i++) {
-      const role = (altMatches[i]![1] ?? altMatches[i]![2]!).toLowerCase();
-      const start = altMatches[i]!.index! + altMatches[i]![0]!.length;
+      const role = (altMatches[i][1] ?? altMatches[i][2]!).toLowerCase();
+      const start = altMatches[i].index! + altMatches[i][0]!.length;
       const end = altMatches[i + 1]?.index ?? text.length;
       msgs.push({ role, content: text.slice(start, end).trim() });
     }
@@ -169,5 +169,5 @@ export function isJsonString(text: string): boolean {
 export function stripCodeFence(text: string): string {
   const t = text.trim();
   const fence = /^```[a-zA-Z0-9]*\n([\s\S]*?)\n?```$/.exec(t);
-  return fence ? fence[1]!.trim() : t;
+  return fence ? fence[1].trim() : t;
 }

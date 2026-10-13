@@ -23,7 +23,7 @@ function mockFetchSequence(
 ): void {
   let call = 0;
   global.fetch = vi.fn().mockImplementation(() => {
-    const r = responses[Math.min(call, responses.length - 1)]!;
+    const r = responses[Math.min(call, responses.length - 1)];
     call++;
     return Promise.resolve({
       ok: r.ok ?? true,
@@ -107,7 +107,7 @@ describe("AutopilotPanel — governance display", () => {
     await waitFor(() =>
       expect(screen.getByText(/No autopilot runs yet/)).toBeInTheDocument(),
     );
-    const init = vi.mocked(global.fetch).mock.calls[0]![1] as RequestInit;
+    const init = vi.mocked(global.fetch).mock.calls[0][1] as RequestInit;
     // lib/control-api passes a Headers instance; without a token no
     // Authorization header may be set.
     const headers = init.headers as Headers;

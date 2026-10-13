@@ -106,6 +106,7 @@ export function useHistory(options?: UseHistoryOptions): UseHistoryResult {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [baseUrl, token]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the refresh trigger; the effect body intentionally does not read it
   useEffect(() => {
     if (!enabled || !isVisible) return;
     let cancelled = false;

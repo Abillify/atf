@@ -29,7 +29,7 @@ export function ToolCallEntry({ tc }: { tc: NodeToolCall }) {
 
   return (
     <div className="border border-border rounded-lg overflow-hidden">
-      <button
+      <button type="button"
         onClick={() => setExpanded((v) => !v)}
         className="w-full flex items-center justify-between px-3 py-2 bg-muted hover:bg-muted text-left"
       >

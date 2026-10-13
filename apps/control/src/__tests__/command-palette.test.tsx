@@ -44,7 +44,7 @@ describe("CommandPalette", () => {
     await user.type(screen.getByRole("combobox"), "tenants");
     const opts = screen.getAllByRole("option");
     expect(opts.length).toBe(1);
-    expect(opts[0]!.textContent).toContain("Tenants");
+    expect(opts[0].textContent).toContain("Tenants");
   });
 
   it("shows a no-match message", async () => {

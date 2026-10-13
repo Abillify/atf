@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import React, { useState } from "react";
+import type React from "react";
+import { useState } from "react";
 import { formatCost } from "../lib/currency";
 import { Badge, Button } from "../lib/ui";
 import { FlowPicker } from "./FlowPicker";
@@ -171,7 +172,7 @@ function VariantRow({
     <div className="rounded-md border border-border bg-card">
       <div className="flex flex-wrap items-center justify-between gap-2 p-2.5">
         <div className="flex items-center gap-2">
-          <button
+          <button type="button"
             onClick={() => setExpanded((e) => !e)}
             className="text-muted-foreground hover:text-foreground"
             aria-label={expanded ? "Collapse" : "Expand"}
@@ -244,7 +245,7 @@ function RunCard({
 
   return (
     <div className="rounded-lg border border-border bg-muted shadow-sm">
-      <button
+      <button type="button"
         onClick={() => setOpen((o) => !o)}
         className="flex w-full flex-wrap items-center justify-between gap-2 p-3 text-left"
       >

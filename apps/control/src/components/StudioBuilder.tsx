@@ -74,7 +74,6 @@ export function StudioBuilder(props: StudioBuilderProps): React.JSX.Element {
     selectedSubflowPath,
     flowSettingsOpen,
     setFlowSettingsOpen,
-    isLoading,
     isSaving,
     validation,
     setValidation,

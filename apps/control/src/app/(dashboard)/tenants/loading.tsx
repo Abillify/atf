@@ -9,6 +9,7 @@ import { Skeleton } from "../../../lib/ui";
 export default function TenantsLoading() {
   return (
     <div
+      role="status"
       aria-busy="true"
       aria-label="Loading tenants"
       className="flex flex-col gap-3 p-6"

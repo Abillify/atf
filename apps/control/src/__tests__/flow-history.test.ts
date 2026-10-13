@@ -7,7 +7,7 @@
 
 import { describe, test, expect } from "vitest";
 import { renderHook, act } from "@testing-library/react";
-import { useFlowHistory } from "../lib/flow-history";
+import { useFlowHistory, type FlowGraphSnapshot } from "../lib/flow-history";
 import type { RFNode, RFEdge } from "../lib/flow-graph";
 
 function node(id: string, x: number): RFNode {
@@ -47,7 +47,7 @@ describe("useFlowHistory", () => {
     });
     expect(result.current.canUndo).toBe(true);
 
-    let snap;
+    let snap: FlowGraphSnapshot | undefined;
     act(() => {
       snap = result.current.undo();
     });
@@ -68,7 +68,7 @@ describe("useFlowHistory", () => {
       result.current.undo();
     });
 
-    let redone;
+    let redone: FlowGraphSnapshot | undefined;
     act(() => {
       redone = result.current.redo();
     });

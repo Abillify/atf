@@ -64,6 +64,7 @@ export function useApprovals(
   const tokenRef = useRef(token);
   tokenRef.current = token;
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: nonce is the refresh trigger; the effect body intentionally does not read it
   useEffect(() => {
     if (!enabled || !isVisible) return;
     let cancelled = false;
