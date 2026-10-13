@@ -87,7 +87,8 @@ const OCCURRENCES: Occurrence[] = [
 	},
 	{
 		file: "apps/search/src/openapi.ts",
-		pattern: /title: "Aiperator Trust Fabric Search",\n\t{0,6} *version: "(\d+\.\d+\.\d+)"/g,
+		pattern:
+			/title: "Aiperator Trust Fabric Search",\n\t{0,6} *version: "(\d+\.\d+\.\d+)"/g,
 		label: "Search OpenAPI document version",
 		expected: 1,
 	},
@@ -123,6 +124,22 @@ const OCCURRENCES: Occurrence[] = [
 		label: "Gate MCP service-block expectation",
 		expected: 1,
 	},
+	// Helm charts (task 16.4): the appVersion of the umbrella chart and every
+	// subchart tracks the product version, so image tags default to it.
+	...[
+		"deploy/helm/atf/Chart.yaml",
+		"deploy/helm/atf/charts/atf-common/Chart.yaml",
+		"deploy/helm/atf/charts/runtime/Chart.yaml",
+		"deploy/helm/atf/charts/gate/Chart.yaml",
+		"deploy/helm/atf/charts/search/Chart.yaml",
+		"deploy/helm/atf/charts/extract/Chart.yaml",
+		"deploy/helm/atf/charts/control/Chart.yaml",
+	].map((file) => ({
+		file,
+		pattern: /^appVersion: "(\d+\.\d+\.\d+)"$/gm,
+		label: "Helm chart appVersion",
+		expected: 1,
+	})),
 ];
 
 const manifest = JSON.parse(
@@ -189,6 +206,104 @@ for (const [file, occurrences] of byFile) {
 	if (!checkOnly && updated !== text) await writeFile(path, updated, "utf8");
 }
 
+// Contract packages (Requirement 11.5): the package version must cover the
+// wire-contract constant the package exports — package major.minor >= wire
+// major.minor. These versions are independent of the product version, so they
+// are verified against their own source rather than synced to the root
+// manifest. The package may run ahead of the wire value (a published package
+// SemVer is never lowered, and a package-only change bumps the package without
+// changing what goes over the wire), but it must never lag behind it: that
+// once let `@atf/extract-contract` ship as 2.2.0 while its records announced
+// 2.3.0.
+interface ContractCheck {
+	/** Workspace directory of the contract package. */
+	dir: string;
+	/** Source file declaring the wire constant (main entry only). */
+	source: string;
+	/** Exported constant name holding the semver wire version. */
+	constant: string;
+}
+
+/** True when `pkg` major.minor is at least `wire` major.minor. */
+function coversWire(pkg: string, wire: string): boolean {
+	const [pMajor = -1, pMinor = -1] = pkg.split(".").map(Number);
+	const [wMajor = 0, wMinor = 0] = wire.split(".").map(Number);
+	return pMajor > wMajor || (pMajor === wMajor && pMinor >= wMinor);
+}
+
+const CONTRACT_PACKAGES: ContractCheck[] = [
+	{
+		dir: "packages/extract-contract",
+		source: "packages/extract-contract/src/version.ts",
+		constant: "EXTRACT_CONTRACT_VERSION",
+	},
+	{
+		dir: "packages/identity-contract",
+		source: "packages/identity-contract/src/index.ts",
+		constant: "IDENTITY_PRINCIPAL_CONTRACT_VERSION",
+	},
+	{
+		dir: "packages/transaction-contract",
+		source: "packages/transaction-contract/src/index.ts",
+		constant: "TRANSACTION_CONTRACT_VERSION",
+	},
+	{
+		dir: "packages/evidence-contract",
+		source: "packages/evidence-contract/src/index.ts",
+		constant: "EVIDENCE_ACTION_CONTRACT_VERSION",
+	},
+	{
+		dir: "packages/erasure-contract",
+		source: "packages/erasure-contract/src/erasure.ts",
+		constant: "ERASURE_CONTRACT_VERSION",
+	},
+];
+
+for (const contract of CONTRACT_PACKAGES) {
+	const manifestPath = resolve(root, contract.dir, "package.json");
+	const sourcePath = resolve(root, contract.source);
+	let pkgVersion: string | undefined;
+	let wireVersion: string | undefined;
+	try {
+		pkgVersion = (
+			JSON.parse(await readFile(manifestPath, "utf8")) as { version?: string }
+		).version;
+		const source = await readFile(sourcePath, "utf8");
+		wireVersion = new RegExp(
+			`export const ${contract.constant}\\s*=\\s*"(\\d+\\.\\d+\\.\\d+)"`,
+		).exec(source)?.[1];
+	} catch {
+		problems.push(
+			`${contract.dir}: cannot read manifest or ${contract.source} — contract list is stale`,
+		);
+		continue;
+	}
+	if (wireVersion === undefined) {
+		problems.push(
+			`${contract.source}: no \`export const ${contract.constant} = "<semver>"\` found — update scripts/check-product-version.ts`,
+		);
+		continue;
+	}
+	if (pkgVersion !== undefined && coversWire(pkgVersion, wireVersion)) continue;
+	if (checkOnly) {
+		problems.push(
+			`${contract.dir}: package version ${pkgVersion} is below wire constant ${contract.constant} = "${wireVersion}" (package major.minor must be >= wire major.minor)`,
+		);
+	} else {
+		// The manifest lags behind the wire promise: raise it to the wire value
+		// (never lowers a version).
+		const manifestText = await readFile(manifestPath, "utf8");
+		const updated = manifestText.replace(
+			/("version"\s*:\s*")(\d+\.\d+\.\d+)(")/,
+			`$1${wireVersion}$3`,
+		);
+		await writeFile(manifestPath, updated, "utf8");
+		rewritten.push(
+			`${contract.dir}: package version ${pkgVersion} → ${wireVersion} (from ${contract.constant})`,
+		);
+	}
+}
+
 if (problems.length > 0) {
 	console.error(
 		`Product version is ${version}; ${problems.length} problem(s):\n${problems.map((p) => `  - ${p}`).join("\n")}`,
@@ -199,8 +314,8 @@ if (problems.length > 0) {
 
 console.log(
 	checkOnly
-		? `Product version ${version} verified across ${OCCURRENCES.length} declared occurrences.`
+		? `Product version ${version} verified across ${OCCURRENCES.length} declared occurrences and ${CONTRACT_PACKAGES.length} contract packages.`
 		: rewritten.length === 0
-			? `Product version ${version} already consistent across ${OCCURRENCES.length} declared occurrences.`
-			: `Synchronised to ${version}:\n${rewritten.map((r) => `  - ${r}`).join("\n")}`,
+			? `Product version ${version} already consistent across ${OCCURRENCES.length} declared occurrences and ${CONTRACT_PACKAGES.length} contract packages.`
+			: `Synchronised:\n${rewritten.map((r) => `  - ${r}`).join("\n")}`,
 );

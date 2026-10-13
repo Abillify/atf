@@ -4,7 +4,8 @@ Evidence records the observed, allowed, or denied outcome of a transaction, and 
 digest. It is what lets a compliance dossier cite an action rather than assert one.
 
 Package `1.1.0`, contract `1.0.0`. `EVIDENCE_ACTION_CONTRACT_VERSION` tracks the wire shape; the
-package version moves when exports are added.
+package version moves when exports are added. `bun run verify:version` enforces that the package major.minor never falls below the wire
+constant's major.minor.
 
 | Export | Purpose |
 | --- | --- |

@@ -1,1 +1,32 @@
-{"name":"@atf/extract-contract","version":"2.2.0","private":true,"description":"Canonical document-extraction output contract: v2 NDJSON record stream (typed block model, figure transcriptions, asset references, ingest/job API types, codec, validator, Markdown view) with the v1 marker grammar available under the /v1 subpath","author":"Abillify Technology GmbH <info@abillify.me>","license": "Elastic-2.0","type":"module","exports":{".":"./src/index.ts","./v1":"./src/v1/index.ts","./v2":"./src/v2/index.ts"},"engines":{"bun":">=1.4.0 <2","node":">=26 <27"},"scripts":{"typecheck":"tsc --noEmit","test":"bun test","test:contracts":"bun test","build":"bun build ./src/index.ts ./src/v1/index.ts ./src/v2/index.ts --outdir ./dist --target bun"},"dependencies":{"zod":"4.4.3"},"devDependencies":{"@types/bun":"1.4.0","fast-check":"4.10.2","typescript":"7.0.2"}}
+{
+    "name": "@atf/extract-contract",
+    "version": "2.3.0",
+    "private": true,
+    "description": "Canonical document-extraction output contract: v2 NDJSON record stream (typed block model, figure transcriptions, asset references, ingest/job API types, codec, validator, Markdown view) with the v1 marker grammar available under the /v1 subpath",
+    "author": "Abillify Technology GmbH <info@abillify.me>",
+    "license": "Elastic-2.0",
+    "type": "module",
+    "exports": {
+        ".": "./src/index.ts",
+        "./v1": "./src/v1/index.ts",
+        "./v2": "./src/v2/index.ts"
+    },
+    "engines": {
+        "bun": ">=1.4.0 <2",
+        "node": ">=26 <27"
+    },
+    "scripts": {
+        "typecheck": "tsc --noEmit",
+        "test": "bun test",
+        "test:contracts": "bun test",
+        "build": "bun build ./src/index.ts ./src/v1/index.ts ./src/v2/index.ts --outdir ./dist --target bun"
+    },
+    "dependencies": {
+        "zod": "4.4.3"
+    },
+    "devDependencies": {
+        "@types/bun": "1.4.0",
+        "fast-check": "4.10.2",
+        "typescript": "7.0.2"
+    }
+}

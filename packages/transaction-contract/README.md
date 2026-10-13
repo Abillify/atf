@@ -5,7 +5,8 @@ adds the budget, delegation chain, and trace deadline that travel with a tool ca
 downstream service can enforce limits it did not set.
 
 Package `1.1.0`, contract `1.0.0`, envelope protocol `v1`
-(`TRANSACTION_ENVELOPE_PROTOCOL_VERSION`).
+(`TRANSACTION_ENVELOPE_PROTOCOL_VERSION`). `bun run verify:version` enforces that the package major.minor never falls below the wire
+constant's major.minor.
 
 | Export | Purpose |
 | --- | --- |

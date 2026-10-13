@@ -19,7 +19,7 @@
     "build": "bun build ./src/index.ts --outdir ./dist --target node"
   },
   "dependencies": {
-    "@atf/extract-contract": "workspace:2.2.0",
+    "@atf/extract-contract": "workspace:2.3.0",
     "chokidar": "4.0.3",
     "picomatch": "4.0.7",
     "pino": "10.3.1",

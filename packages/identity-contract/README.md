@@ -4,8 +4,10 @@ The shared minimal representation of an authenticated actor. Runtime and Gate ea
 own tokens, then reduce the result to this shape so a principal can cross a service boundary
 without either side depending on the other's auth stack.
 
-Package `1.1.0`, contract `1.0.0`. The two version independently: the package version moves when
-exports are added, `IDENTITY_PRINCIPAL_CONTRACT_VERSION` moves only when the wire shape changes.
+Package `1.2.0`, contract `1.1.0` (consumers still accept `1.0.0`). The two version independently:
+the package version moves when exports are added, `IDENTITY_PRINCIPAL_CONTRACT_VERSION` moves only
+when the wire shape changes. `bun run verify:version` enforces that the package major.minor never falls below the wire
+constant's major.minor.
 
 | Export | Purpose |
 | --- | --- |
