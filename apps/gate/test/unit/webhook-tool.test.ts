@@ -55,7 +55,7 @@ describe("WebhookToolExecutor", () => {
 
   it("returns the default only inside the matching tenant partition", async () => {
     const exec = new WebhookToolExecutor(tool({ defaultValue: { idle: true } }), runtime);
-    expect(JSON.parse((await exec.execute({}, ctx())).content[0]!.text)).toEqual({ idle: true });
+    expect(JSON.parse((await exec.execute({}, ctx())).content[0].text)).toEqual({ idle: true });
     expect((await exec.execute({}, ctx("other"))).isError).toBe(true);
   });
 
@@ -65,7 +65,7 @@ describe("WebhookToolExecutor", () => {
     try {
       const body = JSON.stringify({ v: 99 }); const headers = signedHeaders(body, "n-1");
       expect((await fetch(`${url}/webhooks/w`, { method: "POST", headers, body })).status).toBe(200);
-      expect(JSON.parse((await exec.execute({}, ctx("acme", { "x-tenant-id": "evil" }))).content[0]!.text)).toEqual({ v: 99 });
+      expect(JSON.parse((await exec.execute({}, ctx("acme", { "x-tenant-id": "evil" }))).content[0].text)).toEqual({ v: 99 });
       const changedNonce = { ...headers, "x-webhook-nonce": "n-2" };
       expect((await fetch(`${url}/webhooks/w`, { method: "POST", headers: changedNonce, body })).status).toBe(401);
     } finally { server.close(); }

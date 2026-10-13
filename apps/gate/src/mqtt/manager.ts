@@ -192,7 +192,7 @@ export function topicMatches(filter: string, topic: string): boolean {
   const f = filter.split("/");
   const t = topic.split("/");
   for (let i = 0; i < f.length; i++) {
-    const seg = f[i]!;
+    const seg = f[i];
     if (seg === "#") return true; // matches remainder (including zero levels)
     if (t[i] === undefined) return false;
     if (seg === "+") continue;

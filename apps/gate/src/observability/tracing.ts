@@ -50,7 +50,7 @@ export async function initTracing(config: TracingConfig): Promise<void> {
     // dependency graph, so typecheck/build never require them to be present
     // (mirrors the pattern used for the optional redis integrations).
     const apiName = "@opentelemetry/api";
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    // biome-ignore lint/suspicious/noExplicitAny: optional module loaded dynamically, no static types available
     const api = (await import(apiName)) as any;
 
     if (config.otlpEndpoint) {
@@ -59,14 +59,15 @@ export async function initTracing(config: TracingConfig): Promise<void> {
       const exporterName = "@opentelemetry/exporter-trace-otlp-http";
       const resourcesName = "@opentelemetry/resources";
       const semconvName = "@opentelemetry/semantic-conventions";
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const [nodeTrace, traceBase, exporterMod, resourcesMod, semconv]: any[] = await Promise.all([
-        import(sdkTraceNodeName),
-        import(sdkTraceBaseName),
-        import(exporterName),
-        import(resourcesName),
-        import(semconvName),
-      ]);
+      // biome-ignore lint/suspicious/noExplicitAny: optional modules loaded dynamically, no static types available
+      const [nodeTrace, traceBase, exporterMod, resourcesMod, semconv]: any[] =
+        await Promise.all([
+          import(sdkTraceNodeName),
+          import(sdkTraceBaseName),
+          import(exporterName),
+          import(resourcesName),
+          import(semconvName),
+        ]);
 
       const provider = new nodeTrace.NodeTracerProvider({
         resource: new resourcesMod.Resource({
@@ -81,14 +82,24 @@ export async function initTracing(config: TracingConfig): Promise<void> {
       shutdownFn = () => provider.shutdown();
       logger.info(`tracing enabled (OTLP exporter -> ${config.otlpEndpoint})`);
     } else {
-      logger.info("tracing enabled (no otlpEndpoint set - spans are created but not exported)");
+      logger.info(
+        "tracing enabled (no otlpEndpoint set - spans are created but not exported)",
+      );
     }
 
     tracer = api.trace.getTracer(config.serviceName) as MinimalTracer;
-  } catch (err) {
+  } catch (_err) {
     tracer = {
-      startActiveSpan: async <T>(_name: string, fn: (span: MinimalSpan) => Promise<T> | T): Promise<T> =>
-        fn({ setAttribute() {}, setStatus() {}, recordException() {}, end() {} }),
+      startActiveSpan: async <T>(
+        _name: string,
+        fn: (span: MinimalSpan) => Promise<T> | T,
+      ): Promise<T> =>
+        fn({
+          setAttribute() {},
+          setStatus() {},
+          recordException() {},
+          end() {},
+        }),
     };
   }
 }

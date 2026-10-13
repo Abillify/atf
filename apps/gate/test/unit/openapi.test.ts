@@ -55,7 +55,7 @@ describe("expandOpenApiImports", () => {
 
   it("maps path params into the URL and marks them required (GET → read)", () => {
     const tools = expand();
-    const getPet = tools.find((t) => t.name === "pet_getpet")!;
+    const getPet = tools.find((t) => t.name === "pet_getpet");
     expect(getPet).toBeDefined();
     expect(getPet.access).toBe("read");
     const req = getPet.request as Record<string, unknown>;
@@ -69,7 +69,7 @@ describe("expandOpenApiImports", () => {
 
   it("maps a JSON request body to :param.body (POST → write)", () => {
     const tools = expand();
-    const createPet = tools.find((t) => t.name === "pet_createpet")!;
+    const createPet = tools.find((t) => t.name === "pet_createpet");
     expect(createPet.access).toBe("write");
     const req = createPet.request as Record<string, unknown>;
     expect(req.method).toBe("POST");
@@ -84,7 +84,7 @@ describe("expandOpenApiImports", () => {
 
   it("uses an explicit baseUrl override", () => {
     const tools = expand({ baseUrl: "https://staging.example.com" });
-    const req = (tools[0]!.request as Record<string, unknown>).url as string;
+    const req = (tools[0].request as Record<string, unknown>).url as string;
     expect(req.startsWith("https://staging.example.com")).toBe(true);
   });
 
@@ -98,6 +98,6 @@ describe("expandOpenApiImports", () => {
     const imp = OpenApiImportSchema.parse({ spec: "inline.json" });
     const tools = expandOpenApiImports([imp], () => json) as Array<Record<string, unknown>>;
     expect(tools).toHaveLength(1);
-    expect(tools[0]!.name).toBe("geta");
+    expect(tools[0].name).toBe("geta");
   });
 });

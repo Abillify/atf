@@ -113,7 +113,7 @@ describe("Webhook backend · receive then read over MCP", () => {
 
     const res = await client.callTool({ name: "latest_reading", arguments: {} });
     expect(res.isError).toBeFalsy();
-    const payload = JSON.parse((res.content as Array<{ text: string }>)[0]!.text);
+    const payload = JSON.parse((res.content as Array<{ text: string }>)[0].text);
     expect(payload).toEqual({ sensor: "A", value: 7 });
     await client.close();
   });
@@ -180,7 +180,7 @@ describe("MCP proxy backend · forwards to a downstream server", () => {
     const client = await connectMcpStreamable(`http://127.0.0.1:${upstreamPort}`, TOKEN);
     const res = await client.callTool({ name: "remote_calc", arguments: { input: "6 * 7" } });
     expect(res.isError).toBe(true);
-    expect((res.content as Array<{ text: string }>)[0]!.text).toContain("outbound address not allowed");
+    expect((res.content as Array<{ text: string }>)[0].text).toContain("outbound address not allowed");
     await client.close();
   });
 });

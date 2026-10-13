@@ -32,7 +32,7 @@ describe("DatabaseToolExecutor.explain (dry-run)", () => {
 
     const res = await exec.explain({ id: 7 }, ctx);
     expect(res.meta?.dryRun).toBe(true);
-    const plan = JSON.parse(res.content[0]!.text);
+    const plan = JSON.parse(res.content[0].text);
     expect(plan.sql).toContain("SELECT id FROM orders");
     expect(plan.bindings).toEqual(["dev-user", 7]);
     // No query was actually run.

@@ -202,7 +202,7 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
 
   // ── OIDC login / callback / logout ────────────────────────────────────────
 
-  router.get("/monitor/login", async (req: Request, res: Response) => {
+  router.get("/monitor/login", async (_req: Request, res: Response) => {
     if (!config.enabled) { res.status(404).send("Monitoring is disabled"); return; }
     if (!config.oidc) { res.status(404).send("OIDC is not configured"); return; }
     const oidc = config.oidc;

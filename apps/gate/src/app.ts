@@ -1,12 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import express, {
-  Router,
-  type Express,
-  type Request,
-  type Response,
-} from "express";
+import express, { Router, type Express } from "express";
 import cors from "cors";
 import rateLimit from "express-rate-limit";
 import { Authenticator } from "./auth/authenticator.ts";
@@ -35,6 +30,11 @@ import { createIdentityRateLimiter } from "./server/identity-rate-limit.ts";
 import { createMetricsAuthMiddleware } from "./server/metrics-auth.ts";
 import { installRequestTracker } from "./server/request-tracker.ts";
 import { installHealthRoutes } from "./server/health-routes.ts";
+import {
+  buildOpenApiSpec,
+  buildOpenApiYaml,
+  resolveOpenApiServerUrl,
+} from "./openapi.ts";
 import { createHostAllowListMiddleware } from "./server/host-header.ts";
 import { resolveRedactOptions } from "./observability/redact.ts";
 import { Metrics } from "./monitor/metrics.ts";
@@ -352,6 +352,19 @@ export async function buildApp(
     transactionLedger,
     ...(webhookReplayStore !== undefined ? { webhookReplayStore } : {}),
     ...(approvalStore !== undefined ? { approvalStore } : {}),
+  });
+
+  // ── OpenAPI documents (never rate-limited, no credential) ───────────────────
+  // Served before rate limiting so tooling (Swagger UI, codegen, the
+  // openapi:check compat gate) can fetch the contract without a token
+  // (requirement 14.5).
+  app.get("/openapi.json", (req, res) => {
+    res.json(buildOpenApiSpec(resolveOpenApiServerUrl(req)));
+  });
+  app.get("/openapi.yaml", (req, res) => {
+    res
+      .type("text/yaml; charset=utf-8")
+      .send(buildOpenApiYaml(resolveOpenApiServerUrl(req)));
   });
 
   // ── OAuth protected-resource metadata (RFC 9728, never rate-limited) ────────

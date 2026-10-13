@@ -55,7 +55,7 @@ describe("CompositeToolExecutor", () => {
 
     const res = await exec.execute({ n: 5 }, ctx);
     expect(res.isError).toBeFalsy();
-    expect(JSON.parse(res.content[0]!.text)).toEqual({ result: 10, who: "alice" });
+    expect(JSON.parse(res.content[0].text)).toEqual({ result: 10, who: "alice" });
   });
 
   it("returns the last step's result when no output token is set", async () => {
@@ -67,7 +67,7 @@ describe("CompositeToolExecutor", () => {
     });
     const exec = new CompositeToolExecutor(cfg, (n) => tools.get(n));
     const res = await exec.execute({}, ctx);
-    expect(JSON.parse(res.content[0]!.text)).toEqual({ ok: true });
+    expect(JSON.parse(res.content[0].text)).toEqual({ ok: true });
   });
 
   it("aborts and reports the failing step on error", async () => {
@@ -98,7 +98,7 @@ describe("CompositeToolExecutor", () => {
     const exec = new CompositeToolExecutor(cfg, () => undefined);
     const res = await exec.execute({}, ctx);
     expect(res.isError).toBe(true);
-    expect(res.content[0]!.text).toContain("unknown tool");
+    expect(res.content[0].text).toContain("unknown tool");
   });
 
   it("explain returns the static plan without executing", async () => {
@@ -110,7 +110,7 @@ describe("CompositeToolExecutor", () => {
     });
     const exec = new CompositeToolExecutor(cfg, (n) => tools.get(n));
     const res = await exec.explain({}, ctx);
-    const plan = JSON.parse(res.content[0]!.text);
+    const plan = JSON.parse(res.content[0].text);
     expect(plan.steps[0]).toMatchObject({ id: "s1", tool: "t", resolvable: true });
   });
 });

@@ -92,12 +92,12 @@ describe("DatabaseToolExecutor · privileged conditions with authorizationEnable
       authorizationEnabled: false,
     });
     const res = await exec.execute({}, adminScopeCtx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload.rows[0].email).toBe("[redacted]");
     // Comparison point: with authorization enabled isAdmin=false → unmasked.
     const execOn = new DatabaseToolExecutor(cfg, { db, bus: new MonitorBus() });
     const resOn = await execOn.execute({}, adminScopeCtx);
-    expect(JSON.parse(resOn.content[0]!.text).rows[0].email).toBe("a@example.com");
+    expect(JSON.parse(resOn.content[0].text).rows[0].email).toBe("a@example.com");
   });
 
   it("explain() shows privileged conditions as false", async () => {
@@ -108,7 +108,7 @@ describe("DatabaseToolExecutor · privileged conditions with authorizationEnable
       authorizationEnabled: false,
     });
     const res = await exec.explain({}, adminScopeCtx);
-    const plan = JSON.parse(res.content[0]!.text);
+    const plan = JSON.parse(res.content[0].text);
     expect(plan.conditions.privileged).toBe(false);
     expect(plan.sql).toContain("public_col");
     expect(plan.sql).not.toContain("secret_col");

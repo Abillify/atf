@@ -65,7 +65,7 @@ describe("DatabaseToolExecutor · redaction", () => {
     });
     const exec = new DatabaseToolExecutor(cfg, { db, bus: new MonitorBus() });
     const res = await exec.execute({}, ctx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload.rows[0].email).toBe("[redacted]");
     expect(res.structuredContent).toEqual(payload);
   });
@@ -83,7 +83,7 @@ describe("DatabaseToolExecutor · redaction", () => {
     });
     const exec = new DatabaseToolExecutor(cfg, { db, bus: new MonitorBus() });
     const res = await exec.execute({}, adminCtx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload.rows[0].email).toBe("a@example.com");
   });
 
@@ -99,7 +99,7 @@ describe("DatabaseToolExecutor · redaction", () => {
     });
     const exec = new DatabaseToolExecutor(cfg, { db, bus: new MonitorBus() });
     const res = await exec.execute({}, ctx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload.rows[0]).toEqual({ id: 1 });
   });
 
@@ -115,7 +115,7 @@ describe("DatabaseToolExecutor · redaction", () => {
     });
     const exec = new DatabaseToolExecutor(cfg, { db, bus: new MonitorBus() });
     const res = await exec.execute({}, ctx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload.rows[0].email).toMatch(/^[0-9a-f]{16}$/);
     expect(payload.rows[0].email).not.toBe("a@example.com");
   });
@@ -293,6 +293,48 @@ describe("DatabaseToolExecutor · cursor pagination", () => {
     expect(sqlOf(calls, 1)).not.toContain("OFFSET");
     expect(calls[1]?.bindings).toEqual([2]);
     expect(payloadOf(second).rows).toEqual([{ id: 3 }]);
+  });
+
+  it("binds one value per placeholder for a multi-column keyset (Req 6.6)", async () => {
+    const { db, calls } = fakeDb([
+      [
+        { grp: 1, id: 1 },
+        { grp: 1, id: 2 },
+        { grp: 2, id: 3 },
+      ],
+      [{ grp: 2, id: 3 }],
+    ]);
+    const exec = new DatabaseToolExecutor(
+      paginationCfg({ orderBy: ["grp", "id"], keyset: ["grp", "id"] }),
+      { db, bus: new MonitorBus(), paginationCursorSecret: SECRET },
+    );
+    const first = await exec.execute({}, ctx);
+    await exec.execute({ cursor: payloadOf(first).nextCursor ?? "" }, ctx);
+    const sql = sqlOf(calls, 1);
+    expect(sql).toContain("WHERE ((grp > ?) OR (grp = ? AND id > ?))");
+    expect(calls[1]?.bindings).toEqual([1, 1, 2]);
+    expect(calls[1]?.bindings).toHaveLength((sql.match(/\?/g) ?? []).length);
+  });
+
+  it("seeks with < for DESC keyset columns (Req 6.6)", async () => {
+    const { db, calls } = fakeDb([
+      [
+        { grp: 2, id: 9 },
+        { grp: 2, id: 7 },
+        { grp: 1, id: 5 },
+      ],
+      [{ grp: 1, id: 5 }],
+    ]);
+    const exec = new DatabaseToolExecutor(
+      paginationCfg({ orderBy: ["grp DESC", "id"], keyset: ["grp", "id"] }),
+      { db, bus: new MonitorBus(), paginationCursorSecret: SECRET },
+    );
+    const first = await exec.execute({}, ctx);
+    await exec.execute({ cursor: payloadOf(first).nextCursor ?? "" }, ctx);
+    expect(sqlOf(calls, 1)).toContain(
+      "WHERE ((grp < ?) OR (grp = ? AND id > ?))",
+    );
+    expect(calls[1]?.bindings).toEqual([2, 2, 7]);
   });
 
   it("advertises a cursor input parameter when pagination is enabled", () => {

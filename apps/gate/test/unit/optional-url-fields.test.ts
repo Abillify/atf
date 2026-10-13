@@ -6,6 +6,7 @@ import { AppConfigSchema } from "../../src/config/schema.ts";
 
 const baseAuth = { mode: "static" as const, static: { tokens: [{ token: "t" }] } };
 
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: describe title quotes the ${VAR:-} interpolation syntax
 describe("optional URL fields tolerate an empty string (env interpolation leaves unset ${VAR:-} as \"\")", () => {
   it("accepts server.publicUrl: \"\" as unset", () => {
     const result = AppConfigSchema.safeParse({ auth: baseAuth, server: { publicUrl: "" } });

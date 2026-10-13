@@ -348,10 +348,10 @@
       let cleared = true;
 
       /* ─── Tab switching ───────────────────────────────────────────────── */
-      let currentTab = 'monitor';
+      let _currentTab = 'monitor';
 
       function switchTab(name) {
-        currentTab = name;
+        _currentTab = name;
         $('tab-monitor').classList.toggle('active', name === 'monitor');
         $('tab-playground').classList.toggle('active', name === 'playground');
         $('tab-instructions').classList.toggle('active', name === 'instructions');
@@ -628,8 +628,8 @@
         const fields   = $('pg-fields');
         const noParams = $('pg-no-params');
         fields.innerHTML = '';
-        const props    = (tool.inputSchema && tool.inputSchema.properties) || {};
-        const required = new Set((tool.inputSchema && tool.inputSchema.required) || []);
+        const props    = (tool.inputSchema?.properties) || {};
+        const required = new Set((tool.inputSchema?.required) || []);
         const entries  = Object.entries(props);
 
         if (entries.length === 0) {
@@ -668,7 +668,7 @@
         }
 
         let input;
-        const enumVals = schema.enum ?? (schema.items && schema.items.enum);
+        const _enumVals = schema.enum ?? (schema.items?.enum);
 
         if (Array.isArray(schema.enum)) {
           // Enum → <select>
@@ -727,6 +727,7 @@
       // the playground, selects the matching tool and pre-fills its form with
       // the exact arguments that were captured, so a call can be replayed and
       // debugged without re-typing the parameters.
+      // biome-ignore lint/correctness/noUnusedVariables: called from inline onclick handler
       async function toPlayground(btn) {
         const toolName = btn.dataset.tool;
         let args = {};
@@ -775,7 +776,7 @@
       /* ─── Tool Playground: collect args & run ────────────────────────── */
       function collectArgs(tool) {
         const args    = {};
-        const props   = (tool.inputSchema && tool.inputSchema.properties) || {};
+        const props   = (tool.inputSchema?.properties) || {};
         const panel   = $('pg-fields');
         const inputs  = panel.querySelectorAll('[data-field]');
 
@@ -794,7 +795,7 @@
             } else {
               // enum: try to coerce to number if the original schema values are numbers
               const n = Number(raw);
-              args[name] = isNaN(n) ? raw : n;
+              args[name] = Number.isNaN(n) ? raw : n;
             }
             continue;
           }
@@ -936,6 +937,7 @@
         $('pg-output').style.display = 'block';
       }
 
+      // biome-ignore lint/correctness/noUnusedVariables: called from inline onclick handler
       function toggleRaw() {
         showingRaw = !showingRaw;
         if (showingRaw && !pgRawRendered) {
@@ -949,6 +951,7 @@
 
       // Download the full, untruncated payload (raw JSON when the raw pane is
       // open, otherwise the extracted content) as a file.
+      // biome-ignore lint/correctness/noUnusedVariables: called from inline onclick handler
       function downloadResult() {
         const showRaw = showingRaw;
         const text = showRaw ? pgRawStr : (pgContentStr || pgRawStr);

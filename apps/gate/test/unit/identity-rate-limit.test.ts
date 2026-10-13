@@ -21,9 +21,9 @@ describe("createIdentityRateLimiter (memory)", () => {
   it("allows calls up to max within the window, then rejects", async () => {
     const limiter = await createIdentityRateLimiter(perIdentityCfg());
     expect(limiter).toBeDefined();
-    const a1 = await limiter!.check("alice");
-    const a2 = await limiter!.check("alice");
-    const a3 = await limiter!.check("alice");
+    const a1 = await limiter.check("alice");
+    const a2 = await limiter.check("alice");
+    const a3 = await limiter.check("alice");
     expect(a1.allowed).toBe(true);
     expect(a2.allowed).toBe(true);
     expect(a3.allowed).toBe(false);
@@ -32,20 +32,20 @@ describe("createIdentityRateLimiter (memory)", () => {
 
   it("tracks separate buckets per identity key", async () => {
     const limiter = await createIdentityRateLimiter(perIdentityCfg());
-    await limiter!.check("alice");
-    await limiter!.check("alice");
-    const bobFirst = await limiter!.check("bob");
+    await limiter.check("alice");
+    await limiter.check("alice");
+    const bobFirst = await limiter.check("bob");
     expect(bobFirst.allowed).toBe(true);
   });
 
   it("resets the bucket once the window elapses", async () => {
     const limiter = await createIdentityRateLimiter(perIdentityCfg({ windowMs: 20 }));
-    await limiter!.check("alice");
-    await limiter!.check("alice");
-    const blocked = await limiter!.check("alice");
+    await limiter.check("alice");
+    await limiter.check("alice");
+    const blocked = await limiter.check("alice");
     expect(blocked.allowed).toBe(false);
     await new Promise((r) => setTimeout(r, 30));
-    const afterReset = await limiter!.check("alice");
+    const afterReset = await limiter.check("alice");
     expect(afterReset.allowed).toBe(true);
   });
 });

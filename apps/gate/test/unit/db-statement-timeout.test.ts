@@ -123,7 +123,7 @@ describe("statementTimeoutHook", () => {
   });
 
   test("runs the dialect SQL on a freshly created connection", async () => {
-    const hook = statementTimeoutHook("pg", 7_500).afterCreate!;
+    const hook = statementTimeoutHook("pg", 7_500).afterCreate;
     const executed: string[] = [];
     const conn = {
       query(sql: string, cb: (err?: unknown) => void) {
@@ -147,7 +147,7 @@ describe("statementTimeoutHook", () => {
    * to be visible rather than assumed, hence the warning in the implementation.
    */
   test("a failing SET is non-fatal and still yields the connection", async () => {
-    const hook = statementTimeoutHook("pg", 1_000).afterCreate!;
+    const hook = statementTimeoutHook("pg", 1_000).afterCreate;
     const conn = {
       query(_sql: string, cb: (err?: unknown) => void) {
         cb(new Error("permission denied to set parameter"));
@@ -163,7 +163,7 @@ describe("statementTimeoutHook", () => {
   });
 
   test("a driver without query() is skipped rather than crashing the pool", async () => {
-    const hook = statementTimeoutHook("pg", 1_000).afterCreate!;
+    const hook = statementTimeoutHook("pg", 1_000).afterCreate;
     const conn = { notAQuery: true };
 
     const result = await new Promise<{ err: unknown; conn: unknown }>((resolve) => {

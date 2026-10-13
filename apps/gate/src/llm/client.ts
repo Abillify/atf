@@ -276,7 +276,7 @@ export class BedrockLlmClient implements ILlmClient {
     private readonly bus?: MonitorBus,
   ) {
     this.client = new BedrockRuntimeClient({
-      region: config.region!,
+      region: config.region,
       ...(config.accessKeyId && config.secretAccessKey
         ? {
             credentials: {

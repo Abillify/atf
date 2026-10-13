@@ -8,7 +8,6 @@ import { generateKeyPairSync, sign as cryptoSign, type JsonWebKey } from "node:c
 import type { Express } from "express";
 import { AppConfigSchema } from "../../src/config/schema.ts";
 import { buildApp, type AppHandle } from "../../src/app.ts";
-import { FakeDb } from "../helpers/fake-db.ts";
 
 function listen(app: Express): Promise<{ server: Server; port: number }> {
   return new Promise((resolve) => {
@@ -152,8 +151,8 @@ function getCookie(res: Response, name: string): string | undefined {
 /** Drives /monitor/login -> /monitor/callback and returns the callback response. */
 async function loginAndCallback(port: number): Promise<Response> {
   const loginRes = await fetch(`http://127.0.0.1:${port}/monitor/login`, { redirect: "manual" });
-  const stateCookie = getCookie(loginRes, "mcpgate_monitor_state")!;
-  const state = new URL(loginRes.headers.get("location")!).searchParams.get("state")!;
+  const stateCookie = getCookie(loginRes, "mcpgate_monitor_state");
+  const state = new URL(loginRes.headers.get("location")).searchParams.get("state");
   return fetch(`http://127.0.0.1:${port}/monitor/callback?code=fake-code&state=${state}`, {
     redirect: "manual",
     headers: { cookie: `mcpgate_monitor_state=${stateCookie}` },
@@ -173,7 +172,7 @@ describe("Monitor OIDC login", () => {
     const res = await fetch(`http://127.0.0.1:${port}/monitor/login`, { redirect: "manual" });
     expect(res.status).toBe(302);
     const location = res.headers.get("location") ?? "";
-    expect(location).toContain(`http://127.0.0.1:${idp!.port}/authorize`);
+    expect(location).toContain(`http://127.0.0.1:${idp.port}/authorize`);
     expect(getCookie(res, "mcpgate_monitor_state")).toBeDefined();
   });
 
@@ -181,9 +180,9 @@ describe("Monitor OIDC login", () => {
     const port = await start();
 
     const loginRes = await fetch(`http://127.0.0.1:${port}/monitor/login`, { redirect: "manual" });
-    const stateCookie = getCookie(loginRes, "mcpgate_monitor_state")!;
-    const authUrl = new URL(loginRes.headers.get("location")!);
-    const state = authUrl.searchParams.get("state")!;
+    const stateCookie = getCookie(loginRes, "mcpgate_monitor_state");
+    const authUrl = new URL(loginRes.headers.get("location"));
+    const state = authUrl.searchParams.get("state");
 
     const callbackRes = await fetch(
       `http://127.0.0.1:${port}/monitor/callback?code=fake-code&state=${state}`,
@@ -209,7 +208,7 @@ describe("Monitor OIDC login", () => {
   it("rejects a callback with a mismatched state", async () => {
     const port = await start();
     const loginRes = await fetch(`http://127.0.0.1:${port}/monitor/login`, { redirect: "manual" });
-    const stateCookie = getCookie(loginRes, "mcpgate_monitor_state")!;
+    const stateCookie = getCookie(loginRes, "mcpgate_monitor_state");
 
     const res = await fetch(`http://127.0.0.1:${port}/monitor/callback?code=fake-code&state=wrong`, {
       headers: { cookie: `mcpgate_monitor_state=${stateCookie}` },
@@ -220,7 +219,7 @@ describe("Monitor OIDC login", () => {
   it("logout clears the session and re-locks the stream", async () => {
     const port = await start();
     const callbackRes = await loginAndCallback(port);
-    const sessionCookie = getCookie(callbackRes, "mcpgate_monitor_session")!;
+    const sessionCookie = getCookie(callbackRes, "mcpgate_monitor_session");
 
     const logoutRes = await fetch(`http://127.0.0.1:${port}/monitor/logout`, {
       redirect: "manual",

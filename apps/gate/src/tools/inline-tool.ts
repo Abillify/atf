@@ -114,7 +114,7 @@ function handleCalculate(args: Record<string, unknown>, _options: Record<string,
 
 /** Integer if whole, otherwise up to 10 significant digits with trailing zeros stripped. */
 function formatNumber(n: number): string {
-  if (!isFinite(n)) return String(n);
+  if (!Number.isFinite(n)) return String(n);
   if (Number.isInteger(n)) return String(n);
   return parseFloat(n.toPrecision(10)).toString();
 }
@@ -330,7 +330,7 @@ class Parser {
         throw new Error(`'${name}' expects ${range} argument(s), got ${argValues.length}`);
       }
       const result = FUNCTIONS[name]!(...argValues);
-      if (isNaN(result)) throw new Error(`'${name}(${argValues.join(", ")})' produced NaN`);
+      if (Number.isNaN(result)) throw new Error(`'${name}(${argValues.join(", ")})' produced NaN`);
       return result;
     }
 
@@ -363,7 +363,7 @@ class Parser {
     }
     const str = this.src.slice(start, this.pos);
     const v = Number(str);
-    if (isNaN(v)) throw new Error(`Invalid number literal '${str}'`);
+    if (Number.isNaN(v)) throw new Error(`Invalid number literal '${str}'`);
     return v;
   }
 
@@ -416,7 +416,7 @@ function handleDatetime(args: Record<string, unknown>, options: Record<string, u
     } else {
       base = new Date(raw);
     }
-    if (isNaN(base.getTime())) {
+    if (Number.isNaN(base.getTime())) {
       return {
         content: [{ type: "text", text: `Invalid date '${dateArg}'. Use ISO 8601, e.g. "2026-06-19" or "2026-06-19T10:00:00".` }],
         isError: true,

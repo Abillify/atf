@@ -51,6 +51,7 @@ describe("required pinning", () => {
     }
   });
 
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: test title quotes the ${VAR:-} interpolation syntax
   test("rejects an empty-string issuer/audience (the ${VAR:-} interpolation case)", () => {
     // config/loader.ts substitutes an unset `${VAR:-}` with "", not undefined,
     // so a blank value must not count as "pinned".

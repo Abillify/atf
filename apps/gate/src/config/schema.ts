@@ -577,6 +577,25 @@ export const RedactRuleSchema = z.object({
 const ORDER_BY_ENTRY = /^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?(\s+(ASC|DESC))?$/i;
 /** Trailing `ASC`/`DESC` direction of an `orderBy` entry. */
 const ORDER_BY_DIRECTION = /\s+(ASC|DESC)$/i;
+
+/**
+ * Sort direction of the `orderBy` entry for `column` (case-insensitive match
+ * on the bare column name), `"ASC"` when the entry has no explicit direction
+ * or the column is not listed. Used by keyset pagination (Req 6.6) to compare
+ * each keyset column in its configured order.
+ */
+export function orderByDirection(
+  orderBy: readonly string[] | undefined,
+  column: string,
+): "ASC" | "DESC" {
+  const wanted = column.toLowerCase();
+  for (const entry of orderBy ?? []) {
+    const match = ORDER_BY_DIRECTION.exec(entry);
+    const name = (match ? entry.slice(0, match.index) : entry).toLowerCase();
+    if (name === wanted) return match?.[1]?.toUpperCase() === "DESC" ? "DESC" : "ASC";
+  }
+  return "ASC";
+}
 /** A bare SQL identifier, accepted for `pagination.keyset` entries. */
 const SQL_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*$/;
 
@@ -623,9 +642,10 @@ export const DatabaseToolSchema = z.object({
        */
       orderBy: z.array(z.string().min(1)).min(1).optional(),
       /**
-       * Optional keyset ("seek") pagination: the leading `orderBy` columns
-       * used for a `WHERE (a,b) > (:cursor)`-style comparison instead of an
-       * offset. Every entry must be a bare column that appears in `orderBy`.
+       * Optional keyset ("seek") pagination: the `orderBy` columns used for a
+       * `WHERE (a,b) > (:cursor)`-style comparison instead of an offset
+       * (`<` for `DESC` columns). Must list every `orderBy` column as a bare
+       * name, in the same order, and must not name a redacted column.
        */
       keyset: z.array(z.string().min(1)).min(1).optional(),
     })
@@ -682,6 +702,29 @@ export const DatabaseToolSchema = z.object({
             });
           }
         }
+        // The seek predicate compares exactly the keyset columns, so they
+        // must be the complete sort key in the same order: a keyset that is
+        // only part of `orderBy`, or ordered differently, skips or repeats
+        // rows across pages (Req 6.6). The predicate and the cursor values
+        // work on the wrapped result's unqualified column names, so keyset
+        // mode needs bare `orderBy` names; a qualified entry such as
+        // `t.created_at` deliberately never matches.
+        const orderColumns = (pagination.orderBy ?? []).map((e) =>
+          e.replace(ORDER_BY_DIRECTION, "").toLowerCase(),
+        );
+        const keyColumns = pagination.keyset.map((c) => c.toLowerCase());
+        if (orderColumns.join(",") !== keyColumns.join(",")) {
+          ctx.addIssue({
+            code: "custom",
+            message:
+              "pagination.keyset must list every pagination.orderBy column, in the same order " +
+              `(orderBy columns: ${orderColumns.join(", ") || "none"}) — otherwise keyset pages skip or repeat rows (Req 6.6)` +
+              (orderColumns.some((c) => c.includes("."))
+                ? "; keyset mode requires unqualified orderBy column names"
+                : ""),
+            path: ["keyset"],
+          });
+        }
       }
     })
     .default({ enabled: false, pageSize: 100, maxPageSize: 1000 }),
@@ -702,6 +745,22 @@ export const DatabaseToolSchema = z.object({
   outputSchema: OutputSchemaSchema.optional(),
   annotations: AnnotationsSchema.optional(),
   requiredScopes: z.array(z.string()).default([]),
+}).superRefine((tool, ctx) => {
+  // A keyset cursor carries the last row's raw keyset values; it is signed,
+  // not encrypted, so a redacted keyset column would leak its unredacted
+  // value to the caller (Req 6.6). Such a column cannot be a keyset column.
+  const redacted = new Set(tool.redact.map((rule) => rule.column.toLowerCase()));
+  for (const [i, col] of (tool.pagination.keyset ?? []).entries()) {
+    if (redacted.has(col.toLowerCase())) {
+      ctx.addIssue({
+        code: "custom",
+        message:
+          `pagination.keyset column '${col}' is also listed in redact — the cursor would ` +
+          "expose its unredacted value; choose a non-redacted key column",
+        path: ["pagination", "keyset", i],
+      });
+    }
+  }
 });
 
 // ---------------------------------------------------------------------------

@@ -62,7 +62,7 @@ describe("MqttToolExecutor · single-topic", () => {
     expect(mqtt.subscriptions).toContain("sensors/temp");
     mqtt.set("sensors/temp", JSON.stringify({ c: 21.5 }));
     const res = await exec.execute({}, ctx);
-    expect(JSON.parse(res.content[0]!.text)).toEqual({ c: 21.5 });
+    expect(JSON.parse(res.content[0].text)).toEqual({ c: 21.5 });
   });
 
   it("applies the number transform", async () => {
@@ -70,16 +70,16 @@ describe("MqttToolExecutor · single-topic", () => {
     const exec = new MqttToolExecutor(tool({ topic: "t", transform: "number" }), mqtt);
     mqtt.set("t", "42.5");
     const res = await exec.execute({}, ctx);
-    expect(res.content[0]!.text).toBe("42.5");
+    expect(res.content[0].text).toBe("42.5");
   });
 
   it("applies the boolean transform", async () => {
     const mqtt = new FakeMqtt();
     const exec = new MqttToolExecutor(tool({ topic: "t", transform: "boolean" }), mqtt);
     mqtt.set("t", "on");
-    expect((await exec.execute({}, ctx)).content[0]!.text).toBe("true");
+    expect((await exec.execute({}, ctx)).content[0].text).toBe("true");
     mqtt.set("t", "off");
-    expect((await exec.execute({}, ctx)).content[0]!.text).toBe("false");
+    expect((await exec.execute({}, ctx)).content[0].text).toBe("false");
   });
 
   it("errors when no message has arrived and no default is set", async () => {
@@ -94,7 +94,7 @@ describe("MqttToolExecutor · single-topic", () => {
     const exec = new MqttToolExecutor(tool({ topic: "t", defaultValue: "n/a" }), mqtt);
     const res = await exec.execute({}, ctx);
     expect(res.isError).toBeUndefined();
-    expect(res.content[0]!.text).toBe("n/a");
+    expect(res.content[0].text).toBe("n/a");
   });
 
   it("treats a value older than ttlSeconds as stale", async () => {
@@ -124,7 +124,7 @@ describe("MqttToolExecutor · multi-topic", () => {
     mqtt.set("home/hum", "55");
     mqtt.set("home/raw", "hello");
     const res = await exec.execute({}, ctx);
-    expect(JSON.parse(res.content[0]!.text)).toEqual({
+    expect(JSON.parse(res.content[0].text)).toEqual({
       temperature: 21,
       humidity: 55,
       raw: "hello",
@@ -144,6 +144,6 @@ describe("MqttToolExecutor · multi-topic", () => {
       mqtt,
     );
     const res = await exec.execute({}, ctx);
-    expect(JSON.parse(res.content[0]!.text)).toEqual({ a: "MAP_DEFAULT", b: "TOOL_DEFAULT" });
+    expect(JSON.parse(res.content[0].text)).toEqual({ a: "MAP_DEFAULT", b: "TOOL_DEFAULT" });
   });
 });

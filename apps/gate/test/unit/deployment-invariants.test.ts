@@ -5,6 +5,7 @@ import { describe, expect, test } from "bun:test";
 
 const config = {
   transaction: { enforcement: "required", audience: "gate", maxTtlSeconds: 60 },
+  // biome-ignore lint/suspicious/noTemplateCurlyInString: env-interpolation placeholder in config fixture
   redis: { url: "${ATF_REDIS_URL}" },
   server: { readinessPath: "/readyz", readOnlyFilesystem: true, allowPrivilegeEscalation: false },
   network: { egressPorts: [53, 6379] },

@@ -109,7 +109,7 @@ export function projectAuthMeta(
   const claims: Record<string, unknown> = {};
   if (rawClaims && typeof rawClaims === "object" && !Array.isArray(rawClaims)) {
     for (const claim of references.claims) {
-      if (Object.prototype.hasOwnProperty.call(rawClaims, claim)) {
+      if (Object.hasOwn(rawClaims, claim)) {
         claims[claim] = (rawClaims as Record<string, unknown>)[claim];
       }
     }

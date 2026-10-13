@@ -117,7 +117,7 @@ describe("mcpServers import · connects a remote MCP server as a backend", () =>
     // "noop" was never included, "delete_item" was excluded via override.enabled: false.
     expect(generated.map((t) => t.name)).toEqual(["ds_list_items"]);
 
-    const tool = generated[0]!;
+    const tool = generated[0];
     expect(tool.description).toBe("Custom description for the imported tool.");
     expect(tool.type).toBe("mcp");
     expect(tool.targetTool).toBe("list_items");
@@ -161,7 +161,7 @@ describe("mcpServers import · connects a remote MCP server as a backend", () =>
       const client = await connectMcpStreamable(`http://127.0.0.1:${upstreamPort}`, TOKEN);
       const tools = await client.listTools();
       expect(tools.tools.map((t) => t.name)).toEqual(["ds_list_items"]);
-      const schema = tools.tools[0]!.inputSchema as { properties?: Record<string, unknown> };
+      const schema = tools.tools[0].inputSchema as { properties?: Record<string, unknown> };
       expect(schema.properties).not.toHaveProperty("owner");
       expect(schema.properties).not.toHaveProperty("status");
       await client.close();
@@ -171,7 +171,7 @@ describe("mcpServers import · connects a remote MCP server as a backend", () =>
       const client = await connectMcpStreamable(`http://127.0.0.1:${upstreamPort}`, TOKEN);
       const res = await client.callTool({ name: "ds_list_items", arguments: {} });
       expect(res.isError).toBe(true);
-      expect((res.content as Array<{ text: string }>)[0]!.text).toContain("outbound address not allowed");
+      expect((res.content as Array<{ text: string }>)[0].text).toContain("outbound address not allowed");
       await client.close();
       expect(downstreamDb.last("main")).toBeUndefined();
     });

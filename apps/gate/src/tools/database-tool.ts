@@ -4,7 +4,7 @@
 import type { Knex } from "knex";
 import { createHash, randomBytes } from "node:crypto";
 import type { AuthContext } from "../auth/context.ts";
-import type { DatabaseTool, RedactRule } from "../config/schema.ts";
+import { orderByDirection, type DatabaseTool, type RedactRule } from "../config/schema.ts";
 import { compileQuery } from "../db/bindings.ts";
 import {
   evaluateConditions,
@@ -145,6 +145,9 @@ export class DatabaseToolExecutor implements ToolExecutor {
           orderBySql: pagination?.orderBy?.join(", "),
           keysetColumns: cursor.keysetValues ? pagination?.keyset : undefined,
           keysetValues: cursor.keysetValues,
+          keysetDirections: pagination?.keyset?.map((col) =>
+            orderByDirection(pagination.orderBy, col),
+          ),
         }
       : {};
     const { sql, bindings } =
@@ -475,6 +478,8 @@ interface PageWindow {
   keysetColumns?: readonly string[];
   /** Keyset mode: the previous page's last-row values, bound as parameters. */
   keysetValues?: unknown[];
+  /** Keyset mode: sort direction per keyset column (from `orderBy`). */
+  keysetDirections?: readonly ("ASC" | "DESC")[];
 }
 
 /**
@@ -508,13 +513,18 @@ function applyAutoLimit(
   const cap = Math.max(1, Math.floor(rowLimit) + 1);
   const off = Math.max(0, Math.floor(window.offset ?? 0));
   const orderBy = window.orderBySql;
-  const keyset =
+  const seek =
     window.keysetColumns &&
     window.keysetColumns.length > 0 &&
     window.keysetValues
-      ? keysetPredicate(window.keysetColumns)
+      ? keysetPredicate(
+          window.keysetColumns,
+          window.keysetValues,
+          window.keysetDirections,
+        )
       : undefined;
-  const keysetBindings = keyset ? (window.keysetValues ?? []) : [];
+  const keyset = seek?.sql;
+  const keysetBindings = seek ? seek.bindings : [];
   switch ((client ?? "").toLowerCase()) {
     case "mssql":
     case "tedious": {
@@ -576,18 +586,30 @@ function applyAutoLimit(
  * Dialect-portable keyset ("seek") predicate for the ordered columns
  * `[a, b, …]`, expanding `(a,b,…) > (:v1,:v2,…)` to its lexicographic form
  * `(a > :v1) OR (a = :v1 AND b > :v2) OR …`, which every supported dialect
- * understands. Keyset columns should be NOT NULL; NULL values compare unknown
- * and exclude the row.
+ * understands. A `DESC` column seeks with `<` instead of `>` so the predicate
+ * follows the configured sort order. Every `?` the predicate emits gets its
+ * own binding, in placeholder order (column i repeats `v1 … v(i-1)` for the
+ * equality terms, then `vi`). Keyset columns should be NOT NULL; NULL values
+ * compare unknown and exclude the row.
  */
-function keysetPredicate(columns: readonly string[]): string {
+function keysetPredicate(
+  columns: readonly string[],
+  values: readonly unknown[],
+  directions: readonly ("ASC" | "DESC")[] = [],
+): { sql: string; bindings: unknown[] } {
   const parts: string[] = [];
+  const bindings: unknown[] = [];
   for (let i = 0; i < columns.length; i++) {
     const conds: string[] = [];
-    for (let j = 0; j < i; j++) conds.push(`${columns[j]} = ?`);
-    conds.push(`${columns[i]} > ?`);
+    for (let j = 0; j < i; j++) {
+      conds.push(`${columns[j]} = ?`);
+      bindings.push(values[j]);
+    }
+    conds.push(`${columns[i]} ${directions[i] === "DESC" ? "<" : ">"} ?`);
+    bindings.push(values[i]);
     parts.push(`(${conds.join(" AND ")})`);
   }
-  return `(${parts.join(" OR ")})`;
+  return { sql: `(${parts.join(" OR ")})`, bindings };
 }
 
 /** Normalise the various Knex driver return shapes into a plain row array. */

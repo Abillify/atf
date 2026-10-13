@@ -57,29 +57,29 @@ describe("DatabaseToolExecutor · autoLimit pushdown", () => {
     const { db, calls } = fakeDb("pg", [{ id: 1 }]);
     const exec = new DatabaseToolExecutor(tool({ rowLimit: 50 }), { db, bus: new MonitorBus() });
     await exec.execute({}, ctx);
-    expect(calls[0]!.sql).toBe("SELECT * FROM (SELECT id FROM orders WHERE u = ?) AS _mcpgate_q LIMIT 51");
-    expect(calls[0]!.bindings).toEqual(["alice"]);
+    expect(calls[0].sql).toBe("SELECT * FROM (SELECT id FROM orders WHERE u = ?) AS _mcpgate_q LIMIT 51");
+    expect(calls[0].bindings).toEqual(["alice"]);
   });
 
   it("uses TOP for mssql", async () => {
     const { db, calls } = fakeDb("mssql", []);
     const exec = new DatabaseToolExecutor(tool({ rowLimit: 10 }), { db, bus: new MonitorBus() });
     await exec.execute({}, ctx);
-    expect(calls[0]!.sql).toBe("SELECT TOP (11) * FROM (SELECT id FROM orders WHERE u = ?) AS _mcpgate_q");
+    expect(calls[0].sql).toBe("SELECT TOP (11) * FROM (SELECT id FROM orders WHERE u = ?) AS _mcpgate_q");
   });
 
   it("uses ROWNUM for oracle", async () => {
     const { db, calls } = fakeDb("oracledb", []);
     const exec = new DatabaseToolExecutor(tool({ rowLimit: 5 }), { db, bus: new MonitorBus() });
     await exec.execute({}, ctx);
-    expect(calls[0]!.sql).toBe("SELECT * FROM (SELECT id FROM orders WHERE u = ?) WHERE ROWNUM <= 6");
+    expect(calls[0].sql).toBe("SELECT * FROM (SELECT id FROM orders WHERE u = ?) WHERE ROWNUM <= 6");
   });
 
   it("does not wrap when autoLimit is disabled", async () => {
     const { db, calls } = fakeDb("pg", []);
     const exec = new DatabaseToolExecutor(tool({ autoLimit: false }), { db, bus: new MonitorBus() });
     await exec.execute({}, ctx);
-    expect(calls[0]!.sql).toBe("SELECT id FROM orders WHERE u = ?");
+    expect(calls[0].sql).toBe("SELECT id FROM orders WHERE u = ?");
   });
 
   it("does not double-wrap a query that already has a LIMIT", async () => {
@@ -89,7 +89,7 @@ describe("DatabaseToolExecutor · autoLimit pushdown", () => {
       { db, bus: new MonitorBus() },
     );
     await exec.execute({}, ctx);
-    expect(calls[0]!.sql).toBe("SELECT id FROM orders LIMIT 3");
+    expect(calls[0].sql).toBe("SELECT id FROM orders LIMIT 3");
   });
 });
 
@@ -99,7 +99,7 @@ describe("DatabaseToolExecutor · result shaping", () => {
     const { db } = fakeDb("pg", rows);
     const exec = new DatabaseToolExecutor(tool({ rowLimit: 2 }), { db, bus: new MonitorBus() });
     const res = await exec.execute({}, ctx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload.rowCount).toBe(2);
     expect(payload.truncated).toBe(true);
   });
@@ -108,7 +108,7 @@ describe("DatabaseToolExecutor · result shaping", () => {
     const { db } = fakeDb("pg", [{ id: 1 }]);
     const exec = new DatabaseToolExecutor(tool({ rowLimit: 10 }), { db, bus: new MonitorBus() });
     const res = await exec.execute({}, ctx);
-    const payload = JSON.parse(res.content[0]!.text);
+    const payload = JSON.parse(res.content[0].text);
     expect(payload).toEqual({ rowCount: 1, truncated: false, rows: [{ id: 1 }] });
   });
 });
@@ -126,8 +126,8 @@ describe("DatabaseToolExecutor · top-level LIMIT scanner", () => {
       const { db, calls } = fakeDb("pg", []);
       const exec = new DatabaseToolExecutor(tool({ query, rowLimit: 4 }), { db, bus: new MonitorBus() });
       await exec.execute({}, ctx);
-      expect(calls[0]!.sql).toStartWith("SELECT * FROM (");
-      expect(calls[0]!.sql).toEndWith("LIMIT 5");
+      expect(calls[0].sql).toStartWith("SELECT * FROM (");
+      expect(calls[0].sql).toEndWith("LIMIT 5");
     });
   }
 
@@ -136,6 +136,6 @@ describe("DatabaseToolExecutor · top-level LIMIT scanner", () => {
     const query = "SELECT TOP (3) id FROM orders";
     const exec = new DatabaseToolExecutor(tool({ query }), { db, bus: new MonitorBus() });
     await exec.execute({}, ctx);
-    expect(calls[0]!.sql).toBe(query);
+    expect(calls[0].sql).toBe(query);
   });
 });

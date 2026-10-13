@@ -63,7 +63,7 @@ function expandOne(imp: OpenApiImport, specText: string): unknown[] {
           : defaultOperationId(method, path);
 
       if (include && !include.has(operationId)) continue;
-      if (exclude && exclude.has(operationId)) continue;
+      if (exclude?.has(operationId)) continue;
 
       tools.push(
         buildTool(doc, imp, baseUrl, method, path, operation, operationId, sharedParams),

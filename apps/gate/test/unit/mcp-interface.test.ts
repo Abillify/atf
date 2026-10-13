@@ -28,13 +28,13 @@ describe("ToolRegistry · MCP interface (outputSchema / annotations / requiredSc
     const reg = new ToolRegistry([read, write], runtime());
     const defs = new Map(reg.list().map((d) => [d.name, d]));
 
-    expect(defs.get("r")!.annotations).toEqual({
+    expect(defs.get("r").annotations).toEqual({
       readOnlyHint: true,
       destructiveHint: false,
       idempotentHint: true,
       openWorldHint: false,
     });
-    expect(defs.get("w")!.annotations).toEqual({
+    expect(defs.get("w").annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
       idempotentHint: false,
@@ -52,7 +52,7 @@ describe("ToolRegistry · MCP interface (outputSchema / annotations / requiredSc
       annotations: { idempotentHint: true, title: "Idempotent upsert" },
     });
     const reg = new ToolRegistry([upsert], runtime());
-    const def = reg.list().find((d) => d.name === "upsert")!;
+    const def = reg.list().find((d) => d.name === "upsert");
     expect(def.annotations).toEqual({
       readOnlyHint: false,
       destructiveHint: true,
@@ -82,13 +82,13 @@ describe("ToolRegistry · MCP interface (outputSchema / annotations / requiredSc
     });
     const reg = new ToolRegistry([defaulted, explicit], runtime());
     const defs = new Map(reg.list().map((d) => [d.name, d]));
-    expect(defs.get("d")!.outputSchema).toBeDefined();
-    expect((defs.get("d")!.outputSchema as { required: string[] }).required).toEqual([
+    expect(defs.get("d").outputSchema).toBeDefined();
+    expect((defs.get("d").outputSchema as { required: string[] }).required).toEqual([
       "rowCount",
       "truncated",
       "rows",
     ]);
-    expect(defs.get("e")!.outputSchema).toEqual({
+    expect(defs.get("e").outputSchema).toEqual({
       type: "object",
       properties: { count: { type: "integer" } },
       required: ["count"],

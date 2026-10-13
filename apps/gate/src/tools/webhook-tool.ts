@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { Router, type Request, type Response } from "express";
+import type { Router, Request, Response } from "express";
 import express from "express";
 import type { AuthContext } from "../auth/context.ts";
 import type { WebhookTool } from "../config/schema.ts";

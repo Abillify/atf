@@ -171,7 +171,7 @@ describe("MCP integration · tools/list advertises outputSchema + annotations", 
   it("allows every authenticated caller to list and call a tool without requiredScopes", async () => {
     const client = await connectMcp(`http://127.0.0.1:${port}`, PLAIN_TOKEN);
     const tools = await client.listTools();
-    const reader = tools.tools.find((tool) => tool.name === "reader")!;
+    const reader = tools.tools.find((tool) => tool.name === "reader");
     expect(reader.outputSchema).toBeDefined();
     expect(reader.annotations).toMatchObject({ readOnlyHint: true, destructiveHint: false });
     const result = await client.callTool({ name: "reader", arguments: {} });

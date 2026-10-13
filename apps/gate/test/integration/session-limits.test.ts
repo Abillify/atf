@@ -159,7 +159,7 @@ describe("monitor bus · redaction is applied on the real path", () => {
     const port = await start(baseConfig({}));
     await initialize(port);
 
-    const handle = open!.handle;
+    const handle = open.handle;
     const authEvent = handle.bus.recent().find((e) => e.type === "auth");
     expect(authEvent).toBeDefined();
 
@@ -178,7 +178,7 @@ describe("monitor bus · redaction is applied on the real path", () => {
     );
     await initialize(port);
 
-    const claims = open!.handle.bus
+    const claims = open.handle.bus
       .recent()
       .find((e) => e.type === "auth")?.meta?.claims as Record<string, unknown> | undefined;
     // Disabling redaction never bypasses the configuration-derived projection.

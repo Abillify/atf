@@ -66,7 +66,7 @@ describe("MCP integration · per-identity rate limiting", () => {
     expect(first.isError).toBeFalsy();
     expect(second.isError).toBeFalsy();
     expect(third.isError).toBe(true);
-    expect((third.content as Array<{ text: string }>)[0]!.text).toContain("Rate limit exceeded");
+    expect((third.content as Array<{ text: string }>)[0].text).toContain("Rate limit exceeded");
     await client.close();
   });
 });

@@ -60,7 +60,7 @@ async function expandOne(
   const tools: unknown[] = [];
   for (const remote of remoteTools) {
     if (include && !include.has(remote.name)) continue;
-    if (exclude && exclude.has(remote.name)) continue;
+    if (exclude?.has(remote.name)) continue;
 
     const override = overridesByName.get(remote.name);
     if (override?.enabled === false) continue;

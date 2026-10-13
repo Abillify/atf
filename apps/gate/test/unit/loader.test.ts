@@ -53,12 +53,17 @@ describe("loadConfig", () => {
     const { config } = loadConfig(dir);
     const tool = config.tools.find((t) => t.name === "orders");
     expect(tool?.type).toBe("database");
-    expect((tool as any).query).toContain(":ctx.username");
+    if (tool?.type !== "database") throw new Error("expected a database tool");
+    expect(tool.query).toContain(":ctx.username");
   });
 
   it("coerces string booleans (boolish) from env interpolation", () => {
     const dir = makeConfigDir();
-    writeFileSync(join(dir, "config.yaml"), BASE + "\nmonitoring:\n  enabled: '${X:-false}'\n");
+    writeFileSync(
+      join(dir, "config.yaml"),
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: exercises env-interpolation syntax in config values
+      BASE + "\nmonitoring:\n  enabled: '${X:-false}'\n",
+    );
     const { config } = loadConfig(dir);
     expect(config.monitoring.enabled).toBe(false);
   });
@@ -309,12 +314,63 @@ describe("database tool pagination config (Req 6.5 / 6.6)", () => {
       BASE +
         "\ntools:\n" +
         "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
-        "    pagination: { enabled: true, orderBy: [created_at DESC, id], keyset: [id] }\n",
+        "    pagination: { enabled: true, orderBy: [created_at DESC, id], keyset: [created_at, id] }\n",
     );
     const tool = loadConfig(dir).config.tools.find((t) => t.name === "t");
     expect(
       (tool as { pagination?: { keyset?: string[] } }).pagination?.keyset,
-    ).toEqual(["id"]);
+    ).toEqual(["created_at", "id"]);
+  });
+
+  it("rejects a keyset that is only part of the orderBy columns (Req 6.6)", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
+        "    pagination: { enabled: true, orderBy: [created_at DESC, id], keyset: [id] }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(
+      /keyset must list every pagination\.orderBy column, in the same order/,
+    );
+  });
+
+  it("rejects a keyset whose column order differs from orderBy (Req 6.6)", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id from t'\n" +
+        "    pagination: { enabled: true, orderBy: [grp, id], keyset: [id, grp] }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(/in the same order/);
+  });
+
+  it("rejects keyset mode with a qualified orderBy column (Req 6.6)", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select t.id from t'\n" +
+        "    pagination: { enabled: true, orderBy: [t.id], keyset: [id] }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(/requires unqualified orderBy column names/);
+  });
+
+  it("rejects a keyset column that is also redacted (Req 6.6)", () => {
+    const dir = makeConfigDir();
+    writeFileSync(
+      join(dir, "config.yaml"),
+      BASE +
+        "\ntools:\n" +
+        "  - name: t\n    type: database\n    database: d\n    query: 'select id, email from t'\n" +
+        "    redact: [{ column: email }]\n" +
+        "    pagination: { enabled: true, orderBy: [email], keyset: [email] }\n",
+    );
+    expect(() => loadConfig(dir)).toThrow(/also listed in redact/);
   });
 });
 

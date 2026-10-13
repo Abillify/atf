@@ -64,9 +64,9 @@ describe("HttpToolExecutor", () => {
     );
     const res = await exec.execute({ id: "42" }, ctx);
     expect(res.isError).toBeUndefined();
-    expect(calls[0]!.url).toBe("https://1.1.1.1/users/42");
-    expect((calls[0]!.init.headers as Record<string, string>)["X-User"]).toBe("alice");
-    expect(JSON.parse(res.content[0]!.text)).toEqual({ ok: true, who: "x" });
+    expect(calls[0].url).toBe("https://1.1.1.1/users/42");
+    expect((calls[0].init.headers as Record<string, string>)["X-User"]).toBe("alice");
+    expect(JSON.parse(res.content[0].text)).toEqual({ ok: true, who: "x" });
   });
 
   it("sends a JSON body with type-preserving token substitution", async () => {
@@ -82,8 +82,8 @@ describe("HttpToolExecutor", () => {
       runtime,
     );
     await exec.execute({ qty: 5 }, ctx);
-    expect(JSON.parse(calls[0]!.init.body as string)).toEqual({ qty: 5, by: "alice" });
-    expect((calls[0]!.init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
+    expect(JSON.parse(calls[0].init.body as string)).toEqual({ qty: 5, by: "alice" });
+    expect((calls[0].init.headers as Record<string, string>)["Content-Type"]).toBe("application/json");
   });
 
   it("applies a jsonPath pipeline step", async () => {
@@ -99,7 +99,7 @@ describe("HttpToolExecutor", () => {
       runtime,
     );
     const res = await exec.execute({}, ctx);
-    expect(JSON.parse(res.content[0]!.text)).toEqual([1, 2, 3]);
+    expect(JSON.parse(res.content[0].text)).toEqual([1, 2, 3]);
   });
 
   it("applies a field pipeline step with array indexing", async () => {
@@ -115,7 +115,7 @@ describe("HttpToolExecutor", () => {
       runtime,
     );
     const res = await exec.execute({}, ctx);
-    expect(res.content[0]!.text).toBe("8");
+    expect(res.content[0].text).toBe("8");
   });
 
   it("returns isError for a non-2xx response", async () => {
@@ -126,7 +126,7 @@ describe("HttpToolExecutor", () => {
     );
     const res = await exec.execute({}, ctx);
     expect(res.isError).toBe(true);
-    expect(res.content[0]!.text).toContain("HTTP 500");
+    expect(res.content[0].text).toContain("HTTP 500");
   });
 
   it("reports a network failure as an error result", async () => {
@@ -139,6 +139,6 @@ describe("HttpToolExecutor", () => {
     );
     const res = await exec.execute({}, ctx);
     expect(res.isError).toBe(true);
-    expect(res.content[0]!.text).toContain("ECONNREFUSED");
+    expect(res.content[0].text).toContain("ECONNREFUSED");
   });
 });

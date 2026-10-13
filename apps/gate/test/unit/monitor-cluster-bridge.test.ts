@@ -23,7 +23,7 @@ describe("MonitorBus.ingestRemote", () => {
     bus.publish({ type: "auth", username: "alice" });
     const recent = bus.recent();
     expect(recent).toHaveLength(2);
-    expect(recent[0]!.remote).toBe(true);
-    expect(recent[1]!.remote).toBeUndefined();
+    expect(recent[0].remote).toBe(true);
+    expect(recent[1].remote).toBeUndefined();
   });
 });

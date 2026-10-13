@@ -141,7 +141,7 @@ function upper(token: Token | undefined): string {
 }
 
 function isIdentifier(token: Token | undefined): boolean {
-  if (!token || token.kind !== "word") return false;
+  if (token?.kind !== "word") return false;
   return !new Set([
     "AND", "OR", "NOT", "NULL", "TRUE", "FALSE", "WHERE", "ON", "SET", "VALUES",
     "SELECT", "FROM", "JOIN", "RETURNING", "LIMIT", "OFFSET", "ORDER", "GROUP", "HAVING",

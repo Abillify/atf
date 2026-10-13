@@ -214,7 +214,7 @@ describe("MCP integration · Streamable HTTP transport (/mcp)", () => {
         method,
         headers: {
           authorization: `Bearer ${OTHER_TENANT_TOKEN}`,
-          "mcp-session-id": sessionId!,
+          "mcp-session-id": sessionId,
           accept: "application/json, text/event-stream",
         },
       });
@@ -224,7 +224,7 @@ describe("MCP integration · Streamable HTTP transport (/mcp)", () => {
 
     await fetch(`http://127.0.0.1:${port}/mcp`, {
       method: "DELETE",
-      headers: { authorization: `Bearer ${TOKEN}`, "mcp-session-id": sessionId! },
+      headers: { authorization: `Bearer ${TOKEN}`, "mcp-session-id": sessionId },
     });
   });
 
