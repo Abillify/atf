@@ -10,6 +10,7 @@ still depends on the operator enabling and verifying it. See
 
 - [Orchestration and model access](#orchestration-and-model-access)
 - [Document extraction](#document-extraction)
+- [Outpost (local ingestion)](#outpost-local-ingestion)
 - [Retrieval](#retrieval)
 - [Governed tool and data access](#governed-tool-and-data-access)
 - [Guardrails and safety](#guardrails-and-safety)
@@ -163,6 +164,28 @@ callers that already hold Markdown.
   only. The ingest ACL headers can only narrow the caller's own identity.
 - **Degradation is reported, not hidden.** Without LibreOffice the service stays healthy and
   reports `degraded_formats`; without poppler it reports unhealthy.
+
+## Outpost (local ingestion)
+
+The Outpost brings documents to Extract from places a server cannot reach: a local folder
+on a workstation or file server, an S3 bucket, a Google Drive share, a Dropbox folder. It
+runs **locally** — the cloud never gets pull access to the source; the Outpost pushes.
+
+- **One engine, two runtimes.** The sync logic lives in
+  [`packages/outpost-core`](../packages/outpost-core) and is shared verbatim by the Docker
+  runtime ([`apps/outpost`](../apps/outpost)) and the desktop application
+  ([`apps/outpost-desktop`](../apps/outpost-desktop)); a safety rule fixed once applies to both.
+- **Mirror with a brake.** With `mirrorDelete: true`, deletions propagate to the Extract
+  collection; a large candidate set pauses until an operator confirms the exact candidate
+  hash (`confirm-deletes`), so a mount glitch cannot mass-delete a collection.
+- **Least privilege.** Cloud sources use read-only scopes; Extract auth needs only
+  `extract.ingest` (plus `extract.delete` when mirroring deletes). Every secret supports a
+  `_FILE` variant and the logger scrubs registered secrets.
+- **Desktop credential isolation.** The desktop app keeps tokens in the OS keychain
+  (`me.abillify.atf-outpost`), bridged to the sidecar over a token-handshake stdio protocol;
+  the WebView never sees credentials, and the sidecar's control API binds to loopback only.
+  The Tauri updater is currently disabled (see the desktop README and
+  [THREAT-MODEL.md](THREAT-MODEL.md)).
 
 ## Retrieval
 

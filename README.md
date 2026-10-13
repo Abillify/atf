@@ -21,8 +21,10 @@ infrastructure, where the interesting problem is not calling a model but everyth
 keeping personal data out of a provider's hands, requiring a human to approve consequential
 actions, proving to a regulator what happened, and knowing what it cost.
 
-Five applications, connected by explicit versioned contracts and open protocols. Each one is
-deployable on its own.
+Seven applications, connected by explicit versioned contracts and open protocols. Each one is
+deployable on its own. Five of them run as server services; the Extract Outpost runs on your
+side — as a Docker daemon or a desktop app — and mirrors local folders and cloud storage into
+the platform.
 
 > **Project status:** ATF is at `0.14.0`: complete enough to evaluate the local service wiring
 > end to end, but still pre-1.0. Governed capabilities require explicit configuration and
@@ -71,8 +73,9 @@ and prerequisites are documented in [Capabilities](docs/CAPABILITIES.md) and
 It is not a hosted service — there is no signup, and operating it for third parties is the one
 use the license reserves. It is not a research or agent-authoring framework; flows are YAML
 that operators review, not a Python DSL. And it is not a thin proxy in front of a model API:
-the retrieval, policy, and evidence layers are the product, which is also why the deployment
-footprint is PostgreSQL plus five services rather than a single binary.
+the retrieval, policy, and evidence layers are the product, which is also why the server
+deployment footprint is PostgreSQL plus five services rather than a single binary (the Outpost
+sync agent runs on the customer side, not in that footprint).
 
 ### When to use something else
 
@@ -103,6 +106,7 @@ flowchart LR
     search --> pg[("PostgreSQL<br/>pgvector")]
     search -.->|documents| extract["<b>Extract</b><br/>document to Markdown"]
     extract --> search
+    outpost["<b>Outpost</b><br/>sync agent<br/>folders · S3 · Drive · Dropbox"] -->|upload| extract
 ```
 
 | Application | Role |
@@ -112,10 +116,13 @@ flowchart LR
 | [`apps/search`](apps/search) | Semantic and hybrid retrieval on PostgreSQL/pgvector. No separate vector database |
 | [`apps/gate`](apps/gate) | MCP gateway. Turns YAML into governed, identity-aware tools |
 | [`apps/extract`](apps/extract) | Converts PDF, office and image documents into the canonical extracted-document Markdown that Search indexes |
+| [`apps/outpost`](apps/outpost) | Extract Outpost runtime: a locally-operated sync agent (CLI daemon, Docker entrypoint, health endpoint) that mirrors folders, S3, Google Drive and Dropbox into Extract collections |
+| [`apps/outpost-desktop`](apps/outpost-desktop) | Desktop wrapper around the same sync core for users who run the Outpost on their own machine |
 
-Shared messages that cross service boundaries live in versioned contract packages under
-[`packages/`](packages), and `integration/system` exercises their combined lifecycle so a
-contract break fails in CI rather than at deployment. See
+The platform is organised as seven applications under [`apps/`](apps), ten shared packages under
+[`packages/`](packages) — versioned contract packages plus `security-kit`, `observability` and
+`outpost-core` — and one end-to-end suite in [`integration/`](integration). `integration/system`
+exercises their combined lifecycle so a contract break fails in CI rather than at deployment. See
 [ARCHITECTURE.md](ARCHITECTURE.md) for the request path and the design rules.
 
 ## Control at a glance

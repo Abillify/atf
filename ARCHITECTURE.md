@@ -1,9 +1,11 @@
 # Architecture
 
-ATF is a Bun workspace monorepo containing five independently deployable applications and
-six shared contract packages. The applications communicate over documented HTTP and MCP
-interfaces only. None imports another's source, and none reads another's private
-configuration.
+ATF is a Bun workspace monorepo containing seven independently deployable applications and
+ten shared packages — six versioned contract packages plus `security-kit`, `observability`
+and `outpost-core`. The applications communicate over documented HTTP and MCP interfaces
+only. None imports another's source, and none reads another's private configuration. Five
+applications form the server footprint (Runtime, Control, Search, Gate, Extract); the two
+Outpost applications run on the customer side and reach the platform through Extract's API.
 
 ## System overview
 
@@ -26,6 +28,10 @@ flowchart TB
     subgraph state["State"]
         pg[("PostgreSQL<br/>+ pgvector")]
         redis[("Redis<br/>optional")]
+    end
+
+    subgraph customer["Customer side"]
+        outpost["<b>Outpost</b><br/>sync agent<br/>folders · S3 · Drive · Dropbox<br/>Docker daemon or desktop"]
     end
 
     subgraph external["External"]
@@ -56,6 +62,7 @@ flowchart TB
     gate --> systems
     gate -.->|approval + session state| redis
     gate --> pg
+    outpost -->|upload via Extract API| extract
 ```
 
 Solid lines show configured request or persistence paths; they are not all mandatory for every
@@ -98,9 +105,63 @@ policy, approvals, and the PII vault, and records cost, traces, and audit entrie
 OpenAI-compatible surface so existing clients work unchanged, plus administrative and
 monitoring APIs for Control.
 
-Route groups: `/v1/*` (OpenAI-compatible chat, responses, models, embeddings), `/flows/*`,
-`/runs/*`, `/admin/*`, `/monitoring/*`, `/security/*`, `/eval/*`, `/triggers/*`,
-`/webhooks/*`, `/mcp`, `/health/*`, `/metrics`.
+Route groups (generated from the router tree — do not edit by hand):
+
+<!-- BEGIN GENERATED: runtime route groups (bun run route-reference) -->
+Updated with `bun run route-reference` from the real router tree
+(`src/bootstrap/routes-inference.ts`, `routes-management.ts`, `autopilot.ts`).
+Conditional groups are mounted only when their bootstrap condition holds.
+
+| Router group | Mount | Enabled when | Endpoints |
+| --- | --- | --- | --- |
+| `createAnalysisArtifactsRouter` | — (full paths) | always | POST `/v1/analysis-artifacts`<br/>GET `/v1/analysis-artifacts`<br/>GET `/v1/analysis-artifacts/:id`<br/>POST `/v1/analysis-artifacts/:id/revisions` |
+| `createHealthRouter` | — (full paths) | always | GET `/health`<br/>GET `/health/live`<br/>GET `/health/ready` |
+| `createTransactionJwksRouter` | — (full paths) | always | GET `/.well-known/atf-transaction-jwks.json` |
+| `createModelsRouter` | — (full paths) | always | GET `/v1/models`<br/>GET `/v1/models/:id` |
+| `createMediaRouter` | — (full paths) | always | GET `/v1/media/:id` |
+| `createChatRouter` | — (full paths) | always | POST `/v1/chat/completions` |
+| `createResponsesRouter` | — (full paths) | always | POST `/v1/responses` |
+| `createJobsRouter` | — (full paths) | `jobStore is set` | GET `/v1/jobs/:id` |
+| `createReceiptsRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/v1/receipts`<br/>GET `/v1/receipts/:id`<br/>GET `/v1/receipts/:id/proof` |
+| `createReceiptJwksRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/.well-known/atf-receipt-jwks.json` |
+| `createFlowMcpRouter` | — (full paths) | always | ALL `/mcp` |
+| `createRedTeamRouter` | — (full paths) | always | POST `/security/red-team/:flowId/run`<br/>GET `/security/red-team/runs`<br/>GET `/security/red-team/runs/:runId`<br/>GET `/security/red-team/posture`<br/>GET `/security/red-team/attacks`<br/>POST `/security/red-team/attacks/refresh`<br/>POST `/security/red-team/attacks/register`<br/>GET `/security/tool-authz`<br/>PUT `/security/tool-authz`<br/>GET `/security/mcp` |
+| `createRagRouter` | — (full paths) | `vectorStore is set && ragEmbedder is set` | POST `/v1/rag/:collection/documents`<br/>DELETE `/v1/rag/:collection/documents`<br/>DELETE `/v1/rag/:collection`<br/>GET `/v1/rag/collections`<br/>GET `/v1/rag/:collection/count`<br/>GET `/v1/rag/:collection/documents` |
+| `createMemoryRouter` | — (full paths) | `memoryStore is set` | POST `/v1/memory`<br/>POST `/v1/memory/recall`<br/>DELETE `/v1/memory`<br/>GET `/v1/memory/count`<br/>GET `/admin/memory/sessions`<br/>GET `/admin/memory/sessions/:id`<br/>DELETE `/admin/memory/sessions/:id` |
+| `createAssistantsRouter` | — (full paths) | `assistantsResult is set` | GET `/v1/assistants`<br/>POST `/v1/assistants`<br/>GET `/v1/assistants/:id`<br/>PATCH `/v1/assistants/:id`<br/>GET `/v1/assistants/:id/sessions`<br/>POST `/v1/assistants/:id/sessions/:conversationId/fork`<br/>DELETE `/v1/assistants/:id/sessions/:conversationId`<br/>POST `/v1/assistants/:id/sessions/:conversationId/restore`<br/>GET `/v1/assistants/:id/sessions/:conversationId/snapshots`<br/>POST `/v1/assistants/:id/sessions/:conversationId/snapshots`<br/>GET `/v1/assistants/:id/tool-recovery`<br/>POST `/v1/assistants/:id/tool-recovery/:conversationId/:toolCallId/reconcile`<br/>GET `/v1/assistants/:id/sessions/search`<br/>GET `/v1/assistants/:id/runs`<br/>POST `/v1/assistants/:id/runs`<br/>GET `/v1/assistants/:id/runs/:runId`<br/>GET `/v1/assistants/:id/schedules`<br/>POST `/v1/assistants/:id/schedules`<br/>DELETE `/v1/assistants/:id/schedules/:scheduleId`<br/>PATCH `/v1/assistants/:id/directives`<br/>GET `/v1/assistants/:id/soul/history`<br/>GET `/v1/assistants/:id/skills`<br/>PUT `/v1/assistants/:id/skills`<br/>DELETE `/v1/assistants/:id/skills/:name`<br/>POST `/v1/assistants/:id/skills/:name/publish`<br/>GET `/v1/org-skills`<br/>POST `/v1/org-skills/:orgSkillId/install`<br/>GET `/v1/assistants/:id/proposals`<br/>POST `/v1/assistants/:id/proposals/:proposalId/apply`<br/>POST `/v1/assistants/:id/proposals/:proposalId/reject`<br/>POST `/v1/assistants/:id/delegation`<br/>GET `/v1/assistants/:id/delegation`<br/>DELETE `/v1/assistants/:id/delegation`<br/>GET `/v1/assistants/:id/channels/rocketchat`<br/>PUT `/v1/assistants/:id/channels/rocketchat`<br/>DELETE `/v1/assistants/:id/channels/rocketchat`<br/>GET `/v1/assistants/:id/channels`<br/>POST `/v1/assistants/:id/channels`<br/>DELETE `/v1/assistants/:id/channels/:grantId`<br/>GET `/v1/assistants/:id/inbox` |
+| `createAssistantsAdminRouter` | — (full paths) | `assistantsResult is set` | GET `/admin/assistants`<br/>GET `/admin/identity-broker/delegations`<br/>GET `/admin/org-skills`<br/>POST `/admin/org-skills/:orgSkillId/deprecate`<br/>GET `/admin/assistants/:tenantId/:userId/:id`<br/>PATCH `/admin/assistants/:tenantId/:userId/:id/constraints`<br/>PATCH `/admin/assistants/:tenantId/:userId/:id`<br/>GET `/admin/assistants/:tenantId/:userId/:id/proposals` |
+| `createGitopsRouter` | — (full paths) | `gitopsEnabled` | POST `/webhooks/git`<br/>GET `/webhooks/git` |
+| `createProviderKeysRouter` | — (full paths) | always | GET `/admin/provider-keys` |
+| `createProviderMonitoringRouter` | — (full paths) | always | GET `/monitoring/providers` |
+| `createProviderTestingRouter` | — (full paths) | always | GET `/monitoring/providers/:name/models`<br/>POST `/monitoring/providers/test/prompt`<br/>POST `/monitoring/providers/test/capabilities`<br/>POST `/monitoring/providers/test/performance` |
+| `createGuardrailsRouter` | — (full paths) | always | GET `/admin/guardrails` |
+| `createPiiVaultRouter` | — (full paths) | always | GET `/admin/pii-vault/status` |
+| `createEvalRouter` | — (full paths) | always | GET `/eval/cases`<br/>POST `/eval/cases`<br/>DELETE `/eval/cases/:id` |
+| `createTenantsRouter` | — (full paths) | `tenantManagementEnabled` | POST `/admin/tenants`<br/>GET `/admin/tenants`<br/>GET `/admin/tenants/:id`<br/>PATCH `/admin/tenants/:id`<br/>DELETE `/admin/tenants/:id`<br/>POST `/admin/tenants/:id/keys`<br/>GET `/admin/tenants/:id/keys`<br/>DELETE `/admin/tenants/:id/keys/:kid`<br/>GET `/admin/tenants/:id/usage`<br/>GET `/admin/tenants/:id/usage/summary`<br/>GET `/admin/tenants/:id/usage/export`<br/>GET `/admin/tenants/:id/provider-keys`<br/>PUT `/admin/tenants/:id/provider-keys/:provider`<br/>DELETE `/admin/tenants/:id/provider-keys/:provider` |
+| `createControlRouter` | — (full paths) | always | GET `/monitoring/approvals`<br/>GET `/monitoring/approvals/:id/widget`<br/>GET `/monitoring/approvals/:id/decide`<br/>POST `/monitoring/approvals/:id`<br/>POST `/monitoring/replay`<br/>GET `/monitoring/canary` |
+| `createMcpRouter` | — (full paths) | `mcpServers.length > 0` | GET `/mcp/servers`<br/>POST `/mcp/:server/reconnect` |
+| `createOptimizerRouter` | `/optimizer` | always | GET `/optimizer/routing-advice`<br/>POST `/optimizer/routing-advice`<br/>POST `/optimizer/analyze/:executionId`<br/>POST `/optimizer/:flowId/run`<br/>GET `/optimizer/:flowId/runs`<br/>GET `/optimizer/runs/:runId`<br/>POST `/optimizer/runs/:runId/promote` |
+| `createCompliancePolicyRouter` | `/admin/compliance-policy` | always | GET `/admin/compliance-policy/`<br/>POST `/admin/compliance-policy/evaluate`<br/>GET `/admin/compliance-policy/report`<br/>GET `/admin/compliance-policy/report.csv` |
+| `createPolicyReplayRouter` | `/admin/policy-replay` | always | POST `/admin/policy-replay/`<br/>POST `/admin/policy-replay/stream` |
+| `createEvalRunsRouter` | — (full paths) | always | POST `/admin/eval/matrix-runs`<br/>GET `/admin/eval/matrix-runs`<br/>GET `/admin/eval/matrix-runs/:id`<br/>GET `/admin/eval/matrix-runs/:runId/cells/:cellId/trace`<br/>POST `/admin/eval/runs`<br/>GET `/admin/eval/runs` |
+| `createComplianceRouter` | — (full paths) | `retentionService is set` | GET `/admin/compliance/status`<br/>POST `/admin/compliance/sweep`<br/>POST `/admin/compliance/forget`<br/>POST `/admin/compliance/erasures/:id/retry`<br/>GET `/admin/compliance/dossier`<br/>GET `/admin/compliance/audit-anchor`<br/>POST `/admin/compliance/audit-anchor`<br/>GET `/admin/compliance/ropa`<br/>GET `/v1/me/data`<br/>DELETE `/v1/me/data`<br/>GET `/v1/me/data/erasures/:id` |
+| `createFlowsRouter` | — (full paths) | always | _no static routes (transport-only router)_ |
+| `createMonitoringRouter` | — (full paths) | always | POST `/monitoring/ticket`<br/>GET `/monitoring/events/buffer`<br/>GET `/monitoring/history`<br/>GET `/monitoring/history/facets`<br/>GET `/monitoring/flow-stats`<br/>GET `/monitoring/usage`<br/>GET `/monitoring/history/:id`<br/>DELETE `/monitoring/history`<br/>GET `/monitoring/audit`<br/>GET `/monitoring/audit/export`<br/>GET `/monitoring/audit/verify`<br/>GET `/monitoring/events` |
+| `createDebugRouter` | — (full paths) | always | GET `/monitoring/debug`<br/>GET `/monitoring/debug/:executionId/sample`<br/>GET `/monitoring/debug/:executionId` |
+| `createExplainRouter` | — (full paths) | always | GET `/monitoring/explain/:executionId`<br/>GET `/monitoring/explain/:executionId/bundle` |
+| `createMetricsRouter` | — (full paths) | `metricsEnabled ?? true` | GET `/metrics`<br/>GET `/monitoring/metrics` |
+| `createLimitsRouter` | — (full paths) | always | GET `/monitoring/limits`<br/>POST `/monitoring/limits`<br/>PUT `/monitoring/limits/:id`<br/>DELETE `/monitoring/limits/:id`<br/>GET `/monitoring/usage/timeseries`<br/>GET `/monitoring/usage/models` |
+| `createOidcAuthRouter` | — (full paths) | always | GET `/monitoring/auth/config`<br/>GET `/monitoring/auth/login`<br/>GET `/monitoring/auth/callback`<br/>GET `/monitoring/auth/refresh`<br/>POST `/monitoring/auth/logout` |
+| (direct) | / | always | GET /monitoring/auth/config |
+| `createRocketChatRouter` | — (full paths) | `assistantsResult?.rocketChat is set` | POST `/integrations/rocketchat/events` |
+| `createRocketChatConnectRouter` | — (full paths) | `connectReady && delegation is set` | GET `/connect/rocketchat/:requestId{[0-9a-fA-F-]+}`<br/>GET `/connect/rocketchat/callback`<br/>POST `/connect/rocketchat/complete` |
+| `createSloRouter` | — (full paths) | always | GET `/monitoring/slo` |
+| `createFinopsRouter` | — (full paths) | always | GET `/admin/finops/forecast/:tenantId`<br/>GET `/admin/finops/co2` |
+| `createShadowRouter` | — (full paths) | always | GET `/monitoring/shadow`<br/>GET `/monitoring/shadow/comparisons`<br/>GET `/monitoring/shadow/:flowId` |
+| `createTriggersRouter` | — (full paths) | always | POST `/triggers/:flowId`<br/>GET `/triggers` |
+| `stubRouter` | `/autopilot` | always | _stub router (503 until configured)_ |
+| `createAutopilotRouter` | `/autopilot` | always | GET `/autopilot/runs`<br/>GET `/autopilot/runs/flow/:flowId`<br/>GET `/autopilot/runs/:id`<br/>POST `/autopilot/trigger`<br/>GET `/autopilot/config` |
+<!-- END GENERATED: runtime route groups -->
 
 ### Control (`apps/control`)
 
@@ -184,10 +245,29 @@ and Search's `/ingest-file` proxy forwards Markdown only (images not stored).
 
 Like Search, it has a Node build target (`build:node`) in addition to the Bun target.
 
-## Shared contract packages
+### Outpost (`apps/outpost`)
+
+The locally operated Extract Outpost runtime. Bun, CLI-first.
+
+All sync logic lives in `@atf/outpost-core`; this application is the runtime around it: a CLI
+(`daemon`, `once`, `login`, `source-login`, `confirm-deletes`, `healthcheck`, `sidecar`), a
+Docker entrypoint using `/data` for sync state and file-backed credentials, a health endpoint,
+and the desktop Control API (loopback-only, Bearer-token-protected) that the desktop app talks
+to. The Outpost pulls from local folders, S3, Google Drive and Dropbox and uploads into Extract
+collections — credentials and file content stay on the customer side by design.
+
+### Outpost Desktop (`apps/outpost-desktop`)
+
+Tauri desktop wrapper around the same core. The native host keeps credentials in the OS
+keychain, spawns the Node SEA sidecar (the `sidecar` command above), and exchanges only a
+loopback port and Bearer token with it. See [Extract Outpost](#extract-outpost) above for the
+process topology.
+
+## Shared packages
 
 `packages/` holds the messages that cross service boundaries, each as a versioned package
-with Zod validation and its own tests.
+with Zod validation and its own tests, plus three shared implementation packages
+(`security-kit`, `observability`, `outpost-core`).
 
 | Package | Version | Contract |
 | --- | --- | --- |
@@ -197,6 +277,13 @@ with Zod validation and its own tests.
 | `@atf/schema-compatibility` | 1.0.0 | Deterministic schema-evolution classification |
 | `@atf/contract-adapter` | 1.0.0 | Explicit adapters between the contracts above |
 | `@atf/extract-contract` | 2.0.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath |
+| `@atf/erasure-contract` | 1.0.0 | DSAR erasure request, per-store result, and signed erasure receipt payload |
+
+The remaining packages are shared implementations rather than wire contracts:
+`@atf/security-kit` (constant-time compare, base64url, SSRF egress guard, TLS helpers),
+`@atf/observability` (OpenTelemetry tracing bootstrap, W3C Trace Context, OTLP/HTTP JSON),
+and `@atf/outpost-core` (0.1.0, the sync-agent core shared by the Outpost runtime and the
+desktop sidecar).
 
 `integration/system` exercises their combined lifecycle without external infrastructure, which
 is what makes a contract break visible in CI rather than at deployment time.

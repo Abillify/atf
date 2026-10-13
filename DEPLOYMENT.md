@@ -2,7 +2,7 @@
 
 ## Repository boundary
 
-The repository includes source code and a local unauthenticated quickstart under `deploy/examples`. It does **not** include a production Compose stack, Helm chart, customer flow bundle, credentials, production endpoints, or operational overlay.
+The repository includes source code, a local unauthenticated quickstart under `deploy/examples`, and a reference Helm chart under `deploy/helm/atf`. It does **not** include a production Compose stack, customer flow bundle, credentials, production endpoints, or operational overlay. The Helm chart carries no environment-specific values: image registry/tag or digest, Secret names, flow ConfigMaps, and replica counts are supplied by the deployment system at install time.
 
 Environment-specific stack definitions, operational flows, and customer configuration must live in a separately access-controlled deployment system. Released images must be built from a reviewed commit, scanned, accompanied by `sbom.cdx.json` and `THIRD_PARTY_NOTICES.md`, and pinned by immutable digest in the deployment system.
 
@@ -25,11 +25,56 @@ docker exec -it outpost atf-outpost confirm-deletes <sourceId>
 
 ## Application artifacts
 
-- Runtime and Gate are Bun 1.4.0 applications.
+- Runtime and Gate are Bun applications (toolchain pin 1.4.0; the production images in
+  `deploy/images/` run the digest-pinned Bun 1.4.2 base, a patch release inside the declared
+  `engines` range — see `DEVELOPMENT.md`).
 - Search is Bun-native and additionally supports `bun run --filter @atf/search build:node` for a Node.js 26 artifact. That build keeps the native module `sharp` external, so the Node image must install `sharp` (the version pinned in `apps/search/package.json`) for its target platform next to the artifact.
 - Control is built with Bun and deployed on Node.js 26 from the Next.js standalone output.
 
-Production Dockerfiles and orchestration definitions are deployment-owned and are not represented by the quickstart Dockerfile.
+Production Dockerfiles live under `deploy/images/` (one per service, pinned base-image
+digests, non-root). Orchestration beyond the reference Helm chart below — network fabric,
+ingress, TLS termination, and overlays — remains deployment-owned.
+
+## Helm chart (`deploy/helm/atf`)
+
+The umbrella chart `deploy/helm/atf` is the reference Kubernetes deployment for the five
+services (Runtime, Gate, Search, Extract, Control). It is validated in CI with `helm lint`
+and `kubeconform -strict` against every rendered manifest. For sizing and
+budgeting the chart's resource defaults — and the inference cost drivers behind
+them — see [docs/OPERATIONS-TCO.md](docs/OPERATIONS-TCO.md).
+
+Layout: an umbrella chart with one subchart per service plus an `atf-common` library chart
+that holds the shared templates (Deployment, Service, HPA, PDB, NetworkPolicy,
+ServiceAccount, migration Job hooks). Every workload runs with a restrictive
+`securityContext` (`runAsNonRoot`, `readOnlyRootFilesystem`, dropped capabilities,
+`RuntimeDefault` seccomp), requests/limits, liveness/readiness probes matching the table
+below, a `PodDisruptionBudget`, and a default-deny `NetworkPolicy` that only admits the
+documented service-to-service callers (plus ingress for `control`, or `gate`/`search`/
+`extract` when their `expose` flag is set).
+
+The chart references **existing** Secrets — it never contains secret material. Set
+`global.secrets.<service>` to the name of a Secret whose keys are the service's environment
+variables (`DATABASE_URL`, `POSTGRES_URL`, `EXTRACT_DATABASE_URL`, …); workloads consume it
+via `envFrom`, and the migration hooks read the database URL from it via `secretKeyRef`.
+Runtime flows come from a ConfigMap named by `runtime.flowsConfigMap` (mounted at
+`/config/flows`), Gate configuration from `gate.configMap` (mounted at `/config`).
+
+Migrations run as `pre-install`/`pre-upgrade` Jobs (`<service>.migration.enabled`, ordered
+by hook weight: Runtime 10, Search 20, Extract 30) that execute `bun run scripts/migrate.ts`
+from the service image; the replicas themselves boot with `MIGRATE_ON_START=false`.
+
+Images default to `ghcr.io/abillify/atf-<service>` tagged with the chart `appVersion`;
+pin `global.image.tag` or the per-service `image.digest` to an immutable digest in
+production. Example:
+
+```sh
+helm install atf deploy/helm/atf --namespace atf --create-namespace \
+  --set global.secrets.runtime=atf-runtime --set global.secrets.gate=atf-gate \
+  --set global.secrets.search=atf-search --set global.secrets.extract=atf-extract \
+  --set global.secrets.control=atf-control \
+  --set runtime.flowsConfigMap=atf-flows --set gate.configMap=atf-gate-config \
+  --set global.image.tag=0.14.0
+```
 
 ## Inference provider configuration
 
@@ -72,6 +117,118 @@ for the exact set.
 The gate covers settings a process can inspect about itself. It cannot verify TLS termination,
 network policy, backup restores, secret rotation, or least-privilege database grants. Those
 remain deployment review items, which is why the list above is longer than what the gate checks.
+
+### Schema migrations (`bun run migrate`, `MIGRATE_ON_START`)
+
+Runtime, Search, and Extract each ship a standalone migration command:
+
+```sh
+cd apps/runtime && DATABASE_URL=...            bun run migrate
+cd apps/search  && POSTGRES_URL=...            bun run migrate
+cd apps/extract && EXTRACT_DATABASE_URL=...    bun run migrate
+```
+
+Every migrator runs under a PostgreSQL session advisory lock, so a migration
+Job and booting replicas serialise safely — the losers see the schema already
+at the target version and no-op. The scripts read only the database variables
+(Search additionally the DDL-shaping knobs `VECTOR_HALF_PRECISION`, `HNSW_M`,
+`HNSW_EF_CONSTRUCTION`), so a one-shot Job needs the database secret and
+nothing else. Exit code 0 means the schema is at the target version
+(including "already up to date"); 1 means it is not.
+
+`MIGRATE_ON_START` controls whether a service applies migrations itself at
+boot. Unset means: `true` outside production, `false` when
+`APP_ENV`/`NODE_ENV` is `production` — production replicas therefore do not do
+DDL on their boot path, and a one-shot migration Job runs `bun run migrate`
+ahead of the rollout instead (the Helm chart wires this as a
+`pre-install`/`pre-upgrade` hook). An explicit `true`/`false` always wins, e.g.
+to keep migrate-on-boot during a brownout migration window.
+
+### Liveness and readiness probes
+
+Every service exposes a liveness probe that never touches a dependency and a
+readiness probe that gates the load balancer, so an orchestrator restarts a
+wedged process without removing healthy replicas from rotation over a slow
+database — and vice versa:
+
+| Service | Liveness | Readiness | 503 when |
+| --- | --- | --- | --- |
+| Runtime | `GET /health/live` | `GET /health/ready` | a configured dependency (database, Redis, flows) is down |
+| Gate | `GET /healthz` | `GET /readyz` | a required dependency is down |
+| Search | `GET /health/live` | `GET /health/ready` | PostgreSQL is unreachable |
+| Extract | `GET /health/live` | `GET /health/ready` | the poppler binaries or the vision endpoint are unavailable |
+
+The legacy composite `GET /health` stays unchanged on every service for
+back-compat (the Compose healthchecks and the `/ui` status pages use it). For
+Search it remains the diagnostic probe that also reports embedding, reranker,
+and circuit-breaker state — degraded model providers are visible there without
+pulling a replica out of rotation, because the database is the source of truth
+for readiness. For Extract, LibreOffice absence degrades only the Office
+formats and an unreachable Search only `/v1/ingest`, so neither makes
+`/health/ready` fail; `?deep=1` forces a re-probe past the cached results.
+
+### Service TLS and mTLS (`TLS_CERT_FILE`, `TLS_CLIENT_CA_FILE`)
+
+Search and Extract serve plain HTTP by default and terminate TLS at the ingress,
+which is the supported topology. For deployments that require transport
+encryption all the way to the service (compliance networks, cross-cluster
+links), both services accept the same knobs:
+
+| Variable | Effect |
+| --- | --- |
+| `TLS_CERT_FILE` / `TLS_KEY_FILE` | PEM material for the listener; both must be set together or startup fails. The service then serves HTTPS directly. |
+| `TLS_CLIENT_CA_FILE` | Optional. When set, the listener requests and **requires** a client certificate chained to this CA — mTLS. |
+
+The client side mirrors this: Search trusts a self-signed Converter via
+`CONVERTER_CA_CERT_FILE`, Extract trusts a self-signed Search via
+`SEARCH_CA_CERT_FILE`. The CA file is concatenated onto the platform trust
+store rather than replacing it, so a bundle containing both a private CA and
+public roots works in one setting.
+
+In the Helm chart, set `search.config.tls.secretName` (and/or
+`extract.config.tls.secretName`) to an existing `kubernetes.io/tls` Secret. The
+chart mounts it read-only at `/etc/atf/tls`, wires `TLS_CERT_FILE`/`TLS_KEY_FILE`
+from the mount, and flips the liveness/readiness probes to the `HTTPS` scheme
+(kubelet probes do not verify certificates). With search TLS enabled, also set
+`extract.config.searchTls: true` so the in-cluster `SEARCH_URL` uses `https`.
+`TLS_CLIENT_CA_FILE` (mTLS) is deliberately **not** chart-wired: kubelet HTTP
+probes cannot present a client certificate, so enabling it through the chart
+would fail every probe. Operators who need mTLS between services in Kubernetes
+should manage the client-CA variable and probe trade-offs explicitly (for
+example via a sidecar proxy) rather than through the chart defaults.
+
+**SPIFFE compatibility.** The implementation does no SPIFFE-specific protocol
+work; it validates ordinary X.509 chains against a configured CA bundle. A SPIFFE
+trust bundle is a PEM CA file and an SVID is a standard X.509 SNI-capable
+certificate, so a SPIFFE-compatible workload can drop its rotated SVID into
+`TLS_CERT_FILE`/`TLS_KEY_FILE` (server) or the client CA/credential knobs and
+the services trust the same trust domain — including with a workload-attested CA
+in `TLS_CLIENT_CA_FILE`. Certificate rotation is a file replacement plus the
+service's standard restart/rollout; there is no in-process watcher.
+
+### Service-token rotation (`API_TOKEN_NEXT`)
+
+Static service tokens support two simultaneously valid values so a rotation
+never has a window where old and new token are both required to be identical
+everywhere at once (Requirement 11.8). Search and Extract accept
+`API_TOKEN_NEXT` in addition to `API_TOKEN`; while both are set, **either** one
+authenticates. `API_TOKEN_NEXT` alone also enables token auth — useful when the
+old token has already been withdrawn. The production gate additionally refuses a
+rotation token shorter than 32 characters and one identical to `API_TOKEN`.
+
+Runbook per service pair (example: Extract → Search):
+
+1. Mint the new token and set it as `API_TOKEN_NEXT` on the **server** (Search).
+   Both tokens are now accepted; nothing changes for existing clients.
+2. Roll every **client** (Extract, Runtime, monitors, hand-written callers) to
+   send the new token.
+3. Promote: set the new token as `API_TOKEN` and **unset** `API_TOKEN_NEXT`.
+   The old token stops authenticating at this point — keep it valid in the
+   secret store until the previous step has fully converged on every replica.
+
+The same procedure applies to each service's own inbound `API_TOKEN`; the
+`MONITOR_TOKEN` has no rotation twin and is rotated by the ordinary
+pull-out-of-rotation restart.
 
 ### Supply-chain inventories per artifact and platform
 

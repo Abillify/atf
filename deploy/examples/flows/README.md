@@ -108,6 +108,6 @@ The twelve built-in node types: `llm`, `tool`, `router`, `classifier`, `parallel
 other string resolves through the plugin node-handler registry.
 
 Complete reference of every field, node type setting, placeholder, condition operator and
-calculation function: [`docs/FLOWS.md`](../../docs/FLOWS.md) (generated from the engine's own
-schema and node type catalog). Overview: [`docs/CAPABILITIES.md`](../../docs/CAPABILITIES.md) and
-[`apps/runtime/README.md`](../../apps/runtime/README.md).
+calculation function: [`docs/FLOWS.md`](../../../docs/FLOWS.md) (generated from the engine's own
+schema and node type catalog). Overview: [`docs/CAPABILITIES.md`](../../../docs/CAPABILITIES.md) and
+[`apps/runtime/README.md`](../../../apps/runtime/README.md).

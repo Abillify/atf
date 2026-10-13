@@ -10,6 +10,11 @@
 Versions are declared in `package.json`, `.nvmrc`, and `.node-version`. Do not use npm, pnpm, or
 yarn; the workspace resolves exclusively from `bun.lock`.
 
+The toolchain pin (`packageManager`, CI `BUN_VERSION`) is Bun 1.4.0. The production images under
+`deploy/images/` intentionally build and run on the digest-pinned `oven/bun:1.4.2` base: a patch
+release inside the declared `engines` range (`>=1.4.0 <2`). Both are pinned on purpose; change
+them deliberately, not as a side effect.
+
 ```bash
 bun install --frozen-lockfile
 ```
@@ -116,10 +121,21 @@ variables so a plain `bun run test` stays green without them:
 
 | Variable | Enables |
 | --- | --- |
-| `TEST_POSTGRES_URL` | Runtime database, migration, and row-level-security tests |
-| `POSTGRES_URL` | Search integration tests |
+| `TEST_POSTGRES_URL` | PostgreSQL-backed tests: Runtime (audit two-replica, receipt-log sink), Search integration suites, Extract, and the Gate pagination property test (Property 10) |
+| `DATABASE_URL` | Runtime durable-store integration tests (`db/__tests__/pg-integration.test.ts`, `cluster-limits.integration.test.ts`); not set in CI |
 | `RUN_MODEL_INTEGRATION` | Runtime tests against a real model provider |
 | `MCPGATE_LLM_E2E`, `LLM_BASE_URL` | Gate end-to-end tests against a local model server |
+| `LMSTUDIO_BASE_URL`, `OPENAI_BASE_URL` | Runtime model integration tests against a local OpenAI-compatible server (LM Studio first, `OPENAI_BASE_URL` as fallback) |
+| `BEDROCK_ACCESS_KEY_ID` (plus `BEDROCK_SECRET_ACCESS_KEY`, `BEDROCK_REGION`) | Bedrock-backed integration tests; the suite detects the key and skips otherwise |
+| `TEST_TOKEN` | Value substituted into Gate tool YAML during loader tests — proves `${TEST_TOKEN}` environment expansion in configs; the tests pass a fallback when unset |
+| `SEARCH_BASE_URL` | Base URL of a running Search instance for the retrieval evaluation scripts (`bun run eval:retrieval`, `scripts/eval/ingest-corpus.ts`); defaults to `http://127.0.0.1:3002` |
+
+Script variables (not test gates):
+
+| Variable | Effect |
+| --- | --- |
+| `ATF_BUDGET_FILE` | Alternative budget definition for `bun run check:budgets` / `check:budgets:ci`; defaults to `budgets/default.json` |
+| `ATF_REDACTION_RULES_REQUIRED=1` | Makes `bun run verify:public` fail when the redaction rule set is missing, instead of warning |
 
 A PostgreSQL with pgvector for local runs:
 

@@ -24,6 +24,9 @@
 | Search | [../apps/search/README.md](../apps/search/README.md) |
 | Gate | [../apps/gate/README.md](../apps/gate/README.md) |
 | Extract | [../apps/extract/README.md](../apps/extract/README.md) |
+| Outpost (Docker) | [../apps/outpost/README.md](../apps/outpost/README.md) |
+| Outpost Desktop | [../apps/outpost-desktop/README.md](../apps/outpost-desktop/README.md) |
+| Outpost core | [../packages/outpost-core/README.md](../packages/outpost-core/README.md) |
 
 Contract packages: [identity](../packages/identity-contract/README.md),
 [transaction](../packages/transaction-contract/README.md),
@@ -41,18 +44,28 @@ Contract packages: [identity](../packages/identity-contract/README.md),
 | [FLOWS.md](FLOWS.md) | Every flow field, node type and setting, placeholder, condition operator, variable reference and calculation function. **Generated** — run `bun run flow-reference` |
 | [UI-STYLE-GUIDE.md](UI-STYLE-GUIDE.md) | Control UI conventions and accessibility expectations |
 | [operations-and-retrieval.md](operations-and-retrieval.md) | Search operational behavior and retrieval tuning |
+| [OPERATIONS-TCO.md](OPERATIONS-TCO.md) | Sizing and budgeting: minimum/HA topology, resource needs, cost drivers (VLM per page, embeddings, reranker) |
 | [document-intelligence-v2-migration.md](document-intelligence-v2-migration.md) | Moving a deployment onto the Document Intelligence v2 ingestion path |
 | [router-result-interpretation.md](router-result-interpretation.md) | Configuring Gate's optional second-pass result interpretation |
 | [MCP-2026-CONTEXT-LAYER.md](MCP-2026-CONTEXT-LAYER.md) | MCP context-layer design |
 | [../deploy/examples/flows/README.md](../deploy/examples/flows/README.md) | Example flows, ordered by what they add |
 | [../licenses/README.md](../licenses/README.md) | Why some third-party license texts are vendored here |
+| [UPGRADE.md](UPGRADE.md) | Upgrading a deployment from 0.3 to the current version, milestone by milestone |
+| [THREAT-MODEL.md](THREAT-MODEL.md) | STRIDE threat model per service, including Outpost Desktop and the updater |
+| [DSFA-VORLAGE.md](DSFA-VORLAGE.md) | DPIA (German "DSFA") template, Art. 35 GDPR, with ATF-specific pre-fills |
+| [VVT-VORLAGE.md](VVT-VORLAGE.md) | Record of processing activities (RoPA, German "VVT") template, Art. 30 GDPR |
+| [runbooks/backup-restore.md](runbooks/backup-restore.md) | Backing up and restoring every store, in dependency order |
+| [runbooks/key-rotation.md](runbooks/key-rotation.md) | Rotating PII-vault, OIDC, BYOK and audit-anchor keys |
+| [runbooks/incident.md](runbooks/incident.md) | Security incident handling: first 15 minutes, evidence, close-out |
+| [runbooks/scaling.md](runbooks/scaling.md) | Per-service sizing, queue-depth scaling, anti-patterns |
 
 ## Architecture decisions
 
-[`adr/`](adr/) holds 27 records. They document the reasoning and the trade-offs, which is
+[`adr/`](adr/) holds 33 records. They document the reasoning and the trade-offs, which is
 usually more useful than the current code when you are deciding whether to change something.
+The full index with statuses is [`adr/README.md`](adr/README.md).
 
-- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0023)
+- [`adr/`](adr/) — Runtime, Control, and platform decisions (0001–0029)
 - [`adr/search/`](adr/search/) — Search decisions
 - [`adr/gate/`](adr/gate/) — Gate decisions
 

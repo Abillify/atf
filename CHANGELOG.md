@@ -20,6 +20,183 @@ releases:
 
 ### Added
 
+- Supply-chain evidence for release images (Req 13.1, Task 17.1).
+  `release.yml` now builds the service images directly as GHCR tags
+  (`ghcr.io/abillify/atf-<service>`), signs them with cosign keyless — the
+  workflow's OIDC identity is the signing credential, there is no
+  long-lived secret — and attaches an SLSA build-provenance and a CycloneDX
+  SBOM attestation to every image (each bound to the digest, not the tag,
+  so a retag never invalidates the signature). Permissions are minimal per
+  job (`contents: read`, plus `packages: write`, `id-token: write` and
+  `attestations: write` only in the image job). The signing step fails
+  instead of silently skipping when cosign or the id token is missing.
+- CI security scans (Req 13.2, 13.3, Task 17.2). New jobs in `ci.yml`:
+  `image-scan` builds each of the five production images and scans it with
+  Trivy (fails on critical CVEs; unfixed findings are ignored on purpose
+  and handled through the base-image digest bumps), `secrets` runs gitleaks
+  over the full history (`.gitleaks.toml` with project-specific allowlist
+  rules for test fixtures), and `codeql` analyses TypeScript and Rust with
+  dedicated configurations under `.github/codeql/` (pinned CodeQL
+  `init`/`analyze` actions, one language per matrix job —
+  `javascript-typescript` and `rust` — with `build-mode: none`).
+- OpenAPI breaking-change check for all services (Req 11.7, Task 17.3).
+  `scripts/check-openapi-compat.ts` exports the OpenAPI documents of
+  Runtime, Search, Gate and Extract to `docs/openapi/`
+  (`bun run openapi:update`) and compares them in CI against the committed
+  references (`bun run openapi:check`): removed paths, removed operations,
+  new required parameters, changed response-field types and status codes
+  break the check; purely additive changes pass. A negative test keeps the
+  check itself sharp.
+- Lint baseline with fingerprints (Req 13.4, 13.5, Task 17.4).
+  `scripts/check-lint-baseline.ts` compares the Biome findings against the
+  committed `.biome-baseline.json`; the key is severity + rule + file +
+  hash of the source line, so a new finding in a clean file breaks CI, while
+  a fixed finding does not narrow the baseline automatically
+  (`bun run lint:baseline -- --update` is explicit). The stock dropped from
+  655 to 280 findings (−57 %) and errors to 0; all `noExplicitAny` findings
+  are gone (types, narrowing or justified `biome-ignore` suppressions), and
+  the remaining 280 are exclusively `noNonNullAssertion` warnings in files
+  where removing the assertion would break the typecheck.
+- Unified contract versioning (Req 11.5, Task 17.5).
+  `@atf/extract-contract` has a single source
+  (`EXTRACT_CONTRACT_VERSION` in `src/version.ts`), and
+  `scripts/check-product-version.ts` (`verify:version`) now checks for every
+  contract package that the `package.json` major.minor is at least the
+  major.minor of the exported wire-contract constant — a package lagging
+  behind its wire promise, such as the former `@atf/extract-contract` 2.2.0
+  vs. 2.3.0, breaks the check. The package may run ahead of the wire value,
+  because published package versions are never lowered:
+  `@atf/identity-contract` stays 1.2.0 (wire 1.1.0),
+  `@atf/transaction-contract` and `@atf/evidence-contract` stay 1.1.0
+  (wire 1.0.0).
+- Branch-coverage proxy for security modules (Req 13.7, Task 17.6).
+  `scripts/check-security-coverage.ts` (`bun run coverage:security`)
+  enforces ≥ 90 % line and function coverage from lcov for each of
+  `auth.ts`, `audit-log.ts`, `pii-vault.ts`, `tool-authz.ts` and
+  `prod-gate.ts` — Bun 1.4 cannot report branch data, so lines plus
+  functions are the documented substitute. `knip` (configuration
+  `knip.json`) runs in CI and reports unused files, exports and
+  dependencies.
+- TCO guide `docs/OPERATIONS-TCO.md` (Req 12.8, Task 16.8): minimal and HA
+  topology with the actual Helm resource defaults, resource needs per
+  service and the cost drivers in order — VLM tokens per page
+  (`RENDER_DPI`, `MAX_PAGES`, `PAGE_CONCURRENCY`), embeddings per chunk,
+  reranker per query (`RERANK_CANDIDATE_MULTIPLIER`) — each as a formula
+  with a clearly marked worked example instead of invented prices, plus a
+  sizing worksheet and the cost brakes the product already has. Linked from
+  `docs/README.md` and `DEPLOYMENT.md`.
+- OTel span export for Search and Extract through a shared implementation
+  (Req 11.6, Task 16.7). The new package `@atf/observability` contains the
+  tracer that used to live only in the Runtime: W3C trace-context parsing,
+  batch flushing and OTLP/HTTP JSON export — now identical for Runtime,
+  Search and Extract (the Gate keeps its own optional OpenTelemetry-SDK
+  tracer). The Runtime keeps a thin shim that injects its egress guard
+  (`egressFetch`) as the shared tracer's transport; Search and Extract use
+  the default fetch. Both services get one server span per request
+  (parented on an incoming `traceparent`, renamed to the route template to
+  bound cardinality, `http.*` attributes) and the configuration
+  `TRACING_ENABLED`, `OTEL_EXPORTER_OTLP_ENDPOINT` and `OTEL_SERVICE_NAME`
+  (default `atf-search`/`atf-extract`); without an endpoint the tracer runs
+  log-only. New: `Span.updateName` on the tracer interface. The
+  AsyncLocalStorage now carries the span context of the server span, so
+  downstream clients (embedding, reranker, vision) follow the service's
+  trace even when the caller sent no `traceparent`.
+- Optional service TLS/mTLS and service-token rotation (Req 11.8, Task 16.6).
+  Search and Extract accept `TLS_CERT_FILE`/`TLS_KEY_FILE` (a PEM pair; both
+  or a startup error) and switch the listener to HTTPS; with
+  `TLS_CLIENT_CA_FILE` a client certificate signed by that CA is
+  additionally required (mTLS). SPIFFE-compatible workloads fit without
+  protocol work: the SVID and trust bundle are ordinary X.509 certificates
+  and PEM bundles, and rotation works by replacing the files plus a
+  rollout. On the client side Search trusts a self-signed converter via
+  `CONVERTER_CA_CERT_FILE` and Extract a self-signed Search via
+  `SEARCH_CA_CERT_FILE` (the CA is appended to the platform trust, not a
+  replacement). For token rotation both services accept `API_TOKEN_NEXT`
+  in addition to `API_TOKEN` — both tokens are valid at the same time; the
+  rotation procedure is in `DEPLOYMENT.md`, and the production gate checks
+  the minimum length (32) and that the two differ. The building blocks live
+  in `@atf/security-kit` (`createServerWithOptionalTls`,
+  `createClientTlsInit`, `createStaticTokenMatcher`). The Helm chart mirrors
+  this: `search.config.tls.secretName`/`extract.config.tls.secretName`
+  mount an existing `kubernetes.io/tls` Secret at `/etc/atf/tls`, the
+  probes switch to `HTTPS`, and `extract.config.searchTls` produces the
+  `https` `SEARCH_URL`; a CI render-variant job validates this with
+  kubeconform. `docs/CONFIGURATION.md` regenerated.
+
+- Hardened Compose quickstart, with extraction anchored in the CI smoke test
+  (Req 12.6, 12.7, Task 16.5). Every service in
+  `deploy/examples/compose.yaml` now runs with `no-new-privileges`,
+  `cap_drop: [ALL]` and CPU/memory limits; Postgres gets back only the
+  capabilities it needs for `gosu` and file ownership (`SETUID`, `SETGID`,
+  `CHOWN`, `DAC_OVERRIDE`, `FOWNER`). The CI compose job additionally
+  smoke-tests the conversion path: a generated PDF is checked against
+  `POST /v1/convert` (Extract) and `POST /ingest-file` (Search), so the
+  extraction path — not only the health endpoints — is part of the smoke
+  test. The Extract image therefore also appears in the CI artifact
+  inventories (quickstart binary upload). `.dockerignore` excludes the Rust
+  build target of the desktop app (several GB, consumed by no image
+  target).
+
+- Reference Helm chart `deploy/helm/atf` (Req 12.3, Task 16.4). An umbrella
+  chart with one subchart per service (Runtime, Gate, Search, Extract,
+  Control) plus the library chart `atf-common` for the shared templates.
+  Every workload runs with a restrictive `securityContext`
+  (`runAsNonRoot`, `readOnlyRootFilesystem`, `capabilities.drop: ALL`,
+  seccomp `RuntimeDefault`), requests/limits, liveness and readiness
+  probes, a `PodDisruptionBudget` and a default-deny `NetworkPolicy` (only
+  the documented service-to-service callers; ingress open for `control`,
+  optionally `gate`/`search`/`extract` via `expose`). The chart contains no
+  secret values; it references existing Secrets (`global.secrets.<service>`,
+  `envFrom`), and the migration hooks read the database URL via
+  `secretKeyRef`. Migrations run as `pre-install`/`pre-upgrade` jobs with
+  hook weights (Runtime 10, Search 20, Extract 30), and the replicas start
+  with `MIGRATE_ON_START=false`. `values.schema.json` validates all values
+  (among others the digest format and resource quantities); the CI job
+  `helm` runs `helm lint` and `kubeconform -strict` over every rendered
+  manifest (both tools pinned by checksum). `check-product-version.ts`
+  includes the `appVersion` of all seven chart files in the version sync.
+- Separate liveness and readiness endpoints for Search and Extract
+  (Req 12.5, Task 16.3). Both services now serve `GET /health/live` (pure
+  process liveness; deliberately checks no dependencies — a slow backend
+  must not trigger a restart loop) and `GET /health/ready` (the
+  load-balancer gate): Search on a PostgreSQL ping, Extract on the Poppler
+  binaries and the vision endpoint — the same fatal criteria as `/health`,
+  without the LibreOffice and Search reports (missing LibreOffice only
+  degrades Office formats, an unreachable Search only `/v1/ingest`;
+  `?deep=1` forces a new probe). The composite `GET /health` stays
+  unchanged for backward compatibility (Compose health checks, `/ui`).
+  Runtime (`/health/live`, `/health/ready`) and Gate (`/healthz`,
+  `/readyz`) were already separate. OpenAPI of both services extended;
+  overview table in `DEPLOYMENT.md`.
+- Standalone `migrate` command per service (`bun run migrate` in Runtime,
+  Search and Extract, Req 12.4, Task 16.2). The scripts
+  (`apps/<svc>/scripts/migrate.ts`) call the same migrators as the startup
+  path, all of which run under a PostgreSQL advisory lock — a migration job
+  and booting replicas serialize safely. The scripts read only the
+  database variables (Search additionally the DDL knobs
+  `VECTOR_HALF_PRECISION`, `HNSW_M`, `HNSW_EF_CONSTRUCTION`), so a job needs
+  only the database Secret. Exit 0 = schema at the target version
+  (including "already up to date"), exit 1 = error. New:
+  `MIGRATE_ON_START` controls whether a service migrates on boot; unset
+  means `true` outside production and `false` with
+  `APP_ENV`/`NODE_ENV=production` — production replicas no longer run DDL
+  on their boot path. An explicit `true`/`false` always wins. Details in
+  `DEPLOYMENT.md`.
+- Production Dockerfiles per service under `deploy/images/`
+  (`Dockerfile.runtime`, `.search`, `.gate`, `.extract`, `.control`,
+  Req 12.1/12.2, Task 16.1). Multi-stage with `bun install --frozen-lockfile
+  --production --filter @atf/<svc>`, base images pinned by digest, every
+  container runs as non-root UID/GID 65532 and starts with a read-only root
+  filesystem (tmpfs only where needed). Runtime, Search and Gate use the Bun
+  distroless image; because it ships no `libstdc++`/`libgcc_s`, those ABI
+  libraries are copied from the deps stage so that `sharp` (Search) and the
+  lazily imported NER stack (`@huggingface/transformers`/`onnxruntime-node`,
+  Runtime) stay loadable. Extract runs on `debian:bookworm-slim` with
+  Poppler and LibreOffice (nogui), including a build-time check of the
+  converters; Control builds the Next.js standalone output and starts it
+  with `node server.js` (the `next start` equivalent) on `node:26-alpine`.
+  The images were smoke-tested over HTTP (`/health/ready`, `/health`,
+  `/readyz`).
 - The supply-chain inventory now also covers the Rust dependencies of
   Outpost Desktop (Req 10.7, Task 14.4b). With `--include-cargo`,
   `scripts/generate-supply-chain.ts` reads the crate graph from
@@ -271,9 +448,152 @@ releases:
   branches, 45 % functions and 50 % lines across `src/**`, just below the
   measured baseline (58/51/52/60 %), so regressions fail immediately.
   `bun run test:coverage` runs the same suite explicitly.
+- Documentation consistency gates (Req 14.1–14.3, Tasks 20.2–20.3):
+  `check:workspace-counts` compares the workspace counts stated in README
+  and ARCHITECTURE against the real workspace lists from `package.json`
+  (7 apps, 10 packages, 1 integration) and runs in the hygiene job;
+  `route-reference:check` validates the generated Runtime route-group table
+  in `ARCHITECTURE.md` against the Runtime's route catalog — which fixed a
+  bug in the catalog itself (direct-route detection searched the masked
+  instead of the real source text).
+- OpenAPI served by Runtime and Gate (Req 14.4, Task 20.5): both services
+  now generate complete OpenAPI 3.1 documents from their routes and serve
+  them at `/openapi.json` and `/openapi.yaml`; `openapi:check` checks the
+  baselines of all four services (Runtime, Gate, Search, Extract) in CI,
+  and two new tests enforce that every route carries a tag and every
+  documented route exists.
+- Operations documentation (Req 14.5–14.6, Task 20.6): four runbooks under
+  `docs/runbooks/` — `backup-restore.md` (what to back up, Postgres backup
+  and restore, point-in-time recovery, what must never be restored
+  blindly), `key-rotation.md` (PII vault, OIDC, BYOK and audit-anchor
+  secrets, with recommended rotation frequencies), `incident.md` (roles,
+  severity, first 15 minutes, investigation aids, erasure requests during an
+  incident, recovery) and `scaling.md` (sizing baseline and horizontal
+  scaling per service); `docs/UPGRADE.md` with the upgrade path 0.3 →
+  current, including every migration since 0.9; `docs/THREAT-MODEL.md` as a
+  STRIDE model across six application surfaces including the Outpost and
+  the desktop updater; `docs/DSFA-VORLAGE.md` and `docs/VVT-VORLAGE.md` as
+  fillable GDPR templates (Art. 35 DPIA and Art. 30 record of processing
+  activities) with product-specific notes.
+- Outpost documentation (Req 14.7, Task 20.7): new
+  `apps/outpost-desktop/README.md` (architecture WebView → Tauri IPC →
+  sidecar, IPC-token handshake, keychain storage, disabled updater) and
+  `packages/outpost-core/README.md` (source adapters, sync planner, delete
+  brakes, path guard); `SECURITY.md` extended with the Outpost scope
+  (credential disclosure, sidecar protocol, path-guard escape, delete
+  mirroring) and `docs/CAPABILITIES.md` with the Outpost chapter;
+  `docs/README.md` now lists all application and reference documents,
+  including the ADR index.
+- ADR index and six new ADRs (Tasks 20.6, 20.8): `docs/adr/README.md`
+  indexes all 29 decisions (0001–0029) with their status; new are 0024
+  (shared security kit), 0025 (cross-service erasure orchestrated by the
+  Runtime), 0026 (audit hash chain and signed anchors), 0027 (CSP nonces in
+  the operator plane), 0028 (converter isolation as a sidecar) and 0029
+  (verifiable execution receipts).
+- Markdown link checker (Req 14.9, Task 20.8): `scripts/check-markdown-links.ts`
+  (`bun run check:links`, a new hygiene CI step) checks every relative link
+  and anchor in the repository's Markdown files — code blocks are masked and
+  GitHub slug rules are applied to anchors; it found and fixed three dead
+  links in `deploy/examples/flows/README.md`.
+- Verifiable execution receipts (Req 15, Tasks 21.1–21.8, ADR 0029). With
+  `DECISION_RECEIPTS_ENABLED=true` the Runtime issues one signed receipt per
+  chat completion and per tool call, carrying the flow id and version,
+  hashes of the prompt template, tool authorization and compliance policy,
+  model and provider, the PII tokenization proof, retrieval sources with
+  revision ids, the approval chain, cost, timestamps and the response hash
+  — without PII in clear text. The signature is a COSE_Sign1 (Ed25519,
+  WebCrypto) over deterministic CBOR (RFC 8949, shortest encoding, in
+  `@atf/security-kit` with RFC 8949 test vectors); every receipt is
+  appended to an append-only transparency log with a Merkle tree and is
+  backed by a signed tree head with an inclusion proof. New endpoints:
+  `GET /v1/receipts/{id}` and `GET /v1/receipts/{id}/proof` (Merkle proof
+  plus signed tree head), `GET /.well-known/atf-receipt-jwks.json` (JWKS)
+  and `GET /v1/receipts?execution_id=` (collection for the trace viewer);
+  chat responses carry the receipt reference in the `X-ATF-Receipt`
+  header. Persistence: migration 46 (`receipt_log`, `receipt_tree_heads`,
+  hex TEXT, append-only). At startup the transparency log is rebuilt from
+  `receipt_log`, so positions and proofs continue across restarts, and
+  `GET /v1/receipts/{id}` and `/proof` fall back to the rebuilt log when
+  the bounded in-memory store no longer holds the receipt (same tenant
+  check). While audit anchoring is active, tree heads are sealed
+  periodically on `AUDIT_ANCHOR_INTERVAL_MS` (only when the log grew) and
+  persisted in `receipt_tree_heads`. One receipt-issuing writer per
+  database is assumed (ADR 0029). The new CLI `atf-verify` (`scripts/atf-verify.ts`,
+  also as a compiled binary via `bun run atf-verify:build`) checks receipt,
+  signature and inclusion proof offline against a JWKS — without a
+  connection to the Runtime. Control shows receipts in the trace viewer
+  ("Receipts" tab), verifies signature and inclusion client-side through
+  `@atf/security-kit/browser` and exports single receipts or all receipts
+  of an execution as JSON. Cross-consistency: Control tests verify the
+  proofs produced by the Runtime transparency log with the mirrored browser
+  implementation.
+- Policy replay simulator (Req 16, Tasks 22.1–22.3): `POST
+  /admin/policy-replay` replays stored executions dry against candidate
+  policies (tool authorization and compliance) and reports, per execution,
+  the old and new outcome plus every flipped tool call with the deciding
+  rule — and a summary (evaluated, changed, newly denied, newly allowed,
+  highlight rows) and optional guardrail scans of the stored prompts. The
+  simulator (`src/replay/policy-replay.ts`) works exclusively through a
+  read-only execution source (`ReplayExecutionSource`); candidate policies
+  are validated against the Zod schemas before evaluation, and the live
+  engine of the current tool authorization stays the "old" side (no round
+  trip through `describe()`). A property test (Property 17, fast-check)
+  proves the absence of side effects: the execution store is bit-identical
+  after the simulation, the evaluation is idempotent and invalid candidates
+  touch nothing. Progress is optionally streamed over SSE
+  (`POST /admin/policy-replay/stream`); every run writes a `policy.replay`
+  audit entry. Control shows the simulator on the compliance page ("Policy
+  Replay Simulator" panel) with JSON fields for the candidate policies, a
+  diff table with old→new badges and an invert filter.
 
 ### Changed
 
+- The product's seven monoliths are split into modules below 1500 lines
+  (Req 13.6, Tasks 18.1–18.5), behaviour-neutral: all public import paths
+  stay valid (the entry files re-export where they did before). The Runtime
+  handler `graph/handlers/llm.ts` (5081 lines) separates provider
+  ingredients, the candidate loop, streaming, tooling and metering into
+  eleven `llm-*` modules (now 733); `graph/agent-harness/loop.ts` (3610)
+  moves delegation, findings, coverage, verification, stop logic and
+  outcome into eight `loop-*` modules (1441); `index.ts` (2651) becomes a
+  lean composition root whose bootstrap steps (engine, persistence, cache,
+  guardrails, observability, MCP, routes, assistants, Autopilot, red team,
+  operator auth) live in `bootstrap/*` (about 1150); `routes/flows.ts`
+  (3043) splits into `flows-shared`/`flows-context` plus six
+  `flows-routes-*` modules (62); `graph/graph-engine/handler-factories.ts`
+  (2888) into run state, tool callbacks, node lifecycle and tool usage
+  (1429). In Search, `postgres-client.ts` (6452 lines) splits into
+  `pg-types`/`pg-helpers`/`pg-engine-detect` plus five method modules
+  behind a narrow `PgFactoryCtx` (342), and `handlers/mcp.ts` (3307) into
+  `mcp-tool-ctx` plus one registration module each for transaction,
+  search, ingest and catalog tools (859); the existing `mcp-nav` pattern
+  (context interface plus register function) was adopted for this. Tool
+  registration, the registration boundary (authz enforcement, invocation
+  ledger) and all MCP protocol paths behave exactly as before; the Search
+  and Runtime suites pass, and the lint baseline keeps its number of
+  findings — the findings only moved into the new files.
+- Lint cleanup across all workspaces (Req 13.4, 13.5, Task 17.4). 245 `!`
+  assertions were removed where their type errors could be solved cleanly
+  (narrowing, explicit checks, correct signatures); the rest stay in the
+  fingerprint baseline. The `abortSignal` casts to `any` in the Search LLM
+  clients were unnecessary (the SDK accepts `AbortSignal`) and are gone;
+  `activity-emitter.ts` now types events as `unknown[]` instead of
+  `any[]`. The test mocks in `auth.test.ts` and `loader.test.ts` use
+  narrowing instead of `any`. Dead code removed:
+  `apps/control/src/hooks/useSessionRenew.ts` — silent token renewal lives
+  entirely in `AuthProvider` (`renewNow`); the hook was imported nowhere,
+  had no tests and was reported by `knip`. The `onResolve` property of
+  `ApprovalsPanel` is now typed `void` instead of
+  `Promise<boolean | void>` — the hook's `Promise<boolean>` stays
+  assignable, and so do callers returning void.
+- Supply-chain generator: reviewed declared-license fallback rules for the
+  native binary packages `@oxc-parser/binding-*` and
+  `@oxc-resolver/binding-*` (optional knip dependencies; darwin-arm64 and
+  linux-x64 gnu/musl) — their manifests declare MIT, but the tarballs
+  contain only `package.json` and the `.node` binary; the canonical MIT
+  text is attached without an invented copyright holder. `sbom.cdx.json`
+  and `THIRD_PARTY_NOTICES.md` regenerated as the linux-x64 reference
+  (1172 package versions).
 - Outpost: the release pipeline `outpost-release.yml` meets the same
   hardening standard as `release.yml` (Req 10.1, 10.2, Task 14.1). All action
   references are pinned to commit SHAs with a version comment; `permissions`
@@ -667,9 +987,17 @@ releases:
   tampered, foreign or with-other-args reused cursors are rejected with
   `Invalid pagination cursor`, and a bare decimal offset as before is no
   longer accepted. New is an optional keyset mode
-  (`pagination.keyset: [col…]`, columns must appear in `orderBy`): instead of
-  `OFFSET` the wrapper generates a dialect-portable seek predicate
-  `WHERE (a > ?) OR (a = ? AND b > ?)` with bound values from the last page.
+  (`pagination.keyset: [col…]`): instead of `OFFSET` the wrapper generates a
+  dialect-portable seek predicate `WHERE (a > ?) OR (a = ? AND b > ?)` with
+  one bound value per placeholder from the last page, seeking with `<` on
+  `DESC` columns. The loader only accepts a keyset that lists every
+  `orderBy` column as a bare name in the same order (so qualified `orderBy`
+  entries such as `t.created_at` cannot use keyset mode), and rejects a
+  keyset column that is also listed in `redact` (the signed but unencrypted
+  cursor would carry its unredacted value). Property 10
+  (`apps/gate/test/integration/pagination-completeness.property.test.ts`)
+  checks offset and keyset paging against SQLite and, with
+  `TEST_POSTGRES_URL`, PostgreSQL.
   The signing secret comes from `server.pagination.secret`; without
   configuration it falls back to a random in-process secret (cursors then do
   not survive a restart and are not valid across replicas). The `autoLimit`
@@ -743,6 +1071,18 @@ releases:
   still tracked but already deleted in the working tree.
 - Test fixtures no longer contain literal PEM private-key headers, so the
   public-tree scanner passes without an allowlist entry.
+- Control: the execution picker and the persisted run history read their
+  labels from the `de`/`en` catalogs (`executions.*`) and follow the active
+  locale. Previously both components showed hard-coded German labels in the
+  English UI as well; the German UI is unchanged.
+- `@atf/security-kit` loads under Node's TypeScript type stripping again: the
+  CBOR codec no longer uses a constructor parameter property, which Node
+  rejects. The CI `contracts` job now also runs the package's Node tests
+  (`test:node`), so a Bun-only construct can no longer slip through.
+- Tests: the pg-gated Search erasure suite creates the stats and legacy
+  asset tables it needs, so it also passes on a fresh database, and the Gate
+  fingerprint property test (Property 13) no longer generates `-0`, which
+  JSON cannot round-trip (intermittent failure).
 
 ## [0.14.0] — 2026-10-08
 Platform hardening, phase 1 (foundation), phase 3 (audit integrity) and phase 4

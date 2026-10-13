@@ -132,6 +132,29 @@ Escape from the document conversion path and SSRF through the conversion configu
 explicitly in scope (see below); the `source_url` allowlist and the upload checksum chain are
 the controls a deployment must configure and monitor.
 
+### Outpost (local ingestion agent)
+
+The Outpost ([`apps/outpost`](apps/outpost),
+[`apps/outpost-desktop`](apps/outpost-desktop),
+[`packages/outpost-core`](packages/outpost-core)) runs on customer-controlled machines and
+pushes source content into Extract. In-scope findings specific to it:
+
+- credential disclosure: Extract or cloud tokens must stay in the OS keychain (desktop) or
+  `_FILE` secrets (Docker), must never reach the WebView, logs, or disk outside the store,
+  and cloud tokens are read-only-scoped by design;
+- sidecar protocol abuse: the desktop sidecar performs a 32-byte token handshake on stdio
+  and binds its control API to loopback only — reaching or influencing it from outside the
+  host process pair is an escape;
+- path-guard escape: a configured local source must never read outside its declared root
+  (symlink and traversal handling at the adapter boundary);
+- delete-mirroring abuse: the `confirm-deletes` threshold is a safety control; forcing a
+  large mirrored delete through it is in scope.
+
+The desktop Tauri updater is currently disabled (`createUpdaterArtifacts: false`, empty
+endpoint list, placeholder signing key). Until it is enabled with a provisioned signing key,
+update-channel findings do not apply; when enabled, unsigned or replayed update payloads
+become in-scope (see `docs/THREAT-MODEL.md`).
+
 ## Contributing securely
 
 Never commit secrets, real endpoints, production flows, customer data, or internal
