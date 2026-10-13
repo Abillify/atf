@@ -1528,6 +1528,84 @@ export const MIGRATIONS: readonly Migration[] = [
       `ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS hash_alg TEXT NOT NULL DEFAULT 'sha256'`,
     ],
   },
+  {
+    version: 46,
+    name: "receipt_log + receipt_tree_heads — Decision_Receipt transparency log (Req 15.3)",
+    statements: [
+      // RFC-6962 Merkle transparency log over signed Decision_Receipts.
+      // `seq` is the leaf index, `leaf_hash` = H(0x00 || cose_bytes). The
+      // table is append-only: the immutability trigger below aborts
+      // UPDATE/DELETE for everyone (no sanctioned purge — receipts are
+      // evidence), mirroring the audit_log pattern from migration 42.
+      // `cose_bytes` holds the COSE_Sign1 bytes as lowercase hex (TEXT): the
+      // Bun SQL adapter passes parameters through as text, matching the hex
+      // leaf_hash / root_hash columns.
+      `CREATE TABLE IF NOT EXISTS receipt_log (
+         seq         BIGSERIAL PRIMARY KEY,
+         receipt_id  TEXT NOT NULL UNIQUE,
+         leaf_hash   TEXT NOT NULL,
+         cose_bytes  TEXT NOT NULL,
+         appended_at TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      `CREATE INDEX IF NOT EXISTS receipt_log_appended_idx
+         ON receipt_log (appended_at DESC)`,
+      // Periodic signed Merkle tree heads (audit anchors). `cose_bytes` is a
+      // COSE_Sign1 over the canonical tree-head CBOR [tree_size, root_hash,
+      // timestamp]; verification lives in receipts/transparency-log.ts.
+      `CREATE TABLE IF NOT EXISTS receipt_tree_heads (
+         id          BIGSERIAL PRIMARY KEY,
+         tree_size   BIGINT NOT NULL,
+         root_hash   TEXT NOT NULL,
+         cose_bytes  TEXT NOT NULL,
+         sealed_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+       )`,
+      `CREATE INDEX IF NOT EXISTS receipt_tree_heads_size_idx
+         ON receipt_tree_heads (tree_size DESC)`,
+      `CREATE OR REPLACE FUNCTION receipt_log_immutable() RETURNS trigger
+       LANGUAGE plpgsql AS $fn$
+       BEGIN
+         RAISE EXCEPTION
+           'receipt_log is append-only: % is not permitted (receipts are evidence)',
+           TG_OP;
+       END
+       $fn$`,
+      `DROP TRIGGER IF EXISTS receipt_log_immutable ON receipt_log`,
+      `CREATE TRIGGER receipt_log_immutable
+         BEFORE UPDATE OR DELETE ON receipt_log
+         FOR EACH ROW EXECUTE FUNCTION receipt_log_immutable()`,
+      `CREATE OR REPLACE FUNCTION receipt_tree_heads_immutable() RETURNS trigger
+       LANGUAGE plpgsql AS $fn$
+       BEGIN
+         RAISE EXCEPTION
+           'receipt_tree_heads is append-only: % is not permitted',
+           TG_OP;
+       END
+       $fn$`,
+      `DROP TRIGGER IF EXISTS receipt_tree_heads_immutable ON receipt_tree_heads`,
+      `CREATE TRIGGER receipt_tree_heads_immutable
+         BEFORE UPDATE OR DELETE ON receipt_tree_heads
+         FOR EACH ROW EXECUTE FUNCTION receipt_tree_heads_immutable()`,
+      // Belt-and-braces: the application roles get INSERT/SELECT only —
+      // UPDATE/DELETE would fail at the trigger anyway, but revoking keeps
+      // the permission model honest (same pattern as audit_log, migration 43).
+      `DO $do$
+       BEGIN
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_app') THEN
+           EXECUTE 'GRANT INSERT, SELECT ON receipt_log TO aiperator_app';
+           EXECUTE 'GRANT INSERT, SELECT ON receipt_tree_heads TO aiperator_app';
+           EXECUTE 'REVOKE UPDATE, DELETE ON receipt_log FROM aiperator_app';
+           EXECUTE 'REVOKE UPDATE, DELETE ON receipt_tree_heads FROM aiperator_app';
+         END IF;
+         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'aiperator_operator') THEN
+           EXECUTE 'GRANT INSERT, SELECT ON receipt_log TO aiperator_operator';
+           EXECUTE 'GRANT INSERT, SELECT ON receipt_tree_heads TO aiperator_operator';
+           EXECUTE 'REVOKE UPDATE, DELETE ON receipt_log FROM aiperator_operator';
+           EXECUTE 'REVOKE UPDATE, DELETE ON receipt_tree_heads FROM aiperator_operator';
+         END IF;
+       END
+       $do$`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

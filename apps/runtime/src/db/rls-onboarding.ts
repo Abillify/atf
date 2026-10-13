@@ -266,6 +266,23 @@ const RLS_SETUP_STATEMENTS: readonly string[] = [
      END IF;
    END
    $$`,
+  // Req 15.3 (platform-hardening): the Decision_Receipt transparency log is
+  // append-only evidence as well — take UPDATE/DELETE back from the blanket
+  // grant above (mirrors audit_log; migration 46 repeats this idempotently).
+  `DO $$
+   BEGIN
+     IF EXISTS (SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'receipt_log') THEN
+       EXECUTE 'REVOKE UPDATE, DELETE ON public.receipt_log FROM aiperator_app';
+       EXECUTE 'REVOKE UPDATE, DELETE ON public.receipt_log FROM aiperator_operator';
+     END IF;
+     IF EXISTS (SELECT 1 FROM information_schema.tables
+               WHERE table_schema = 'public' AND table_name = 'receipt_tree_heads') THEN
+       EXECUTE 'REVOKE UPDATE, DELETE ON public.receipt_tree_heads FROM aiperator_app';
+       EXECUTE 'REVOKE UPDATE, DELETE ON public.receipt_tree_heads FROM aiperator_operator';
+     END IF;
+   END
+   $$`,
   `DO $$
    DECLARE
      worker_table TEXT;

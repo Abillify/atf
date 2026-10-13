@@ -133,7 +133,11 @@ export interface ChatRouterOptions {
   idempotencyStore?: IdempotencyStore;
   jobStore?: JobStore;
   /** Durable Agent Runtime opt-in for async/batch jobs — see `dispatchAsyncJob`. */
-  jobRecovery?: { maxAttempts: number; leaseMs: number; contextSecret?: string };
+  jobRecovery?: {
+    maxAttempts: number;
+    leaseMs: number;
+    contextSecret?: string;
+  };
   /** Existing transaction HMAC secret used to attest persisted authorization context. */
   executionContextSecret?: string;
   captureRequestTokens?: boolean;
@@ -150,6 +154,13 @@ export interface ChatRouterOptions {
    * during long silent LLM phases. 0 disables the heartbeat. Default 15000.
    */
   sseHeartbeatMs?: number;
+  /**
+   * Decision_Receipts active (DECISION_RECEIPTS_ENABLED + signing key wired).
+   * The route then pre-generates the parent receipt id, exposes it as
+   * `X-ATF-Receipt` and hands it to the receipt decorator via the request
+   * context (Req 15.4).
+   */
+  decisionReceiptsEnabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------

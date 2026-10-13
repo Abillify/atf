@@ -128,6 +128,7 @@ export function createChatRouter(
   const compliancePolicyLoader = options?.compliancePolicyLoader;
   const auditLog = options?.auditLog;
   const sseHeartbeatMs = options?.sseHeartbeatMs;
+  const decisionReceiptsEnabled = options?.decisionReceiptsEnabled === true;
 
   router.post("/v1/chat/completions", async (ctx) => {
     const requestStart = Date.now();
@@ -404,18 +405,18 @@ export function createChatRouter(
       authzEnabled,
     );
     if (!decision.allowed) {
-        metrics?.recordRejected("forbidden");
-        return ctx.json(
-          {
-            error: {
-              message:
-                decision.reason ?? "You are not permitted to use this flow.",
-              type: "permission_error",
-            },
+      metrics?.recordRejected("forbidden");
+      return ctx.json(
+        {
+          error: {
+            message:
+              decision.reason ?? "You are not permitted to use this flow.",
+            type: "permission_error",
           },
-          403,
-        );
-      }
+        },
+        403,
+      );
+    }
 
     // -----------------------------------------------------------------------
     // Step 3a2: Compliance policy (data/model rules — ADR-0009)
@@ -552,6 +553,15 @@ export function createChatRouter(
     // `GET /monitoring/debug/:executionId` while the trace is still resident.
     ctx.header("X-Execution-Id", requestCtx.executionId);
 
+    // Decision_Receipts (Req 15.4): pre-generate the parent receipt id so the
+    // client can fetch `GET /v1/receipts/{id}` as soon as the run finishes.
+    // The receipt decorator consumes the same id from the request context.
+    if (decisionReceiptsEnabled) {
+      const receiptId = crypto.randomUUID();
+      requestCtx.decisionReceiptId = receiptId;
+      ctx.header("X-ATF-Receipt", receiptId);
+    }
+
     /** Token usage of the run, captured for the idempotency record. */
     let runUsage: TokenUsage | undefined;
 
@@ -624,7 +634,9 @@ export function createChatRouter(
       flowToRun,
       getRunUsage: () => runUsage,
       shadowModeService,
-      ...(executionContextSecret !== undefined ? { executionContextSecret } : {}),
+      ...(executionContextSecret !== undefined
+        ? { executionContextSecret }
+        : {}),
     });
 
     // -----------------------------------------------------------------------

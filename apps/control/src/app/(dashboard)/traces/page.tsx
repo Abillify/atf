@@ -41,6 +41,13 @@ const ExplainCard = dynamic(
   { ssr: false },
 );
 
+// Decision receipts (Req 15.7) — client-side COSE/Merkle verification.
+const ReceiptsPanel = dynamic(
+  () =>
+    import("../../../components/ReceiptsPanel").then((m) => m.ReceiptsPanel),
+  { ssr: false },
+);
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -60,7 +67,7 @@ interface OtelTracesResponse {
   spans: OtelSpan[];
 }
 
-type TabId = "steps" | "waterfall" | "explain";
+type TabId = "steps" | "waterfall" | "explain" | "receipts";
 
 // ---------------------------------------------------------------------------
 // Fetch helpers
@@ -155,12 +162,15 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
 
     if (resolved.timedOut) {
       return (
-        <span className="inline-flex flex-wrap items-center gap-1.5" aria-label="Approval auto-closed by timeout">
+        <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning">
             ⏱ auto-closed
           </span>
           {waitMs !== null && waitMs >= 0 && (
-            <span className="text-[11px] text-muted-foreground" title="Time until timeout auto-deny">
+            <span
+              className="text-[11px] text-muted-foreground"
+              title="Time until timeout auto-deny"
+            >
               after {formatWait(waitMs)}
             </span>
           )}
@@ -170,15 +180,20 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
 
     if (resolved.approved) {
       return (
-        <span className="inline-flex flex-wrap items-center gap-1.5" aria-label="Approval granted">
+        <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">
             ✓ approved
           </span>
           {resolved.by !== undefined && (
-            <span className="text-[11px] text-muted-foreground">by {resolved.by}</span>
+            <span className="text-[11px] text-muted-foreground">
+              by {resolved.by}
+            </span>
           )}
           {waitMs !== null && waitMs >= 0 && (
-            <span className="text-[11px] text-muted-foreground" title="Time from request to decision">
+            <span
+              className="text-[11px] text-muted-foreground"
+              title="Time from request to decision"
+            >
               in {formatWait(waitMs)}
             </span>
           )}
@@ -188,15 +203,20 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
 
     // denied
     return (
-      <span className="inline-flex flex-wrap items-center gap-1.5" aria-label="Approval denied">
+      <span className="inline-flex flex-wrap items-center gap-1.5">
         <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger">
           ✕ denied
         </span>
         {resolved.by !== undefined && (
-          <span className="text-[11px] text-muted-foreground">by {resolved.by}</span>
+          <span className="text-[11px] text-muted-foreground">
+            by {resolved.by}
+          </span>
         )}
         {waitMs !== null && waitMs >= 0 && (
-          <span className="text-[11px] text-muted-foreground" title="Time from request to decision">
+          <span
+            className="text-[11px] text-muted-foreground"
+            title="Time from request to decision"
+          >
             in {formatWait(waitMs)}
           </span>
         )}
@@ -206,10 +226,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
 
   // Still pending (unlikely in a completed trace, but possible for in-flight ones)
   return (
-    <span
-      className="inline-flex items-center gap-1 rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-semibold text-accent animate-pulse"
-      aria-label="Awaiting approval"
-    >
+    <span className="inline-flex items-center gap-1 rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-semibold text-accent animate-pulse">
       ⏳ awaiting approval
     </span>
   );
@@ -392,22 +409,42 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
       {/* Metadata row */}
       <div className="flex flex-wrap gap-4 rounded-md bg-muted px-3 py-2 text-xs text-muted-foreground">
         {event.model && (
-          <span><span className="font-medium text-muted-foreground">model</span> {event.model}</span>
+          <span>
+            <span className="font-medium text-muted-foreground">model</span>{" "}
+            {event.model}
+          </span>
         )}
         {event.latency_ms != null && (
-          <span><span className="font-medium text-muted-foreground">latency</span> {event.latency_ms} ms</span>
+          <span>
+            <span className="font-medium text-muted-foreground">latency</span>{" "}
+            {event.latency_ms} ms
+          </span>
         )}
         {event.input_tokens != null && (
-          <span><span className="font-medium text-muted-foreground">in-tokens</span> {event.input_tokens}</span>
+          <span>
+            <span className="font-medium text-muted-foreground">in-tokens</span>{" "}
+            {event.input_tokens}
+          </span>
         )}
         {event.output_tokens != null && (
-          <span><span className="font-medium text-muted-foreground">out-tokens</span> {event.output_tokens}</span>
+          <span>
+            <span className="font-medium text-muted-foreground">
+              out-tokens
+            </span>{" "}
+            {event.output_tokens}
+          </span>
         )}
         {event.cost != null && event.cost > 0 && (
-          <span><span className="font-medium text-muted-foreground">cost</span> {formatCost(event.cost)}</span>
+          <span>
+            <span className="font-medium text-muted-foreground">cost</span>{" "}
+            {formatCost(event.cost)}
+          </span>
         )}
         {event.sequence != null && (
-          <span><span className="font-medium text-muted-foreground">seq</span> {event.sequence}</span>
+          <span>
+            <span className="font-medium text-muted-foreground">seq</span>{" "}
+            {event.sequence}
+          </span>
         )}
       </div>
 
@@ -422,7 +459,9 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
               const { resolved, pending } = a;
               const tool = a.tool ?? "unknown tool";
               // Strip server prefix for display: "crm/cancel_booking" → "cancel_booking"
-              const displayTool = tool.includes("/") ? tool.split("/").slice(1).join("/") : tool;
+              const displayTool = tool.includes("/")
+                ? tool.split("/").slice(1).join("/")
+                : tool;
               const requestedAt = resolved?.requestedAt ?? pending?.requestedAt;
               const waitMs =
                 resolved?.requestedAt !== undefined
@@ -443,7 +482,10 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
                 resolved !== undefined && !resolved.approved;
 
               return (
-                <div key={a.id} className="flex flex-wrap items-center gap-2 text-xs">
+                <div
+                  key={a.id}
+                  className="flex flex-wrap items-center gap-2 text-xs"
+                >
                   <span className="font-mono text-accent">{displayTool}</span>
                   {argsPreview && (
                     <span
@@ -460,7 +502,10 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
                     </span>
                   )}
                   {requestedAt && (
-                    <span className="text-[11px] text-muted-foreground" title="When approval was requested">
+                    <span
+                      className="text-[11px] text-muted-foreground"
+                      title="When approval was requested"
+                    >
                       requested {formatTime(requestedAt)}
                     </span>
                   )}
@@ -478,8 +523,12 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
 
       {/* Prompt / Response */}
       {sections.map((sec) => (
-        <div key={sec.label} className="rounded-md border border-border bg-card">
+        <div
+          key={sec.label}
+          className="rounded-md border border-border bg-card"
+        >
           <button
+            type="button"
             className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-muted-foreground hover:bg-muted"
             onClick={sec.toggle}
             aria-expanded={sec.expandable ? sec.expanded : undefined}
@@ -487,7 +536,9 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
           >
             <span>{sec.label}</span>
             {sec.expandable && (
-              <span className="text-muted-foreground">{sec.expanded ? "▲" : "▼"}</span>
+              <span className="text-muted-foreground">
+                {sec.expanded ? "▲" : "▼"}
+              </span>
             )}
           </button>
           {(!sec.expandable || sec.expanded) && (
@@ -526,7 +577,10 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
                       </span>
                     )}
                     {/* Approval outcome inline */}
-                    <ApprovalOutcomeBadge resolved={resolved} pending={pending} />
+                    <ApprovalOutcomeBadge
+                      resolved={resolved}
+                      pending={pending}
+                    />
                   </div>
                   {/* Args */}
                   <pre className="mt-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words font-mono text-xs text-muted-foreground">
@@ -547,13 +601,25 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
           </div>
           <div className="divide-y divide-border">
             {event.routing_decision.candidates?.map((c, i) => (
-              <div key={i} className={`flex items-center gap-2 px-3 py-1.5 text-xs ${c.matched ? "bg-warning-soft" : ""}`}>
-                <span className={`w-4 ${c.matched ? "text-success" : "text-muted-foreground"}`}>
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: routing candidates have no unique id; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
+                key={i}
+                className={`flex items-center gap-2 px-3 py-1.5 text-xs ${c.matched ? "bg-warning-soft" : ""}`}
+              >
+                <span
+                  className={`w-4 ${c.matched ? "text-success" : "text-muted-foreground"}`}
+                >
                   {c.matched ? "✓" : "○"}
                 </span>
                 <span className="font-mono text-foreground">{c.target}</span>
-                {c.condition && <span className="text-muted-foreground">{c.condition}</span>}
-                {c.label && <span className="italic text-muted-foreground">{c.label}</span>}
+                {c.condition && (
+                  <span className="text-muted-foreground">{c.condition}</span>
+                )}
+                {c.label && (
+                  <span className="italic text-muted-foreground">
+                    {c.label}
+                  </span>
+                )}
               </div>
             ))}
           </div>
@@ -612,6 +678,8 @@ function StepNavigator({
 
         return (
           <button
+            type="button"
+            // biome-ignore lint/suspicious/noArrayIndexKey: a node can execute several times per trace, so execution id + node id alone are not unique
             key={`${e.execution_id}-${e.node_id}-${i}`}
             onClick={() => onSelect(i)}
             className={`flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
@@ -627,6 +695,7 @@ function StepNavigator({
               {/* Approval indicator dot */}
               {approvalDot !== null && (
                 <span
+                  role="img"
                   className={`h-1.5 w-1.5 rounded-full ${approvalDot}`}
                   title={`${approvalCount} approval${approvalCount !== 1 ? "s" : ""}`}
                   aria-label={`${approvalCount} approval${approvalCount !== 1 ? "s" : ""}`}
@@ -701,7 +770,12 @@ export default function TracesPage() {
     if (typeof window === "undefined") return;
     const params = new URLSearchParams(window.location.search);
     const linkedTab = params.get("tab");
-    if (linkedTab === "steps" || linkedTab === "waterfall" || linkedTab === "explain") {
+    if (
+      linkedTab === "steps" ||
+      linkedTab === "waterfall" ||
+      linkedTab === "explain" ||
+      linkedTab === "receipts"
+    ) {
       setTab(linkedTab);
     }
     const linked = params.get("execution")?.trim();
@@ -792,7 +866,9 @@ export default function TracesPage() {
 
   return (
     <div className="flex h-full flex-col p-4 sm:p-6">
-      <h1 className="mb-4 text-xl font-semibold text-foreground">Execution Trace Viewer</h1>
+      <h1 className="mb-4 text-xl font-semibold text-foreground">
+        Execution Trace Viewer
+      </h1>
 
       {/* Lookup bar */}
       <div className="mb-4 flex gap-2">
@@ -802,7 +878,9 @@ export default function TracesPage() {
           onChange={(e) => setExecutionId(e.target.value)}
           placeholder="Execution ID…"
           className="flex-1 rounded-md border border-border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-          onKeyDown={(e) => { if (e.key === "Enter") handleSubmit(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") handleSubmit();
+          }}
           aria-label="Execution ID"
         />
         <Button
@@ -822,15 +900,19 @@ export default function TracesPage() {
           onValueChange={(v) => setTab(v as TabId)}
         >
           <TabsList>
-            {(["steps", "waterfall", "explain"] as TabId[]).map((t) => (
-              <TabsTrigger key={t} value={t}>
-                {t === "steps"
-                  ? "Step-by-Step"
-                  : t === "waterfall"
-                    ? "Span Waterfall"
-                    : "Explain"}
-              </TabsTrigger>
-            ))}
+            {(["steps", "waterfall", "explain", "receipts"] as TabId[]).map(
+              (t) => (
+                <TabsTrigger key={t} value={t}>
+                  {t === "steps"
+                    ? "Step-by-Step"
+                    : t === "waterfall"
+                      ? "Span Waterfall"
+                      : t === "explain"
+                        ? "Explain"
+                        : "Receipts"}
+                </TabsTrigger>
+              ),
+            )}
           </TabsList>
         </Tabs>
       )}
@@ -847,7 +929,10 @@ export default function TracesPage() {
 
       {/* Loading */}
       {(loadingEvents || loadingSpans) && (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true">
+        <div
+          className="flex items-center gap-2 text-sm text-muted-foreground"
+          aria-busy="true"
+        >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
           Loading trace…
         </div>
@@ -857,7 +942,10 @@ export default function TracesPage() {
       {tab === "steps" && submittedId && !loadingEvents && (
         <>
           {eventsError && (
-            <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
+            <div
+              role="alert"
+              className="rounded-md bg-danger-soft p-3 text-sm text-danger"
+            >
               Failed to load events: {eventsError.message}
             </div>
           )}
@@ -873,7 +961,8 @@ export default function TracesPage() {
               {/* Step list (left panel) */}
               <div className="w-full shrink-0 rounded-lg border border-border bg-card p-2 lg:w-56">
                 <div className="mb-2 text-xs font-semibold text-muted-foreground uppercase tracking-wide px-1">
-                  {sortedEvents.length} step{sortedEvents.length !== 1 ? "s" : ""}
+                  {sortedEvents.length} step
+                  {sortedEvents.length !== 1 ? "s" : ""}
                 </div>
                 <StepNavigator
                   events={sortedEvents}
@@ -932,7 +1021,11 @@ export default function TracesPage() {
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => setActiveStep((s) => Math.min(sortedEvents.length - 1, s + 1))}
+                        onClick={() =>
+                          setActiveStep((s) =>
+                            Math.min(sortedEvents.length - 1, s + 1),
+                          )
+                        }
                         disabled={activeStep === sortedEvents.length - 1}
                         aria-label="Next step"
                       >
@@ -951,10 +1044,14 @@ export default function TracesPage() {
       {tab === "waterfall" && submittedId && !loadingSpans && (
         <>
           {spansError && (
-            <div role="alert" className="rounded-md bg-warning-soft p-3 text-sm text-warning">
+            <div
+              role="alert"
+              className="rounded-md bg-warning-soft p-3 text-sm text-warning"
+            >
               OTel spans unavailable: {spansError.message}.
               <span className="ml-1 text-warning">
-                Ensure TRACING_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT is configured.
+                Ensure TRACING_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT is
+                configured.
               </span>
             </div>
           )}
@@ -966,12 +1063,22 @@ export default function TracesPage() {
           {sortedSpans.length > 0 && (
             <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
-                <span>Execution: <code className="font-mono">{submittedId}</code></span>
-                <span>{sortedSpans.length} span{sortedSpans.length !== 1 ? "s" : ""} · {totalDuration} ms total</span>
+                <span>
+                  Execution: <code className="font-mono">{submittedId}</code>
+                </span>
+                <span>
+                  {sortedSpans.length} span{sortedSpans.length !== 1 ? "s" : ""}{" "}
+                  · {totalDuration} ms total
+                </span>
               </div>
               <div className="divide-y divide-border">
                 {sortedSpans.map((span) => (
-                  <SpanBar key={span.spanId} span={span} minTime={minTime} totalDuration={totalDuration} />
+                  <SpanBar
+                    key={span.spanId}
+                    span={span}
+                    minTime={minTime}
+                    totalDuration={totalDuration}
+                  />
                 ))}
               </div>
             </div>
@@ -982,6 +1089,15 @@ export default function TracesPage() {
       {/* ── Decision-Provenance Explainability Card ──────────────────────── */}
       {tab === "explain" && submittedId && (
         <ExplainCard
+          executionId={submittedId}
+          token={token}
+          enabled={ready && isAuthenticated}
+        />
+      )}
+
+      {/* ── Decision Receipts (Req 15.7) ─────────────────────────────────── */}
+      {tab === "receipts" && submittedId && (
+        <ReceiptsPanel
           executionId={submittedId}
           token={token}
           enabled={ready && isAuthenticated}

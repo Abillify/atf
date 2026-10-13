@@ -14,6 +14,8 @@ import {
   createToolAuthzEngine,
   createToolAuthzEngineFromJson,
   createDenyAllToolAuthzEngine,
+  TOOL_AUTHZ_DENY_ALL_MARKER,
+  TOOL_AUTHZ_NOOP_MARKER,
   type ToolAuthzPolicy,
 } from "../tool-authz.js";
 import type { RequestContext } from "../../types/monitoring.js";
@@ -172,5 +174,33 @@ describe("tool-authz — fail-closed on malformed policy", () => {
     expect(engine.active).toBe(true);
     expect(engine.describe().defaultAction).toBe("deny");
     expect(engine.evaluate("x/y", {}, ctx()).reason).toBe("nope");
+  });
+});
+describe("tool-authz — policyHash (Decision_Receipt provenance, Req 15.2)", () => {
+  const policy: ToolAuthzPolicy = {
+    defaultAction: "deny",
+    rules: [{ id: "a", tool: "search/*", action: "allow" }],
+  };
+  test("a real policy hashes to a stable SHA-256 hex digest independent of key order", () => {
+    const first = createToolAuthzEngine(policy).policyHash();
+    expect(first).toMatch(/^[0-9a-f]{64}$/);
+    const reordered = createToolAuthzEngine({
+      rules: [{ action: "allow", tool: "search/*", id: "a" }],
+      defaultAction: "deny",
+    }).policyHash();
+    expect(reordered).toBe(first);
+    const changed = createToolAuthzEngine({
+      ...policy,
+      defaultAction: "allow",
+    }).policyHash();
+    expect(changed).not.toBe(first);
+  });
+  test("engines without a real policy return the documented markers, not a digest", () => {
+    expect(createToolAuthzEngine(undefined).policyHash()).toBe(
+      TOOL_AUTHZ_NOOP_MARKER,
+    );
+    expect(createDenyAllToolAuthzEngine().policyHash()).toBe(
+      TOOL_AUTHZ_DENY_ALL_MARKER,
+    );
   });
 });

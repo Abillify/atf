@@ -51,6 +51,9 @@
  * No `any` at module boundaries.
  */
 
+import { createHash } from "node:crypto";
+
+import { canonicalizeJson } from "@atf/erasure-contract";
 import { z } from "zod";
 import type { RequestContext } from "../types/monitoring.js";
 
@@ -225,10 +228,24 @@ export interface ToolAuthzEngine {
 
   /** Returns a read-only description of the loaded policy (for the dashboard). */
   describe(): ToolAuthzPolicyDescription;
+
+  /**
+   * Stable SHA-256 hex digest identifying the policy in force (Decision_Receipt
+   * policy hash, Req 15.2). Engines without a real policy return a documented
+   * marker string instead of a digest so a receipt never implies a policy that
+   * was not loaded.
+   */
+  policyHash(): string;
 }
 
 class ToolAuthzEngineImpl implements ToolAuthzEngine {
   constructor(private readonly policy: ToolAuthzPolicy) {}
+
+  policyHash(): string {
+    return createHash("sha256")
+      .update(canonicalizeJson(this.policy), "utf8")
+      .digest("hex");
+  }
 
   get active(): boolean {
     return this.policy.rules.length > 0;
@@ -294,6 +311,9 @@ class NoopToolAuthzEngine implements ToolAuthzEngine {
   describe(): ToolAuthzPolicyDescription {
     return { active: false, ruleCount: 0, defaultAction: "allow", rules: [] };
   }
+  policyHash(): string {
+    return TOOL_AUTHZ_NOOP_MARKER;
+  }
 }
 
 /**
@@ -312,7 +332,19 @@ class DenyAllToolAuthzEngine implements ToolAuthzEngine {
   describe(): ToolAuthzPolicyDescription {
     return { active: true, ruleCount: 0, defaultAction: "deny", rules: [] };
   }
+  policyHash(): string {
+    return TOOL_AUTHZ_DENY_ALL_MARKER;
+  }
 }
+
+/**
+ * Documented policy-hash markers for engines without a real policy
+ * (Decision_Receipt policy provenance, Req 15.2). A receipt carrying a marker
+ * states honestly that no rule set was in force, instead of a digest that
+ * would imply one.
+ */
+export const TOOL_AUTHZ_NOOP_MARKER = "atf:tool-authz:noop";
+export const TOOL_AUTHZ_DENY_ALL_MARKER = "atf:tool-authz:deny-all";
 
 const FAIL_CLOSED_REASON =
   "tool authorization policy failed to load — denying all tool calls (fail-closed)";

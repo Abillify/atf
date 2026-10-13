@@ -115,6 +115,7 @@ export function createResponsesRouter(
   const shadowModeService = options?.shadowModeService;
   const compliancePolicyLoader = options?.compliancePolicyLoader;
   const auditLog = options?.auditLog;
+  const decisionReceiptsEnabled = options?.decisionReceiptsEnabled === true;
 
   router.post("/v1/responses", async (ctx) => {
     const requestStart = Date.now();
@@ -157,8 +158,7 @@ export function createResponsesRouter(
       return ctx.json(
         {
           error: {
-            message:
-              "Field 'input' must be a non-empty string or item array.",
+            message: "Field 'input' must be a non-empty string or item array.",
             type: "invalid_request_error",
           },
         },
@@ -220,6 +220,15 @@ export function createResponsesRouter(
     const traceCtx = ctx.get(TRACE_CONTEXT_KEY);
     if (traceCtx !== undefined) {
       requestCtx.traceContext = traceCtx;
+    }
+
+    // Decision_Receipts (Req 15.4): pre-generate the parent receipt id so the
+    // client can fetch `GET /v1/receipts/{id}` as soon as the run finishes.
+    // The receipt decorator consumes the same id from the request context.
+    if (decisionReceiptsEnabled) {
+      const receiptId = crypto.randomUUID();
+      requestCtx.decisionReceiptId = receiptId;
+      ctx.header("X-ATF-Receipt", receiptId);
     }
 
     // Per-request flow variable overrides
@@ -383,18 +392,18 @@ export function createResponsesRouter(
       authzEnabled,
     );
     if (!decision.allowed) {
-        metrics?.recordRejected("forbidden");
-        return ctx.json(
-          {
-            error: {
-              message:
-                decision.reason ?? "You are not permitted to use this flow.",
-              type: "permission_error",
-            },
+      metrics?.recordRejected("forbidden");
+      return ctx.json(
+        {
+          error: {
+            message:
+              decision.reason ?? "You are not permitted to use this flow.",
+            type: "permission_error",
           },
-          403,
-        );
-      }
+        },
+        403,
+      );
+    }
 
     // -----------------------------------------------------------------------
     // Step 3b: Compliance policy (ADR-0009)
@@ -543,7 +552,9 @@ export function createResponsesRouter(
       flowToRun,
       getRunUsage: () => runUsage,
       shadowModeService,
-      ...(executionContextSecret !== undefined ? { executionContextSecret } : {}),
+      ...(executionContextSecret !== undefined
+        ? { executionContextSecret }
+        : {}),
     });
 
     // -----------------------------------------------------------------------

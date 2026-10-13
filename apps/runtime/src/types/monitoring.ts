@@ -210,6 +210,13 @@ export interface AgentExecutionContext {
   ssoToken: string;
   /** UUID correlating all monitoring events for this request */
   executionId: string;
+  /**
+   * Pre-generated parent Decision_Receipt id (Req 15.4). The chat route sets
+   * this before execution so the `X-ATF-Receipt` response header can be sent
+   * immediately; the receipt decorator consumes it instead of generating a
+   * fresh UUID. Optional — receipts are off by default.
+   */
+  decisionReceiptId?: string;
   /** Authenticated user's email address (optional) */
   userEmail?: string;
   /**
