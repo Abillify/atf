@@ -220,7 +220,7 @@ describe("createRuntimeEgress", () => {
   });
 
   test("honours a caller-provided AbortSignal", async () => {
-    const srv = await startServer((_req, res) => {
+    const srv = await startServer((_req, _res) => {
       // never respond
       void _req;
     });

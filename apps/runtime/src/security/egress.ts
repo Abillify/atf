@@ -220,7 +220,7 @@ export function createRuntimeEgress(
               } else {
                 // DNS-Pinning: the socket connects to exactly the address that
                 // passed the policy check above.
-                const selected = addresses[0]!;
+                const selected = addresses[0];
                 callback(null, selected.address, selected.family);
               }
             } catch (cause) {
@@ -423,7 +423,7 @@ function addressBlocked(
  * (ollama, OTLP collectors) that operators explicitly allow-list.
  */
 function isAllowedPrivateAddress(address: string, allowLoopback: boolean): boolean {
-  const normalized = address.toLowerCase().split("%")[0]!;
+  const normalized = address.toLowerCase().split("%")[0];
   if (normalized.startsWith("::ffff:")) {
     return isAllowedPrivateAddress(normalized.slice(7), allowLoopback);
   }
@@ -432,7 +432,7 @@ function isAllowedPrivateAddress(address: string, allowLoopback: boolean): boole
   }
   if (isIP(normalized) === 4) {
     const [a, b] = normalized.split(".").map(Number);
-    return a === 10 || (a === 172 && b! >= 16 && b! <= 31) || (a === 192 && b === 168);
+    return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
   }
   return isIP(normalized) === 6 && (normalized.startsWith("fc") || normalized.startsWith("fd"));
 }

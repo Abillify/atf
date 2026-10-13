@@ -264,7 +264,8 @@ describe("GET /v1/me/data/erasures/{id} — signed Erasure_Receipt (Req 2.11)", 
     expect(del.status).toBe(200);
     const { requestId } = (await del.json()) as { requestId: string };
     const operation = await orch.get(requestId);
-    const receiptId = (operation?.receipt as ErasureReceiptEnvelope).payload
+    if (!operation) throw new Error("operation must exist after deletion");
+    const receiptId = (operation.receipt as ErasureReceiptEnvelope).payload
       .receiptId;
     return { ...built, orch, receiptId };
   }

@@ -39,8 +39,12 @@ describe("buildFlowJsonSchema", () => {
  * the schema structure instead.
  */
 describe("flow.schema.json accepts the source form", () => {
+  // Deep structural assertions on raw JSON Schema nodes; typing every level
+  // would add ceremony without catching more mistakes.
+  // biome-ignore lint/suspicious/noExplicitAny: raw JSON Schema traversal in tests
   const schema = buildFlowJsonSchema() as Record<string, any>;
-  const accepts = (flow: unknown): boolean => z.fromJSONSchema(schema as never).safeParse(flow).success;
+  const accepts = (flow: unknown): boolean =>
+    z.fromJSONSchema(schema as never).safeParse(flow).success;
   const node = schema.properties.nodes.items;
   const override = node.properties.overrides.items;
 
@@ -48,15 +52,46 @@ describe("flow.schema.json accepts the source form", () => {
     for (const llm of [node.properties.llm, override.properties.llm]) {
       const [shortcut, explicit] = llm.anyOf;
       expect(shortcut.required).toEqual(["shortcut"]);
-      expect(Object.keys(shortcut.properties)).toEqual(["shortcut", "parameters"]);
+      expect(Object.keys(shortcut.properties)).toEqual([
+        "shortcut",
+        "parameters",
+      ]);
       expect(shortcut.additionalProperties).toBe(false); // provider/model next to a shortcut are rejected
       expect(explicit.required).toEqual(["provider", "model"]);
     }
     const base = { id: "f", name: "F", edges: [] };
-    expect(accepts({ ...base, nodes: [{ id: "a", type: "llm", llm: { shortcut: "fast-pool" } }] })).toBe(true);
-    expect(accepts({ ...base, nodes: [{ id: "a", type: "llm", llm: { shortcut: "x", parameters: { temperature: 0.2 } } }] })).toBe(true);
-    expect(accepts({ ...base, nodes: [{ id: "a", type: "llm", llm: { shortcut: "x", provider: "openai" } }] })).toBe(false);
-    expect(accepts({ ...base, nodes: [{ id: "a", type: "llm", llm: { model: "m" } }] })).toBe(false);
+    expect(
+      accepts({
+        ...base,
+        nodes: [{ id: "a", type: "llm", llm: { shortcut: "fast-pool" } }],
+      }),
+    ).toBe(true);
+    expect(
+      accepts({
+        ...base,
+        nodes: [
+          {
+            id: "a",
+            type: "llm",
+            llm: { shortcut: "x", parameters: { temperature: 0.2 } },
+          },
+        ],
+      }),
+    ).toBe(true);
+    expect(
+      accepts({
+        ...base,
+        nodes: [
+          { id: "a", type: "llm", llm: { shortcut: "x", provider: "openai" } },
+        ],
+      }),
+    ).toBe(false);
+    expect(
+      accepts({
+        ...base,
+        nodes: [{ id: "a", type: "llm", llm: { model: "m" } }],
+      }),
+    ).toBe(false);
   });
 
   test("_-prefixed comment keys are allowed; other unknown keys are not", () => {
@@ -70,16 +105,35 @@ describe("flow.schema.json accepts the source form", () => {
     expect(schema.required).not.toContain("nodes");
     expect(schema.anyOf).toEqual([
       { required: ["nodes", "edges"] },
-      { required: ["metadata"], properties: { metadata: { type: "object", required: ["$include"] } } },
+      {
+        required: ["metadata"],
+        properties: { metadata: { type: "object", required: ["$include"] } },
+      },
     ]);
   });
 
   test("every example flow in deploy/examples/flows validates", () => {
-    const dir = path.join(import.meta.dirname, "..", "..", "..", "..", "..", "..", "deploy", "examples", "flows");
-    const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f) && !f.includes(".example."));
+    const dir = path.join(
+      import.meta.dirname,
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "..",
+      "deploy",
+      "examples",
+      "flows",
+    );
+    const files = fs
+      .readdirSync(dir)
+      .filter((f) => /\.ya?ml$/.test(f) && !f.includes(".example."));
     expect(files.length).toBeGreaterThan(0);
     for (const f of files) {
-      expect({ f, ok: accepts(parse(fs.readFileSync(path.join(dir, f), "utf8"))) }).toEqual({ f, ok: true });
+      expect({
+        f,
+        ok: accepts(parse(fs.readFileSync(path.join(dir, f), "utf8"))),
+      }).toEqual({ f, ok: true });
     }
   });
 });

@@ -182,6 +182,7 @@ const operationArb = fc
     requestId: fc.uuid(),
     tenantId: fc
       .string({ minLength: 1, maxLength: 20 })
+      // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must go
       .map((s) => s.replace(/[\u0000-\u001f]/g, "x") || "t"),
     scope: fc.constantFrom("subject" as const, "tenant" as const),
     userId: fc.string({ minLength: 1, maxLength: 24 }),

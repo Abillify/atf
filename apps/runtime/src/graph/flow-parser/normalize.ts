@@ -211,7 +211,7 @@ function loadSubflowRaw(
  * happen structurally but are not separately attributed). This is what lets
  * `POST /flows/write` write a saved flow's nodes back to the sub-flow file
  * they came from instead of flattening everything into the parent file —
- * see `resolveFlowIncludes` below and `src/routes/flows.ts`.
+ * see `resolveFlowIncludes` below and `src/routes/flows-shared.ts`.
  */
 function resolveSubflowIncludes(
   raw: Record<string, unknown>,
@@ -491,7 +491,7 @@ export function applyFlowVariables(
  * bookkeeping field, never itself persisted to a flow file. It lets the
  * editor (`GET /flows/:id` → Studio builder → `POST /flows/write`) round-trip
  * an `$include`-composed flow without flattening the sub-flow's nodes back
- * into the parent file on every save; see `src/routes/flows.ts`. Omitted
+ * into the parent file on every save; see `src/routes/flows-shared.ts`. Omitted
  * entirely when the flow uses no includes, so every flow that doesn't use
  * this feature is completely unaffected.
  *

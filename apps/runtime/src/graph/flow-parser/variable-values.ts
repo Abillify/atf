@@ -239,8 +239,15 @@ export function createLoadTimeResolver(
     const dot = path.indexOf(".");
     return lookup(path.slice(0, dot), path.slice(dot + 1));
   };
-  const resolveOne = (placeholder: string, calc: string | undefined, root?: string, dotted?: string): unknown =>
-    calc !== undefined ? evaluateExpression(calc, byPath) : lookup(root ?? "", dotted ?? "");
+  const resolveOne = (
+    _placeholder: string,
+    calc: string | undefined,
+    root?: string,
+    dotted?: string,
+  ): unknown =>
+    calc !== undefined
+      ? evaluateExpression(calc, byPath)
+      : lookup(root ?? "", dotted ?? "");
 
   const resolveString = (s: string): unknown => {
     if (!s.includes("{{")) return s;
@@ -315,7 +322,9 @@ export function checkLoadTimePlaceholders(
       return;
     }
     if (Array.isArray(value)) {
-      value.forEach((v, i) => visit(v, `${path}[${i}]`));
+      value.forEach((v, i) => {
+        visit(v, `${path}[${i}]`);
+      });
       return;
     }
     if (value !== null && typeof value === "object") {
@@ -326,6 +335,8 @@ export function checkLoadTimePlaceholders(
     const id = (n as { id?: unknown } | null)?.id;
     visit(n, `nodes[${i}]${typeof id === "string" ? `(${id})` : ""}`);
   });
-  (flow.edges ?? []).forEach((e, i) => visit(e, `edges[${i}]`));
+  (flow.edges ?? []).forEach((e, i) => {
+    visit(e, `edges[${i}]`);
+  });
   return issues;
 }

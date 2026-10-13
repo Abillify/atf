@@ -20,7 +20,8 @@ bun run --filter @atf/runtime dev
 ```
 
 The example environment loads the checked-in example flows. Verify Runtime with
-`curl --fail http://127.0.0.1:3000/health/ready`. Alternatively, use the four-service stack in
+`curl --fail http://127.0.0.1:3000/health/ready`. Alternatively, use the full
+five-service stack (Runtime, Control, Search, Extract, Gate) in
 [`deploy/examples/`](../../deploy/examples/), which brings its own PostgreSQL and a deterministic
 mock model.
 

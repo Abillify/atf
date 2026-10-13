@@ -28,6 +28,7 @@ const config = {
   logLevel: "error",
   maxToolSteps: 5,
   maxConcurrentExecutions: 50,
+  migrateOnStart: true,
   defaultLlm: { provider: "openai-local", model: "local-model" },
 } as AppConfig;
 

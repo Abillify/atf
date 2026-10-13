@@ -41,6 +41,7 @@ const baseConfig: AppConfig = {
   logLevel: "error",
   maxToolSteps: 5,
   maxConcurrentExecutions: 50,
+  migrateOnStart: true,
   defaultLlm: { provider: "openai", model: "mock-model" },
 };
 

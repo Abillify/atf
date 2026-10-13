@@ -7,7 +7,7 @@
  * sub-flow file each merged node came from as `metadata.$includeOrigins`
  * (`nodeId -> relPath`). This is what lets `POST /flows/write` write an
  * edited flow's nodes back to the sub-flow file they came from instead of
- * flattening everything into the parent file — see `src/routes/flows.ts`.
+ * flattening everything into the parent file — see `src/routes/flows-shared.ts`.
  */
 
 import { describe, test, expect, afterEach } from "bun:test";

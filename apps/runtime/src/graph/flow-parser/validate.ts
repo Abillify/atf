@@ -70,7 +70,7 @@ export function describeSchemaIssues(
 				Math.max(0, ...b.map((i) => i.path.length));
 			const best = [...branches].sort(
 				(a, b) => depth(b) - depth(a) || a.length - b.length,
-			)[0]!;
+			)[0];
 			const nested = describeSchemaIssues(best, path);
 			out.push(
 				...(nested.length > 0 ? nested : [{ path, message: issue.message }]),

@@ -488,7 +488,7 @@ export interface LlmProviderOptions {
  */
 export function createLlmProvider(
   config: LlmConfig,
-  appConfig: AppConfig,
+  _appConfig: AppConfig,
   options?: LlmProviderOptions,
 ): LanguageModel {
   const overrideKey = options?.apiKey;
@@ -680,7 +680,7 @@ export function createLlmProvider(
  */
 export function createEmbeddingProvider(
   config: EmbeddingConfig,
-  appConfig: AppConfig,
+  _appConfig: AppConfig,
 ): EmbeddingModel {
   const instance = getProviderInstance(config.provider);
   const protocol = resolveProviderProtocol(config.provider);

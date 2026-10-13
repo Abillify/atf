@@ -79,6 +79,7 @@ function buildApp(options: {
     logLevel: "error",
     maxToolSteps: 5,
     maxConcurrentExecutions: 50,
+    migrateOnStart: true,
     defaultLlm: { provider: "primary", model: "local-model" },
   } as AppConfig;
 

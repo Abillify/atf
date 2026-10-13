@@ -20,6 +20,7 @@ const baseConfig: AppConfig = {
   logLevel: "error",
   maxToolSteps: 5,
   maxConcurrentExecutions: 50,
+  migrateOnStart: true,
 };
 
 async function makeHs256Token(

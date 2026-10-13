@@ -121,7 +121,7 @@ describe("value details", () => {
     ...live,
     nodes: [
       {
-        ...live.nodes[0]!,
+        ...live.nodes[0],
         config: { routing: { strategy: "balanced", candidates: [{ shortcut: "qwen-lmstudio" }, { shortcut: "sonnet" }] } },
       },
       { id: "extra", type: "tool", tools: ["search"] },

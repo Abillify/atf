@@ -28,8 +28,16 @@ import { REGULATED_ACTIONS } from "../../compliance/regulated-actions.ts";
 // Task 3.8: every regulated action is audited via recordRequired
 // ---------------------------------------------------------------------------
 
+// flows.ts was split into flows-routes-* modules (Phase 18.4, Req 13.6); the
+// scan covers the router root plus every module that can host a route.
 const ROUTE_FILES = [
   "flows.ts",
+  "flows-routes-list.ts",
+  "flows-routes-source.ts",
+  "flows-routes-catalog.ts",
+  "flows-routes-crud.ts",
+  "flows-routes-inspect.ts",
+  "flows-routes-ops.ts",
   "control.ts",
   "tenants.ts",
   "compliance.ts",
@@ -51,8 +59,8 @@ describe("Regulated actions use recordRequired (Req 1.5)", () => {
       const hit = sources.find((src) => pattern.test(src.text));
       expect(
         hit,
-        `${action}: kein recordRequired-Aufruf mit action:"${action}" gefunden — ` +
-          `Regulierte Aktionen dürfen nicht auf best-effort record() fallen (Req 1.5).`,
+        `${action}: no recordRequired call with action:"${action}" found — ` +
+          `regulated actions must not fall back to best-effort record() (Req 1.5).`,
       ).toBeDefined();
     });
   }
@@ -237,7 +245,7 @@ describe("Audit chain linearity (Properties 1 & 2)", () => {
   // instances (simulates two replicas). Only runs with TEST_POSTGRES_URL.
   const pgUrl = process.env["TEST_POSTGRES_URL"];
   test.skipIf(pgUrl === undefined || pgUrl === "")(
-    "zwei Replicas schreiben linear über den Advisory-Lock (echtes Postgres)",
+    "two replicas write linearly through the advisory lock (real Postgres)",
     async () => {
       if (pgUrl === undefined || pgUrl === "") return;
       const sqlA = new Bun.SQL(pgUrl);
