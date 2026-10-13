@@ -13,22 +13,21 @@ const APACHE_2_0_SHA256 =
 	"283ea6cc2997a1a70da0049e09adf9317bb60ca1b51279b65196b83a69e1996b";
 // "unlicense" is the canonical public-domain dedication file name used by
 // crates such as byteorder; it is a license text like any LICENSE variant.
-const NOTICE_NAMES =
-	/^(?:licen[cs]e|copying|notice|unlicense)(?:[._-].*)?$/i;
+const NOTICE_NAMES = /^(?:licen[cs]e|copying|notice|unlicense)(?:[._-].*)?$/i;
 const CARGO_MANIFEST = "apps/outpost-desktop/src-tauri/Cargo.toml";
 const CARGO_LOCKFILE = "apps/outpost-desktop/src-tauri/Cargo.lock";
 
 type ArtifactKind = "workspace" | "image";
 type Options = {
-  inventoryRoot: string;
-  outputDir: string;
-  platform: string;
-  assertHostPlatform: boolean;
-  artifactKind: ArtifactKind;
-  artifactName: string;
-  gitSha: string;
-  checkOnly: boolean;
-  includeCargo: boolean;
+	inventoryRoot: string;
+	outputDir: string;
+	platform: string;
+	assertHostPlatform: boolean;
+	artifactKind: ArtifactKind;
+	artifactName: string;
+	gitSha: string;
+	checkOnly: boolean;
+	includeCargo: boolean;
 };
 
 type PackageManifest = {
@@ -42,14 +41,14 @@ type PackageManifest = {
 type Ecosystem = "npm" | "cargo";
 type NoticeText = { file: string; text: string; provenance: string };
 type Component = {
-  name: string;
-  version: string;
-  license: string;
-  repository: string;
-  packageRoot: string;
-  noticeTexts: NoticeText[];
-  compliance: Compliance;
-  ecosystem: Ecosystem;
+	name: string;
+	version: string;
+	license: string;
+	repository: string;
+	packageRoot: string;
+	noticeTexts: NoticeText[];
+	compliance: Compliance;
+	ecosystem: Ecosystem;
 };
 type Compliance = { classification: string; requirement: string };
 type SupplementalRule = {
@@ -328,6 +327,26 @@ const DECLARED_LICENSE_FALLBACK_RULES: DeclaredLicenseFallbackRule[] = [
 		reason:
 			"The exact package manifest declares MIT, but neither the package nor its exact source tree supplies a package-level MIT copyright notice or complete MIT text; the separate V8-derived BSD header does not fill that gap.",
 	},
+	{
+		packagePattern:
+			/^@oxc-parser\/binding-(?:darwin-arm64|linux-x64-gnu|linux-x64-musl)$/,
+		expectedVersion: "0.153.0",
+		expectedLicense: "MIT",
+		expectedRepository: "https://github.com/oxc-project/oxc",
+		files: ["licenses/declared-MIT-no-upstream-copyright.txt"],
+		reason:
+			"Optional native dependency of knip: the exact package manifest declares MIT, but the published binary tarball ships only package.json and the native .node binary, and the upstream oxc tree keeps its license text at the repository root rather than in the platform binary package.",
+	},
+	{
+		packagePattern:
+			/^@oxc-resolver\/binding-(?:darwin-arm64|linux-x64-gnu|linux-x64-musl)$/,
+		expectedVersion: "11.24.2",
+		expectedLicense: "MIT",
+		expectedRepository: "https://github.com/oxc-project/oxc-resolver",
+		files: ["licenses/declared-MIT-no-upstream-copyright.txt"],
+		reason:
+			"Optional native dependency of knip: the exact package manifest declares MIT, but the published binary tarball ships only package.json, a stub README and the native .node binary, and the upstream oxc-resolver tree keeps its license text at the repository root rather than in the platform binary package.",
+	},
 ];
 
 const EXPRESSION_LICENSE_SUPPLEMENT_RULES: ExpressionLicenseSupplementRule[] = [
@@ -344,89 +363,89 @@ const EXPRESSION_LICENSE_SUPPLEMENT_RULES: ExpressionLicenseSupplementRule[] = [
 ];
 
 const STANDARD_LICENSE_FAMILIES: StandardLicenseFamily[] = [
-  {
-    id: "Apache-2.0",
-    textPattern:
-      /Apache License[\s\S]*Version 2\.0[\s\S]*TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION[\s\S]*END OF TERMS AND CONDITIONS/i,
-  },
-  {
-    id: "MIT",
-    // The optional "(including the next paragraph)" clause is the modern
-    // canonical MIT wording used by many crates (e.g. bytemuck).
-    textPattern:
-      /^(?=[\s\S]*Permission is hereby granted, free of charge,)(?=[\s\S]*The above copyright notice and this permission notice(?: \(including the next paragraph\))?\s+shall be[\s\S]*included)(?=[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"'])[\s\S]*$/i,
-  },
-  {
-    id: "MIT-0",
-    textPattern:
-      /MIT No Attribution \(MIT-0\)[\s\S]*Permission is hereby granted, free of charge,[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
-  },
-  {
-    id: "0BSD",
-    textPattern:
-      /Permission to use, copy, modify, and\/or distribute this software for any[\s\S]*purpose with or without fee is hereby granted\.[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
-  },
-  {
-    id: "ISC",
-    textPattern:
-      /^(?=[\s\S]*Permission to use, copy, modify, and\/or distribute this software[\s\S]*with or without fee is hereby granted, provided that)(?=[\s\S]*copyright notice[\s\S]*and this permission notice appear in all copies)(?=[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"'])[\s\S]*$/i,
-  },
-  {
-    id: "BSD-2-Clause",
-    textPattern:
-      /^(?![\s\S]*(?:Neither[\s\S]*may\s+be\s+used\s+to|may\s+not\s+be\s+used\s+to)[\s\S]*endorse or promote)(?=[\s\S]*Redistribution and use in source and binary forms)(?=[\s\S]*Redistributions? of source code)(?=[\s\S]*Redistributions? in binary form)(?=[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED)[\s\S]*$/i,
-  },
-  {
-    id: "BSD-3-Clause",
-    textPattern:
-      /^(?=[\s\S]*Redistribution and use in source and binary forms)(?=[\s\S]*Redistributions? of source code)(?=[\s\S]*Redistributions? in binary form)(?=[\s\S]*(?:Neither[\s\S]*may\s+be\s+used\s+to|may\s+not\s+be\s+used\s+to)[\s\S]*endorse or promote)(?=[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED)[\s\S]*$/i,
-  },
-  {
-    id: "MPL-2.0",
-    textPattern: /Mozilla Public License,? version 2\.0[\s\S]*1\. Definitions/i,
-  },
-  {
-    id: "LGPL-3.0-or-later",
-    textPattern:
-      /GNU LESSER GENERAL PUBLIC LICENSE[\s\S]*Version 3[\s\S]*GNU GENERAL PUBLIC LICENSE/i,
-  },
-  {
-    id: "CC-BY-4.0",
-    textPattern:
-      /Creative Commons Attribution 4\.0 International Public License/i,
-  },
-  {
-    id: "AFL-2.1",
-    textPattern:
-      /The Academic Free License, v\. 2\.1:[\s\S]*Grant of Copyright License[\s\S]*This license is Copyright \(C\) 2003-2004 Lawrence E\. Rosen/i,
-  },
-  {
-    id: "CC0-1.0",
-    textPattern:
-      /CC0 1\.0 Universal[\s\S]*Statement of Purpose[\s\S]*1\. Copyright and Related Rights[\s\S]*2\. Waiver[\s\S]*3\. Public License Fallback[\s\S]*4\. Limitations and Disclaimers/i,
-  },
-  // Families below occur in the Rust (crates.io) dependency graph of
-  // Outpost Desktop (Requirement 10.7, Task 14.4).
-  {
-    id: "Zlib",
-    textPattern:
-      /^(?=[\s\S]*This software is provided 'as-is')(?=[\s\S]*The origin of this software must not be misrepresented)(?=[\s\S]*[Aa]ltered [Ss]ource versions must be plainly marked)(?=[\s\S]*[Tt]his notice may not be removed or altered)[\s\S]*$/i,
-  },
-  {
-    id: "Unicode-3.0",
-    textPattern:
-      /UNICODE LICENSE V3[\s\S]*COPYRIGHT AND PERMISSION NOTICE[\s\S]*Permission is hereby granted, free of charge[\s\S]*THE DATA FILES AND SOFTWARE ARE PROVIDED ["']AS IS["']/i,
-  },
-  {
-    id: "Unlicense",
-    textPattern:
-      /This is free and unencumbered software released into the public domain\.[\s\S]*Anyone is free to copy, modify, publish[\s\S]*dedicate any and all copyright interest[\s\S]*THE SOFTWARE IS PROVIDED ["']AS IS["']/i,
-  },
-  {
-    id: "CDLA-Permissive-2.0",
-    textPattern:
-      /Community Data License Agreement - Permissive - Version 2\.0[\s\S]*1\. Provision of the Data[\s\S]*2\. Conditions for Sharing Data[\s\S]*3\. No Restrictions on Results/i,
-  },
+	{
+		id: "Apache-2.0",
+		textPattern:
+			/Apache License[\s\S]*Version 2\.0[\s\S]*TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION[\s\S]*END OF TERMS AND CONDITIONS/i,
+	},
+	{
+		id: "MIT",
+		// The optional "(including the next paragraph)" clause is the modern
+		// canonical MIT wording used by many crates (e.g. bytemuck).
+		textPattern:
+			/^(?=[\s\S]*Permission is hereby granted, free of charge,)(?=[\s\S]*The above copyright notice and this permission notice(?: \(including the next paragraph\))?\s+shall be[\s\S]*included)(?=[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"'])[\s\S]*$/i,
+	},
+	{
+		id: "MIT-0",
+		textPattern:
+			/MIT No Attribution \(MIT-0\)[\s\S]*Permission is hereby granted, free of charge,[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
+	},
+	{
+		id: "0BSD",
+		textPattern:
+			/Permission to use, copy, modify, and\/or distribute this software for any[\s\S]*purpose with or without fee is hereby granted\.[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"']/i,
+	},
+	{
+		id: "ISC",
+		textPattern:
+			/^(?=[\s\S]*Permission to use, copy, modify, and\/or distribute this software[\s\S]*with or without fee is hereby granted, provided that)(?=[\s\S]*copyright notice[\s\S]*and this permission notice appear in all copies)(?=[\s\S]*THE SOFTWARE IS PROVIDED [“"']AS IS[”"'])[\s\S]*$/i,
+	},
+	{
+		id: "BSD-2-Clause",
+		textPattern:
+			/^(?![\s\S]*(?:Neither[\s\S]*may\s+be\s+used\s+to|may\s+not\s+be\s+used\s+to)[\s\S]*endorse or promote)(?=[\s\S]*Redistribution and use in source and binary forms)(?=[\s\S]*Redistributions? of source code)(?=[\s\S]*Redistributions? in binary form)(?=[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED)[\s\S]*$/i,
+	},
+	{
+		id: "BSD-3-Clause",
+		textPattern:
+			/^(?=[\s\S]*Redistribution and use in source and binary forms)(?=[\s\S]*Redistributions? of source code)(?=[\s\S]*Redistributions? in binary form)(?=[\s\S]*(?:Neither[\s\S]*may\s+be\s+used\s+to|may\s+not\s+be\s+used\s+to)[\s\S]*endorse or promote)(?=[\s\S]*THIS (?:SOFTWARE )?IS PROVIDED)[\s\S]*$/i,
+	},
+	{
+		id: "MPL-2.0",
+		textPattern: /Mozilla Public License,? version 2\.0[\s\S]*1\. Definitions/i,
+	},
+	{
+		id: "LGPL-3.0-or-later",
+		textPattern:
+			/GNU LESSER GENERAL PUBLIC LICENSE[\s\S]*Version 3[\s\S]*GNU GENERAL PUBLIC LICENSE/i,
+	},
+	{
+		id: "CC-BY-4.0",
+		textPattern:
+			/Creative Commons Attribution 4\.0 International Public License/i,
+	},
+	{
+		id: "AFL-2.1",
+		textPattern:
+			/The Academic Free License, v\. 2\.1:[\s\S]*Grant of Copyright License[\s\S]*This license is Copyright \(C\) 2003-2004 Lawrence E\. Rosen/i,
+	},
+	{
+		id: "CC0-1.0",
+		textPattern:
+			/CC0 1\.0 Universal[\s\S]*Statement of Purpose[\s\S]*1\. Copyright and Related Rights[\s\S]*2\. Waiver[\s\S]*3\. Public License Fallback[\s\S]*4\. Limitations and Disclaimers/i,
+	},
+	// Families below occur in the Rust (crates.io) dependency graph of
+	// Outpost Desktop (Requirement 10.7, Task 14.4).
+	{
+		id: "Zlib",
+		textPattern:
+			/^(?=[\s\S]*This software is provided 'as-is')(?=[\s\S]*The origin of this software must not be misrepresented)(?=[\s\S]*[Aa]ltered [Ss]ource versions must be plainly marked)(?=[\s\S]*[Tt]his notice may not be removed or altered)[\s\S]*$/i,
+	},
+	{
+		id: "Unicode-3.0",
+		textPattern:
+			/UNICODE LICENSE V3[\s\S]*COPYRIGHT AND PERMISSION NOTICE[\s\S]*Permission is hereby granted, free of charge[\s\S]*THE DATA FILES AND SOFTWARE ARE PROVIDED ["']AS IS["']/i,
+	},
+	{
+		id: "Unlicense",
+		textPattern:
+			/This is free and unencumbered software released into the public domain\.[\s\S]*Anyone is free to copy, modify, publish[\s\S]*dedicate any and all copyright interest[\s\S]*THE SOFTWARE IS PROVIDED ["']AS IS["']/i,
+	},
+	{
+		id: "CDLA-Permissive-2.0",
+		textPattern:
+			/Community Data License Agreement - Permissive - Version 2\.0[\s\S]*1\. Provision of the Data[\s\S]*2\. Conditions for Sharing Data[\s\S]*3\. No Restrictions on Results/i,
+	},
 ];
 
 const DENIED_LICENSE_PATTERNS = [
@@ -442,55 +461,55 @@ const ALLOWED_LICENSE_IDS = new Set(
 	STANDARD_LICENSE_FAMILIES.map((family) => family.id),
 );
 const ALLOWED_LICENSE_EXPRESSIONS = new Map<string, string>([
-  ["id:Apache-2.0", "Apache-2.0"],
-  ["id:MIT", "MIT"],
-  ["id:MIT-0", "MIT-0"],
-  ["id:0BSD", "0BSD"],
-  ["id:ISC", "ISC"],
-  ["id:BSD-2-Clause", "BSD-2-Clause"],
-  ["id:BSD-3-Clause", "BSD-3-Clause"],
-  ["id:MPL-2.0", "MPL-2.0"],
-  ["id:LGPL-3.0-or-later", "LGPL-3.0-or-later"],
-  ["id:CC-BY-4.0", "CC-BY-4.0"],
-  ["and(id:MIT,id:ISC)", "MIT AND ISC"],
-  ["or(id:MIT,id:Apache-2.0)", "MIT OR Apache-2.0"],
-  // Same dual license, operand order as declared by the Tauri packages.
-  ["or(id:Apache-2.0,id:MIT)", "Apache-2.0 OR MIT"],
-  ["or(id:AFL-2.1,id:BSD-3-Clause)", "(AFL-2.1 OR BSD-3-Clause)"],
-  ["or(id:MIT,id:CC0-1.0)", "(MIT OR CC0-1.0)"],
-  // Expressions from the Rust dependency graph of Outpost Desktop
-  // (crates.io manifests, normalized; Requirement 10.7, Task 14.4).
-  // The operand order follows the declared manifest strings.
-  ["id:Zlib", "Zlib"],
-  ["id:Unicode-3.0", "Unicode-3.0"],
-  ["id:Unlicense", "Unlicense"],
-  ["id:CDLA-Permissive-2.0", "CDLA-Permissive-2.0"],
-  [
-    "and(or(id:MIT,id:Apache-2.0),id:Unicode-3.0)",
-    "(MIT OR Apache-2.0) AND Unicode-3.0",
-  ],
-  ["or(or(id:0BSD,id:MIT),id:Apache-2.0)", "0BSD OR MIT OR Apache-2.0"],
-  ["and(id:Apache-2.0,id:ISC)", "Apache-2.0 AND ISC"],
-  ["and(id:Apache-2.0,id:MIT)", "Apache-2.0 AND MIT"],
-  ["or(or(id:Apache-2.0,id:ISC),id:MIT)", "Apache-2.0 OR ISC OR MIT"],
-  [
-    "or(or(id:BSD-2-Clause,id:Apache-2.0),id:MIT)",
-    "BSD-2-Clause OR Apache-2.0 OR MIT",
-  ],
-  ["and(id:BSD-3-Clause,id:MIT)", "BSD-3-Clause AND MIT"],
-  [
-    "or(or(id:BSD-3-Clause,id:MIT),id:Apache-2.0)",
-    "BSD-3-Clause OR MIT OR Apache-2.0",
-  ],
-  ["or(id:BSD-3-Clause,id:MIT)", "BSD-3-Clause OR MIT"],
-  [
-    "or(or(id:CC0-1.0,id:MIT-0),id:Apache-2.0)",
-    "CC0-1.0 OR MIT-0 OR Apache-2.0",
-  ],
-  ["or(or(id:MIT,id:Apache-2.0),id:Zlib)", "MIT OR Apache-2.0 OR Zlib"],
-  ["or(or(id:MIT,id:Zlib),id:Apache-2.0)", "MIT OR Zlib OR Apache-2.0"],
-  ["or(id:Unlicense,id:MIT)", "Unlicense OR MIT"],
-  ["or(or(id:Zlib,id:Apache-2.0),id:MIT)", "Zlib OR Apache-2.0 OR MIT"],
+	["id:Apache-2.0", "Apache-2.0"],
+	["id:MIT", "MIT"],
+	["id:MIT-0", "MIT-0"],
+	["id:0BSD", "0BSD"],
+	["id:ISC", "ISC"],
+	["id:BSD-2-Clause", "BSD-2-Clause"],
+	["id:BSD-3-Clause", "BSD-3-Clause"],
+	["id:MPL-2.0", "MPL-2.0"],
+	["id:LGPL-3.0-or-later", "LGPL-3.0-or-later"],
+	["id:CC-BY-4.0", "CC-BY-4.0"],
+	["and(id:MIT,id:ISC)", "MIT AND ISC"],
+	["or(id:MIT,id:Apache-2.0)", "MIT OR Apache-2.0"],
+	// Same dual license, operand order as declared by the Tauri packages.
+	["or(id:Apache-2.0,id:MIT)", "Apache-2.0 OR MIT"],
+	["or(id:AFL-2.1,id:BSD-3-Clause)", "(AFL-2.1 OR BSD-3-Clause)"],
+	["or(id:MIT,id:CC0-1.0)", "(MIT OR CC0-1.0)"],
+	// Expressions from the Rust dependency graph of Outpost Desktop
+	// (crates.io manifests, normalized; Requirement 10.7, Task 14.4).
+	// The operand order follows the declared manifest strings.
+	["id:Zlib", "Zlib"],
+	["id:Unicode-3.0", "Unicode-3.0"],
+	["id:Unlicense", "Unlicense"],
+	["id:CDLA-Permissive-2.0", "CDLA-Permissive-2.0"],
+	[
+		"and(or(id:MIT,id:Apache-2.0),id:Unicode-3.0)",
+		"(MIT OR Apache-2.0) AND Unicode-3.0",
+	],
+	["or(or(id:0BSD,id:MIT),id:Apache-2.0)", "0BSD OR MIT OR Apache-2.0"],
+	["and(id:Apache-2.0,id:ISC)", "Apache-2.0 AND ISC"],
+	["and(id:Apache-2.0,id:MIT)", "Apache-2.0 AND MIT"],
+	["or(or(id:Apache-2.0,id:ISC),id:MIT)", "Apache-2.0 OR ISC OR MIT"],
+	[
+		"or(or(id:BSD-2-Clause,id:Apache-2.0),id:MIT)",
+		"BSD-2-Clause OR Apache-2.0 OR MIT",
+	],
+	["and(id:BSD-3-Clause,id:MIT)", "BSD-3-Clause AND MIT"],
+	[
+		"or(or(id:BSD-3-Clause,id:MIT),id:Apache-2.0)",
+		"BSD-3-Clause OR MIT OR Apache-2.0",
+	],
+	["or(id:BSD-3-Clause,id:MIT)", "BSD-3-Clause OR MIT"],
+	[
+		"or(or(id:CC0-1.0,id:MIT-0),id:Apache-2.0)",
+		"CC0-1.0 OR MIT-0 OR Apache-2.0",
+	],
+	["or(or(id:MIT,id:Apache-2.0),id:Zlib)", "MIT OR Apache-2.0 OR Zlib"],
+	["or(or(id:MIT,id:Zlib),id:Apache-2.0)", "MIT OR Zlib OR Apache-2.0"],
+	["or(id:Unlicense,id:MIT)", "Unlicense OR MIT"],
+	["or(or(id:Zlib,id:Apache-2.0),id:MIT)", "Zlib OR Apache-2.0 OR MIT"],
 ]);
 
 type LicenseToken =
@@ -713,13 +732,13 @@ function parseArgs(argv: string[]): Options {
 	for (let index = 0; index < argv.length; index++) {
 		const arg = argv[index];
 		if (
-      arg === "--check" ||
-      arg === "--assert-host-platform" ||
-      arg === "--include-cargo"
-    ) {
-      flags.add(arg);
-      continue;
-    }
+			arg === "--check" ||
+			arg === "--assert-host-platform" ||
+			arg === "--include-cargo"
+		) {
+			flags.add(arg);
+			continue;
+		}
 		if (!arg.startsWith("--")) throw new Error(`Unexpected argument: ${arg}`);
 		const value = argv[index + 1];
 		if (!value || value.startsWith("--"))
@@ -744,16 +763,16 @@ function parseArgs(argv: string[]): Options {
 	if (gitSha !== "unknown" && !/^[0-9a-f]{7,64}$/i.test(gitSha))
 		throw new Error("--git-sha must be a hexadecimal commit SHA");
 	return {
-    inventoryRoot,
-    outputDir: resolve(values.get("--output-dir") ?? repoRoot),
-    platform,
-    assertHostPlatform: flags.has("--assert-host-platform"),
-    artifactKind: kind,
-    artifactName: values.get("--artifact-name") ?? `${kind}-${platform}`,
-    gitSha,
-    checkOnly: flags.has("--check"),
-    includeCargo: flags.has("--include-cargo"),
-  };
+		inventoryRoot,
+		outputDir: resolve(values.get("--output-dir") ?? repoRoot),
+		platform,
+		assertHostPlatform: flags.has("--assert-host-platform"),
+		artifactKind: kind,
+		artifactName: values.get("--artifact-name") ?? `${kind}-${platform}`,
+		gitSha,
+		checkOnly: flags.has("--check"),
+		includeCargo: flags.has("--include-cargo"),
+	};
 }
 
 function normalizeText(text: string): string {
@@ -801,63 +820,63 @@ function matches(value: string, patterns: RegExp[]): boolean {
 }
 
 function complianceFor(
-  name: string,
-  version: string,
-  license: string,
-  kind: ArtifactKind,
-  ecosystem: Ecosystem,
+	name: string,
+	version: string,
+	license: string,
+	kind: ArtifactKind,
+	ecosystem: Ecosystem,
 ): Compliance {
-  if (
-    /^@img\/sharp-libvips(?:-|$)/.test(name) ||
-    /\bLGPL-[0-9]/i.test(license)
-  ) {
-    return {
-      classification: "LGPL shared library",
-      requirement:
-        "Retain the full LGPL text and the replaceable, dynamically loaded shared-library boundary for libvips.",
-    };
-  }
-  if (/\bMPL-[0-9]/i.test(license)) {
-    if (ecosystem === "cargo") {
-      return {
-        classification: "MPL file-level source",
-        requirement: `The unmodified crates.io archive of ${name}@${version}, pinned by the Cargo.lock checksum recorded in this inventory, is the corresponding source under MPL-2.0. Retain the MPL-2.0 text and the pinned archive; publish covered-file modifications if that status changes.`,
-      };
-    }
-    if (/^(?:axe-core|@axe-core\/playwright)$/.test(name)) {
-      return {
-        classification: "MPL file-level source",
-        requirement: `${kind === "image" ? "This image retains" : "This workspace inventory contains"} the package's readable JavaScript source form for ${name}@${version} under /workspace/node_modules together with MPL-2.0. Retain those files; publish covered-file modifications if that status changes.`,
-      };
-    }
-    if (!/^lightningcss(?:-|$)/.test(name)) {
-      throw new Error(
-        `${name}@${version}: MPL component has no reviewed corresponding-source rule`,
-      );
-    }
-    const sourceUrl = MPL_SOURCE_BY_VERSION.get(version);
-    if (!sourceUrl) {
-      throw new Error(
-        `${name}@${version}: Lightning CSS version has no commit-pinned MPL corresponding-source URL`,
-      );
-    }
-    return {
-      classification: "MPL file-level source",
-      requirement: `${kind === "image" ? "This image contains an unmodified Lightning CSS executable package." : "This workspace inventory contains an unmodified Lightning CSS package."} Corresponding source for ${name}@${version} is available from the commit-pinned archive ${sourceUrl}. Retain this source link and the MPL-2.0 text; publish covered-file modifications if that status changes.`,
-    };
-  }
-  if (/\bCC-BY(?:-[0-9.]+)?/i.test(license) || name === "caniuse-lite") {
-    return {
-      classification: "CC-BY attribution",
-      requirement:
-        "Caniuse data attribution: https://caniuse.com/ — packaged upstream data is unmodified by ATF; disclose changes if that status changes.",
-    };
-  }
-  return {
-    classification: "Standard notice",
-    requirement:
-      "Retain the listed license and notice text with redistributed copies.",
-  };
+	if (
+		/^@img\/sharp-libvips(?:-|$)/.test(name) ||
+		/\bLGPL-[0-9]/i.test(license)
+	) {
+		return {
+			classification: "LGPL shared library",
+			requirement:
+				"Retain the full LGPL text and the replaceable, dynamically loaded shared-library boundary for libvips.",
+		};
+	}
+	if (/\bMPL-[0-9]/i.test(license)) {
+		if (ecosystem === "cargo") {
+			return {
+				classification: "MPL file-level source",
+				requirement: `The unmodified crates.io archive of ${name}@${version}, pinned by the Cargo.lock checksum recorded in this inventory, is the corresponding source under MPL-2.0. Retain the MPL-2.0 text and the pinned archive; publish covered-file modifications if that status changes.`,
+			};
+		}
+		if (/^(?:axe-core|@axe-core\/playwright)$/.test(name)) {
+			return {
+				classification: "MPL file-level source",
+				requirement: `${kind === "image" ? "This image retains" : "This workspace inventory contains"} the package's readable JavaScript source form for ${name}@${version} under /workspace/node_modules together with MPL-2.0. Retain those files; publish covered-file modifications if that status changes.`,
+			};
+		}
+		if (!/^lightningcss(?:-|$)/.test(name)) {
+			throw new Error(
+				`${name}@${version}: MPL component has no reviewed corresponding-source rule`,
+			);
+		}
+		const sourceUrl = MPL_SOURCE_BY_VERSION.get(version);
+		if (!sourceUrl) {
+			throw new Error(
+				`${name}@${version}: Lightning CSS version has no commit-pinned MPL corresponding-source URL`,
+			);
+		}
+		return {
+			classification: "MPL file-level source",
+			requirement: `${kind === "image" ? "This image contains an unmodified Lightning CSS executable package." : "This workspace inventory contains an unmodified Lightning CSS package."} Corresponding source for ${name}@${version} is available from the commit-pinned archive ${sourceUrl}. Retain this source link and the MPL-2.0 text; publish covered-file modifications if that status changes.`,
+		};
+	}
+	if (/\bCC-BY(?:-[0-9.]+)?/i.test(license) || name === "caniuse-lite") {
+		return {
+			classification: "CC-BY attribution",
+			requirement:
+				"Caniuse data attribution: https://caniuse.com/ — packaged upstream data is unmodified by ATF; disclose changes if that status changes.",
+		};
+	}
+	return {
+		classification: "Standard notice",
+		requirement:
+			"Retain the listed license and notice text with redistributed copies.",
+	};
 }
 
 async function packageRoots(
@@ -926,267 +945,267 @@ async function packageRoots(
 }
 
 async function loadComponents(
-  options: Options,
-  repoRoot: string,
+	options: Options,
+	repoRoot: string,
 ): Promise<Component[]> {
-  const byIdentity = new Map<string, Component>();
-  const discovery = await packageRoots(
-    join(options.inventoryRoot, "node_modules", ".bun"),
-  );
-  const discoveryErrors = [...discovery.errors];
-  for (const packageRoot of discovery.roots) {
-    const manifestPath = join(packageRoot, "package.json");
-    let manifest: PackageManifest;
-    try {
-      manifest = JSON.parse(
-        await readFile(manifestPath, "utf8"),
-      ) as PackageManifest;
-    } catch (error) {
-      discoveryErrors.push(
-        `${manifestPath}: cannot read or parse manifest: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    if (typeof manifest.name !== "string" || manifest.name.trim() === "") {
-      discoveryErrors.push(`${manifestPath}: missing non-empty name`);
-      continue;
-    }
-    if (
-      typeof manifest.version !== "string" ||
-      manifest.version.trim() === ""
-    ) {
-      discoveryErrors.push(`${manifestPath}: missing non-empty version`);
-      continue;
-    }
-    const identity = `${manifest.name}@${manifest.version}`;
-    if (byIdentity.has(identity)) continue;
-    const noticeTexts: NoticeText[] = [];
-    let packageEntries: Dirent[];
-    try {
-      packageEntries = await readdir(packageRoot, { withFileTypes: true });
-    } catch (error) {
-      discoveryErrors.push(
-        `${packageRoot}: cannot read package directory: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    for (const entry of packageEntries.sort((a, b) =>
-      stableCompare(a.name, b.name),
-    )) {
-      if (!entry.isFile() || !NOTICE_NAMES.test(entry.name)) continue;
-      const noticePath = join(packageRoot, entry.name);
-      try {
-        const text = normalizeText(await readFile(noticePath, "utf8"));
-        if (text)
-          noticeTexts.push({ file: entry.name, text, provenance: "package" });
-      } catch (error) {
-        discoveryErrors.push(
-          `${noticePath}: cannot read license/notice text: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-    const declaredLicense = licenseValue(manifest);
-    let license: string;
-    try {
-      license = canonicalLicenseExpression(declaredLicense);
-    } catch (error) {
-      discoveryErrors.push(
-        `${identity}: invalid or disallowed license ${JSON.stringify(declaredLicense)}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    byIdentity.set(identity, {
-      name: manifest.name,
-      version: manifest.version,
-      license,
-      repository: repositoryValue(manifest),
-      packageRoot,
-      noticeTexts,
-      compliance: complianceFor(
-        manifest.name,
-        manifest.version,
-        license,
-        options.artifactKind,
-        "npm",
-      ),
-      ecosystem: "npm",
-    });
-  }
-  if (discoveryErrors.length > 0) {
-    throw new Error(
-      `Package discovery failed (${discoveryErrors.length}):\n${discoveryErrors.map((error) => `  - ${error}`).join("\n")}`,
-    );
-  }
-  const components = [...byIdentity.values()].sort(
-    (a, b) =>
-      stableCompare(a.name, b.name) || stableCompare(a.version, b.version),
-  );
-  for (const component of components) {
-    if (component.noticeTexts.length > 0) continue;
-    const rule = PACKAGE_EMBEDDED_LICENSE_RULES.find((candidate) =>
-      candidate.packagePattern.test(component.name),
-    );
-    if (!rule) continue;
-    if (component.version !== rule.expectedVersion) {
-      throw new Error(
-        `${component.name}@${component.version}: embedded license rule expects version ${rule.expectedVersion}`,
-      );
-    }
-    if (component.license !== rule.expectedLicense) {
-      throw new Error(
-        `${component.name}@${component.version}: embedded license rule expects ${rule.expectedLicense}, package declares ${component.license}`,
-      );
-    }
-    if (component.repository !== rule.expectedRepository) {
-      throw new Error(
-        `${component.name}@${component.version}: embedded license rule expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
-      );
-    }
-    const sourcePath = join(component.packageRoot, rule.sourceFile);
-    const sourceText = normalizeText(await readFile(sourcePath, "utf8"));
-    const section = sourceText.match(rule.sectionPattern)?.[1];
-    if (!section) {
-      throw new Error(
-        `${component.name}@${component.version}: ${rule.sourceFile} no longer contains the reviewed complete license section`,
-      );
-    }
-    component.noticeTexts.push({
-      file: `${rule.sourceFile} (reviewed embedded license section)`,
-      text: normalizeText(section),
-      provenance: `${component.name}@${component.version}; ${rule.reason}`,
-    });
-  }
-  for (const component of components) {
-    if (component.noticeTexts.length > 0) continue;
-    const rule = REPOSITORY_LICENSE_REUSE_RULES.find((candidate) =>
-      candidate.packagePattern.test(component.name),
-    );
-    if (!rule) continue;
-    if (component.license !== rule.expectedLicense) {
-      throw new Error(
-        `${component.name}@${component.version}: repository reuse rule expects ${rule.expectedLicense}, package declares ${component.license}`,
-      );
-    }
-    if (component.repository !== rule.expectedRepository) {
-      throw new Error(
-        `${component.name}@${component.version}: repository reuse rule expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
-      );
-    }
-    const source = components.find(
-      (candidate) =>
-        candidate.repository === rule.expectedRepository &&
-        candidate.license === rule.expectedLicense &&
-        rule.sourcePackagePattern.test(candidate.name) &&
-        candidate.noticeTexts.some((notice) =>
-          rule.allowedSourceFiles.test(notice.file),
-        ),
-    );
-    if (!source) {
-      throw new Error(
-        `${component.name}@${component.version}: no installed source package matching ${rule.sourcePackagePattern} provides an allowed repository-root LICENSE/LICENCE/COPYING file`,
-      );
-    }
-    component.noticeTexts = source.noticeTexts
-      .filter((notice) => rule.allowedSourceFiles.test(notice.file))
-      .map((notice) => ({
-        ...notice,
-        file: `${notice.file} (reviewed repository-root reuse)`,
-        provenance: `${source.name}@${source.version}; ${rule.reason}`,
-      }));
-  }
-  for (const component of components) {
-    if (component.noticeTexts.length > 0) continue;
-    const rule = SUPPLEMENTAL_RULES.find((candidate) =>
-      candidate.packagePattern.test(component.name),
-    );
-    if (!rule) continue;
-    if (component.license !== rule.expectedLicense) {
-      throw new Error(
-        `${component.name}@${component.version}: supplemental rule expects ${rule.expectedLicense}, package declares ${component.license}`,
-      );
-    }
-    for (const file of rule.files) {
-      const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
-      if (!text)
-        throw new Error(
-          `${component.name}@${component.version}: supplemental file is empty: ${file}`,
-        );
-      component.noticeTexts.push({
-        file: `${file} (supplemental)`,
-        text,
-        provenance: `${rule.attribution}; ${rule.reason}`,
-      });
-    }
-  }
-  for (const component of components) {
-    if (component.noticeTexts.length > 0) continue;
-    const rule = DECLARED_LICENSE_FALLBACK_RULES.find((candidate) =>
-      candidate.packagePattern.test(component.name),
-    );
-    if (!rule) continue;
-    if (component.version !== rule.expectedVersion) {
-      throw new Error(
-        `${component.name}@${component.version}: declared-license fallback expects version ${rule.expectedVersion}`,
-      );
-    }
-    if (component.license !== rule.expectedLicense) {
-      throw new Error(
-        `${component.name}@${component.version}: declared-license fallback expects ${rule.expectedLicense}, package declares ${component.license}`,
-      );
-    }
-    if (component.repository !== rule.expectedRepository) {
-      throw new Error(
-        `${component.name}@${component.version}: declared-license fallback expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
-      );
-    }
-    for (const file of rule.files) {
-      const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
-      if (!text) {
-        throw new Error(
-          `${component.name}@${component.version}: declared-license fallback file is empty: ${file}`,
-        );
-      }
-      component.noticeTexts.push({
-        file: `${file} (declared-license fallback)`,
-        text,
-        provenance: `${component.name}@${component.version} package manifest and reviewed package content; ${rule.reason} No copyright holder or year was inferred.`,
-      });
-    }
-  }
-  for (const component of components) {
-    const rule = EXPRESSION_LICENSE_SUPPLEMENT_RULES.find((candidate) =>
-      candidate.packagePattern.test(component.name),
-    );
-    if (!rule) continue;
-    if (component.version !== rule.expectedVersion) {
-      throw new Error(
-        `${component.name}@${component.version}: expression supplement expects version ${rule.expectedVersion}`,
-      );
-    }
-    if (component.license !== rule.expectedLicense) {
-      throw new Error(
-        `${component.name}@${component.version}: expression supplement expects ${rule.expectedLicense}, package declares ${component.license}`,
-      );
-    }
-    if (component.repository !== rule.expectedRepository) {
-      throw new Error(
-        `${component.name}@${component.version}: expression supplement expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
-      );
-    }
-    for (const file of rule.files) {
-      const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
-      if (!text)
-        throw new Error(
-          `${component.name}@${component.version}: expression supplement file is empty: ${file}`,
-        );
-      component.noticeTexts.push({
-        file: `${file} (expression supplement)`,
-        text,
-        provenance: `${rule.attribution}; ${rule.reason}`,
-      });
-    }
-  }
-  return components;
+	const byIdentity = new Map<string, Component>();
+	const discovery = await packageRoots(
+		join(options.inventoryRoot, "node_modules", ".bun"),
+	);
+	const discoveryErrors = [...discovery.errors];
+	for (const packageRoot of discovery.roots) {
+		const manifestPath = join(packageRoot, "package.json");
+		let manifest: PackageManifest;
+		try {
+			manifest = JSON.parse(
+				await readFile(manifestPath, "utf8"),
+			) as PackageManifest;
+		} catch (error) {
+			discoveryErrors.push(
+				`${manifestPath}: cannot read or parse manifest: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			continue;
+		}
+		if (typeof manifest.name !== "string" || manifest.name.trim() === "") {
+			discoveryErrors.push(`${manifestPath}: missing non-empty name`);
+			continue;
+		}
+		if (
+			typeof manifest.version !== "string" ||
+			manifest.version.trim() === ""
+		) {
+			discoveryErrors.push(`${manifestPath}: missing non-empty version`);
+			continue;
+		}
+		const identity = `${manifest.name}@${manifest.version}`;
+		if (byIdentity.has(identity)) continue;
+		const noticeTexts: NoticeText[] = [];
+		let packageEntries: Dirent[];
+		try {
+			packageEntries = await readdir(packageRoot, { withFileTypes: true });
+		} catch (error) {
+			discoveryErrors.push(
+				`${packageRoot}: cannot read package directory: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			continue;
+		}
+		for (const entry of packageEntries.sort((a, b) =>
+			stableCompare(a.name, b.name),
+		)) {
+			if (!entry.isFile() || !NOTICE_NAMES.test(entry.name)) continue;
+			const noticePath = join(packageRoot, entry.name);
+			try {
+				const text = normalizeText(await readFile(noticePath, "utf8"));
+				if (text)
+					noticeTexts.push({ file: entry.name, text, provenance: "package" });
+			} catch (error) {
+				discoveryErrors.push(
+					`${noticePath}: cannot read license/notice text: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}
+		const declaredLicense = licenseValue(manifest);
+		let license: string;
+		try {
+			license = canonicalLicenseExpression(declaredLicense);
+		} catch (error) {
+			discoveryErrors.push(
+				`${identity}: invalid or disallowed license ${JSON.stringify(declaredLicense)}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			continue;
+		}
+		byIdentity.set(identity, {
+			name: manifest.name,
+			version: manifest.version,
+			license,
+			repository: repositoryValue(manifest),
+			packageRoot,
+			noticeTexts,
+			compliance: complianceFor(
+				manifest.name,
+				manifest.version,
+				license,
+				options.artifactKind,
+				"npm",
+			),
+			ecosystem: "npm",
+		});
+	}
+	if (discoveryErrors.length > 0) {
+		throw new Error(
+			`Package discovery failed (${discoveryErrors.length}):\n${discoveryErrors.map((error) => `  - ${error}`).join("\n")}`,
+		);
+	}
+	const components = [...byIdentity.values()].sort(
+		(a, b) =>
+			stableCompare(a.name, b.name) || stableCompare(a.version, b.version),
+	);
+	for (const component of components) {
+		if (component.noticeTexts.length > 0) continue;
+		const rule = PACKAGE_EMBEDDED_LICENSE_RULES.find((candidate) =>
+			candidate.packagePattern.test(component.name),
+		);
+		if (!rule) continue;
+		if (component.version !== rule.expectedVersion) {
+			throw new Error(
+				`${component.name}@${component.version}: embedded license rule expects version ${rule.expectedVersion}`,
+			);
+		}
+		if (component.license !== rule.expectedLicense) {
+			throw new Error(
+				`${component.name}@${component.version}: embedded license rule expects ${rule.expectedLicense}, package declares ${component.license}`,
+			);
+		}
+		if (component.repository !== rule.expectedRepository) {
+			throw new Error(
+				`${component.name}@${component.version}: embedded license rule expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
+			);
+		}
+		const sourcePath = join(component.packageRoot, rule.sourceFile);
+		const sourceText = normalizeText(await readFile(sourcePath, "utf8"));
+		const section = sourceText.match(rule.sectionPattern)?.[1];
+		if (!section) {
+			throw new Error(
+				`${component.name}@${component.version}: ${rule.sourceFile} no longer contains the reviewed complete license section`,
+			);
+		}
+		component.noticeTexts.push({
+			file: `${rule.sourceFile} (reviewed embedded license section)`,
+			text: normalizeText(section),
+			provenance: `${component.name}@${component.version}; ${rule.reason}`,
+		});
+	}
+	for (const component of components) {
+		if (component.noticeTexts.length > 0) continue;
+		const rule = REPOSITORY_LICENSE_REUSE_RULES.find((candidate) =>
+			candidate.packagePattern.test(component.name),
+		);
+		if (!rule) continue;
+		if (component.license !== rule.expectedLicense) {
+			throw new Error(
+				`${component.name}@${component.version}: repository reuse rule expects ${rule.expectedLicense}, package declares ${component.license}`,
+			);
+		}
+		if (component.repository !== rule.expectedRepository) {
+			throw new Error(
+				`${component.name}@${component.version}: repository reuse rule expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
+			);
+		}
+		const source = components.find(
+			(candidate) =>
+				candidate.repository === rule.expectedRepository &&
+				candidate.license === rule.expectedLicense &&
+				rule.sourcePackagePattern.test(candidate.name) &&
+				candidate.noticeTexts.some((notice) =>
+					rule.allowedSourceFiles.test(notice.file),
+				),
+		);
+		if (!source) {
+			throw new Error(
+				`${component.name}@${component.version}: no installed source package matching ${rule.sourcePackagePattern} provides an allowed repository-root LICENSE/LICENCE/COPYING file`,
+			);
+		}
+		component.noticeTexts = source.noticeTexts
+			.filter((notice) => rule.allowedSourceFiles.test(notice.file))
+			.map((notice) => ({
+				...notice,
+				file: `${notice.file} (reviewed repository-root reuse)`,
+				provenance: `${source.name}@${source.version}; ${rule.reason}`,
+			}));
+	}
+	for (const component of components) {
+		if (component.noticeTexts.length > 0) continue;
+		const rule = SUPPLEMENTAL_RULES.find((candidate) =>
+			candidate.packagePattern.test(component.name),
+		);
+		if (!rule) continue;
+		if (component.license !== rule.expectedLicense) {
+			throw new Error(
+				`${component.name}@${component.version}: supplemental rule expects ${rule.expectedLicense}, package declares ${component.license}`,
+			);
+		}
+		for (const file of rule.files) {
+			const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
+			if (!text)
+				throw new Error(
+					`${component.name}@${component.version}: supplemental file is empty: ${file}`,
+				);
+			component.noticeTexts.push({
+				file: `${file} (supplemental)`,
+				text,
+				provenance: `${rule.attribution}; ${rule.reason}`,
+			});
+		}
+	}
+	for (const component of components) {
+		if (component.noticeTexts.length > 0) continue;
+		const rule = DECLARED_LICENSE_FALLBACK_RULES.find((candidate) =>
+			candidate.packagePattern.test(component.name),
+		);
+		if (!rule) continue;
+		if (component.version !== rule.expectedVersion) {
+			throw new Error(
+				`${component.name}@${component.version}: declared-license fallback expects version ${rule.expectedVersion}`,
+			);
+		}
+		if (component.license !== rule.expectedLicense) {
+			throw new Error(
+				`${component.name}@${component.version}: declared-license fallback expects ${rule.expectedLicense}, package declares ${component.license}`,
+			);
+		}
+		if (component.repository !== rule.expectedRepository) {
+			throw new Error(
+				`${component.name}@${component.version}: declared-license fallback expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
+			);
+		}
+		for (const file of rule.files) {
+			const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
+			if (!text) {
+				throw new Error(
+					`${component.name}@${component.version}: declared-license fallback file is empty: ${file}`,
+				);
+			}
+			component.noticeTexts.push({
+				file: `${file} (declared-license fallback)`,
+				text,
+				provenance: `${component.name}@${component.version} package manifest and reviewed package content; ${rule.reason} No copyright holder or year was inferred.`,
+			});
+		}
+	}
+	for (const component of components) {
+		const rule = EXPRESSION_LICENSE_SUPPLEMENT_RULES.find((candidate) =>
+			candidate.packagePattern.test(component.name),
+		);
+		if (!rule) continue;
+		if (component.version !== rule.expectedVersion) {
+			throw new Error(
+				`${component.name}@${component.version}: expression supplement expects version ${rule.expectedVersion}`,
+			);
+		}
+		if (component.license !== rule.expectedLicense) {
+			throw new Error(
+				`${component.name}@${component.version}: expression supplement expects ${rule.expectedLicense}, package declares ${component.license}`,
+			);
+		}
+		if (component.repository !== rule.expectedRepository) {
+			throw new Error(
+				`${component.name}@${component.version}: expression supplement expects ${rule.expectedRepository}, package declares ${component.repository || "no repository"}`,
+			);
+		}
+		for (const file of rule.files) {
+			const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
+			if (!text)
+				throw new Error(
+					`${component.name}@${component.version}: expression supplement file is empty: ${file}`,
+				);
+			component.noticeTexts.push({
+				file: `${file} (expression supplement)`,
+				text,
+				provenance: `${rule.attribution}; ${rule.reason}`,
+			});
+		}
+	}
+	return components;
 }
 
 // Fallback files for license branches a crate manifest declares but whose
@@ -1194,340 +1213,340 @@ async function loadComponents(
 // Apache-2.0 is deliberately missing here: the canonical text is injected
 // centrally for all ecosystems.
 const RUST_DECLARED_FALLBACK_FILES = new Map<string, string>([
-  ["MIT", "licenses/declared-MIT-no-upstream-copyright.txt"],
-  ["MIT-0", "licenses/rust-declared-MIT-0-no-upstream-copyright.txt"],
-  ["Zlib", "licenses/rust-declared-Zlib-no-upstream-copyright.txt"],
-  [
-    "BSD-3-Clause",
-    "licenses/rust-declared-BSD-3-Clause-no-upstream-copyright.txt",
-  ],
-  ["MPL-2.0", "licenses/rust-declared-MPL-2.0-no-upstream-copyright.txt"],
+	["MIT", "licenses/declared-MIT-no-upstream-copyright.txt"],
+	["MIT-0", "licenses/rust-declared-MIT-0-no-upstream-copyright.txt"],
+	["Zlib", "licenses/rust-declared-Zlib-no-upstream-copyright.txt"],
+	[
+		"BSD-3-Clause",
+		"licenses/rust-declared-BSD-3-Clause-no-upstream-copyright.txt",
+	],
+	["MPL-2.0", "licenses/rust-declared-MPL-2.0-no-upstream-copyright.txt"],
 ]);
 
 type CargoMetadataPackage = {
-  name: string;
-  version: string;
-  license?: string | null;
-  repository?: string | null;
-  source?: string | null;
-  manifest_path?: string;
+	name: string;
+	version: string;
+	license?: string | null;
+	repository?: string | null;
+	source?: string | null;
+	manifest_path?: string;
 };
 
 // Loads the Rust dependencies from Cargo.lock/Cargo.toml of Outpost Desktop
 // (Requirement 10.7, Task 14.4). Requires `cargo fetch --locked` so the
 // license texts of the crate archives are in the local registry cache.
 async function loadCargoComponents(
-  repoRoot: string,
-  options: Options,
+	repoRoot: string,
+	options: Options,
 ): Promise<Component[]> {
-  let metadata: { packages?: CargoMetadataPackage[] };
-  try {
-    const proc = Bun.spawn(
-      [
-        "cargo",
-        "metadata",
-        "--manifest-path",
-        CARGO_MANIFEST,
-        "--locked",
-        "--format-version",
-        "1",
-      ],
-      { cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
-    );
-    const [stdout, stderr] = await Promise.all([
-      new Response(proc.stdout).text(),
-      new Response(proc.stderr).text(),
-    ]);
-    await proc.exited;
-    if (proc.exitCode !== 0)
-      throw new Error(`exit code ${proc.exitCode}: ${stderr.trim()}`);
-    metadata = JSON.parse(stdout) as { packages?: CargoMetadataPackage[] };
-  } catch (error) {
-    throw new Error(
-      `cargo metadata failed for ${CARGO_MANIFEST}: ${error instanceof Error ? error.message : String(error)}. Install cargo and run \`cargo fetch --locked --manifest-path ${CARGO_MANIFEST}\` before --include-cargo.`,
-    );
-  }
-  const discoveryErrors: string[] = [];
-  const components: Component[] = [];
-  const seen = new Set<string>();
-  const registryPackages = (metadata.packages ?? [])
-    .filter((pkg) => (pkg.source ?? "").startsWith("registry+"))
-    .sort((a, b) =>
-      stableCompare(`${a.name}@${a.version}`, `${b.name}@${b.version}`),
-    );
-  if (registryPackages.length === 0)
-    throw new Error(
-      `cargo metadata returned no registry packages for ${CARGO_MANIFEST}`,
-    );
-  for (const pkg of registryPackages) {
-    const identity = `${pkg.name}@${pkg.version}`;
-    if (seen.has(identity)) continue;
-    seen.add(identity);
-    const declaredLicense = (pkg.license ?? "").trim();
-    if (!declaredLicense) {
-      discoveryErrors.push(`${identity}: crate manifest declares no license`);
-      continue;
-    }
-    let license: string;
-    try {
-      license = canonicalLicenseExpression(
-        normalizeRustLicenseExpression(declaredLicense),
-      );
-    } catch (error) {
-      discoveryErrors.push(
-        `${identity}: invalid or disallowed license ${JSON.stringify(declaredLicense)}: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    const packageRoot = (pkg.manifest_path ?? "").replace(
-      /[\\/]Cargo\.toml$/,
-      "",
-    );
-    const noticeTexts: NoticeText[] = [];
-    if (!packageRoot) {
-      discoveryErrors.push(`${identity}: cargo metadata has no manifest path`);
-      continue;
-    }
-    let packageEntries: Dirent[];
-    try {
-      packageEntries = await readdir(packageRoot, { withFileTypes: true });
-    } catch (error) {
-      discoveryErrors.push(
-        `${packageRoot}: cannot read crate directory (run cargo fetch --locked): ${error instanceof Error ? error.message : String(error)}`,
-      );
-      continue;
-    }
-    for (const entry of packageEntries.sort((a, b) =>
-      stableCompare(a.name, b.name),
-    )) {
-      if (!entry.isFile() || !NOTICE_NAMES.test(entry.name)) continue;
-      const noticePath = join(packageRoot, entry.name);
-      try {
-        const text = normalizeText(await readFile(noticePath, "utf8"));
-        if (text)
-          noticeTexts.push({ file: entry.name, text, provenance: "package" });
-      } catch (error) {
-        discoveryErrors.push(
-          `${noticePath}: cannot read license/notice text: ${error instanceof Error ? error.message : String(error)}`,
-        );
-      }
-    }
-    components.push({
-      name: pkg.name,
-      version: pkg.version,
-      license,
-      repository: (pkg.repository ?? "").toLowerCase(),
-      packageRoot,
-      noticeTexts,
-      compliance: complianceFor(
-        pkg.name,
-        pkg.version,
-        license,
-        options.artifactKind,
-        "cargo",
-      ),
-      ecosystem: "cargo",
-    });
-  }
-  // For every declared license branch without a matching text in the crate archive
-  // the reviewed fallback text is added without an invented copyright holder.
-  for (const component of components) {
-    const identity = `${component.name}@${component.version}`;
-    const declaredIds = licenseIds(component.license);
-    for (const family of STANDARD_LICENSE_FAMILIES) {
-      if (!declaredIds.has(family.id) || family.id === "Apache-2.0") continue;
-      if (
-        component.noticeTexts.some((notice) =>
-          noticeMatchesFamily(component, family, notice),
-        )
-      )
-        continue;
-      const file = RUST_DECLARED_FALLBACK_FILES.get(family.id);
-      if (!file) {
-        discoveryErrors.push(
-          `${identity}: declared ${family.id} branch has no crate text and no reviewed Rust fallback file`,
-        );
-        continue;
-      }
-      const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
-      if (!text)
-        throw new Error(
-          `${identity}: Rust declared-license fallback file is empty: ${file}`,
-        );
-      component.noticeTexts.push({
-        file: `${file} (declared-license fallback)`,
-        text,
-        provenance: `${identity} crate manifest pinned by Cargo.lock declares ${family.id}; the published crates.io archive omits that license branch. No copyright holder or year was inferred.`,
-      });
-    }
-  }
-  if (discoveryErrors.length > 0) {
-    throw new Error(
-      `Crate discovery failed (${discoveryErrors.length}):\n${discoveryErrors.map((error) => `  - ${error}`).join("\n")}`,
-    );
-  }
-  return components;
+	let metadata: { packages?: CargoMetadataPackage[] };
+	try {
+		const proc = Bun.spawn(
+			[
+				"cargo",
+				"metadata",
+				"--manifest-path",
+				CARGO_MANIFEST,
+				"--locked",
+				"--format-version",
+				"1",
+			],
+			{ cwd: repoRoot, stdout: "pipe", stderr: "pipe" },
+		);
+		const [stdout, stderr] = await Promise.all([
+			new Response(proc.stdout).text(),
+			new Response(proc.stderr).text(),
+		]);
+		await proc.exited;
+		if (proc.exitCode !== 0)
+			throw new Error(`exit code ${proc.exitCode}: ${stderr.trim()}`);
+		metadata = JSON.parse(stdout) as { packages?: CargoMetadataPackage[] };
+	} catch (error) {
+		throw new Error(
+			`cargo metadata failed for ${CARGO_MANIFEST}: ${error instanceof Error ? error.message : String(error)}. Install cargo and run \`cargo fetch --locked --manifest-path ${CARGO_MANIFEST}\` before --include-cargo.`,
+		);
+	}
+	const discoveryErrors: string[] = [];
+	const components: Component[] = [];
+	const seen = new Set<string>();
+	const registryPackages = (metadata.packages ?? [])
+		.filter((pkg) => (pkg.source ?? "").startsWith("registry+"))
+		.sort((a, b) =>
+			stableCompare(`${a.name}@${a.version}`, `${b.name}@${b.version}`),
+		);
+	if (registryPackages.length === 0)
+		throw new Error(
+			`cargo metadata returned no registry packages for ${CARGO_MANIFEST}`,
+		);
+	for (const pkg of registryPackages) {
+		const identity = `${pkg.name}@${pkg.version}`;
+		if (seen.has(identity)) continue;
+		seen.add(identity);
+		const declaredLicense = (pkg.license ?? "").trim();
+		if (!declaredLicense) {
+			discoveryErrors.push(`${identity}: crate manifest declares no license`);
+			continue;
+		}
+		let license: string;
+		try {
+			license = canonicalLicenseExpression(
+				normalizeRustLicenseExpression(declaredLicense),
+			);
+		} catch (error) {
+			discoveryErrors.push(
+				`${identity}: invalid or disallowed license ${JSON.stringify(declaredLicense)}: ${error instanceof Error ? error.message : String(error)}`,
+			);
+			continue;
+		}
+		const packageRoot = (pkg.manifest_path ?? "").replace(
+			/[\\/]Cargo\.toml$/,
+			"",
+		);
+		const noticeTexts: NoticeText[] = [];
+		if (!packageRoot) {
+			discoveryErrors.push(`${identity}: cargo metadata has no manifest path`);
+			continue;
+		}
+		let packageEntries: Dirent[];
+		try {
+			packageEntries = await readdir(packageRoot, { withFileTypes: true });
+		} catch (error) {
+			discoveryErrors.push(
+				`${packageRoot}: cannot read crate directory (run cargo fetch --locked): ${error instanceof Error ? error.message : String(error)}`,
+			);
+			continue;
+		}
+		for (const entry of packageEntries.sort((a, b) =>
+			stableCompare(a.name, b.name),
+		)) {
+			if (!entry.isFile() || !NOTICE_NAMES.test(entry.name)) continue;
+			const noticePath = join(packageRoot, entry.name);
+			try {
+				const text = normalizeText(await readFile(noticePath, "utf8"));
+				if (text)
+					noticeTexts.push({ file: entry.name, text, provenance: "package" });
+			} catch (error) {
+				discoveryErrors.push(
+					`${noticePath}: cannot read license/notice text: ${error instanceof Error ? error.message : String(error)}`,
+				);
+			}
+		}
+		components.push({
+			name: pkg.name,
+			version: pkg.version,
+			license,
+			repository: (pkg.repository ?? "").toLowerCase(),
+			packageRoot,
+			noticeTexts,
+			compliance: complianceFor(
+				pkg.name,
+				pkg.version,
+				license,
+				options.artifactKind,
+				"cargo",
+			),
+			ecosystem: "cargo",
+		});
+	}
+	// For every declared license branch without a matching text in the crate archive
+	// the reviewed fallback text is added without an invented copyright holder.
+	for (const component of components) {
+		const identity = `${component.name}@${component.version}`;
+		const declaredIds = licenseIds(component.license);
+		for (const family of STANDARD_LICENSE_FAMILIES) {
+			if (!declaredIds.has(family.id) || family.id === "Apache-2.0") continue;
+			if (
+				component.noticeTexts.some((notice) =>
+					noticeMatchesFamily(component, family, notice),
+				)
+			)
+				continue;
+			const file = RUST_DECLARED_FALLBACK_FILES.get(family.id);
+			if (!file) {
+				discoveryErrors.push(
+					`${identity}: declared ${family.id} branch has no crate text and no reviewed Rust fallback file`,
+				);
+				continue;
+			}
+			const text = normalizeText(await readFile(join(repoRoot, file), "utf8"));
+			if (!text)
+				throw new Error(
+					`${identity}: Rust declared-license fallback file is empty: ${file}`,
+				);
+			component.noticeTexts.push({
+				file: `${file} (declared-license fallback)`,
+				text,
+				provenance: `${identity} crate manifest pinned by Cargo.lock declares ${family.id}; the published crates.io archive omits that license branch. No copyright holder or year was inferred.`,
+			});
+		}
+	}
+	if (discoveryErrors.length > 0) {
+		throw new Error(
+			`Crate discovery failed (${discoveryErrors.length}):\n${discoveryErrors.map((error) => `  - ${error}`).join("\n")}`,
+		);
+	}
+	return components;
 }
 
 function generateNotices(
-  components: Component[],
-  options: Options,
-  project: PackageManifest,
-  lockSha: string,
-  cargoLockSha: string,
+	components: Component[],
+	options: Options,
+	project: PackageManifest,
+	lockSha: string,
+	cargoLockSha: string,
 ): string {
-  const groups = new Map<
-    string,
-    {
-      text: string;
-      files: Set<string>;
-      packages: Set<string>;
-      provenance: Set<string>;
-    }
-  >();
-  for (const component of components)
-    for (const notice of component.noticeTexts) {
-      const hash = digest(notice.text);
-      const group = groups.get(hash) ?? {
-        text: notice.text,
-        files: new Set(),
-        packages: new Set(),
-        provenance: new Set(),
-      };
-      group.files.add(notice.file);
-      group.packages.add(`${component.name}@${component.version}`);
-      group.provenance.add(notice.provenance);
-      groups.set(hash, group);
-    }
-  const lines = [
-    "# Third-Party Notices",
-    "",
-    "This file is generated by `bun run supply-chain`. Do not edit it manually.",
-    "",
-    `Artifact: **${options.artifactName}** (${options.artifactKind}); platform: **${options.platform}**; project version: **${project.version}**.`,
-    `Git commit: \`${options.gitSha}\`; \`bun.lock\` SHA-256: \`${lockSha}\`.${cargoLockSha ? ` \`Cargo.lock\` SHA-256: \`${cargoLockSha}\`.` : ""}`,
-    "",
-    `ATF itself is licensed under ${PROJECT_LICENSE}; see LICENSE.md. Third-party components remain subject to their own licenses. This inventory describes only the named artifact and makes no claim about unrelated production images.`,
-    "",
-    `Installed third-party package versions: **${components.length}**.`,
-    "",
-    "## Package inventory",
-    "",
-    "| Package | Version | Declared license | Text | Compliance |",
-    "| --- | --- | --- | --- | --- |",
-  ];
-  for (const component of components)
-    lines.push(
-      `| ${markdownCell(component.name)} | ${markdownCell(component.version)} | ${markdownCell(component.license)} | yes | ${markdownCell(component.compliance.classification)} |`,
-    );
-  lines.push("", "## Artifact-specific compliance", "");
-  for (const item of [
-    ...new Map(
-      components.map((component) => [
-        `${component.compliance.classification}\0${component.compliance.requirement}`,
-        component.compliance,
-      ]),
-    ).values(),
-  ].sort((a, b) => stableCompare(a.classification, b.classification))) {
-    lines.push(`- **${item.classification}:** ${item.requirement}`);
-  }
-  lines.push("", "## License and notice texts", "");
-  for (const [hash, group] of [...groups.entries()].sort((a, b) =>
-    stableCompare(a[0], b[0]),
-  )) {
-    lines.push(
-      `### ${[...group.packages].sort().join(", ")}`,
-      "",
-      `Source files: ${[...group.files].sort().join(", ")}; provenance: ${[...group.provenance].sort().join(" | ")}; SHA-256: \`${hash}\``,
-      "",
-      "```text",
-      group.text.replaceAll("```", "` ` `"),
-      "```",
-      "",
-    );
-  }
-  return `${lines.join("\n").trimEnd()}\n`;
+	const groups = new Map<
+		string,
+		{
+			text: string;
+			files: Set<string>;
+			packages: Set<string>;
+			provenance: Set<string>;
+		}
+	>();
+	for (const component of components)
+		for (const notice of component.noticeTexts) {
+			const hash = digest(notice.text);
+			const group = groups.get(hash) ?? {
+				text: notice.text,
+				files: new Set(),
+				packages: new Set(),
+				provenance: new Set(),
+			};
+			group.files.add(notice.file);
+			group.packages.add(`${component.name}@${component.version}`);
+			group.provenance.add(notice.provenance);
+			groups.set(hash, group);
+		}
+	const lines = [
+		"# Third-Party Notices",
+		"",
+		"This file is generated by `bun run supply-chain`. Do not edit it manually.",
+		"",
+		`Artifact: **${options.artifactName}** (${options.artifactKind}); platform: **${options.platform}**; project version: **${project.version}**.`,
+		`Git commit: \`${options.gitSha}\`; \`bun.lock\` SHA-256: \`${lockSha}\`.${cargoLockSha ? ` \`Cargo.lock\` SHA-256: \`${cargoLockSha}\`.` : ""}`,
+		"",
+		`ATF itself is licensed under ${PROJECT_LICENSE}; see LICENSE.md. Third-party components remain subject to their own licenses. This inventory describes only the named artifact and makes no claim about unrelated production images.`,
+		"",
+		`Installed third-party package versions: **${components.length}**.`,
+		"",
+		"## Package inventory",
+		"",
+		"| Package | Version | Declared license | Text | Compliance |",
+		"| --- | --- | --- | --- | --- |",
+	];
+	for (const component of components)
+		lines.push(
+			`| ${markdownCell(component.name)} | ${markdownCell(component.version)} | ${markdownCell(component.license)} | yes | ${markdownCell(component.compliance.classification)} |`,
+		);
+	lines.push("", "## Artifact-specific compliance", "");
+	for (const item of [
+		...new Map(
+			components.map((component) => [
+				`${component.compliance.classification}\0${component.compliance.requirement}`,
+				component.compliance,
+			]),
+		).values(),
+	].sort((a, b) => stableCompare(a.classification, b.classification))) {
+		lines.push(`- **${item.classification}:** ${item.requirement}`);
+	}
+	lines.push("", "## License and notice texts", "");
+	for (const [hash, group] of [...groups.entries()].sort((a, b) =>
+		stableCompare(a[0], b[0]),
+	)) {
+		lines.push(
+			`### ${[...group.packages].sort().join(", ")}`,
+			"",
+			`Source files: ${[...group.files].sort().join(", ")}; provenance: ${[...group.provenance].sort().join(" | ")}; SHA-256: \`${hash}\``,
+			"",
+			"```text",
+			group.text.replaceAll("```", "` ` `"),
+			"```",
+			"",
+		);
+	}
+	return `${lines.join("\n").trimEnd()}\n`;
 }
 function licenseEntry(value: string): { expression: string } {
 	return { expression: value };
 }
 function purl(ecosystem: Ecosystem, name: string, version: string): string {
-  const type = ecosystem === "cargo" ? "cargo" : "npm";
-  return `pkg:${type}/${encodeURIComponent(name)}@${encodeURIComponent(version)}`;
+	const type = ecosystem === "cargo" ? "cargo" : "npm";
+	return `pkg:${type}/${encodeURIComponent(name)}@${encodeURIComponent(version)}`;
 }
 function generateSbom(
-  components: Component[],
-  options: Options,
-  project: PackageManifest,
-  lockSha: string,
-  cargoLockSha: string,
+	components: Component[],
+	options: Options,
+	project: PackageManifest,
+	lockSha: string,
+	cargoLockSha: string,
 ): string {
-  const projectName = project.name ?? "aiperator-trust-fabric";
-  const projectVersion = project.version ?? "0.0.0";
-  const bom = {
-    $schema: "https://cyclonedx.org/schema/bom-1.6.schema.json",
-    bomFormat: "CycloneDX",
-    specVersion: "1.6",
-    version: 1,
-    metadata: {
-      tools: {
-        components: [
-          {
-            type: "application",
-            author: PROJECT_AUTHOR,
-            name: "ATF supply-chain generator",
-            version: GENERATOR_VERSION,
-          },
-        ],
-      },
-      component: {
-        type: "application",
-        "bom-ref": `pkg:npm/${projectName}@${projectVersion}`,
-        group: "Abillify Technology GmbH",
-        name: projectName,
-        version: projectVersion,
-        licenses: [{ expression: PROJECT_LICENSE }],
-        purl: `pkg:npm/${projectName}@${projectVersion}`,
-      },
-      properties: [
-        { name: "atf:inventory:platform", value: options.platform },
-        { name: "atf:artifact:kind", value: options.artifactKind },
-        { name: "atf:artifact:name", value: options.artifactName },
-        { name: "atf:git:sha", value: options.gitSha },
-        { name: "atf:bun-lock:sha256", value: lockSha },
-        ...(cargoLockSha
-          ? [{ name: "atf:cargo-lock:sha256", value: cargoLockSha }]
-          : []),
-      ],
-    },
-    components: components.map((component) => {
-      const packageUrl = purl(
-        component.ecosystem,
-        component.name,
-        component.version,
-      );
-      const slash =
-        component.ecosystem === "npm" && component.name.startsWith("@")
-          ? component.name.indexOf("/")
-          : -1;
-      return {
-        type: "library",
-        "bom-ref": packageUrl,
-        ...(slash > 0 ? { group: component.name.slice(0, slash) } : {}),
-        name: slash > 0 ? component.name.slice(slash + 1) : component.name,
-        version: component.version,
-        licenses: [licenseEntry(component.license)],
-        purl: packageUrl,
-        properties: [
-          {
-            name: "atf:compliance:classification",
-            value: component.compliance.classification,
-          },
-        ],
-      };
-    }),
-  };
-  return `${JSON.stringify(bom, null, 2)}\n`;
+	const projectName = project.name ?? "aiperator-trust-fabric";
+	const projectVersion = project.version ?? "0.0.0";
+	const bom = {
+		$schema: "https://cyclonedx.org/schema/bom-1.6.schema.json",
+		bomFormat: "CycloneDX",
+		specVersion: "1.6",
+		version: 1,
+		metadata: {
+			tools: {
+				components: [
+					{
+						type: "application",
+						author: PROJECT_AUTHOR,
+						name: "ATF supply-chain generator",
+						version: GENERATOR_VERSION,
+					},
+				],
+			},
+			component: {
+				type: "application",
+				"bom-ref": `pkg:npm/${projectName}@${projectVersion}`,
+				group: "Abillify Technology GmbH",
+				name: projectName,
+				version: projectVersion,
+				licenses: [{ expression: PROJECT_LICENSE }],
+				purl: `pkg:npm/${projectName}@${projectVersion}`,
+			},
+			properties: [
+				{ name: "atf:inventory:platform", value: options.platform },
+				{ name: "atf:artifact:kind", value: options.artifactKind },
+				{ name: "atf:artifact:name", value: options.artifactName },
+				{ name: "atf:git:sha", value: options.gitSha },
+				{ name: "atf:bun-lock:sha256", value: lockSha },
+				...(cargoLockSha
+					? [{ name: "atf:cargo-lock:sha256", value: cargoLockSha }]
+					: []),
+			],
+		},
+		components: components.map((component) => {
+			const packageUrl = purl(
+				component.ecosystem,
+				component.name,
+				component.version,
+			);
+			const slash =
+				component.ecosystem === "npm" && component.name.startsWith("@")
+					? component.name.indexOf("/")
+					: -1;
+			return {
+				type: "library",
+				"bom-ref": packageUrl,
+				...(slash > 0 ? { group: component.name.slice(0, slash) } : {}),
+				name: slash > 0 ? component.name.slice(slash + 1) : component.name,
+				version: component.version,
+				licenses: [licenseEntry(component.license)],
+				purl: packageUrl,
+				properties: [
+					{
+						name: "atf:compliance:classification",
+						value: component.compliance.classification,
+					},
+				],
+			};
+		}),
+	};
+	return `${JSON.stringify(bom, null, 2)}\n`;
 }
 async function verifyOrWrite(
 	path: string,
@@ -1569,37 +1588,37 @@ try {
 			`No installed third-party packages found under ${join(options.inventoryRoot, "node_modules", ".bun")}`,
 		);
 	let cargoLockSha = "";
-  if (options.includeCargo) {
-    cargoLockSha = digest(await readFile(join(repoRoot, CARGO_LOCKFILE)));
-    const cargoComponents = await loadCargoComponents(repoRoot, options);
-    components.push(...cargoComponents);
-    components.sort(
-      (a, b) =>
-        stableCompare(a.name, b.name) ||
-        stableCompare(a.version, b.version) ||
-        stableCompare(a.ecosystem, b.ecosystem),
-    );
-  }
-  const apacheSource = await readFile(
-    join(repoRoot, "licenses/Apache-2.0.txt"),
-  );
-  const apacheDigest = digest(apacheSource);
-  if (apacheDigest !== APACHE_2_0_SHA256)
-    throw new Error(
-      `Canonical Apache-2.0 text SHA-256 mismatch: expected ${APACHE_2_0_SHA256}, received ${apacheDigest}`,
-    );
-  const apacheText = normalizeText(apacheSource.toString("utf8"));
-  if (!apacheText)
-    throw new Error("Apache-2.0 family text is empty: licenses/Apache-2.0.txt");
-  for (const component of components) {
-    if (!licenseIds(component.license).has("Apache-2.0")) continue;
-    component.noticeTexts.push({
-      file: "licenses/Apache-2.0.txt (standard license family)",
-      text: apacheText,
-      provenance:
-        "Canonical Apache License 2.0 standard text; package-specific NOTICE files remain separate",
-    });
-  }
+	if (options.includeCargo) {
+		cargoLockSha = digest(await readFile(join(repoRoot, CARGO_LOCKFILE)));
+		const cargoComponents = await loadCargoComponents(repoRoot, options);
+		components.push(...cargoComponents);
+		components.sort(
+			(a, b) =>
+				stableCompare(a.name, b.name) ||
+				stableCompare(a.version, b.version) ||
+				stableCompare(a.ecosystem, b.ecosystem),
+		);
+	}
+	const apacheSource = await readFile(
+		join(repoRoot, "licenses/Apache-2.0.txt"),
+	);
+	const apacheDigest = digest(apacheSource);
+	if (apacheDigest !== APACHE_2_0_SHA256)
+		throw new Error(
+			`Canonical Apache-2.0 text SHA-256 mismatch: expected ${APACHE_2_0_SHA256}, received ${apacheDigest}`,
+		);
+	const apacheText = normalizeText(apacheSource.toString("utf8"));
+	if (!apacheText)
+		throw new Error("Apache-2.0 family text is empty: licenses/Apache-2.0.txt");
+	for (const component of components) {
+		if (!licenseIds(component.license).has("Apache-2.0")) continue;
+		component.noticeTexts.push({
+			file: "licenses/Apache-2.0.txt (standard license family)",
+			text: apacheText,
+			provenance:
+				"Canonical Apache License 2.0 standard text; package-specific NOTICE files remain separate",
+		});
+	}
 	const failures: string[] = [];
 	for (const component of components) {
 		const identity = `${component.ecosystem}:${component.name}@${component.version}`;
@@ -1611,14 +1630,14 @@ try {
 		for (const family of STANDARD_LICENSE_FAMILIES) {
 			if (!declaredIds.has(family.id)) continue;
 			if (
-        !component.noticeTexts.some((notice) =>
-          noticeMatchesFamily(component, family, notice),
-        )
-      ) {
-        failures.push(
-          `${identity}: declared ${family.id} family is missing a plausibly complete matching license text`,
-        );
-      }
+				!component.noticeTexts.some((notice) =>
+					noticeMatchesFamily(component, family, notice),
+				)
+			) {
+				failures.push(
+					`${identity}: declared ${family.id} family is missing a plausibly complete matching license text`,
+				);
+			}
 		}
 	}
 	if (failures.length)
@@ -1628,17 +1647,17 @@ try {
 	const noticePath = join(options.outputDir, "THIRD_PARTY_NOTICES.md");
 	const sbomPath = join(options.outputDir, "sbom.cdx.json");
 	const results = await Promise.all([
-    verifyOrWrite(
-      noticePath,
-      generateNotices(components, options, project, lockSha, cargoLockSha),
-      options,
-    ),
-    verifyOrWrite(
-      sbomPath,
-      generateSbom(components, options, project, lockSha, cargoLockSha),
-      options,
-    ),
-  ]);
+		verifyOrWrite(
+			noticePath,
+			generateNotices(components, options, project, lockSha, cargoLockSha),
+			options,
+		),
+		verifyOrWrite(
+			sbomPath,
+			generateSbom(components, options, project, lockSha, cargoLockSha),
+			options,
+		),
+	]);
 	if (results.some((result) => !result)) process.exit(1);
 	console.log(
 		`${options.checkOnly ? "Verified" : "Generated"} ${relative(repoRoot, noticePath)} and ${relative(repoRoot, sbomPath)} for ${components.length} package versions (${options.artifactName}, ${options.platform}, ${options.gitSha}).`,

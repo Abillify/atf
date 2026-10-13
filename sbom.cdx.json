@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "4113ceee5cff81a9620ed44263c36b21f6c0a7e0defc0e8155c5033d4a5944d2"
+        "value": "86bb6121c2bb5c5b55d4c43b295cec666ca247662ff43dd745d28bf1f05147bc"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -1834,6 +1834,101 @@
         }
       ],
       "purl": "pkg:npm/%40nodable%2Fentities@3.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40oxc-parser%2Fbinding-linux-x64-gnu@0.153.0",
+      "group": "@oxc-parser",
+      "name": "binding-linux-x64-gnu",
+      "version": "0.153.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40oxc-parser%2Fbinding-linux-x64-gnu@0.153.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40oxc-parser%2Fbinding-linux-x64-musl@0.153.0",
+      "group": "@oxc-parser",
+      "name": "binding-linux-x64-musl",
+      "version": "0.153.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40oxc-parser%2Fbinding-linux-x64-musl@0.153.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40oxc-project%2Ftypes@0.153.0",
+      "group": "@oxc-project",
+      "name": "types",
+      "version": "0.153.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40oxc-project%2Ftypes@0.153.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40oxc-resolver%2Fbinding-linux-x64-gnu@11.24.2",
+      "group": "@oxc-resolver",
+      "name": "binding-linux-x64-gnu",
+      "version": "11.24.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40oxc-resolver%2Fbinding-linux-x64-gnu@11.24.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/%40oxc-resolver%2Fbinding-linux-x64-musl@11.24.2",
+      "group": "@oxc-resolver",
+      "name": "binding-linux-x64-musl",
+      "version": "11.24.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/%40oxc-resolver%2Fbinding-linux-x64-musl@11.24.2",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -8237,6 +8332,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/fd-package-json@2.0.0",
+      "name": "fd-package-json",
+      "version": "2.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/fd-package-json@2.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/fdeflate@0.3.7",
       "name": "fdeflate",
       "version": "0.3.7",
@@ -8516,6 +8629,24 @@
         }
       ],
       "purl": "pkg:cargo/form_urlencoded@1.2.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/formatly@0.11.4",
+      "name": "formatly",
+      "version": "0.11.4",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/formatly@0.11.4",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -9002,6 +9133,24 @@
         }
       ],
       "purl": "pkg:npm/get-proto@1.0.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/get-tsconfig@4.14.3",
+      "name": "get-tsconfig",
+      "version": "4.14.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/get-tsconfig@4.14.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -11009,6 +11158,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/knip@6.41.0",
+      "name": "knip",
+      "version": "6.41.0",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/knip@6.41.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/langsmith@0.8.11",
       "name": "langsmith",
       "version": "0.8.11",
@@ -12881,6 +13048,42 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/oxc-parser@0.153.0",
+      "name": "oxc-parser",
+      "version": "0.153.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/oxc-parser@0.153.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/oxc-resolver@11.24.2",
+      "name": "oxc-resolver",
+      "version": "11.24.2",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/oxc-resolver@11.24.2",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/p-finally@1.0.0",
       "name": "p-finally",
       "version": "1.0.0",
@@ -12980,6 +13183,24 @@
         }
       ],
       "purl": "pkg:npm/p-timeout@7.0.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/package-manager-detector@1.9.0",
+      "name": "package-manager-detector",
+      "version": "1.9.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/package-manager-detector@1.9.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -15077,6 +15298,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/resolve-pkg-maps@1.0.0",
+      "name": "resolve-pkg-maps",
+      "version": "1.0.0",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/resolve-pkg-maps@1.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/rfd@0.16.0",
       "name": "rfd",
       "version": "0.16.0",
@@ -16391,6 +16630,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/smol-toml@1.9.1",
+      "name": "smol-toml",
+      "version": "1.9.1",
+      "licenses": [
+        {
+          "expression": "BSD-3-Clause"
+        }
+      ],
+      "purl": "pkg:npm/smol-toml@1.9.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/socket2@0.6.5",
       "name": "socket2",
       "version": "0.6.5",
@@ -16724,6 +16981,24 @@
         }
       ],
       "purl": "pkg:npm/strip-indent@3.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/strip-json-comments@5.0.3",
+      "name": "strip-json-comments",
+      "version": "5.0.3",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/strip-json-comments@5.0.3",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -18407,6 +18682,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/unbash@5.0.0",
+      "name": "unbash",
+      "version": "5.0.0",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/unbash@5.0.0",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:npm/undici@6.23.0",
       "name": "undici",
       "version": "6.23.0",
@@ -18866,6 +19159,24 @@
         }
       ],
       "purl": "pkg:cargo/wait-timeout@0.2.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/walk-up-path@4.0.0",
+      "name": "walk-up-path",
+      "version": "4.0.0",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/walk-up-path@4.0.0",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -20603,6 +20914,24 @@
     },
     {
       "type": "library",
+      "bom-ref": "pkg:npm/yaml@2.9.1",
+      "name": "yaml",
+      "version": "2.9.1",
+      "licenses": [
+        {
+          "expression": "ISC"
+        }
+      ],
+      "purl": "pkg:npm/yaml@2.9.1",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
       "bom-ref": "pkg:cargo/yoke@0.8.3",
       "name": "yoke",
       "version": "0.8.3",
@@ -20918,6 +21247,24 @@
         }
       ],
       "purl": "pkg:npm/zod@4.4.3",
+      "properties": [
+        {
+          "name": "atf:compliance:classification",
+          "value": "Standard notice"
+        }
+      ]
+    },
+    {
+      "type": "library",
+      "bom-ref": "pkg:npm/zod@4.6.6",
+      "name": "zod",
+      "version": "4.6.6",
+      "licenses": [
+        {
+          "expression": "MIT"
+        }
+      ],
+      "purl": "pkg:npm/zod@4.6.6",
       "properties": [
         {
           "name": "atf:compliance:classification",
