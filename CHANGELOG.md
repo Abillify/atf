@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-10-13
+
 ### Added
 
 - Supply-chain evidence for release images (Req 13.1, Task 17.1).
@@ -2798,7 +2800,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/abillify/atf/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/abillify/atf/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/abillify/atf/compare/v0.13.1...v0.13.2
 [0.13.1]: https://github.com/abillify/atf/compare/v0.13.0...v0.13.1
