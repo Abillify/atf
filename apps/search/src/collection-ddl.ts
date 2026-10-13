@@ -478,7 +478,7 @@ export async function loadCollectionMeta(
     [table],
   );
   if (res.rows.length === 0) return null;
-  const row = res.rows[0]!;
+  const row = res.rows[0];
   return {
     language: row.fts_language,
     sparseEnabled: row.sparse_enabled,
@@ -905,7 +905,7 @@ export interface UpsertSqlParts {
 
 export function buildUpsertSqlParts(
   meta: CollectionMeta,
-  vecType: string,
+  _vecType: string,
 ): UpsertSqlParts {
   const sparseEnabled = meta.sparseEnabled && meta.sparseVocabSize !== null;
   const binaryEnabled =

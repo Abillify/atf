@@ -41,7 +41,7 @@ describe("InvocationLedger", () => {
     const executor: PostgresInvocationExecutor = {
       async queryInvocationLedger(sql, params) {
         calls.push({ sql, params });
-        return responses.shift()!;
+        return responses.shift();
       },
     };
     const ledger = new PostgresInvocationLedger(executor, 60_000);
@@ -49,9 +49,9 @@ describe("InvocationLedger", () => {
     await ledger.initialize();
     await expect(ledger.claim("key", "fp")).resolves.toMatchObject({ kind: "claimed" });
     await expect(ledger.claim("key", "fp")).resolves.toMatchObject({ kind: "replay", record: { result: { value: 42 } } });
-    expect(calls[0]!.sql).toContain("CREATE TABLE IF NOT EXISTS vs_invocation_ledger");
-    expect(calls[2]!.sql).toContain("expires_at <= now()");
-    expect(calls[3]!.sql).toContain("ON CONFLICT (key) DO UPDATE");
+    expect(calls[0].sql).toContain("CREATE TABLE IF NOT EXISTS vs_invocation_ledger");
+    expect(calls[2].sql).toContain("expires_at <= now()");
+    expect(calls[3].sql).toContain("ON CONFLICT (key) DO UPDATE");
   });
 
   it("uses fingerprint/state compare-and-transition and fails on conflicts", async () => {
@@ -65,8 +65,8 @@ describe("InvocationLedger", () => {
     const ledger = new PostgresInvocationLedger(executor);
     await expect(ledger.transition("key", "fp", "committed", { ok: true }))
       .rejects.toThrow("transition conflict");
-    expect(calls[0]!.sql).toContain("fingerprint = $2");
-    expect(calls[0]!.sql).toContain("state IN ('pending', 'running')");
-    expect(calls[0]!.params?.[3]).toBe(JSON.stringify({ ok: true }));
+    expect(calls[0].sql).toContain("fingerprint = $2");
+    expect(calls[0].sql).toContain("state IN ('pending', 'running')");
+    expect(calls[0].params?.[3]).toBe(JSON.stringify({ ok: true }));
   });
 });

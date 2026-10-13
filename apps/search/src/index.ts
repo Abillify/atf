@@ -9,7 +9,14 @@ import express, {
   type RequestHandler,
 } from "express";
 import { pino } from "pino";
-import { type IncomingMessage, type ServerResponse } from "node:http";
+import { createServerWithOptionalTls } from "@atf/security-kit";
+import {
+  createTracer,
+  formatTraceparent,
+  parseTraceparent,
+  type Tracer,
+} from "@atf/observability";
+import type { IncomingMessage, ServerResponse } from "node:http";
 import { randomUUID } from "node:crypto";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { pinoHttp } from "pino-http";
@@ -45,7 +52,6 @@ import {
   createPostgresClient,
   type PostgresClient,
   waitForDatabase,
-  type CircuitBreakerStatus,
 } from "./postgres-client.js";
 import { runMigrations } from "./migrations.js";
 import { createCircuitBreaker } from "./retry.js";
@@ -70,6 +76,8 @@ import { createErasureHandler } from "./handlers/erasure.js";
 import {
   createAdminStatsHandler,
   createHealthHandler,
+  createLivenessHandler,
+  createReadinessHandler,
   createListCollectionsHandler,
   createDeleteCollectionHandler,
 } from "./handlers/admin.js";
@@ -158,7 +166,7 @@ export function createApp(
   postgresClient: PostgresClient,
   breakers?: PrebuiltBreakers,
   invocationLedger?: InvocationLedger,
-): { app: Express; cleanup: () => void } {
+): { app: Express; cleanup: () => void; tracer: Tracer } {
   const app = express();
 
   const logger = pino({ level: config.logLevel, base: { pid: process.pid } });
@@ -167,6 +175,7 @@ export function createApp(
   // Strip control characters (including \r, \n) from HTTP header values to
   // prevent Node.js ERR_INVALID_CHAR errors when echoing client-supplied IDs.
   const sanitizeHeaderValue = (v: string): string =>
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must go
     v.replace(/[\x00-\x1f\x7f]/g, "");
 
   const httpLogger = pinoHttp({
@@ -294,24 +303,60 @@ export function createApp(
     });
   });
 
-  // ── W3C Trace Context propagation ─────────────────────────────────────────
-  // Store incoming traceparent/tracestate in an AsyncLocalStorage context so
-  // downstream HTTP clients (embedding, reranker, …) can forward them without
-  // needing explicit parameter threading.
-  app.use((req: Request, _res: Response, next: NextFunction) => {
+  // ── OTel server spans + W3C Trace Context propagation ────────────────────
+  // Shared tracer implementation (@atf/observability, Req 11.6): every request
+  // gets a server span, parented to an inbound traceparent when present. The
+  // span's context doubles as the AsyncLocalStorage traceparent so downstream
+  // HTTP clients (embedding, reranker, …) join this service's trace even when
+  // the caller sent no traceparent at all.
+  const tracer: Tracer = createTracer(
+    {
+      tracingEnabled: config.tracingEnabled,
+      ...(config.otelExporterOtlpEndpoint !== null
+        ? { otelExporterOtlpEndpoint: config.otelExporterOtlpEndpoint }
+        : {}),
+      otelServiceName: config.otelServiceName,
+    },
+    logger,
+  );
+  app.use((req: Request, res: Response, next: NextFunction) => {
     const tp = req.headers["traceparent"];
     const ts = req.headers["tracestate"];
+    const inbound = parseTraceparent(typeof tp === "string" ? tp : undefined);
+    const serverSpan = tracer.startSpan(
+      `${req.method} ${req.route?.path ?? req.path}`,
+      {
+        kind: "server",
+        ...(inbound !== undefined ? { parent: inbound } : {}),
+        attributes: {
+          "http.method": req.method,
+          "http.route": req.route?.path ?? req.path,
+          "http.target": req.originalUrl ?? req.path,
+        },
+      },
+    );
     traceContextStorage.run(
       {
-        traceparent: typeof tp === "string" ? tp : undefined,
+        traceparent: formatTraceparent(serverSpan.spanContext()),
         tracestate: typeof ts === "string" ? ts : undefined,
       },
-      next,
+      () => {
+        res.on("finish", () => {
+          // Rename once routing resolved the parameterised path: keeps span
+          // names low-cardinality (e.g. "GET /api/documents/:id").
+          serverSpan.updateName(`${req.method} ${req.route?.path ?? req.path}`);
+          serverSpan
+            .setAttribute("http.status_code", res.statusCode)
+            .setStatus(res.statusCode >= 500 ? "error" : "ok")
+            .end();
+        });
+        next();
+      },
     );
   });
 
   // ── Token Usage Context propagation ─────────────────────────────────────────
-  app.use((req: Request, _res: Response, next: NextFunction) => {
+  app.use((_req: Request, _res: Response, next: NextFunction) => {
     usageStorage.run(
       { inputTokens: 0, outputTokens: 0, cost: 0, modelCosts: {} },
       next,
@@ -471,6 +516,7 @@ export function createApp(
       authzEnabled: config.authzEnabled,
       tenantIsolationEnabled: config.tenantIsolationEnabled,
       defaultTenantId: config.defaultTenantId,
+      apiTokenNext: config.apiTokenNext,
     },
   );
   // Compose the optional "every read must be attributable" check INTO the auth
@@ -904,7 +950,13 @@ export function createApp(
   );
 
   // ── Routes ────────────────────────────────────────────────────────────────
+  // Unauthenticated, so an orchestrator and API tooling need no credential.
+  // /health/live never touches a dependency (process liveness only);
+  // /health/ready gates the load balancer on the database (requirement 12.5);
+  // /health stays the composite diagnostic probe for back-compat.
   app.get("/health", healthHandler);
+  app.get("/health/live", createLivenessHandler());
+  app.get("/health/ready", createReadinessHandler(postgresClient, logger));
   app.get("/metrics", authMiddleware, authorizeMetrics, metricsHandler);
 
   // OpenAPI spec — no auth required so tooling (Swagger UI, etc.) can fetch it.
@@ -1473,12 +1525,17 @@ export function createApp(
     rateLimiter.close();
     revisionTtlCleaner.stop();
     batchWorker.stop();
+    // Flush buffered spans and stop the tracer timer (idempotent — awaited
+    // again in the shutdown handler before the process exits).
+    void tracer.shutdown().catch((err) => {
+      logger.error({ err }, "Error flushing tracer spans");
+    });
     void revisionPool.end().catch((err) => {
       logger.error({ err }, "Error closing revision pool");
     });
   }
 
-  return { app, cleanup };
+  return { app, cleanup, tracer };
 }
 
 async function main(): Promise<void> {
@@ -1605,29 +1662,38 @@ async function main(): Promise<void> {
   // Run schema migrations before the HTTP server accepts any traffic.
   // Safe for multi-instance deployments: an advisory lock ensures only one
   // instance applies migrations; others wait and skip once the lock is released.
-  try {
-    const { Pool } = await import("pg");
-    const pool = new Pool({
-      connectionString: config.postgresUrl,
-      max: 1, // migration runner needs only one connection
-    });
+  // Requirement 12.4: production defaults to dedicated migration Jobs
+  // (`bun run migrate`) instead of DDL on the boot path (MIGRATE_ON_START).
+  if (config.migrateOnStart) {
     try {
-      await runMigrations(pool, logger, {
-        ddlConfig: {
-          vecType: config.halfPrecision ? "halfvec" : "vector",
-          cosineOps: config.halfPrecision
-            ? "halfvec_cosine_ops"
-            : "vector_cosine_ops",
-          hnswM: config.hnswM,
-          efConstruction: config.hnswEfConstruction,
-        },
+      const { Pool } = await import("pg");
+      const pool = new Pool({
+        connectionString: config.postgresUrl,
+        max: 1, // migration runner needs only one connection
       });
-    } finally {
-      await pool.end();
+      try {
+        await runMigrations(pool, logger, {
+          ddlConfig: {
+            vecType: config.halfPrecision ? "halfvec" : "vector",
+            cosineOps: config.halfPrecision
+              ? "halfvec_cosine_ops"
+              : "vector_cosine_ops",
+            hnswM: config.hnswM,
+            efConstruction: config.hnswEfConstruction,
+          },
+        });
+      } finally {
+        await pool.end();
+      }
+    } catch (err) {
+      logger.error({ err }, "Schema migration failed; aborting startup");
+      process.exit(1);
     }
-  } catch (err) {
-    logger.error({ err }, "Schema migration failed; aborting startup");
-    process.exit(1);
+  } else {
+    logger.info(
+      "MIGRATE_ON_START is disabled — schema migrations are not applied at boot; " +
+        "run `bun run migrate` (or the migration Job) first",
+    );
   }
 
   // Check the installed pgvector version once at startup (Requirement 4.2):
@@ -1666,7 +1732,7 @@ async function main(): Promise<void> {
     invocationLedger = new MemoryInvocationLedger();
   }
 
-  const { app, cleanup } = createApp(
+  const { app, cleanup, tracer } = createApp(
     config,
     postgresClient,
     {
@@ -1681,8 +1747,12 @@ async function main(): Promise<void> {
     invocationLedger,
   );
 
-  const server = app.listen(config.port, () => {
-    logger.info(`vectorsearch listening on port ${config.port}`);
+  // Optional TLS/mTLS listener (Req 11.8): plain HTTP when config.tls is null.
+  const server = createServerWithOptionalTls(app, config.tls);
+  server.listen(config.port, () => {
+    logger.info(
+      `vectorsearch listening on port ${config.port}${config.tls !== null ? " (TLS)" : ""}`,
+    );
   });
 
   // Enforce a server-level request timeout to prevent slow or stalled
@@ -1705,6 +1775,9 @@ async function main(): Promise<void> {
       } catch (err) {
         logger.error({ err }, "Error closing postgres client");
       }
+      // Final flush so the last request's spans reach the collector (no-op
+      // when tracing is disabled or already flushed).
+      await tracer.shutdown().catch(() => undefined);
       process.exit(0);
     });
 

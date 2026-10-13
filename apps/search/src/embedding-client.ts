@@ -239,7 +239,7 @@ export function createEmbeddingClient(
         const texts = Array.isArray(input) ? input : [input];
         let vectors: number[][];
         let inputTokens = 0;
-        let outputTokens = 0;
+        const outputTokens = 0;
         if (embedModel.startsWith("cohere.")) {
           const res = await bedrockClient.send(
             new InvokeModelCommand({
@@ -251,7 +251,7 @@ export function createEmbeddingClient(
                 input_type: "search_document",
               }),
             }),
-            { abortSignal: signal as any },
+            { abortSignal: signal },
           );
           const resBody = JSON.parse(new TextDecoder().decode(res.body));
           vectors = resBody.embeddings;
@@ -262,7 +262,7 @@ export function createEmbeddingClient(
           // Titan or other models requiring single inputs
           vectors = await Promise.all(
             texts.map(async (text) => {
-              const res = await bedrockClient!.send(
+              const res = await bedrockClient.send(
                 new InvokeModelCommand({
                   modelId: embedModel,
                   contentType: "application/json",
@@ -271,7 +271,7 @@ export function createEmbeddingClient(
                     inputText: text,
                   }),
                 }),
-                { abortSignal: signal as any },
+                { abortSignal: signal },
               );
               const resBody = JSON.parse(new TextDecoder().decode(res.body));
               if (typeof resBody.inputTextTokenCount === "number") {

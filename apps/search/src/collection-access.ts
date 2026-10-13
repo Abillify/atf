@@ -46,7 +46,7 @@ export function collectionAccessAllowed(
   if (!hasIdentity) return false;
 
   if (userId && allowedUsers.includes(userId)) return true;
-  if (userGroups && userGroups.some((g) => allowedGroups.includes(g)))
+  if (userGroups?.some((g) => allowedGroups.includes(g)))
     return true;
 
   return false;

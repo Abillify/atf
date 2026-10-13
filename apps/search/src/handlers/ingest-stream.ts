@@ -19,11 +19,11 @@ import type { EmbeddingClient } from "../embedding-client.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { PostgresClient } from "../postgres-client.js";
 import { normalizeMetadata, type Metadata } from "../metadata.js";
-import { readHeader } from "../header-utils.js";
 import {
   buildJobsForBatch,
   embedJobsWithLateChunking,
   assemblePoints,
+  type EmbedJob,
   type IngestDocument,
 } from "../ingest-jobs.js";
 import {
@@ -280,7 +280,7 @@ export function createIngestStreamHandler(
         }));
 
         // Build jobs using semanticChunkBatch (one embed call for all docs in sub-batch)
-        let jobs;
+        let jobs: EmbedJob[];
         try {
           jobs = await buildJobsForBatch(
             batchWithVersion,

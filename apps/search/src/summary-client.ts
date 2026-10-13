@@ -188,7 +188,7 @@ export function createSummaryClient(
           },
         });
         const res = await bedrockClient.send(command, {
-          abortSignal: controller.signal as any,
+          abortSignal: controller.signal,
         });
         const text_result = res.output?.message?.content?.[0]?.text;
         if (typeof text_result !== "string" || text_result.trim() === "") {

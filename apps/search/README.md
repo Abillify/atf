@@ -16,10 +16,11 @@ cp apps/search/.env.example apps/search/.env
 bun run --filter @atf/search dev
 ```
 
-The example sets `PORT=3002`, matching the documented multi-service layout. Search needs
-PostgreSQL with the `vector` extension and an embedding endpoint. Both are provided by
+The code default is `PORT=3000`; the example `.env` sets `PORT=3002`, matching the documented
+multi-service layout (Runtime 3000, Control 3001, Search 3002, Gate 3003, Extract 3004). Search
+needs PostgreSQL with the `vector` extension and an embedding endpoint. Both are provided by
 [`deploy/examples/`](../../deploy/examples/). Verify a standalone instance with
-`curl --fail http://127.0.0.1:3002/health`.
+`curl --fail http://127.0.0.1:3002/health` (or port 3000 when `PORT` is unset).
 
 ```bash
 bun run --filter @atf/search test

@@ -104,7 +104,7 @@ describe("Property: Header validation rejects invalid chunk values", () => {
       fc.asyncProperty(
         fc
           .string({ minLength: 1, maxLength: 20 })
-          .filter((s) => isNaN(Number(s))),
+          .filter((s) => Number.isNaN(Number(s))),
         fc.nat({ max: 999 }).map(String),
         async (invalidSize, validOverlap) => {
           const res = mockRes();
@@ -198,11 +198,12 @@ describe("Integration: Successful ingest with chunking", () => {
     });
 
     // batchUpsert returns as many IDs as there are chunks
-    let batchUpsertMock: ReturnType<typeof vi.fn>;
     const postgresClient = createMockPostgresClient({
       ensureCollection: { ok: true, result: undefined },
     });
-    batchUpsertMock = postgresClient.batchUpsert as ReturnType<typeof vi.fn>;
+    const batchUpsertMock = postgresClient.batchUpsert as ReturnType<
+      typeof vi.fn
+    >;
     batchUpsertMock.mockImplementation(
       (points: Array<{ reference: string }>) => ({
         ok: true,
@@ -314,7 +315,7 @@ describe("Integration: Successful ingest with chunking", () => {
     const allVectors = points.map((p) => p.vector);
     expect(allVectors).toHaveLength(N);
     for (let i = 0; i < N; i++) {
-      const vec = allVectors[i]!;
+      const vec = allVectors[i];
       expect(vec.length).toBe(3);
       expect(vec.every((v) => v > 0)).toBe(true);
     }
@@ -371,7 +372,7 @@ describe("Integration: Successful ingest with chunking", () => {
     ];
 
     for (let i = 0; i < N; i++) {
-      const point = points[i]!;
+      const point = points[i];
       // User metadata must be clean — no chunk-specific fields
       expect(point.metadata.client).toBe("acme");
       expect(point.metadata).not.toHaveProperty("chunk_index");

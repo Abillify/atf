@@ -88,7 +88,7 @@ describe("createRerankerClient — rank-pooling mode (1-dim embeddings)", () => 
     await makeClient(" [SEP] ").rerank("q", ["docA", "docB"]);
     // First call is the probe (query alone); second call carries the pairs.
     const call = vi.mocked(fetch).mock.calls[1];
-    const body = JSON.parse(call![1]!.body as string) as { input: string[] };
+    const body = JSON.parse(call[1]!.body as string) as { input: string[] };
     expect(body.input).toEqual(["q [SEP] docA", "q [SEP] docB"]);
   });
 
@@ -102,8 +102,8 @@ describe("createRerankerClient — rank-pooling mode (1-dim embeddings)", () => 
     if (result.ok) {
       const byIdx = new Map(result.result.map((s) => [s.index, s.score]));
       expect(byIdx.get(0)).toBeCloseTo(0.5, 5);
-      expect(byIdx.get(1)!).toBeGreaterThan(0.99);
-      expect(byIdx.get(2)!).toBeLessThan(0.01);
+      expect(byIdx.get(1)).toBeGreaterThan(0.99);
+      expect(byIdx.get(2)).toBeLessThan(0.01);
       for (const s of result.result) {
         expect(s.score).toBeGreaterThanOrEqual(0);
         expect(s.score).toBeLessThanOrEqual(1);
@@ -256,8 +256,8 @@ describe("createRerankerClient — native /v1/rerank endpoint (llama-server)", (
       expect(body.texts).toEqual(["The sky is blue", "Grass is green"]);
 
       const byIdx = new Map(result.result.map((s) => [s.index, s.score]));
-      expect(byIdx.get(0)!).toBeGreaterThan(0.99);
-      expect(byIdx.get(1)!).toBeLessThan(0.2);
+      expect(byIdx.get(0)).toBeGreaterThan(0.99);
+      expect(byIdx.get(1)).toBeLessThan(0.2);
       for (const s of result.result) {
         expect(s.score).toBeGreaterThanOrEqual(0);
         expect(s.score).toBeLessThanOrEqual(1);

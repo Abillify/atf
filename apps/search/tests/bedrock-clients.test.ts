@@ -19,10 +19,10 @@ vi.mock("@aws-sdk/client-bedrock-runtime", () => {
       send = mockSend;
     },
     InvokeModelCommand: class {
-      constructor(public input: any) {}
+      constructor(public input: unknown) {}
     },
     ConverseCommand: class {
-      constructor(public input: any) {}
+      constructor(public input: unknown) {}
     },
   };
 });

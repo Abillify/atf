@@ -71,7 +71,7 @@ function parseIntParam(
 ): { value?: number; error?: string } {
   if (raw === undefined) return {};
   const n = parseInt(String(raw), 10);
-  if (isNaN(n) || n < min || n > max) {
+  if (Number.isNaN(n) || n < min || n > max) {
     return { error: `must be an integer between ${min} and ${max}` };
   }
   return { value: n };

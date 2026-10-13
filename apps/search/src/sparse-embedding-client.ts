@@ -137,7 +137,7 @@ export function createSparseEmbeddingClient(
         const texts = Array.isArray(input) ? input : [input];
         let denseVectors: number[][];
         let inputTokens = 0;
-        let outputTokens = 0;
+        const outputTokens = 0;
         if (model.startsWith("cohere.")) {
           const res = await bedrockClient.send(
             new InvokeModelCommand({
@@ -149,7 +149,7 @@ export function createSparseEmbeddingClient(
                 input_type: "search_document",
               }),
             }),
-            { abortSignal: controller.signal as any },
+            { abortSignal: controller.signal },
           );
           const resBody = JSON.parse(new TextDecoder().decode(res.body));
           denseVectors = resBody.embeddings;
@@ -159,7 +159,7 @@ export function createSparseEmbeddingClient(
         } else {
           denseVectors = await Promise.all(
             texts.map(async (text) => {
-              const res = await bedrockClient!.send(
+              const res = await bedrockClient.send(
                 new InvokeModelCommand({
                   modelId: model,
                   contentType: "application/json",
@@ -168,7 +168,7 @@ export function createSparseEmbeddingClient(
                     inputText: text,
                   }),
                 }),
-                { abortSignal: controller.signal as any },
+                { abortSignal: controller.signal },
               );
               const resBody = JSON.parse(new TextDecoder().decode(res.body));
               if (typeof resBody.inputTextTokenCount === "number") {

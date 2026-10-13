@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: Elastic-2.0
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: compose-file fixtures embed ${VAR} placeholders
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { describe, expect, it } from "vitest";

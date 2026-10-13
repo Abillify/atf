@@ -66,7 +66,7 @@ describeIfPg("postgres-client · real pgvector", () => {
 
   beforeAll(async () => {
     client = createPostgresClient({
-      connectionString: CONNECTION!,
+      connectionString: CONNECTION,
       logger,
       statsFlushIntervalMs: 3_600_000, // never flush during the test run
     });
@@ -272,7 +272,7 @@ describeIfPg("postgres-client · real pgvector", () => {
       const first = await page(total);
       const scores = first.map((r) => r.score);
       for (let i = 1; i < scores.length; i++) {
-        expect(scores[i]!).toBeLessThanOrEqual(scores[i - 1]!);
+        expect(scores[i]).toBeLessThanOrEqual(scores[i - 1]);
       }
     });
 
@@ -291,7 +291,7 @@ describeIfPg("postgres-client · real pgvector", () => {
         if (results.length === 0) break;
         seen.push(...results.map((r) => r.reference));
         if (results.length < pageSize) break;
-        const last = results[results.length - 1]!;
+        const last = results[results.length - 1];
         cursor = encodeCursor({
           created: last.created.toISOString(),
           id: last.id,
@@ -315,7 +315,7 @@ describeIfPg("postgres-client · real pgvector", () => {
         if (results.length === 0) break;
         paged.push(...results.map((r) => r.reference));
         if (results.length < 5) break;
-        const last = results[results.length - 1]!;
+        const last = results[results.length - 1];
         cursor = encodeCursor({
           created: last.created.toISOString(),
           id: last.id,

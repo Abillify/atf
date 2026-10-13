@@ -9,7 +9,11 @@
 // handler directly instead.
 
 import { describe, it, expect, vi } from "vitest";
-import { createHealthHandler } from "../src/handlers/admin.js";
+import {
+  createHealthHandler,
+  createLivenessHandler,
+  createReadinessHandler,
+} from "../src/handlers/admin.js";
 import type {
   PostgresClient,
   PostgresResponse,
@@ -104,6 +108,64 @@ describe("GET /health (handler unit test)", () => {
 
     expect(res.statusCode).toBe(503);
     expect((res.body as { status: string }).status).toBe("unhealthy");
+    expect((res.body as { checks: { database: string } }).checks.database).toBe(
+      "Connection refused",
+    );
+  });
+});
+
+describe("GET /health/live (requirement 12.5)", () => {
+  it("returns 200 without touching any dependency", async () => {
+    // The liveness probe must not even ping the database: restarting a pod
+    // because Postgres is slow turns a dependency outage into a full outage.
+    const postgresClient = createMockPostgresClient({});
+    const handler = createLivenessHandler();
+    const res = mockRes();
+    await handler({} as never, res as never, vi.fn());
+
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { status: string }).status).toBe("ok");
+    expect(typeof (res.body as { uptime_seconds: number }).uptime_seconds).toBe(
+      "number",
+    );
+    expect(postgresClient.ping).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /health/ready (requirement 12.5)", () => {
+  it("returns 200 when the database pings", async () => {
+    const handler = createReadinessHandler(
+      createMockPostgresClient({ ping: { ok: true, result: undefined } }),
+      logger,
+    );
+    const res = mockRes();
+    await handler({} as never, res as never, vi.fn());
+
+    expect(res.statusCode).toBe(200);
+    expect((res.body as { status: string }).status).toBe("ready");
+    expect((res.body as { checks: { database: string } }).checks.database).toBe(
+      "ok",
+    );
+  });
+
+  it("returns 503 when the database is unreachable", async () => {
+    const handler = createReadinessHandler(
+      createMockPostgresClient({
+        ping: {
+          ok: false,
+          error: {
+            code: "POSTGRES_UNREACHABLE",
+            message: "Connection refused",
+          },
+        },
+      }),
+      logger,
+    );
+    const res = mockRes();
+    await handler({} as never, res as never, vi.fn());
+
+    expect(res.statusCode).toBe(503);
+    expect((res.body as { status: string }).status).toBe("unready");
     expect((res.body as { checks: { database: string } }).checks.database).toBe(
       "Connection refused",
     );

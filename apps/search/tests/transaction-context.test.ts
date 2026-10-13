@@ -81,7 +81,7 @@ describe("Agent Transaction Fabric v1", () => {
       groups: [" legal ", "legal"], evidenceContractHash: hash.toUpperCase(),
     }), config, { ...principal, tenantId: "tenant-a" });
     expect(context.envelope).toMatchObject({ tenantId: "tenant-a", scopes: ["read", "retrieve"], groups: ["legal"], evidenceContractHash: hash });
-    expect(canonicalActionContractHash(context.envelope!)).toBe(hash);
+    expect(canonicalActionContractHash(context.envelope)).toBe(hash);
   });
   it("prefers actionContractHash, accepts an identical case-insensitive alias, and rejects conflicts", async () => {
     const now = Math.floor(Date.now() / 1000);
@@ -90,7 +90,7 @@ describe("Agent Transaction Fabric v1", () => {
       ...base(now), actionContractHash: hash.toUpperCase(), evidenceContractHash: hash,
     }), config, principal);
     expect(accepted.envelope).toMatchObject({ actionContractHash: hash, evidenceContractHash: hash });
-    expect(canonicalActionContractHash(accepted.envelope!)).toBe(hash);
+    expect(canonicalActionContractHash(accepted.envelope)).toBe(hash);
     await expectCode(verifyTransactionToken(await token({
       ...base(now), actionContractHash: hash, evidenceContractHash: stableHash("different"),
     }), config, principal), "TRANSACTION_ENVELOPE_INVALID");

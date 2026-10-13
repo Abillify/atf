@@ -19,14 +19,19 @@ import {
 // Test helpers
 // ---------------------------------------------------------------------------
 
+// Minimal Express-shaped stand-ins: the middleware only touches the fields
+// below, so the mocks are cast at the call sites instead of modelling the
+// full Request/Response interfaces.
 function mockReq(
   headers: Record<string, string> = {},
   body: Record<string, unknown> = {},
 ) {
+  // biome-ignore lint/suspicious/noExplicitAny: minimal Express req stand-in
   return { headers, body } as any;
 }
 
 function mockRes() {
+  // biome-ignore lint/suspicious/noExplicitAny: minimal Express res stand-in
   const res: any = {
     statusCode: 200,
     headers: {} as Record<string, string>,
@@ -112,7 +117,7 @@ describe("createAuthMiddleware", () => {
     };
     const middleware = createAuthMiddleware(
       CONFIGURED_TOKEN,
-      oidc as any,
+      oidc,
       CONFIGURED_TOKEN,
       null,
       undefined,
@@ -166,6 +171,86 @@ describe("createAuthMiddleware", () => {
   it("calls next() even with a wrong token when auth is disabled (apiToken = null)", () => {
     const middleware = createAuthMiddleware(null);
     const req = mockReq({ authorization: "Bearer anything" });
+    const res = mockRes();
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Token rotation (Req 11.8): API_TOKEN_NEXT keeps both tokens valid
+// ---------------------------------------------------------------------------
+
+describe("createAuthMiddleware token rotation (Req 11.8)", () => {
+  const OLD_TOKEN = "rotation-old-token-0123456789abcdef";
+  const NEXT_TOKEN = "rotation-next-token-0123456789abcdef0";
+
+  const withNext = () =>
+    createAuthMiddleware(OLD_TOKEN, undefined, null, null, undefined, {
+      apiTokenNext: NEXT_TOKEN,
+    });
+
+  it("accepts the primary token while a rotation token is set", () => {
+    const middleware = withNext();
+    const req = mockReq({ authorization: `Bearer ${OLD_TOKEN}` });
+    const res = mockRes();
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("accepts the rotation token alongside the primary token", () => {
+    const middleware = withNext();
+    const req = mockReq({ authorization: `Bearer ${NEXT_TOKEN}` });
+    const res = mockRes();
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("rejects tokens that match neither the primary nor the rotation token", () => {
+    const middleware = withNext();
+    const req = mockReq({ authorization: "Bearer not-a-configured-token" });
+    const res = mockRes();
+    const next = vi.fn();
+
+    middleware(req, res, next);
+
+    expect(next).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(401);
+    expect(res.body).toEqual({ error: "Unauthorized" });
+  });
+
+  it("enforces auth when only the rotation token is configured (no API_TOKEN)", () => {
+    const middleware = createAuthMiddleware(null, undefined, null, null, undefined, {
+      apiTokenNext: NEXT_TOKEN,
+    });
+    const okReq = mockReq({ authorization: `Bearer ${NEXT_TOKEN}` });
+    const okRes = mockRes();
+    const okNext = vi.fn();
+    middleware(okReq, okRes, okNext);
+    expect(okNext).toHaveBeenCalledOnce();
+
+    const oldReq = mockReq({ authorization: `Bearer ${OLD_TOKEN}` });
+    const oldRes = mockRes();
+    const oldNext = vi.fn();
+    middleware(oldReq, oldRes, oldNext);
+    expect(oldNext).not.toHaveBeenCalled();
+    expect(oldRes.statusCode).toBe(401);
+  });
+
+  it("ignores an empty rotation token (single-token setups unchanged)", () => {
+    const middleware = createAuthMiddleware(OLD_TOKEN, undefined, null, null, undefined, {
+      apiTokenNext: "",
+    });
+    const req = mockReq({ authorization: `Bearer ${OLD_TOKEN}` });
     const res = mockRes();
     const next = vi.fn();
 

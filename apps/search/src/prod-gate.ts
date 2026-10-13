@@ -61,8 +61,15 @@ export function checkProductionReadiness(
   if (isProd && config.authnMode !== "oidc") {
     fatal.push("Production requires AUTHN_MODE=oidc.");
   }
-  if (isProd && (config.apiToken !== null || config.monitorToken !== null)) {
-    fatal.push("API_TOKEN and MONITOR_TOKEN must be unset in the OIDC-only production profile.");
+  if (
+    isProd &&
+    (config.apiToken !== null ||
+      config.monitorToken !== null ||
+      config.apiTokenNext != null)
+  ) {
+    fatal.push(
+      "API_TOKEN, API_TOKEN_NEXT and MONITOR_TOKEN must be unset in the OIDC-only production profile.",
+    );
   }
 
   const tokenEnabled = config.authnMode === "token" || config.authnMode === "token_or_oidc";
@@ -70,6 +77,17 @@ export function checkProductionReadiness(
     flag(
       "API_TOKEN is shorter than 32 characters — it is a single shared secret " +
         "granting full read and write access. Use a high-entropy value.",
+    );
+  }
+
+  if (
+    tokenEnabled &&
+    config.apiTokenNext != null &&
+    config.apiTokenNext.length < 32
+  ) {
+    flag(
+      "API_TOKEN_NEXT is shorter than 32 characters — the rotation token grants " +
+        "the same access as API_TOKEN. Use a high-entropy value.",
     );
   }
 
@@ -85,6 +103,17 @@ export function checkProductionReadiness(
     flag(
       "API_TOKEN and MONITOR_TOKEN are identical — the admin UI credential and the " +
         "programmatic credential cannot then be rotated or revoked independently.",
+    );
+  }
+
+  if (
+    config.apiToken !== null &&
+    config.apiTokenNext != null &&
+    config.apiToken === config.apiTokenNext
+  ) {
+    flag(
+      "API_TOKEN and API_TOKEN_NEXT are identical — a rotation token must differ " +
+        "from the token it replaces, otherwise the rotation has no effect.",
     );
   }
 

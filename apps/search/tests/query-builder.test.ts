@@ -131,7 +131,7 @@ describe("ACL SQL", () => {
       service: false,
     });
     const bob = new SqlParams();
-    const bobSql = buildAccessSql(bob, {
+    const _bobSql = buildAccessSql(bob, {
       principal: {
         userId: "bob",
         userGroups: ["finance"],

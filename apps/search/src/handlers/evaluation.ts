@@ -318,7 +318,7 @@ export function createRetrievalEvaluationHandler(
         while (!failure && !controller.signal.aborted) {
           const index = cursor++;
           if (index >= parsed.length) return;
-          const item = parsed[index]!;
+          const item = parsed[index];
           const embedded = await embeddingClient.embed(
             item.query,
             controller.signal,

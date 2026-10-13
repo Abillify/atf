@@ -63,7 +63,7 @@ describe("vectorsearch real MCP transaction _meta contract", () => {
 
   it("returns capabilities without a transaction token so orchestrators can negotiate v1", async () => {
     const result = await client.callTool({ name: "transaction_capabilities", arguments: {} });
-    const document = JSON.parse((result.content as Array<{ text: string }>)[0]!.text);
+    const document = JSON.parse((result.content as Array<{ text: string }>)[0].text);
     expect(document).toMatchObject({
       schemaVersion: "v1",
       service: "vectorsearch",
@@ -94,13 +94,13 @@ describe("vectorsearch real MCP transaction _meta contract", () => {
     await client.callTool({ name: "delete_document", arguments: { reference: "doc-a" }, _meta: { "transaction/token": transactionToken } });
     const conflict = await client.callTool({ name: "delete_document", arguments: { reference: "doc-b" }, _meta: { "transaction/token": transactionToken } });
     expect(conflict.isError).toBe(true);
-    expect((conflict.content as Array<{ text: string }>)[0]!.text).toContain("IDEMPOTENCY_KEY_MISMATCH");
+    expect((conflict.content as Array<{ text: string }>)[0].text).toContain("IDEMPOTENCY_KEY_MISMATCH");
   });
 
   it("denies write calls without a write/tool-specific scope", async () => {
     const denied = await client.callTool({ name: "delete_document", arguments: { reference: "doc-denied" }, _meta: { "transaction/token": await issue("alice", "delete-denied", ["read"]) } });
     expect(denied.isError).toBe(true);
-    expect((denied.content as Array<{ text: string }>)[0]!.text).toContain("TOOL_SCOPE_DENIED");
+    expect((denied.content as Array<{ text: string }>)[0].text).toContain("TOOL_SCOPE_DENIED");
   });
 
   it("serves stateless 2026 discovery and the shared paginated tool catalog", async () => {

@@ -46,13 +46,13 @@ describe("parseMetadataHeader — unit tests", () => {
   it("returns error with status 400 for invalid JSON", () => {
     const result = parseMetadataHeader("not-json");
     expect(result.error).toBeDefined();
-    expect(result.error!.status).toBe(400);
+    expect(result.error.status).toBe(400);
   });
 
   it("returns error with status 400 for JSON array (not an object)", () => {
     const result = parseMetadataHeader("[1,2,3]");
     expect(result.error).toBeDefined();
-    expect(result.error!.status).toBe(400);
+    expect(result.error.status).toBe(400);
   });
 
   it("preserves all known metadata fields: id, s3key, client, property, viewers", () => {
@@ -190,7 +190,7 @@ describe("Property 3: Invalid JSON Metadata Rejected", () => {
         (str) => {
           const result = parseMetadataHeader(str);
           expect(result.error).toBeDefined();
-          expect(result.error!.status).toBe(400);
+          expect(result.error.status).toBe(400);
         },
       ),
       { numRuns: 100 },

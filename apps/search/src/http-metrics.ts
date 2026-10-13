@@ -82,7 +82,7 @@ export class HttpMetrics {
     const histogramKey = `${normalizedMethod}|${route}`;
     const histogram = this.durations.get(histogramKey) ?? { buckets: Array(buckets.length).fill(0), count: 0, sum: 0 };
     const seconds = Math.max(0, (performance.now() - start) / 1000);
-    for (let i = 0; i < buckets.length; i++) if (seconds <= buckets[i]!) histogram.buckets[i]!++;
+    for (let i = 0; i < buckets.length; i++) if (seconds <= buckets[i]) histogram.buckets[i]++;
     histogram.count++;
     histogram.sum += seconds;
     this.durations.set(histogramKey, histogram);
@@ -130,7 +130,7 @@ export class HttpMetrics {
     for (const [key, histogram] of this.durations) {
       const [method = "", route = ""] = key.split("|");
       for (let i = 0; i < buckets.length; i++) {
-        const le = Number.isFinite(buckets[i]!) ? String(buckets[i]) : "+Inf";
+        const le = Number.isFinite(buckets[i]) ? String(buckets[i]) : "+Inf";
         lines.push(`vectorsearch_http_request_duration_seconds_bucket{${labels(method, route)},le="${le}"} ${histogram.buckets[i]}`);
       }
       lines.push(`vectorsearch_http_request_duration_seconds_sum{${labels(method, route)}} ${histogram.sum}`);

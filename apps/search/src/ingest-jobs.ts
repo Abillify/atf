@@ -678,7 +678,7 @@ export async function buildJobsForDocument(
   doc: IngestDocument,
   docIndex: number,
   sharedMetadata: Metadata,
-  versionMode: "replace" | "version",
+  _versionMode: "replace" | "version",
   chunking: ChunkingOptions,
   embedFn: EmbedFn,
   summaryClient: SummaryClient | null = null,
@@ -725,7 +725,7 @@ export async function buildJobsForDocument(
 export async function buildJobsForBatch(
   documents: IngestDocument[],
   sharedMetadata: Metadata,
-  versionMode: "replace" | "version",
+  _versionMode: "replace" | "version",
   chunking: ChunkingOptions,
   embedFn: EmbedFn,
   summaryClient: SummaryClient | null = null,

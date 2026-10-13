@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
+import type { ServerTlsConfig } from "@atf/security-kit";
+
 /**
  * config.ts
  *
@@ -25,6 +27,13 @@ export interface UiBffConfig {
 
 export interface Config {
   postgresUrl: string; // POSTGRES_URL (required)
+  /**
+   * Apply schema migrations during boot. Unset means: true outside
+   * production, false when NODE_ENV=production (requirement 12.4) — a
+   * production rollout runs the standalone `bun run migrate` command as a
+   * one-shot Job instead of doing DDL on the boot path of every replica.
+   */
+  migrateOnStart: boolean; // MIGRATE_ON_START (default: true, false when NODE_ENV=production)
   defaultCollection: string; // DEFAULT_COLLECTION (default: "documents")
   embedUrl: string; // EMBED_URL (required)
   embedModel: string; // EMBED_MODEL (required)
@@ -43,8 +52,28 @@ export interface Config {
   /** Required vector dimension for both embedding paths when configured. */
   embedExpectedDimension: number | null; // EMBED_EXPECTED_DIMENSION (optional positive int)
   apiToken: string | null; // API_TOKEN (optional)
+  /**
+   * Optional rotation token: while both `API_TOKEN` and `API_TOKEN_NEXT` are
+   * set, either one authenticates (Requirement 11.8). Runbook: deploy the new
+   * token as `API_TOKEN_NEXT`, roll all clients over, then promote it to
+   * `API_TOKEN` and unset `API_TOKEN_NEXT`.
+   */
+  apiTokenNext: string | null; // API_TOKEN_NEXT (optional, rotation)
+  /**
+   * Optional TLS material for the HTTP listener. `null` keeps plain HTTP;
+   * when set, `clientCaFile` additionally enables mTLS client verification.
+   */
+  tls: ServerTlsConfig | null; // TLS_CERT_FILE + TLS_KEY_FILE (+ TLS_CLIENT_CA_FILE)
   port: number; // PORT (default: 3000)
   logLevel: string; // LOG_LEVEL (default: "info")
+  /**
+   * Shared OTel span export (Req 11.6): when enabled, every request gets a
+   * server span exported through `@atf/observability` (OTLP/HTTP JSON) — the
+   * same tracer implementation the runtime uses.
+   */
+  tracingEnabled: boolean; // TRACING_ENABLED (default: false)
+  otelExporterOtlpEndpoint: string | null; // OTEL_EXPORTER_OTLP_ENDPOINT (optional)
+  otelServiceName: string; // OTEL_SERVICE_NAME (default: "atf-search")
   defaultChunkSize: number | null; // CHUNK_SIZE (optional)
   defaultChunkOverlap: number | null; // CHUNK_OVERLAP (optional)
 
@@ -571,6 +600,11 @@ export interface ConverterConfig {
   /** CONVERTER_TOKEN — Bearer credential presented to the converter. */
   token: string | null;
   /**
+   * CONVERTER_CA_CERT_FILE — PEM file with additional trusted CAs for the
+   * converter endpoint (private CA / SPIFFE bundle). null = platform default.
+   */
+  caCertFile: string | null;
+  /**
    * CONVERTER_TIMEOUT_MS — a whole document, not a single page. Default 15 min:
    * conversion runs one vision call per page, so a long specification takes
    * minutes and a short timeout discards work that was nearly finished.
@@ -707,7 +741,7 @@ export function loadConfig(): Config {
     if (raw === undefined || raw.trim() === "") return defaultVal;
     const parsed = parseFloat(raw);
     if (exclusive) {
-      if (isNaN(parsed) || parsed <= exclusive.gt || parsed >= exclusive.lt) {
+      if (Number.isNaN(parsed) || parsed <= exclusive.gt || parsed >= exclusive.lt) {
         throw new Error(
           `${name} must be a float in (${exclusive.gt}, ${exclusive.lt})`,
         );
@@ -896,7 +930,30 @@ export function loadConfig(): Config {
   }
   const defaultCollection = process.env["DEFAULT_COLLECTION"] || "documents";
   const apiToken = optionalString("API_TOKEN");
+  const apiTokenNext = optionalString("API_TOKEN_NEXT");
+
+  // ── Server TLS (opt-in — enabled when TLS_CERT_FILE + TLS_KEY_FILE are set) ─
+  const tlsCertFile = optionalString("TLS_CERT_FILE");
+  const tlsKeyFile = optionalString("TLS_KEY_FILE");
+  if ((tlsCertFile === null) !== (tlsKeyFile === null)) {
+    throw new Error("TLS_CERT_FILE and TLS_KEY_FILE must be set together");
+  }
+  const tls: ServerTlsConfig | null =
+    tlsCertFile !== null && tlsKeyFile !== null
+      ? {
+          certFile: tlsCertFile,
+          keyFile: tlsKeyFile,
+          clientCaFile: optionalString("TLS_CLIENT_CA_FILE"),
+        }
+      : null;
+
   const logLevel = process.env["LOG_LEVEL"] || "info";
+  const tracingEnabled = parseBoolEnv("TRACING_ENABLED", false);
+  const otelExporterOtlpEndpoint = optionalString(
+    "OTEL_EXPORTER_OTLP_ENDPOINT",
+  );
+  const otelServiceName =
+    process.env["OTEL_SERVICE_NAME"]?.trim() || "atf-search";
   const bodyLimit = process.env["BODY_LIMIT"] || "10mb";
   const streamBodyLimit =
     (process.env["STREAM_BODY_LIMIT"] ?? "50mb").trim() || "50mb";
@@ -934,6 +991,7 @@ export function loadConfig(): Config {
       : {
           url: converterUrl.replace(/\/+$/, ""),
           token: optionalString("CONVERTER_TOKEN"),
+          caCertFile: optionalString("CONVERTER_CA_CERT_FILE"),
           timeoutMs: parseNonNegIntEnv("CONVERTER_TIMEOUT_MS", 900_000),
           uploadLimit:
             (process.env["CONVERTER_UPLOAD_LIMIT"] ?? "50mb").trim() || "50mb",
@@ -1060,6 +1118,12 @@ export function loadConfig(): Config {
   const nodeEnv = (process.env["NODE_ENV"] ?? "development")
     .trim()
     .toLowerCase();
+  // Requirement 12.4: dev keeps the convenient migrate-on-boot, production
+  // defaults to dedicated migration Jobs (`bun run migrate`) instead.
+  const migrateOnStart = parseBoolEnv(
+    "MIGRATE_ON_START",
+    nodeEnv !== "production",
+  );
   const halfPrecision = parseBoolEnv("VECTOR_HALF_PRECISION", false);
   const semanticChunking = parseBoolEnv("SEMANTIC_CHUNKING", false);
   const hydeEnableThinking = parseBoolEnv("HYDE_ENABLE_THINKING", false);
@@ -1288,12 +1352,15 @@ export function loadConfig(): Config {
   // ── Monitor token — web UI token login (opt-in) ──────────────────────────
   const monitorToken = optionalString("MONITOR_TOKEN");
 
+  // `API_TOKEN_NEXT` alone also enables token auth: during a rotation the
+  // old token may already have been withdrawn while the new one is set.
+  const tokenConfigured = apiToken !== null || apiTokenNext !== null;
   const inferredAuthnMode =
-    apiToken !== null && apiOidcIssuers.length > 0
+    tokenConfigured && apiOidcIssuers.length > 0
       ? "token_or_oidc"
       : apiOidcIssuers.length > 0
         ? "oidc"
-        : apiToken !== null
+        : tokenConfigured
           ? "token"
           : "disabled";
   const authnMode = parseEnumEnv(
@@ -1303,7 +1370,7 @@ export function loadConfig(): Config {
   );
   if (
     (authnMode === "token" || authnMode === "token_or_oidc") &&
-    apiToken === null
+    !tokenConfigured
   ) {
     throw new Error(`API_TOKEN is required when AUTHN_MODE=${authnMode}`);
   }
@@ -1371,6 +1438,7 @@ export function loadConfig(): Config {
 
   return {
     postgresUrl,
+    migrateOnStart,
     defaultCollection,
     embedUrl,
     embedModel,
@@ -1381,8 +1449,13 @@ export function loadConfig(): Config {
     embedFallbackInputField,
     embedExpectedDimension,
     apiToken,
+    apiTokenNext,
+    tls,
     port,
     logLevel,
+    tracingEnabled,
+    otelExporterOtlpEndpoint,
+    otelServiceName,
     defaultChunkSize,
     defaultChunkOverlap,
     rerankUrl,

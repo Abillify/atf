@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import { type Request, type RequestHandler } from "express";
-import { safeEqual } from "@atf/security-kit";
+import type { Request, RequestHandler } from "express";
+import { createStaticTokenMatcher, safeEqual } from "@atf/security-kit";
 import type { JwtVerifier } from "./jwt-verifier.js";
 import {
   readAssertedIdentity,
@@ -44,7 +44,7 @@ function assertedOrService(
  * (headers ignored, same rule as the JWT path); otherwise the request is treated
  * as an operator session and asserted headers apply.
  */
-function resolveOidcSessionPrincipal(
+function _resolveOidcSessionPrincipal(
   req: Request,
   session: unknown,
 ): RequestPrincipal {
@@ -144,6 +144,11 @@ export interface ApiAuthOptions {
   authzEnabled?: boolean;
   tenantIsolationEnabled?: boolean;
   defaultTenantId?: string;
+  /**
+   * Optional rotation token (Req 11.8): while set, both this and the primary
+   * `API_TOKEN` authenticate, allowing clients to roll over without downtime.
+   */
+  apiTokenNext?: string | null;
 }
 
 /**
@@ -156,36 +161,58 @@ export function createAuthMiddleware(
   _oidc?: OidcSessionChecker,
   _monitorToken?: string | null,
   jwtVerifier?: JwtVerifier | null,
-  servicePrincipal: Pick<RequestPrincipal, "scopes" | "tenantId"> = SERVICE_PRINCIPAL,
+  servicePrincipal: Pick<
+    RequestPrincipal,
+    "scopes" | "tenantId"
+  > = SERVICE_PRINCIPAL,
   options: ApiAuthOptions = {},
 ): RequestHandler {
-  const mode: AuthnMode = options.mode ??
-    (apiToken !== null && jwtVerifier ? "token_or_oidc" : apiToken !== null ? "token" : jwtVerifier ? "oidc" : "disabled");
+  // Req 11.8: during a rotation both tokens are valid; the matcher ignores
+  // null/empty entries, so a single-token setup behaves exactly as before.
+  const tokenMatcher = createStaticTokenMatcher([
+    apiToken,
+    options.apiTokenNext,
+  ]);
+  const anyTokenConfigured = apiToken !== null || options.apiTokenNext != null;
+  const mode: AuthnMode =
+    options.mode ??
+    (anyTokenConfigured && jwtVerifier
+      ? "token_or_oidc"
+      : anyTokenConfigured
+        ? "token"
+        : jwtVerifier
+          ? "oidc"
+          : "disabled");
   const authzEnabled = options.authzEnabled ?? true;
   const defaultTenantId = options.defaultTenantId?.trim() || "default";
   const tenantIsolationEnabled = options.tenantIsolationEnabled ?? true;
 
-  const normalizePrincipal = (principal: RequestPrincipal): RequestPrincipal => ({
+  const normalizePrincipal = (
+    principal: RequestPrincipal,
+  ): RequestPrincipal => ({
     ...principal,
-    tenantId: tenantIsolationEnabled
-      ? principal.tenantId
-      : defaultTenantId,
+    tenantId: tenantIsolationEnabled ? principal.tenantId : defaultTenantId,
     ...(!authzEnabled ? { authorizationBypass: true } : {}),
   });
 
   return (req, res, next) => {
     if (mode === "disabled") {
-      setPrincipal(req, normalizePrincipal({
-        userId: undefined,
-        userGroups: undefined,
-        source: "anonymous",
-        tenantId: tenantIsolationEnabled ? undefined : defaultTenantId,
-      }));
+      setPrincipal(
+        req,
+        normalizePrincipal({
+          userId: undefined,
+          userGroups: undefined,
+          source: "anonymous",
+          tenantId: tenantIsolationEnabled ? undefined : defaultTenantId,
+        }),
+      );
       return next();
     }
 
     const authHeader = req.headers["authorization"];
-    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const bearerToken = authHeader?.startsWith("Bearer ")
+      ? authHeader.slice(7)
+      : null;
     if (bearerToken === null) {
       res.status(401).json({ error: "Unauthorized" });
       return;
@@ -193,8 +220,7 @@ export function createAuthMiddleware(
 
     if (
       (mode === "token" || mode === "token_or_oidc") &&
-      apiToken !== null &&
-      safeEqual(bearerToken, apiToken)
+      tokenMatcher(bearerToken)
     ) {
       // Req 3.4: asserted identity headers are only trusted from a static
       // token whose configured scopes include search.assert-identity.
@@ -223,24 +249,33 @@ export function createAuthMiddleware(
     }
 
     if ((mode === "oidc" || mode === "token_or_oidc") && jwtVerifier) {
-      void jwtVerifier.verify(bearerToken).then((principal) => {
-        if (!principal) {
-          res.status(401).json({ error: "Unauthorized" });
-          return;
-        }
-        setPrincipal(req, normalizePrincipal({
-          userId: principal.userId,
-          userGroups: principal.groups.length > 0 ? principal.groups : undefined,
-          tenantId: principal.tenantId,
-          ...(principal.scopes?.length ? { scopes: principal.scopes } : {}),
-          issuer: principal.iss,
-          ...(principal.audience !== undefined ? { audience: principal.audience } : {}),
-          ...(principal.clientId ? { clientId: principal.clientId } : {}),
-          ...(principal.jti ? { credentialId: principal.jti } : {}),
-          source: "jwt",
-        }));
-        next();
-      }).catch(() => res.status(401).json({ error: "Unauthorized" }));
+      void jwtVerifier
+        .verify(bearerToken)
+        .then((principal) => {
+          if (!principal) {
+            res.status(401).json({ error: "Unauthorized" });
+            return;
+          }
+          setPrincipal(
+            req,
+            normalizePrincipal({
+              userId: principal.userId,
+              userGroups:
+                principal.groups.length > 0 ? principal.groups : undefined,
+              tenantId: principal.tenantId,
+              ...(principal.scopes?.length ? { scopes: principal.scopes } : {}),
+              issuer: principal.iss,
+              ...(principal.audience !== undefined
+                ? { audience: principal.audience }
+                : {}),
+              ...(principal.clientId ? { clientId: principal.clientId } : {}),
+              ...(principal.jti ? { credentialId: principal.jti } : {}),
+              source: "jwt",
+            }),
+          );
+          next();
+        })
+        .catch(() => res.status(401).json({ error: "Unauthorized" }));
       return;
     }
 

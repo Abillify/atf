@@ -235,7 +235,7 @@ function splitTextBySize(
   // Choose the strongest separator that actually occurs in the text.
   let sepIndex = separators.findIndex((s) => s !== "" && text.includes(s));
   if (sepIndex === -1) sepIndex = separators.length - 1; // "" → hard cut
-  const sep = separators[sepIndex]!;
+  const sep = separators[sepIndex];
   const rest = separators.slice(sepIndex + 1);
 
   const fragments =

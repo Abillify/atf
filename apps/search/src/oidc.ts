@@ -182,7 +182,7 @@ export function createOidcProvider(
   };
 
   // ── GET /auth/callback ─────────────────────────────────────────────────────
-  const callbackHandler: RequestHandler = async (req, res, next) => {
+  const callbackHandler: RequestHandler = async (req, res, _next) => {
     const log: Logger = (req as { log?: Logger }).log ?? logger;
     try {
       // Surface provider-side errors (access_denied, etc.).

@@ -394,7 +394,7 @@ export function createRerankerClient(
                   top_n: documents.length,
                 }),
               }),
-              { abortSignal: controller.signal as any },
+              { abortSignal: controller.signal },
             );
             const resBody = JSON.parse(new TextDecoder().decode(res.body));
             const results = resBody.results as Array<{
@@ -620,7 +620,7 @@ export function createRerankerClient(
       { dim: probeDim, mode: "bi-encoder" },
       "Reranker mode detected and cached",
     );
-    const queryVec = probe.rows[0]!.embedding;
+    const queryVec = probe.rows[0].embedding;
     const res = await rerankViaBiEncoderWithQueryVec(
       rerankUrl,
       rerankModel,

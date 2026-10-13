@@ -3,7 +3,11 @@
 
 import type { RequestHandler } from "express";
 import type { Logger } from "pino";
-import type { PostgresClient } from "../postgres-client.js";
+import type {
+  IngestStats,
+  PostgresClient,
+  SearchStats,
+} from "../postgres-client.js";
 import type { EmbeddingClient } from "../embedding-client.js";
 import type { SummaryClient } from "../summary-client.js";
 import {
@@ -25,7 +29,7 @@ export function createAdminStatsHandler(
       const rawLimit = req.query["limit"];
       const parsedLimit =
         rawLimit !== undefined ? parseInt(String(rawLimit), 10) : 100;
-      if (isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 1000) {
+      if (Number.isNaN(parsedLimit) || parsedLimit <= 0 || parsedLimit > 1000) {
         res
           .status(400)
           .json({ error: "Limit must be a number between 1 and 1000" });
@@ -36,14 +40,15 @@ export function createAdminStatsHandler(
       const rawOffset = req.query["offset"];
       const parsedOffset =
         rawOffset !== undefined ? parseInt(String(rawOffset), 10) : 0;
-      if (isNaN(parsedOffset) || parsedOffset < 0) {
+      if (Number.isNaN(parsedOffset) || parsedOffset < 0) {
         res
           .status(400)
           .json({ error: "Offset must be a non-negative integer" });
         return;
       }
 
-      let ingestStats, searchStats;
+      let ingestStats: IngestStats[] | undefined;
+      let searchStats: SearchStats[] | undefined;
       const scope = accessScopeForRequest(req);
 
       if (!type || type === "ingest") {
@@ -206,6 +211,54 @@ export function createHealthHandler(
         ...(circuitBreakerStatuses.length > 0
           ? { circuit_breakers: circuitBreakers }
           : {}),
+      });
+    } catch (err) {
+      next(err);
+    }
+  };
+}
+
+/**
+ * Liveness probe (requirement 12.5): is the process alive and able to serve?
+ *
+ * Checks nothing but the event loop on purpose — restarting a pod because
+ * Postgres is slow turns a dependency outage into a full outage, and the
+ * restart fixes nothing.
+ */
+export function createLivenessHandler(): RequestHandler {
+  const startTime = Date.now();
+  return (_req, res) => {
+    res.status(200).json({
+      status: "ok",
+      uptime_seconds: Math.floor((Date.now() - startTime) / 1000),
+    });
+  };
+}
+
+/**
+ * Readiness probe (requirement 12.5): can this replica serve traffic?
+ *
+ * Only the database decides — it is the source of truth for every request
+ * path. Model probes (embedding, reranker) stay in the composite `/health`
+ * response so a degraded model is visible in monitoring without pulling the
+ * pod out of the load balancer for a dependency it can retry around.
+ */
+export function createReadinessHandler(
+  postgresClient: PostgresClient,
+  logger?: Logger,
+): RequestHandler {
+  return async (req, res, next) => {
+    const log: Logger | undefined = (req as { log?: Logger }).log ?? logger;
+    try {
+      const pingResult = await postgresClient.ping();
+      if (pingResult.ok) {
+        res.status(200).json({ status: "ready", checks: { database: "ok" } });
+        return;
+      }
+      log?.warn({ error: pingResult.error }, "Readiness check: database failed");
+      res.status(503).json({
+        status: "unready",
+        checks: { database: pingResult.error.message },
       });
     } catch (err) {
       next(err);
@@ -384,10 +437,8 @@ export function createBackfillSummariesHandler(
       let limit = Number.POSITIVE_INFINITY;
       if (rawLimit !== undefined) {
         const parsed = parseInt(String(rawLimit), 10);
-        if (isNaN(parsed) || parsed <= 0) {
-          res
-            .status(400)
-            .json({ error: "limit must be a positive integer" });
+        if (Number.isNaN(parsed) || parsed <= 0) {
+          res.status(400).json({ error: "limit must be a positive integer" });
           return;
         }
         limit = parsed;

@@ -80,7 +80,7 @@ export function findHeadings(
 /**
  * Boundary types in priority order (lower number = higher priority).
  */
-const enum BoundaryPriority {
+enum BoundaryPriority {
   Heading = 0,
   Paragraph = 1, // \n\n
   Sentence = 2, // ". " / "! " / "? "

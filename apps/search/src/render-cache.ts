@@ -36,6 +36,7 @@
  * one ACL path and one Extract client.
  */
 
+import { createClientTlsInit } from "@atf/security-kit";
 import type { Logger } from "pino";
 import type { ConverterConfig } from "./config.js";
 import type { AccessScope } from "./access-scope.js";
@@ -163,11 +164,17 @@ export function cacheAssetIdFor(baseAssetId: string, target: RenderTarget): stri
 export function createRenderCache(deps: RenderCacheDeps): RenderCache {
   const { converter, assetStore, logger } = deps;
   const doFetch = deps.fetchImpl ?? fetch;
+  // Optional private-CA trust for the converter endpoint (Req 11.8).
+  const tlsInit = createClientTlsInit({ caCertFile: converter.caCertFile });
 
-  function extractHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  function extractHeaders(
+    extra: Record<string, string> = {},
+  ): Record<string, string> {
     const headers: Record<string, string> = {
       ...extra,
-      ...(converter.token !== null ? { authorization: `Bearer ${converter.token}` } : {}),
+      ...(converter.token !== null
+        ? { authorization: `Bearer ${converter.token}` }
+        : {}),
     };
     injectTraceHeaders(headers);
     return headers;
@@ -176,15 +183,25 @@ export function createRenderCache(deps: RenderCacheDeps): RenderCache {
   /** Call Extract's POST /v2/render, returning the PNG bytes and its pixel size. */
   async function renderViaExtract(
     target: RenderTarget,
-  ): Promise<RenderCacheResult<{ data: Buffer; width: number | null; height: number | null }>> {
+  ): Promise<
+    RenderCacheResult<{
+      data: Buffer;
+      width: number | null;
+      height: number | null;
+    }>
+  > {
     const controller = new AbortController();
     const timeout =
-      converter.timeoutMs > 0 ? setTimeout(() => controller.abort(), converter.timeoutMs) : null;
+      converter.timeoutMs > 0
+        ? setTimeout(() => controller.abort(), converter.timeoutMs)
+        : null;
     try {
       const body: Record<string, unknown> = {
         source: target.sourceSha256,
         page: target.page,
-        ...(target.bbox !== undefined && target.bbox !== null ? { bbox: target.bbox } : {}),
+        ...(target.bbox !== undefined && target.bbox !== null
+          ? { bbox: target.bbox }
+          : {}),
         ...(target.targetPixels !== undefined && target.targetPixels !== null
           ? { targetPixels: target.targetPixels }
           : {}),
@@ -196,6 +213,7 @@ export function createRenderCache(deps: RenderCacheDeps): RenderCache {
           headers: extractHeaders({ "content-type": "application/json" }),
           body: JSON.stringify(body),
           signal: controller.signal,
+          ...(tlsInit ?? {}),
         });
       } catch (error) {
         const aborted = controller.signal.aborted;
@@ -212,7 +230,12 @@ export function createRenderCache(deps: RenderCacheDeps): RenderCache {
         // miss rather than a server error so the caller can 404 the zoom.
         const detail = await response.text().catch(() => "");
         return fail({
-          status: response.status === 404 ? 404 : response.status >= 500 ? 502 : response.status,
+          status:
+            response.status === 404
+              ? 404
+              : response.status >= 500
+                ? 502
+                : response.status,
           code: response.status === 404 ? "SOURCE_NOT_FOUND" : "RENDER_FAILED",
           message: `Extract render failed (HTTP ${response.status}): ${detail.slice(0, 200)}`,
         });
@@ -234,7 +257,11 @@ export function createRenderCache(deps: RenderCacheDeps): RenderCache {
   return {
     cacheAssetId: cacheAssetIdFor,
 
-    async getOrRender(binding, target, scope): Promise<RenderCacheResult<RenderedAsset>> {
+    async getOrRender(
+      binding,
+      target,
+      scope,
+    ): Promise<RenderCacheResult<RenderedAsset>> {
       // Fail closed on a malformed source digest before any read or render.
       if (!SHA256_HEX.test(target.sourceSha256)) {
         return fail({
@@ -246,7 +273,12 @@ export function createRenderCache(deps: RenderCacheDeps): RenderCache {
       const assetId = cacheAssetIdFor(binding.baseAssetId, target);
 
       // 1. Cache read — ACL enforced by the store (14.5). A hit is a pure read.
-      const cached = await assetStore.get(binding.assetScope, assetId, "full", scope);
+      const cached = await assetStore.get(
+        binding.assetScope,
+        assetId,
+        "full",
+        scope,
+      );
       if (!cached.ok) {
         return fail({
           status: cached.error.status,

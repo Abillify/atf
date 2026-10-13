@@ -20,6 +20,7 @@ import { Pool } from "pg";
 import { pino } from "pino";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ErasureResponse } from "@atf/erasure-contract";
+import { ensureStatsTables } from "../src/collection-ddl.js";
 import { createErasureHandler } from "../src/handlers/erasure.js";
 import { MemoryInvocationLedger } from "../src/invocation-ledger.js";
 import {
@@ -52,6 +53,24 @@ describeIfPg("POST /v1/erasure (integration)", () => {
     });
     const ensured = await pg.ensureCollection(COLLECTION, VECTOR_SIZE);
     expect(ensured.ok).toBe(true);
+    // vs_search_stats is created by the global migrations, which a bare test
+    // database has not run; create it the same way the migration does.
+    const client = await pool.connect();
+    try {
+      await ensureStatsTables(client);
+    } finally {
+      client.release();
+    }
+    // The legacy asset table (global migration v4) that delete-by-reference
+    // cleans up; a bare test database has not run the migrations.
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS vs_document_assets (
+        tenant_id TEXT NOT NULL, collection TEXT NOT NULL, asset_id TEXT NOT NULL,
+        document_reference TEXT NOT NULL, figure_id TEXT NOT NULL, mime_type TEXT NOT NULL,
+        data BYTEA NOT NULL, checksum TEXT,
+        created TIMESTAMPTZ NOT NULL DEFAULT NOW(), modified TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (tenant_id, collection, asset_id)
+      )`).catch(() => {});
     handler = createErasureHandler({
       postgresClient: pg,
       ledger: new MemoryInvocationLedger(),

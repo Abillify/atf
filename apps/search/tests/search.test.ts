@@ -476,10 +476,10 @@ describe("search handler reranking", () => {
     expect(reranker.rerank).toHaveBeenCalledOnce();
     const out = (res.body as { results: SearchResult[] }).results;
     expect(out).toHaveLength(2);
-    expect(out[0]!.id).toBe("c");
-    expect(out[0]!.score).toBeCloseTo(0.99);
-    expect(out[0]!.vector_score).toBeCloseTo(0.7);
-    expect(out[1]!.id).toBe("b");
+    expect(out[0].id).toBe("c");
+    expect(out[0].score).toBeCloseTo(0.99);
+    expect(out[0].vector_score).toBeCloseTo(0.7);
+    expect(out[1].id).toBe("b");
   });
 
   it("falls back to vector-search order when the reranker fails", async () => {
@@ -593,18 +593,18 @@ describe("search handler reranking", () => {
 
     const resultsMatch = allText.match(/event: results\ndata: ({.*?})\n/);
     expect(resultsMatch).not.toBeNull();
-    const resultsPayload = JSON.parse(resultsMatch![1]) as {
+    const resultsPayload = JSON.parse(resultsMatch[1]) as {
       results: SearchResult[];
     };
     expect(resultsPayload.results).toHaveLength(2);
-    expect(resultsPayload.results[0]!.id).toBe("a"); // vector order
+    expect(resultsPayload.results[0].id).toBe("a"); // vector order
 
     const rerankMatch = allText.match(/event: rerank\ndata: ({.*?})\n/);
     expect(rerankMatch).not.toBeNull();
-    const rerankPayload = JSON.parse(rerankMatch![1]) as {
+    const rerankPayload = JSON.parse(rerankMatch[1]) as {
       scores: Array<{ score: number }>;
     };
-    expect(rerankPayload.scores[0]!.score).toBeCloseTo(0.99);
+    expect(rerankPayload.scores[0].score).toBeCloseTo(0.99);
   });
 });
 

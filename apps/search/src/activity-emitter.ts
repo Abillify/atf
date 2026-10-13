@@ -61,11 +61,9 @@ export function emitActivity(event: ActivityEvent): void {
 }
 
 export function onActivity(listener: (event: ActivityEvent) => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _emitter.on(ACTIVITY_EVENT, listener as (...args: any[]) => void);
+  _emitter.on(ACTIVITY_EVENT, listener as (...args: unknown[]) => void);
 }
 
 export function offActivity(listener: (event: ActivityEvent) => void): void {
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  _emitter.off(ACTIVITY_EVENT, listener as (...args: any[]) => void);
+  _emitter.off(ACTIVITY_EVENT, listener as (...args: unknown[]) => void);
 }

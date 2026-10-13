@@ -361,6 +361,36 @@ export function buildOpenApiSpec(serverUrl: string) {
           },
         },
       },
+      "/health/live": {
+        get: {
+          tags: ["Admin"],
+          operationId: "getLiveness",
+          summary: "Liveness probe",
+          description:
+            "Process liveness only — never checks dependencies, so a slow " +
+            "database does not cause restart loops (requirement 12.5). Always 200.",
+          security: [],
+          responses: {
+            "200": { description: "Process alive" },
+          },
+        },
+      },
+      "/health/ready": {
+        get: {
+          tags: ["Admin"],
+          operationId: "getReadiness",
+          summary: "Readiness probe",
+          description:
+            "Gates the load balancer on the database, the source of truth for " +
+            "every request path. Model probes stay in /health so a degraded " +
+            "model does not remove the replica (requirement 12.5).",
+          security: [],
+          responses: {
+            "200": { description: "Ready to serve" },
+            "503": { description: "Database unreachable" },
+          },
+        },
+      },
 
       // ── Auth ───────────────────────────────────────────────────────────────
       "/login": {

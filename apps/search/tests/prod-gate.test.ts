@@ -331,3 +331,58 @@ describe("transaction and static-service production contract", () => {
     expect(report).toContain("vectorsearch.write");
   });
 });
+
+// Req 11.8: the rotation token is held to the same standards as API_TOKEN.
+describe("rotation token (API_TOKEN_NEXT) findings", () => {
+  it("flags a rotation token shorter than 32 characters", () => {
+    expect(
+      fatals(
+        cfg({
+          authnMode: "token",
+          apiToken: LONG,
+          apiTokenNext: "too-short-rotation-token",
+        }),
+      ).some((message) => message.includes("API_TOKEN_NEXT is shorter")),
+    ).toBe(true);
+  });
+
+  it("flags a rotation token identical to the primary token", () => {
+    expect(
+      fatals(
+        cfg({
+          authnMode: "token",
+          apiToken: LONG,
+          apiTokenNext: LONG,
+        }),
+      ).some((message) =>
+        message.includes("API_TOKEN and API_TOKEN_NEXT are identical"),
+      ),
+    ).toBe(true);
+  });
+
+  it("accepts a distinct high-entropy rotation token", () => {
+    expect(
+      fatals(
+        cfg({
+          authnMode: "token",
+          apiToken: LONG,
+          apiTokenNext: "y".repeat(40),
+        }),
+      ).some(
+        (message) =>
+          message.includes("API_TOKEN_NEXT is shorter") ||
+          message.includes("API_TOKEN and API_TOKEN_NEXT are identical"),
+      ),
+    ).toBe(false);
+  });
+
+  it("is fatal in production when the OIDC-only profile still has a rotation token", () => {
+    expect(
+      fatals(cfg({ authnMode: "oidc", apiTokenNext: LONG })).some((message) =>
+        message.includes(
+          "API_TOKEN, API_TOKEN_NEXT and MONITOR_TOKEN must be unset",
+        ),
+      ),
+    ).toBe(true);
+  });
+});

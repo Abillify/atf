@@ -119,7 +119,7 @@ export function createHydeClient(config: HydeClientConfig): HydeClient {
           },
         });
         const res = await bedrockClient.send(command, {
-          abortSignal: controller.signal as any,
+          abortSignal: controller.signal,
         });
         const text = res.output?.message?.content?.[0]?.text;
         if (typeof text !== "string" || text.trim() === "") {

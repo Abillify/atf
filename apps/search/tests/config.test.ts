@@ -46,6 +46,31 @@ describe("Config", () => {
     expect(() => loadConfig()).toThrow("EMBED_URL");
   });
 
+  // Req 12.4: migrations run at boot outside production by default;
+  // production defaults to dedicated migration Jobs (`bun run migrate`).
+  it("defaults migrateOnStart to true outside production", () => {
+    delete process.env["MIGRATE_ON_START"];
+    delete process.env["NODE_ENV"];
+    expect(loadConfig().migrateOnStart).toBe(true);
+    process.env["NODE_ENV"] = "development";
+    expect(loadConfig().migrateOnStart).toBe(true);
+  });
+
+  it("defaults migrateOnStart to false in production", () => {
+    delete process.env["MIGRATE_ON_START"];
+    process.env["NODE_ENV"] = "production";
+    expect(loadConfig().migrateOnStart).toBe(false);
+  });
+
+  it("lets an explicit MIGRATE_ON_START win over NODE_ENV", () => {
+    process.env["NODE_ENV"] = "production";
+    process.env["MIGRATE_ON_START"] = "true";
+    expect(loadConfig().migrateOnStart).toBe(true);
+    process.env["NODE_ENV"] = "development";
+    process.env["MIGRATE_ON_START"] = "false";
+    expect(loadConfig().migrateOnStart).toBe(false);
+  });
+
   it("defaults the RRF list weights to 1.0 (unchanged ranking)", () => {
     delete process.env["RRF_WEIGHT_DENSE"];
     delete process.env["RRF_WEIGHT_FTS"];
@@ -190,6 +215,70 @@ describe("Config", () => {
     expect(config.mcp2026Path).toBe("/mcp/v2026");
     expect(config.mcpServiceName).toBe("vectorsearch");
     expect(config.mcpServiceVersion).toBe("1.0.0");
+  });
+
+  // Req 11.8: API_TOKEN_NEXT is the additive rotation token.
+  it("loads API_TOKEN_NEXT and infers token auth from it alone", () => {
+    delete process.env["API_TOKEN"];
+    delete process.env["AUTHN_MODE"];
+    process.env["API_TOKEN_NEXT"] = "rotation-token-01234567890123456789";
+
+    const config = loadConfig();
+    expect(config.apiToken).toBeNull();
+    expect(config.apiTokenNext).toBe("rotation-token-01234567890123456789");
+    expect(config.authnMode).toBe("token");
+  });
+
+  it("keeps both tokens when API_TOKEN and API_TOKEN_NEXT are set", () => {
+    process.env["API_TOKEN"] = "primary-token-0123456789012345678901";
+    process.env["API_TOKEN_NEXT"] = "rotation-token-01234567890123456789";
+
+    const config = loadConfig();
+    expect(config.apiToken).toBe("primary-token-0123456789012345678901");
+    expect(config.apiTokenNext).toBe("rotation-token-01234567890123456789");
+  });
+
+  // Req 11.8: optional server TLS, enabled by TLS_CERT_FILE + TLS_KEY_FILE.
+  it("throws when TLS_CERT_FILE is set without TLS_KEY_FILE", () => {
+    process.env["TLS_CERT_FILE"] = "/etc/tls/server.crt";
+    delete process.env["TLS_KEY_FILE"];
+
+    expect(() => loadConfig()).toThrow(
+      "TLS_CERT_FILE and TLS_KEY_FILE must be set together",
+    );
+  });
+
+  it("loads server TLS config when cert and key are set", () => {
+    process.env["TLS_CERT_FILE"] = "/etc/tls/server.crt";
+    process.env["TLS_KEY_FILE"] = "/etc/tls/server.key";
+
+    const config = loadConfig();
+    expect(config.tls).toEqual({
+      certFile: "/etc/tls/server.crt",
+      keyFile: "/etc/tls/server.key",
+      clientCaFile: null,
+    });
+  });
+
+  it("reads TLS_CLIENT_CA_FILE for mTLS client verification", () => {
+    process.env["TLS_CERT_FILE"] = "/etc/tls/server.crt";
+    process.env["TLS_KEY_FILE"] = "/etc/tls/server.key";
+    process.env["TLS_CLIENT_CA_FILE"] = "/etc/tls/client-ca.pem";
+
+    const config = loadConfig();
+    expect(config.tls?.clientCaFile).toBe("/etc/tls/client-ca.pem");
+  });
+
+  it("defaults tls to null when no TLS vars are set", () => {
+    expect(loadConfig().tls).toBeNull();
+  });
+
+  it("reads CONVERTER_CA_CERT_FILE for trusting a self-signed converter", () => {
+    process.env["CONVERTER_URL"] = "https://extract.internal:8080";
+    process.env["CONVERTER_CA_CERT_FILE"] = "/etc/tls/extract-ca.pem";
+
+    const config = loadConfig();
+    expect(config.converter?.caCertFile).toBe("/etc/tls/extract-ca.pem");
   });
 
   it("validates and loads MCP 2026 service metadata", () => {

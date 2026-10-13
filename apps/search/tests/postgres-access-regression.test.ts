@@ -109,7 +109,7 @@ describe("postgres access regressions", () => {
     expect(result.ok).toBe(true);
     const upsertCall = query.mock.calls.find(([sql]) =>
       String(sql).includes('INSERT INTO "vc_documents"'),
-    )!;
+    );
     expect(upsertCall[0]).not.toContain("allowed_users = EXCLUDED.allowed_users");
     expect(upsertCall[0]).not.toContain("allowed_groups = EXCLUDED.allowed_groups");
     expect(upsertCall[1]).toContainEqual(["collection-user"]);
@@ -162,7 +162,7 @@ describe("postgres access regressions", () => {
     const postgres = client();
     const result = await postgres.listCollections(scope);
     expect(result.ok).toBe(true);
-    const countCall = query.mock.calls.find(([sql]) => String(sql).includes(" UNION ALL "))!;
+    const countCall = query.mock.calls.find(([sql]) => String(sql).includes(" UNION ALL "));
     expect(countCall[0]).toContain("allowed_users");
     expect(countCall[0]).toContain("allowed_groups");
     // Empty row ACLs remain public, while identified users/groups add their
@@ -186,7 +186,7 @@ describe("postgres access regressions", () => {
     const postgres = client();
     const result = await postgres.listCollections(serviceScope);
     expect(result.ok && result.result.every((r) => r.totalChunks === 9)).toBe(true);
-    const countCall = query.mock.calls.find(([sql]) => String(sql).includes(" UNION ALL "))!;
+    const countCall = query.mock.calls.find(([sql]) => String(sql).includes(" UNION ALL "));
     expect(countCall[0]).not.toContain("allowed_users");
     expect(countCall[1]).toEqual(["tenant-a", "tenant-a"]);
     await postgres.close();

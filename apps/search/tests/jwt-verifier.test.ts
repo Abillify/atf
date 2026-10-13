@@ -138,7 +138,7 @@ describe("createJwtVerifier", () => {
   it("verifies a well-formed token and returns the principal", async () => {
     const verifier = createJwtVerifier([
       { issuer: idp.issuer, audience: "vectorsearch" },
-    ])!;
+    ]);
     const token = await mint({ sub: "sub-123" }, { audience: "vectorsearch" });
     const principal = await verifier.verify(token);
     expect(principal).toMatchObject({ sub: "sub-123", userId: "sub-123" });
@@ -153,7 +153,7 @@ describe("createJwtVerifier", () => {
 
   describe("userId resolution", () => {
     it("defaults to sub", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       const token = await mint({ sub: "sub-123", email: "a@b.c" });
       expect((await verifier.verify(token))?.userId).toBe("sub-123");
     });
@@ -161,7 +161,7 @@ describe("createJwtVerifier", () => {
     it("uses the configured claim when set", async () => {
       const verifier = createJwtVerifier([
         { issuer: idp.issuer, userClaim: "email" },
-      ])!;
+      ]);
       const token = await mint({ sub: "sub-123", email: "alice@example.com" });
       expect((await verifier.verify(token))?.userId).toBe("alice@example.com");
     });
@@ -171,7 +171,7 @@ describe("createJwtVerifier", () => {
       // identity means service context, i.e. unrestricted read access.
       const verifier = createJwtVerifier([
         { issuer: idp.issuer, userClaim: "email" },
-      ])!;
+      ]);
       expect((await verifier.verify(await mint({ sub: "sub-1" })))?.userId).toBe(
         "sub-1",
       );
@@ -186,7 +186,7 @@ describe("createJwtVerifier", () => {
     it("trims the resolved identity", async () => {
       const verifier = createJwtVerifier([
         { issuer: idp.issuer, userClaim: "email" },
-      ])!;
+      ]);
       const token = await mint({ sub: "s", email: "  alice@example.com  " });
       expect((await verifier.verify(token))?.userId).toBe("alice@example.com");
     });
@@ -194,7 +194,7 @@ describe("createJwtVerifier", () => {
 
   describe("groups resolution", () => {
     it("reads the default `groups` claim", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       const token = await mint({ sub: "s", groups: ["legal", "staff"] });
       expect((await verifier.verify(token))?.groups).toEqual(["legal", "staff"]);
     });
@@ -202,7 +202,7 @@ describe("createJwtVerifier", () => {
     it("reads a configured claim, including the string form", async () => {
       const verifier = createJwtVerifier([
         { issuer: idp.issuer, groupsClaim: "roles" },
-      ])!;
+      ]);
       const token = await mint({ sub: "s", roles: "admin auditor" });
       expect((await verifier.verify(token))?.groups).toEqual(["admin", "auditor"]);
     });
@@ -210,19 +210,19 @@ describe("createJwtVerifier", () => {
     it("yields an empty list when the claim is absent", async () => {
       const verifier = createJwtVerifier([
         { issuer: idp.issuer, groupsClaim: "roles" },
-      ])!;
+      ]);
       expect((await verifier.verify(await mint({ sub: "s" })))?.groups).toEqual([]);
     });
   });
 
   describe("rejection", () => {
     it("rejects an unknown issuer without any network call", async () => {
-      const verifier = createJwtVerifier([{ issuer: "https://other.example.com" }])!;
+      const verifier = createJwtVerifier([{ issuer: "https://other.example.com" }]);
       expect(await verifier.verify(await mint({ sub: "s" }))).toBeNull();
     });
 
     it("rejects a token with no iss claim", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       const token = await new SignJWT({ sub: "s" })
         .setProtectedHeader({ alg: "RS256", kid: "test-key" })
         .setIssuedAt()
@@ -232,12 +232,12 @@ describe("createJwtVerifier", () => {
     });
 
     it("rejects a token with no sub claim", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       expect(await verifier.verify(await mint({ name: "no sub" }))).toBeNull();
     });
 
     it("rejects an expired token", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       const token = await mint({ sub: "s" }, { expiresIn: "-1s" });
       expect(await verifier.verify(token)).toBeNull();
     });
@@ -250,19 +250,19 @@ describe("createJwtVerifier", () => {
     it("rejects a token minted for a different audience", async () => {
       const verifier = createJwtVerifier([
         { issuer: idp.issuer, audience: "vectorsearch" },
-      ])!;
+      ]);
       const token = await mint({ sub: "s" }, { audience: "some-other-service" });
       expect(await verifier.verify(token)).toBeNull();
     });
 
     it("accepts any audience when none is configured (documented risk)", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       const token = await mint({ sub: "s" }, { audience: "some-other-service" });
       expect(await verifier.verify(token)).not.toBeNull();
     });
 
     it("rejects a garbage string instead of throwing", async () => {
-      const verifier = createJwtVerifier([{ issuer: idp.issuer }])!;
+      const verifier = createJwtVerifier([{ issuer: idp.issuer }]);
       expect(await verifier.verify("not-a-jwt")).toBeNull();
       expect(await verifier.verify("")).toBeNull();
     });
@@ -270,7 +270,7 @@ describe("createJwtVerifier", () => {
     it("rejects when discovery is unreachable", async () => {
       const verifier = createJwtVerifier([
         { issuer: "http://127.0.0.1:1/unreachable" },
-      ])!;
+      ]);
       const token = await mint({ sub: "s" }, { issuer: "http://127.0.0.1:1/unreachable" });
       expect(await verifier.verify(token)).toBeNull();
     });
@@ -288,7 +288,7 @@ describe("scope and tenant claim normalization", () => {
     const verifier = createJwtVerifier(
       [{ issuer: idp.issuer, tenantClaim: "tid" }],
       "tenant-default",
-    )!;
+    );
     expect(
       (await verifier.verify(await mint({ sub: "alice", tid: "tenant-claim" })))?.tenantId,
     ).toBe("tenant-claim");
@@ -301,12 +301,12 @@ describe("scope and tenant claim normalization", () => {
   });
 
   it("rejects a verified JWT with no usable tenant and no configured fallback", async () => {
-    const verifier = createJwtVerifier([{ issuer: idp.issuer, tenantClaim: "tid" }])!;
+    const verifier = createJwtVerifier([{ issuer: idp.issuer, tenantClaim: "tid" }]);
     expect(await verifier.verify(await mint({ sub: "alice" }))).toBeNull();
   });
 
   it("returns configured verified tenant, scope, client and credential claims", async () => {
-    const verifier = createJwtVerifier([{ issuer: idp.issuer, tenantClaim: "tid", scopesClaim: "permissions", clientIdClaim: "azp" }])!;
+    const verifier = createJwtVerifier([{ issuer: idp.issuer, tenantClaim: "tid", scopesClaim: "permissions", clientIdClaim: "azp" }]);
     const principal = await verifier.verify(await mint({ sub: "alice", tid: "tenant-a", permissions: "vectorsearch.read tool:search", azp: "client-a", jti: "credential-1" }));
     expect(principal).toMatchObject({ tenantId: "tenant-a", scopes: ["vectorsearch.read", "tool:search"], clientId: "client-a", jti: "credential-1" });
   });

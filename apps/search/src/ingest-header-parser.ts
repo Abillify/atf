@@ -55,7 +55,7 @@ export function parseLateChunkingAlphaHeader(
   const v = header.trim();
   if (v === "") return undefined;
   const parsed = parseFloat(v);
-  if (isNaN(parsed)) return null;
+  if (Number.isNaN(parsed)) return null;
   if (parsed === 0) return 0; // explicit disable
   if (parsed > 0 && parsed < 1) return parsed;
   return null; // out of range

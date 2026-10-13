@@ -46,6 +46,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { createClientTlsInit } from "@atf/security-kit";
 import type { Request, RequestHandler } from "express";
 import type { Logger } from "pino";
 import type { ConverterConfig } from "../config.js";
@@ -80,14 +81,23 @@ function httpError(message: string, status: number, detail?: string): Error {
   });
 }
 
-export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHandler {
+export function createIngestFileHandler(
+  deps: IngestFileHandlerDeps,
+): RequestHandler {
   const { converter, logger } = deps;
+  // Optional private-CA trust for the converter endpoint (Req 11.8): an
+  // undefined fragment keeps platform-default TLS, so spreading is always safe.
+  const tlsInit = createClientTlsInit({ caCertFile: converter.caCertFile });
 
   /** Common headers for a call to Extract: auth + trace propagation. */
-  function extractHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  function extractHeaders(
+    extra: Record<string, string> = {},
+  ): Record<string, string> {
     const headers: Record<string, string> = {
       ...extra,
-      ...(converter.token !== null ? { authorization: `Bearer ${converter.token}` } : {}),
+      ...(converter.token !== null
+        ? { authorization: `Bearer ${converter.token}` }
+        : {}),
     };
     injectTraceHeaders(headers);
     return headers;
@@ -102,7 +112,11 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
     label: string,
   ): Promise<Response> {
     try {
-      return await fetch(`${converter.url}${path}`, { ...init, signal });
+      return await fetch(`${converter.url}${path}`, {
+        ...init,
+        ...(tlsInit ?? {}),
+        signal,
+      });
     } catch (error) {
       throw httpError(
         aborted()
@@ -210,7 +224,9 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
         detail,
       );
     }
-    const finished = (await complete.json().catch(() => ({}))) as { sha256?: string };
+    const finished = (await complete.json().catch(() => ({}))) as {
+      sha256?: string;
+    };
     return typeof finished.sha256 === "string" ? finished.sha256 : sha256;
   }
 
@@ -261,7 +277,9 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
     return {
       jobId: job.jobId,
       status: job.status ?? "queued",
-      ...(typeof job.collection === "string" ? { collection: job.collection } : {}),
+      ...(typeof job.collection === "string"
+        ? { collection: job.collection }
+        : {}),
     };
   }
 
@@ -290,23 +308,46 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
 
       const controller = new AbortController();
       const timeout =
-        converter.timeoutMs > 0 ? setTimeout(() => controller.abort(), converter.timeoutMs) : null;
+        converter.timeoutMs > 0
+          ? setTimeout(() => controller.abort(), converter.timeoutMs)
+          : null;
       const onClose = (): void => controller.abort();
       req.on("aborted", onClose);
       const isAborted = (): boolean => controller.signal.aborted;
 
       const startedAt = Date.now();
       log.info(
-        { bytes: body.length, contentType: req.headers["content-type"], reference },
+        {
+          bytes: body.length,
+          contentType: req.headers["content-type"],
+          reference,
+        },
         "Starting a v2 extraction job for an uploaded document",
       );
 
       try {
-        const sourceSha256 = await uploadSource(body, reference, controller.signal, isAborted);
-        const job = await createJob(req, reference, sourceSha256, attributes, controller.signal, isAborted);
+        const sourceSha256 = await uploadSource(
+          body,
+          reference,
+          controller.signal,
+          isAborted,
+        );
+        const job = await createJob(
+          req,
+          reference,
+          sourceSha256,
+          attributes,
+          controller.signal,
+          isAborted,
+        );
 
         log.info(
-          { jobId: job.jobId, reference, sourceSha256, durationMs: Date.now() - startedAt },
+          {
+            jobId: job.jobId,
+            reference,
+            sourceSha256,
+            durationMs: Date.now() - startedAt,
+          },
           "v2 extraction job started; assets are stored by the job's emitter",
         );
 
@@ -316,7 +357,9 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
           job_id: job.jobId,
           job_status: job.status,
           reference,
-          ...(job.collection !== undefined ? { collection: job.collection } : {}),
+          ...(job.collection !== undefined
+            ? { collection: job.collection }
+            : {}),
           poll: `/v2/jobs/${job.jobId}`,
         });
       } finally {
@@ -325,11 +368,15 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
       }
     })().catch((error: unknown) => {
       const status =
-        error instanceof Error && "status" in error && typeof error.status === "number"
+        error instanceof Error &&
+        "status" in error &&
+        typeof error.status === "number"
           ? error.status
           : 502;
       const detail =
-        error instanceof Error && "detail" in error && typeof error.detail === "string"
+        error instanceof Error &&
+        "detail" in error &&
+        typeof error.detail === "string"
           ? error.detail
           : undefined;
       (req as Request & { log?: Logger }).log?.warn(
@@ -341,8 +388,13 @@ export function createIngestFileHandler(deps: IngestFileHandlerDeps): RequestHan
         return;
       }
       res.status(status).json({
-        error: error instanceof Error ? error.message : "Starting the extraction job failed",
-        ...(detail !== undefined && detail !== "" ? { extract_detail: detail } : {}),
+        error:
+          error instanceof Error
+            ? error.message
+            : "Starting the extraction job failed",
+        ...(detail !== undefined && detail !== ""
+          ? { extract_detail: detail }
+          : {}),
       });
     });
   };

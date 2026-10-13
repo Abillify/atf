@@ -12,7 +12,6 @@ import {
   buildJobsForDocument,
   embedJobsWithLateChunking,
   assemblePoints,
-  type ChunkingOptions,
   type IngestDocument,
 } from "../ingest-jobs.js";
 import type { EmbedFn } from "../semantic-chunker.js";
@@ -20,10 +19,6 @@ import type { SummaryClient } from "../summary-client.js";
 import {
   parseIngestHeaders,
   resolveChunkingOptions,
-  parseSemanticChunkingHeader,
-  parseLateChunkingAlphaHeader,
-  parseQuantizationHeader,
-  parseBreakpointPercentileHeader,
 } from "../ingest-header-parser.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
@@ -95,14 +90,14 @@ export function createIngestHandler(
             .filter(Boolean)
         : [];
       const allowedUsersRaw = readHeader(req, "x-allowed-users");
-      const allowedUsers = allowedUsersRaw
+      const _allowedUsers = allowedUsersRaw
         ? allowedUsersRaw
             .split(",")
             .map((u) => u.trim())
             .filter(Boolean)
         : [];
       const allowedGroupsRaw = readHeader(req, "x-allowed-groups");
-      const allowedGroups = allowedGroupsRaw
+      const _allowedGroups = allowedGroupsRaw
         ? allowedGroupsRaw
             .split(",")
             .map((g) => g.trim())
@@ -262,7 +257,7 @@ export function createIngestHandler(
 
       const ensureResult = await postgresClient.ensureCollection(
         collectionRaw,
-        vectors[0]!.length,
+        vectors[0].length,
         {
           language: ftsLanguage,
           sparseVocabSize: defaults.sparseVocabSize ?? undefined,
@@ -313,7 +308,7 @@ export function createIngestHandler(
       if (!chunking.enabled) {
         // Single document — use upsert for the simple response shape
         const upsertResult = await postgresClient.upsert(
-          points[0]!,
+          points[0],
           collectionRaw,
           versionMode,
         );

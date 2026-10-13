@@ -101,11 +101,12 @@ export interface ScoreDistribution {
 function scoreDistribution(values: number[]): ScoreDistribution {
   const sorted = values.filter(Number.isFinite).sort((a, b) => a - b);
   if (sorted.length === 0) return { count: 0, min: null, max: null, mean: null, p50: null, p90: null, p95: null };
-  const percentile = (p: number): number => sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)]!;
+  const percentile = (p: number): number =>
+    sorted[Math.min(sorted.length - 1, Math.ceil(p * sorted.length) - 1)];
   return {
     count: sorted.length,
-    min: sorted[0]!,
-    max: sorted[sorted.length - 1]!,
+    min: sorted[0],
+    max: sorted[sorted.length - 1],
     mean: sorted.reduce((sum, value) => sum + value, 0) / sorted.length,
     p50: percentile(0.5),
     p90: percentile(0.9),
@@ -127,7 +128,11 @@ export function buildEvaluationReport(queries: ScoredEvaluationQuery[], cutoffs:
     const expectedSet = new Set(expected);
     const retrieved = [...new Set(query.retrieved.map((reference) => reference.trim()).filter(Boolean))].slice(0, maxCutoff);
     const hits = retrieved.filter((reference) => expectedSet.has(reference));
-    retrieved.forEach((reference, index) => (expectedSet.has(reference) ? relevantScores : nonrelevantScores).push(query.scores[index] ?? Number.NaN));
+    retrieved.forEach((reference, index) => {
+      (expectedSet.has(reference) ? relevantScores : nonrelevantScores).push(
+        query.scores[index] ?? Number.NaN,
+      );
+    });
     const first = retrieved.findIndex((reference) => expectedSet.has(reference));
     return {
       id: query.id,
