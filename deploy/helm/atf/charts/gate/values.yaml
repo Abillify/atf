@@ -1,0 +1,75 @@
+# Default values for the ATF Gate subchart.
+# The full contract (including every field) is enforced by
+# ../values.schema.json of the umbrella chart.
+
+replicaCount: 2
+
+image:
+  repository: atf-gate
+  digest: ""
+  pullPolicy: ""
+
+# The Gate listens on server.port from its config.yaml (mounted via
+# configMap), not on the PORT environment variable - keep containerPort in
+# sync with the port inside that ConfigMap.
+containerPort: 3000
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: null
+
+# The Gate keeps no schema of its own; migrations are a runtime/search/
+# extract concern. The block exists so values.schema.json stays uniform.
+migration:
+  enabled: false
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Name of a ConfigMap holding the Gate configuration (config.yaml plus any
+# files it references); mounted read-only at /config and wired via
+# MCPGATE_CONFIG_DIR. The Gate refuses to start without it.
+configMap: ""
+
+config:
+  env: production
+
+# Open the NetworkPolicy for ingress from outside the release (direct MCP
+# clients). Keep false when access goes through an ingress controller.
+expose: false
+
+# Size limit for the /tmp emptyDir ("" = node default).
+tmpSizeLimit: 512Mi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional plain environment variables (list of {name, value}).
+extraEnv: []
+# Additional envFrom entries (list of secretRef/configMapRef).
+extraEnvFrom: []

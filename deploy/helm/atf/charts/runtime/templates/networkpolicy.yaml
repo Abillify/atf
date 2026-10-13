@@ -1,0 +1,1 @@
+{{- include "atf.networkPolicy" (dict "ctx" . "name" "runtime" "clients" (list "control")) }}

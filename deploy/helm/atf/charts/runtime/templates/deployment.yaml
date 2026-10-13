@@ -1,0 +1,7 @@
+{{- $extraVolumes := "" -}}
+{{- $extraMounts := "" -}}
+{{- with .Values.flowsConfigMap }}
+{{- $extraVolumes = printf "- name: flows\n  configMap:\n    name: %s\n    defaultMode: 420" . }}
+{{- $extraMounts = "- name: flows\n  mountPath: /config/flows\n  readOnly: true" }}
+{{- end }}
+{{- include "atf.deployment" (dict "ctx" . "name" "runtime" "livenessPath" "/health/live" "readinessPath" "/health/ready" "extraVolumes" $extraVolumes "extraMounts" $extraMounts) }}

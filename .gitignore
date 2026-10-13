@@ -39,3 +39,8 @@ scripts/eval/golden-set/corpus/
 
 # Local agent task artifacts (may contain secrets)
 /.agents/tasks/
+# Local scratch copies and helper scripts (never part of the product)
+/.scratch/
+
+# Helm packaging output
+deploy/helm/**/*.tgz

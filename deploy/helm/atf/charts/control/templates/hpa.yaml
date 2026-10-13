@@ -1,0 +1,1 @@
+{{- include "atf.hpa" (dict "ctx" . "name" "control") }}

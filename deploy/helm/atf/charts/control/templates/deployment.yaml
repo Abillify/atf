@@ -1,0 +1,1 @@
+{{- include "atf.deployment" (dict "ctx" . "name" "control" "livenessPath" "/" "readinessPath" "/") }}

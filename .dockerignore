@@ -7,6 +7,9 @@
 **/playwright-report/
 **/test-results/
 semantic-review/
+# Rust build artifacts of the desktop app: gigabytes of object files that no
+# image target consumes, and large enough to strain the build-context transfer.
+apps/outpost-desktop/src-tauri/target/
 **/.env
 **/.env.*
 live/

@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+# Production image for the ATF control frontend (requirements 12.1, 12.2).
+#
+# The build stage runs `next build`, which emits the standalone output (see
+# `output: "standalone"` in next.config.ts). The final stage is the Node 26
+# Alpine image pinned by digest, running as a non-root UID, and starts the
+# production server over that standalone output — the `next start` server
+# invoked through the bundled `server.js`, which is the deployment mode Next
+# documents for standalone builds. No dev server, no source tree, no dev
+# dependencies in the final image.
+#
+# Read-only root filesystem: the server writes nothing; mount a tmpfs at /tmp
+# if the platform proxy needs scratch space.
+#
+# Build from the repository root:
+#   docker build -f deploy/images/Dockerfile.control -t atf-control .
+#
+# Digests are updated by Dependabot (docker ecosystem).
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS build
+WORKDIR /repo
+# .dockerignore excludes node_modules, dist, .next and test artifacts, so the
+# context stays small even though this is a monorepo.
+COPY . .
+# The build needs dev dependencies (tailwind, postcss), so this installs the
+# full workspace; only the traced standalone output reaches the final stage.
+RUN bun install --frozen-lockfile
+# NEXT_PUBLIC_BACKEND_URL is deliberately NOT baked in: src/lib/backend-url.ts
+# resolves the backend relatively at runtime, so one image works behind any
+# reverse proxy.
+RUN bun run --filter @atf/control build
+
+FROM node:26-alpine@sha256:0b36e8c136b94cd4fcf02188228e76c31ad5872eef3fec8cbd2eee500cfd9e80 AS runtime
+ENV NODE_ENV=production
+RUN addgroup -g 65532 atf \
+    && adduser -u 65532 -G atf -D -h /tmp atf
+WORKDIR /app
+# With outputFileTracingRoot at the workspace root, the standalone server ends
+# up at apps/control/server.js inside the bundle, with the hoisted
+# node_modules next to it.
+COPY --from=build --chown=65532:65532 /repo/apps/control/.next/standalone/ ./
+# Static assets and the public directory are not part of the traced bundle and
+# must be copied to the paths the server expects.
+COPY --from=build --chown=65532:65532 /repo/apps/control/.next/static/ ./apps/control/.next/static/
+USER 65532:65532
+ENV PORT=3001
+ENV HOSTNAME=0.0.0.0
+EXPOSE 3001
+# server.js is the standalone entry point that boots the same production
+# server as `next start`, without requiring the dev-dependency tree.
+CMD ["node", "apps/control/server.js"]

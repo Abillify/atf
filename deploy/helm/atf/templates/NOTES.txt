@@ -1,0 +1,19 @@
+ATF {{ .Chart.AppVersion }} installed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Deployed services (one Deployment + Service each):
+  - runtime  (API backend)
+  - gate     (MCP gateway, config from ConfigMap {{ .Values.gate.configMap | default "<none — gate will not start>" }})
+  - search   (semantic search)
+  - extract  (document conversion)
+  - control  (web UI)
+
+{{ if .Values.runtime.flowsConfigMap }}Flows are mounted from ConfigMap "{{ .Values.runtime.flowsConfigMap }}".{{ else }}WARNING: runtime.flowsConfigMap is not set — the runtime has no /config/flows mount.{{ end }}
+
+Secret references (envFrom on every workload, must already exist):
+{{ range $k, $v := .Values.global.secrets }}  - {{ $k }}: {{ if $v }}{{ $v }}{{ else }}<not set>{{ end }}
+{{ end }}
+Migration Jobs (pre-install/pre-upgrade hooks) read the database URLs from
+these Secrets; disable per service with <service>.migration.enabled=false.
+
+Reach the control UI (port-forward):
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ .Release.Name }}-control 8080:80

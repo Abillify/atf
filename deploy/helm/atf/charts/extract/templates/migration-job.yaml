@@ -1,0 +1,1 @@
+{{- include "atf.migrationJob" (dict "ctx" . "name" "extract" "urlEnv" "EXTRACT_DATABASE_URL" "weight" 30) }}

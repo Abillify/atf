@@ -1,0 +1,7 @@
+{{- $extraVolumes := "" -}}
+{{- $extraMounts := "" -}}
+{{- with .Values.configMap }}
+{{- $extraVolumes = printf "- name: config\n  configMap:\n    name: %s" . }}
+{{- $extraMounts = "- name: config\n  mountPath: /config\n  readOnly: true" }}
+{{- end }}
+{{- include "atf.deployment" (dict "ctx" . "name" "gate" "livenessPath" "/healthz" "readinessPath" "/readyz" "extraVolumes" $extraVolumes "extraMounts" $extraMounts) }}

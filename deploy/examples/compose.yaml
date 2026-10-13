@@ -1,8 +1,26 @@
 name: atf-quickstart
 
+# Every service runs with no-new-privileges and all Linux capabilities dropped.
+# The application images listen on unprivileged ports and need no capabilities
+# at all; Postgres is the sole exception because its entrypoint uses gosu to
+# switch from root to the postgres user (SETUID/SETGID) and repairs the data
+# directory on first boot (CHOWN/DAC_OVERRIDE/FOWNER). Resource limits keep one
+# runaway service (typically a LibreOffice conversion) from starving the rest of
+# the stack on a single-host quickstart box.
 services:
   postgres:
     image: pgvector/pgvector:0.8.1-pg18
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # Required by the official entrypoint: gosu privilege drop + initdb chown.
+    cap_add:
+      - SETUID
+      - SETGID
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
     environment:
       POSTGRES_DB: atf_search
       POSTGRES_USER: atf
@@ -10,6 +28,11 @@ services:
       PGDATA: /pg/18/data
     volumes:
       - postgres-data:/pg
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1024M
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U atf -d atf_search"]
       interval: 3s
@@ -21,6 +44,15 @@ services:
     command: ["python", "/mock/model-mock.py"]
     volumes:
       - ./model-mock.py:/mock/model-mock.py:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
       interval: 3s
@@ -48,6 +80,15 @@ services:
       - "${ATF_RUNTIME_PORT:-3000}:3000"
     volumes:
       - ./flows:/config/flows:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1024M
     depends_on:
       model-mock:
         condition: service_healthy
@@ -68,6 +109,16 @@ services:
       CONTROL_CSP_MODE: legacy
     ports:
       - "${ATF_CONTROL_PORT:-3001}:3001"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # next dev (Turbopack) is the memory-hungriest part of the quickstart.
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1536M
     depends_on:
       runtime:
         condition: service_healthy
@@ -102,6 +153,15 @@ services:
       CONVERTER_URL: http://extract:3000
     ports:
       - "${ATF_SEARCH_PORT:-3002}:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 1024M
     depends_on:
       postgres:
         condition: service_healthy
@@ -141,6 +201,18 @@ services:
       CALLBACK_ALLOWED_HOSTS: 127.0.0.1,localhost
     ports:
       - "${ATF_EXTRACT_PORT:-3004}:3000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # LibreOffice conversions are the heaviest workload in the stack; the limit
+    # is deliberately higher than the others so a conversion is throttled
+    # rather than OOM-killed.
+    deploy:
+      resources:
+        limits:
+          cpus: "4"
+          memory: 4096M
     depends_on:
       model-mock:
         condition: service_healthy
@@ -164,6 +236,15 @@ services:
       - "${ATF_GATE_PORT:-3003}:3000"
     volumes:
       - ./gate:/config:ro
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
     healthcheck:
       test: ["CMD", "bun", "-e", "fetch('http://127.0.0.1:3000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 5s

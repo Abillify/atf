@@ -1,0 +1,76 @@
+# Default values for the ATF Search subchart.
+# The full contract (including every field) is enforced by
+# ../values.schema.json of the umbrella chart.
+
+replicaCount: 2
+
+image:
+  repository: atf-search
+  digest: ""
+  pullPolicy: ""
+
+containerPort: 3000
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: null
+
+# Schema migrations run as a Helm hook Job (pre-install,pre-upgrade) that
+# executes `bun run scripts/migrate.ts` with POSTGRES_URL from the Secret
+# named by global.secrets.search. The application itself never migrates on
+# boot in this chart (MIGRATE_ON_START=false).
+migration:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Search hard-fails without the embedding endpoint configuration
+# (EMBED_URL, EMBED_MODEL, EMBED_MODEL_REVISION, EMBED_INPUT_FIELD,
+# EMBED_EXPECTED_DIMENSION). Provide them through the Secret referenced by
+# global.secrets.search or via extraEnv/extraEnvFrom.
+# Optional direct service TLS (requirement 11.8): set
+# config.tls.secretName to an existing kubernetes.io/tls Secret; it is mounted
+# at /etc/atf/tls and TLS_CERT_FILE/TLS_KEY_FILE are wired, and the HTTP
+# probes switch to HTTPS. See DEPLOYMENT.md for the runbook.
+config: {}
+
+# Open the NetworkPolicy for ingress from outside the release. Keep false:
+# Search is an internal service, accessed via Runtime (or Extract).
+expose: false
+
+# Size limit for the /tmp emptyDir ("" = node default).
+tmpSizeLimit: 1Gi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional plain environment variables (list of {name, value}).
+extraEnv: []
+# Additional envFrom entries (list of secretRef/configMapRef).
+extraEnvFrom: []

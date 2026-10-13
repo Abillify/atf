@@ -1,0 +1,86 @@
+# Default values for the ATF Extract subchart.
+# The full contract (including every field) is enforced by
+# ../values.schema.json of the umbrella chart.
+
+replicaCount: 2
+
+image:
+  repository: atf-extract
+  digest: ""
+  pullPolicy: ""
+
+containerPort: 3000
+
+service:
+  type: ClusterIP
+  port: 80
+
+# Extract runs LibreOffice as a subprocess for document conversion; give it
+# more memory than the pure-API services.
+resources:
+  requests:
+    cpu: 500m
+    memory: 2Gi
+  limits:
+    memory: 4Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 8
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: null
+
+# Schema migrations run as a Helm hook Job (pre-install,pre-upgrade) that
+# executes `bun run scripts/migrate.ts` with EXTRACT_DATABASE_URL from the
+# Secret named by global.secrets.extract. The application itself never
+# migrates on boot in this chart (MIGRATE_ON_START=false).
+migration:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+config:
+  # Wire SEARCH_URL to the Search Service of this release automatically.
+  # Set false (and provide SEARCH_URL via extraEnv) when Search runs
+  # outside the release.
+  autoSearchUrl: true
+  # Set true when the Search service terminates TLS itself
+  # (search.config.tls.secretName); SEARCH_URL then uses https.
+  searchTls: false
+  # Optional direct service TLS for Extract itself - see the Search
+  # subchart values and DEPLOYMENT.md.
+  # tls:
+  #   secretName: atf-extract-tls
+
+# Extract hard-fails without the vision model configuration (VISION_URL,
+# VISION_MODEL). Provide them through the Secret referenced by
+# global.secrets.extract or via extraEnv/extraEnvFrom.
+
+# Open the NetworkPolicy for ingress from outside the release. Keep false:
+# Extract is an internal service, called by Search (and Runtime flows).
+expose: false
+
+# Size limit for the /tmp emptyDir ("" = node default). LibreOffice
+# conversion scratch space needs the largest budget of the stack.
+tmpSizeLimit: 4Gi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional plain environment variables (list of {name, value}).
+extraEnv: []
+# Additional envFrom entries (list of secretRef/configMapRef).
+extraEnvFrom: []

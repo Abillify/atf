@@ -1,0 +1,50 @@
+# syntax=docker/dockerfile:1
+# Production image for the ATF search service (requirements 12.1, 12.2).
+#
+# Multi-stage: dependencies are installed with --production only and scoped to
+# this workspace via --filter, the final stage is the official Bun distroless
+# image pinned by digest, running as the non-root UID 65532. The root
+# filesystem can be mounted read-only; the service writes nothing to disk.
+# sharp ships prebuilt glibc binaries but needs libstdc++/libgcc_s, which the
+# distroless base lacks; both are copied from the deps stage (see below).
+#
+# Build from the repository root:
+#   docker build -f deploy/images/Dockerfile.search -t atf-search .
+#
+# Digests are updated by Dependabot (docker ecosystem).
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS deps
+WORKDIR /repo
+# .dockerignore excludes node_modules, dist, .next and test artifacts, so the
+# context stays small even though this is a monorepo.
+COPY . .
+# Production dependencies only, scoped to the search service and the @atf/*
+# workspace packages it imports (Bun follows workspace dependencies
+# transitively).
+RUN bun install --frozen-lockfile --production --filter @atf/search
+
+# sharp (asset-variants.ts) links against libstdc++/libgcc_s, which the
+# distroless base does not ship. Stage them from the Debian-based deps
+# image (cp -L resolves the versioned symlinks) so the final stage stays
+# shell-free.
+RUN mkdir -p /native-libs \
+    && cp -L /usr/lib/*/libstdc++.so.6 /usr/lib/*/libgcc_s.so.1 /native-libs/
+
+FROM oven/bun:1.4.2-distroless@sha256:1a0c31c7c5f9d193aedf60fe1cebdeb76ac8f6e29f24be8dd8cbd6df72df26ec AS runtime
+ENV NODE_ENV=production
+WORKDIR /app
+# C++ ABI runtime libraries for sharp (see deps stage); /usr/lib is on the
+# dynamic loader's default search path.
+COPY --from=deps /native-libs/ /usr/lib/
+# The workspace symlinks under node_modules/@atf point at ../../packages/...,
+# so the package sources must ship next to node_modules.
+COPY --from=deps --chown=65532:65532 /repo/package.json /repo/bun.lock /app/
+COPY --from=deps --chown=65532:65532 /repo/node_modules /app/node_modules
+COPY --from=deps --chown=65532:65532 /repo/packages /app/packages
+COPY --from=deps --chown=65532:65532 /repo/apps/search /app/apps/search
+USER 65532:65532
+EXPOSE 3000
+# The entry file is invoked directly, not through the `start` package.json
+# script: Bun's script runner needs a /bin/sh, which the distroless base does
+# not ship. Import resolution still walks up to the hoisted /app/node_modules.
+WORKDIR /app/apps/search
+ENTRYPOINT ["/usr/local/bin/bun", "run", "src/index.ts"]

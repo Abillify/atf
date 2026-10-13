@@ -1,0 +1,1 @@
+{{- include "atf.migrationJob" (dict "ctx" . "name" "search" "urlEnv" "POSTGRES_URL" "weight" 20) }}

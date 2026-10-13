@@ -1,0 +1,366 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "title": "ATF umbrella chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "global": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "nameOverride": { "type": "string" },
+        "fullnameOverride": { "type": "string" },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["registry", "tag", "pullPolicy"],
+          "properties": {
+            "registry": { "type": "string", "minLength": 1 },
+            "tag": { "type": "string" },
+            "pullPolicy": { "type": "string", "enum": ["", "Always", "IfNotPresent", "Never"] }
+          }
+        },
+        "imagePullSecrets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["name"],
+            "properties": { "name": { "type": "string", "minLength": 1 } }
+          }
+        },
+        "secrets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runtime", "gate", "search", "extract", "control"],
+          "properties": {
+            "runtime": { "type": "string" },
+            "gate": { "type": "string" },
+            "search": { "type": "string" },
+            "extract": { "type": "string" },
+            "control": { "type": "string" }
+          }
+        },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "topologySpreadConstraints": { "type": "array" }
+      }
+    },
+    "runtime": { "$ref": "#/definitions/runtime" },
+    "gate": { "$ref": "#/definitions/gate" },
+    "search": { "$ref": "#/definitions/search" },
+    "extract": { "$ref": "#/definitions/extract" },
+    "control": { "$ref": "#/definitions/control" },
+    "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" }
+  },
+  "definitions": {
+    "quantity": { "type": "string", "minLength": 1 },
+    "envList": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "value": { "type": "string" },
+          "valueFrom": { "type": "object" }
+        }
+      }
+    },
+    "envFromList": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requests", "limits"],
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["cpu", "memory"],
+          "properties": {
+            "cpu": { "$ref": "#/definitions/quantity" },
+            "memory": { "$ref": "#/definitions/quantity" }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["memory"],
+          "properties": {
+            "cpu": { "$ref": "#/definitions/quantity" },
+            "memory": { "$ref": "#/definitions/quantity" }
+          }
+        }
+      }
+    },
+    "serviceBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "port"],
+      "properties": {
+        "type": { "type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"] },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 }
+      }
+    },
+    "tlsConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "secretName": {
+          "description": "Name of an existing kubernetes.io/tls Secret mounted at /etc/atf/tls; enables direct service TLS (TLS_CERT_FILE/TLS_KEY_FILE) and flips HTTP probes to HTTPS. See DEPLOYMENT.md.",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "imageBlock": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "digest", "pullPolicy"],
+      "properties": {
+        "repository": { "type": "string", "minLength": 1 },
+        "digest": { "type": "string", "pattern": "^$|^sha256:[0-9a-f]{64}$" },
+        "pullPolicy": { "type": "string", "enum": ["", "Always", "IfNotPresent", "Never"] }
+      }
+    },
+    "autoscaling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "minReplicas", "maxReplicas", "targetCPUUtilizationPercentage"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minReplicas": { "type": "integer", "minimum": 1 },
+        "maxReplicas": { "type": "integer", "minimum": 1 },
+        "targetCPUUtilizationPercentage": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "targetMemoryUtilizationPercentage": { "type": ["integer", "null"], "minimum": 1, "maximum": 100 }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "minAvailable": { "type": ["integer", "string", "null"] },
+        "maxUnavailable": { "type": ["integer", "string", "null"] }
+      }
+    },
+    "migration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["enabled", "backoffLimit", "activeDeadlineSeconds"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "backoffLimit": { "type": "integer", "minimum": 0 },
+        "activeDeadlineSeconds": { "type": "integer", "minimum": 1 },
+        "extraEnv": { "$ref": "#/definitions/envList" }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["create"],
+      "properties": {
+        "create": { "type": "boolean" },
+        "name": { "type": "string" }
+      }
+    },
+    "common": {
+      "type": "object",
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/imageBlock" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "$ref": "#/definitions/serviceBlock" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "podDisruptionBudget": { "$ref": "#/definitions/pdb" },
+        "migration": { "$ref": "#/definitions/migration" },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+        "tmpSizeLimit": { "type": "string" },
+        "expose": { "type": "boolean" },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "extraEnv": { "$ref": "#/definitions/envList" },
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" }
+      }
+    },
+    "runtime": {
+      "allOf": [{ "$ref": "#/definitions/common" }],
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/imageBlock" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "$ref": "#/definitions/serviceBlock" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "podDisruptionBudget": { "$ref": "#/definitions/pdb" },
+        "migration": { "$ref": "#/definitions/migration" },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+        "tmpSizeLimit": { "type": "string" },
+        "expose": { "type": "boolean" },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "extraEnv": { "$ref": "#/definitions/envList" },
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
+        "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
+        "flowsConfigMap": { "type": "string" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["appEnv"],
+          "properties": {
+            "appEnv": { "type": "string", "enum": ["production", "staging"] }
+          }
+        }
+      }
+    },
+    "gate": {
+      "allOf": [{ "$ref": "#/definitions/common" }],
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/imageBlock" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "$ref": "#/definitions/serviceBlock" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "podDisruptionBudget": { "$ref": "#/definitions/pdb" },
+        "migration": { "$ref": "#/definitions/migration" },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+        "tmpSizeLimit": { "type": "string" },
+        "expose": { "type": "boolean" },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "extraEnv": { "$ref": "#/definitions/envList" },
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
+        "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
+        "configMap": { "type": "string" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["env"],
+          "properties": {
+            "env": { "type": "string", "enum": ["production", "staging"] }
+          }
+        }
+      }
+    },
+    "search": {
+      "allOf": [{ "$ref": "#/definitions/common" }],
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/imageBlock" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "$ref": "#/definitions/serviceBlock" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "podDisruptionBudget": { "$ref": "#/definitions/pdb" },
+        "migration": { "$ref": "#/definitions/migration" },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+        "tmpSizeLimit": { "type": "string" },
+        "expose": { "type": "boolean" },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "extraEnv": { "$ref": "#/definitions/envList" },
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
+        "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
+        "config": {
+          "type": "object",
+          "properties": {
+            "tls": { "$ref": "#/definitions/tlsConfig" }
+          }
+        }
+      }
+    },
+    "extract": {
+      "allOf": [{ "$ref": "#/definitions/common" }],
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/imageBlock" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "$ref": "#/definitions/serviceBlock" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "podDisruptionBudget": { "$ref": "#/definitions/pdb" },
+        "migration": { "$ref": "#/definitions/migration" },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+        "tmpSizeLimit": { "type": "string" },
+        "expose": { "type": "boolean" },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "extraEnv": { "$ref": "#/definitions/envList" },
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
+        "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["autoSearchUrl"],
+          "properties": {
+            "autoSearchUrl": { "type": "boolean" },
+            "searchTls": {
+              "description": "Use https for the in-cluster SEARCH_URL when the search service terminates TLS itself.",
+              "type": "boolean"
+            },
+            "tls": { "$ref": "#/definitions/tlsConfig" }
+          }
+        }
+      }
+    },
+    "control": {
+      "allOf": [{ "$ref": "#/definitions/common" }],
+      "additionalProperties": false,
+      "properties": {
+        "replicaCount": { "type": "integer", "minimum": 1 },
+        "image": { "$ref": "#/definitions/imageBlock" },
+        "containerPort": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "service": { "$ref": "#/definitions/serviceBlock" },
+        "resources": { "$ref": "#/definitions/resources" },
+        "autoscaling": { "$ref": "#/definitions/autoscaling" },
+        "podDisruptionBudget": { "$ref": "#/definitions/pdb" },
+        "migration": { "$ref": "#/definitions/migration" },
+        "serviceAccount": { "$ref": "#/definitions/serviceAccount" },
+        "tmpSizeLimit": { "type": "string" },
+        "expose": { "type": "boolean" },
+        "podAnnotations": { "type": "object" },
+        "nodeSelector": { "type": "object" },
+        "tolerations": { "type": "array" },
+        "affinity": { "type": "object" },
+        "extraEnv": { "$ref": "#/definitions/envList" },
+        "extraEnvFrom": { "$ref": "#/definitions/envFromList" },
+        "global": { "description": "Injected by Helm into subchart values.", "type": "object" },
+        "atf-common": { "description": "Injected by Helm for the library subchart dependency.", "type": "object" },
+        "config": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["autoBackendUrl"],
+          "properties": {
+            "autoBackendUrl": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

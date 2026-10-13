@@ -1,0 +1,1 @@
+{{- include "atf.networkPolicy" (dict "ctx" . "name" "gate" "clients" (list "runtime") "publicIngress" .Values.expose) }}

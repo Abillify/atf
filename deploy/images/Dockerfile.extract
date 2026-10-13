@@ -1,0 +1,75 @@
+# syntax=docker/dockerfile:1
+# Production image for the ATF extract (converter) service (requirements 12.1,
+# 12.2).
+#
+# Extract is the one service that needs external binaries: poppler-utils for
+# PDF text extraction (pdftotext incl. -bbox-layout geometry) and
+# rasterisation, LibreOffice writer/calc/impress/draw for
+# DOCX/XLSX/PPTX/VSDX. That rules out the Bun distroless base the other
+# services use, so the final stage is Debian bookworm-slim (pinned by digest)
+# with the bun binary copied from the pinned official image.
+#
+# fonts-liberation is not optional: without a metric-compatible substitute for
+# Arial and Times, LibreOffice reflows the document and the page breaks stop
+# matching what a human sees when they open the file, which silently
+# invalidates every page number in the output.
+#
+# Read-only root filesystem: mount a tmpfs at /tmp — LibreOffice and poppler
+# need a writable HOME/TEMP_DIR (TEMP_DIR=/tmp/atf-extract below).
+#
+# Build from the repository root:
+#   docker build -f deploy/images/Dockerfile.extract -t atf-extract .
+#
+# Digests are updated by Dependabot (docker ecosystem).
+FROM oven/bun:1.4.2@sha256:9114c058aeae42162ee16dd5084b95fe9473970bb6bcb5b232ab1630f0546895 AS deps
+WORKDIR /repo
+# .dockerignore excludes node_modules, dist, .next and test artifacts, so the
+# context stays small even though this is a monorepo.
+COPY . .
+# Production dependencies only, scoped to the extract service and the @atf/*
+# workspace packages it imports (Bun follows workspace dependencies
+# transitively).
+RUN bun install --frozen-lockfile --production --filter @atf/extract
+
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
+ENV NODE_ENV=production
+# ca-certificates: the service calls out to VISION_URL/SEARCH_URL over TLS;
+# tini: LibreOffice spawns child processes and PID 1 must reap them.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+      ca-certificates \
+      tini \
+      poppler-utils \
+      libreoffice-writer-nogui \
+      libreoffice-calc-nogui \
+      libreoffice-impress-nogui \
+      libreoffice-draw-nogui \
+      fonts-liberation \
+      fonts-dejavu-core \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* \
+    # Fail the build, not the first conversion, if a converter is missing or
+    # pdftotext cannot emit the -bbox-layout geometry the text path parses.
+    && pdfinfo -v \
+    && pdftotext -v \
+    && { pdftotext -h 2>&1 | grep -q -- '-bbox-layout' \
+         || { echo 'pdftotext lacks -bbox-layout' >&2; exit 1; }; } \
+    && libreoffice --version \
+    && groupadd -g 65532 atf \
+    && useradd -u 65532 -g 65532 -d /tmp -s /usr/sbin/nologin atf
+# The bun binary is statically linked against glibc, which bookworm provides.
+COPY --from=deps /usr/local/bin/bun /usr/local/bin/bun
+WORKDIR /app
+# The workspace symlinks under node_modules/@atf point at ../../packages/...,
+# so the package sources must ship next to node_modules.
+COPY --from=deps --chown=65532:65532 /repo/package.json /repo/bun.lock /app/
+COPY --from=deps --chown=65532:65532 /repo/node_modules /app/node_modules
+COPY --from=deps --chown=65532:65532 /repo/packages /app/packages
+COPY --from=deps --chown=65532:65532 /repo/apps/extract /app/apps/extract
+USER 65532:65532
+ENV TEMP_DIR=/tmp/atf-extract
+EXPOSE 3000
+# The entry file is invoked directly, not through the `start` package.json
+# script, so the invocation does not depend on Bun's script-runner shell.
+WORKDIR /app/apps/extract
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/bun", "run", "src/index.ts"]

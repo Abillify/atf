@@ -1,0 +1,8 @@
+{{- $extraVolumes := "" -}}
+{{- $extraMounts := "" -}}
+{{- with .Values.config.tls }}{{- with .secretName }}
+{{- $extraVolumes = printf "- name: tls\n  secret:\n    secretName: %s\n    defaultMode: 420" . }}
+{{- $extraMounts = "- name: tls\n  mountPath: /etc/atf/tls\n  readOnly: true" }}
+{{- end }}{{- end }}
+{{- include "atf.deployment" (dict "ctx" . "name" "search" "livenessPath" "/health/live" "readinessPath" "/health/ready" "extraVolumes" $extraVolumes "extraMounts" $extraMounts) }}
+

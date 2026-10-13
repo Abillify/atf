@@ -1,0 +1,60 @@
+# ATF umbrella chart values (requirement 12.3).
+#
+# The chart renders the five ATF services (runtime, gate, search, extract,
+# control) plus their Services, PDBs, optional HPAs, NetworkPolicies and
+# migration hook Jobs. It ships no PostgreSQL and no model serving: point
+# the database and model URLs at managed/external instances through the
+# per-service Secrets named below.
+#
+# Secrets are references, never values: global.secrets.<service> names an
+# EXISTING Kubernetes Secret (created out-of-band, e.g. by Sealed Secrets,
+# External Secrets or SOPS). The chart only references it via envFrom, and
+# the migration Jobs read their database URL from it via secretKeyRef.
+
+global:
+  nameOverride: ""
+  fullnameOverride: ""
+
+  image:
+    # Registry prefix for all five service images (ghcr.io/abillify/atf-*).
+    registry: ghcr.io/abillify
+    # Shared tag; empty means each chart's appVersion (the product version).
+    # Ignored for any service whose image.digest is pinned.
+    tag: ""
+    pullPolicy: IfNotPresent
+
+  # List of {name: <pull-secret>} for a private registry.
+  imagePullSecrets: []
+
+  # Existing Secrets per service (see above). The keys double as the
+  # service names, so the schema keeps them closed:
+  #   runtime  -> DATABASE_URL (+ OIDC/authn/authz material)
+  #   gate     -> upstream credentials referenced by its config.yaml
+  #   search   -> POSTGRES_URL, EMBED_*, optional RERANK_*, CONVERTER_TOKEN
+  #   extract  -> EXTRACT_DATABASE_URL, VISION_*
+  #   control  -> session/OIDC material
+  secrets:
+    runtime: ""
+    gate: ""
+    search: ""
+    extract: ""
+    control: ""
+
+  # Annotations merged into every pod template (e.g. checksum annotations
+  # for externally managed ConfigMaps).
+  podAnnotations: {}
+
+  # Scheduling defaults, overridable per service.
+  nodeSelector: {}
+  tolerations: []
+  affinity: {}
+  topologySpreadConstraints: []
+
+runtime:
+  # ConfigMap with the flow definitions (mounted at /config/flows).
+  flowsConfigMap: ""
+
+gate:
+  # ConfigMap with the Gate configuration (mounted at /config); the Gate
+  # refuses to start without it.
+  configMap: ""

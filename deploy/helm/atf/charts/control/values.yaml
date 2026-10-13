@@ -1,0 +1,69 @@
+# Default values for the ATF Control subchart.
+# The full contract (including every field) is enforced by
+# ../values.schema.json of the umbrella chart.
+
+replicaCount: 2
+
+image:
+  repository: atf-control
+  digest: ""
+  pullPolicy: ""
+
+# Control is a Next.js standalone server; it listens on PORT (default 3001
+# in the image).
+containerPort: 3001
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 4
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: null
+
+# Control keeps no schema of its own; migrations are a runtime/search/
+# extract concern. The block exists so values.schema.json stays uniform.
+migration:
+  enabled: false
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+config:
+  # Wire NEXT_PUBLIC_BACKEND_URL to the Runtime Service of this release
+  # automatically. Set false (and provide the variable via extraEnv) when
+  # the Runtime runs outside the release.
+  autoBackendUrl: true
+
+# Open the NetworkPolicy for ingress from outside the release (browsers).
+# Control is the user-facing edge of the stack, so this defaults to true.
+expose: true
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional plain environment variables (list of {name, value}).
+extraEnv: []
+# Additional envFrom entries (list of secretRef/configMapRef).
+extraEnvFrom: []

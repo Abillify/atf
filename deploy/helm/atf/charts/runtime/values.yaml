@@ -1,0 +1,73 @@
+# Default values for the ATF Runtime subchart.
+# The full contract (including every field) is enforced by
+# ../values.schema.json of the umbrella chart.
+
+replicaCount: 2
+
+image:
+  # Image name relative to global.image.registry; the tag comes from
+  # global.image.tag (default: this chart's appVersion). Pin
+  # image.digest to an immutable sha256 for reproducible installs.
+  repository: atf-runtime
+  digest: ""
+  pullPolicy: ""
+
+containerPort: 3000
+
+service:
+  type: ClusterIP
+  port: 80
+
+resources:
+  requests:
+    cpu: 500m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 6
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: null
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1
+  maxUnavailable: null
+
+# Schema migrations run as a Helm hook Job (pre-install,pre-upgrade) that
+# executes `bun run scripts/migrate.ts` with DATABASE_URL from the Secret
+# named by global.secrets.runtime. The application itself never migrates on
+# boot in this chart (MIGRATE_ON_START=false).
+migration:
+  enabled: true
+  backoffLimit: 3
+  activeDeadlineSeconds: 900
+  extraEnv: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+# Name of a ConfigMap holding the flow definitions; mounted read-only at
+# /config/flows and wired via FLOWS_DIR. Empty means the image-bundled
+# default flows are used.
+flowsConfigMap: ""
+
+config:
+  appEnv: production
+
+# Size limit for the /tmp emptyDir ("" = node default).
+tmpSizeLimit: 1Gi
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+# Additional plain environment variables (list of {name, value}).
+extraEnv: []
+# Additional envFrom entries (list of secretRef/configMapRef).
+extraEnvFrom: []
