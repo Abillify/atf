@@ -543,6 +543,14 @@ describe("loadConfig() — valid configurations", () => {
     expect(expectConfigSuccess({ PORT: "1" }).port).toBe(1);
     expect(expectConfigSuccess({ PORT: "65535" }).port).toBe(65535);
   });
+
+  test("RERANK_BATCH_SIZE maps to rerankBatchSize and stays undefined when unset", () => {
+    delete process.env.RERANK_BATCH_SIZE;
+    expect(expectConfigSuccess().rerankBatchSize).toBeUndefined();
+    expect(
+      expectConfigSuccess({ RERANK_BATCH_SIZE: "16" }).rerankBatchSize,
+    ).toBe(16);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -562,6 +570,10 @@ describe("loadConfig() — invalid configurations call process.exit(1)", () => {
     expect(combined).toContain("PORT");
   });
 
+  test("RERANK_BATCH_SIZE=0 causes exit(1) and mentions RERANK_BATCH_SIZE", () => {
+    const { stderrOutput } = expectConfigFailure({ RERANK_BATCH_SIZE: "0" });
+    expect(stderrOutput.join(" ")).toContain("RERANK_BATCH_SIZE");
+  });
   test("PORT=65536 (above max) causes exit(1) and mentions PORT in stderr", () => {
     const { stderrOutput } = expectConfigFailure({ PORT: "65536" });
     const combined = stderrOutput.join(" ");

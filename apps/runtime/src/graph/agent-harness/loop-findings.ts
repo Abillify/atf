@@ -227,6 +227,20 @@ export function coverageRequestMessages(messages: readonly BaseMessage[]): BaseM
 }
 
 /**
+ * Text of the latest human message (text parts only, whitespace-normalized),
+ * used as the summary rerank query. "" when there is none.
+ */
+export function latestHumanText(messages: readonly BaseMessage[]): string {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message === undefined || message._getType() !== "human") continue;
+    const text = messageText(message).replace(/\s+/gu, " ").trim();
+    if (text !== "") return text;
+  }
+  return "";
+}
+
+/**
  * Minimum trimmed length for a line to be eligible for cross-line
  * deduplication. Short/structural lines (headings, bullets like "- …", blank
  * lines) are kept verbatim to preserve formatting; only substantial content

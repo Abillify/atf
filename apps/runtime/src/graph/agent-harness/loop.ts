@@ -17,7 +17,12 @@ import type { LangGraphRunnableConfig } from "@langchain/langgraph";
 import type { FlowNode, LlmConfig } from "../../types/flow.js";
 import type { Citation, StreamError } from "../../types/openai.js";
 import { approvalRequestedBy } from "../approval-gate.js";
-import { combineAbortSignals, isRagContextMessage } from "../exec-runtime.js";
+import {
+  combineAbortSignals,
+  isRagContextMessage,
+  resolveTurnContext,
+} from "../exec-runtime.js";
+import { buildClassificationNamespaces } from "../classification-access.js";
 import type { AgentState, ExecRuntime } from "../graph-engine.js";
 import { baseMessagesToModelMessages } from "../message-mapping.js";
 import type {
@@ -35,6 +40,7 @@ import {
   renderCoverageAssignment,
   seedCoverageLedger,
 } from "./coverage.js";
+import { applySummaryTriageRerank } from "./coverage-rerank.js";
 import type { HarnessProgress } from "./types.js";
 import { createCoverageAssignmentRuntime } from "./loop-coverage-assignment.js";
 import {
@@ -54,6 +60,7 @@ import {
   messageChars,
   messageText,
   coverageRequestMessages,
+  latestHumanText,
 } from "./loop-findings.js";
 import { incorporateOutcome, type OutcomeCtx } from "./loop-outcome.js";
 import {
@@ -498,14 +505,7 @@ export function createAgentHarnessNodeHandler(
       }
       plannerlessSeq += 1;
       if (coverageConfig !== undefined) {
-        try {
-          coverageLedger = seedCoverageLedger(
-            state.toolResults,
-            coverageConfig.sourceTool,
-          );
-          progress.coverage = coverageLedger;
-          currentCoverageAssignment = issueCoverageAssignment();
-        } catch {
+        const coverageSeedFailure = () => {
           errors.push({
             message: `Agent harness "${node.id}": coverage seed validation failed.`,
             type: "execution_error",
@@ -515,6 +515,50 @@ export function createAgentHarnessNodeHandler(
             },
           });
           return stop("coverage-seed-failure", progress, errors);
+        };
+        let seededLedger: CoverageLedger;
+        try {
+          seededLedger = seedCoverageLedger(
+            state.toolResults,
+            coverageConfig.sourceTool,
+          );
+        } catch {
+          return coverageSeedFailure();
+        }
+        // One-time summary rerank (staged only): score order for Stage 1 and
+        // the freeze, plus deterministic decisions in hybrid/rerank mode. Never
+        // throws; any reranker problem falls back to full LLM triage.
+        if (coverageConfig.mode === "staged") {
+          const rerankOutcome = await applySummaryTriageRerank({
+            ledger: seededLedger,
+            config: coverageConfig.summaryTriage,
+            reranker: runtime.reranker,
+            userText: latestHumanText(coverageRequestMessages(baseMessages)),
+            resolveTemplate: (template) =>
+              resolveTurnContext(
+                template,
+                state.context,
+                buildClassificationNamespaces(state.turns),
+              ) ?? "",
+            ...(runtime.signal !== undefined ? { signal: runtime.signal } : {}),
+          });
+          seededLedger = rerankOutcome.ledger;
+          if (rerankOutcome.configDiagnostic !== undefined) {
+            runtime.onNodeDiagnostic?.(node.id, rerankOutcome.configDiagnostic);
+          }
+          if (rerankOutcome.diagnostic !== undefined) {
+            runtime.onNodeDiagnostic?.(node.id, rerankOutcome.diagnostic);
+          }
+          if (rerankOutcome.status !== undefined) {
+            emitHarnessStatus(rerankOutcome.status);
+          }
+        }
+        try {
+          coverageLedger = seededLedger;
+          progress.coverage = coverageLedger;
+          currentCoverageAssignment = issueCoverageAssignment();
+        } catch {
+          return coverageSeedFailure();
         }
         if (currentCoverageAssignment === undefined) {
           return stop(

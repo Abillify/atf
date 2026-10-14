@@ -170,6 +170,7 @@ export function loadConfig(): AppConfig {
     rerankFallbackModel: env.RERANK_FALLBACK_MODEL,
     rerankFallbackProvider: env.RERANK_FALLBACK_PROVIDER,
     rerankFallbackRegion: env.RERANK_FALLBACK_REGION,
+    rerankBatchSize: env.RERANK_BATCH_SIZE,
     defaultLlm: env.DEFAULT_LLM,
     corsOrigins: env.CORS_ORIGINS,
     monitoringAuthRequired: env.MONITORING_AUTH,

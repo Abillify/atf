@@ -46,6 +46,32 @@ releases:
   `source-map-js` 1.2.2 (CVE-2026-93749). Third-party notices and the SBOM are
   regenerated.
 
+### Added
+
+- Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the
+  staged queue. In `mode: hybrid`, a cross-encoder scores every open summary
+  once after the seed (query = latest user message plus optional templates,
+  score = maximum over the queries). By rank, the top `acceptTopK` share
+  (default 7 %) is accepted, and ranks beyond `excludeBelowRank` (default 35 %)
+  with a score below `excludeMaxScore` (default 0.01) are excluded. Only the
+  gray zone goes to LLM triage. Each decision carries a reason
+  (`Rerank-Rang r/N, Score s …`) and `triageSource: rerank`. Short summaries
+  are never excluded, and global discovery can still reopen every exclusion.
+  Fail-closed: when the reranker is missing, fails, times out or returns an
+  incomplete score set, all summaries go to LLM triage in ledger order (trace
+  diagnostic `summary_triage_rerank_fallback` with `reason`). The default is
+  `mode: llm`; `mode: rerank` exists but is not enabled by default. Trace
+  diagnostic `summary_triage_rerank_scored` reports accepted/excluded/gray and
+  the reranker latency.
+- Runtime, coverage harness: with a configured reranker (`RERANK_*`), Stage-1
+  triage batches follow the summary rerank score even in `mode: llm`. The
+  staged candidate freeze takes discovery-promoted documents first, then the
+  highest scores, so an overflow drops the least relevant candidates.
+  `summaryTriage.rerankOrder: false` turns this off. Without a reranker, the
+  ledger order is unchanged.
+- Runtime: `RERANK_BATCH_SIZE` (default 32) sets the maximum number of texts
+  per TEI `/rerank` request.
+
 ### Changed
 
 - Runtime, `config.refHandles`: on a node that shows the model short
@@ -72,6 +98,28 @@ releases:
 
 ### Fixed
 
+- Runtime, coverage harness: `triageSource: rerank` no longer survives when
+  global discovery (path B) reopens a rerank exclusion or when the staged
+  candidate freeze excludes a rerank-accepted document as budget overflow.
+  The verifier manifest therefore shows a rerank origin only for decisions
+  the reranker actually made. `rerankRank`/`rerankScore` stay as measurements.
+- Runtime, summary rerank: the pass deadline and the execution abort now
+  cancel the in-flight reranker requests (TEI batch requests, Bedrock
+  `send`) instead of only abandoning them. An aborted execution is reported
+  as fallback reason `aborted`; a deadline stays `timeout`.
+- Runtime, summary rerank: one pass uses exactly one reranker backend. With
+  TEI primary and Bedrock fallback, the backend that answers the first call
+  is pinned for the pass; if it fails later, the whole pass falls back to
+  LLM triage (`reranker_error`) instead of mixing uncalibrated TEI and
+  Bedrock scores. A TEI that is down from the start still lets Bedrock score
+  the whole pass.
+- Runtime, TEI reranker: one `rerank`/`rerankOrThrow` call now has an overall
+  deadline of 120 s across its sequential batches (before: up to 32 batches
+  of 30 s each). It also bounds lenient callers such as the `parallel` RAG
+  node.
+- Runtime, coverage harness: an invalid `coverageQueue.summaryTriage` block no
+  longer falls back to `mode: llm` silently; the trace diagnostic
+  `summary_triage_config_invalid` names the invalid fields.
 - Runtime, MCP: when the transport recovery of a shared session fails (e.g.
   the replacement handshake is reset), the caller gets the same
   `MCP server temporarily unavailable: … last connect attempt failed: …`
@@ -84,6 +132,14 @@ releases:
   concrete way out, `list_documents` with `path_prefix` set to the file (or
   folder) of the rejected reference, and the new field
   `suggested_path_prefixes` lists those prefixes.
+- Runtime, TEI reranker: the client sent up to 1000 texts in one `/rerank`
+  request. TEI rejects more than its `max_client_batch_size` (default 32) with
+  HTTP 422, and the client silently turned that into an empty result. Requests
+  are now split into batches of at most `RERANK_BATCH_SIZE`, and the results
+  are merged back to the input indices. Failures are logged with status and
+  batch index. The new strict `rerankOrThrow` lets callers that need to
+  detect an outage (the summary triage) see the error instead of an empty
+  ranking.
 - Runtime, MCP: a configured MCP server whose startup handshake or
   transport recovery failed no longer stays unusable until the periodic
   reconnect (10 min) or a restart. The next tool or discovery call connects on

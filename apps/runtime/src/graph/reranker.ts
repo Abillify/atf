@@ -29,6 +29,7 @@
 import {
   BedrockAgentRuntimeClient,
   RerankCommand,
+  type RerankCommandOutput,
 } from "@aws-sdk/client-bedrock-agent-runtime";
 import type { AppConfig } from "../config/index.js";
 import { getProviderInstance } from "../config/providers.js";
@@ -147,27 +148,128 @@ export interface RerankHit {
  * as `{ index, score }` (index points back into the input array). Returns at
  * most `topN` hits. Implementations must never throw for an empty input — they
  * return `[]` so callers can fall back to the un-reranked order.
+ *
+ * `rerank` is lenient: a failed call is logged and degrades to `[]`. Callers
+ * that must distinguish "no hits" from "reranker down" (e.g. the coverage
+ * summary triage, which may only make deterministic decisions on a complete
+ * score set) use the optional strict {@link Reranker.rerankOrThrow}.
  */
 export interface Reranker {
   rerank(
     query: string,
     documents: string[],
     topN: number,
+    options?: RerankCallOptions,
   ): Promise<RerankHit[]>;
+  /**
+   * Strict variant: same contract as {@link Reranker.rerank} for empty input,
+   * but throws a {@link RerankError} instead of degrading to `[]` when the
+   * backend fails or answers with an unusable payload. Optional so lightweight
+   * fakes stay valid.
+   */
+  rerankOrThrow?(
+    query: string,
+    documents: string[],
+    topN: number,
+    options?: RerankCallOptions,
+  ): Promise<RerankHit[]>;
+  /**
+   * Returns a session that pins ONE backend for a sequence of calls (e.g. all
+   * chunks of a coverage rerank pass), so scores from different, uncalibrated
+   * cross-encoders are never mixed. Optional: single-backend rerankers are
+   * already consistent and need no session.
+   */
+  pinBackend?(): Reranker;
+}
+
+/** Per-call options of a rerank request. */
+export interface RerankCallOptions {
+  /**
+   * Aborts the in-flight backend request(s) (pass deadline, execution abort).
+   * An aborted strict call throws {@link RerankError} with kind `aborted`.
+   */
+  signal?: AbortSignal;
+}
+
+/** Failure category of a strict rerank call. */
+export type RerankErrorKind =
+  | "http"
+  | "invalid_response"
+  | "timeout"
+  | "network"
+  | "too_many_documents"
+  /** The caller's {@link RerankCallOptions.signal} aborted the call. */
+  | "aborted";
+
+/** Raised by {@link Reranker.rerankOrThrow} when no complete result is available. */
+export class RerankError extends Error {
+  readonly kind: RerankErrorKind;
+  readonly status: number | undefined;
+  readonly batchIndex: number | undefined;
+  readonly detail: string | undefined;
+
+  constructor(
+    kind: RerankErrorKind,
+    message: string,
+    options: { status?: number; batchIndex?: number; detail?: string } = {},
+  ) {
+    super(message);
+    this.name = "RerankError";
+    this.kind = kind;
+    this.status = options.status;
+    this.batchIndex = options.batchIndex;
+    this.detail = options.detail;
+  }
 }
 
 /** Max passages sent to the Rerank API in one call (Cohere allows up to 1000). */
-const MAX_DOCUMENTS = 1000;
+export const RERANK_MAX_DOCUMENTS_PER_CALL = 1000;
+const MAX_DOCUMENTS = RERANK_MAX_DOCUMENTS_PER_CALL;
 /** Max characters per passage sent to the reranker (keeps the request lean). */
 const MAX_DOC_CHARS = 4096;
 const DEFAULT_TEI_TIMEOUT_MS = 30_000;
+/**
+ * Default overall deadline of ONE TEI `rerank`/`rerankOrThrow` call across all
+ * of its sequential batches. Without it, a slow backend could hold a call for
+ * up to 32 batches × 30 s (16 min), including lenient callers such as the
+ * `parallel` RAG node. 2 min is conservative: a live 838-summary coverage pass
+ * took 1.5–4.3 s.
+ */
+export const DEFAULT_TEI_TOTAL_TIMEOUT_MS = 120_000;
+/**
+ * Default texts per TEI `/rerank` request. TEI rejects requests above its
+ * `max_client_batch_size` (default 32) with HTTP 422, so larger inputs are
+ * split client-side.
+ */
+export const DEFAULT_TEI_BATCH_SIZE = 32;
+const MAX_ERROR_DETAIL_CHARS = 200;
 
 function clampScore(score: number): number {
   return Math.min(1, Math.max(0, score));
 }
 
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+/** Structured log fields for a failed rerank call. */
+function rerankErrorFields(err: unknown): Record<string, unknown> {
+  if (err instanceof RerankError) {
+    return {
+      error: err.message,
+      error_kind: err.kind,
+      ...(err.status !== undefined ? { status: err.status } : {}),
+      ...(err.batchIndex !== undefined ? { batch_index: err.batchIndex } : {}),
+      ...(err.detail !== undefined ? { detail: err.detail } : {}),
+    };
+  }
+  return { error: errorMessage(err) };
+}
+
 /** HTTP client for a Text Embeddings Inference `/rerank` endpoint. */
 export class TeiReranker implements Reranker {
+  readonly batchSize: number;
+
   constructor(
     private readonly url: string,
     private readonly model: string,
@@ -175,76 +277,238 @@ export class TeiReranker implements Reranker {
     private readonly timeoutMs = DEFAULT_TEI_TIMEOUT_MS,
     /** Outbound fetch: the process-wide Egress_Guard by default (SSRF-safe). */
     private readonly fetchFn: typeof fetch = egressFetch,
-  ) {}
+    /** Max texts per `/rerank` request (TEI `max_client_batch_size`). */
+    batchSize: number = DEFAULT_TEI_BATCH_SIZE,
+    /**
+     * Overall deadline per call across all batches (also bounds the lenient
+     * {@link rerank}); see {@link DEFAULT_TEI_TOTAL_TIMEOUT_MS}.
+     */
+    private readonly totalTimeoutMs: number = DEFAULT_TEI_TOTAL_TIMEOUT_MS,
+  ) {
+    this.batchSize =
+      Number.isInteger(batchSize) && batchSize > 0
+        ? batchSize
+        : DEFAULT_TEI_BATCH_SIZE;
+  }
 
+  /** Lenient rerank: logs the failure (status, batch) and returns `[]`. */
   async rerank(
     query: string,
     documents: string[],
     topN: number,
+    options?: RerankCallOptions,
+  ): Promise<RerankHit[]> {
+    try {
+      return await this.rerankOrThrow(query, documents, topN, options);
+    } catch (err) {
+      this.logger?.warn("TEI rerank call failed; trying configured fallback", {
+        ...rerankErrorFields(err),
+        batch_size: this.batchSize,
+        documents: Math.min(documents.length, MAX_DOCUMENTS),
+      });
+      return [];
+    }
+  }
+
+  /**
+   * Strict rerank: sends the documents in sequential batches of at most
+   * {@link batchSize}, maps each batch's local indices back to global input
+   * indices, and sorts globally. All-or-nothing — any failing batch throws a
+   * {@link RerankError}; partial results are never returned.
+   */
+  async rerankOrThrow(
+    query: string,
+    documents: string[],
+    topN: number,
+    options?: RerankCallOptions,
   ): Promise<RerankHit[]> {
     const docs = documents.slice(0, MAX_DOCUMENTS);
     if (query.trim() === "" || docs.length === 0 || topN <= 0) return [];
 
+    const external = options?.signal;
+    const total = new AbortController();
+    const totalTimer = setTimeout(() => total.abort(), this.totalTimeoutMs);
+    try {
+      const hits: RerankHit[] = [];
+      for (
+        let offset = 0, batchIndex = 0;
+        offset < docs.length;
+        offset += this.batchSize, batchIndex++
+      ) {
+        // Never start another batch once the call is aborted or out of time.
+        this.throwIfStopped(external, total.signal, batchIndex);
+        const batch = docs.slice(offset, offset + this.batchSize);
+        const batchHits = await this.rerankBatch(
+          query,
+          batch,
+          batchIndex,
+          external,
+          total.signal,
+        );
+        for (const hit of batchHits) {
+          hits.push({ index: hit.index + offset, score: hit.score });
+        }
+      }
+      return hits
+        .sort((a, b) => b.score - a.score || a.index - b.index)
+        .slice(0, topN);
+    } finally {
+      clearTimeout(totalTimer);
+    }
+  }
+
+  /** Throws the matching {@link RerankError} when the call must stop. */
+  private throwIfStopped(
+    external: AbortSignal | undefined,
+    total: AbortSignal,
+    batchIndex: number,
+  ): void {
+    if (external?.aborted === true) {
+      throw new RerankError(
+        "aborted",
+        `TEI rerank batch ${batchIndex} aborted by caller`,
+        { batchIndex },
+      );
+    }
+    if (total.aborted) {
+      throw new RerankError(
+        "timeout",
+        `TEI rerank batch ${batchIndex} exceeded total deadline of ${this.totalTimeoutMs} ms`,
+        { batchIndex },
+      );
+    }
+  }
+
+  /** Classifies a failed batch: caller abort → total deadline → batch timer. */
+  private stoppedError(
+    external: AbortSignal | undefined,
+    total: AbortSignal,
+    batch: AbortSignal,
+    batchIndex: number,
+  ): RerankError | undefined {
+    if (external?.aborted === true || total.aborted) {
+      try {
+        this.throwIfStopped(external, total, batchIndex);
+      } catch (err) {
+        return err as RerankError;
+      }
+    }
+    if (batch.aborted) {
+      return new RerankError(
+        "timeout",
+        `TEI rerank batch ${batchIndex} timed out after ${this.timeoutMs} ms`,
+        { batchIndex },
+      );
+    }
+    return undefined;
+  }
+
+  private async rerankBatch(
+    query: string,
+    batch: string[],
+    batchIndex: number,
+    external: AbortSignal | undefined,
+    total: AbortSignal,
+  ): Promise<RerankHit[]> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    // One signal for the request: batch timer, total deadline, caller abort.
+    const signal = AbortSignal.any(
+      external !== undefined
+        ? [controller.signal, total, external]
+        : [controller.signal, total],
+    );
+    let response: Response;
     try {
-      const response = await this.fetchFn(this.url, {
+      response = await this.fetchFn(this.url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           model: this.model,
           query: query.slice(0, MAX_DOC_CHARS),
-          texts: docs.map((text) => text.slice(0, MAX_DOC_CHARS)),
-          top_n: Math.min(topN, docs.length),
+          texts: batch.map((text) => text.slice(0, MAX_DOC_CHARS)),
+          top_n: batch.length,
         }),
-        signal: controller.signal,
+        signal,
       });
+    } catch (err) {
+      clearTimeout(timer);
+      throw (
+        this.stoppedError(external, total, controller.signal, batchIndex) ??
+        new RerankError(
+          "network",
+          `TEI rerank batch ${batchIndex} failed: ${errorMessage(err)}`,
+          { batchIndex },
+        )
+      );
+    }
+
+    try {
       if (!response.ok) {
-        this.logger?.warn(
-          "TEI rerank call failed; trying configured fallback",
+        let detail: string | undefined;
+        try {
+          detail = (await response.text()).slice(0, MAX_ERROR_DETAIL_CHARS);
+        } catch {
+          detail = undefined;
+        }
+        throw new RerankError(
+          "http",
+          `TEI rerank batch ${batchIndex} returned HTTP ${response.status}`,
           {
             status: response.status,
+            batchIndex,
+            ...(detail !== undefined && detail !== "" ? { detail } : {}),
           },
         );
-        return [];
       }
 
-      const payload: unknown = await response.json();
-      if (!Array.isArray(payload)) {
-        this.logger?.warn(
-          "TEI rerank returned an invalid response; trying configured fallback",
+      let payload: unknown;
+      try {
+        payload = await response.json();
+      } catch (err) {
+        throw (
+          this.stoppedError(external, total, controller.signal, batchIndex) ??
+          new RerankError(
+            "invalid_response",
+            `TEI rerank batch ${batchIndex} returned no valid JSON: ${errorMessage(err)}`,
+            { batchIndex },
+          )
         );
-        return [];
+      }
+      if (!Array.isArray(payload)) {
+        throw new RerankError(
+          "invalid_response",
+          `TEI rerank batch ${batchIndex} returned a non-array payload`,
+          { batchIndex },
+        );
       }
 
       const hits: RerankHit[] = [];
       const seen = new Set<number>();
       for (const row of payload) {
-        if (row === null || typeof row !== "object") return [];
-        const { index, score } = row as Record<string, unknown>;
+        const { index, score } =
+          row !== null && typeof row === "object"
+            ? (row as Record<string, unknown>)
+            : {};
         if (
           typeof index !== "number" ||
           !Number.isInteger(index) ||
           index < 0 ||
-          index >= docs.length ||
+          index >= batch.length ||
           typeof score !== "number" ||
           !Number.isFinite(score) ||
           seen.has(index)
         ) {
-          this.logger?.warn(
-            "TEI rerank returned invalid hits; trying configured fallback",
+          throw new RerankError(
+            "invalid_response",
+            `TEI rerank batch ${batchIndex} returned an invalid hit`,
+            { batchIndex },
           );
-          return [];
         }
         seen.add(index);
         hits.push({ index, score: clampScore(score) });
       }
-      return hits.sort((a, b) => b.score - a.score).slice(0, topN);
-    } catch (err) {
-      this.logger?.warn("TEI rerank call failed; trying configured fallback", {
-        error: err instanceof Error ? err.message : String(err),
-      });
-      return [];
+      return hits;
     } finally {
       clearTimeout(timer);
     }
@@ -263,14 +527,168 @@ export class FallbackReranker implements Reranker {
     query: string,
     documents: string[],
     topN: number,
+    options?: RerankCallOptions,
   ): Promise<RerankHit[]> {
-    const primaryHits = await this.primary.rerank(query, documents, topN);
+    const primaryHits = await this.primary.rerank(
+      query,
+      documents,
+      topN,
+      options,
+    );
     if (primaryHits.length > 0) return primaryHits;
+    if (options?.signal?.aborted === true) return [];
     this.logger?.warn(
       "Primary reranker returned no hits; using Bedrock fallback",
     );
-    return this.secondary.rerank(query, documents, topN);
+    return this.secondary.rerank(query, documents, topN, options);
   }
+
+  /**
+   * Strict: primary first; on a primary error (or an empty result for a
+   * non-empty input) the secondary, strict as well. Throws when both fail.
+   * A caller abort is rethrown and never triggers the secondary.
+   */
+  async rerankOrThrow(
+    query: string,
+    documents: string[],
+    topN: number,
+    options?: RerankCallOptions,
+  ): Promise<RerankHit[]> {
+    return (await this.strictWithFallback(query, documents, topN, options))
+      .hits;
+  }
+
+  /** Strict primary → secondary call that also reports who answered. */
+  private async strictWithFallback(
+    query: string,
+    documents: string[],
+    topN: number,
+    options: RerankCallOptions | undefined,
+  ): Promise<{ hits: RerankHit[]; backend: Reranker | undefined }> {
+    if (query.trim() === "" || documents.length === 0 || topN <= 0) {
+      return { hits: [], backend: undefined };
+    }
+    let primaryError: unknown;
+    try {
+      const hits = await strictRerank(
+        this.primary,
+        query,
+        documents,
+        topN,
+        options,
+      );
+      if (hits.length > 0) return { hits, backend: this.primary };
+    } catch (err) {
+      if (options?.signal?.aborted === true) throw abortedError(err);
+      primaryError = err;
+    }
+    this.logger?.warn("Primary reranker failed; using Bedrock fallback", {
+      ...(primaryError !== undefined
+        ? rerankErrorFields(primaryError)
+        : { error: "primary returned no hits" }),
+    });
+    const hits = await strictRerank(
+      this.secondary,
+      query,
+      documents,
+      topN,
+      options,
+    );
+    return { hits, backend: this.secondary };
+  }
+
+  /**
+   * Pins ONE backend for a sequence of strict calls (a coverage rerank pass).
+   * The first non-empty call goes primary → secondary as usual; whichever
+   * backend answered is fixed and every later call of the session goes ONLY
+   * to it. A failure of the pinned backend is thrown, never retried on the
+   * other one: TEI and Bedrock scores are not calibrated against each other,
+   * so a pass must never mix them. When the primary is already down at the
+   * start, the secondary scores the whole pass consistently.
+   */
+  pinBackend(): Reranker {
+    let pinned: Reranker | undefined;
+    const strict = async (
+      query: string,
+      documents: string[],
+      topN: number,
+      options?: RerankCallOptions,
+    ): Promise<RerankHit[]> => {
+      if (pinned !== undefined) {
+        return strictRerank(pinned, query, documents, topN, options);
+      }
+      const { hits, backend } = await this.strictWithFallback(
+        query,
+        documents,
+        topN,
+        options,
+      );
+      if (backend !== undefined) {
+        pinned = backend;
+        if (backend === this.secondary) {
+          this.logger?.warn(
+            "Rerank session pinned to the Bedrock fallback; primary unavailable",
+          );
+        }
+      }
+      return hits;
+    };
+    return {
+      rerankOrThrow: strict,
+      rerank: async (query, documents, topN, options) => {
+        try {
+          return await strict(query, documents, topN, options);
+        } catch (err) {
+          this.logger?.warn("Pinned rerank session call failed", {
+            ...rerankErrorFields(err),
+          });
+          return [];
+        }
+      },
+    };
+  }
+}
+
+function isAborted(signal: AbortSignal | undefined): boolean {
+  return signal?.aborted === true;
+}
+
+/** Normalises a failure caused by a caller abort to kind `aborted`. */
+function abortedError(err: unknown): RerankError {
+  if (err instanceof RerankError && err.kind === "aborted") return err;
+  return new RerankError("aborted", `Rerank aborted: ${errorMessage(err)}`);
+}
+
+/**
+ * Calls {@link Reranker.rerankOrThrow} when available. For a lenient-only
+ * reranker, an empty result for a non-empty input is treated as a failure.
+ */
+export async function strictRerank(
+  reranker: Reranker,
+  query: string,
+  documents: string[],
+  topN: number,
+  options?: RerankCallOptions,
+): Promise<RerankHit[]> {
+  if (reranker.rerankOrThrow !== undefined) {
+    return reranker.rerankOrThrow(query, documents, topN, options);
+  }
+  const hits = await reranker.rerank(query, documents, topN, options);
+  if (options?.signal?.aborted === true) {
+    throw new RerankError("aborted", "Rerank aborted by caller");
+  }
+  if (
+    hits.length === 0 &&
+    query.trim() !== "" &&
+    documents.length > 0 &&
+    topN > 0
+  ) {
+    throw new RerankError(
+      "invalid_response",
+      "Reranker returned no hits for a non-empty input",
+    );
+  }
+  return hits;
 }
 
 /**
@@ -288,48 +706,75 @@ export class BedrockReranker implements Reranker {
     query: string,
     documents: string[],
     topN: number,
+    options?: RerankCallOptions,
   ): Promise<RerankHit[]> {
-    const docs = documents.slice(0, MAX_DOCUMENTS);
-    if (query.trim() === "" || docs.length === 0 || topN <= 0) return [];
-    const numberOfResults = Math.min(topN, docs.length);
     try {
-      const command = new RerankCommand({
-        queries: [
-          { type: "TEXT", textQuery: { text: query.slice(0, MAX_DOC_CHARS) } },
-        ],
-        sources: docs.map((text) => ({
-          type: "INLINE" as const,
-          inlineDocumentSource: {
-            type: "TEXT" as const,
-            textDocument: { text: text.slice(0, MAX_DOC_CHARS) },
-          },
-        })),
-        rerankingConfiguration: {
-          type: "BEDROCK_RERANKING_MODEL" as const,
-          bedrockRerankingConfiguration: {
-            numberOfResults,
-            modelConfiguration: { modelArn: this.modelArn },
-          },
-        },
-      });
-      // The cast narrows the structural client type accepted for testability.
-      const res = await (this.client as BedrockAgentRuntimeClient).send(
-        command,
-      );
-      const results = res.results ?? [];
-      const hits: RerankHit[] = [];
-      for (const r of results) {
-        if (typeof r.index === "number") {
-          hits.push({ index: r.index, score: r.relevanceScore ?? 0 });
-        }
-      }
-      return hits;
+      return await this.rerankOrThrow(query, documents, topN, options);
     } catch (err) {
       this.logger?.warn("Rerank call failed; falling back to retrieval order", {
-        error: err instanceof Error ? err.message : String(err),
+        ...rerankErrorFields(err),
       });
       return [];
     }
+  }
+
+  async rerankOrThrow(
+    query: string,
+    documents: string[],
+    topN: number,
+    options?: RerankCallOptions,
+  ): Promise<RerankHit[]> {
+    const signal = options?.signal;
+    if (signal?.aborted === true) {
+      throw new RerankError("aborted", "Bedrock rerank aborted by caller");
+    }
+    const docs = documents.slice(0, MAX_DOCUMENTS);
+    if (query.trim() === "" || docs.length === 0 || topN <= 0) return [];
+    const numberOfResults = Math.min(topN, docs.length);
+    const command = new RerankCommand({
+      queries: [
+        { type: "TEXT", textQuery: { text: query.slice(0, MAX_DOC_CHARS) } },
+      ],
+      sources: docs.map((text) => ({
+        type: "INLINE" as const,
+        inlineDocumentSource: {
+          type: "TEXT" as const,
+          textDocument: { text: text.slice(0, MAX_DOC_CHARS) },
+        },
+      })),
+      rerankingConfiguration: {
+        type: "BEDROCK_RERANKING_MODEL" as const,
+        bedrockRerankingConfiguration: {
+          numberOfResults,
+          modelConfiguration: { modelArn: this.modelArn },
+        },
+      },
+    });
+    let res: RerankCommandOutput;
+    try {
+      // The cast narrows the structural client type accepted for testability.
+      res = await (this.client as BedrockAgentRuntimeClient).send(
+        command,
+        signal !== undefined ? { abortSignal: signal } : {},
+      );
+    } catch (err) {
+      // Re-read the signal: it may have aborted while the request was pending.
+      if (isAborted(signal)) {
+        throw new RerankError(
+          "aborted",
+          `Bedrock rerank aborted: ${errorMessage(err)}`,
+        );
+      }
+      throw new RerankError("network", `Bedrock rerank failed: ${errorMessage(err)}`);
+    }
+    const results = res.results ?? [];
+    const hits: RerankHit[] = [];
+    for (const r of results) {
+      if (typeof r.index === "number") {
+        hits.push({ index: r.index, score: r.relevanceScore ?? 0 });
+      }
+    }
+    return hits;
   }
 }
 
@@ -418,7 +863,15 @@ export function createReranker(
     return undefined;
   }
 
-  const primary = new TeiReranker(rerankUrl, model, logger);
+  const primary = new TeiReranker(
+    rerankUrl,
+    model,
+    logger,
+    DEFAULT_TEI_TIMEOUT_MS,
+    egressFetch,
+    appConfig.rerankBatchSize ?? DEFAULT_TEI_BATCH_SIZE,
+    DEFAULT_TEI_TOTAL_TIMEOUT_MS,
+  );
   const fallbackModel = appConfig.rerankFallbackModel?.trim();
   if (fallbackModel === undefined || fallbackModel === "") return primary;
 

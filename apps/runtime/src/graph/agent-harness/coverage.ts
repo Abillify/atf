@@ -52,6 +52,59 @@ export interface CoverageSearchDiscoveryConfig {
 
 export type CoverageQueueMode = "legacy" | "staged";
 
+/**
+ * Summary-triage strategy (staged mode only).
+ * - `llm`: every summary goes through LLM triage (historic behavior). With a
+ *   configured reranker, batches and the candidate freeze are score-ordered.
+ * - `hybrid`: a cross-encoder scores every open summary first; the top ranks
+ *   are accepted and the clearly irrelevant tail is excluded deterministically,
+ *   only the gray zone goes to LLM triage.
+ * - `rerank`: accept the top ranks, exclude the rest (except short/empty
+ *   summaries, which stay with the LLM).
+ * Any reranker failure falls back to full LLM triage (fail-closed).
+ */
+export type CoverageSummaryTriageMode = "llm" | "hybrid" | "rerank";
+
+export interface CoverageSummaryTriageConfig {
+	mode: CoverageSummaryTriageMode;
+	/** Score-order Stage-1 batches and the freeze when a reranker is configured. */
+	rerankOrder: boolean;
+	/** Share (0..1) of scored documents accepted deterministically. */
+	acceptTopK: number;
+	/** Share (0..1) above which low-score documents may be excluded. */
+	excludeBelowRank: number;
+	/** Exclusion additionally requires a score below this value. */
+	excludeMaxScore: number;
+	/** `"user"` (latest human message) or templates; one rerank query each. */
+	queries: string[];
+	/**
+	 * Runtime-only (not a flow schema field): set by the runtime parser when the
+	 * configured block was invalid and replaced by mode llm with default
+	 * thresholds; lists the offending fields for the
+	 * `summary_triage_config_invalid` diagnostic.
+	 */
+	configError?: string;
+}
+
+export const DEFAULT_SUMMARY_TRIAGE_ACCEPT_TOP_K = 0.07;
+export const DEFAULT_SUMMARY_TRIAGE_EXCLUDE_BELOW_RANK = 0.35;
+export const DEFAULT_SUMMARY_TRIAGE_EXCLUDE_MAX_SCORE = 0.01;
+export const DEFAULT_SUMMARY_TRIAGE_QUERIES: readonly string[] = ["user"];
+export const MAX_SUMMARY_TRIAGE_QUERIES = 6;
+
+/** Ledger record of the one-time summary rerank pass. */
+export interface CoverageSummaryRerank {
+	mode: CoverageSummaryTriageMode;
+	status: "scored" | "fallback";
+	reason?: string;
+	documentCount: number;
+	queryCount: number;
+	accepted: number;
+	excluded: number;
+	gray: number;
+	latencyMs: number;
+}
+
 /** Optional worker-node overrides for deterministic coverage assignments. */
 export type CoverageTargets = Partial<Record<CoverageAssignmentMode, string>>;
 
@@ -82,6 +135,8 @@ export interface CoverageQueueConfig {
 	 * Defaults to false (marker contract) for backward compatibility.
 	 */
 	structuredReport?: boolean;
+	/** Optional reranker-backed summary triage (staged only; default llm). */
+	summaryTriage?: CoverageSummaryTriageConfig;
 }
 
 export type CoverageDocumentStatus =
@@ -123,6 +178,12 @@ export interface CoverageDocument {
 	discoveredSeeds?: CoverageDiscoveredSeed[];
 	/** Set when a targeted search hit put this document into original review. */
 	promotedBySearch?: boolean;
+	/** Summary cross-encoder score (max over rerank queries). */
+	rerankScore?: number;
+	/** 1-based rank by {@link rerankScore} among all scored documents. */
+	rerankRank?: number;
+	/** Set while the current triage decision was made deterministically by the reranker. */
+	triageSource?: "rerank";
 }
 
 export type CoverageLedgerPhase =
@@ -160,6 +221,27 @@ export interface CoverageLedger {
 	usedExpansionSeeds: string[];
 	activeExpansionSeeds: string[];
 	overflowRefs: string[];
+	/** Outcome of the summary rerank pass; absent when none ran. */
+	summaryRerank?: CoverageSummaryRerank;
+}
+
+/**
+ * Stable order by summary rerank rank (ascending); unranked documents keep
+ * their relative ledger order after all ranked ones. Without any rank the
+ * input order is returned unchanged.
+ */
+function byRerankRank<T extends CoverageDocument>(documents: readonly T[]): T[] {
+	if (!documents.some((document) => document.rerankRank !== undefined)) {
+		return [...documents];
+	}
+	return documents
+		.map((document, index) => ({ document, index }))
+		.sort((a, b) => {
+			const ra = a.document.rerankRank ?? Number.POSITIVE_INFINITY;
+			const rb = b.document.rerankRank ?? Number.POSITIVE_INFINITY;
+			return ra === rb ? a.index - b.index : ra - rb;
+		})
+		.map(({ document }) => document);
 }
 
 export type CoverageAssignmentMode = "summary" | "original" | "discovery";
@@ -523,9 +605,11 @@ export function nextCoverageAssignment(
 
 	if (config.mode === "staged") {
 		// Stage 1: complete the recall-oriented summary scan before any search.
-		const openCandidates = ledger.documents
-			.filter((document) => document.status === "open")
-			.slice(0, config.batchSize);
+		// With summary rerank scores, the most promising summaries are triaged
+		// first; without them this is exactly the ledger order.
+		const openCandidates = byRerankRank(
+			ledger.documents.filter((document) => document.status === "open"),
+		).slice(0, config.batchSize);
 		if (openCandidates.length > 0) {
 			const documents = fitAssignmentBudget(
 				openCandidates,
@@ -684,6 +768,33 @@ export function markCoverageDiscoveryCompleted(
 }
 
 /**
+ * Freeze order when summary rerank scores exist: discovery-promoted documents
+ * first (path B proves relevance from the original text), then by summary
+ * rerank score descending, unscored last; ties keep ledger order. Overflow
+ * therefore hits the least relevant candidates. Without any score the ledger
+ * order is returned unchanged.
+ */
+function freezeOrder(documents: readonly CoverageDocument[]): CoverageDocument[] {
+	if (!documents.some((document) => document.rerankScore !== undefined)) {
+		return [...documents];
+	}
+	return documents
+		.map((document, index) => ({ document, index }))
+		.sort((a, b) => {
+			const pa = a.document.promotedBySearch === true ? 0 : 1;
+			const pb = b.document.promotedBySearch === true ? 0 : 1;
+			if (pa !== pb) return pa - pb;
+			const sa = a.document.rerankScore;
+			const sb = b.document.rerankScore;
+			if (sa !== undefined && sb !== undefined && sa !== sb) return sb - sa;
+			if (sa === undefined && sb !== undefined) return 1;
+			if (sa !== undefined && sb === undefined) return -1;
+			return a.index - b.index;
+		})
+		.map(({ document }) => document);
+}
+
+/**
  * Freezes one staged candidate generation after successful discovery. The
  * global budget includes candidates from every generation. Overflow remains a
  * deterministic completeness gap and is never silently treated as reviewed.
@@ -700,7 +811,9 @@ export function freezeCoverageCandidates(
 	);
 	const budget = maxCandidates ?? Number.POSITIVE_INFINITY;
 	const remaining = Math.max(0, budget - ledger.candidateRefs.length);
-	const novel = eligible.filter((document) => !already.has(document.ref));
+	const novel = freezeOrder(
+		eligible.filter((document) => !already.has(document.ref)),
+	);
 	const accepted = novel.slice(0, remaining).map((document) => document.ref);
 	const overflowRefs = novel.slice(remaining).map((document) => document.ref);
 	const acceptedSet = new Set(accepted);
@@ -709,8 +822,11 @@ export function freezeCoverageCandidates(
 	const documents = ledger.documents.map((document) => {
 		if (acceptedSet.has(document.ref)) return document;
 		if (!overflowSet.has(document.ref)) return document;
+		// The exclusion comes from the candidate budget, not from the reranker:
+		// drop a prior `triageSource` so the manifest shows no rerank origin.
+		const { triageSource: _overflowTriageSource, ...rest } = document;
 		return {
-			...document,
+			...rest,
 			status: "excluded" as const,
 			reason: "Staged candidate budget overflow; original review not assigned",
 		};
@@ -819,8 +935,15 @@ export function promoteCoverageSearchHits(
 			),
 		);
 		if (document.status !== "summary-reviewed") promotedRefs.push(document.ref);
+		// Reopening an excluded document overrides its (possibly deterministic
+		// rerank) exclusion: the admission now comes from discovery, so the
+		// stale `triageSource` must not survive into the verifier manifest. An
+		// already admitted document keeps its admission provenance.
+		const { triageSource: _reopenedTriageSource, ...reopened } = document;
+		const base: CoverageDocument =
+			document.status === "excluded" ? reopened : document;
 		return {
-			...document,
+			...base,
 			status: "summary-reviewed" as const,
 			reason:
 				document.status === "excluded"
@@ -1786,8 +1909,12 @@ export function applyCoverageReport(
 						})),
 					]
 				: [];
+		// An LLM summary decision supersedes a deterministic rerank decision.
+		const { triageSource: _previousTriageSource, ...rest } = document;
+		const base: CoverageDocument =
+			assignment.mode === "summary" ? rest : document;
 		return {
-			...document,
+			...base,
 			status,
 			reason: item.reason,
 			...(triageDecision !== undefined ? { triageDecision } : {}),
@@ -1877,8 +2004,11 @@ export function reopenCoverageFromCritique(
 		// A verifier may reject the synthesis, but it cannot force duplicate reads.
 		if (isDocumentFullyCovered(document)) return document;
 		reopenedRefs.push(document.ref);
+		// A reopened document goes back to LLM triage; a prior deterministic
+		// rerank decision no longer applies (scoring runs only once after seed).
+		const { triageSource: _revokedTriageSource, ...rest } = document;
 		return {
-			...document,
+			...rest,
 			status:
 				document.windows.length > 0
 					? ("summary-reviewed" as const)
@@ -1973,8 +2103,18 @@ export function coverageSummary(ledger: CoverageLedger): string {
 		`(total ${ledger.total}); successful discovery rounds: ${ledger.discoveryRounds}; ` +
 		`distinct discovery queries: ${ledger.discoverySearches.length}; ` +
 		`current discovery attempts: ${ledger.discoveryAttempts}; ` +
-		`documents promoted by targeted search: ${promoted}`
+		`documents promoted by targeted search: ${promoted}` +
+		summaryRerankSuffix(ledger)
 	);
+}
+
+/** Appended only for deterministic modes, so llm-mode summaries stay unchanged. */
+function summaryRerankSuffix(ledger: CoverageLedger): string {
+	const rerank = ledger.summaryRerank;
+	if (rerank === undefined || rerank.mode === "llm") return "";
+	return rerank.status === "scored"
+		? `; summary rerank: ${rerank.accepted} accepted, ${rerank.excluded} excluded`
+		: `; summary rerank: fallback (${rerank.reason ?? "unknown"}), all summaries via LLM triage`;
 }
 
 export interface CoverageCompletionStatusOptions {
@@ -2189,6 +2329,13 @@ export function coverageVerificationManifest(
 			ref: document.ref,
 			status: document.status,
 			triageDecision: document.triageDecision ?? null,
+			// Omitted when absent so manifests without summary rerank stay unchanged.
+			...(document.triageSource !== undefined
+				? { triageSource: document.triageSource }
+				: {}),
+			...(document.rerankRank !== undefined
+				? { rerankRank: document.rerankRank }
+				: {}),
 			candidateReasonCount: document.candidateReasons?.length ?? 0,
 			candidateReasons: (document.candidateReasons ?? [])
 				.slice(0, MAX_VERIFICATION_CANDIDATE_REASONS)
@@ -2217,6 +2364,9 @@ export function coverageVerificationManifest(
 		ref: document.ref,
 		status: document.status,
 		triageDecision: document.triageDecision,
+		...(document.triageSource !== undefined
+			? { triageSource: document.triageSource }
+			: {}),
 		basis: document.basis,
 		fullyCovered: document.fullyCovered,
 		reason: document.reason,

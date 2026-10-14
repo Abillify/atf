@@ -229,6 +229,8 @@ export interface AppConfig {
   rerankFallbackModel?: string;
   rerankFallbackProvider?: string;
   rerankFallbackRegion?: string;
+  /** Max texts per TEI `/rerank` request (`RERANK_BATCH_SIZE`, default 32). */
+  rerankBatchSize?: number;
   corsOrigins: string[];
   monitoringAuthRequired: boolean;
   debugCaptureRequestTokens?: boolean;
@@ -895,6 +897,11 @@ export const EnvSchema = z.object({
   RERANK_FALLBACK_MODEL: z.string().optional(),
   RERANK_FALLBACK_PROVIDER: z.string().min(1).max(64).optional(),
   RERANK_FALLBACK_REGION: z.string().optional(),
+  /**
+   * Max texts per TEI /rerank request (TEI max_client_batch_size). Larger
+   * inputs are split client-side into sequential batches. Default 32.
+   */
+  RERANK_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).optional(),
   CORS_ORIGINS: z
     .string()
     .optional()

@@ -12,10 +12,16 @@
  */
 
 import type { FlowNode, LlmConfig } from "../../types/flow.js";
-import type {
-  CoverageAssignmentMode,
-  CoverageLedger,
-  CoverageQueueConfig,
+import {
+  type CoverageAssignmentMode,
+  type CoverageLedger,
+  type CoverageQueueConfig,
+  type CoverageSummaryTriageConfig,
+  DEFAULT_SUMMARY_TRIAGE_ACCEPT_TOP_K,
+  DEFAULT_SUMMARY_TRIAGE_EXCLUDE_BELOW_RANK,
+  DEFAULT_SUMMARY_TRIAGE_EXCLUDE_MAX_SCORE,
+  DEFAULT_SUMMARY_TRIAGE_QUERIES,
+  MAX_SUMMARY_TRIAGE_QUERIES,
 } from "./coverage.js";
 
 // ---------------------------------------------------------------------------
@@ -810,6 +816,99 @@ export function renderTaskList(tasks: Task[]): string {
 // ---------------------------------------------------------------------------
 
 /**
+ * Parses `coverageQueue.summaryTriage`. Defense in depth next to the zod
+ * schema: any invalid mode or threshold degrades to `mode: "llm"` with default
+ * thresholds — never to a deterministic exclusion.
+ */
+export function parseSummaryTriageConfig(
+  raw: Record<string, unknown>,
+): CoverageSummaryTriageConfig {
+  const share = (value: unknown, fallback: number): number | undefined =>
+    value === undefined
+      ? fallback
+      : typeof value === "number" &&
+          Number.isFinite(value) &&
+          value > 0 &&
+          value < 1
+        ? value
+        : undefined;
+  const queries = Array.isArray(raw.queries)
+    ? raw.queries
+        .filter(
+          (entry): entry is string =>
+            typeof entry === "string" && entry.trim() !== "",
+        )
+        .slice(0, MAX_SUMMARY_TRIAGE_QUERIES)
+    : [];
+  const rerankOrder = raw.rerankOrder !== false;
+  const acceptTopK = share(raw.acceptTopK, DEFAULT_SUMMARY_TRIAGE_ACCEPT_TOP_K);
+  const excludeBelowRank = share(
+    raw.excludeBelowRank,
+    DEFAULT_SUMMARY_TRIAGE_EXCLUDE_BELOW_RANK,
+  );
+  const excludeMaxScore =
+    raw.excludeMaxScore === undefined
+      ? DEFAULT_SUMMARY_TRIAGE_EXCLUDE_MAX_SCORE
+      : typeof raw.excludeMaxScore === "number" &&
+          Number.isFinite(raw.excludeMaxScore) &&
+          raw.excludeMaxScore >= 0 &&
+          raw.excludeMaxScore <= 1
+        ? raw.excludeMaxScore
+        : undefined;
+  const mode =
+    raw.mode === undefined
+      ? "llm"
+      : raw.mode === "llm" || raw.mode === "hybrid" || raw.mode === "rerank"
+        ? raw.mode
+        : undefined;
+  const effectiveQueries =
+    queries.length > 0 ? queries : [...DEFAULT_SUMMARY_TRIAGE_QUERIES];
+  const problems: string[] = [];
+  if (mode === undefined) problems.push(`invalid mode '${String(raw.mode)}'`);
+  if (acceptTopK === undefined) {
+    problems.push(`invalid acceptTopK '${String(raw.acceptTopK)}'`);
+  }
+  if (excludeBelowRank === undefined) {
+    problems.push(`invalid excludeBelowRank '${String(raw.excludeBelowRank)}'`);
+  }
+  if (excludeMaxScore === undefined) {
+    problems.push(`invalid excludeMaxScore '${String(raw.excludeMaxScore)}'`);
+  }
+  if (
+    acceptTopK !== undefined &&
+    excludeBelowRank !== undefined &&
+    acceptTopK >= excludeBelowRank
+  ) {
+    problems.push("acceptTopK >= excludeBelowRank");
+  }
+  if (
+    mode === undefined ||
+    acceptTopK === undefined ||
+    excludeBelowRank === undefined ||
+    excludeMaxScore === undefined ||
+    problems.length > 0
+  ) {
+    return {
+      mode: "llm",
+      rerankOrder,
+      acceptTopK: DEFAULT_SUMMARY_TRIAGE_ACCEPT_TOP_K,
+      excludeBelowRank: DEFAULT_SUMMARY_TRIAGE_EXCLUDE_BELOW_RANK,
+      excludeMaxScore: DEFAULT_SUMMARY_TRIAGE_EXCLUDE_MAX_SCORE,
+      queries: effectiveQueries,
+      configError: problems.join("; "),
+    };
+  }
+  return {
+    mode,
+    rerankOrder,
+    acceptTopK,
+    excludeBelowRank,
+    excludeMaxScore,
+    queries: effectiveQueries,
+  };
+}
+
+/**
  * Reads a validated `node.config` record into a typed {@link HarnessConfig}.
  *
  * This function assumes the record has already passed the Zod
@@ -1157,6 +1256,13 @@ export function parseHarnessConfig(
           : {}),
         markers: { start, end },
         ...(raw.structuredReport === true ? { structuredReport: true } : {}),
+        ...(raw.summaryTriage !== null && typeof raw.summaryTriage === "object"
+          ? {
+              summaryTriage: parseSummaryTriageConfig(
+                raw.summaryTriage as Record<string, unknown>,
+              ),
+            }
+          : {}),
       };
     }
   }

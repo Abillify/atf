@@ -438,6 +438,23 @@ export const HarnessConfigSchema = z
 						maxCandidates: z.number().int().min(1).max(10000).optional(),
 					})
 					.optional(),
+				// Reranker-backed summary triage (staged only). Shares are fractions of
+				// the scored collection; an unresolved `{{vars.*}}` mode fails here.
+				summaryTriage: z
+					.object({
+						mode: z.enum(["llm", "hybrid", "rerank"]).optional(),
+						rerankOrder: z.boolean().optional(),
+						acceptTopK: z.number().gt(0).lt(1).optional(),
+						excludeBelowRank: z.number().gt(0).lt(1).optional(),
+						excludeMaxScore: z.number().min(0).max(1).optional(),
+						queries: z.array(z.string().min(1).max(2000)).min(1).max(6).optional(),
+					})
+					.refine(
+						(triage) =>
+							(triage.acceptTopK ?? 0.07) < (triage.excludeBelowRank ?? 0.35),
+						{ message: "summaryTriage.acceptTopK must be below excludeBelowRank" },
+					)
+					.optional(),
 				markers: z
 					.object({
 						start: z.string().min(1).max(128),
