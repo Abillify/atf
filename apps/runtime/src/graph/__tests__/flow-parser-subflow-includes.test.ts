@@ -10,11 +10,12 @@
  * flattening everything into the parent file — see `src/routes/flows-shared.ts`.
  */
 
-import { describe, test, expect, afterEach } from "bun:test";
+import { describe, test, expect, afterEach, spyOn } from "bun:test";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { createFlowParserService } from "../flow-parser.js";
+import { resolveFlowSourceIncludes } from "../flow-parser/normalize.js";
 
 let tmpDir: string | undefined;
 
@@ -123,5 +124,45 @@ describe("$include.subflows origin tracking", () => {
       | Record<string, string>
       | undefined;
     expect(origins?.router).toBeUndefined();
+  });
+
+  test("a duplicate sub-flow node id is reported once per load (runtime merge only)", async () => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "flowparser-subflow-"));
+    fs.mkdirSync(path.join(tmpDir, "subflows"));
+    fs.writeFileSync(
+      path.join(tmpDir, "subflows", "dup.yaml"),
+      JSON.stringify({ nodes: [{ id: "router", type: "tool" }], edges: [] }),
+    );
+    const parent = {
+      id: "parent3",
+      name: "Parent3",
+      metadata: { $include: { subflows: ["subflows/dup.yaml"] } },
+      nodes: [{ id: "router", type: "router" }],
+      edges: [],
+    };
+    fs.writeFileSync(path.join(tmpDir, "parent3.json"), JSON.stringify(parent));
+    const writes: string[] = [];
+    const spy = spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write);
+    try {
+      const service = createFlowParserService(tmpDir);
+      await service.start();
+      const flow = service.getRegistry().get("parent3");
+      await service.stop();
+      expect(flow?.nodes).toHaveLength(1);
+      const loadWarnings = writes.filter((w) => w.includes("already exists in parent flow"));
+      expect(loadWarnings).toHaveLength(1);
+
+      // The source merge alone stays silent but still skips the node.
+      writes.length = 0;
+      const source = structuredClone(parent) as Record<string, unknown>;
+      resolveFlowSourceIncludes(source, tmpDir, "parent3.json");
+      expect(writes.filter((w) => w.includes("already exists in parent flow"))).toHaveLength(0);
+      expect((source.nodes as unknown[]).length).toBe(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

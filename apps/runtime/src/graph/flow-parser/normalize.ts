@@ -138,6 +138,7 @@ function loadSubflowRaw(
   maxDepth: number,
   visited: Set<string>,
   resolvePrompts = true,
+  warnDuplicates = true,
 ): { nodes: unknown[]; edges: unknown[] } {
   const empty = { nodes: [], edges: [] };
   if (depth > maxDepth) {
@@ -190,6 +191,8 @@ function loadSubflowRaw(
     visited,
     undefined,
     resolvePrompts,
+    undefined,
+    warnDuplicates,
   );
 
   const nodes = Array.isArray(raw.nodes) ? raw.nodes : [];
@@ -223,6 +226,12 @@ function resolveSubflowIncludes(
   origins?: Record<string, string>,
   resolvePrompts = true,
   edgeOrigins?: Record<string, string>,
+  /**
+   * Emit the duplicate-node-ID warning. The loader merges every flow twice
+   * (editable source form + runtime form); only the runtime merge warns, so
+   * each duplicate is reported once. Skipping the node is unaffected.
+   */
+  warnDuplicates = true,
 ): void {
   const metadata = raw.metadata;
   if (typeof metadata !== "object" || metadata === null) return;
@@ -268,6 +277,7 @@ function resolveSubflowIncludes(
       maxDepth,
       visited,
       resolvePrompts,
+      warnDuplicates,
     );
 
     for (const node of subNodes) {
@@ -276,7 +286,7 @@ function resolveSubflowIncludes(
       const id = n.id;
       if (typeof id !== "string") continue;
       if (existingNodeIds.has(id)) {
-        process.stderr.write(
+        if (warnDuplicates) process.stderr.write(
           `${JSON.stringify({
             level: "warn",
             component: "flow-parser",
@@ -573,6 +583,8 @@ function mergeSubflows(
     origins,
     resolvePrompts,
     edgeOrigins,
+    // Only the runtime merge warns about duplicate node IDs (see above).
+    resolvePrompts,
   );
   if (
     Object.keys(origins).length > 0 ||

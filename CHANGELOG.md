@@ -138,6 +138,9 @@ releases:
   concrete way out, `list_documents` with `path_prefix` set to the file (or
   folder) of the rejected reference, and the new field
   `suggested_path_prefixes` lists those prefixes.
+- Runtime, flow loader: a duplicate node ID in an included sub-flow is
+  reported once per load instead of twice (the editable source merge no
+  longer warns; only the runtime merge does).
 - Runtime, TEI reranker: the client sent up to 1000 texts in one `/rerank`
   request. TEI rejects more than its `max_client_batch_size` (default 32) with
   HTTP 422, and the client silently turned that into an empty result. Requests
