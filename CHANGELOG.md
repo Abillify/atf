@@ -46,6 +46,26 @@ releases:
   `source-map-js` 1.2.2 (CVE-2026-93749). Third-party notices and the SBOM are
   regenerated.
 
+### Fixed
+
+- Runtime, threaded conversations: a repeated request with the same
+  `conversation_id` and an unchanged last user message (double submit,
+  "regenerate") now regenerates the answer from the start of that turn. The
+  engine forks from the turn's input checkpoint, so the new answer replaces the
+  old one in the thread. Previously the model saw its old answer plus the fresh
+  retrieval context as a separate message, ended the answer early, and the
+  thread collected several answers to the same turn. New trace diagnostic
+  `history_reconciliation.regenerate.outcome = "duplicate_turn_regenerated"`
+  and metric outcome `duplicate_turn_regenerated` on
+  `aiperator_thread_history_reconciled_total`. If the base checkpoint cannot be
+  found, the turn runs as before and the trace records
+  `duplicate_turn_kept` with a reason. Known limitation: a delta client that
+  sends only the new message cannot be told apart from a double submit. If it
+  sends the same short reply twice in a row as a real new turn (for example
+  "ja" after a follow-up question), the runtime now replaces the previous
+  answer instead of continuing. Before, the new message was silently dropped.
+  Clients that send the full history, such as Open WebUI, are not affected.
+
 ## [0.15.0] — 2026-10-13
 
 ### Added

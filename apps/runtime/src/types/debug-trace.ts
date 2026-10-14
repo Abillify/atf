@@ -178,6 +178,25 @@ export interface DebugHistoryReconciliation {
    * duplicate request rather than from the model.
    */
   duplicate_turn: boolean;
+  /**
+   * Set only when `duplicate_turn` is true: whether the turn was regenerated
+   * from its start. `outcome: "duplicate_turn_regenerated"` is the trace
+   * diagnostic for "the engine forked from `base_checkpoint_id` and the new
+   * answer replaced the old one". `duplicate_turn_kept` means the turn ran on
+   * top of the persisted thread as before; `reason` says why.
+   */
+  regenerate?: {
+    outcome: "duplicate_turn_regenerated" | "duplicate_turn_kept";
+    reason?:
+      | "last_incoming_not_user"
+      | "not_latest_user_turn"
+      | "nothing_to_replace"
+      | "base_checkpoint_not_found"
+      | "history_unreadable";
+    base_checkpoint_id?: string;
+    /** Persisted messages after the user turn that left the active branch. */
+    replaced_messages?: number;
+  };
 }
 
 // ---------------------------------------------------------------------------

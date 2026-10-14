@@ -20,7 +20,11 @@ import {
   ToolMessage,
   type BaseMessage,
 } from "@langchain/core/messages";
-import { reconcileThreadedHistory } from "../graph-engine/history-contract.js";
+import {
+  findRegenerateBaseCheckpoint,
+  planDuplicateTurnRegenerate,
+  reconcileThreadedHistory,
+} from "../graph-engine/history-contract.js";
 
 function texts(messages: BaseMessage[]): string[] {
   return messages.map((m) =>
@@ -165,5 +169,135 @@ describe("reconcileThreadedHistory — order and content sensitivity", () => {
 
     expect(result.dropped).toBe(0);
     expect(result.messages).toHaveLength(1);
+  });
+});
+
+describe("reconcileThreadedHistory — lastMatchedPersistedIndex", () => {
+  test("full-history client: index of the last matched message", () => {
+    const persisted = [
+      new HumanMessage("Frage"),
+      new SystemMessage("[RAG-Kontext] …"),
+      new AIMessage("Rückfrage"),
+    ];
+    const incoming = [
+      new HumanMessage("Frage"),
+      new AIMessage("Rückfrage"),
+      new HumanMessage("Antwort"),
+    ];
+    expect(
+      reconcileThreadedHistory(persisted, incoming).lastMatchedPersistedIndex,
+    ).toBe(2);
+  });
+
+  test("delta client: -1 when nothing matched, 0 for a repeated first turn", () => {
+    const persisted = [new HumanMessage("Frage"), new AIMessage("A")];
+    expect(
+      reconcileThreadedHistory(persisted, [new HumanMessage("Neu")])
+        .lastMatchedPersistedIndex,
+    ).toBe(-1);
+    expect(
+      reconcileThreadedHistory(persisted, [new HumanMessage("Frage")])
+        .lastMatchedPersistedIndex,
+    ).toBe(0);
+    expect(reconcileThreadedHistory([], [new HumanMessage("x")]).lastMatchedPersistedIndex).toBe(-1);
+  });
+});
+
+describe("planDuplicateTurnRegenerate", () => {
+  const plan = (persisted: BaseMessage[], incoming: BaseMessage[]) =>
+    planDuplicateTurnRegenerate(
+      persisted,
+      incoming,
+      reconcileThreadedHistory(persisted, incoming),
+    );
+
+  test("repeated latest user turn → regenerate from that turn", () => {
+    expect(
+      plan(
+        [
+          new HumanMessage("Gibt es X"),
+          new SystemMessage("[RAG-Kontext] …"),
+          new AIMessage("Alte Antwort"),
+        ],
+        [new HumanMessage("Gibt es X")],
+      ),
+    ).toEqual({ kind: "regenerate", userIndex: 0 });
+  });
+
+  test("transcript ending on the assistant answer is kept", () => {
+    expect(
+      plan(
+        [new HumanMessage("Frage"), new AIMessage("Rückfrage")],
+        [new HumanMessage("Frage"), new AIMessage("Rückfrage")],
+      ),
+    ).toEqual({ kind: "keep", reason: "last_incoming_not_user" });
+  });
+
+  test("an older repeated user message never rewinds later turns", () => {
+    expect(
+      plan(
+        [
+          new HumanMessage("ja"),
+          new AIMessage("A1"),
+          new HumanMessage("x"),
+          new AIMessage("A2"),
+        ],
+        [new HumanMessage("ja")],
+      ),
+    ).toEqual({ kind: "keep", reason: "not_latest_user_turn" });
+  });
+
+  test("nothing after the user turn → nothing to replace", () => {
+    expect(plan([new HumanMessage("Frage")], [new HumanMessage("Frage")])).toEqual({
+      kind: "keep",
+      reason: "nothing_to_replace",
+    });
+  });
+
+  test("a new tail is not a duplicate", () => {
+    expect(
+      plan(
+        [new HumanMessage("Frage"), new AIMessage("A")],
+        [new HumanMessage("Neue Frage")],
+      ),
+    ).toEqual({ kind: "keep", reason: "not_duplicate" });
+  });
+});
+
+describe("findRegenerateBaseCheckpoint", () => {
+  const persisted = [
+    new HumanMessage("u1"),
+    new AIMessage("a1"),
+    new HumanMessage("u2"),
+    new AIMessage("a2"),
+  ];
+
+  test("picks the newest matching input checkpoint, ignoring loop checkpoints", () => {
+    const prefix = [new HumanMessage("u1"), new AIMessage("a1")];
+    const id = findRegenerateBaseCheckpoint(persisted, 2, [
+      { checkpointId: "cp-latest", source: "loop", messages: persisted },
+      { checkpointId: "cp-loop-same-len", source: "loop", messages: prefix },
+      { checkpointId: "cp-input-new", source: "input", messages: prefix },
+      { checkpointId: "cp-input-old", source: "input", messages: prefix },
+    ]);
+    expect(id).toBe("cp-input-new");
+  });
+
+  test("a prefix mismatch is not accepted", () => {
+    const id = findRegenerateBaseCheckpoint(persisted, 2, [
+      {
+        checkpointId: "cp-other",
+        source: "input",
+        messages: [new HumanMessage("u1"), new AIMessage("anders")],
+      },
+    ]);
+    expect(id).toBeUndefined();
+  });
+
+  test("userIndex 0 matches the empty input checkpoint of a fresh thread", () => {
+    const id = findRegenerateBaseCheckpoint(persisted, 0, [
+      { checkpointId: "cp-start", source: "input", messages: [] },
+    ]);
+    expect(id).toBe("cp-start");
   });
 });

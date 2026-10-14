@@ -76,7 +76,11 @@ import type {
   DebugStreamError,
   DebugHistoryReconciliation,
 } from "../../types/debug-trace.js";
-import { reconcileThreadedHistory } from "./history-contract.js";
+import {
+  findRegenerateBaseCheckpoint,
+  planDuplicateTurnRegenerate,
+  reconcileThreadedHistory,
+} from "./history-contract.js";
 import type { Metrics } from "../../observability/metrics.js";
 import { createMetrics } from "../../observability/metrics.js";
 import type { SpendRecorder } from "../../observability/cost.js";
@@ -117,6 +121,14 @@ import { createRunState, startDebugTrace } from "./run-state.js";
 import { createToolCallbacks } from "./run-tool-callbacks.js";
 import { createNodeLifecycle } from "./run-node-lifecycle.js";
 import type { ExecutionEventMeta } from "../../monitoring/execution-store.js";
+
+/**
+ * How many checkpoints of a thread the duplicate-turn regenerate search scans.
+ * `getStateHistory` is newest-first and the target input checkpoint sits about
+ * (nodes of one turn + 2) entries from the top, so this is ample headroom; a
+ * miss falls back to the pre-regenerate behaviour.
+ */
+const REGENERATE_HISTORY_SCAN_LIMIT = 256;
 
 // ---------------------------------------------------------------------------
 // Provider-attempt summary + tool-reported usage — extracted to tool-usage.ts
@@ -1054,7 +1066,21 @@ class GraphEngineServiceImpl implements GraphEngineService {
       // transcript each turn (the OpenAI Chat-Completions default) duplicated
       // every earlier turn through the append-only messages reducer. Read AFTER
       // the thread lock so it cannot race a concurrent turn on the same thread.
+      //
+      // A duplicate turn that repeats the thread's latest user message (double
+      // submit, "regenerate") is REPLAYED from that turn's input checkpoint
+      // instead of running on top of the old answer. Without the fork the
+      // responder saw `[system, user, assistant(old answer), …]` plus the fresh
+      // retrieval context and ended its answer early, and the append-only
+      // reducer stacked a second answer onto the same turn. Forking keeps the
+      // reducer untouched and the persisted thread consistent: the new
+      // checkpoints descend from the base checkpoint and become the latest
+      // state, the old branch stays in history (nothing is deleted). Tools of
+      // the regenerated turn run again, exactly as they did for every duplicate
+      // turn before this change. When the base checkpoint cannot be found the
+      // turn falls back to the previous behaviour.
       let stateMessages = baseMessages;
+      let forkCheckpointId: string | undefined;
       if (threaded) {
         let persisted: BaseMessage[] = [];
         try {
@@ -1073,12 +1099,91 @@ class GraphEngineServiceImpl implements GraphEngineService {
         }
         const reconciled = reconcileThreadedHistory(persisted, baseMessages);
         stateMessages = reconciled.messages;
+        let regenerate: DebugHistoryReconciliation["regenerate"];
+        if (reconciled.duplicateTurn) {
+          const plan = planDuplicateTurnRegenerate(
+            persisted,
+            baseMessages,
+            reconciled,
+          );
+          if (plan.kind === "regenerate") {
+            let baseCheckpointId: string | undefined;
+            let unreadable = false;
+            try {
+              for await (const snap of graph.getStateHistory(
+                { configurable: { thread_id: threadKey, checkpoint_ns: "" } },
+                { limit: REGENERATE_HISTORY_SCAN_LIMIT },
+              )) {
+                const checkpointId = snap.config.configurable?.checkpoint_id;
+                if (typeof checkpointId !== "string") continue;
+                const values = snap.values as
+                  | { messages?: BaseMessage[] }
+                  | undefined;
+                baseCheckpointId = findRegenerateBaseCheckpoint(
+                  persisted,
+                  plan.userIndex,
+                  [
+                    {
+                      checkpointId,
+                      source: snap.metadata?.source,
+                      messages: Array.isArray(values?.messages)
+                        ? values.messages
+                        : [],
+                    },
+                  ],
+                );
+                if (baseCheckpointId !== undefined) break;
+              }
+            } catch {
+              unreadable = true;
+              baseCheckpointId = undefined;
+            }
+            const lastIncoming = baseMessages[baseMessages.length - 1];
+            if (baseCheckpointId !== undefined && lastIncoming !== undefined) {
+              forkCheckpointId = baseCheckpointId;
+              stateMessages = [lastIncoming];
+              regenerate = {
+                outcome: "duplicate_turn_regenerated",
+                base_checkpoint_id: baseCheckpointId,
+                replaced_messages: persisted.length - plan.userIndex - 1,
+              };
+              this.logger?.info("Duplicate turn regenerated from turn start", {
+                execution_id: executionId,
+                flow_id: flowId,
+                thread_key: threadKey,
+                base_checkpoint_id: baseCheckpointId,
+                replaced_messages: persisted.length - plan.userIndex - 1,
+              });
+            } else {
+              const reason = unreadable
+                ? "history_unreadable"
+                : "base_checkpoint_not_found";
+              regenerate = { outcome: "duplicate_turn_kept", reason };
+              this.logger?.warn(
+                "Duplicate turn could not be regenerated; continuing on the persisted thread",
+                {
+                  execution_id: executionId,
+                  flow_id: flowId,
+                  thread_key: threadKey,
+                  reason,
+                },
+              );
+            }
+          } else if (plan.reason !== "not_duplicate") {
+            regenerate = { outcome: "duplicate_turn_kept", reason: plan.reason };
+          }
+        }
         if (reconciled.dropped > 0) {
           this.metrics.recordCounter(
             "aiperator_thread_history_reconciled_total",
             {
               flow: flowId,
-              outcome: reconciled.duplicateTurn ? "duplicate_turn" : "trimmed",
+              outcome:
+                forkCheckpointId !== undefined
+                  ? "duplicate_turn_regenerated"
+                  : reconciled.duplicateTurn
+                    ? "duplicate_turn"
+                    : "trimmed",
             },
             reconciled.dropped,
           );
@@ -1087,8 +1192,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
           persisted: persisted.length,
           incoming: reconciled.incoming,
           dropped: reconciled.dropped,
-          appended: reconciled.messages.length,
+          appended: stateMessages.length,
           duplicate_turn: reconciled.duplicateTurn,
+          ...(regenerate !== undefined ? { regenerate } : {}),
         };
       }
 
@@ -1125,6 +1231,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
         configurable: {
           runtime,
           ...(threaded ? { thread_id: threadKey, checkpoint_ns: "" } : {}),
+          ...(forkCheckpointId !== undefined
+            ? { checkpoint_id: forkCheckpointId }
+            : {}),
         },
         signal: controller.signal,
       });
