@@ -432,6 +432,12 @@ export interface AppConfig {
   llmRetryBackoffMs?: number;
   /** Hard deadline for one provider request/stream attempt. */
   llmRequestTimeoutMs?: number;
+  /**
+   * Reuse sockets (HTTP keep-alive) for `openai`/`ollama` provider requests.
+   * Default true; `false` opens a fresh connection per request. Overridable
+   * per provider via `PROVIDERS[].keepAlive`.
+   */
+  llmHttpKeepAlive?: boolean;
   /** Absolute generated-text ceiling per provider attempt. */
   llmMaxOutputChars?: number;
   /** Controls semantic response fallbacks while preserving transport retries. */
@@ -1566,6 +1572,15 @@ export const EnvSchema = z.object({
     .min(1_000)
     .max(3_600_000)
     .default(600_000),
+  // HTTP keep-alive for LLM provider requests (openai/ollama protocols only).
+  // Default true (socket reuse); "false"/"0" opens a fresh connection per
+  // request. Other egress traffic (MCP, OIDC, reranker, ...) is unaffected.
+  LLM_HTTP_KEEP_ALIVE: z
+    .string()
+    .optional()
+    .transform((raw): boolean =>
+      raw === undefined || raw === "" ? true : raw !== "false" && raw !== "0",
+    ),
   LLM_MAX_OUTPUT_CHARS: z.coerce
     .number()
     .int()

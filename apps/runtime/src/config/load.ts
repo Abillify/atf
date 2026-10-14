@@ -307,6 +307,7 @@ export function loadConfig(): AppConfig {
     llmMaxAttempts: env.LLM_MAX_ATTEMPTS,
     llmRetryBackoffMs: env.LLM_RETRY_BACKOFF_MS,
     llmRequestTimeoutMs: env.LLM_REQUEST_TIMEOUT_MS,
+    llmHttpKeepAlive: env.LLM_HTTP_KEEP_ALIVE,
     llmMaxOutputChars: env.LLM_MAX_OUTPUT_CHARS,
     llmStreamFallbackPolicy: env.LLM_STREAM_FALLBACK_POLICY,
     fallbackLlm: env.FALLBACK_LLM,

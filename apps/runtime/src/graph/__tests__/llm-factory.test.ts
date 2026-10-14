@@ -15,7 +15,11 @@ import {
   injectExtraBody,
   requestsStructuredJson,
   recoverReasoningOnlyJson,
+  resolveLlmKeepAlive,
+  selectLlmTransportFetches,
 } from "../llm-factory.js";
+import { egressFetch, egressFetchWithoutKeepAlive } from "../../security/egress.js";
+import { generateText } from "ai";
 import { setProviderRegistry } from "../../config/providers.js";
 import type { AppConfig } from "../../config/index.js";
 import type { LlmConfig } from "../../types/flow.js";
@@ -329,5 +333,104 @@ describe("recoverReasoningOnlyJson", () => {
     expect(recoverReasoningOnlyJson({})).toBeNull();
     expect(recoverReasoningOnlyJson(null)).toBeNull();
     expect(recoverReasoningOnlyJson("nope")).toBeNull();
+  });
+});
+
+describe("createLlmProvider — connect retry and keep-alive", () => {
+  afterEach(() => {
+    setProviderRegistry(undefined);
+  });
+
+  const completion = () =>
+    new Response(
+      JSON.stringify({
+        id: "c1",
+        object: "chat.completion",
+        created: 0,
+        model: "m",
+        choices: [
+          {
+            index: 0,
+            message: { role: "assistant", content: "hello" },
+            finish_reason: "stop",
+          },
+        ],
+        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+
+  test("a socket reset before the response is retried once", async () => {
+    setProviderRegistry([{ name: "vllm", protocol: "openai", url: "http://vllm:8000/v1" }]);
+    let calls = 0;
+    const stub = (async () => {
+      calls += 1;
+      if (calls === 1) {
+        throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+      }
+      return completion();
+    }) as unknown as typeof fetch;
+    const model = createLlmProvider({ provider: "vllm", model: "m" }, cfg(), {
+      fetch: stub,
+    });
+    const result = await generateText({ model, prompt: "hi", maxRetries: 0 });
+    expect(result.text).toBe("hello");
+    expect(calls).toBe(2);
+  });
+
+  test("an HTTP 503 is not retried at the transport layer", async () => {
+    setProviderRegistry([{ name: "vllm", protocol: "openai", url: "http://vllm:8000/v1" }]);
+    let calls = 0;
+    const stub = (async () => {
+      calls += 1;
+      return new Response(JSON.stringify({ error: { message: "busy" } }), {
+        status: 503,
+        headers: { "content-type": "application/json" },
+      });
+    }) as unknown as typeof fetch;
+    const model = createLlmProvider({ provider: "vllm", model: "m" }, cfg(), {
+      fetch: stub,
+    });
+    await expect(generateText({ model, prompt: "hi", maxRetries: 0 })).rejects.toThrow();
+    expect(calls).toBe(1);
+  });
+
+  test("resolveLlmKeepAlive: provider override wins over the global default", () => {
+    expect(resolveLlmKeepAlive(undefined, {})).toBe(true);
+    expect(resolveLlmKeepAlive(undefined, { llmHttpKeepAlive: false })).toBe(false);
+    expect(resolveLlmKeepAlive({ keepAlive: true }, { llmHttpKeepAlive: false })).toBe(true);
+    expect(resolveLlmKeepAlive({ keepAlive: false }, { llmHttpKeepAlive: true })).toBe(false);
+    expect(resolveLlmKeepAlive({}, {})).toBe(true);
+  });
+});
+
+describe("selectLlmTransportFetches — real egress choice", () => {
+  test("keepAlive=false: primary and fresh are egressFetchWithoutKeepAlive", () => {
+    const { primary, fresh } = selectLlmTransportFetches(false);
+    expect(primary).toBe(egressFetchWithoutKeepAlive);
+    expect(fresh).toBe(egressFetchWithoutKeepAlive);
+  });
+  test("keepAlive=true: primary egressFetch, the retry still a fresh connection", () => {
+    const { primary, fresh } = selectLlmTransportFetches(true);
+    expect(primary).toBe(egressFetch);
+    expect(fresh).toBe(egressFetchWithoutKeepAlive);
+  });
+  test("a test override serves both", () => {
+    const stub = (async () => new Response("")) as unknown as typeof fetch;
+    expect(selectLlmTransportFetches(true, stub)).toEqual({ primary: stub, fresh: stub });
+    expect(selectLlmTransportFetches(false, stub)).toEqual({ primary: stub, fresh: stub });
+  });
+  test("instance/env keep-alive resolution drives the choice", () => {
+    const pick = (keepAlive: boolean | undefined, env: boolean | undefined) =>
+      selectLlmTransportFetches(
+        resolveLlmKeepAlive(
+          keepAlive === undefined ? {} : { keepAlive },
+          env === undefined ? {} : { llmHttpKeepAlive: env },
+        ),
+      ).primary;
+    expect(pick(undefined, undefined)).toBe(egressFetch);
+    expect(pick(undefined, false)).toBe(egressFetchWithoutKeepAlive);
+    expect(pick(true, false)).toBe(egressFetch);
+    expect(pick(false, true)).toBe(egressFetchWithoutKeepAlive);
   });
 });

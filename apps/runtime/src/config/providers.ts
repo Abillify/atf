@@ -105,6 +105,12 @@ export interface ProviderInstance {
    * flag. `ollama` is treated as local without it, matching its prior behaviour.
    */
   local?: boolean;
+  /**
+   * HTTP keep-alive (socket reuse) for this provider's requests; overrides
+   * `LLM_HTTP_KEEP_ALIVE`. Only effective for the `openai`/`ollama` protocols,
+   * which run through the runtime egress transport.
+   */
+  keepAlive?: boolean;
 }
 
 /**
@@ -130,6 +136,8 @@ const ProviderInstanceSchema = z
     apiVersion: z.string().min(1).optional(),
     api_version: z.string().min(1).optional(),
     local: z.boolean().optional(),
+    keepAlive: z.boolean().optional(),
+    keep_alive: z.boolean().optional(),
   })
   .transform((raw): ProviderInstance => {
     const pick = (
@@ -144,6 +152,7 @@ const ProviderInstanceSchema = z
     const sessionToken = pick(raw.sessionToken, raw.session_token);
     const resourceName = pick(raw.resourceName, raw.resource_name);
     const apiVersion = pick(raw.apiVersion, raw.api_version);
+    const keepAlive = raw.keepAlive ?? raw.keep_alive;
     return {
       name: raw.name,
       protocol: raw.protocol,
@@ -156,6 +165,7 @@ const ProviderInstanceSchema = z
       ...(resourceName !== undefined ? { resourceName } : {}),
       ...(apiVersion !== undefined ? { apiVersion } : {}),
       ...(raw.local !== undefined ? { local: raw.local } : {}),
+      ...(keepAlive !== undefined ? { keepAlive } : {}),
     };
   });
 

@@ -30,11 +30,15 @@
  * extended with redirect-following-with-revalidation and the size limit.
  * Request bodies must be buffered (string/Buffer/Uint8Array/URLSearchParams);
  * a `Request` input carrying a stream body is rejected.
+ *
+ * {@link RuntimeEgress.fetchWithoutKeepAlive} applies the identical policy but
+ * opens a fresh socket per request (dedicated `keepAlive: false` agents) —
+ * used for LLM provider requests when `LLM_HTTP_KEEP_ALIVE=false`.
  */
 
 import { lookup as dnsLookup } from "node:dns/promises";
-import { request as httpRequest } from "node:http";
-import { request as httpsRequest } from "node:https";
+import { Agent as HttpAgent, request as httpRequest } from "node:http";
+import { Agent as HttpsAgent, request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { Readable } from "node:stream";
 import {
@@ -83,6 +87,11 @@ export interface RuntimeEgressOptions {
 export interface RuntimeEgress {
   /** Guarded `fetch` — drop-in replacement for the global. */
   readonly fetch: typeof fetch;
+  /**
+   * Same guard as {@link fetch}, but every request opens a fresh connection
+   * (no socket reuse from a keep-alive pool).
+   */
+  readonly fetchWithoutKeepAlive: typeof fetch;
   /** Synchronous URL validation (scheme/credentials/allow-list/metadata). */
   readonly checkUrl: (urlString: string) => string | null;
 }
@@ -155,12 +164,24 @@ export function createRuntimeEgress(
   const privateAllowedFor = (host: string): boolean =>
     isExactHostAllowed(host, allowedPrivateHosts);
 
+  // Created once per egress instance on first use; only requests that opt out
+  // of keep-alive use them. Keep-alive requests pass no agent (global default).
+  let noKeepAliveAgents: { http: HttpAgent; https: HttpsAgent } | undefined;
+  const noKeepAliveAgent = (protocol: string): HttpAgent | HttpsAgent => {
+    noKeepAliveAgents ??= {
+      http: new HttpAgent({ keepAlive: false }),
+      https: new HttpsAgent({ keepAlive: false }),
+    };
+    return protocol === "https:" ? noKeepAliveAgents.https : noKeepAliveAgents.http;
+  };
+
   const singleRequest = (
     url: URL,
     method: string,
     headers: Headers,
     body: Buffer | string | undefined,
     signal: AbortSignal | undefined,
+    keepAlive: boolean,
   ): Promise<Response> =>
     new Promise<Response>((resolve, reject) => {
       const host = normalizeHost(url.hostname);
@@ -176,6 +197,7 @@ export function createRuntimeEgress(
           method,
           headers: requestHeaders,
           signal,
+          ...(keepAlive ? {} : { agent: noKeepAliveAgent(url.protocol) }),
           lookup: async (
             _hostname: string,
             lookupOptions: { all?: boolean },
@@ -260,7 +282,7 @@ export function createRuntimeEgress(
       request.end();
     });
 
-  const guardedFetch = async (
+  const makeGuardedFetch = (keepAlive: boolean) => async (
     input: RequestInfo | URL,
     init?: RequestInit,
   ): Promise<Response> => {
@@ -291,7 +313,7 @@ export function createRuntimeEgress(
     for (let hop = 0; ; hop += 1) {
       const blocked = validate(url);
       if (blocked) throw new Error(blocked);
-      const response = await singleRequest(url, method, headers, body, signal);
+      const response = await singleRequest(url, method, headers, body, signal, keepAlive);
       const location = response.headers.get("location");
       if (!REDIRECT_STATUSES.has(response.status) || location === null) {
         return limitResponseSize(response, maxBytes);
@@ -324,7 +346,8 @@ export function createRuntimeEgress(
   };
 
   return {
-    fetch: guardedFetch as typeof fetch,
+    fetch: makeGuardedFetch(true) as typeof fetch,
+    fetchWithoutKeepAlive: makeGuardedFetch(false) as typeof fetch,
     checkUrl: (urlString: string) => checkUrl(urlString, allowedHosts),
   };
 }
@@ -467,3 +490,13 @@ export const egressFetch: typeof fetch = ((
   input: RequestInfo | URL,
   init?: RequestInit,
 ): Promise<Response> => getRuntimeEgress().fetch(input, init)) as typeof fetch;
+
+/**
+ * {@link egressFetch} without socket reuse: same policy, fresh connection per
+ * request. Used for LLM provider requests when keep-alive is disabled.
+ */
+export const egressFetchWithoutKeepAlive: typeof fetch = ((
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> =>
+  getRuntimeEgress().fetchWithoutKeepAlive(input, init)) as typeof fetch;

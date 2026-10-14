@@ -254,6 +254,59 @@ export function providerTransportErrorCode(
 	return transportMessage(error) ? "NETWORK_ERROR" : undefined;
 }
 
+/**
+ * Connection failures that can only happen before a response arrived and
+ * where re-sending the request on a fresh connection is safe. Deliberately
+ * narrower than {@link TRANSPORT_CODES}: timeouts, DNS failures and
+ * socket-open failures are not retried.
+ */
+const CONNECT_RETRY_CODES = new Set([
+	"ECONNRESET",
+	"EPIPE",
+	"ECONNREFUSED",
+	"ECONNABORTED",
+	"ConnectionReset",
+	"ConnectionClosed",
+	"ConnectionRefused",
+]);
+
+const CONNECT_RETRY_MESSAGE =
+	/(?:socket hang up|socket connection was closed unexpectedly|other side closed|connection reset)/iu;
+
+/**
+ * Error code when `error` is a pre-response connection failure that may be
+ * retried once on a fresh connection (stale keep-alive socket, reset before
+ * the first response byte). `undefined` for aborts, timeouts, DNS and policy
+ * failures and anything carrying an HTTP status. Message-only matches
+ * return `SOCKET_HANG_UP`.
+ */
+export function preResponseConnectErrorCode(error: unknown): string | undefined {
+	const chain = errorChain(error);
+	if (chain.length === 0) {
+		return CONNECT_RETRY_MESSAGE.test(String(error)) ? "SOCKET_HANG_UP" : undefined;
+	}
+	if (
+		chain.some(
+			(record) => record.name === "AbortError" || record.name === "TimeoutError",
+		)
+	) {
+		return undefined;
+	}
+	if (errorStatus(error) !== undefined) return undefined;
+	for (const record of chain) {
+		if (typeof record.code === "string") {
+			if (CONNECT_RETRY_CODES.has(record.code)) return record.code;
+			if (TRANSPORT_CODES.has(record.code)) return undefined;
+		}
+	}
+	return chain.some(
+		(record) =>
+			typeof record.message === "string" && CONNECT_RETRY_MESSAGE.test(record.message),
+	)
+		? "SOCKET_HANG_UP"
+		: undefined;
+}
+
 export function isProviderTransportError(
 	error: unknown,
 	options: { requestTimedOut?: boolean; flowAborted?: boolean } = {},

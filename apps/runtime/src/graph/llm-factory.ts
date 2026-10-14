@@ -24,10 +24,12 @@ import {
   configuredProviderNames,
   getProviderInstance,
   PROVIDER_PROTOCOLS,
+  type ProviderInstance,
   resolveProviderProtocol,
 } from "../config/providers.js";
 import { parseBedrockByokCredentials } from "./tenant-provider-keys.js";
-import { egressFetch } from "../security/egress.js";
+import { egressFetch, egressFetchWithoutKeepAlive } from "../security/egress.js";
+import { createLlmTransportFetch } from "./llm-transport.js";
 
 // ---------------------------------------------------------------------------
 // reasoning_content fetch interceptor
@@ -464,10 +466,39 @@ export interface LlmProviderOptions {
   apiKey?: string;
   /**
    * Outbound fetch for providers routed through the reasoning interceptor.
-   * Defaults to the process-wide Egress_Guard (SSRF-safe); tests may inject
-   * a stub. Streaming responses are passed through untouched.
+   * Defaults to the process-wide Egress_Guard (SSRF-safe; keep-alive per
+   * {@link resolveLlmKeepAlive}); tests may inject a stub, which then serves
+   * both the first try and the single connect-retry. Streaming responses are
+   * passed through untouched.
    */
   fetch?: typeof fetch;
+}
+
+/**
+ * Whether provider requests reuse sockets: the instance's `keepAlive`
+ * override wins over `LLM_HTTP_KEEP_ALIVE`; default true.
+ */
+export function resolveLlmKeepAlive(
+  instance: Pick<ProviderInstance, "keepAlive"> | undefined,
+  appConfig: Pick<AppConfig, "llmHttpKeepAlive">,
+): boolean {
+  return instance?.keepAlive ?? appConfig.llmHttpKeepAlive ?? true;
+}
+
+/**
+ * Picks the real egress fetches for {@link createLlmTransportFetch}: the first
+ * try reuses sockets only when `keepAlive` is on; the single connect-retry
+ * always uses a fresh connection. A test `override` serves both.
+ */
+export function selectLlmTransportFetches(
+  keepAlive: boolean,
+  override?: typeof fetch,
+): { primary: typeof fetch; fresh: typeof fetch } {
+  return {
+    primary:
+      override ?? (keepAlive ? egressFetch : egressFetchWithoutKeepAlive),
+    fresh: override ?? egressFetchWithoutKeepAlive,
+  };
 }
 
 /**
@@ -488,14 +519,21 @@ export interface LlmProviderOptions {
  */
 export function createLlmProvider(
   config: LlmConfig,
-  _appConfig: AppConfig,
+  appConfig: AppConfig,
   options?: LlmProviderOptions,
 ): LanguageModel {
   const overrideKey = options?.apiKey;
-  // Outbound transport for the reasoning interceptor: the process-wide
-  // Egress_Guard by default (SSRF-safe), overridable in tests.
-  const baseFetch = options?.fetch ?? egressFetch;
   const instance = getProviderInstance(config.provider);
+  // Outbound transport for the reasoning interceptor: the process-wide
+  // Egress_Guard by default (SSRF-safe), overridable in tests. Keep-alive is
+  // configurable; the single connect-retry always uses a fresh connection.
+  const keepAlive = resolveLlmKeepAlive(instance, appConfig);
+  const baseFetch = createLlmTransportFetch({
+    ...selectLlmTransportFetches(keepAlive, options?.fetch),
+    provider: config.provider,
+    model: config.model,
+    keepAlive,
+  });
   const protocol = resolveProviderProtocol(config.provider);
   if (protocol === undefined) throw new UnknownProviderError(config.provider);
   // Optional `chat_template_kwargs` (e.g. `{ enable_thinking: false }`) sourced

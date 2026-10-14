@@ -7,6 +7,7 @@ import {
 	createProviderCircuitBreaker,
 	describeProviderError,
 	isProviderTransportError,
+	preResponseConnectErrorCode,
 	providerTransportErrorCode,
 } from "../provider-circuit-breaker.js";
 
@@ -226,5 +227,56 @@ describe("provider transport error classification", () => {
 		expect(described).toContain("status=400");
 		expect(described).toContain("code=ConnectionClosed");
 		expect(describeProviderError(new Error("x".repeat(1_000))).length).toBeLessThanOrEqual(400);
+	});
+});
+
+describe("pre-response connect error classification", () => {
+	const coded = (message: string, code: string) =>
+		Object.assign(new Error(message), { code });
+
+	test("classifies retryable connection failures", () => {
+		expect(preResponseConnectErrorCode(coded("socket hang up", "ECONNRESET"))).toBe(
+			"ECONNRESET",
+		);
+		expect(preResponseConnectErrorCode(coded("write EPIPE", "EPIPE"))).toBe("EPIPE");
+		expect(
+			preResponseConnectErrorCode(coded("connect ECONNREFUSED", "ECONNREFUSED")),
+		).toBe("ECONNREFUSED");
+		expect(
+			preResponseConnectErrorCode(
+				coded("The socket connection was closed unexpectedly", "ConnectionClosed"),
+			),
+		).toBe("ConnectionClosed");
+		expect(
+			preResponseConnectErrorCode(
+				new Error("Cannot connect to API", {
+					cause: coded("socket hang up", "ECONNRESET"),
+				}),
+			),
+		).toBe("ECONNRESET");
+		expect(preResponseConnectErrorCode(new Error("socket hang up"))).toBe(
+			"SOCKET_HANG_UP",
+		);
+	});
+
+	test("rejects aborts, timeouts, DNS, policy and HTTP failures", () => {
+		const abort = new Error("aborted");
+		abort.name = "AbortError";
+		const timeout = new Error("socket hang up");
+		timeout.name = "TimeoutError";
+		expect(preResponseConnectErrorCode(abort)).toBeUndefined();
+		expect(preResponseConnectErrorCode(timeout)).toBeUndefined();
+		expect(preResponseConnectErrorCode(coded("timed out", "ETIMEDOUT"))).toBeUndefined();
+		expect(
+			preResponseConnectErrorCode(coded("getaddrinfo ENOTFOUND", "ENOTFOUND")),
+		).toBeUndefined();
+		expect(
+			preResponseConnectErrorCode(new Error("outbound address not allowed: 10.0.0.1")),
+		).toBeUndefined();
+		expect(
+			preResponseConnectErrorCode(
+				Object.assign(new Error("socket hang up"), { statusCode: 503 }),
+			),
+		).toBeUndefined();
 	});
 });

@@ -71,6 +71,12 @@ releases:
   ledger order is unchanged.
 - Runtime: `RERANK_BATCH_SIZE` (default 32) sets the maximum number of texts
   per TEI `/rerank` request.
+- Runtime: `LLM_HTTP_KEEP_ALIVE` (default `true`) and the per-provider
+  override `PROVIDERS[].keepAlive` / `keep_alive`. With `false`, requests to
+  `openai`/`ollama` providers open a fresh connection each time instead of
+  reusing a pooled socket. The egress guard (private-host allow-list, DNS
+  pinning, redirect checks, response limit, timeouts) applies unchanged. Other
+  outbound traffic (MCP, OIDC, reranker) is not affected.
 
 ### Changed
 
@@ -176,6 +182,20 @@ releases:
   "ja" after a follow-up question), the runtime now replaces the previous
   answer instead of continuing. Before, the new message was silently dropped.
   Clients that send the full history, such as Open WebUI, are not affected.
+- Runtime, LLM providers (`openai`/`ollama`): a tool-loop step whose request
+  fails with a connection error before the first response byte (ECONNRESET,
+  EPIPE, ECONNREFUSED, "socket hang up") is retried once on a fresh connection
+  after 75 ms, also when earlier steps already streamed text. Before, such a
+  stale keep-alive socket could end the node with an error after partial
+  output. The trace records `llm_step_connect_retry` and, if the retry fails
+  too, `llm_step_connect_retry_failed`, both with the provider/model of the
+  failing request. LLM requests issued inside tool executions (harness
+  delegate/planner, image inspection) get their own retry but are neither
+  counted in the outer node's `request_index` nor reported there. A step that
+  breaks off in the middle of its own response is still not retried. The
+  retry budget is per request: on the last candidate, where the AI SDK
+  retries itself (`maxRetries` 2), an unreachable endpoint costs up to 6
+  connects per step instead of 3.
 
 ## [0.15.0] — 2026-10-13
 

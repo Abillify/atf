@@ -36,6 +36,7 @@ beforeEach(() => {
   delete process.env.MONITORING_TRANSPORT;
   delete process.env.MCP_SCHEMA_COMPATIBILITY_MODE;
   delete process.env.LLM_STREAM_FALLBACK_POLICY;
+  delete process.env.LLM_HTTP_KEEP_ALIVE;
   delete process.env.MCP_SERVERS;
   delete process.env.PROVIDERS;
   delete process.env.DEFAULT_LLM;
@@ -297,6 +298,12 @@ describe("loadConfig() — valid configurations", () => {
     }
   });
 
+  test("LLM_HTTP_KEEP_ALIVE defaults to true and accepts false/0", () => {
+    expect(expectConfigSuccess().llmHttpKeepAlive).toBe(true);
+    expect(expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "true" }).llmHttpKeepAlive).toBe(true);
+    expect(expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "false" }).llmHttpKeepAlive).toBe(false);
+    expect(expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "0" }).llmHttpKeepAlive).toBe(false);
+  });
   test("rejects an invalid LLM stream fallback policy", () => {
     const { stderrOutput } = expectConfigFailure({
       LLM_STREAM_FALLBACK_POLICY: "permissive",

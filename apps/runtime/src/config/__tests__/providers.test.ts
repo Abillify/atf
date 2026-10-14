@@ -122,6 +122,19 @@ describe("PROVIDERS parsing", () => {
     });
   });
 
+  test("normalises the optional keep-alive override", () => {
+    const parsed = ProviderInstancesSchema.safeParse([
+      { name: "a", protocol: "openai", keepAlive: false },
+      { name: "b", protocol: "openai", keep_alive: false },
+      { name: "c", protocol: "openai", keepAlive: true },
+      { name: "d", protocol: "openai" },
+    ]);
+    if (!parsed.success) throw new Error("expected keep-alive overrides to parse");
+    expect(parsed.data[0].keepAlive).toBe(false);
+    expect(parsed.data[1].keepAlive).toBe(false);
+    expect(parsed.data[2].keepAlive).toBe(true);
+    expect("keepAlive" in parsed.data[3]).toBe(false);
+  });
   test("rejects duplicate names and unknown protocols", () => {
     expect(
       ProviderInstancesSchema.safeParse([

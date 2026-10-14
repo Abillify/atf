@@ -60,6 +60,11 @@ import type {
   SemanticCacheKeyInput,
 } from "../semantic-cache.js";
 import { runAttemptStream } from "./llm-attempt-stream.js";
+import {
+  isolateToolsFromLlmTransportScope,
+  type LlmTransportScope,
+  runInLlmTransportScope,
+} from "../llm-transport.js";
 import { handleAttemptError, postprocessAttempt } from "./llm-attempt-postprocess.js";
 import type {
   FinalAnswerStreamState,
@@ -312,7 +317,9 @@ export async function runCandidateLoop(
     // Attempt number visible to prepareStep diagnostics (assigned per attempt).
     let currentAttempt = 0;
     if (aiTools !== undefined && Object.keys(aiTools).length > 0) {
-      streamParams.tools = aiTools;
+      // Nested LLM requests from tool executions must not count as steps of
+      // this attempt nor report connect-retries on this node.
+      streamParams.tools = isolateToolsFromLlmTransportScope(aiTools);
       // A node may raise its tool-step budget above the global default via
       // `config.maxToolSteps` — needed for agentic flows (for example, a
       // coverage controller) that systematically read many documents in one
@@ -1183,7 +1190,46 @@ export async function runCandidateLoop(
           repAbort.signal,
           requestDeadline,
         );
-        const result = streamText(streamParams);
+        // Provider requests of this attempt (one per tool-loop step) report
+        // their single connect-retry here. Stream pulls run in the consumer's
+        // async context, so the scope wraps streamText AND runAttemptStream.
+        const transportScope: LlmTransportScope = {
+          requestCount: 0,
+          onConnectRetry: (event) => {
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "warn",
+              code: "llm_step_connect_retry",
+              message: `Provider ${event.provider}/${event.model}: connection failed before the step's response (${event.errorCode}); retrying once on a fresh connection.`,
+              details: {
+                provider: event.provider,
+                model: event.model,
+                attempt,
+                request_index: event.requestIndex,
+                error_code: event.errorCode,
+                retry_delay_ms: event.retryDelayMs,
+                keep_alive: event.keepAlive,
+              },
+            });
+          },
+          onConnectRetryFailed: (event) => {
+            runtime.onNodeDiagnostic?.(node.id, {
+              level: "warn",
+              code: "llm_step_connect_retry_failed",
+              message: `Provider ${event.provider}/${event.model}: connect-retry of the step failed as well.`,
+              details: {
+                provider: event.provider,
+                model: event.model,
+                attempt,
+                request_index: event.requestIndex,
+                error_code: event.errorCode,
+                retry_error_code: event.retryErrorCode ?? null,
+              },
+            });
+          },
+        };
+        const result = runInLlmTransportScope(transportScope, () =>
+          streamText(streamParams),
+        );
         // Records this attempt's tool exchange as the continuation of the
         // next (answer-only) attempt. The trailing text-only assistant turn
         // is the rejected output and is dropped. Returns false when the
@@ -1223,7 +1269,7 @@ export async function runCandidateLoop(
           return true;
         };
 
-        await runAttemptStream({
+        await runInLlmTransportScope(transportScope, () => runAttemptStream({
           attempt,
           attemptUsage,
           candidate,
@@ -1247,7 +1293,7 @@ export async function runCandidateLoop(
           toolRefByKey,
           toolStartTimes,
           st,
-        });
+        }));
         const post = await postprocessAttempt({
           accountAttempt,
           attempt,
