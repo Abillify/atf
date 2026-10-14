@@ -617,8 +617,27 @@ export class McpWrapper implements McpWrapperService {
     Map<string, Promise<TokenClientEntry>>
   >();
 
-  /** In-flight transport recovery, deduplicated per server/caller session. */
+  /**
+   * In-flight transport recovery or on-demand shared connect, deduplicated per
+   * server/caller session (single-flight).
+   */
   private readonly reconnects = new Map<string, Promise<void>>();
+
+  /**
+   * Last failed shared connect per configured server. Drives the on-demand
+   * connect backoff so a burst of tool calls against an unreachable server
+   * does not open one handshake per call (no thundering herd).
+   */
+  private readonly connectFailures = new Map<
+    string,
+    { failedAt: number; consecutive: number; message: string }
+  >();
+
+  /** First backoff window after a failed shared connect (doubles per failure). */
+  private readonly connectBackoffBaseMs: number;
+
+  /** Upper bound of the shared-connect backoff window. */
+  private readonly connectBackoffMaxMs: number;
 
   /** One-time handles for evidence-bound calls; never accepts caller-supplied final args. */
   private readonly preparedEvidenceCalls = new Map<
@@ -693,6 +712,8 @@ export class McpWrapper implements McpWrapperService {
       capabilityTtlMs?: number;
       retryTimeoutMs?: number;
       connectTimeoutMs?: number;
+      connectBackoffBaseMs?: number;
+      connectBackoffMaxMs?: number;
       preparedEvidenceCallTtlMs?: number;
       maxPreparedEvidenceCalls?: number;
       maxPreparedEvidenceCallsPerCaller?: number;
@@ -716,6 +737,18 @@ export class McpWrapper implements McpWrapperService {
     this.capabilityTtlMs = options.capabilityTtlMs ?? 30_000;
     this.retryTimeoutMs = options.retryTimeoutMs ?? 5_000;
     this.connectTimeoutMs = options.connectTimeoutMs ?? 4_000;
+    this.connectBackoffBaseMs = options.connectBackoffBaseMs ?? 1_000;
+    this.connectBackoffMaxMs = options.connectBackoffMaxMs ?? 30_000;
+    if (
+      !Number.isSafeInteger(this.connectBackoffBaseMs) ||
+      this.connectBackoffBaseMs <= 0 ||
+      !Number.isSafeInteger(this.connectBackoffMaxMs) ||
+      this.connectBackoffMaxMs < this.connectBackoffBaseMs
+    ) {
+      throw new Error(
+        "connectBackoffBaseMs must be a positive safe integer no greater than connectBackoffMaxMs",
+      );
+    }
     this.preparedEvidenceCallTtlMs =
       options.preparedEvidenceCallTtlMs ??
       DEFAULT_PREPARED_EVIDENCE_CALL_TTL_MS;
@@ -776,6 +809,12 @@ export class McpWrapper implements McpWrapperService {
    * connection. A caller-authenticated server without a static Authorization
    * header deliberately has no shared session: its first connection is created
    * per caller with that caller's bearer token.
+   *
+   * Self-healing: a failed handshake still registers the server. Every later
+   * tool/discovery call that finds no shared client connects on demand
+   * (single-flight per server, exponential backoff after failures) instead of
+   * failing with "not found"; only unconfigured servers report
+   * `MCP server not found: <name> (not configured)`.
    * Requirements: 7.1
    */
   async connect(config: McpServerConfig): Promise<void> {
@@ -818,16 +857,20 @@ export class McpWrapper implements McpWrapperService {
         pending,
         `MCP connect ${config.name}`,
         undefined,
-        this.connectTimeoutMs,
+        this._connectTimeoutFor(config),
       );
     } catch (error) {
       // A late SDK connection must not become an unhandled rejection or leak
       // a live transport after bootstrap has already moved on.
       void pending.then((lateClient) => lateClient.close()).catch(() => {});
+      // The server stays registered: the first tool call connects on demand
+      // (after the backoff window), the periodic reconnect retries as well.
+      this._recordConnectFailure(config.name, error);
       throw error;
     }
 
     this.clients.set(config.name, client);
+    this._clearConnectFailure(config.name);
     this._invalidateCapabilities(config.name);
 
     // Capture the server-level instructions advertised at initialize, so an LLM
@@ -1159,6 +1202,37 @@ export class McpWrapper implements McpWrapperService {
       return;
     }
 
+    if (oldClient === undefined) {
+      // No shared client: share the single-flight of the on-demand connect
+      // (_sharedClient) and transport recovery (_recoverClient) instead of
+      // racing a second handshake into the empty slot. Same "first writer
+      // wins" rule as _startSharedConnect/_recoverClient.
+      const key = this._reconnectKey(serverName);
+      const inFlight = this.reconnects.get(key);
+      if (inFlight !== undefined) {
+        await this._bounded(
+          inFlight,
+          `MCP reconnect ${serverName}`,
+          undefined,
+          this._connectTimeoutFor(config),
+        );
+        const current = this.clients.get(serverName);
+        const instr = current?.getInstructions();
+        if (instr !== undefined && instr.trim().length > 0) {
+          this.instructions.set(serverName, instr);
+        } else {
+          this.instructions.delete(serverName);
+        }
+        this._invalidateCapabilities(serverName);
+        this.schemaCache.invalidateDiscovery(serverName);
+        return;
+      }
+      // Registers in the single-flight, records connect failures, sets the
+      // client only into an empty slot and refreshes instructions + caches.
+      await this._startSharedConnect(serverName, config, key);
+      return;
+    }
+
     const pending = this._createClient(config);
     let client: Client;
     try {
@@ -1166,25 +1240,39 @@ export class McpWrapper implements McpWrapperService {
         pending,
         `MCP reconnect ${serverName}`,
         undefined,
-        this.connectTimeoutMs,
+        this._connectTimeoutFor(config),
       );
     } catch (error) {
-      // Make-before-break: the old session (if any) stays in place so tool
-      // calls keep working; the periodic reconnect will try again later.
+      // Make-before-break: the old session stays in place so tool calls keep
+      // working; the periodic reconnect will try again later.
       // A late handshake must not leak a live transport past the timeout.
       void pending.then((lateClient) => lateClient.close()).catch(() => {});
       throw error;
     }
+    this._clearConnectFailure(serverName);
 
-    // The replacement is live — best-effort close of the old client now.
-    if (oldClient) {
+    // Re-read the slot after the handshake: a transport recovery or an
+    // on-demand connect may have replaced the old client meanwhile. First
+    // writer wins — keep that client, close ours, and leave the old client to
+    // whoever removed it (the recovery already closed it).
+    const current = this.clients.get(serverName);
+    if (current !== undefined && current !== oldClient) {
+      void client.close().catch(() => {});
+      this._invalidateCapabilities(serverName);
+      this.schemaCache.invalidateDiscovery(serverName);
+      return;
+    }
+
+    // Install the replacement first (no await between the slot check and the
+    // write), then best-effort close the old client while it is still ours.
+    this.clients.set(serverName, client);
+    if (current === oldClient) {
       try {
         await oldClient.close();
       } catch {
         // intentionally ignored
       }
     }
-    this.clients.set(serverName, client);
     this._invalidateCapabilities(serverName);
 
     // Refresh server-level instructions from the new session's initialize.
@@ -1264,7 +1352,7 @@ export class McpWrapper implements McpWrapperService {
       authToken !== undefined &&
       authToken !== ""
         ? await this._acquireTokenClient(serverName, authToken)
-        : { client: this._requireClient(serverName), release: () => {} };
+        : { client: await this._sharedClient(serverName), release: () => {} };
     if (!((lease.client as unknown) instanceof Stateless2026Client)) {
       lease.release();
       throw new Error(`MCP server ${serverName} has no native 2026 client`);
@@ -1494,7 +1582,7 @@ export class McpWrapper implements McpWrapperService {
     const lease =
       authToken !== undefined
         ? await this._acquireTokenClient(serverName, authToken)
-        : { client: this._requireClient(serverName), release: () => {} };
+        : { client: await this._sharedClient(serverName), release: () => {} };
     let value: CapabilityDocument | undefined;
     try {
       const tools = await listAllTools(lease.client);
@@ -1831,13 +1919,17 @@ export class McpWrapper implements McpWrapperService {
       );
     }
     const normalizedArgs = nfcNormalizeDeep(args) as Record<string, unknown>;
-    const recovery = this.reconnects.get(
-      this._reconnectKey(serverName, forwardAuth ? ctx.ssoToken : undefined),
-    );
-    if (recovery !== undefined) await recovery;
-    const lease = forwardAuth
-      ? await this._acquireTokenClient(serverName, ctx.ssoToken)
-      : { client: this._requireClient(serverName), release: () => {} };
+    let lease: ClientLease;
+    if (forwardAuth) {
+      const recovery = this.reconnects.get(
+        this._reconnectKey(serverName, ctx.ssoToken),
+      );
+      if (recovery !== undefined) await recovery;
+      lease = await this._acquireTokenClient(serverName, ctx.ssoToken);
+    } else {
+      // _sharedClient awaits an in-flight recovery and connects on demand.
+      lease = { client: await this._sharedClient(serverName), release: () => {} };
+    }
     let rawTool: Awaited<ReturnType<SchemaCache["fetchRawTool"]>> | undefined;
     try {
       rawTool = await this.schemaCache.fetchRawTool(
@@ -2023,13 +2115,20 @@ export class McpWrapper implements McpWrapperService {
     // exact session is currently being replaced, wait for the shared recovery
     // instead of observing the intentional temporary cache gap.
     const acquireClient = async (): Promise<ClientLease> => {
+      if (!forwardAuth) {
+        // Shared session: waits for an in-flight recovery and, when the
+        // server is configured but currently has no client (failed startup or
+        // failed recovery), reconnects on demand instead of failing.
+        return {
+          client: await this._sharedClient(serverName, opts?.signal),
+          release: () => {},
+        };
+      }
       const recovery = this.reconnects.get(
-        this._reconnectKey(serverName, forwardAuth ? ctx.ssoToken : undefined),
+        this._reconnectKey(serverName, ctx.ssoToken),
       );
       if (recovery !== undefined) await recovery;
-      return forwardAuth
-        ? await this._acquireTokenClient(serverName, ctx.ssoToken)
-        : { client: this._requireClient(serverName), release: () => {} };
+      return await this._acquireTokenClient(serverName, ctx.ssoToken);
     };
 
     // Generate this once for the entire logical call, not per transport
@@ -2349,13 +2448,172 @@ export class McpWrapper implements McpWrapperService {
         release: lease.release,
       };
     }
-    const recovery = this.reconnects.get(this._reconnectKey(serverName));
-    if (recovery !== undefined) await recovery;
     return {
-      client: this._requireClient(serverName),
+      client: await this._sharedClient(serverName),
       schemaScope: "shared",
       release: () => {},
     };
+  }
+
+  /** Handshake bound for one server: per-server override, else wrapper default. */
+  private _connectTimeoutFor(config: McpServerConfig): number {
+    return config.connectTimeoutMs ?? this.connectTimeoutMs;
+  }
+
+  /**
+   * How long a caller waits for a shared recovery/connect it did not start.
+   * Must cover a slow handshake, otherwise a recovery that would succeed is
+   * reported as failed to the waiting caller.
+   */
+  private _recoveryWaitMs(config: McpServerConfig): number {
+    return Math.max(
+      this.retryTimeoutMs * 2,
+      this._connectTimeoutFor(config) + this.retryTimeoutMs,
+    );
+  }
+
+  private _hasBootstrapAuthorization(config: McpServerConfig): boolean {
+    return Object.entries(config.headers ?? {}).some(
+      ([name, value]) =>
+        name.toLowerCase() === "authorization" && value.trim().length > 0,
+    );
+  }
+
+  private _recordConnectFailure(serverName: string, error: unknown): void {
+    const previous = this.connectFailures.get(serverName);
+    this.connectFailures.set(serverName, {
+      failedAt: Date.now(),
+      consecutive: (previous?.consecutive ?? 0) + 1,
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  private _clearConnectFailure(serverName: string): void {
+    this.connectFailures.delete(serverName);
+  }
+
+  /** Remaining backoff (ms) before the next on-demand connect may start. */
+  private _connectBackoffRemaining(serverName: string): number {
+    const failure = this.connectFailures.get(serverName);
+    if (failure === undefined) return 0;
+    const window = Math.min(
+      this.connectBackoffBaseMs * 2 ** Math.min(failure.consecutive - 1, 30),
+      this.connectBackoffMaxMs,
+    );
+    return Math.max(0, failure.failedAt + window - Date.now());
+  }
+
+  private _unavailableError(serverName: string, cause?: unknown): Error {
+    const lastMessage =
+      cause instanceof Error
+        ? cause.message
+        : (this.connectFailures.get(serverName)?.message ?? "unknown error");
+    const remaining = this._connectBackoffRemaining(serverName);
+    const retry =
+      remaining > 0 ? `retry in ${remaining} ms` : "retrying on next call";
+    return new Error(
+      `MCP server temporarily unavailable: ${serverName} (configured but not connected; last connect attempt failed: ${lastMessage}; ${retry})`,
+    );
+  }
+
+  /**
+   * Returns the shared (bootstrap) client of a configured server. When it is
+   * missing — the startup handshake failed, or a transport recovery removed
+   * the poisoned client and its replacement handshake failed — the client is
+   * re-established on demand: one connect per server at a time (single-flight
+   * via {@link reconnects}), and after a failure no new connect is started
+   * until the exponential backoff window has elapsed. Callers inside the
+   * window fail fast with "temporarily unavailable" instead of piling up
+   * handshakes against a struggling peer.
+   */
+  private async _sharedClient(
+    serverName: string,
+    signal?: AbortSignal,
+  ): Promise<Client> {
+    const config = this._requireConfig(serverName);
+    const existing = this.clients.get(serverName);
+    const key = this._reconnectKey(serverName);
+    let pending = this.reconnects.get(key);
+    if (existing !== undefined && pending === undefined) return existing;
+    if (pending === undefined) {
+      if (
+        config.forwardAuthToken === true &&
+        !this._hasBootstrapAuthorization(config)
+      ) {
+        throw new Error(
+          `MCP server not found: ${serverName} (caller-scoped server has no shared session)`,
+        );
+      }
+      if (this._connectBackoffRemaining(serverName) > 0) {
+        throw this._unavailableError(serverName);
+      }
+      pending = this._startSharedConnect(serverName, config, key);
+    }
+    try {
+      await this._bounded(
+        pending,
+        `MCP connect ${serverName}`,
+        signal,
+        this._recoveryWaitMs(config),
+      );
+    } catch (error) {
+      const recovered = this.clients.get(serverName);
+      if (recovered !== undefined) return recovered;
+      if (signal?.aborted === true) throw error;
+      throw this._unavailableError(serverName, error);
+    }
+    const client = this.clients.get(serverName);
+    if (client === undefined) throw this._unavailableError(serverName);
+    return client;
+  }
+
+  /** Starts (and registers) the single-flight on-demand shared connect. */
+  private _startSharedConnect(
+    serverName: string,
+    config: McpServerConfig,
+    key: string,
+  ): Promise<void> {
+    const attempt = (async (): Promise<void> => {
+      const pending = this._createClient(config);
+      let client: Client;
+      try {
+        client = await this._bounded(
+          pending,
+          `MCP connect ${serverName}`,
+          undefined,
+          this._connectTimeoutFor(config),
+        );
+      } catch (error) {
+        void pending.then((lateClient) => lateClient.close()).catch(() => {});
+        this._recordConnectFailure(serverName, error);
+        throw error;
+      }
+      if (this.clients.has(serverName)) {
+        // A concurrent connect()/reconnect() won; keep its client.
+        void client.close().catch(() => {});
+      } else {
+        this.clients.set(serverName, client);
+        const instr = client.getInstructions();
+        if (instr !== undefined && instr.trim().length > 0) {
+          this.instructions.set(serverName, instr);
+        } else {
+          this.instructions.delete(serverName);
+        }
+      }
+      this._clearConnectFailure(serverName);
+      this.schemaCache.invalidateDiscovery(serverName);
+      this._invalidateCapabilities(serverName);
+    })();
+    this.reconnects.set(key, attempt);
+    void attempt.then(
+      () => {
+        if (this.reconnects.get(key) === attempt) this.reconnects.delete(key);
+      },
+      () => {
+        if (this.reconnects.get(key) === attempt) this.reconnects.delete(key);
+      },
+    );
+    return attempt;
   }
 
   private _reconnectKey(serverName: string, token?: string): string {
@@ -2372,15 +2630,28 @@ export class McpWrapper implements McpWrapperService {
     token?: string,
     signal?: AbortSignal,
   ): Promise<void> {
+    const config = this._requireConfig(serverName);
     const key = this._reconnectKey(serverName, token);
+    // Shared session: a failed recovery surfaces in the same "temporarily
+    // unavailable" form as the on-demand connect in _sharedClient (cause kept
+    // in the text), never as the raw handshake error. A caller abort keeps its
+    // original error; token-scoped clients are unchanged.
+    const awaitRecovery = async (recovery: Promise<void>): Promise<void> => {
+      try {
+        await this._bounded(
+          recovery,
+          `MCP reconnect ${serverName}`,
+          signal,
+          this._recoveryWaitMs(config),
+        );
+      } catch (error) {
+        if (token !== undefined || signal?.aborted === true) throw error;
+        throw this._unavailableError(serverName, error);
+      }
+    };
     const inFlight = this.reconnects.get(key);
     if (inFlight !== undefined) {
-      await this._bounded(
-        inFlight,
-        `MCP reconnect ${serverName}`,
-        signal,
-        this.retryTimeoutMs * 2,
-      );
+      await awaitRecovery(inFlight);
       return;
     }
 
@@ -2420,17 +2691,27 @@ export class McpWrapper implements McpWrapperService {
         }
       }
 
-      const config = this._requireConfig(serverName);
       const pending = this._createClient(config, token);
       let replacement: Client;
       try {
-        replacement = await this._bounded(pending, `MCP connect ${serverName}`);
+        // Handshake bound, not the per-request retry timeout: a slow but
+        // healthy peer must not lose its shared client to a 5 s request bound.
+        replacement = await this._bounded(
+          pending,
+          `MCP connect ${serverName}`,
+          undefined,
+          this._connectTimeoutFor(config),
+        );
       } catch (error) {
         void pending.then((lateClient) => lateClient.close()).catch(() => {});
+        // Shared session: the server stays registered without a client; the
+        // next call reconnects on demand once the backoff window has elapsed.
+        if (token === undefined) this._recordConnectFailure(serverName, error);
         throw error;
       }
 
       if (token === undefined) {
+        this._clearConnectFailure(serverName);
         if (!this.clients.has(serverName))
           this.clients.set(serverName, replacement);
         else void replacement.close().catch(() => {});
@@ -2468,26 +2749,13 @@ export class McpWrapper implements McpWrapperService {
     // The shared recovery is independent of this caller. Its signal only
     // bounds this caller's wait, so one disconnected request cannot cancel
     // recovery needed by other concurrent requests.
-    await this._bounded(
-      recovery,
-      `MCP reconnect ${serverName}`,
-      signal,
-      this.retryTimeoutMs * 2,
-    );
-  }
-
-  private _requireClient(serverName: string): Client {
-    const client = this.clients.get(serverName);
-    if (!client) {
-      throw new Error(`MCP server not found: ${serverName}`);
-    }
-    return client;
+    await awaitRecovery(recovery);
   }
 
   private _requireConfig(serverName: string): McpServerConfig {
     const config = this.configs.get(serverName);
     if (!config) {
-      throw new Error(`MCP server not found: ${serverName}`);
+      throw new Error(`MCP server not found: ${serverName} (not configured)`);
     }
     return config;
   }
@@ -2631,6 +2899,8 @@ export function createMcpWrapper(options?: {
   capabilityTtlMs?: number;
   retryTimeoutMs?: number;
   connectTimeoutMs?: number;
+  connectBackoffBaseMs?: number;
+  connectBackoffMaxMs?: number;
   preparedEvidenceCallTtlMs?: number;
   maxPreparedEvidenceCalls?: number;
   maxPreparedEvidenceCallsPerCaller?: number;

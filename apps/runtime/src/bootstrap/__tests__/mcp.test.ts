@@ -77,7 +77,10 @@ describe("buildMcp — startup connection failures do not crash the process", ()
     // the process actually dying, so completion of the await IS the assertion.
     const result = await buildMcp(config, logger);
     expect(result.mcpWrapper).toBeDefined();
-    expect(result.knownToolIds.size).toBe(0);
+    // The server stays configured; its tools are runtime-resolved (connect on
+    // demand) so flows using them still compile.
+    expect(result.knownToolIds.has("down-server/*")).toBe(true);
+    expect(result.knownToolIds.size).toBe(1);
     expect(errors.some((m) => m.includes("Failed to connect"))).toBe(true);
   });
 
@@ -88,13 +91,15 @@ describe("buildMcp — startup connection failures do not crash the process", ()
     // servers through the same real wrapper factory path is out of scope here
     // (network); instead assert the per-server try/catch does not abort the
     // Promise.all early for the remaining entries by checking knownToolIds
-    // stays empty rather than throwing when both are unreachable.
+    // holds a runtime-resolved marker for each unreachable server.
     const config = baseConfig([
       { name: "down-a", url: "http://a.invalid", transport: "http" },
       { name: "down-b", url: "http://b.invalid", transport: "http" },
     ]);
     const result = await buildMcp(config, logger);
-    expect(result.knownToolIds.size).toBe(0);
+    expect(result.knownToolIds.size).toBe(2);
+    expect(result.knownToolIds.has("down-a/*")).toBe(true);
+    expect(result.knownToolIds.has("down-b/*")).toBe(true);
   });
 
   test("connecting succeeds and listTools populates knownToolIds when reachable", async () => {

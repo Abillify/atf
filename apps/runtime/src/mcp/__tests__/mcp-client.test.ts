@@ -152,6 +152,9 @@ function mkWrapper(
   options: {
     capabilityTtlMs?: number;
     retryTimeoutMs?: number;
+    connectTimeoutMs?: number;
+    connectBackoffBaseMs?: number;
+    connectBackoffMaxMs?: number;
     schemaTtlMs?: number;
     schemaCompatibilityMode?: "report" | "strict";
     onSchemaCompatibility?: (report: SchemaCompatibilityReport) => void;
@@ -550,6 +553,271 @@ describe("reconnect", () => {
     expect(created).toHaveLength(0);
     await w.reconnect("srv");
     expect(created).toHaveLength(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// shared client self-healing (on-demand connect after failed startup/recovery)
+// ---------------------------------------------------------------------------
+
+describe("shared client self-healing", () => {
+  const hang = (): Promise<void> => new Promise<void>(() => {});
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  test("startup connect timeout: the next tool call connects on demand without restart", async () => {
+    behavior.connect = hang;
+    const w = mkWrapper({ connectTimeoutMs: 20, connectBackoffBaseMs: 1 });
+    await expect(w.connect(mkConfig({ name: "srv" }))).rejects.toThrow(
+      /MCP connect srv timed out after 20ms/,
+    );
+    expect(created).toHaveLength(1);
+
+    behavior.connect = async () => {};
+    await sleep(5);
+    const result = await w.callTool("srv", "t", {}, mkCtx());
+    expect(result.content).toEqual([{ type: "text", text: "ok" }]);
+    expect(created).toHaveLength(2);
+  });
+
+  test("recovery connect timeout: the call fails transiently, the next call heals the client", async () => {
+    behavior.listTools = async () => ({
+      tools: [{ ...defaultTool("t"), annotations: { readOnlyHint: true } }],
+    });
+    let calls = 0;
+    behavior.callTool = async () => {
+      calls += 1;
+      if (calls === 1) throw new Error("read ECONNRESET");
+      return { content: "healed" };
+    };
+    // retryTimeoutMs ≠ connectTimeoutMs proves the recovery handshake is
+    // bounded by the connect timeout, not the per-request retry timeout.
+    const w = mkWrapper({
+      retryTimeoutMs: 1_000,
+      connectTimeoutMs: 20,
+      connectBackoffBaseMs: 1,
+    });
+    await w.connect(mkConfig({ name: "srv" }));
+
+    behavior.connect = hang;
+    let failure: unknown;
+    try {
+      await w.callTool("srv", "t", {}, mkCtx());
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toMatch(/timed out after 20ms/);
+    expect((failure as Error).message).toMatch(/MCP server temporarily unavailable/);
+    expect((failure as Error).message).not.toMatch(/MCP server not found/);
+
+    behavior.connect = async () => {};
+    await sleep(5);
+    const result = await w.callTool("srv", "t", {}, mkCtx());
+    expect(result.content).toBe("healed");
+    // bootstrap + hung recovery + on-demand replacement
+    expect(created).toHaveLength(3);
+  });
+
+  test("concurrent calls after a failed startup share one on-demand connect", async () => {
+    behavior.connect = async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:9999");
+    };
+    const w = mkWrapper({ connectBackoffBaseMs: 1 });
+    await expect(w.connect(mkConfig({ name: "srv" }))).rejects.toThrow(/ECONNREFUSED/);
+    expect(created).toHaveLength(1);
+
+    behavior.connect = async () => {
+      await sleep(10);
+    };
+    await sleep(5);
+    const results = await Promise.all(
+      Array.from({ length: 5 }, (_, i) => w.callTool("srv", "t", { i }, mkCtx())),
+    );
+    expect(results).toHaveLength(5);
+    expect(created).toHaveLength(2);
+  });
+
+  test("inside the backoff window calls fail fast as temporarily unavailable", async () => {
+    behavior.connect = async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:9999");
+    };
+    const w = mkWrapper({ connectBackoffBaseMs: 10_000 });
+    await expect(w.connect(mkConfig({ name: "srv" }))).rejects.toThrow(/ECONNREFUSED/);
+    behavior.connect = async () => {};
+
+    await expect(w.callTool("srv", "t", {}, mkCtx())).rejects.toThrow(
+      /MCP server temporarily unavailable: srv \(configured but not connected; last connect attempt failed: connect ECONNREFUSED/,
+    );
+    expect(created).toHaveLength(1);
+  });
+
+  test("a failed on-demand connect doubles the backoff window", async () => {
+    behavior.connect = async () => {
+      throw new Error("connect ECONNREFUSED 127.0.0.1:9999");
+    };
+    const w = mkWrapper({ connectBackoffBaseMs: 20, connectBackoffMaxMs: 10_000 });
+    await expect(w.connect(mkConfig({ name: "srv" }))).rejects.toThrow(/ECONNREFUSED/);
+    await sleep(30);
+    await expect(w.callTool("srv", "t", {}, mkCtx())).rejects.toThrow(
+      /temporarily unavailable: srv/,
+    );
+    expect(created).toHaveLength(2);
+    // Second failure → 40 ms window; 30 ms later still blocked.
+    await sleep(30);
+    await expect(w.callTool("srv", "t", {}, mkCtx())).rejects.toThrow(/retry in \d+ ms/);
+    expect(created).toHaveLength(2);
+  });
+
+  test("an unconfigured server is reported as not configured", async () => {
+    const w = mkWrapper();
+    await expect(w.callTool("nope", "t", {}, mkCtx())).rejects.toThrow(
+      /MCP server not found: nope \(not configured\)/,
+    );
+  });
+
+  test("a per-server connectTimeoutMs overrides the wrapper default", async () => {
+    behavior.connect = async () => {
+      await sleep(50);
+    };
+    const w = mkWrapper({ connectTimeoutMs: 10 });
+    await w.connect(mkConfig({ name: "srv", connectTimeoutMs: 500 }));
+    const result = await w.callTool("srv", "t", {}, mkCtx());
+    expect(result.content).toEqual([{ type: "text", text: "ok" }]);
+  });
+
+  test("discovery connects on demand after a failed startup", async () => {
+    behavior.connect = hang;
+    const w = mkWrapper({ connectTimeoutMs: 20, connectBackoffBaseMs: 1 });
+    await expect(w.connect(mkConfig({ name: "srv" }))).rejects.toThrow(/timed out/);
+    behavior.connect = async () => {};
+    await sleep(5);
+    expect(await w.listTools("srv")).toEqual(["t"]);
+    const schema = await w.getFilteredToolSchema("srv", "t");
+    expect(schema).toBeDefined();
+    expect(created).toHaveLength(2);
+  });
+
+  test("mid-session abort with a rejected recovery handshake → temporarily unavailable, not raw ECONNRESET", async () => {
+    behavior.listTools = async () => ({
+      tools: [{ ...defaultTool("t"), annotations: { readOnlyHint: true } }],
+    });
+    behavior.callTool = async () => {
+      throw new Error("read ECONNRESET");
+    };
+    const w = mkWrapper({ connectBackoffBaseMs: 1 });
+    await w.connect(mkConfig({ name: "srv" }));
+
+    // The peer drops the session; the recovery handshake is reset as well.
+    behavior.connect = async () => {
+      throw new Error("read ECONNRESET");
+    };
+    let failure: unknown;
+    try {
+      await w.callTool("srv", "t", {}, mkCtx());
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    expect(message).toMatch(
+      /^MCP server temporarily unavailable: srv \(configured but not connected; last connect attempt failed: read ECONNRESET/,
+    );
+    expect(message).not.toMatch(/MCP server not found/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// reconnect vs. on-demand connect / recovery races
+// ---------------------------------------------------------------------------
+
+describe("reconnect single-flight", () => {
+  const sleep = (ms: number): Promise<void> =>
+    new Promise((resolve) => setTimeout(resolve, ms));
+
+  test.each([
+    ["reconnect first", true],
+    ["callTool first", false],
+  ] as const)(
+    "without a client, reconnect and an on-demand call share one handshake (%s)",
+    async (_label, reconnectFirst) => {
+      behavior.connect = async () => {
+        throw new Error("connect ECONNREFUSED 127.0.0.1:9999");
+      };
+      const w = mkWrapper({ connectBackoffBaseMs: 1 });
+      await expect(w.connect(mkConfig({ name: "srv" }))).rejects.toThrow(/ECONNREFUSED/);
+      expect(created).toHaveLength(1);
+
+      const closed: FakeClient[] = [];
+      behavior.close = async (client) => {
+        if (client !== undefined) closed.push(client);
+      };
+      behavior.connect = async () => {
+        await sleep(20);
+      };
+      await sleep(5);
+      const reconnect = (): Promise<void> => w.reconnect("srv");
+      const call = () => w.callTool("srv", "t", {}, mkCtx());
+      if (reconnectFirst) {
+        const r = reconnect();
+        const c = call();
+        await Promise.all([r, c]);
+      } else {
+        const c = call();
+        const r = reconnect();
+        await Promise.all([r, c]);
+      }
+      // bootstrap failure + exactly one shared handshake, no closed loser.
+      expect(created).toHaveLength(2);
+      expect(closed).toHaveLength(0);
+      const served: FakeClient[] = [];
+      behavior.callTool = async (_req, _opts, client) => {
+        if (client !== undefined) served.push(client);
+        return { content: "ok" };
+      };
+      await w.callTool("srv", "t", {}, mkCtx());
+      expect(served[0]).toBe(created[1]);
+    },
+  );
+
+  test("reconnect with an old client yields to a recovery replacement installed during its handshake", async () => {
+    behavior.listTools = async () => ({
+      tools: [{ ...defaultTool("t"), annotations: { readOnlyHint: true } }],
+    });
+    const w = mkWrapper();
+    await w.connect(mkConfig({ name: "srv" }));
+    const original = created[0];
+    const closed: FakeClient[] = [];
+    behavior.close = async (client) => {
+      if (client !== undefined) closed.push(client);
+    };
+    // Client #1 (reconnect) handshakes slowly, client #2 (recovery) at once.
+    behavior.connect = async (client) => {
+      if (client === created[1]) await sleep(40);
+    };
+    const served: FakeClient[] = [];
+    behavior.callTool = async (_req, _opts, client) => {
+      if (client === original) throw new Error("read ECONNRESET");
+      if (client !== undefined) served.push(client);
+      return { content: "ok" };
+    };
+
+    const reconnecting = w.reconnect("srv");
+    await sleep(5);
+    // The old session breaks; transport recovery installs client #2.
+    await w.callTool("srv", "t", {}, mkCtx());
+    expect(created).toHaveLength(3);
+    const replacement = created[2];
+    expect(served).toEqual([replacement as FakeClient]);
+
+    await reconnecting;
+    // The recovery replacement stays; reconnect's own client is closed; the
+    // old client was closed exactly once (by the recovery).
+    expect(closed.filter((c) => c === created[1])).toHaveLength(1);
+    expect(closed.filter((c) => c === original)).toHaveLength(1);
+    expect(closed.filter((c) => c === replacement)).toHaveLength(0);
+    await w.callTool("srv", "t", {}, mkCtx());
+    expect(served.at(-1)).toBe(replacement);
   });
 });
 

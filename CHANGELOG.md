@@ -48,6 +48,27 @@ releases:
 
 ### Fixed
 
+- Runtime, MCP: when the transport recovery of a shared session fails (e.g.
+  the replacement handshake is reset), the caller gets the same
+  `MCP server temporarily unavailable: … last connect attempt failed: …`
+  error as the on-demand connect instead of the raw `read ECONNRESET`.
+- Runtime, MCP: `reconnect()` without a live client now joins the
+  single-flight of the on-demand connect and the transport recovery instead
+  of racing a second handshake. With a live client it keeps a replacement
+  that a recovery installed during its handshake and closes its own client.
+- Runtime, MCP: a configured MCP server whose startup handshake or
+  transport recovery failed no longer stays unusable until the periodic
+  reconnect (10 min) or a restart. The next tool or discovery call connects on
+  demand, single-flight per server with exponential backoff after failures
+  (1 s doubling to 30 s), so a burst of calls does not open one handshake each.
+  Errors now distinguish `MCP server not found: <name> (not configured)` from
+  `MCP server temporarily unavailable: <name> (configured but not connected;
+  last connect attempt failed: …; retry in … ms)`. The recovery handshake is
+  bounded by the connect timeout instead of the per-request retry timeout, and
+  the new optional per-server field `connectTimeoutMs` (500–120000 ms, in
+  `MCP_SERVERS`/`mcp.yaml`) overrides the 4 s default. A server that is down at
+  startup is registered as `<server>/*`, so flows using its tools still
+  compile; the periodic reconnect replaces the marker with the real tool list.
 - Runtime, threaded conversations: a repeated request with the same
   `conversation_id` and an unchanged last user message (double submit,
   "regenerate") now regenerates the answer from the start of that turn. The

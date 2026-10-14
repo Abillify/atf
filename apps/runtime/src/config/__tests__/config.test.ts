@@ -365,6 +365,31 @@ describe("loadConfig() — valid configurations", () => {
     expect(server0.name).toBe("my-mcp");
   });
 
+  test("accepts a per-server connectTimeoutMs within bounds", () => {
+    const servers = JSON.stringify([
+      {
+        name: "slow-mcp",
+        url: "http://localhost:4000",
+        transport: "http",
+        connectTimeoutMs: 15000,
+      },
+    ]);
+    const config = expectConfigSuccess({ MCP_SERVERS: servers });
+    expect(config.mcpServers[0]?.connectTimeoutMs).toBe(15000);
+  });
+
+  test("rejects a per-server connectTimeoutMs below 500 ms", () => {
+    const servers = JSON.stringify([
+      {
+        name: "slow-mcp",
+        url: "http://localhost:4000",
+        transport: "http",
+        connectTimeoutMs: 100,
+      },
+    ]);
+    expectConfigFailure({ MCP_SERVERS: servers });
+  });
+
   test("accepts allowAnonymous only with explicitly disabled authentication", () => {
     const servers = JSON.stringify([
       {

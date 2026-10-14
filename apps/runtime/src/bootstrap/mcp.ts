@@ -61,9 +61,10 @@ export async function buildMcp(
   // would have worked fine. The periodic reconnect timer below already treats
   // a post-startup connection loss as recoverable (it retries every 10
   // minutes and logs a warning); startup now gets the SAME treatment instead
-  // of a stricter one. A flow whose tools depend on the unreachable server
-  // fails that specific tool call (or the MCP wrapper's own connect-on-demand
-  // retry, depending on transport) rather than taking down flows that do not.
+  // of a stricter one. The server stays configured: its tools are registered
+  // as `<server>/*` (runtime-resolved) so dependent flows still compile, and
+  // the MCP wrapper connects on demand on the first tool call (single-flight,
+  // with backoff) instead of reporting the server as not found.
   await Promise.all(
     config.mcpServers.map(async (serverConfig) => {
       try {
@@ -93,14 +94,19 @@ export async function buildMcp(
       } catch (err) {
         logger.error(
           "Failed to connect to MCP server at startup — continuing without it. " +
-            "Tools from this server are unavailable until the periodic reconnect " +
-            "(every 10 min) succeeds. Set up alerting on this log line if this " +
-            "server is required for the deployment.",
+            "Tools from this server connect on demand on first use (with backoff) " +
+            "and via the periodic reconnect (every 10 min). Set up alerting on " +
+            "this log line if this server is required for the deployment.",
           {
             server: serverConfig.name,
             error: err instanceof Error ? err.message : String(err),
           },
         );
+        // The server stays configured in the wrapper. Mark its tools as
+        // runtime-resolved so flows that use them still compile; the first call
+        // connects on demand. The periodic reconnect replaces this marker with
+        // the concrete tool list once listTools succeeds.
+        knownToolIds.add(`${serverConfig.name}/*`);
         return; // Skip listTools below — there is no connection to list from.
       }
       if (serverConfig.forwardAuthToken === true) {
@@ -160,6 +166,7 @@ export async function buildMcp(
               continue;
             }
             const toolNames = await mcpWrapper.listTools(serverConfig.name);
+            // Also drops a `<server>/*` marker left by a failed startup connect.
             const oldBareNames = [...knownToolIds]
               .filter((id) => id.startsWith(`${serverConfig.name}/`))
               .map((id) => id.slice(serverConfig.name.length + 1));

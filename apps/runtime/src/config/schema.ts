@@ -107,6 +107,12 @@ export interface McpServerConfig {
    */
   requestTimeoutMs?: number;
   /**
+   * Bound for the MCP initialize handshake of this server (ms): startup
+   * connect, on-demand connect after a failed startup/recovery, transport
+   * recovery and periodic reconnect. Overrides the wrapper default (4 s).
+   */
+  connectTimeoutMs?: number;
+  /**
    * Total call attempts for retryable tools on this server (default 3, from
    * the readOnlyHint/idempotentHint gate). Set higher when a server is known
    * to be slow-but-recoverable; set 1 to disable retries entirely.
@@ -723,6 +729,7 @@ export const McpServerConfigSchema = z.object({
   profile: z.enum(["2025", "2026-07-28"]).optional(),
   protocolVersion: z.enum(["2025", "2026-07-28"]).optional(),
   requestTimeoutMs: z.number().int().min(1_000).max(600_000).optional(),
+  connectTimeoutMs: z.number().int().min(500).max(120_000).optional(),
   retryAttempts: z.number().int().min(1).max(10).optional(),
   taskPollingIntervalMs: z.number().int().min(0).max(60_000).optional(),
   taskPollingMaxAttempts: z.number().int().min(1).max(10_000).optional(),
