@@ -79,6 +79,10 @@ export const REF_HANDLE_ARG_KEYS: readonly string[] = [
   "base_ref",
   "references",
   "refs",
+  // get_document_asset's fail-closed owner check: the document the asset must
+  // belong to. The model copies it from the same tool results as `reference`,
+  // so it carries a handle just as often and must be resolved the same way.
+  "expected_document_reference",
 ];
 
 /** A registered reference and the handle the model sees for it. */
@@ -92,7 +96,31 @@ export interface RefHandleInfo {
 /** Outcome of {@link resolveRefHandleArgs}: rewritten args, or a model error. */
 export type RefHandleArgResolution =
   | { ok: true; args: Record<string, unknown>; resolved: boolean }
-  | { ok: false; unknownHandles: string[] };
+  | {
+      ok: false;
+      /**
+       * `unknown_ref_handle`: a handle-shaped value that is not registered
+       * (takes precedence). `unregistered_ref`: strict mode only — a
+       * path-shaped value that no tool result of this run contained (a
+       * reference the model assembled itself, e.g. from `link` + a chapter
+       * title).
+       */
+      kind: "unknown_ref_handle" | "unregistered_ref";
+      unknownHandles: string[];
+      unregisteredRefs: Array<{ key: string; value: string }>;
+    };
+
+/** Options for {@link resolveRefHandleArgs}. */
+export interface RefHandleArgOptions {
+  /**
+   * Reject path-shaped reference values (containing `/`) that are neither a
+   * handle nor a reference any tool result of this run contained. Only
+   * meaningful on nodes that show the model handles (`config.refHandles`).
+   */
+  strict?: boolean;
+  /** Argument keys exempt from the strict check (flow-author forced args). */
+  exemptKeys?: ReadonlySet<string>;
+}
 
 export interface RefHandleRegistry {
   /**
@@ -116,6 +144,26 @@ export interface RefHandleRegistry {
    * sees handles.
    */
   registerFromPayload(content: unknown): void;
+  /**
+   * Records the references of a tool-result payload as "seen in this run"
+   * WITHOUT creating handles — for tool results of nodes that do not mask
+   * (no `config.refHandles`), whose real references may still be quoted by a
+   * masking node later in the run. Also records `document_group.id` values
+   * (thread ids / attachment parents, valid `get_thread` arguments).
+   */
+  observeFromPayload(content: unknown): void;
+  /**
+   * True when `value` (trimmed, NFC) is a real reference some tool result of
+   * this run contained — registered or merely observed, including references
+   * past the handle budget.
+   */
+  isKnownRef(value: string): boolean;
+  /**
+   * False once the seen-reference set overflowed its cap: the strict
+   * unregistered-reference check then fails open for the rest of the run so a
+   * real reference is never rejected for lack of bookkeeping space.
+   */
+  strictCheckAvailable(): boolean;
   /**
    * Replaces known real references with their handles throughout a tool
    * result the model is about to read: exact string values anywhere in the
@@ -186,6 +234,14 @@ function baseHandle(ref: string): string {
 /** Default cap on live mappings — past it, refs pass through unmasked. */
 const DEFAULT_MAX_REFS = 2048;
 
+/** Seen-reference cap as a multiple of the handle budget. */
+const SEEN_REFS_FACTOR = 4;
+
+/** Comparison key for seen references: trimmed, Unicode NFC. */
+function seenKey(value: string): string {
+  return value.trim().normalize("NFC");
+}
+
 /** Keys whose string values identify a document inside a tool payload. */
 const REFERENCE_VALUE_KEYS = new Set(["reference", "ref", "base_ref"]);
 
@@ -212,14 +268,37 @@ export class HashRefHandleRegistry implements RefHandleRegistry {
   private readonly collisions = new Map<string, number>();
   /** (channel, node) → held-back tail of a streamed delta. */
   private readonly streamBufs = new Map<string, string>();
+  /**
+   * Every real reference a tool result of this run contained (NFC keys),
+   * independent of the handle budget. Backs the strict check that rejects
+   * references the model assembled itself.
+   */
+  private readonly seenRefs = new Set<string>();
+  private readonly maxSeenRefs: number;
+  private seenOverflow = false;
 
-  constructor(options?: { maxRefs?: number }) {
+  constructor(options?: { maxRefs?: number; maxSeenRefs?: number }) {
     this.maxRefs = Math.max(1, options?.maxRefs ?? DEFAULT_MAX_REFS);
+    this.maxSeenRefs = Math.max(
+      1,
+      options?.maxSeenRefs ?? this.maxRefs * SEEN_REFS_FACTOR,
+    );
+  }
+
+  private markSeen(value: string): void {
+    const key = seenKey(value);
+    if (key === "" || this.seenRefs.has(key)) return;
+    if (this.seenRefs.size >= this.maxSeenRefs) {
+      this.seenOverflow = true;
+      return;
+    }
+    this.seenRefs.add(key);
   }
 
   register(ref: string): string {
     const value = ref.trim();
     if (value === "") return ref;
+    this.markSeen(value);
     const existing = this.byRef.get(value);
     if (existing !== undefined) return existing;
     if (this.byRef.size >= this.maxRefs) {
@@ -251,9 +330,25 @@ export class HashRefHandleRegistry implements RefHandleRegistry {
   }
 
   registerFromPayload(content: unknown): void {
-    for (const value of collectReferenceValues(parseMaybeJson(content))) {
+    const parsed = parseMaybeJson(content);
+    for (const value of collectReferenceValues(parsed)) {
       this.register(value);
     }
+    for (const value of collectDocumentGroupIds(parsed)) this.markSeen(value);
+  }
+
+  observeFromPayload(content: unknown): void {
+    const parsed = parseMaybeJson(content);
+    for (const value of collectReferenceValues(parsed)) this.markSeen(value);
+    for (const value of collectDocumentGroupIds(parsed)) this.markSeen(value);
+  }
+
+  isKnownRef(value: string): boolean {
+    return this.seenRefs.has(seenKey(value));
+  }
+
+  strictCheckAvailable(): boolean {
+    return !this.seenOverflow;
   }
 
   maskContent(content: unknown): unknown {
@@ -407,6 +502,33 @@ function collectReferenceValues(value: unknown, found: string[] = []): string[] 
   return found;
 }
 
+/**
+ * Collects `document_group.id` strings (e-mail thread ids, attachment parent
+ * references) from a parsed payload. They are valid `get_thread` arguments but
+ * not document references, so they are only recorded as seen, never masked.
+ */
+function collectDocumentGroupIds(value: unknown, found: string[] = []): string[] {
+  if (Array.isArray(value)) {
+    for (const item of value) collectDocumentGroupIds(item, found);
+    return found;
+  }
+  if (value !== null && typeof value === "object") {
+    for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+      if (key === "document_group" && nested !== null && typeof nested === "object") {
+        const id = (nested as { id?: unknown }).id;
+        if (typeof id === "string" && id.trim() !== "") found.push(id);
+      }
+      collectDocumentGroupIds(nested, found);
+    }
+    return found;
+  }
+  if (typeof value === "string") {
+    const parsed = parseMaybeJson(value);
+    if (parsed !== value) collectDocumentGroupIds(parsed, found);
+  }
+  return found;
+}
+
 /** Parses JSON strings / MCP text-part arrays; returns the input when not JSON. */
 function parseMaybeJson(content: unknown): unknown {
   if (typeof content === "string") {
@@ -449,40 +571,70 @@ function parseMaybeJson(content: unknown): unknown {
  * bogus value would let the tool silently search for nothing (or the wrong
  * thing).
  *
+ * Strict mode (`options.strict`, used on `config.refHandles` nodes): a
+ * PATH-SHAPED value (contains `/`) that is neither a handle nor a reference
+ * any tool result of this run contained is rejected as `unregistered_ref`.
+ * On a masking node every genuine reference reaches the model as a handle, so
+ * such a value was assembled by the model itself — typically the `link` file
+ * path plus a guessed chapter number/title (trace 42474444: 9 of 15
+ * get_document calls) — and would only fail at the server as "No document
+ * found". Values without `/` (thread ids, free identifiers) and keys in
+ * `exemptKeys` are never checked; the check fails open once the registry's
+ * seen-reference set overflowed ({@link RefHandleRegistry.strictCheckAvailable}).
+ *
  * Exported for unit testing.
  */
 export function resolveRefHandleArgs(
   registry: RefHandleRegistry,
   args: Record<string, unknown>,
+  options?: RefHandleArgOptions,
 ): RefHandleArgResolution {
   const unknownHandles: string[] = [];
+  const unregisteredRefs: Array<{ key: string; value: string }> = [];
+  const strict = options?.strict === true && registry.strictCheckAvailable();
   let resolved = false;
   const out: Record<string, unknown> = { ...args };
   for (const key of REF_HANDLE_ARG_KEYS) {
     const value = out[key];
-    if (typeof value === "string") {
-      const real = registry.resolve(value);
+    const checkStrict = strict && options?.exemptKeys?.has(key) !== true;
+    const resolveOne = (item: string): string => {
+      const real = registry.resolve(item);
       if (real !== undefined) {
-        out[key] = real;
         resolved = true;
-      } else if (looksLikeHandle(value)) {
-        unknownHandles.push(value);
+        return real;
       }
+      if (looksLikeHandle(item)) unknownHandles.push(item);
+      else if (checkStrict && item.includes("/") && !registry.isKnownRef(item)) {
+        unregisteredRefs.push({ key, value: item });
+      }
+      return item;
+    };
+    if (typeof value === "string") {
+      const mapped = resolveOne(value);
+      if (mapped !== value) out[key] = mapped;
     } else if (Array.isArray(value)) {
-      const mapped = value.map((item) => {
-        if (typeof item !== "string") return item;
-        const real = registry.resolve(item);
-        if (real !== undefined) {
-          resolved = true;
-          return real;
-        }
-        if (looksLikeHandle(item)) unknownHandles.push(item);
-        return item;
-      });
+      const mapped = value.map((item) =>
+        typeof item === "string" ? resolveOne(item) : item,
+      );
       if (mapped.some((item, i) => item !== value[i])) out[key] = mapped;
     }
   }
-  if (unknownHandles.length > 0) return { ok: false, unknownHandles };
+  if (unknownHandles.length > 0) {
+    return {
+      ok: false,
+      kind: "unknown_ref_handle",
+      unknownHandles,
+      unregisteredRefs,
+    };
+  }
+  if (unregisteredRefs.length > 0) {
+    return {
+      ok: false,
+      kind: "unregistered_ref",
+      unknownHandles,
+      unregisteredRefs,
+    };
+  }
   return { ok: true, args: out, resolved };
 }
 

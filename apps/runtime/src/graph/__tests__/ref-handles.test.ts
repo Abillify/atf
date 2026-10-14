@@ -359,3 +359,95 @@ describe("resolveRefHandleArgs", () => {
     }
   });
 });
+describe("resolveRefHandleArgs — strict", () => {
+  const PDF = "/Pflichtenheft WMS_Prozesse/Pflichtenheft WMS_Prozesse.pdf";
+  const CH73 = `${PDF}/73. 9.5 Lagereinheit prüfen`;
+  const CH77 = `${PDF}/77. PFLICHTENHEFT WMS - Prozesse`;
+  it("passes a registered real path reference unchanged, NFD-registered and NFC-requested", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register(CH73.normalize("NFD"));
+    const result = resolveRefHandleArgs(reg, { reference: CH73.normalize("NFC") }, { strict: true });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.args.reference).toBe(CH73.normalize("NFC"));
+  });
+  it("rejects a constructed neighbouring-chapter reference as unregistered_ref", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register(CH73);
+    const result = resolveRefHandleArgs(reg, { reference: CH77 }, { strict: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe("unregistered_ref");
+      expect(result.unregisteredRefs).toEqual([{ key: "reference", value: CH77 }]);
+    }
+  });
+  it("lets unknown handles take precedence over unregistered references", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register(CH73);
+    const result = resolveRefHandleArgs(reg, { reference: CH77, refs: ["QQQQ"] }, { strict: true });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      expect(result.kind).toBe("unknown_ref_handle");
+      expect(result.unknownHandles).toEqual(["QQQQ"]);
+    }
+  });
+  it("passes values that are not path-shaped (thread ids)", () => {
+    const reg = new HashRefHandleRegistry();
+    const result = resolveRefHandleArgs(reg, { reference: "thread-123" }, { strict: true });
+    expect(result.ok).toBe(true);
+  });
+  it("accepts a document_group.id seen in a tool payload", () => {
+    const reg = new HashRefHandleRegistry();
+    const groupId = "mail/threads/abc-123";
+    reg.registerFromPayload({ results: [{ base_ref: CH73, document_group: { id: groupId, kind: "email_thread" } }] });
+    const result = resolveRefHandleArgs(reg, { reference: groupId }, { strict: true });
+    expect(result.ok).toBe(true);
+  });
+  it("accepts references recorded via observeFromPayload without creating handles", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.observeFromPayload([{ type: "text", text: JSON.stringify({ results: [{ reference: CH77 }] }) }]);
+    expect(reg.list()).toHaveLength(0);
+    expect(reg.isKnownRef(CH77)).toBe(true);
+    expect(resolveRefHandleArgs(reg, { reference: CH77 }, { strict: true }).ok).toBe(true);
+  });
+  it("skips exempt keys", () => {
+    const reg = new HashRefHandleRegistry();
+    const result = resolveRefHandleArgs(
+      reg,
+      { reference: CH77 },
+      { strict: true, exemptKeys: new Set(["reference"]) },
+    );
+    expect(result.ok).toBe(true);
+  });
+  it("keeps the non-strict behaviour unchanged", () => {
+    const reg = new HashRefHandleRegistry();
+    reg.register(CH73);
+    const result = resolveRefHandleArgs(reg, { reference: CH77 });
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.args.reference).toBe(CH77);
+  });
+  it("resolves a handle under expected_document_reference", () => {
+    const reg = new HashRefHandleRegistry();
+    const handle = reg.register(CH73);
+    const result = resolveRefHandleArgs(
+      reg,
+      { reference: "asset-1", expected_document_reference: handle },
+      { strict: true },
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.args.expected_document_reference).toBe(CH73);
+  });
+  it("treats a reference beyond the handle budget as known", () => {
+    const reg = new HashRefHandleRegistry({ maxRefs: 1 });
+    reg.register(REF_A);
+    expect(reg.register(CH73)).toBe(CH73);
+    expect(resolveRefHandleArgs(reg, { reference: CH73 }, { strict: true }).ok).toBe(true);
+  });
+  it("fails open once the seen-reference set overflows", () => {
+    const reg = new HashRefHandleRegistry({ maxRefs: 1, maxSeenRefs: 1 });
+    reg.register(CH73);
+    expect(reg.strictCheckAvailable()).toBe(true);
+    reg.register(REF_B);
+    expect(reg.strictCheckAvailable()).toBe(false);
+    expect(resolveRefHandleArgs(reg, { reference: CH77 }, { strict: true }).ok).toBe(true);
+  });
+});

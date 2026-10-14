@@ -14,7 +14,7 @@
  */
 
 import { describe, it, expect } from "bun:test";
-import { buildAiTools } from "../agent-tools.js";
+import { buildAiTools, suggestedPathPrefix } from "../agent-tools.js";
 import { HashRefHandleRegistry } from "../ref-handles.js";
 import type { McpWrapperService } from "../../mcp/mcp-wrapper.js";
 import type { FlowNode } from "../../types/flow.js";
@@ -80,12 +80,13 @@ describe("buildAiTools — ref-handle resolution (config.refHandles)", () => {
     expect(result).toEqual({ title: "Dok", content: "text" });
   });
 
-  it("forwards a real (non-handle) reference unchanged", async () => {
+  it("forwards a real (non-handle) reference a tool returned in this run unchanged", async () => {
     let seenArgs: unknown;
     const mcp = fakeMcp({ title: "Dok", content: "text" }, (_s, _t, args) => {
       seenArgs = args;
     });
     const registry = new HashRefHandleRegistry();
+    registry.registerFromPayload({ results: [{ base_ref: REF_A }] });
     const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
     await executeOnlyTool(tools, { reference: REF_A });
     expect(seenArgs).toEqual({ reference: REF_A });
@@ -134,5 +135,184 @@ describe("buildAiTools — ref-handle resolution (config.refHandles)", () => {
     const { tools } = await buildAiTools(NODE, mcp, CTX);
     const result = await executeOnlyTool(tools, { query: "x" });
     expect(JSON.stringify(result)).toContain(REF_A);
+  });
+});
+
+// Shapes from a production trace: `link` is the bare PDF path, chapter refs
+// hang below it. The folder name keeps the date prefix, commas and spaces.
+const PDF =
+  "/20250101_Pflichtenheft WMS_Prozesse_A, B, C/20250101_Pflichtenheft WMS_Prozesse_A, B, C.pdf";
+const CHAPTER_73 = `${PDF}/73. 9.5 Lagereinheit prüfen`;
+const CONSTRUCTED_77 = `${PDF}/77. PFLICHTENHEFT WMS - Prozesse`;
+
+describe("buildAiTools — unregistered (model-assembled) references", () => {
+  it("rejects a constructed neighbouring-chapter reference before the MCP call", async () => {
+    let called = false;
+    const mcp = fakeMcp({}, () => {
+      called = true;
+    });
+    const registry = new HashRefHandleRegistry();
+    registry.registerFromPayload({ results: [{ base_ref: CHAPTER_73, link: PDF }] });
+    const valid = registry.list()[0]?.handle ?? "???";
+    const rejections: Array<{ kind: string; values: string[]; toolCallId: string; toolRef: string }> = [];
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, {
+      refHandles: registry,
+      onRefHandleRejected: (info) => rejections.push(info),
+    });
+    const result = (await executeOnlyTool(tools, {
+      reference: CONSTRUCTED_77,
+    })) as Record<string, unknown>;
+    expect(called).toBe(false);
+    expect(result.isError).toBe(true);
+    expect(result.error).toBe("unregistered_ref");
+    expect(result.unregistered_refs).toEqual([CONSTRUCTED_77]);
+    expect(String(result.message)).toContain(valid);
+    expect(String(result.message)).toContain("list_documents");
+    expect(rejections).toEqual([
+      { toolCallId: "tool-call-1", toolRef: "vectorsearch/get_document", kind: "unregistered_ref", values: [CONSTRUCTED_77] },
+    ]);
+  });
+
+  it("rejects a bare `link` path used as reference", async () => {
+    let called = false;
+    const mcp = fakeMcp({}, () => {
+      called = true;
+    });
+    const registry = new HashRefHandleRegistry();
+    registry.registerFromPayload({ results: [{ base_ref: CHAPTER_73, link: PDF }] });
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    const result = (await executeOnlyTool(tools, { reference: PDF })) as Record<string, unknown>;
+    expect(called).toBe(false);
+    expect(result.error).toBe("unregistered_ref");
+  });
+
+  it("does not block list_documents with a folder path_prefix", async () => {
+    let seenArgs: unknown;
+    const mcp = fakeMcp({ documents: [] }, (_s, _t, args) => {
+      seenArgs = args;
+    });
+    const registry = new HashRefHandleRegistry();
+    registry.register(CHAPTER_73);
+    const node: FlowNode = { ...NODE, tools: ["vectorsearch/list_documents"] };
+    const { tools } = await buildAiTools(node, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    const prefix = "/20250101_Pflichtenheft WMS_Prozesse_A, B, C";
+    const result = (await executeOnlyTool(tools, { path_prefix: prefix })) as Record<string, unknown>;
+    expect(result.isError).toBeUndefined();
+    expect(seenArgs).toEqual({ path_prefix: prefix });
+  });
+
+  it("does not block a reference forced via config.toolArgs", async () => {
+    let seenArgs: unknown;
+    const mcp = fakeMcp({ content: "x" }, (_s, _t, args) => {
+      seenArgs = args;
+    });
+    const registry = new HashRefHandleRegistry();
+    const node: FlowNode = {
+      ...NODE,
+      config: {
+        refHandles: true,
+        toolArgs: { "vectorsearch/get_document": { reference: CONSTRUCTED_77 } },
+      },
+    };
+    const { tools } = await buildAiTools(node, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    await executeOnlyTool(tools, { offset: 0 });
+    expect(seenArgs).toEqual({ offset: 0, reference: CONSTRUCTED_77 });
+  });
+
+  it("accepts a real reference from an earlier tool result beyond the handle budget", async () => {
+    let seenArgs: unknown;
+    const mcp = fakeMcp({ content: "x" }, (_s, _t, args) => {
+      seenArgs = args;
+    });
+    const registry = new HashRefHandleRegistry({ maxRefs: 1 });
+    registry.register(REF_A);
+    // Over budget: shown to the model as the real path, not as a handle.
+    registry.registerFromPayload({ results: [{ base_ref: CHAPTER_73 }] });
+    expect(registry.list().some((i) => i.ref === CHAPTER_73)).toBe(false);
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    await executeOnlyTool(tools, { reference: CHAPTER_73 });
+    expect(seenArgs).toEqual({ reference: CHAPTER_73 });
+  });
+
+  it("accepts a real reference that a non-masking node of the run observed", async () => {
+    const registry = new HashRefHandleRegistry();
+    const plainNode: FlowNode = { ...NODE, id: "plain", config: {} };
+    const observed = fakeMcp({ results: [{ base_ref: CHAPTER_73 }] }, () => {});
+    const plain = await buildAiTools(plainNode, observed, CTX, undefined, undefined, undefined, undefined, undefined, { refObserver: registry });
+    const plainResult = await executeOnlyTool(plain.tools, { query: "x" });
+    // Observation never masks.
+    expect(JSON.stringify(plainResult)).toContain("73. 9.5 Lagereinheit");
+    expect(registry.list()).toHaveLength(0);
+
+    let seenArgs: unknown;
+    const mcp = fakeMcp({ content: "x" }, (_s, _t, args) => {
+      seenArgs = args;
+    });
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    await executeOnlyTool(tools, { reference: CHAPTER_73 });
+    expect(seenArgs).toEqual({ reference: CHAPTER_73 });
+  });
+
+  it("keeps `link` unmasked when only chapter references are registered", async () => {
+    const payload = { results: [{ base_ref: CHAPTER_73, link: PDF, title: "9.5" }] };
+    const mcp = fakeMcp(payload, () => {});
+    const registry = new HashRefHandleRegistry();
+    const node: FlowNode = { ...NODE, tools: ["vectorsearch/search"] };
+    const { tools } = await buildAiTools(node, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    const result = (await executeOnlyTool(tools, { query: "x" })) as {
+      results: Array<{ base_ref: string; link: string }>;
+    };
+    expect(result.results[0]?.link).toBe(PDF);
+    expect(result.results[0]?.base_ref).toBe(registry.list()[0]?.handle ?? "???");
+  });
+});
+
+describe("unregistered_ref names a concrete way out (list_documents path_prefix)", () => {
+  it("suggests the PDF path for a model-built chapter reference", async () => {
+    const mcp = fakeMcp({}, () => {});
+    const registry = new HashRefHandleRegistry();
+    registry.registerFromPayload({ results: [{ base_ref: CHAPTER_73, link: PDF }] });
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    const result = (await executeOnlyTool(tools, { reference: CONSTRUCTED_77 })) as Record<string, unknown>;
+    expect(result.error).toBe("unregistered_ref");
+    expect(result.suggested_path_prefixes).toEqual([PDF]);
+    const message = String(result.message);
+    expect(message).toContain(`list_documents with path_prefix "${PDF}"`);
+    expect(message).toContain("Never build a reference yourself.");
+  });
+
+  it("derives the prefix from the first file segment, else the parent folder", () => {
+    expect(suggestedPathPrefix("x/y/Datei WMS, A.pdf/72. Titel")).toBe("x/y/Datei WMS, A.pdf");
+    expect(suggestedPathPrefix(PDF)).toBe(PDF);
+    expect(suggestedPathPrefix("/Ordner/Unterordner/Kapitel 4.12")).toBe("/Ordner/Unterordner");
+    expect(suggestedPathPrefix("Kapitel ohne Pfad")).toBeUndefined();
+  });
+
+  it("falls back to the generic sentence without a derivable prefix", async () => {
+    const mcp = fakeMcp({}, () => {});
+    const registry = new HashRefHandleRegistry();
+    registry.registerFromPayload({ results: [{ base_ref: CHAPTER_73 }] });
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    const result = (await executeOnlyTool(tools, { reference: "/Kapitel 77 Prozesse" })) as Record<string, unknown>;
+    expect(result.error).toBe("unregistered_ref");
+    expect(result.suggested_path_prefixes).toEqual([]);
+    expect(String(result.message)).toContain("path_prefix set to its folder");
+  });
+
+  it("an observed/replayed rejection result never registers the rejected value as seen", async () => {
+    const mcp = fakeMcp({}, () => {});
+    const registry = new HashRefHandleRegistry();
+    registry.registerFromPayload({ results: [{ base_ref: CHAPTER_73, link: PDF }] });
+    const { tools } = await buildAiTools(NODE, mcp, CTX, undefined, undefined, undefined, undefined, undefined, { refHandles: registry });
+    const first = (await executeOnlyTool(tools, { reference: CONSTRUCTED_77 })) as Record<string, unknown>;
+    expect(first.error).toBe("unregistered_ref");
+    // History replay observes tool messages (llm-message-build): feed the
+    // rejection back in both raw and JSON-string form.
+    registry.observeFromPayload(first);
+    registry.observeFromPayload(JSON.stringify(first));
+    expect(registry.isKnownRef(CONSTRUCTED_77)).toBe(false);
+    expect(registry.isKnownRef(PDF)).toBe(false);
+    const second = (await executeOnlyTool(tools, { reference: CONSTRUCTED_77 })) as Record<string, unknown>;
+    expect(second.error).toBe("unregistered_ref");
   });
 });

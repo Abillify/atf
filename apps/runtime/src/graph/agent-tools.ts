@@ -74,6 +74,7 @@ import {
 } from "./image-reference.js";
 import {
   resolveRefHandleArgs,
+  type RefHandleArgResolution,
   type RefHandleRegistry,
 } from "./ref-handles.js";
 import {
@@ -213,6 +214,95 @@ export interface AgentMediaHooks {
 }
 
 /**
+ * Model-facing error for a tool call rejected by the ref-handle check. The
+ * `unknown_ref_handle` shape is unchanged; `unregistered_ref` uses the same
+ * form (isError/error/message + the rejected values) and tells the model how
+ * to reach a neighbouring chapter correctly.
+ */
+function refHandleRejection(
+  registry: RefHandleRegistry,
+  resolution: Extract<RefHandleArgResolution, { ok: false }>,
+): Record<string, unknown> {
+  const valid =
+    registry.list().length > 0
+      ? registry
+          .list()
+          .map((i) => `${i.handle}`)
+          .join(", ")
+      : "(none retrieved yet — run a search first)";
+  if (resolution.kind === "unknown_ref_handle") {
+    return {
+      isError: true,
+      error: "unknown_ref_handle",
+      message:
+        `The reference handle(s) ${resolution.unknownHandles.join(", ")} are not valid. ` +
+        "Use one of the handles exactly as shown in the tool results: " +
+        valid,
+      unknown_handles: resolution.unknownHandles,
+    };
+  }
+  const values = resolution.unregisteredRefs.map((r) => r.value);
+  const prefixes = Array.from(
+    new Set(
+      values
+        .map(suggestedPathPrefix)
+        .filter((prefix): prefix is string => prefix !== undefined),
+    ),
+  );
+  const wayOut =
+    prefixes.length > 0
+      ? prefixes
+          .map(
+            (prefix) =>
+              ` Call list_documents with path_prefix "${prefix}" and use the handle it returns for the chapter you need.`,
+          )
+          .join("")
+      : " To read a neighbouring chapter of the same file, call list_documents with path_prefix set to its folder and use the handle it returns.";
+  return {
+    isError: true,
+    error: "unregistered_ref",
+    message:
+      `The reference(s) ${values.join(", ")} were not returned by any tool in this run and are rejected. ` +
+      "Do not build references from `link`, folder paths, chapter numbers or titles. " +
+      "Use one of the handles exactly as shown in the tool results: " +
+      valid +
+      "." +
+      wayOut +
+      " Never build a reference yourself.",
+    unregistered_refs: values,
+    suggested_path_prefixes: prefixes,
+  };
+}
+
+/**
+ * A path segment that ends in a file extension (`….pdf`, `….docx`). The
+ * extension must start with a letter, so numbered titles ("Kapitel 4.12")
+ * are not mistaken for files.
+ */
+const FILE_SEGMENT = /\.[A-Za-z][A-Za-z0-9]{1,4}$/u;
+
+/**
+ * The `list_documents` path_prefix that lists the chapters next to a rejected,
+ * model-built reference: the path up to and including the first segment with
+ * a file extension (the file whose chapters are separate documents); without
+ * such a segment the parent folder. Undefined for a value without `/`.
+ */
+export function suggestedPathPrefix(value: string): string | undefined {
+  const trimmed = value.trim();
+  if (!trimmed.includes("/")) return undefined;
+  const segments = trimmed.split("/");
+  const fileIndex = segments.findIndex((segment) =>
+    FILE_SEGMENT.test(segment.trim()),
+  );
+  if (fileIndex >= 0) {
+    // A value that IS the file path (nothing after it) lists its own chapters.
+    return segments.slice(0, fileIndex + 1).join("/");
+  }
+  const parent = trimmed.slice(0, trimmed.lastIndexOf("/"));
+  return parent === "" ? undefined : parent;
+}
+
+/**
  * Builds an AI SDK ToolSet from a node's MCP tool references.
  *
  * Tool keys are namespaced by server (`server__tool`) and sanitised to a valid
@@ -276,6 +366,28 @@ export async function buildAiTools(
      * through unchanged (the default for every existing flow).
      */
     refHandles?: RefHandleRegistry;
+    /**
+     * Called when a tool call is rejected before the MCP call because of an
+     * unknown handle or (strict mode) an unregistered, model-assembled
+     * reference. Diagnostics only.
+     */
+    onRefHandleRejected?: (info: {
+      toolCallId: string;
+      toolRef: string;
+      kind: "unknown_ref_handle" | "unregistered_ref";
+      values: string[];
+    }) => void;
+    /**
+     * Called on a resolution while the strict check is unavailable (the
+     * registry's seen-reference cap overflowed). Callers deduplicate.
+     */
+    onRefStrictCheckDisabled?: () => void;
+    /**
+     * Run-scoped registry to OBSERVE (not mask) tool-result references on a
+     * node without `config.refHandles`, so masking nodes of the same run accept
+     * those real references. Ignored when `refHandles` is set.
+     */
+    refObserver?: RefHandleRegistry;
   },
 ): Promise<{
   tools: ToolSet;
@@ -409,26 +521,36 @@ export async function buildAiTools(
         // a handle. A handle-shaped argument that was never registered is the
         // hallucination this feature exists to catch: reject it with the valid
         // list instead of forwarding a value the tool would silently miss.
-        // Real paths (not handle-shaped) pass through untouched, so a
-        // user-supplied or tool-produced reference keeps working verbatim.
+        // Real paths (not handle-shaped) are not rewritten. Without
+        // refHandles (non-masking nodes) they pass through unchanged.
+        // Strict mode (always on here, refHandles nodes only): on a masking
+        // node every genuine reference reaches the model as a handle, so a
+        // path-shaped value no tool result of this run contained was
+        // assembled by the model (e.g. `link` + chapter title, trace
+        // 42474444) — reject it the same way, before the MCP call. This
+        // includes paths that appear only in the user's message or the system
+        // prompt: they were never returned by a tool and are rejected too.
+        // Flow-author forced args (`config.toolArgs`) are exempt.
         if (opts?.refHandles !== undefined) {
-          const handleResolution = resolveRefHandleArgs(opts.refHandles, args);
+          if (!opts.refHandles.strictCheckAvailable()) {
+            opts.onRefStrictCheckDisabled?.();
+          }
+          const handleResolution = resolveRefHandleArgs(opts.refHandles, args, {
+            strict: true,
+            exemptKeys: new Set(Object.keys(forcedArgs ?? {})),
+          });
           if (handleResolution.ok === false) {
-            return {
-              isError: true,
-              error: "unknown_ref_handle",
-              message:
-                `The reference handle(s) ${handleResolution.unknownHandles.join(", ")} are not valid. ` +
-                "Use one of the handles exactly as shown in the tool results: " +
-                (opts.refHandles.list().length > 0
-                  ? opts
-                      .refHandles
-                      .list()
-                      .map((i) => `${i.handle}`)
-                      .join(", ")
-                  : "(none retrieved yet — run a search first)"),
-              unknown_handles: handleResolution.unknownHandles,
-            };
+            const rejectedValues =
+              handleResolution.kind === "unknown_ref_handle"
+                ? handleResolution.unknownHandles
+                : handleResolution.unregisteredRefs.map((r) => r.value);
+            opts.onRefHandleRejected?.({
+              toolCallId: toolOptions.toolCallId,
+              toolRef,
+              kind: handleResolution.kind,
+              values: rejectedValues,
+            });
+            return refHandleRejection(opts.refHandles, handleResolution);
           }
           args = handleResolution.args;
         }
@@ -834,6 +956,11 @@ export async function buildAiTools(
         if (opts?.refHandles !== undefined) {
           opts.refHandles.registerFromPayload(content);
           content = opts.refHandles.maskContent(content);
+        } else {
+          // Non-masking node in a run that masks elsewhere: remember the real
+          // references it saw, so a masking node that later quotes one of
+          // them (via findings/state) is not rejected as unregistered.
+          opts?.refObserver?.observeFromPayload(content);
         }
 
         return content;

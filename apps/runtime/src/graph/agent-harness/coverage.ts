@@ -1307,9 +1307,19 @@ export type CoverageSearchParseResult =
 	| { status: "invalid-effective-args" }
 	| { status: "unparseable-success" };
 
+/**
+ * Maps a model-facing reference back to the real one. Identity by default;
+ * a worker with `config.refHandles` sees short handles in its tool results,
+ * which coverage evidence must never record in place of the real reference.
+ */
+export type CoverageRefResolver = (value: string) => string;
+
+const identityRef: CoverageRefResolver = (value) => value;
+
 export function parseCoverageSearchToolResult(
 	argsJson: string,
 	result: unknown,
+	resolveRef: CoverageRefResolver = identityRef,
 ): CoverageSearchParseResult {
 	let args: Record<string, unknown>;
 	try {
@@ -1353,11 +1363,13 @@ export function parseCoverageSearchToolResult(
 				if (value === null || typeof value !== "object") continue;
 				const hit = value as Record<string, unknown>;
 				const ref = normalizedRef(
-					typeof hit.base_ref === "string"
-						? hit.base_ref
-						: typeof hit.reference === "string"
-							? hit.reference
-							: "",
+					resolveRef(
+						typeof hit.base_ref === "string"
+							? hit.base_ref
+							: typeof hit.reference === "string"
+								? hit.reference
+								: "",
+					),
 				);
 				if (ref === "" || seen.has(ref)) continue;
 				seen.add(ref);
@@ -1383,7 +1395,7 @@ export function parseCoverageSearchToolResult(
 				if (last !== undefined && Array.isArray(hit.group_members)) {
 					for (const member of hit.group_members) {
 						if (typeof member !== "string") continue;
-						const memberRef = normalizedRef(member);
+						const memberRef = normalizedRef(resolveRef(member));
 						if (memberRef === "" || seen.has(memberRef)) continue;
 						seen.add(memberRef);
 						hits.push({ ...last, ref: memberRef });
@@ -1568,7 +1580,19 @@ export function coverageEvidenceFromToolResult(
 	assignedRefs: ReadonlySet<string>,
 	argsJson: string,
 	result: unknown,
+	options?: {
+		/** Handle → real reference (refHandles workers); identity by default. */
+		resolveRef?: CoverageRefResolver;
+		/**
+		 * Restores the real text of a masked `content` window so its length —
+		 * and therefore the covered window end — matches the server's
+		 * `totalChars` (masking shortens embedded references to handles).
+		 */
+		restoreText?: (text: string) => string;
+	},
 ): CoverageDocumentEvidence | undefined {
+	const resolveRef = options?.resolveRef ?? identityRef;
+	const restoreText = options?.restoreText ?? ((text: string) => text);
 	let args: Record<string, unknown>;
 	try {
 		const parsed = JSON.parse(argsJson) as unknown;
@@ -1578,7 +1602,7 @@ export function coverageEvidenceFromToolResult(
 		return undefined;
 	}
 	if (typeof args.reference !== "string") return undefined;
-	const requestedRef = normalizedRef(args.reference);
+	const requestedRef = normalizedRef(resolveRef(args.reference));
 	if (!assignedRefs.has(requestedRef)) return undefined;
 	const offset = args.offset === undefined ? 0 : args.offset;
 	if (!Number.isInteger(offset) || (offset as number) < 0) return undefined;
@@ -1589,7 +1613,7 @@ export function coverageEvidenceFromToolResult(
 		if (record.isError === true || typeof record.content !== "string") continue;
 		const returnedRef =
 			typeof record.reference === "string"
-				? normalizedRef(record.reference)
+				? normalizedRef(resolveRef(record.reference))
 				: requestedRef;
 		if (returnedRef !== requestedRef || !assignedRefs.has(returnedRef))
 			continue;
@@ -1602,7 +1626,10 @@ export function coverageEvidenceFromToolResult(
 		}
 		const totalChars = record.totalChars;
 		const start = offset as number;
-		const end = Math.min(totalChars, start + record.content.length);
+		const end = Math.min(
+			totalChars,
+			start + restoreText(record.content).length,
+		);
 		if (start > totalChars || (totalChars > 0 && end <= start)) continue;
 		const modified =
 			typeof record.modified === "string" &&

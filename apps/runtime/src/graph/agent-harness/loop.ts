@@ -39,6 +39,7 @@ import type { HarnessProgress } from "./types.js";
 import { createCoverageAssignmentRuntime } from "./loop-coverage-assignment.js";
 import {
   formatCoverageSearchStatus,
+  renderCoverageAssignmentForWorker,
   withCoverageEvidenceRuntime,
   withDelegateRuntime,
   COVERAGE_REPORT_EXTRACTION_MAX_TOKENS,
@@ -911,6 +912,14 @@ export function createAgentHarnessNodeHandler(
             currentCoverageAssignment?.id === t.coverageAssignmentId
               ? currentCoverageAssignment
               : undefined;
+          // A worker with config.refHandles sees handles in its tool results;
+          // its assignment and coverage evidence must use the same registry.
+          const workerRefHandles =
+            runtime.refHandles !== undefined &&
+            (nodeMap.get(t.target)?.config as { refHandles?: unknown } | undefined)
+              ?.refHandles === true
+              ? runtime.refHandles
+              : undefined;
           const delegateState = (() => {
             if (
               assignment === undefined ||
@@ -940,10 +949,14 @@ export function createAgentHarnessNodeHandler(
             // turn, which local Qwen answers with an empty completion. Same
             // reasoning as the verifier manifest above.
             const assignmentMessage = new HumanMessage({
-              content: renderCoverageAssignment(
+              content: renderCoverageAssignmentForWorker(
+                renderCoverageAssignment(
+                  assignment,
+                  coverageConfig,
+                  coverageLedger,
+                ),
                 assignment,
-                coverageConfig,
-                coverageLedger,
+                workerRefHandles,
               ),
             });
             const messages = [...workerContext, assignmentMessage];
@@ -986,6 +999,7 @@ export function createAgentHarnessNodeHandler(
                   searchEvidence,
                   searchParseStatuses,
                   (item) => emitHarnessStatus(formatCoverageSearchStatus(item)),
+                  workerRefHandles,
                 );
           const res = await runDelegation(
             t.target,

@@ -46,6 +46,30 @@ releases:
   `source-map-js` 1.2.2 (CVE-2026-93749). Third-party notices and the SBOM are
   regenerated.
 
+### Changed
+
+- Runtime, `config.refHandles`: on a node that shows the model short
+  reference handles, a path-shaped `reference`/`base_ref` (or other reference
+  key) that is neither a known handle nor a reference some tool result of this
+  run contained is now rejected before the MCP call, with an
+  `unregistered_ref` error in the same form as `unknown_ref_handle`. The
+  message lists the valid handles and points to
+  `list_documents(path_prefix)` for neighbouring chapters. This catches
+  references the model assembles itself, e.g. the `link` file path plus a
+  chapter title (9 of 15 `get_document` calls in one fds-auto run failed with
+  "No document found"). `list_documents(path_prefix=…)`, values without `/`
+  (thread ids) and arguments forced via `config.toolArgs` are never blocked;
+  `link` stays unmasked because it is not a readable document.
+  `expected_document_reference` is now resolved as a reference key too. Tool
+  results of non-masking nodes and replayed history tool messages count as
+  seen, and the check fails open (diagnostic `ref_strict_check_disabled`) once
+  its bounded seen-reference set overflows. New trace diagnostics
+  `unregistered_ref_rejected` and `unknown_ref_handle_rejected`. Known
+  limitation: a real path the model copies from text that no tool result of
+  the run or the replayed history contained is rejected, including paths that
+  appear only in the user's message or the system prompt; the error tells the
+  model to search or use `list_documents` instead.
+
 ### Fixed
 
 - Runtime, MCP: when the transport recovery of a shared session fails (e.g.
@@ -56,6 +80,10 @@ releases:
   single-flight of the on-demand connect and the transport recovery instead
   of racing a second handshake. With a live client it keeps a replacement
   that a recovery installed during its handshake and closes its own client.
+- Runtime, `config.refHandles`: the `unregistered_ref` error names the
+  concrete way out, `list_documents` with `path_prefix` set to the file (or
+  folder) of the rejected reference, and the new field
+  `suggested_path_prefixes` lists those prefixes.
 - Runtime, MCP: a configured MCP server whose startup handshake or
   transport recovery failed no longer stays unusable until the periodic
   reconnect (10 min) or a restart. The next tool or discovery call connects on
@@ -69,6 +97,12 @@ releases:
   `MCP_SERVERS`/`mcp.yaml`) overrides the 4 s default. A server that is down at
   startup is registered as `<server>/*`, so flows using its tools still
   compile; the periodic reconnect replaces the marker with the real tool list.
+- Runtime, coverage harness with `config.refHandles` on the worker: coverage
+  evidence (`get_document` windows, search hits) is recorded on the real
+  references instead of the handles the worker saw, and masked windows are
+  length-restored, so gap-free coverage still matches `totalChars`. The
+  coverage assignment shows the worker the same handles in its `REF:` lines.
+  Before, a masking worker could never get an original accepted as covered.
 - Runtime, threaded conversations: a repeated request with the same
   `conversation_id` and an unchanged last user message (double submit,
   "regenerate") now regenerates the answer from the start of that turn. The

@@ -118,9 +118,22 @@ export async function buildLlmMessages(params: {
   // persisted state keeps the real references, so history, client citations
   // and audit surfaces are unaffected; resolution maps the handle back
   // before every tool call.
-  const modelFacingMessages =
+  const masksRefs =
     runtime.refHandles !== undefined &&
-    (node.config as { refHandles?: unknown } | undefined)?.refHandles === true
+    (node.config as { refHandles?: unknown } | undefined)?.refHandles === true;
+  if (masksRefs && runtime.refHandles !== undefined) {
+    // Replayed tool results (earlier turns are persisted UNMAPPED, i.e. with
+    // real references) are genuine tool output: record their references as
+    // seen so the strict unregistered-reference check accepts a real path the
+    // model quotes from that history.
+    for (const message of groundedMessages) {
+      if (message._getType() === "tool") {
+        runtime.refHandles.observeFromPayload(message.content);
+      }
+    }
+  }
+  const modelFacingMessages =
+    masksRefs && runtime.refHandles !== undefined
       ? maskRagContextForModel(groundedMessages, runtime.refHandles)
       : groundedMessages;
   const rawModelMessages = baseMessagesToModelMessages(

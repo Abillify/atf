@@ -611,7 +611,7 @@ const LLM: NodeTypeDoc = {
       label: "Short reference handles",
       default: false,
       description:
-        "Replace long document references in tool results with short 4-character handles (e.g. `K3NQ`) that the model reads and quotes; the runtime maps them back to the real references before the tool call and in everything the user sees. Use on tool-loop nodes whose model must re-quote `reference`/`base_ref` arguments — small models truncate long paths. Unknown handles are rejected with the valid list instead of hitting the backend.",
+        "Replace long document references in tool results with short 4-character handles (e.g. `K3NQ`) that the model reads and quotes; the runtime maps them back to the real references before the tool call and in everything the user sees. Use on tool-loop nodes whose model must re-quote `reference`/`base_ref` arguments — small models truncate long paths. Unknown handles are rejected with the valid list instead of hitting the backend. Path-shaped references that no tool returned in this run are rejected the same way (`unregistered_ref`); `link` is never a reference.",
     },
     {
       key: "turnContext",

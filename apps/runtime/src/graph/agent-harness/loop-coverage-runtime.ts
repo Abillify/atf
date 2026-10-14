@@ -27,6 +27,25 @@ import type {
   CoverageSearchParseResult,
 } from "./coverage.js";
 import { compactStatusText } from "./loop-findings.js";
+import type { RefHandleRegistry } from "../ref-handles.js";
+
+/**
+ * Model-facing coverage assignment for a worker. A worker with
+ * `config.refHandles` sees handles in every tool result, so the assignment's
+ * `REF:` lines must show the same handles — otherwise the model mixes two
+ * vocabularies for one document. The assigned refs are registered first
+ * (deterministic handles), which also makes them "seen" for the strict
+ * unregistered-reference check. Without a registry the text is unchanged.
+ */
+export function renderCoverageAssignmentForWorker(
+  text: string,
+  assignment: CoverageAssignment,
+  refHandles?: RefHandleRegistry,
+): string {
+  if (refHandles === undefined) return text;
+  for (const document of assignment.documents) refHandles.register(document.ref);
+  return refHandles.maskText(text);
+}
 
 export function formatCoverageSearchStatus(item: CoverageSearchEvidence): string {
   const rerankStatus =
@@ -178,7 +197,24 @@ export function withCoverageEvidenceRuntime(
   searchEvidence: CoverageSearchEvidence[],
   searchParseStatuses: CoverageSearchParseResult["status"][],
   onSearchEvidence?: (item: CoverageSearchEvidence) => void,
+  /**
+   * Run-scoped ref-handle registry, passed ONLY when the worker node masks
+   * references (`config.refHandles`). Its tool results — and the model-side
+   * tool-call args — then carry handles; evidence is recorded on the real
+   * references (whole-value `resolve`), and a masked `content` window is
+   * length-restored with `unmapText` so gap-free coverage still matches the
+   * server's `totalChars`.
+   */
+  refHandles?: RefHandleRegistry,
 ): ExecRuntime {
+  const resolveRef =
+    refHandles === undefined
+      ? undefined
+      : (value: string): string => refHandles.resolve(value) ?? value;
+  const restoreText =
+    refHandles === undefined
+      ? undefined
+      : (text: string): string => refHandles.unmapText(text);
   // Two independent maps keyed by tool call id. The AI SDK invokes `execute`
   // (which reports the effective args) and emits the `tool-call` stream part
   // without a guaranteed order, so neither callback may depend on the other
@@ -274,10 +310,17 @@ export function withCoverageEvidenceRuntime(
             assignedRefs,
             call.argsJson,
             content,
+            resolveRef !== undefined && restoreText !== undefined
+              ? { resolveRef, restoreText }
+              : undefined,
           );
           if (item !== undefined) evidence.push(item);
         } else {
-          const parsed = parseCoverageSearchToolResult(call.argsJson, content);
+          const parsed = parseCoverageSearchToolResult(
+            call.argsJson,
+            content,
+            resolveRef,
+          );
           searchParseStatuses.push(parsed.status);
           runtime.onToolTraceMetadata?.(toolCallId, {
             parse_status: parsed.status,

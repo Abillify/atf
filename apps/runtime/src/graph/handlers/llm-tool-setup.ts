@@ -48,6 +48,12 @@ const SAFE_ASSISTANT_RETRY_TOOL_REFS = new Set([
   "parking/availability",
 ]);
 
+/**
+ * Run-scoped ref-handle registries whose `ref_strict_check_disabled`
+ * diagnostic was already emitted (one per run, not one per tool call).
+ */
+const strictDisabledReported = new WeakSet<object>();
+
 export function readSafeAssistantRetryToolRefs(
   requestParams: Record<string, unknown> | undefined,
 ): string[] {
@@ -209,8 +215,47 @@ export async function setupLlmTools(params: {
           ...(runtime.refHandles !== undefined &&
           (node.config as { refHandles?: unknown } | undefined)?.refHandles ===
             true
-            ? { refHandles: runtime.refHandles }
-            : {}),
+            ? {
+                refHandles: runtime.refHandles,
+                onRefHandleRejected: (info: {
+                  toolCallId: string;
+                  toolRef: string;
+                  kind: "unknown_ref_handle" | "unregistered_ref";
+                  values: string[];
+                }) => {
+                  runtime.onNodeDiagnostic?.(node.id, {
+                    level: "warn",
+                    code:
+                      info.kind === "unregistered_ref"
+                        ? "unregistered_ref_rejected"
+                        : "unknown_ref_handle_rejected",
+                    message:
+                      info.kind === "unregistered_ref"
+                        ? `Rejected ${info.toolRef} call: reference(s) not returned by any tool in this run (model-assembled).`
+                        : `Rejected ${info.toolRef} call: unknown reference handle(s).`,
+                    details: {
+                      tool_call_id: info.toolCallId,
+                      tool_ref: info.toolRef,
+                      values: info.values,
+                    },
+                  });
+                },
+                onRefStrictCheckDisabled: () => {
+                  const registry = runtime.refHandles;
+                  if (registry === undefined || strictDisabledReported.has(registry))
+                    return;
+                  strictDisabledReported.add(registry);
+                  runtime.onNodeDiagnostic?.(node.id, {
+                    level: "info",
+                    code: "ref_strict_check_disabled",
+                    message:
+                      "Seen-reference budget exhausted: unregistered references are no longer rejected for the rest of this run.",
+                  });
+                },
+              }
+            : runtime.refHandles !== undefined
+              ? { refObserver: runtime.refHandles }
+              : {}),
         },
       );
       aiTools = built.tools;
