@@ -29,7 +29,7 @@
  * No `any` at module boundaries.
  */
 
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import type {
   RedTeamEngine,
   RedTeamExecutor,
@@ -94,8 +94,30 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
     return next();
   });
 
+  /**
+   * Write gate on top of the read gate above. Running attacks executes the
+   * flow (LLM cost, tool calls) and refreshing replaces the attack library, so
+   * both are flow writes (admin) — a viewer may only read results.
+   */
+  const forbidUnlessFlowWrite = async (ctx: Context): Promise<Response | null> => {
+    if (operatorAuth === undefined) return null;
+    const r = await operatorAuth.authorize(
+      ctx.req.header("Authorization"),
+      ctx.req.query("token"),
+      "flows:write",
+    );
+    return r.ok
+      ? null
+      : ctx.json(
+          { error: { message: "Forbidden: flows:write required", type: "auth_error" } },
+          403,
+        );
+  };
+
   // ── POST /security/red-team/:flowId/run ─────────────────────────────────
   app.post("/security/red-team/:flowId/run", async (ctx) => {
+    const forbidden = await forbidUnlessFlowWrite(ctx);
+    if (forbidden !== null) return forbidden;
     if (engine === undefined || executor === undefined) {
       return ctx.json(
         {
@@ -186,6 +208,8 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
   // Manually trigger a remote attack-library refresh (pulls from RED_TEAM_ATTACKS_URL).
   // Useful after pushing new attack templates without waiting for the next poll.
   app.post("/security/red-team/attacks/refresh", async (ctx) => {
+    const forbidden = await forbidUnlessFlowWrite(ctx);
+    if (forbidden !== null) return forbidden;
     await defaultAttackRegistry.refreshRemote();
     return ctx.json({ refreshed: true, stats: defaultAttackRegistry.stats() });
   });

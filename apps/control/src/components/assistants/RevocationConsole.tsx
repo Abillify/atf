@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { useCanWrite } from "../../lib/auth/useCanWrite";
 import type React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../lib/auth/useAuth";
@@ -93,6 +94,7 @@ function fetchDelegations(
  * asks first.
  */
 export function RevocationConsole(): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   const { confirm: confirmDialog } = useConfirm();
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled.
   const { token, ready, isAuthenticated } = useAuth();
@@ -258,7 +260,8 @@ export function RevocationConsole(): React.JSX.Element {
                       <Button
                         size="sm"
                         variant="destructive"
-                        disabled={revoke.isPending}
+                        disabled={revoke.isPending || !writeGate.allowed}
+                        title={writeGate.title}
                         onClick={async () => {
                           const ok = await confirmDialog({
                             title: "Revoke delegation?",

@@ -5,8 +5,9 @@
  * Autopilot routes (`src/routes/autopilot.ts`)
  *
  * REST API for the Continuous Safety & Quality Autopilot engine.
- * Mounted at `/autopilot/*`, gated by operator RBAC (requires "operator" or
- * "admin" role, mirrors the red-team and optimizer routes).
+ * Mounted at `/autopilot/*`, gated by operator RBAC: reading runs needs
+ * `flows:read`, triggering a cycle needs `flows:write` (admin), like the
+ * red-team and optimizer routes.
  *
  * Endpoints:
  *   GET  /autopilot/runs           — list recent runs (all flows)
@@ -38,11 +39,11 @@ export function createAutopilotRouter(deps: AutopilotRouterDeps): Hono {
       header: (k: string) => string | undefined;
       query: (k: string) => string | undefined;
     };
-  }) => {
+  }, permission: "flows:read" | "flows:write" = "flows:read") => {
     const r = await operatorAuth.authorize(
       ctx.req.header("Authorization"),
       ctx.req.query("token"),
-      "flows:read",
+      permission,
     );
     return r.ok
       ? (r.actor ?? { name: "operator", role: "admin" as const, via: "open" as const })
@@ -87,7 +88,9 @@ export function createAutopilotRouter(deps: AutopilotRouterDeps): Hono {
 
   // POST /autopilot/trigger — manual cycle trigger
   router.post("/trigger", async (ctx) => {
-    const actor = await guard(ctx);
+    // A cycle can promote a flow version, so starting one is a flow write
+    // (admin) — like the optimizer and red-team runs — not a read.
+    const actor = await guard(ctx, "flows:write");
     if (!actor) return unauthorized(ctx);
 
     let body: { flowId?: unknown };

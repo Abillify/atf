@@ -6,6 +6,11 @@ import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
 import { FlowsTab, formatDuration, studioHref } from "../components/FlowsTab";
 import { ConfirmProvider } from "../lib/ui";
 
+// The panel gates its write controls by role (useCanWrite); render as admin.
+vi.mock("../lib/auth/useAuth", () => ({
+  useAuth: () => ({ token: "test-token", ready: true, isAuthenticated: true, role: "admin" }),
+}));
+
 /**
  * Req 9.5: FlowsTab asks for confirmations through useConfirm(), so every
  * test mounts the ConfirmProvider.

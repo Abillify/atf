@@ -41,3 +41,29 @@ describe("red-team auth middleware scope", () => {
     expect(body.error.type).toBe("auth_error");
   });
 });
+
+describe("red-team write gate", () => {
+  const operatorAuth = createOperatorAuthorizer({
+    authRequired: true,
+    tokens: [
+      { token: "admin-tok", role: "admin", name: "alice" },
+      { token: "operator-tok", role: "operator", name: "olga" },
+      { token: "viewer-tok", role: "viewer", name: "vic" },
+    ],
+  });
+  const app = new Hono();
+  app.route("/", createRedTeamRouter({ operatorAuth }));
+  const post = (path: string, token: string) =>
+    app.request(path, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
+
+  test("viewers and operators cannot run attacks or refresh the library", async () => {
+    for (const token of ["viewer-tok", "operator-tok"]) {
+      expect((await post("/security/red-team/helpdesk/run", token)).status).toBe(403);
+      expect((await post("/security/red-team/attacks/refresh", token)).status).toBe(403);
+    }
+  });
+
+  test("an admin passes the gate (the disabled engine then answers 503)", async () => {
+    expect((await post("/security/red-team/helpdesk/run", "admin-tok")).status).toBe(503);
+  });
+});

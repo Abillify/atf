@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
@@ -354,6 +355,7 @@ export interface EvalRunsPanelProps {
 }
 
 export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
   // token; the backend serves the operator plane anonymously). authFetch omits
   // the Authorization header for an undefined token.
@@ -436,7 +438,7 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
           <textarea value={tasksJson} onChange={(event) => setTasksJson(event.target.value)} rows={12} spellCheck={false} className="mt-1 w-full rounded-md border border-border bg-background p-3 font-mono text-xs" />
         </label>
         {formError && <div role="alert" className="mt-3 rounded bg-danger-soft p-3 text-xs text-danger">{formError}</div>}
-        <Button type="button" className="mt-4" loading={startMutation.isPending} onClick={() => startMutation.mutate()}>
+        <Button type="button" className="mt-4" loading={startMutation.isPending} disabled={!writeGate.allowed} title={writeGate.title} onClick={() => startMutation.mutate()}>
           Start matrix ({selectedFlows.length} flows)
         </Button>
       </section>

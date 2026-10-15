@@ -19,6 +19,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
+import { useCanWrite } from "../../../lib/auth/useCanWrite";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { downloadAuthenticated } from "../../../lib/authenticated-download";
@@ -99,6 +100,7 @@ function StatCard({ label, value, color = "gray" }: { label: string; value: stri
 // ---------------------------------------------------------------------------
 
 function RetentionActionsPanel({ token }: { token: string | undefined }) {
+  const writeGate = useCanWrite("admin");
   const { confirm: confirmDialog } = useConfirm();
   const [status, setStatus] = useState<ComplianceStatus | null>(null);
   const [sweepResult, setSweepResult] = useState<{ report: SweepEntry[]; purged: number } | null>(null);
@@ -196,7 +198,8 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
             });
             if (ok) await runSweep();
           }}
-          disabled={sweeping}
+          disabled={sweeping || !writeGate.allowed}
+          title={writeGate.title}
         >
           {sweeping ? "Running sweep…" : "Run sweep now"}
         </Button>
@@ -279,8 +282,11 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
             if (ok) await runForget();
           }}
           disabled={
-            forgetting || (!forgetTenantId.trim() && !forgetUserId.trim())
+            forgetting ||
+            !writeGate.allowed ||
+            (!forgetTenantId.trim() && !forgetUserId.trim())
           }
+          title={writeGate.title}
         >
           {forgetting ? "Erasing…" : "Erase subject data"}
         </Button>
@@ -314,6 +320,7 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
 // ---------------------------------------------------------------------------
 
 function AuditAnchorPanel({ token }: { token: string | undefined }) {
+  const writeGate = useCanWrite("admin");
   const [anchor, setAnchor] = useState<AuditAnchor | null>(null);
   const [anchoring, setAnchoring] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -343,7 +350,7 @@ function AuditAnchorPanel({ token }: { token: string | undefined }) {
         <h2 className="text-sm font-semibold text-foreground">Audit Chain Anchor</h2>
         <div className="flex gap-2">
           <Button variant="secondary" size="sm" onClick={() => void fetchAnchor()}>↻ Check</Button>
-          <Button variant="outline" size="sm" onClick={() => void createAnchor()} disabled={anchoring}>
+          <Button variant="outline" size="sm" onClick={() => void createAnchor()} disabled={anchoring || !writeGate.allowed} title={writeGate.title}>
             {anchoring ? "Anchoring…" : "Create anchor now"}
           </Button>
         </div>

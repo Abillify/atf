@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useState } from "react";
 import { Badge, Button } from "../lib/ui";
 import { FlowPicker } from "./FlowPicker";
@@ -60,6 +61,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 };
 
 export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
+  const writeGate = useCanWrite("admin");
   const {
     posture,
     runs,
@@ -238,7 +240,8 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
             />
             <Button
               variant="destructive"
-              disabled={selectedFlow === "" || isRunning || !redTeamEnabled}
+              disabled={selectedFlow === "" || isRunning || !redTeamEnabled || !writeGate.allowed}
+              title={writeGate.title}
               onClick={() => onRun(selectedFlow)}
             >
               {isRunning ? "Running attacks…" : "Run Red-Team"}
@@ -404,7 +407,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
               save.
             </p>
             {onSaveToolAuthz !== undefined && !editing && (
-              <Button variant="primary" size="sm" onClick={startEditing}>
+              <Button variant="primary" size="sm" onClick={startEditing} disabled={!writeGate.allowed} title={writeGate.title}>
                 {toolAuthz?.active ? "Edit policy" : "Create policy"}
               </Button>
             )}

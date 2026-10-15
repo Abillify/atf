@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { useCanWrite } from "../../lib/auth/useCanWrite";
 import type React from "react";
 import { useMutation } from "@tanstack/react-query";
 import { backendUrl } from "../../lib/backend-url";
@@ -49,6 +50,7 @@ export function ConstraintsEditor({
   token: string | undefined;
   onSaved: () => void;
 }): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   const [draft, setDraft] = useState<Record<string, string>>(() => ({
     rules: detail.soul.constraints.rules ?? "",
     compliance: detail.soul.constraints.compliance ?? "",
@@ -157,7 +159,8 @@ export function ConstraintsEditor({
       <div className="flex items-center gap-2">
         <Button
           size="sm"
-          disabled={!dirty || save.isPending}
+          disabled={!dirty || !writeGate.allowed || save.isPending}
+          title={writeGate.title}
           onClick={() => save.mutate()}
         >
           {save.isPending ? "Saving…" : "Save constraints"}

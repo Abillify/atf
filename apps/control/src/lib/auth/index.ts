@@ -8,5 +8,7 @@
 export { AuthProvider, AuthContext, TOKEN_STORAGE_KEY } from "./AuthProvider";
 export { useAuth } from "./useAuth";
 export { RequireRole, hasMinimumRole } from "./RequireRole";
+export { useCanWrite } from "./useCanWrite";
+export type { WriteGate } from "./useCanWrite";
 export type { AuthRole, AuthContextValue } from "./types";
 export type { RequireRoleProps } from "./RequireRole";

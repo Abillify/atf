@@ -17,6 +17,7 @@
 
 import { useState, useCallback, useEffect } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
+import { useCanWrite } from "../../../lib/auth/useCanWrite";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Badge, Button, } from "../../../lib/ui";
@@ -55,6 +56,7 @@ function TestFirePanel({
   token: string | undefined;
   onClose: () => void;
 }) {
+  const writeGate = useCanWrite("operator");
   const [payload, setPayload] = useState('{"message": "test"}');
   const [result, setResult] = useState<TestFireResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -108,7 +110,7 @@ function TestFirePanel({
         />
       </div>
       <div className="flex items-center gap-2">
-        <Button variant="primary" size="sm" onClick={() => void fire()} disabled={loading}>
+        <Button variant="primary" size="sm" onClick={() => void fire()} disabled={loading || !writeGate.allowed} title={writeGate.title}>
           {loading ? "Firing…" : "Fire (sync)"}
         </Button>
         <p className="text-xs text-muted-foreground">
@@ -138,6 +140,7 @@ function TestFirePanel({
 // ---------------------------------------------------------------------------
 
 export default function TriggersPage() {
+  const writeGate = useCanWrite("operator");
   const { token, ready, isAuthenticated } = useAuth();
   const [flows, setFlows] = useState<TriggerFlow[]>([]);
   const [loading, setLoading] = useState(false);
@@ -235,6 +238,8 @@ export default function TriggersPage() {
                 variant="outline"
                 size="sm"
                 onClick={() => setFiringId(firingId === f.flowId ? null : f.flowId)}
+                disabled={!writeGate.allowed}
+                title={writeGate.title}
               >
                 {firingId === f.flowId ? "Close test" : "Test fire"}
               </Button>

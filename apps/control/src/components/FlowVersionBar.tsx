@@ -20,6 +20,7 @@
  */
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useCallback, useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { request } from "../lib/control-api";
@@ -74,6 +75,7 @@ export function FlowVersionBar({
   onDiffOverlayChange,
   onRolledBack,
 }: FlowVersionBarProps): React.JSX.Element | null {
+  const writeGate = useCanWrite("admin");
   const [selected, setSelected] = useState<Comparison | null>(null);
   const [confirmingRollback, setConfirmingRollback] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
@@ -249,6 +251,8 @@ export function FlowVersionBar({
               variant="outline"
               size="sm"
               onClick={() => setConfirmingRollback(true)}
+              disabled={!writeGate.allowed}
+              title={writeGate.title}
             >
               Rollback to v{selected.version}
             </Button>

@@ -8,6 +8,7 @@
  */
 
 import { useState } from "react";
+import { useCanWrite } from "../../lib/auth/useCanWrite";
 import type React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "../../lib/auth/useAuth";
@@ -75,6 +76,7 @@ function fetchOrgSkills(
  * `org-skill-registry.ts`).
  */
 export function SkillRegistryConsole(): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled.
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
@@ -212,7 +214,8 @@ export function SkillRegistryConsole(): React.JSX.Element {
                     <Button
                       size="sm"
                       variant="destructive"
-                      disabled={deprecate.isPending}
+                      disabled={deprecate.isPending || !writeGate.allowed}
+                      title={writeGate.title}
                       onClick={() => deprecate.mutate(row)}
                     >
                       Deprecate

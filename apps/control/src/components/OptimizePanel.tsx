@@ -16,6 +16,7 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { Button } from "../lib/ui";
 import { request } from "../lib/control-api";
 import type { FlowDefinition } from "../types/flow";
@@ -137,6 +138,7 @@ export function OptimizePanel({
   canvasLabel = "canvas",
   hideHeading = false,
 }: OptimizePanelProps): React.JSX.Element {
+  const writeGate = useCanWrite("admin");
   const { ready, isAuthenticated } = useAuth();
   const [source, setSource] = useState<AdviceSource>(getCanvasDefinition ? "canvas" : "live");
   const [canvasCandidates, setCanvasCandidates] = useState<string[]>([]);
@@ -201,7 +203,8 @@ export function OptimizePanel({
             variant="outline"
             size="sm"
             className="w-full"
-            disabled={!ready || !isAuthenticated || advice.isFetching}
+            disabled={!ready || !isAuthenticated || !writeGate.allowed || advice.isFetching}
+            title={writeGate.title}
             onClick={() => void advice.refetch()}
           >
             {advice.isFetching ? "Checking…" : advice.data ? "Check again" : "Check routing recommendations"}

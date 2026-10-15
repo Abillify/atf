@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
+import { useCanWrite } from "../../../lib/auth/useCanWrite";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
@@ -125,6 +126,7 @@ function SessionEntries({
 }
 
 export default function MemoryPage() {
+  const writeGate = useCanWrite("operator");
   const { confirm: confirmDialog } = useConfirm();
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
   // token; the backend serves the operator plane anonymously). authFetch omits
@@ -230,7 +232,8 @@ export default function MemoryPage() {
                   });
                   if (ok) clearMutation.mutate(session.id);
                 }}
-                disabled={clearMutation.isPending}
+                disabled={clearMutation.isPending || !writeGate.allowed}
+                title={writeGate.title}
                 className="ml-4"
                 aria-label={`Clear session for ${session.userId}`}
               >

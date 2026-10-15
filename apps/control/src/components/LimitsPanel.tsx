@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useMemo, useState } from "react";
 import {
   LineChart,
@@ -368,6 +369,7 @@ function LimitRow({
   onDelete: () => void;
   onEdit: (input: TokenLimitInput) => void;
 }): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   const [editing, setEditing] = useState(false);
   const [value, setValue] = useState(String(limit.limitTokens));
 
@@ -455,7 +457,13 @@ function LimitRow({
           </>
         ) : (
           <>
-            <Button variant="ghost" size="sm" onClick={() => setEditing(true)}>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setEditing(true)}
+              disabled={!writeGate.allowed}
+              title={writeGate.title}
+            >
               Edit
             </Button>
             <Button
@@ -463,6 +471,8 @@ function LimitRow({
               size="sm"
               className="ml-1"
               onClick={onDelete}
+              disabled={!writeGate.allowed}
+              title={writeGate.title}
             >
               Delete
             </Button>
@@ -484,6 +494,7 @@ function AddLimitForm({
   models: string[];
   onSave: (input: TokenLimitInput) => Promise<void>;
 }): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   const [scopeType, setScopeType] = useState<LimitScopeType>("global");
   const [scopeId, setScopeId] = useState("");
   const [model, setModel] = useState("");
@@ -591,7 +602,8 @@ function AddLimitForm({
           variant="primary"
           size="sm"
           onClick={() => void submit()}
-          disabled={saving}
+          disabled={saving || !writeGate.allowed}
+          title={writeGate.title}
         >
           {saving ? "Saving…" : "Save limit"}
         </Button>

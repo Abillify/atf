@@ -8,7 +8,7 @@ import { AssistantsPanel } from "../components/AssistantsPanel";
 import { ConfirmProvider } from "../lib/ui";
 
 vi.mock("../lib/auth/useAuth", () => ({
-  useAuth: () => ({ token: "test-token", ready: true }),
+  useAuth: () => ({ token: "test-token", ready: true, role: "admin" }),
 }));
 
 function renderWithQueryClient(ui: React.ReactElement) {

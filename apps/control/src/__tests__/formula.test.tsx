@@ -17,7 +17,7 @@ import type { FlowDefinition } from "../types/flow";
 import { FLOW_REFERENCE } from "../../../runtime/src/graph/flow-reference-data";
 
 vi.mock("../lib/auth/useAuth", () => ({
-  useAuth: () => ({ token: undefined, ready: true, isAuthenticated: true }),
+  useAuth: () => ({ token: undefined, ready: true, isAuthenticated: true, role: "admin" }),
 }));
 
 const flow: Pick<FlowDefinition, "nodes" | "variables"> = {

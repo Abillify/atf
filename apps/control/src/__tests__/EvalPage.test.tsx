@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import EvalPage from "../app/(dashboard)/eval/page";
 
 vi.mock("../lib/auth/useAuth", () => ({
-	useAuth: () => ({ token: undefined, ready: true, isAuthenticated: true }),
+	useAuth: () => ({ token: undefined, ready: true, isAuthenticated: true, role: "admin" }),
 }));
 vi.mock("../components/EvalRunsPanel", () => ({ EvalRunsPanel: () => null }));
 

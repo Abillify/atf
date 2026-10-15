@@ -16,6 +16,12 @@ import type {
   McpServerInfo,
 } from "../types/security";
 
+// The panel gates its write controls by role (useCanWrite); admin by default.
+const auth = vi.hoisted(() => ({ role: "admin" as string }));
+vi.mock("../lib/auth/useAuth", () => ({
+  useAuth: () => ({ token: "test-token", ready: true, isAuthenticated: true, role: auth.role }),
+}));
+
 const posture: PostureResponse = {
   enabled: true,
   posture: { helpdesk: 0.95, dispatch: 0.6 },
@@ -112,6 +118,21 @@ describe("SecurityPanel — posture section", () => {
     render(<SecurityPanel {...baseProps()} />);
     const btn = screen.getByText("Run Red-Team");
     expect(btn).toBeDisabled();
+  });
+
+  test("a viewer or operator cannot start a red-team run, even with a flow selected", () => {
+    for (const role of ["viewer", "operator"]) {
+      auth.role = role;
+      const { unmount } = render(<SecurityPanel {...baseProps()} />);
+      fireEvent.click(screen.getByRole("button", { name: "Flow to red-team" }));
+      fireEvent.change(screen.getByLabelText("Search flows"), { target: { value: "helpdesk" } });
+      fireEvent.keyDown(screen.getByLabelText("Search flows"), { key: "Enter" });
+      const btn = screen.getByText("Run Red-Team").closest("button");
+      expect(btn).toBeDisabled();
+      expect(btn).toHaveAttribute("title", "Requires the admin role");
+      unmount();
+    }
+    auth.role = "admin";
   });
 
   test("selecting a flow enables the run button and onRun is called", () => {

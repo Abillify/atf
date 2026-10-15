@@ -8,7 +8,7 @@ import { OptimizePanel, emptyAdviceMessage, nodesWithCandidates } from "../compo
 import type { FlowDefinition } from "../types/flow";
 
 vi.mock("../lib/auth/useAuth", () => ({
-  useAuth: () => ({ ready: true, isAuthenticated: true }),
+  useAuth: () => ({ ready: true, isAuthenticated: true, role: "admin" }),
 }));
 
 const draft: FlowDefinition = {

@@ -16,6 +16,7 @@
  */
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useEffect, useState } from "react";
 import { request } from "../lib/control-api";
 import { Button } from "../lib/ui";
@@ -88,6 +89,7 @@ export function FlowCopilotPanel({
   prefill,
   focus,
 }: FlowCopilotPanelProps): React.JSX.Element {
+  const writeGate = useCanWrite("admin");
   const [useFocus, setUseFocus] = useState(true);
   const activeFocus = useFocus && focus && (focus.nodeIds.length > 0 || focus.edge) ? focus : undefined;
   const [expanded, setExpanded] = useState(false);
@@ -110,7 +112,7 @@ export function FlowCopilotPanel({
   }, [prefill?.nonce]);
 
   const handleAsk = async (): Promise<void> => {
-    if (!instruction.trim()) return;
+    if (!writeGate.allowed || !instruction.trim()) return;
     setExpanded(true);
     setIsLoading(true);
     setError(null);
@@ -221,7 +223,8 @@ export function FlowCopilotPanel({
           variant="primary"
           size="sm"
           onClick={() => void handleAsk()}
-          disabled={isLoading || !instruction.trim()}
+          disabled={isLoading || !writeGate.allowed || !instruction.trim()}
+          title={writeGate.title}
         >
           {isLoading ? "Thinking…" : "Ask"}
         </Button>

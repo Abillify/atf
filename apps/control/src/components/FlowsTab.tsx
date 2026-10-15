@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Workflow } from "lucide-react";
@@ -86,6 +87,7 @@ export function FlowsTab({
   token,
   enabled = true,
 }: FlowsTabProps): React.JSX.Element {
+  const writeGate = useCanWrite("admin");
   const actions = useFlows({
     enabled,
     ...(token !== undefined ? { token } : {}),
@@ -224,6 +226,8 @@ export function FlowsTab({
                 variant="outline"
                 size="sm"
                 onClick={() => fileInput.current?.click()}
+                disabled={!writeGate.allowed}
+                title={writeGate.title}
               >
                 Import
               </Button>
@@ -376,7 +380,8 @@ export function FlowsTab({
                             variant="ghost"
                             size="sm"
                             onClick={() => void deleteFlow(f.id)}
-                            disabled={busyId === f.id}
+                            disabled={busyId === f.id || !writeGate.allowed}
+                            title={writeGate.title}
                             className="text-danger"
                           >
                             Delete

@@ -14,6 +14,7 @@
  */
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useAuth } from "../lib/auth/useAuth";
@@ -174,6 +175,7 @@ export function AutopilotPanel({
   fixedFlow = false,
   hideHeading = false,
 }: AutopilotPanelProps): React.JSX.Element {
+  const writeGate = useCanWrite("admin");
   // isAuthenticated instead of !!token: with AUTHN_MODE=disabled there is no token,
   // the operator plane is still reachable. Header only with a real token
   // (handled by lib/control-api).
@@ -360,7 +362,8 @@ export function AutopilotPanel({
           <Button
             variant="primary"
             size="sm"
-            disabled={triggering || !triggerFlowId.trim() || unavailable !== null}
+            disabled={triggering || !writeGate.allowed || !triggerFlowId.trim() || unavailable !== null}
+            title={writeGate.title}
             onClick={() => void handleTrigger()}
           >
             {triggering ? "…" : "Trigger"}

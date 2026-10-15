@@ -9,6 +9,7 @@
  */
 
 import type React from "react";
+import { useCanWrite } from "../../lib/auth/useCanWrite";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../lib/backend-url";
 import { authFetch } from "../../lib/auth-fetch";
@@ -65,6 +66,7 @@ export function AssistantDetailView({
   row: AssistantRow;
   token: string | undefined;
 }): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   const queryClient = useQueryClient();
   const { confirm: confirmDialog } = useConfirm();
   const path = detailPath(row);
@@ -195,7 +197,8 @@ export function AssistantDetailView({
             key={level}
             size="sm"
             variant={detail.autonomy === level ? "primary" : "outline"}
-            disabled={setAutonomy.isPending}
+            disabled={setAutonomy.isPending || !writeGate.allowed}
+            title={writeGate.title}
             onClick={() => setAutonomy.mutate(level)}
           >
             {level}
@@ -205,7 +208,8 @@ export function AssistantDetailView({
           <Button
             size="sm"
             variant="destructive"
-            disabled={setStatus.isPending}
+            disabled={setStatus.isPending || !writeGate.allowed}
+            title={writeGate.title}
             onClick={() => setStatus.mutate("suspended")}
           >
             Suspend
@@ -214,7 +218,8 @@ export function AssistantDetailView({
           <Button
             size="sm"
             variant="outline"
-            disabled={setStatus.isPending || detail.status === "archived"}
+            disabled={setStatus.isPending || !writeGate.allowed || detail.status === "archived"}
+            title={writeGate.title}
             onClick={() => setStatus.mutate("active")}
           >
             Reactivate
@@ -301,7 +306,8 @@ export function AssistantDetailView({
                     size="sm"
                     variant="destructive"
                     className="ml-auto"
-                    disabled={rejectProposal.isPending}
+                    disabled={rejectProposal.isPending || !writeGate.allowed}
+                    title={writeGate.title}
                     onClick={() => rejectProposal.mutate(proposal.id)}
                   >
                     Reject
@@ -352,7 +358,8 @@ export function AssistantDetailView({
                   <Button
                     size="sm"
                     variant="destructive"
-                    disabled={revokeDelegation.isPending}
+                    disabled={revokeDelegation.isPending || !writeGate.allowed}
+                    title={writeGate.title}
                     onClick={async () => {
                       const ok = await confirmDialog({
                         title: "Revoke delegation?",

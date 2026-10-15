@@ -18,6 +18,7 @@
  */
 
 import type React from "react";
+import { useCanWrite } from "../lib/auth/useCanWrite";
 import { useState } from "react";
 import { useAuth } from "../lib/auth/useAuth";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -160,6 +161,7 @@ function BoolBadge({ value }: { value: boolean }) {
 // ---------------------------------------------------------------------------
 
 export function ProviderTestingPanel(): React.JSX.Element {
+  const writeGate = useCanWrite("operator");
   // Gate on isAuthenticated (= !authRequired || !!token) rather than !!token,
   // so the bench also works when operator auth is disabled (AUTHN_MODE=disabled):
   // no token is issued then, but the backend serves the operator plane to an
@@ -323,7 +325,8 @@ export function ProviderTestingPanel(): React.JSX.Element {
           <Button
             variant="primary"
             loading={capabilityTest.isPending}
-            disabled={!canTest || capabilityTest.isPending}
+            disabled={!canTest || !writeGate.allowed || capabilityTest.isPending}
+            title={writeGate.title}
             onClick={() => capabilityTest.mutate()}
           >
             Run capability test
@@ -408,7 +411,8 @@ export function ProviderTestingPanel(): React.JSX.Element {
           <Button
             variant="primary"
             loading={promptTest.isPending}
-            disabled={!canTest || prompt.trim() === "" || promptTest.isPending}
+            disabled={!canTest || !writeGate.allowed || prompt.trim() === "" || promptTest.isPending}
+            title={writeGate.title}
             onClick={() => promptTest.mutate()}
           >
             Run prompt
@@ -489,7 +493,8 @@ export function ProviderTestingPanel(): React.JSX.Element {
           <Button
             variant="primary"
             loading={performanceTest.isPending}
-            disabled={!canTest || performanceTest.isPending}
+            disabled={!canTest || !writeGate.allowed || performanceTest.isPending}
+            title={writeGate.title}
             onClick={() => performanceTest.mutate()}
           >
             Run performance test

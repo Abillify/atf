@@ -15,6 +15,7 @@
 
 import React from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
+import { useCanWrite } from "../../../lib/auth/useCanWrite";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
@@ -66,6 +67,7 @@ function deleteEvalCase(id: string, token: string | undefined): Promise<void> {
 }
 
 export default function EvalPage() {
+  const writeGate = useCanWrite("operator");
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
   // token; the backend serves the operator plane anonymously). authFetch omits
   // the Authorization header for an undefined token.
@@ -192,7 +194,8 @@ export default function EvalPage() {
                           deleteMutation.reset();
                           setConfirmId(c.id);
                         }}
-                        disabled={deleteMutation.isPending}
+                        disabled={deleteMutation.isPending || !writeGate.allowed}
+                        title={writeGate.title}
                         aria-label={`Delete eval case ${c.id}`}
                       >
                         Delete

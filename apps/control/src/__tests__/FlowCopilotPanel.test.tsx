@@ -6,6 +6,11 @@ import { describe, test, expect, vi, afterEach } from "vitest";
 import { FlowCopilotPanel, describeCopilotFocus } from "../components/FlowCopilotPanel";
 import type { FlowDefinition } from "../types/flow";
 
+// The panel gates its write controls by role (useCanWrite); render as admin.
+vi.mock("../lib/auth/useAuth", () => ({
+  useAuth: () => ({ token: "test-token", ready: true, isAuthenticated: true, role: "admin" }),
+}));
+
 const definition: FlowDefinition = {
   id: "f1",
   name: "Flow 1",

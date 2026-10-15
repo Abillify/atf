@@ -147,6 +147,20 @@ releases:
   of erasing the caller's identifiers in every tenant. The issuer is recorded
   in the audit entry. Callers whose tokens lack `iss` now get 401.
 
+- **Role gating matches the Runtime's RBAC.** Runtime: starting an autopilot
+  cycle (`POST /autopilot/trigger`) and running red-team attacks or refreshing
+  the attack library (`POST /security/red-team/:flowId/run`,
+  `…/attacks/refresh`) required only read permissions, so a viewer could
+  trigger flow promotions and attack runs; they now need `flows:write`
+  (admin). Control: write controls are disabled with a "Requires the … role"
+  hint below the role the Runtime enforces (`useCanWrite`) — operator for
+  memory, limits, eval cases and runs, provider tests, trigger test-fires and
+  assistants admin; admin for Studio (previously gated at operator although
+  every flow write needs admin), flow import/delete, version rollback,
+  copilots, optimizer, autopilot, red-team, tool-authz and compliance actions.
+- **Control BFF proxy refuses cross-site requests** (`/api/backend/*`):
+  `Sec-Fetch-Site`/`Origin` are checked before the session cookie is used.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

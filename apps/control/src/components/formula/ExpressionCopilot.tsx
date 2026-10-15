@@ -9,6 +9,7 @@ import type React from "react";
 import { useRef, useState } from "react";
 import { Sparkles } from "lucide-react";
 import { request } from "../../lib/control-api";
+import { useCanWrite } from "../../lib/auth/useCanWrite";
 import { getPath, type FormulaGroup, type FormulaKind } from "../../lib/formula";
 import { snippet } from "./formulaUtils";
 import { DiffView } from "./DiffView";
@@ -84,6 +85,7 @@ export function ExpressionCopilot({
   selection?: { start: number; end: number } | null;
   onAccept: (next: string) => void;
 }): React.JSX.Element {
+  const writeGate = useCanWrite("admin");
   const [instruction, setInstruction] = useState("");
   const [useSelection, setUseSelection] = useState(true);
   const sel =
@@ -99,7 +101,7 @@ export function ExpressionCopilot({
     );
 
   const ask = (): void => {
-    if (!instruction.trim() || st.state === "asking") return;
+    if (!writeGate.allowed || !instruction.trim() || st.state === "asking") return;
     base.current = current;
     setSt({ state: "asking" });
     // Req 9.2: lib/control-api; request() because the {ok:...} body is read
@@ -163,7 +165,8 @@ export function ExpressionCopilot({
         <button
           type="button"
           onClick={ask}
-          disabled={!instruction.trim() || st.state === "asking"}
+          disabled={!writeGate.allowed || !instruction.trim() || st.state === "asking"}
+          title={writeGate.title}
           className="rounded bg-copilot-solid px-2 py-1 text-xs font-medium text-on-solid hover:bg-copilot-solid-hover disabled:opacity-50"
         >
           {st.state === "asking" ? "Thinking…" : "Ask"}

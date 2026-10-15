@@ -11,7 +11,8 @@
  *   - Right sidebar: an accordion with one section expanded at a time —
  *     Nodes (the palette), Optimize, Diff, Autopilot and Documentation
  *
- * Write/mutation controls are gated with <RequireRole minRole="operator"> (Req. 21.1).
+ * Write/mutation controls are gated with <RequireRole minRole="admin"> (Req. 21.1):
+ * every flow write — save, publish, draft, test-run — needs `flows:write`.
  *
  * Heavy components are lazy-loaded (code-splitting, Req. 12.3).
  */
@@ -605,14 +606,14 @@ export default function StudioPage() {
           <div
             className={`flex min-h-0 flex-col overflow-hidden border-b border-border bg-card p-2 ${"flex-1"}`}
           >
-            {/* Builder canvas — write controls gated by operator role (Req. 21.1) */}
+            {/* Builder canvas — flow writes need flows:write, i.e. the admin role (Req. 21.1) */}
             <div className="flex-1 min-h-0">
               <RequireRole
-                minRole="operator"
+                minRole="admin"
                 mode="disable"
                 fallback={
                   <div className="flex h-64 items-center justify-center rounded border border-dashed border-border text-xs text-muted-foreground">
-                    You need the <strong className="mx-1">operator</strong> role
+                    You need the <strong className="mx-1">admin</strong> role
                     to edit flows.
                   </div>
                 }
