@@ -12,7 +12,7 @@ import type React from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../lib/backend-url";
 import { authFetch } from "../../lib/auth-fetch";
-import { Badge, Button } from "../../lib/ui";
+import { Badge, Button, useConfirm } from "../../lib/ui";
 import {
   detailPath,
   readJson,
@@ -66,6 +66,7 @@ export function AssistantDetailView({
   token: string | undefined;
 }): React.JSX.Element {
   const queryClient = useQueryClient();
+  const { confirm: confirmDialog } = useConfirm();
   const path = detailPath(row);
   const detailKey = ["assistants", "admin", path];
 
@@ -352,7 +353,15 @@ export function AssistantDetailView({
                     size="sm"
                     variant="destructive"
                     disabled={revokeDelegation.isPending}
-                    onClick={() => revokeDelegation.mutate(grant.issuer)}
+                    onClick={async () => {
+                      const ok = await confirmDialog({
+                        title: "Revoke delegation?",
+                        message: `The assistant loses its ${grant.issuer} delegation at once; the user has to consent again to restore it.`,
+                        confirmLabel: "Revoke",
+                        destructive: true,
+                      });
+                      if (ok) revokeDelegation.mutate(grant.issuer);
+                    }}
                     aria-label={`Revoke delegation for issuer ${grant.issuer}`}
                   >
                     Revoke

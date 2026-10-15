@@ -22,6 +22,7 @@ import { authFetch } from "../../../lib/auth-fetch";
 import {
   Button, Badge, Tabs, TabsList, TabsTrigger, TabsContent,
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
+  useConfirm,
 } from "../../../lib/ui";
 import { formatNumber, formatDate } from "../../../lib/i18n";
 
@@ -171,6 +172,7 @@ function TenantForm({
 // ---------------------------------------------------------------------------
 
 function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefined }) {
+  const { confirm: confirmDialog } = useConfirm();
   const qc = useQueryClient();
   const [newName, setNewName] = useState("default");
   const [revealed, setRevealed] = useState<string | null>(null);
@@ -233,7 +235,16 @@ function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefi
                 </TableCell>
                 <TableCell className="text-right">
                   {!k.revoked && (
-                    <Button variant="destructive" size="sm" onClick={() => revokeMutation.mutate(k.id)} disabled={revokeMutation.isPending}>Revoke</Button>
+                    <Button variant="destructive" size="sm" disabled={revokeMutation.isPending}
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: "Revoke API key?",
+                          message: `Every client using "${k.name}" is rejected immediately. This cannot be undone.`,
+                          confirmLabel: "Revoke",
+                          destructive: true,
+                        });
+                        if (ok) revokeMutation.mutate(k.id);
+                      }}>Revoke</Button>
                   )}
                 </TableCell>
               </TableRow>
@@ -305,6 +316,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
 // ---------------------------------------------------------------------------
 
 function BYOKTab({ tenantId, token }: { tenantId: string; token: string | undefined }) {
+  const { confirm: confirmDialog } = useConfirm();
   const qc = useQueryClient();
   const [editing, setEditing] = useState<ByokProvider | null>(null);
   const [keyValue, setKeyValue] = useState("");
@@ -379,7 +391,15 @@ function BYOKTab({ tenantId, token }: { tenantId: string; token: string | undefi
                   </Button>
                   {configuredSet.has(p) && (
                     <Button variant="destructive" size="sm" disabled={deleteMutation.isPending}
-                      onClick={() => deleteMutation.mutate(p)}>Remove</Button>
+                      onClick={async () => {
+                        const ok = await confirmDialog({
+                          title: `Remove the ${p} key?`,
+                          message: "This tenant's requests to the provider fall back to the deployment key, or fail when keys are mandatory.",
+                          confirmLabel: "Remove",
+                          destructive: true,
+                        });
+                        if (ok) deleteMutation.mutate(p);
+                      }}>Remove</Button>
                   )}
                 </div>
               </TableCell>

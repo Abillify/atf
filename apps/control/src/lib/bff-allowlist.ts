@@ -12,6 +12,10 @@
  * `src/lib/backend-url.ts` consumers), are forwarded; everything else is
  * rejected with 404 before any request leaves the server.
  *
+ * `/v1/chat/completions` carries Studio test runs (`lib/studio-run.ts`);
+ * `/v1/receipts` and the receipt JWKS back the receipt verification panel
+ * (`lib/receipt-verify.ts`).
+ *
  * Matching is done on the URL *pathname* (query strings are irrelevant here)
  * and is deliberately prefix-based: `/admin/tenants` also covers
  * `/admin/tenants/{id}/keys`. A prefix only matches at a path-segment
@@ -29,8 +33,11 @@ export const BFF_ALLOWED_PREFIXES: readonly string[] = [
   "/optimizer/",
   "/security/",
   "/triggers",
+  "/v1/chat/completions",
   "/v1/jobs/",
   "/v1/models",
+  "/v1/receipts",
+  "/.well-known/atf-receipt-jwks.json",
 ];
 
 /**

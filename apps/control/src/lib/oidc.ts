@@ -24,7 +24,7 @@
 
 import { base64UrlDecodeToString } from "@atf/security-kit/browser";
 
-import { backendUrl } from "./backend-url";
+import { authUrl } from "./backend-url";
 
 export interface AuthConfig {
   /** True when the backend has the confidential OIDC client configured. */
@@ -72,7 +72,7 @@ export async function getAuthConfig(): Promise<AuthConfig> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), AUTH_CONFIG_TIMEOUT_MS);
   try {
-    const res = await fetch(backendUrl("/monitoring/auth/config"), {
+    const res = await fetch(authUrl("/monitoring/auth/config"), {
       headers: { Accept: "application/json" },
       signal: controller.signal,
     });
@@ -102,7 +102,7 @@ export async function getAuthConfig(): Promise<AuthConfig> {
  */
 export function beginLogin(): void {
   const here = `${window.location.origin}${window.location.pathname}${window.location.search}`;
-  const url = backendUrl(
+  const url = authUrl(
     `/monitoring/auth/login?redirect=${encodeURIComponent(here)}`,
   );
   window.location.assign(url);
@@ -166,7 +166,7 @@ export function isTrustedEndSessionUrl(
  */
 export async function logout(): Promise<boolean> {
   try {
-    const res = await fetch(backendUrl("/monitoring/auth/logout"), {
+    const res = await fetch(authUrl("/monitoring/auth/logout"), {
       method: "POST",
       headers: { Accept: "application/json" },
       // Send the refresh-session cookie so the backend can drop it server-side.
@@ -202,7 +202,7 @@ export async function logout(): Promise<boolean> {
  */
 export async function refreshSession(): Promise<string | null> {
   try {
-    const res = await fetch(backendUrl("/monitoring/auth/refresh"), {
+    const res = await fetch(authUrl("/monitoring/auth/refresh"), {
       method: "GET",
       headers: { Accept: "application/json" },
       credentials: "include",

@@ -84,6 +84,26 @@ releases:
   cannot be erased automatically is registered with its gap, fails the erasure
   and therefore turns `complete` into `partial`; `GET /v1/me/data` lists it as
   not erasable and the dossier names the gap.
+- **Control in BFF mode** (`CONTROL_SESSION_MODE=bff`): SSO login, logout,
+  refresh and the auth-config probe now go to the Runtime directly
+  (`authUrl`) instead of the BFF proxy, which refuses `/monitoring/auth/` by
+  design, so they no longer end in a 404. The proxy allowlist now covers Studio
+  test runs (`/v1/chat/completions`) and receipt verification (`/v1/receipts`,
+  `/.well-known/atf-receipt-jwks.json`).
+- **Control approvals**: the Approve/Deny buttons are shown only from the
+  operator role up (the Runtime requires `approvals:write`); viewers see who
+  decides instead.
+- **Control confirmations**: revoking API keys and delegations, removing BYOK
+  provider keys, clearing a memory session, deleting token limits, running a
+  retention sweep and erasing a subject (RTBF) now ask for confirmation.
+- **Control mutations are no longer retried**: the global React Query default
+  `mutations.retry` drops from 1 to 0, so a lost response can no longer repeat
+  a POST (for example creating a second API key).
+- **Control warning text contrast**: the light `--warning` token moves to
+  amber-700 (≥ 4.5:1 on `--warning-soft`), fixing the axe colour-contrast
+  failures on the security page.
+- **CI runs Control's Playwright suite and the axe a11y sweep** (`control-e2e`
+  job); the macOS-recorded visual-regression baselines stay excluded.
 
 ### Added
 

@@ -23,6 +23,7 @@ import {
   TableHead,
   TableHeaderCell,
   TableRow,
+  useConfirm,
 } from "../../lib/ui";
 import { PAGE_SIZE, readJson, type DelegationView } from "./assistantShared";
 import { formatDateTime } from "../../lib/i18n";
@@ -92,6 +93,7 @@ function fetchDelegations(
  * asks first.
  */
 export function RevocationConsole(): React.JSX.Element {
+  const { confirm: confirmDialog } = useConfirm();
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled.
   const { token, ready, isAuthenticated } = useAuth();
   const queryClient = useQueryClient();
@@ -257,7 +259,15 @@ export function RevocationConsole(): React.JSX.Element {
                         size="sm"
                         variant="destructive"
                         disabled={revoke.isPending}
-                        onClick={() => revoke.mutate(row)}
+                        onClick={async () => {
+                          const ok = await confirmDialog({
+                            title: "Revoke delegation?",
+                            message: `${row.assistantId} of ${row.userId} loses its ${row.issuer} delegation at once; the user has to consent again to restore it.`,
+                            confirmLabel: "Revoke",
+                            destructive: true,
+                          });
+                          if (ok) revoke.mutate(row);
+                        }}
                         aria-label={`Revoke delegation for ${row.userId} / ${row.assistantId} / ${row.issuer}`}
                       >
                         Revoke

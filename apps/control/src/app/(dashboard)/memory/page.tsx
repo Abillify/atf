@@ -13,7 +13,7 @@ import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
-import { Badge, Button } from "../../../lib/ui";
+import { Badge, Button, useConfirm } from "../../../lib/ui";
 
 interface MemoryEntry {
   id: string;
@@ -125,6 +125,7 @@ function SessionEntries({
 }
 
 export default function MemoryPage() {
+  const { confirm: confirmDialog } = useConfirm();
   // isAuthenticated instead of !!token: also loads with AUTHN_MODE=disabled (no
   // token; the backend serves the operator plane anonymously). authFetch omits
   // the Authorization header for an undefined token.
@@ -220,7 +221,15 @@ export default function MemoryPage() {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={() => clearMutation.mutate(session.id)}
+                onClick={async () => {
+                  const ok = await confirmDialog({
+                    title: "Clear session memory?",
+                    message: `All long-term memories of ${session.userId} in this session are deleted. This cannot be undone.`,
+                    confirmLabel: "Clear",
+                    destructive: true,
+                  });
+                  if (ok) clearMutation.mutate(session.id);
+                }}
                 disabled={clearMutation.isPending}
                 className="ml-4"
                 aria-label={`Clear session for ${session.userId}`}

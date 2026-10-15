@@ -31,6 +31,11 @@ export const BFF_PROXY_PREFIX = "/api/backend";
 
 export function backendBase(): string {
   if (isBffMode()) return BFF_PROXY_PREFIX;
+  return directBackendBase();
+}
+
+/** The Runtime as the browser reaches it without the BFF proxy. */
+function directBackendBase(): string {
   if (typeof process !== "undefined") {
     const configured = process.env["NEXT_PUBLIC_BACKEND_URL"] ?? "";
     // Only use an explicit non-default URL (e.g. local dev without a proxy).
@@ -46,5 +51,18 @@ export function backendBase(): string {
 /** Constructs a full URL or a relative path for a given backend route. */
 export function backendUrl(path: string): string {
   const base = backendBase();
+  return base ? `${base}${path}` : path;
+}
+
+/**
+ * URL of a Runtime OIDC endpoint (`/monitoring/auth/*`). These are top-level
+ * browser navigations and cookie-bound calls against the Runtime's own origin
+ * (state, refresh and logout cookies live there), so they never go through the
+ * BFF proxy — which deliberately refuses `/monitoring/auth/` — not even in BFF
+ * mode. The callback hands the session back as a URL fragment, which the BFF
+ * then seals into its own cookie.
+ */
+export function authUrl(path: string): string {
+  const base = directBackendBase();
   return base ? `${base}${path}` : path;
 }

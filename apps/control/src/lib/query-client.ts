@@ -7,7 +7,7 @@ import { QueryClient } from "@tanstack/react-query";
 /**
  * Central QueryClient instance with sensible defaults.
  *
- * - retry: 3 attempts with exponential backoff (default)
+ * - retry: queries 3 attempts with exponential backoff; mutations never
  * - staleTime: 30 seconds — avoids unnecessary refetches for frequently
  *   accessed data while still keeping the UI reasonably fresh
  * - gcTime: 5 minutes — keeps unused cache entries around so navigating
@@ -22,7 +22,11 @@ export const queryClient = new QueryClient({
       refetchOnWindowFocus: false,
     },
     mutations: {
-      retry: 1,
+      // Never retry a mutation by default: a POST whose response was lost may
+      // already have taken effect, and a retry repeats it (a second API key,
+      // a second tenant, a second erasure). A mutation that is idempotent can
+      // opt in with its own `retry`.
+      retry: 0,
     },
   },
 });

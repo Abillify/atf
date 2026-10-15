@@ -29,6 +29,7 @@ import {
   Button,
   Badge,
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
+  useConfirm,
 } from "../../../lib/ui";
 import { formatDateTime, formatTime } from "../../../lib/i18n";
 
@@ -98,6 +99,7 @@ function StatCard({ label, value, color = "gray" }: { label: string; value: stri
 // ---------------------------------------------------------------------------
 
 function RetentionActionsPanel({ token }: { token: string | undefined }) {
+  const { confirm: confirmDialog } = useConfirm();
   const [status, setStatus] = useState<ComplianceStatus | null>(null);
   const [sweepResult, setSweepResult] = useState<{ report: SweepEntry[]; purged: number } | null>(null);
   const [sweeping, setSweeping] = useState(false);
@@ -185,7 +187,15 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
         <Button
           variant="outline"
           size="sm"
-          onClick={() => void runSweep()}
+          onClick={async () => {
+            const ok = await confirmDialog({
+              title: "Run retention sweep now?",
+              message: "Every record older than its configured retention window is deleted permanently.",
+              confirmLabel: "Run sweep",
+              destructive: true,
+            });
+            if (ok) await runSweep();
+          }}
           disabled={sweeping}
         >
           {sweeping ? "Running sweep…" : "Run sweep now"}
@@ -253,7 +263,21 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
         <Button
           variant="destructive"
           size="sm"
-          onClick={() => void runForget()}
+          onClick={async () => {
+            const who = [
+              forgetTenantId.trim() !== "" ? `tenant "${forgetTenantId.trim()}"` : "",
+              forgetUserId.trim() !== "" ? `user "${forgetUserId.trim()}"` : "",
+            ]
+              .filter(Boolean)
+              .join(" / ");
+            const ok = await confirmDialog({
+              title: "Erase this subject?",
+              message: `All data held for ${who} is erased in every store. This cannot be undone.`,
+              confirmLabel: "Erase",
+              destructive: true,
+            });
+            if (ok) await runForget();
+          }}
           disabled={
             forgetting || (!forgetTenantId.trim() && !forgetUserId.trim())
           }

@@ -5,6 +5,7 @@ import { describe, test, expect, afterEach } from "vitest";
 
 import {
   BFF_PROXY_PREFIX,
+  authUrl,
   backendBase,
   backendUrl,
 } from "./backend-url";
@@ -60,5 +61,23 @@ describe("backendUrl — BFF mode (Req 8.7)", () => {
     process.env["NEXT_PUBLIC_BACKEND_URL"] = "http://127.0.0.1:4173";
     // The browser must talk to its own origin only — never cross-origin.
     expect(backendUrl("/v1/models")).toBe("/api/backend/v1/models");
+  });
+});
+
+describe("authUrl — OIDC endpoints bypass the BFF proxy", () => {
+  test("stays on the Runtime in BFF mode, where the proxy refuses /monitoring/auth/", () => {
+    setModeFlag("bff");
+    expect(authUrl("/monitoring/auth/login")).toBe("/monitoring/auth/login");
+    process.env["NEXT_PUBLIC_BACKEND_URL"] = "https://runtime.example.test";
+    expect(authUrl("/monitoring/auth/logout")).toBe(
+      "https://runtime.example.test/monitoring/auth/logout",
+    );
+  });
+
+  test("matches backendUrl in token mode", () => {
+    setModeFlag(undefined);
+    expect(authUrl("/monitoring/auth/config")).toBe(
+      backendUrl("/monitoring/auth/config"),
+    );
   });
 });

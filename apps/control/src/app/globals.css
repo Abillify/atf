@@ -61,7 +61,8 @@
     --success-soft: 138 76% 97%;
     --success-border: 138 76% 80%;
 
-    --warning: 32 95% 44%;
+    /* amber-700: ≥ 4.5:1 on --warning-soft and white (WCAG AA body text) */
+    --warning: 26 90% 37%;
     --warning-solid: 38 92% 50%;
     --warning-solid-hover: 32 95% 44%;
     --warning-foreground: 0 0% 100%;

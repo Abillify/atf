@@ -7,6 +7,7 @@ import { useState } from "react";
 import { Inbox } from "lucide-react";
 import type { PendingApproval } from "../types/control";
 import { Badge, Button, EmptyState } from "../lib/ui";
+import { RequireRole } from "../lib/auth";
 
 export interface ApprovalsPanelProps {
   pending: PendingApproval[];
@@ -70,24 +71,34 @@ function ApprovalCard({
             {age(item.requestedAt)}
           </div>
         </div>
-        <div className="flex shrink-0 gap-2">
-          <Button
-            variant="primary"
-            size="sm"
-            disabled={busy}
-            onClick={() => void act(true)}
-          >
-            Approve
-          </Button>
-          <Button
-            variant="destructive"
-            size="sm"
-            disabled={busy}
-            onClick={() => void act(false)}
-          >
-            Deny
-          </Button>
-        </div>
+        {/* Deciding needs `approvals:write`, which starts at operator. */}
+        <RequireRole
+          minRole="operator"
+          fallback={
+            <span className="shrink-0 text-xs text-muted-foreground">
+              An operator decides this request.
+            </span>
+          }
+        >
+          <div className="flex shrink-0 gap-2">
+            <Button
+              variant="primary"
+              size="sm"
+              disabled={busy}
+              onClick={() => void act(true)}
+            >
+              Approve
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={busy}
+              onClick={() => void act(false)}
+            >
+              Deny
+            </Button>
+          </div>
+        </RequireRole>
       </div>
       {Object.keys(item.args).length > 0 && (
         <pre className="mt-3 max-h-40 overflow-auto rounded bg-card/70 p-2 text-xs text-foreground">

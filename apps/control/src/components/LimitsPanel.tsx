@@ -22,6 +22,7 @@ import {
   TableRow,
   TableHeaderCell,
   TableCell,
+  useConfirm,
 } from "../lib/ui";
 import { useLimits } from "../hooks/useLimits";
 import { useUsageSeries, useUsageModels } from "../hooks/useUsageSeries";
@@ -81,6 +82,7 @@ export function LimitsPanel({
   enabled,
   token,
 }: LimitsPanelProps): React.JSX.Element {
+  const { confirm: confirmDialog } = useConfirm();
   const chart = useChartPalette();
   const { models } = useUsageModels(enabled, token);
   const {
@@ -331,7 +333,15 @@ export function LimitsPanel({
                 <LimitRow
                   key={l.id}
                   limit={l}
-                  onDelete={() => void deleteLimit(l.id)}
+                  onDelete={async () => {
+                    const ok = await confirmDialog({
+                      title: "Delete token limit?",
+                      message: "The limit stops applying immediately.",
+                      confirmLabel: "Delete",
+                      destructive: true,
+                    });
+                    if (ok) await deleteLimit(l.id);
+                  }}
                   onEdit={(input) => void updateLimit(l.id, input)}
                 />
               ))}

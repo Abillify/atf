@@ -43,6 +43,17 @@ describe("isBffPathAllowed", () => {
     expect(isBffPathAllowed("/v1/jobsX/y")).toBe(false);
   });
 
+  test("allows Studio test runs and receipt verification", () => {
+    for (const path of [
+      "/v1/chat/completions",
+      "/v1/receipts",
+      "/v1/receipts/r-1/proof",
+      "/.well-known/atf-receipt-jwks.json",
+    ]) {
+      expect(isBffPathAllowed(path)).toBe(true);
+    }
+  });
+
   test("rejects paths outside the allowlist", () => {
     for (const path of [
       "/",
@@ -52,7 +63,10 @@ describe("isBffPathAllowed", () => {
       "/admin",
       "/health",
       "/metrics",
-      "/v1/chat/completions",
+      "/v1/chat",
+      "/v1/chat/completionsX",
+      "/v1/receiptsX",
+      "/.well-known/other.json",
       "/monitoring",
       "/api/internal",
       "//admin/x",

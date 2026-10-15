@@ -5,6 +5,7 @@ import { render, screen, waitFor, fireEvent, within } from "@testing-library/rea
 import { describe, test, expect, vi, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AssistantsPanel } from "../components/AssistantsPanel";
+import { ConfirmProvider } from "../lib/ui";
 
 vi.mock("../lib/auth/useAuth", () => ({
   useAuth: () => ({ token: "test-token", ready: true }),
@@ -15,7 +16,9 @@ function renderWithQueryClient(ui: React.ReactElement) {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <QueryClientProvider client={client}>{ui}</QueryClientProvider>,
+    <QueryClientProvider client={client}>
+      <ConfirmProvider>{ui}</ConfirmProvider>
+    </QueryClientProvider>,
   );
 }
 
@@ -136,6 +139,14 @@ describe("AssistantsPanel", () => {
       name: /Revoke delegation/,
     });
     fireEvent.click(revokeBtn);
+    // Nothing is revoked until the confirmation dialog is accepted.
+    const dialog = await screen.findByRole("dialog");
+    expect(
+      (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.some(
+        (call) => typeof call[0] === "string" && call[0].includes("/delegation?"),
+      ),
+    ).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Revoke" }));
 
     await waitFor(() => {
       const calls = (global.fetch as unknown as ReturnType<typeof vi.fn>).mock.calls;

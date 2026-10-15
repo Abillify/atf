@@ -12,6 +12,14 @@ import { describe, test, expect, vi } from "vitest";
 import { ApprovalsPanel } from "../components/ApprovalsPanel";
 import type { PendingApproval } from "../types/control";
 
+const auth = vi.hoisted(() => ({
+  current: { role: "operator" as string | undefined },
+}));
+
+vi.mock("../lib/auth/useAuth", () => ({
+  useAuth: () => auth.current,
+}));
+
 /**
  * Fixtures are deliberately generic (no customer, tenant or flow reference) so
  * the test runs without private deployment material.
@@ -28,6 +36,19 @@ const approval = (over: Partial<PendingApproval> = {}): PendingApproval => ({
 });
 
 describe("ApprovalsPanel", () => {
+  test("a viewer sees the request but no Approve/Deny buttons", () => {
+    auth.current = { role: "viewer" };
+    try {
+      render(<ApprovalsPanel pending={[approval()]} onResolve={() => {}} />);
+      expect(screen.getByText("demo-mcp/case_lookup")).toBeInTheDocument();
+      expect(screen.queryByText("Approve")).toBeNull();
+      expect(screen.queryByText("Deny")).toBeNull();
+      expect(screen.getByText("An operator decides this request.")).toBeInTheDocument();
+    } finally {
+      auth.current = { role: "operator" };
+    }
+  });
+
   test("shows an empty state when nothing is pending", () => {
     render(<ApprovalsPanel pending={[]} onResolve={() => {}} />);
     expect(
