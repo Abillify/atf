@@ -14,7 +14,7 @@ import { test, expect } from "@playwright/test";
 
 test.skip(process.env["E2E_BFF"] !== "1", "needs a BFF-mode server with CONTROL_PUBLIC_ORIGIN");
 
-const ORIGIN = process.env["BASE_URL"] ?? "http://localhost:3000"\;
+const ORIGIN = process.env["BASE_URL"] ?? "http://localhost:3000";
 // Unsigned JWT-shaped handoff token; the session route only reads its claims.
 const b64 = (o: object): string => Buffer.from(JSON.stringify(o)).toString("base64url");
 const TOKEN = `${b64({ alg: "none" })}.${b64({ role: "operator", exp: 4_000_000_000 })}.sig`;

@@ -21,7 +21,7 @@ export interface ApprovalsPanelProps {
     id: string,
     approved: boolean,
     opts?: { reason?: string; by?: string },
-  ) => void | boolean | DecisionOutcome | Promise<void | boolean | DecisionOutcome>;
+  ) => undefined | boolean | DecisionOutcome | Promise<undefined | boolean | DecisionOutcome>;
 }
 
 type DecisionOutcome = { ok: boolean; status?: number };
