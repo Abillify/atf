@@ -271,7 +271,7 @@ jobs:
         run: bunx playwright test --grep-invert "Visual regression"
       - name: Upload Playwright report
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: control-playwright-report
           path: |
@@ -447,7 +447,7 @@ jobs:
           --artifact-kind workspace --artifact-name workspace-linux-x64
           --git-sha unknown --include-cargo
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: workspace-${{ matrix.platform }}-${{ github.sha }}
@@ -475,32 +475,32 @@ jobs:
           bun run supply-chain:images --output-dir "$GITHUB_WORKSPACE/artifacts/images-linux-x64-${GITHUB_SHA}"
           --platform linux-x64 --git-sha "$GITHUB_SHA"
 
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: quickstart-runtime-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/runtime
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: quickstart-control-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/control
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: quickstart-search-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/search
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: quickstart-gate-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/gate
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: quickstart-extract-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/extract
           retention-days: 90
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: quickstart-image-index-linux-x64-${{ github.sha }}
           path: artifacts/images-linux-x64-${{ github.sha }}/index.json
@@ -743,7 +743,7 @@ jobs:
             --out reports/eval/retrieval
 
       - name: Upload eval reports
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:
           name: eval-reports-${{ github.sha }}

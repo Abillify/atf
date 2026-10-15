@@ -100,7 +100,7 @@ jobs:
           --platform "${{ matrix.platform }}" --assert-host-platform
           --artifact-kind workspace --artifact-name "workspace-${{ matrix.platform }}-${GITHUB_SHA}"
           --git-sha "$GITHUB_SHA"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-workspace-${{ matrix.platform }}-${{ github.sha }}
           path: release/workspace-${{ matrix.platform }}-${{ github.sha }}
@@ -125,7 +125,7 @@ jobs:
         run: >-
           bun run supply-chain:images --output-dir "$GITHUB_WORKSPACE/release/quickstart-images-linux-x64-${GITHUB_SHA}"
           --platform linux-x64 --git-sha "$GITHUB_SHA"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-quickstart-images-linux-x64-${{ github.sha }}
           path: release/quickstart-images-linux-x64-${{ github.sha }}
