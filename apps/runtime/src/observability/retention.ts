@@ -10,8 +10,14 @@
  * email) — stores attribute rows under whichever one the request carried.
  */
 export interface ErasureSubject { tenantId?: string; userId?: string; userAliases?: readonly string[]; }
-export interface RetentionTarget { name: string; purgeOlderThan?: (cutoffIso: string) => Promise<number>; eraseSubject?: (subject: ErasureSubject) => Promise<number>; }
-export interface RetentionTargetDescription { name: string; agePurge: boolean; subjectErase: boolean; maxAgeDays: number | null; }
+export interface RetentionTarget {
+  name: string;
+  purgeOlderThan?: (cutoffIso: string) => Promise<number>;
+  eraseSubject?: (subject: ErasureSubject) => Promise<number>;
+  /** Set when the store holds personal data that erasure cannot remove: why. */
+  erasureGap?: string;
+}
+export interface RetentionTargetDescription { name: string; agePurge: boolean; subjectErase: boolean; maxAgeDays: number | null; erasureGap?: string; }
 export interface RetentionSweepResult { target: string; maxAgeDays: number | null; purged: number; skipped: boolean; error?: string; }
 export interface RetentionForgetResult { target: string; erased: number; error?: string; }
 export interface RetentionServiceOptions { maxAgeDaysByTarget?: Record<string, number>; defaultMaxAgeDays?: number; }
@@ -55,8 +61,12 @@ export class RetentionService {
     return this.targets.map((target) => ({
       name: target.name,
       agePurge: target.purgeOlderThan !== undefined,
-      subjectErase: target.eraseSubject !== undefined,
+      subjectErase:
+        target.eraseSubject !== undefined && target.erasureGap === undefined,
       maxAgeDays: this.maxAgeDays(target) ?? null,
+      ...(target.erasureGap !== undefined
+        ? { erasureGap: target.erasureGap }
+        : {}),
     }));
   }
   async sweep(): Promise<RetentionSweepResult[]> {

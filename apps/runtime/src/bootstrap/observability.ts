@@ -48,6 +48,17 @@ import {
   memoryRetentionTarget,
   piiVaultRetentionTarget,
 } from "../observability/retention-targets.js";
+import {
+  analysisArtifactRetentionTarget,
+  assistantDataRetentionTarget,
+  assistantWorkspaceRetentionTarget,
+  autopilotRunRetentionTarget,
+  conversationCheckpointRetentionTarget,
+  costLedgerRetentionTarget,
+  DB_RETENTION_TARGET,
+  rocketchatConnectRetentionTarget,
+  uncoveredRetentionTarget,
+} from "../observability/retention-db-targets.js";
 import type { ReplayStore } from "../graph/replay.js";
 import type { ExecutionStore } from "../monitoring/execution-store.js";
 import type { PiiVaultStore } from "../graph/pii-vault.js";
@@ -223,6 +234,50 @@ export function buildObservability(
             : undefined,
         ),
       );
+    // Conversation checkpoints resolve a subject to its threads through the
+    // execution history, so they too must erase before it.
+    if (config.checkpointingEnabled === true) {
+      targets.push(
+        database !== undefined && executionStore !== undefined
+          ? conversationCheckpointRetentionTarget(database, (subject) =>
+              executionStore.conversationThreadsForSubject(subject),
+            )
+          : uncoveredRetentionTarget(
+              DB_RETENTION_TARGET.conversationCheckpoints,
+              "in-memory conversation checkpoints (no DATABASE_URL) are only cleared by a restart",
+            ),
+      );
+    }
+    if (config.assistantsEnabled === true) {
+      targets.push(
+        database !== undefined
+          ? assistantDataRetentionTarget(database)
+          : uncoveredRetentionTarget(
+              DB_RETENTION_TARGET.assistantData,
+              "in-memory assistant stores (no DATABASE_URL) are only cleared by a restart",
+            ),
+        assistantWorkspaceRetentionTarget(
+          config.assistantWorkspaceRoot ?? "./data/assistants",
+        ),
+      );
+    }
+    if (database !== undefined) {
+      targets.push(
+        costLedgerRetentionTarget(database),
+        analysisArtifactRetentionTarget(database),
+        rocketchatConnectRetentionTarget(database),
+        autopilotRunRetentionTarget(database),
+      );
+    }
+    if (config.semanticCacheEnabled === true) {
+      targets.push(
+        uncoveredRetentionTarget(
+          "semantic_cache",
+          "semantic-cache entries are keyed by tenant and prompt, not by user; " +
+            "they expire after SEMANTIC_CACHE_TTL_SECONDS",
+        ),
+      );
+    }
     if (executionStore !== undefined)
       targets.push(executionHistoryRetentionTarget(executionStore));
     if (memoryStore !== undefined)

@@ -325,6 +325,12 @@ export interface ExecutionStore {
    * one user's rows instead of the whole tenant's.
    */
   executionIdsForSubject(subject: ErasureSubject): Promise<string[]>;
+  /**
+   * Checkpoint thread keys (`${flow_id}:${conversation_id}`, see the graph
+   * engine) of the subject's conversations: the user's executions for a
+   * user-scoped subject, every execution of the tenant otherwise.
+   */
+  conversationThreadsForSubject(subject: ErasureSubject): Promise<string[]>;
 }
 
 const DEFAULT_TENANT_ID = "default";
@@ -594,6 +600,24 @@ export class InMemoryExecutionStore implements ExecutionStore {
         ids.push(id);
     }
     return ids;
+  }
+
+  async conversationThreadsForSubject(
+    subject: ErasureSubject,
+  ): Promise<string[]> {
+    const owned =
+      subjectUserIds(subject).length > 0
+        ? new Set(await this.executionIdsForSubject(subject))
+        : undefined;
+    if (owned === undefined && subject.tenantId === undefined) return [];
+    const threads = new Set<string>();
+    for (const [id, exec] of this.byId) {
+      if (owned !== undefined ? !owned.has(id) : exec.tenant_id !== subject.tenantId)
+        continue;
+      if (exec.flow_id !== null && exec.conversation_id !== null)
+        threads.add(`${exec.flow_id}:${exec.conversation_id}`);
+    }
+    return [...threads];
   }
 
   private rebuildOrder(): void {
@@ -1273,6 +1297,37 @@ export class PostgresExecutionStore implements ExecutionStore {
     if (userIds.length === 0) return [];
     const { tenantId } = subject;
     const run = (db: Database) => ownedExecutionIds(db, userIds, tenantId);
+    return tenantId !== undefined
+      ? this.scoped(tenantId, run)
+      : this.db.withOperator(run);
+  }
+
+  async conversationThreadsForSubject(
+    subject: ErasureSubject,
+  ): Promise<string[]> {
+    const userIds = subjectUserIds(subject);
+    const { tenantId } = subject;
+    if (userIds.length === 0 && tenantId === undefined) return [];
+    const run = async (db: Database): Promise<string[]> => {
+      const rows =
+        userIds.length > 0
+          ? await db.query<{ thread: string }>(
+              `SELECT DISTINCT flow_id || ':' || conversation_id AS thread
+                 FROM executions
+                WHERE execution_id::text IN
+                      (SELECT jsonb_array_elements_text($1::text::jsonb))
+                  AND flow_id IS NOT NULL AND conversation_id IS NOT NULL`,
+              [JSON.stringify(await ownedExecutionIds(db, userIds, tenantId))],
+            )
+          : await db.query<{ thread: string }>(
+              `SELECT DISTINCT flow_id || ':' || conversation_id AS thread
+                 FROM executions
+                WHERE tenant_id = $1
+                  AND flow_id IS NOT NULL AND conversation_id IS NOT NULL`,
+              [tenantId],
+            );
+      return rows.map((r) => r.thread);
+    };
     return tenantId !== undefined
       ? this.scoped(tenantId, run)
       : this.db.withOperator(run);

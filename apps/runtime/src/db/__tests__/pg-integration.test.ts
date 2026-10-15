@@ -866,3 +866,186 @@ suite("Postgres — BYPASSRLS operator pool", () => {
     expect(tenants.has(tenantB)).toBe(true);
   });
 });
+
+suite("Postgres — DSAR coverage of tables without a store object", () => {
+  const count = async (sql: string, params: unknown[]): Promise<number> =>
+    Number(at(await db.query<{ n: string }>(sql, params), 0).n);
+
+  it("erases one user's assistant rows (both sides of a message) but not a colleague's", async () => {
+    const { assistantDataRetentionTarget } = await import(
+      "../../observability/retention-db-targets.js"
+    );
+    const tenant = `acme-${uniq()}`;
+    const me = `me-${uniq()}`;
+    const colleague = `col-${uniq()}`;
+    for (const user of [me, colleague]) {
+      await db.query(
+        `INSERT INTO assistants (tenant_id, user_id, assistant_id, workspace_path)
+           VALUES ($1, $2, 'helper', '/tmp/x')`,
+        [tenant, user],
+      );
+      await db.query(
+        `INSERT INTO assistant_session_events
+           (id, tenant_id, user_id, assistant_id, conversation_id, sequence, execution_id, role, content)
+           VALUES ($1, $2, $3, 'helper', 'c1', 1, $4, 'user', 'private text')`,
+        [crypto.randomUUID(), tenant, user, crypto.randomUUID()],
+      );
+    }
+    const grantId = crypto.randomUUID();
+    await db.query(
+      `INSERT INTO assistant_grants
+         (id, from_tenant_id, from_user_id, from_assistant_id, to_tenant_id, to_user_id, to_assistant_id, granted_by)
+         VALUES ($1, $2, $3, 'helper', $2, $4, 'helper', $3)`,
+      [grantId, tenant, colleague, me],
+    );
+    await db.query(
+      `INSERT INTO assistant_messages
+         (id, grant_id, from_tenant_id, from_user_id, from_assistant_id, to_tenant_id, to_user_id, to_assistant_id, body)
+         VALUES ($1, $2, $3, $4, 'helper', $3, $5, 'helper', 'hi')`,
+      [crypto.randomUUID(), grantId, tenant, colleague, me],
+    );
+
+    // The DSAR tenant claim may differ in case; assistant rows store it lower-cased.
+    const erased = await assistantDataRetentionTarget(db).eraseSubject?.({
+      tenantId: tenant.toUpperCase(),
+      userId: me,
+    });
+    expect(erased).toBe(4); // assistant, session event, grant, message
+    expect(
+      await count(`SELECT count(*) AS n FROM assistants WHERE tenant_id = $1`, [tenant]),
+    ).toBe(1);
+    expect(
+      await count(
+        `SELECT count(*) AS n FROM assistant_session_events WHERE tenant_id = $1 AND user_id = $2`,
+        [tenant, colleague],
+      ),
+    ).toBe(1);
+  });
+
+  it("erases cost-ledger rows by user id or label, scoped to the tenant", async () => {
+    const { costLedgerRetentionTarget } = await import(
+      "../../observability/retention-db-targets.js"
+    );
+    const tenant = `acme-${uniq()}`;
+    for (const [userId, label] of [
+      ["u-1", null],
+      [null, "u@x.de"],
+      ["u-2", "colleague"],
+    ] as const) {
+      await db.query(
+        `INSERT INTO cost_ledger (tenant_id, provider, model, prompt_tokens, completion_tokens, cost, user_id, user_label)
+           VALUES ($1, 'openai', 'm', 1, 1, 0.1, $2, $3)`,
+        [tenant, userId, label],
+      );
+    }
+    const target = costLedgerRetentionTarget(db);
+    expect(
+      await target.eraseSubject?.({ tenantId: tenant, userId: "u@x.de", userAliases: ["u-1"] }),
+    ).toBe(2);
+    expect(
+      await count(`SELECT count(*) AS n FROM cost_ledger WHERE tenant_id = $1`, [tenant]),
+    ).toBe(1);
+  });
+
+  it("erases the checkpoints of the subject's threads and purges old ones with their writes", async () => {
+    const { conversationCheckpointRetentionTarget } = await import(
+      "../../observability/retention-db-targets.js"
+    );
+    const mine = `flow:${uniq()}`;
+    const other = `flow:${uniq()}`;
+    const old = `flow:${uniq()}`;
+    for (const [thread, age] of [
+      [mine, "0 days"],
+      [other, "0 days"],
+      [old, "400 days"],
+    ] as const) {
+      await db.query(
+        `INSERT INTO checkpoints (thread_id, checkpoint_ns, checkpoint_id, checkpoint, metadata, created_at)
+           VALUES ($1, '', 'cp1', '\\x00', '\\x00', now() - $2::interval)`,
+        [thread, age],
+      );
+      await db.query(
+        `INSERT INTO checkpoint_writes (thread_id, checkpoint_ns, checkpoint_id, task_id, idx, channel)
+           VALUES ($1, '', 'cp1', 't', 0, 'messages')`,
+        [thread],
+      );
+    }
+    const target = conversationCheckpointRetentionTarget(db, async () => [mine]);
+    expect(await target.eraseSubject?.({ tenantId: "acme", userId: "u-1" })).toBe(1);
+    expect(
+      await target.purgeOlderThan?.(new Date(Date.now() - 365 * 86_400_000).toISOString()),
+    ).toBeGreaterThanOrEqual(1);
+    const left = await db.query<{ thread_id: string }>(
+      `SELECT thread_id FROM checkpoint_writes WHERE thread_id IN ($1, $2, $3)`,
+      [mine, other, old],
+    );
+    expect(left.map((r) => r.thread_id)).toEqual([other]);
+  });
+
+  it("resolves a user's conversation threads from the execution history", async () => {
+    const store = new PostgresExecutionStore(db);
+    const tenant = `acme-${uniq()}`;
+    const execId = uniq();
+    await db.query(
+      `INSERT INTO executions (execution_id, flow_id, tenant_id, status, started_at, conversation_id)
+         VALUES ($1, 'coach', $2, 'completed', now(), 'chat-1')`,
+      [execId, tenant],
+    );
+    await db.query(
+      `INSERT INTO token_usage_log (execution_id, flow_id, tenant_id, user_id, created_at)
+         VALUES ($1, 'coach', $2, 'u-1', now())`,
+      [execId, tenant],
+    );
+    expect(
+      await store.conversationThreadsForSubject({ tenantId: tenant, userId: "u-1" }),
+    ).toEqual(["coach:chat-1"]);
+    expect(await store.conversationThreadsForSubject({ tenantId: tenant })).toEqual([
+      "coach:chat-1",
+    ]);
+    expect(
+      await store.conversationThreadsForSubject({ tenantId: tenant, userId: "u-2" }),
+    ).toEqual([]);
+  });
+
+  it("purges old autopilot runs and erases analysis artifacts and connect requests by user", async () => {
+    const {
+      autopilotRunRetentionTarget,
+      analysisArtifactRetentionTarget,
+      rocketchatConnectRetentionTarget,
+    } = await import("../../observability/retention-db-targets.js");
+    const tenant = `acme-${uniq()}`;
+    const runId = uniq();
+    await db.query(
+      `INSERT INTO autopilot_runs (id, flow_id, trigger, started_at, status)
+         VALUES ($1, 'f', 'manual', now() - interval '400 days', 'completed')`,
+      [runId],
+    );
+    expect(
+      await autopilotRunRetentionTarget(db).purgeOlderThan?.(
+        new Date(Date.now() - 365 * 86_400_000).toISOString(),
+      ),
+    ).toBeGreaterThanOrEqual(1);
+    expect(await count(`SELECT count(*) AS n FROM autopilot_runs WHERE id = $1`, [runId])).toBe(0);
+
+    await db.query(
+      `INSERT INTO analysis_artifacts (tenant_id, user_id, type, schema_version, title, payload, created_by, content_hash)
+         VALUES ($1, 'u-1', 'open_items', 1, 't', '{}', 'u-1', $2), ($1, 'u-2', 'open_items', 1, 't', '{}', 'u-2', $3)`,
+      [tenant, "a".repeat(64), "b".repeat(64)],
+    );
+    expect(
+      await analysisArtifactRetentionTarget(db).eraseSubject?.({ tenantId: tenant, userId: "u-1" }),
+    ).toBe(1);
+
+    await db.query(
+      `INSERT INTO rocketchat_connect_requests (id, tenant_id, server_url, rocket_user_id, room_id, verified_email, oidc_subject, expires_at)
+         VALUES ($1, $2, 'https://chat', 'r1', 'room', 'u@x.de', 'u-1', now() + interval '1 hour')`,
+      [crypto.randomUUID(), tenant],
+    );
+    expect(
+      await rocketchatConnectRetentionTarget(db).eraseSubject?.({
+        tenantId: tenant,
+        userId: "u@x.de",
+      }),
+    ).toBe(1);
+  });
+});

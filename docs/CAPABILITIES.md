@@ -326,7 +326,15 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Tamper-evident audit log.** Audit entries are hash-chained and periodically anchored, so
   later modification is detectable (`AUDIT_ANCHOR_SECRET`, `AUDIT_ANCHOR_INTERVAL_MS`).
 - **Retention and erasure.** Configurable retention sweeps and targeted erasure support
-  right-to-be-forgotten requests (`RETENTION_ENABLED`, `RETENTION_MAX_AGE_DAYS`).
+  right-to-be-forgotten requests (`RETENTION_ENABLED`, `RETENTION_MAX_AGE_DAYS`). Targets:
+  `replay_snapshots`, `pii_vault`, `conversation_checkpoints`, `assistant_data`,
+  `assistant_workspaces`, `cost_ledger`, `analysis_artifacts`, `rocketchat_connect_requests`,
+  `autopilot_runs` (age purge only), `execution_history` (with the usage log) and
+  `long_term_memory`; `RETENTION_MAX_AGE_DAYS` takes these names as keys. A store that holds
+  personal data but cannot be erased automatically (the semantic cache, or in-memory checkpoint
+  and assistant stores without `DATABASE_URL`) is listed with its gap in `GET /v1/me/data` and
+  the compliance dossier, and makes every erasure report `partial` rather than `complete`. The
+  audit log and `erasure_requests` are retained as accountability records.
 - **Verifiable evidence bundles.** A signed bundle ties an execution to its inputs, policy
   decisions, sources, and outputs (`EVIDENCE_BUNDLE_SECRET`).
 - **Compliance dossier.** A single generated document collects the active policy, the audit

@@ -98,7 +98,13 @@ describe("createErasureOrchestrator — local stores", () => {
   it("keeps an email/external-id-only subject user-scoped instead of tenant-wide", async () => {
     const seen: ErasureSubject[] = [];
     const retention = new RetentionService([
-      { name: "runtime.history", eraseSubject: async (s) => (seen.push(s), 1) },
+      {
+        name: "runtime.history",
+        eraseSubject: async (s) => {
+          seen.push(s);
+          return 1;
+        },
+      },
     ]);
     const orch = createErasureOrchestrator({ retention });
     await orch.execute(

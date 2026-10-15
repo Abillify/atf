@@ -75,6 +75,15 @@ releases:
   reviewer, and `assistant-context`/`assistant-learn` skip their transcript,
   memory and preference writes. Shadow sampling now defaults to 5 % instead of
   100 % (`samplingRate` in `shadow.yaml`, clamped to [0, 1]).
+- **DSAR erasure and retention cover the remaining runtime stores**: new
+  retention targets `conversation_checkpoints` (threads resolved from the
+  execution history; age purge incl. orphaned writes), `assistant_data` (all
+  `assistant_*` tables, both sides of messages and grants), `assistant_workspaces`
+  (workspace files), `cost_ledger`, `analysis_artifacts`,
+  `rocketchat_connect_requests` and `autopilot_runs` (age purge). A store that
+  cannot be erased automatically is registered with its gap, fails the erasure
+  and therefore turns `complete` into `partial`; `GET /v1/me/data` lists it as
+  not erasable and the dossier names the gap.
 
 ### Added
 

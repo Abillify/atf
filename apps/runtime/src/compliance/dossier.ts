@@ -78,6 +78,8 @@ export interface RetentionPosture {
     agePurge: boolean;
     subjectErase: boolean;
     maxAgeDays: number | null;
+    /** Why the store's personal data cannot be erased automatically, when it cannot. */
+    erasureGap?: string;
   }>;
   /** Policy-declared per-data-class retention windows (from compliance-policy.yaml). */
   policyRetentionRules: Array<{ dataClass: string; maxAgeDays: number }>;
@@ -519,7 +521,7 @@ export function formatDossierAsMarkdown(dossier: ComplianceDossier): string {
     lines.push(
       `  - ${t.name}: age-purge=${t.agePurge}, subject-erase=${t.subjectErase}, window=${
         t.maxAgeDays ?? "none"
-      } day(s)`,
+      } day(s)${t.erasureGap !== undefined ? ` — ERASURE GAP: ${t.erasureGap}` : ""}`,
     );
   }
   lines.push("");

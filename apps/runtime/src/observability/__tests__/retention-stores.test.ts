@@ -162,6 +162,23 @@ describe("InMemoryExecutionStore retention", () => {
     // A tenant-only subject still has no user to resolve.
     expect(await store.executionIdsForSubject({ tenantId: "acme" })).toEqual([]);
   });
+
+  it("resolves conversation checkpoint threads for a user and for a tenant", async () => {
+    const store = new InMemoryExecutionStore();
+    const meta = (conversationId: string) => ({ tenantId: "acme", flowId: "coach", conversationId });
+    store.recordEvent({ ...ev({ execution_id: "m" }), user_id: "u-1" }, meta("chat-1"));
+    store.recordEvent({ ...ev({ execution_id: "c" }), user_id: "u-2" }, meta("chat-2"));
+    store.recordEvent({ ...ev({ execution_id: "n" }), user_id: "u-1" }, { tenantId: "acme", flowId: "coach" });
+
+    expect(await store.conversationThreadsForSubject({ tenantId: "acme", userId: "u-1" })).toEqual([
+      "coach:chat-1",
+    ]);
+    expect((await store.conversationThreadsForSubject({ tenantId: "acme" })).sort()).toEqual([
+      "coach:chat-1",
+      "coach:chat-2",
+    ]);
+    expect(await store.conversationThreadsForSubject({})).toEqual([]);
+  });
 });
 
 describe("retention target adapters", () => {

@@ -635,13 +635,22 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     return ctx.json({
       subject: { userId: subject.userId, tenantId: subject.tenantId },
       dataHeld: targets
-        .filter((t) => t.subjectErase)
-        .map((t) => ({
-          store: t.name,
-          maxRetentionDays: t.maxAgeDays,
-          erasable: true,
-          description: `Data in '${t.name}' is retained for ${t.maxAgeDays ?? "an indefinite"} day(s) and can be erased on request.`,
-        })),
+        .filter((t) => t.subjectErase || t.erasureGap !== undefined)
+        .map((t) =>
+          t.erasureGap !== undefined
+            ? {
+                store: t.name,
+                maxRetentionDays: t.maxAgeDays,
+                erasable: false,
+                description: `Data in '${t.name}' cannot be erased automatically: ${t.erasureGap}.`,
+              }
+            : {
+                store: t.name,
+                maxRetentionDays: t.maxAgeDays,
+                erasable: true,
+                description: `Data in '${t.name}' is retained for ${t.maxAgeDays ?? "an indefinite"} day(s) and can be erased on request.`,
+              },
+        ),
       requestErasureEndpoint: "DELETE /v1/me/data",
       note: "To receive a full export of your stored data, contact the platform operator.",
     });
