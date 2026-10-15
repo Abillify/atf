@@ -9,8 +9,10 @@ docker run --rm \
   -v "$PWD/outpost.yaml:/config/outpost.yaml:ro" \
   -v outpost-data:/data \
   -v "$PWD/source:/sources/source:ro" \
-  ghcr.io/abillify/atf-outpost:latest daemon
+  ghcr.io/abillify/atf-outpost:outpost-v<version> daemon
 ```
+
+The image is published by `.github/workflows/outpost-release.yml` only when an `outpost-v*` tag is pushed (tagged with that tag name, and `latest`). The product release `v0.16.0` does not publish it, and no `outpost-v*` tag exists yet. Until one does, build the image yourself from the repository root: `docker build -f apps/outpost/Dockerfile -t atf-outpost .`, then use `atf-outpost` instead of the GHCR name.
 
 The image stores sync state and file credentials below `/data`. The default health endpoint is `127.0.0.1:8787`; set `OUTPOST_HEALTH_BIND` only when an unauthenticated network health endpoint is intentional. A non-loopback bind is logged as a warning.
 
