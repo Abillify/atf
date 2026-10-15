@@ -3,7 +3,7 @@
 
 # Threat model (STRIDE)
 
-As of 0.14.0. One section per service, grouped by STRIDE category, each row
+As of 0.16.0. One section per service, grouped by STRIDE category, each row
 reading threat → mitigation → residual risk. Port numbers are the host ports
 of the Compose quickstart. Trust boundaries: (1) internet → gateway → Gate,
 (2) Gate → internal services (network segment, service tokens), (3) Runtime
@@ -20,12 +20,17 @@ data stays local).
 | I | PII in clear text at the provider or in logs | PII-vault decorator (ADR 0007), detector pipeline (ADR 0015), multimodal mode (ADR 0016), log redaction | New PII types need a detector extension; the fail mode is configurable |
 | D | Expensive models or endless loops → cost DoS | Budgets (`budgets/`), FinOps forecast (ADR 0018), iteration and stagnation limits, rate limiting | Cost DoS below the budget threshold |
 | E | Escalation: a tenant reads another tenant's data | RLS as a deployment option, application scoping, tests; one DB user per service | Application scoping without RLS is a known deployment decision (ADR 0005 status) |
+| S | A second trusted token issuer asserts another tenant's identity | `JWT_ISSUER_TENANTS` binds every issuer in `JWT_ADDITIONAL_ISSUERS` to the tenants it may claim; an unlisted issuer or an unbound tenant gets 401 on `/v1/*` and the operator plane; the production gate fails with several issuers and no binding | A `"*"` binding trusts that issuer for every tenant; the binding is only as good as the map the operator maintains |
+| T | Shadow or replay runs repeat real tool side effects | `suppressSideEffects`: the MCP wrapper refuses tools without `readOnlyHint`, approval-gated tools are denied without a reviewer, assistant memory writes are skipped; shadow sampling defaults to 5 % | A third-party MCP server that wrongly declares `readOnlyHint` on a write tool; `queryPreview` still keeps up to 256 characters of user text in memory |
+| I | Credentials or tokens in service logs | A shared redactor (`@atf/security-kit` `log-redact`) runs on every Runtime, Search and Extract log entry; Gate redacts through the same kit; Search no longer logs queries, user ids or groups; OIDC logs carry a hashed email | Redaction is pattern- and field-name-based; secrets in free-form values of unusual shape can slip through; Search v1 still logs filter values |
+| E | An invalid compliance policy switches enforcement off | A hot reload keeps the last valid policy; with none valid at startup chat and engine admission answer 503 | A deleted policy file still means "no policy" (no mandatory mode yet) |
 
 ## Gate (3003)
 
 | Cat. | Threat | Mitigation | Residual risk |
 | --- | --- | --- | --- |
 | S | Forged monitor sessions | Session cookie `atf_monitor_session`, optional OIDC login for the monitor | — |
+| I | Monitor token leaks through URLs, browser storage or script injection | `?token=` is refused on every monitor endpoint; the token is exchanged once at `POST /monitor/session` for an HttpOnly, SameSite=Strict cookie (8 h, invalidated by token rotation); the page is served with a nonce CSP (`frame-ancestors 'none'`) and no inline handlers | Scripts that still send `?token=` fail; a stolen cookie is valid until it expires or the token is rotated |
 | T | Deleting or altering the Gate audit trail | The file audit sink (JSONL) applies a sink-level redaction policy; subject erasure only through `POST /v1/erasure` with the `gate.erasure` scope, idempotent over `requestId`; an append-only sink reports `not_configured` instead of erasing; the erasure operation itself is recorded in the Runtime audit chain (ADR 0025) | The JSONL file is not hash-chained; ship it to append-only storage if tamper evidence is required |
 | R | Unauthorized MCP access | Bearer on `/mcp*`, tool policy at the Gate, `/.well-known/oauth-protected-resource` | An MCP client with a valid token can do everything it is allowed to (by design) |
 | I | Metrics or health leak internals | `/metrics` only with `server.metrics.enabled`, health without details | — |
@@ -48,6 +53,7 @@ data stays local).
 | Cat. | Threat | Mitigation | Residual risk |
 | --- | --- | --- | --- |
 | S | XSS/CSRF in the Studio, stolen session | Nonce-based CSP (enforced by default, ADR 0027), SameSite cookies, OIDC session (ADR 0013), no secrets in the client | `NEXT_PUBLIC_*` is public by definition — never put secrets there |
+| S | Cross-site request through the BFF proxy (`CONTROL_SESSION_MODE=bff`) | `/api/backend/*` checks `Sec-Fetch-Site` and `Origin` before the session cookie is used; `CONTROL_PUBLIC_ORIGIN` pins the accepted host; the cookie is `SameSite=Strict`; the proxy has an allowlist | Requests that carry neither header (non-browser clients) pass, and they cannot ride a browser session cookie; without `CONTROL_PUBLIC_ORIGIN` the reverse proxy must overwrite `X-Forwarded-Host`; BFF mode has no silent renewal |
 | T | Flow edits without approval | Drafts (`flow_drafts`, migration 41), Autopilot governance with human approval (ADR 0008), canary promotion (ADR 0012) | — |
 | R | Vertical escalation through UI APIs | The backend checks roles; the UI only disables or hides controls | — |
 | I | Cost or usage leak | `NEXT_PUBLIC_CURRENCY` is only a label; details only in authenticated views | — |
