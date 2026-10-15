@@ -96,6 +96,8 @@ export interface InferenceRouteDeps {
   flowDispatcher: FlowDispatcher;
   /** Lazy read of the compliance policy — the loader is built in the management plane. */
   getCompliancePolicy: () => CompliancePolicy | undefined;
+  /** Lazy read of the loader's `enforcementBlocked` (invalid policy, none loaded). */
+  isCompliancePolicyBlocked?: () => boolean;
   /** Decision_Receipts wiring (Req 15.4) — all three present only when enabled. */
   receiptStore?: ReceiptStore;
   transparencyLog?: TransparencyLog;
@@ -289,6 +291,9 @@ export async function registerInferenceRoutes(
     compliancePolicyLoader: {
       get policy() {
         return getCompliancePolicy();
+      },
+      get enforcementBlocked() {
+        return deps.isCompliancePolicyBlocked?.() ?? false;
       },
     },
     auditLog,

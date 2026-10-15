@@ -43,8 +43,12 @@ they have different inputs, different consumers, and different failure modes.
 - **Loader** (`policy-loader.ts`): hot-reloads `compliance-policy.yaml`/`.json`
   from `FLOWS_DIR` via `resolveConfigFile` + the file-watcher's
   `onComplianceChange` hook, the same pattern as `canary.ts` and
-  `flow-dispatcher.ts`. A missing or malformed file degrades to `policy ===
-  undefined` (evaluator treats that as allow-all), never a crash.
+  `flow-dispatcher.ts`. A missing file degrades to `policy === undefined`
+  (evaluator treats that as allow-all), never a crash. A malformed file keeps
+  the last valid policy in force on hot-reload; with none loaded yet (startup)
+  the loader sets `enforcementBlocked` and admission denies every run until the
+  file is fixed. (Amended: originally a malformed file also degraded to
+  allow-all, which silently switched enforcement off.)
 - **Evaluator** (`policy-evaluator.ts`): `evaluatePolicy(policy, ctx)` is a
   pure function — no I/O — returning `{ decision: "allow" | "deny" |
   "require-approval", violations, policyAbsent }`. A `deny` from `dataRules` or

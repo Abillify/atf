@@ -48,6 +48,24 @@ const POLICY: CompliancePolicy = {
 };
 
 describe("checkCompliancePolicy", () => {
+  it("rejects with 503 while the policy file is invalid and none is loaded", async () => {
+    const app = new Hono();
+    let result: Awaited<ReturnType<typeof checkCompliancePolicy>> | undefined;
+    app.get("/", async (c) => {
+      result = await checkCompliancePolicy({
+        compliancePolicyLoader: { policy: undefined, enforcementBlocked: true },
+        flow: FLOW_ALLOWED_MODEL,
+        flowId: "f1",
+        requestCtx: BASE_REQUEST_CTX,
+        ctx: c,
+      });
+      return result.rejected ? result.response : c.json({ ok: true });
+    });
+    const res = await app.request("/");
+    expect(result?.rejected).toBe(true);
+    expect(res.status).toBe(503);
+  });
+
   it("does not reject when no policy is loaded", async () => {
     const app = new Hono();
     let result: Awaited<ReturnType<typeof checkCompliancePolicy>> | undefined;

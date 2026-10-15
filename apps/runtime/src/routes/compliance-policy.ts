@@ -59,7 +59,17 @@ export function createCompliancePolicyRouter(deps: CompliancePolicyRouterDeps): 
   router.get("/", async (ctx) => {
     if (!(await guard(ctx))) return unauthorized(ctx);
     const policy = policyLoader.policy;
+    const loadError = policyLoader.loadError;
     if (policy === undefined) {
+      if (policyLoader.enforcementBlocked) {
+        return ctx.json({
+          enabled: true,
+          blocked: true,
+          loadError,
+          message:
+            "compliance-policy is present but invalid — every run is denied until it is fixed.",
+        });
+      }
       return ctx.json({
         enabled: false,
         message:
@@ -69,6 +79,9 @@ export function createCompliancePolicyRouter(deps: CompliancePolicyRouterDeps): 
     }
     return ctx.json({
       enabled: true,
+      // Set when the file on disk is invalid and the last valid policy below
+      // is still the one in force.
+      ...(loadError !== undefined ? { loadError, stale: true } : {}),
       version: policy.version,
       description: policy.description,
       failClosed: policy.failClosed,

@@ -57,6 +57,13 @@ releases:
   subject user-scoped and no longer runs the local stores for a
   `reference`-scoped request. Retention targets now erase sequentially, PII
   vault first.
+- **An invalid compliance policy no longer switches enforcement off**
+  (`compliance-policy.yaml`): a hot-reload of an unreadable or schema-invalid
+  file keeps the last valid policy in force instead of dropping to "no
+  policy"; at startup, with no valid policy yet, chat and engine admission deny
+  every run with 503 until the file is fixed. `GET /admin/compliance-policy`
+  reports the load error (`loadError`, `stale` or `blocked`), and the loader
+  logs at error level. A missing file still means "no policy".
 
 ### Added
 

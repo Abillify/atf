@@ -78,6 +78,8 @@ function makeDeps(overrides: Partial<PolicyReplayRouterDeps> = {}) {
     policyLoader: {
       policy: undefined,
       hasPolicy: false,
+      loadError: undefined,
+      enforcementBlocked: false,
       reload() {},
     } satisfies CompliancePolicyLoader,
     toolAuthzLoader: {

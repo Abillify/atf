@@ -31,6 +31,22 @@ function service(overrides: Partial<ConstructorParameters<typeof ExecutionAdmiss
 }
 
 describe("ExecutionAdmissionService", () => {
+  it("denies every run while the compliance policy file is invalid", async () => {
+    const result = await service({
+      compliancePolicyLoader: { policy: undefined, enforcementBlocked: true },
+    }).admit("protected", requestCtx);
+    expect(result.allowed).toBe(false);
+    if (!result.allowed) {
+      expect(result.failure.status).toBe(503);
+      expect(result.failure.code).toBe("compliance");
+    }
+    const open = await service({
+      authorizationEnabled: false,
+      compliancePolicyLoader: { policy: undefined, enforcementBlocked: true },
+    }).admit("protected", requestCtx);
+    expect(open.allowed).toBe(true);
+  });
+
   it("denies unknown flows before engine execution", async () => {
     const result = await service().admit("missing", requestCtx);
     expect(result).toEqual({

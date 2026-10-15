@@ -124,7 +124,8 @@ export class ExecutionAdmissionService {
       authorizationEnabled?: boolean;
       authorizer?: FlowAuthorizer;
       flowScopeClaims?: readonly string[];
-      compliancePolicyLoader?: Pick<CompliancePolicyLoader, "policy">;
+      compliancePolicyLoader?: Pick<CompliancePolicyLoader, "policy"> &
+        Partial<Pick<CompliancePolicyLoader, "enforcementBlocked">>;
       providerRegions?: Record<string, string>;
       failClosedUnknownRegion?: boolean;
       costTracker?: BudgetService;
@@ -151,6 +152,18 @@ export class ExecutionAdmissionService {
       this.opts.authorizationEnabled ?? true,
     );
     if (!access.allowed) return this.deny(403, "forbidden", access.reason ?? "You are not permitted to use this flow.");
+
+    // A present but invalid policy file must never read as "no policy".
+    if (
+      this.opts.authorizationEnabled !== false &&
+      this.opts.compliancePolicyLoader?.enforcementBlocked === true
+    ) {
+      return this.deny(
+        503,
+        "compliance",
+        "Request denied: the compliance policy is invalid and runs are blocked until it is fixed.",
+      );
+    }
 
     const llmConfigs = collectExecutionLlmConfigs(flow, this.opts);
     const policy = this.opts.authorizationEnabled === false

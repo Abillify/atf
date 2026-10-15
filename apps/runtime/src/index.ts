@@ -824,6 +824,9 @@ if (import.meta.main) {
       get policy() {
         return compliancePolicyLoaderRef?.policy;
       },
+      get enforcementBlocked() {
+        return compliancePolicyLoaderRef?.enforcementBlocked ?? false;
+      },
     },
     providerRegions: config.providerRegions,
     failClosedUnknownRegion:
@@ -987,6 +990,8 @@ if (import.meta.main) {
     monitoringService,
     flowDispatcher,
     getCompliancePolicy: () => compliancePolicyLoaderRef?.policy,
+    isCompliancePolicyBlocked: () =>
+      compliancePolicyLoaderRef?.enforcementBlocked ?? false,
     // Decision_Receipts (Req 15.4): receipt lookup, inclusion proofs, JWKS.
     ...(receiptSigningKey !== undefined
       ? {

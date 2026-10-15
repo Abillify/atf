@@ -144,7 +144,8 @@ export interface ChatRouterOptions {
   /** Optional shadow mode service for continuous quality monitoring. */
   shadowModeService?: import("../../graph/shadow-mode.js").ShadowModeService;
   /** Optional declarative compliance policy (data/model rules) — see ADR-0009. */
-  compliancePolicyLoader?: Pick<CompliancePolicyLoader, "policy">;
+  compliancePolicyLoader?: Pick<CompliancePolicyLoader, "policy"> &
+    Partial<Pick<CompliancePolicyLoader, "enforcementBlocked">>;
   /** Optional audit log — records `compliance.policy.deny` when a request is rejected by policy. */
   auditLog?: AuditLog;
   /**
@@ -406,7 +407,8 @@ export async function checkTokenLimit(opts: {
  */
 export async function checkCompliancePolicy(opts: {
   authorizationEnabled?: boolean;
-  compliancePolicyLoader?: Pick<CompliancePolicyLoader, "policy">;
+  compliancePolicyLoader?: Pick<CompliancePolicyLoader, "policy"> &
+    Partial<Pick<CompliancePolicyLoader, "enforcementBlocked">>;
   flow: FlowDefinition | undefined;
   flowId: string;
   requestCtx: RequestContext;
@@ -417,6 +419,23 @@ export async function checkCompliancePolicy(opts: {
   const { compliancePolicyLoader, flow, flowId, requestCtx, auditLog, metrics, ctx } =
     opts;
   if (opts.authorizationEnabled === false) return { rejected: false };
+  // A present but invalid policy file must never read as "no policy".
+  if (compliancePolicyLoader?.enforcementBlocked === true) {
+    metrics?.recordRejected("compliance_policy");
+    return {
+      rejected: true,
+      response: ctx.json(
+        {
+          error: {
+            message:
+              "Request denied: the compliance policy is invalid and runs are blocked until it is fixed.",
+            type: "service_unavailable_error",
+          },
+        },
+        503,
+      ),
+    };
+  }
   const policy = compliancePolicyLoader?.policy;
   if (policy === undefined) {
     return { rejected: false };

@@ -339,10 +339,11 @@ sequenceDiagram
 
 Stages are independently configured and many governance features are opt-in. The sequence above
 shows the ordering when those controls are enabled: policy admission precedes graph execution,
-PII tokenization precedes provider calls, and restoration follows output checks. A missing or
-invalid `compliance-policy.yaml` currently disables that policy and allows execution; the
-policy's `failClosed` field applies to evaluator exceptions only. Deployments that depend on the
-policy must validate and monitor that it is loaded.
+PII tokenization precedes provider calls, and restoration follows output checks. A missing
+`compliance-policy.yaml` means "no policy" and allows execution. An invalid one never does: on
+hot-reload the last valid policy stays in force, and at startup — with no valid policy yet —
+admission denies every run (503) until the file is fixed. `GET /admin/compliance-policy` reports
+the load error. The policy's `failClosed` field applies to evaluator exceptions only.
 
 ## Document Intelligence v2 data flow
 
@@ -495,7 +496,7 @@ These are enforced in review and, where possible, in tests:
    application never imports another application's source.
 2. **Fail-closed boundaries are explicit.** Authentication, authorization, approvals, and
    configured policy checks deny on the failure modes documented for them. Exceptions are also
-   explicit: no/invalid compliance-policy file disables that policy, PII detector failures
+   explicit: a missing compliance-policy file disables that policy, PII detector failures
    default to open unless configured otherwise, and optional state can degrade to per-replica
    behavior. A path must not be called fail-closed without its configuration and fallback being
    stated.
