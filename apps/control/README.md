@@ -35,7 +35,7 @@ bun run --filter @atf/control build
 | Flows | Registry; Studio for editing (canvas, per-type settings forms with node docs, variables table, ƒx expression builder, Copilot, drafts/publish/diff, test runs); graph visualization with live execution overlay |
 | Providers | Provider and pool health, provider testing bench |
 | Traces | Execution history, debug trace viewer, decision provenance |
-| Approvals | Reviewer inbox with pending count, role-gated approve and reject |
+| Approvals | Reviewer inbox with pending count, approve and reject from the operator role up; viewers see who decides |
 | Cost | Spend per tenant, day, and model; budgets; anomalies; FinOps forecast |
 | Quality | Evaluation runs and cases, canary status, shadow comparisons, autopilot state |
 | Compliance | Policy view, generated dossier, DSAR and erasure handling |
@@ -81,8 +81,12 @@ Four optional variables are documented in [`.env.example`](.env.example):
 - **BFF origin**: `e2e/bff-origin.spec.ts` runs only with `E2E_BFF=1` against a BFF-mode server with
   `CONTROL_PUBLIC_ORIGIN` set; the route tests in `src/app/api/` cover the same cases offline.
 - **Accessibility**: `e2e/a11y-sweep.spec.ts` and `e2e/a11y-responsive.spec.ts` run axe-core
-  across the dashboard at several viewports. Automated checks catch a subset of issues; they do
+  across the dashboard at several viewports. The sweep derives its routes from the pages under
+  `src/app/(dashboard)` (`e2e/helpers/dashboard-routes.ts`), so a new page is covered without a list edit. Automated checks catch a subset of issues; they do
   not substitute for testing with assistive technology.
+- **CI**: the `control-e2e` job in `.github/workflows/ci.yml` builds Control and runs the whole
+  Playwright suite, including the axe sweep and the CSP spec, with `--grep-invert "Visual regression"`.
+  The visual baselines are recorded on macOS and are not run in CI.
 - **Visual regression**: `e2e/visual.spec.ts` with committed snapshots per platform. Regenerate
   with `--update-snapshots` and review the diff before committing.
 - **Performance budgets**: `playwright.performance.config.ts` with budgets in
