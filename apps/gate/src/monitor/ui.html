@@ -222,9 +222,9 @@
     <header>
       <h1>mcp<span>gate</span></h1>
       <nav class="tabs">
-        <button type="button" id="tab-monitor" class="tab active" onclick="switchTab('monitor')">Live Monitor</button>
-        <button type="button" id="tab-playground" class="tab" onclick="switchTab('playground')">Tool Playground</button>
-        <button type="button" id="tab-instructions" class="tab" onclick="switchTab('instructions')">Instructions</button>
+        <button type="button" id="tab-monitor" class="tab active" data-tab="monitor">Live Monitor</button>
+        <button type="button" id="tab-playground" class="tab" data-tab="playground">Tool Playground</button>
+        <button type="button" id="tab-instructions" class="tab" data-tab="instructions">Instructions</button>
       </nav>
       <div class="spacer"></div>
       <input id="token" type="password" placeholder="monitor token (if required)" size="24" />
@@ -302,8 +302,8 @@
             <div class="pg-result-meta">
               <span id="pg-result-status"></span>
               <span class="pg-result-dur" id="pg-result-dur"></span>
-              <button type="button" class="pg-toggle" id="pg-toggle" onclick="toggleRaw()">show raw JSON</button>
-              <button type="button" class="pg-toggle" id="pg-download" onclick="downloadResult()" style="display:none">download full</button>
+              <button type="button" class="pg-toggle" id="pg-toggle">show raw JSON</button>
+              <button type="button" class="pg-toggle" id="pg-download" style="display:none">download full</button>
             </div>
             <div class="pg-truncated" id="pg-truncated" style="display:none"></div>
             <pre class="pg-pre" id="pg-result-text"></pre>
@@ -317,7 +317,7 @@
     <div id="view-instructions" style="display:none">
       <div class="instr-toolbar">
         <span class="instr-meta" id="instr-meta">—</span>
-        <button type="button" id="instr-refresh" onclick="loadInstructions()">&#8635; Refresh</button>
+        <button type="button" id="instr-refresh">&#8635; Refresh</button>
       </div>
       <div class="instr-scroll">
         <pre id="instr-text"></pre>
@@ -330,8 +330,10 @@
       /* ─── Shared ──────────────────────────────────────────────────────── */
       const $ = (id) => document.getElementById(id);
       const rows = $('rows');
-      const savedToken = localStorage.getItem('mcpgate_monitor_token');
-      if (savedToken) $('token').value = savedToken;
+      // The token is exchanged once for an HttpOnly session cookie (POST
+      // /monitor/session) and never stored in the browser or sent in a URL.
+      // Remove what older versions left in localStorage.
+      try { localStorage.removeItem('mcpgate_monitor_token'); } catch {}
 
       // When OIDC is the configured login method, the session lives in an
       // HttpOnly cookie (sent automatically) — hide the token field and show
@@ -446,7 +448,7 @@
           ? '<button class="mon-action" title="Load these parameters into the Tool Playground"' +
             ' data-tool="' + escHtml(ev.tool) + '"' +
             ' data-args="' + escHtml(JSON.stringify(args)) + '"' +
-            ' onclick="toPlayground(this)">&#8594; Playground</button>'
+            '>&#8594; Playground</button>'
           : '';
         tr.innerHTML =
           '<td style="border-left:3px solid ' + colorFor(ev.sessionId) + '">' + fmtTime(ev.ts) + '</td>' +
@@ -461,13 +463,21 @@
         while (rows.childNodes.length > 500) rows.removeChild(rows.lastChild);
       }
 
-      function connect() {
+      async function connect() {
         if (es) es.close();
         const token = $('token').value.trim();
-        if (token) localStorage.setItem('mcpgate_monitor_token', token);
-        else        localStorage.removeItem('mcpgate_monitor_token');
-        const url = '/monitor/stream' + (token ? '?token=' + encodeURIComponent(token) : '');
-        es = new EventSource(url);
+        if (token) {
+          // Header only: the token never appears in a URL, log or history.
+          const res = await fetch('/monitor/session', {
+            method: 'POST',
+            headers: { Authorization: 'Bearer ' + token },
+            credentials: 'same-origin',
+          });
+          $('token').value = '';
+          if (!res.ok) { setStatus(false); return; }
+          $('logout').style.display = '';
+        }
+        es = new EventSource('/monitor/stream');
         es.onopen   = () => setStatus(true);
         es.onerror  = () => setStatus(false);
         es.onmessage = (e) => { try { render(JSON.parse(e.data)); } catch {} };
@@ -488,9 +498,7 @@
         $('instr-text').style.display  = 'none';
         $('instr-empty').style.display = 'none';
         try {
-          const token = getToken();
-          const url = '/monitor/instructions' + (token ? '?token=' + encodeURIComponent(token) : '');
-          const res = await fetch(url);
+          const res = await fetch('/monitor/instructions');
           if (!res.ok) throw new Error('HTTP ' + res.status);
           const data = await res.json();
           if (data.text) {
@@ -516,7 +524,6 @@
       let selectedTool = null;
       let showingRaw  = false;
 
-      function getToken() { return $('token').value.trim(); }
 
       // Loads the tool list at most once; the cached promise lets callers
       // (tab switch, "→ Playground" action) await readiness. On failure the
@@ -538,9 +545,7 @@
       async function loadTools() {
         const list = $('pg-list');
         list.innerHTML = '<div style="padding:16px;color:var(--muted);font-size:13px">Loading…</div>';
-        const token = getToken();
-        const url = '/monitor/tools' + (token ? '?token=' + encodeURIComponent(token) : '');
-        const res = await fetch(url);
+        const res = await fetch('/monitor/tools');
         if (!res.ok) throw new Error('HTTP ' + res.status);
         allTools = await res.json();
         renderList(allTools);
@@ -727,7 +732,6 @@
       // the playground, selects the matching tool and pre-fills its form with
       // the exact arguments that were captured, so a call can be replayed and
       // debugged without re-typing the parameters.
-      // biome-ignore lint/correctness/noUnusedVariables: called from inline onclick handler
       async function toPlayground(btn) {
         const toolName = btn.dataset.tool;
         let args = {};
@@ -831,9 +835,7 @@
         $('pg-output').style.display  = 'none';
 
         try {
-          const token = getToken();
-          const url   = '/monitor/tools/' + encodeURIComponent(selectedTool.name) + '/run' +
-                        (token ? '?token=' + encodeURIComponent(token) : '');
+          const url   = '/monitor/tools/' + encodeURIComponent(selectedTool.name) + '/run';
           const res   = await fetch(url, {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -937,7 +939,6 @@
         $('pg-output').style.display = 'block';
       }
 
-      // biome-ignore lint/correctness/noUnusedVariables: called from inline onclick handler
       function toggleRaw() {
         showingRaw = !showingRaw;
         if (showingRaw && !pgRawRendered) {
@@ -951,7 +952,6 @@
 
       // Download the full, untruncated payload (raw JSON when the raw pane is
       // open, otherwise the extracted content) as a file.
-      // biome-ignore lint/correctness/noUnusedVariables: called from inline onclick handler
       function downloadResult() {
         const showRaw = showingRaw;
         const text = showRaw ? pgRawStr : (pgContentStr || pgRawStr);
@@ -981,6 +981,18 @@
           }
         );
       }
+
+      /* ─── Event wiring (no inline handlers: the page runs under a nonce CSP) ─ */
+      for (const btn of document.querySelectorAll('[data-tab]')) {
+        btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+      }
+      $('pg-toggle').addEventListener('click', toggleRaw);
+      $('pg-download').addEventListener('click', downloadResult);
+      $('instr-refresh').addEventListener('click', loadInstructions);
+      rows.addEventListener('click', (e) => {
+        const btn = e.target instanceof Element ? e.target.closest('.mon-action') : null;
+        if (btn) void toPlayground(btn);
+      });
     </script>
   </body>
 </html>

@@ -63,8 +63,12 @@ async function start(monitoring: Record<string, unknown>): Promise<number> {
   return l.port;
 }
 
-function runUrl(port: number, name: string, token = MONITOR_TOKEN): string {
-  return `http://127.0.0.1:${port}/monitor/tools/${name}/run?token=${encodeURIComponent(token)}`;
+function runUrl(port: number, name: string): string {
+  return `http://127.0.0.1:${port}/monitor/tools/${name}/run`;
+}
+
+function jsonHeaders(token = MONITOR_TOKEN): Record<string, string> {
+  return { "content-type": "application/json", authorization: `Bearer ${token}` };
 }
 
 describe("Monitor playground · gating", () => {
@@ -72,7 +76,7 @@ describe("Monitor playground · gating", () => {
     const port = await start({ token: MONITOR_TOKEN });
     const res = await fetch(runUrl(port, "list_orders"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ args: {} }),
     });
     expect(res.status).toBe(403);
@@ -94,7 +98,7 @@ describe("Monitor playground · gating", () => {
     const port = await start({ token: MONITOR_TOKEN, playground: { enabled: true } });
     const res = await fetch(runUrl(port, "list_orders"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ args: {} }),
     });
     expect(res.status).toBe(200);
@@ -106,7 +110,7 @@ describe("Monitor playground · gating", () => {
     const port = await start({ token: MONITOR_TOKEN, playground: { enabled: true } });
     const res = await fetch(runUrl(port, "cancel_order"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ args: { id: 1 } }),
     });
     expect(res.status).toBe(403);
@@ -117,7 +121,7 @@ describe("Monitor playground · gating", () => {
     const port = await start({ token: MONITOR_TOKEN, playground: { enabled: true, allowWrite: true } });
     const res = await fetch(runUrl(port, "cancel_order"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: jsonHeaders(),
       body: JSON.stringify({ args: { id: 1 } }),
     });
     expect(res.status).toBe(200);
@@ -126,12 +130,71 @@ describe("Monitor playground · gating", () => {
 
   it("rejects an unauthorized run with a wrong token", async () => {
     const port = await start({ token: MONITOR_TOKEN, playground: { enabled: true } });
-    const res = await fetch(runUrl(port, "list_orders", "wrong"), {
+    const res = await fetch(runUrl(port, "list_orders"), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: jsonHeaders("wrong"),
       body: JSON.stringify({ args: {} }),
     });
     expect(res.status).toBe(401);
+  });
+});
+
+describe("Monitor dashboard · token session and CSP", () => {
+  it("never accepts the token as a ?token= query parameter", async () => {
+    const port = await start({ token: MONITOR_TOKEN });
+    const res = await fetch(
+      `http://127.0.0.1:${port}/monitor/tools?token=${encodeURIComponent(MONITOR_TOKEN)}`,
+    );
+    expect(res.status).toBe(401);
+  });
+
+  it("exchanges the bearer token for an HttpOnly SameSite=Strict cookie that authorizes later requests", async () => {
+    const port = await start({ token: MONITOR_TOKEN });
+    const base = `http://127.0.0.1:${port}`;
+    const rejected = await fetch(`${base}/monitor/session`, {
+      method: "POST",
+      headers: { authorization: "Bearer wrong" },
+    });
+    expect(rejected.status).toBe(401);
+    expect(rejected.headers.get("set-cookie")).toBeNull();
+
+    const res = await fetch(`${base}/monitor/session`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${MONITOR_TOKEN}` },
+    });
+    expect(res.status).toBe(204);
+    const cookie = res.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("HttpOnly");
+    expect(cookie).toContain("SameSite=Strict");
+    expect(cookie).not.toContain(MONITOR_TOKEN);
+
+    const pair = cookie.split(";")[0] ?? "";
+    const tools = await fetch(`${base}/monitor/tools`, { headers: { cookie: pair } });
+    expect(tools.status).toBe(200);
+    // A forged cookie value is rejected.
+    const forged = await fetch(`${base}/monitor/tools`, {
+      headers: { cookie: `${pair.split("=")[0]}=e30.forged` },
+    });
+    expect(forged.status).toBe(401);
+  });
+
+  it("serves the dashboard with a nonce CSP that covers every script and no inline handler", async () => {
+    const port = await start({ token: MONITOR_TOKEN });
+    const res = await fetch(`http://127.0.0.1:${port}/`);
+    expect(res.status).toBe(200);
+    const csp = res.headers.get("content-security-policy") ?? "";
+    const nonce = /script-src 'nonce-([A-Za-z0-9_-]{16,})'/.exec(csp)?.[1];
+    expect(nonce).toBeDefined();
+    expect(csp).toContain("object-src 'none'");
+    expect(csp).toContain("frame-ancestors 'none'");
+    expect(csp).not.toContain("unsafe-eval");
+    expect(csp).not.toMatch(/script-src[^;]*unsafe-inline/);
+    const html = await res.text();
+    const scripts = html.match(/<script[^>]*>/g) ?? [];
+    expect(scripts.length).toBeGreaterThan(0);
+    for (const tag of scripts) expect(tag).toContain(`nonce="${nonce}"`);
+    expect(html).not.toMatch(/\son[a-z]+=["']/);
+    expect(html).not.toContain("localStorage.setItem");
   });
 });
 

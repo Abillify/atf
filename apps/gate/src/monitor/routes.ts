@@ -31,8 +31,10 @@ export interface MonitorDeps {
 
 /**
  * Constant-time bearer token comparison.
- * Accepting the token only via Authorization header (not ?token= query string)
- * prevents it appearing in server access logs or browser history.
+ * The token is accepted only via the Authorization header — never as a
+ * `?token=` query parameter, which would land in access logs, proxy logs and
+ * browser history. The dashboard exchanges it once for an HttpOnly session
+ * cookie (`POST /monitor/session`), which EventSource sends on its own.
  */
 function safeTokenEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
@@ -45,18 +47,17 @@ function safeTokenEqual(a: string, b: string): boolean {
   return timingSafeEqual(ab, bb);
 }
 
+function bearerMatches(req: Request, token: string): boolean {
+  const presented = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "")?.[1]?.trim();
+  return presented !== undefined && safeTokenEqual(presented, token);
+}
+
 function authorize(req: Request, config: MonitoringConfig): boolean {
   if (!config.token && !config.oidc) return true;
 
   if (config.token) {
-    // Prefer the Authorization header (kept out of access logs). Browsers cannot
-    // set headers on EventSource, so a `?token=` query param is also accepted for
-    // the dashboard; document that this may surface the token in proxy logs.
-    const headerToken = /^Bearer\s+(.+)$/i.exec(req.headers.authorization ?? "")?.[1]?.trim();
-    const queryRaw = req.query.token;
-    const queryToken = typeof queryRaw === "string" ? queryRaw.trim() : undefined;
-    const presented = headerToken ?? queryToken;
-    if (presented !== undefined && safeTokenEqual(presented, config.token)) return true;
+    if (bearerMatches(req, config.token)) return true;
+    if (readTokenSessionCookie(req, config.token)) return true;
   }
 
   if (config.oidc) {
@@ -75,6 +76,17 @@ function authorize(req: Request, config: MonitoringConfig): boolean {
 
 const SESSION_COOKIE = "mcpgate_monitor_session";
 const STATE_COOKIE = "mcpgate_monitor_state";
+/** Dashboard session established with the static monitoring token. */
+const TOKEN_SESSION_COOKIE = "mcpgate_monitor_token_session";
+const TOKEN_SESSION_MAX_AGE_S = 8 * 60 * 60;
+
+/**
+ * Key for the token-session cookie, derived from the monitoring token itself:
+ * rotating the token invalidates every dashboard session issued under it.
+ */
+function tokenSessionSecret(token: string): string {
+  return createHmac("sha256", token).update("mcpgate-monitor-token-session/v1").digest("hex");
+}
 
 interface DiscoveryDoc {
   authorization_endpoint: string;
@@ -167,6 +179,38 @@ function readSessionCookie(req: Request, oidc: OidcConfig): MonitorSession | und
   };
 }
 
+function readTokenSessionCookie(req: Request, token: string): boolean {
+  const session = verifyCookie<{ exp?: unknown }>(
+    parseCookies(req)[TOKEN_SESSION_COOKIE],
+    tokenSessionSecret(token),
+  );
+  return typeof session?.exp === "number" && session.exp > Date.now() / 1000;
+}
+
+function secureAttr(req: Request): string {
+  return req.secure || req.headers["x-forwarded-proto"] === "https" ? " Secure;" : "";
+}
+
+/**
+ * Content-Security-Policy for the dashboard page. Scripts run only with the
+ * per-response nonce (the page has no inline event handlers), nothing may
+ * frame it, and every request stays on this origin. Inline `style`
+ * attributes remain allowed: they cannot execute code.
+ */
+function dashboardCsp(nonce: string): string {
+  return [
+    "default-src 'self'",
+    `script-src 'nonce-${nonce}'`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self'",
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; ");
+}
+
 // ---------------------------------------------------------------------------
 // Router
 // ---------------------------------------------------------------------------
@@ -197,7 +241,31 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
       res.redirect("/monitor/login");
       return;
     }
-    res.type("html").send(html);
+    const nonce = randomBytes(16).toString("base64url");
+    res.setHeader("Content-Security-Policy", dashboardCsp(nonce));
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Referrer-Policy", "no-referrer");
+    res.setHeader("Cache-Control", "no-store");
+    res.type("html").send(html.replaceAll("<script>", `<script nonce="${nonce}">`));
+  });
+
+  // ── Token session (static monitoring token) ───────────────────────────────
+  //
+  // The dashboard presents the token ONCE in the Authorization header and gets
+  // an HttpOnly, SameSite=Strict cookie back; the token never has to be kept
+  // in browser storage or put into a URL.
+
+  router.post("/monitor/session", (req: Request, res: Response) => {
+    if (!config.enabled) { res.status(404).json({ error: "Monitoring is disabled" }); return; }
+    if (!config.token) { res.status(404).json({ error: "No monitoring token is configured" }); return; }
+    if (!bearerMatches(req, config.token)) { res.status(401).json({ error: "Unauthorized" }); return; }
+    const exp = Math.floor(Date.now() / 1000) + TOKEN_SESSION_MAX_AGE_S;
+    const cookie = signCookie({ exp }, tokenSessionSecret(config.token));
+    res.setHeader(
+      "Set-Cookie",
+      `${TOKEN_SESSION_COOKIE}=${cookie}; Path=/;${secureAttr(req)} HttpOnly; SameSite=Strict; Max-Age=${TOKEN_SESSION_MAX_AGE_S}`,
+    );
+    res.status(204).end();
   });
 
   // ── OIDC login / callback / logout ────────────────────────────────────────
@@ -326,7 +394,10 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
   });
 
   router.get("/monitor/logout", (_req: Request, res: Response) => {
-    res.setHeader("Set-Cookie", `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
+    res.setHeader("Set-Cookie", [
+      `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`,
+      `${TOKEN_SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`,
+    ]);
     res.redirect("/");
   });
 

@@ -104,6 +104,15 @@ releases:
   failures on the security page.
 - **CI runs Control's Playwright suite and the axe a11y sweep** (`control-e2e`
   job); the macOS-recorded visual-regression baselines stay excluded.
+- **Gate monitor dashboard**: the page is served with a nonce-based
+  Content-Security-Policy (`script-src 'nonce-…'`, `object-src 'none'`,
+  `frame-ancestors 'none'`) and no inline event handlers. The monitoring token
+  is no longer kept in `localStorage` or sent as `?token=`: the dashboard
+  exchanges it once via `POST /monitor/session` (Authorization header) for a
+  signed HttpOnly, SameSite=Strict cookie (8 h, invalidated by rotating the
+  token); `/monitor/logout` clears it. **Breaking:** `?token=` is no longer
+  accepted on any monitor endpoint — scripts must send
+  `Authorization: Bearer <token>`.
 
 ### Added
 
