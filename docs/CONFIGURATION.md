@@ -414,7 +414,7 @@ Source of truth: `apps/search/src/config.ts`.
 | `MCP_SERVICE_NAME` | string | no | — | **read directly — not validated at startup** |
 | `MCP_SERVICE_VERSION` | string | no | — | **read directly — not validated at startup** |
 | `MIGRATE_ON_START` | boolean | no | `true, false when NODE_ENV=production` | Apply schema migrations during boot. (`migrateOnStart`) |
-| `MIN_RERANK_SCORE` | number | no | `empty = off` | Optional relevance threshold (Requirement 4.8). (`minRerankScore`) |
+| `MIN_RERANK_SCORE` | number | no | `empty = off` | Optional relevance threshold (Requirement 4.8) on the reranker scale (sigmoid in [0, 1]). (`minRerankScore`) |
 | `MONITOR_TOKEN` | string | no | — | Machine-to-machine service token for API and MCP clients. (`monitorToken`) |
 | `NODE_ENV` | string | no | `development` | Config member `nodeEnv` |
 | `OIDC_ALLOWED_EMAIL_DOMAINS` | string | no | — | **read directly — not validated at startup**; Comma-separated e-mail domains allowed to log in to the web UI |

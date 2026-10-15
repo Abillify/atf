@@ -521,11 +521,44 @@ export function groupResultsV2(
  * answer pipelines) use `abstain` to withhold an answer instead of answering
  * from irrelevant evidence.
  */
+/**
+ * The scale a result score is on. They are not comparable: a cross-encoder
+ * score is a sigmoid in [0, 1], cosine similarity sits in [-1, 1] (mostly
+ * 0.2–0.9), an RRF score is pool-relative and tiny (≈ 1/60 per list), and
+ * `ts_rank_cd`/BM25 are unbounded lexical ranks.
+ */
+export type RetrievalScoreKind = "cosine" | "rrf" | "fts";
+export type ScoreKind = "rerank" | RetrievalScoreKind;
+
+/** The retrieval scale a search mode produces (before any reranking). */
+export function retrievalScoreKind(opts: {
+  ftsOnly: boolean;
+  hybrid: boolean;
+}): RetrievalScoreKind {
+  return opts.ftsOnly ? "fts" : opts.hybrid ? "rrf" : "cosine";
+}
+
+/** A relevance threshold together with the scale it was set for. */
+export interface ScoreThreshold {
+  value: number;
+  kind: ScoreKind;
+}
+
 export interface AbstentionSignal {
   /** The configured threshold the results were filtered against. */
   threshold: number;
-  /** Which score the threshold was applied to. */
+  /** Which score the threshold was applied to (legacy two-valued field). */
   score_kind: "rerank" | "retrieval";
+  /** The exact scale of the final scores. */
+  score_scale: ScoreKind;
+  /** The scale the threshold was set for. */
+  threshold_scale: ScoreKind;
+  /**
+   * Set when the threshold was NOT applied because the final scores are on a
+   * different scale (e.g. MIN_RERANK_SCORE while the reranker fell back to
+   * RRF scores). Filtering then would drop or keep everything arbitrarily.
+   */
+  skipped?: "scale_mismatch";
   /** Candidates that entered the filter (before). */
   candidates: number;
   /** Results that met the threshold (after). */
@@ -541,30 +574,38 @@ export interface MinScoreOutcome<T> {
 }
 
 /**
- * Filter final search results to `score >= minScore` and derive the
- * abstention signal (Requirement 4.8). `minScore` null/undefined disables
- * filtering entirely and emits no signal, so default deployments are
- * unchanged. `reranked` names the score kind the threshold applies to:
- * the cross-encoder score when reranking was actually applied, the
- * retrieval score otherwise. Inputs are never mutated.
+ * Filter final search results to `score >= threshold` and derive the
+ * abstention signal (Requirement 4.8). No threshold disables filtering and
+ * emits no signal. The threshold is applied only when the final scores are on
+ * the scale it was set for; otherwise the results pass unchanged and the
+ * signal says `skipped: "scale_mismatch"` — a reranker threshold must never
+ * be compared with RRF or cosine scores after a rerank fallback. Inputs are
+ * never mutated.
  */
 export function applyMinScore<T extends { score: number }>(
   results: T[],
-  minScore: number | null | undefined,
-  reranked: boolean,
+  threshold: ScoreThreshold | null | undefined,
+  scoreKind: ScoreKind,
 ): MinScoreOutcome<T> {
-  if (minScore === null || minScore === undefined) {
+  if (threshold === null || threshold === undefined) {
     return { results };
   }
-  const kept = results.filter((r) => r.score >= minScore);
+  const base = {
+    threshold: threshold.value,
+    score_kind: scoreKind === "rerank" ? ("rerank" as const) : ("retrieval" as const),
+    score_scale: scoreKind,
+    threshold_scale: threshold.kind,
+    candidates: results.length,
+  };
+  if (threshold.kind !== scoreKind) {
+    return {
+      results,
+      abstention: { ...base, skipped: "scale_mismatch", kept: results.length, abstain: false },
+    };
+  }
+  const kept = results.filter((r) => r.score >= threshold.value);
   return {
     results: kept,
-    abstention: {
-      threshold: minScore,
-      score_kind: reranked ? "rerank" : "retrieval",
-      candidates: results.length,
-      kept: kept.length,
-      abstain: kept.length === 0,
-    },
+    abstention: { ...base, kept: kept.length, abstain: kept.length === 0 },
   };
 }

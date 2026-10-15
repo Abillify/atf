@@ -669,19 +669,34 @@ describe("search handler MIN_RERANK_SCORE abstention", () => {
     ];
   }
 
+  // The reranker returns the same order with cross-encoder scores 0.9/0.8/0.7.
+  const reranker = () =>
+    createMockRerankerClient({
+      ok: true,
+      result: [
+        { index: 0, score: 0.9 },
+        { index: 1, score: 0.8 },
+        { index: 2, score: 0.7 },
+      ],
+    });
+  const reranked = { "x-rerank": "true" };
+
   function handlerWith(minRerankScore?: number | null) {
     return createSearchHandler(
       createMockEmbeddingClient({ ok: true, result: { vector: [0.1] } }),
       createMockPostgresClient({ search: { ok: true, result: threeResults() } }),
       logger,
-      minRerankScore === undefined ? {} : { minRerankScore },
+      {
+        rerankerClient: reranker(),
+        ...(minRerankScore === undefined ? {} : { minRerankScore }),
+      },
     );
   }
 
-  it("filters below-threshold hits and reports the abstention signal", async () => {
+  it("filters below-threshold reranker scores and reports the abstention signal", async () => {
     const handler = handlerWith(0.75);
     const res = mockRes();
-    await handler(mockReq("q") as never, res as never, vi.fn());
+    await handler(mockReq("q", reranked) as never, res as never, vi.fn());
     expect(res.statusCode).toBe(200);
     const body = res.body as {
       results: SearchResult[];
@@ -690,9 +705,28 @@ describe("search handler MIN_RERANK_SCORE abstention", () => {
     expect(body.results.map((r) => r.id)).toEqual(["a", "b"]);
     expect(body.abstention).toEqual({
       threshold: 0.75,
-      score_kind: "retrieval",
+      score_kind: "rerank",
+      score_scale: "rerank",
+      threshold_scale: "rerank",
       candidates: 3,
       kept: 2,
+      abstain: false,
+    });
+  });
+
+  it("never applies the reranker threshold to retrieval scores (no rerank / fallback)", async () => {
+    const handler = handlerWith(0.95);
+    const res = mockRes();
+    await handler(mockReq("q", { "x-hybrid": "1" }) as never, res as never, vi.fn());
+    const body = res.body as {
+      results: SearchResult[];
+      abstention?: Record<string, unknown>;
+    };
+    expect(body.results.map((r) => r.id)).toEqual(["a", "b", "c"]);
+    expect(body.abstention).toMatchObject({
+      skipped: "scale_mismatch",
+      score_scale: "rrf",
+      threshold_scale: "rerank",
       abstain: false,
     });
   });
@@ -700,7 +734,7 @@ describe("search handler MIN_RERANK_SCORE abstention", () => {
   it("abstains with an empty result list when all hits fall below", async () => {
     const handler = handlerWith(0.95);
     const res = mockRes();
-    await handler(mockReq("q") as never, res as never, vi.fn());
+    await handler(mockReq("q", reranked) as never, res as never, vi.fn());
     const body = res.body as {
       results: SearchResult[];
       abstention?: { abstain: boolean; kept: number };

@@ -76,6 +76,7 @@ import {
 import { rerankResultsWithStatus } from "./search.js";
 import {
   applyMinScore,
+  retrievalScoreKind,
   diversifyResults,
   fitRerankInputs,
   groupResultsV2,
@@ -588,14 +589,14 @@ export function createSearchV2Handler(
       results = results.slice(0, limit);
 
       // 4c. MIN_RERANK_SCORE / abstention (task 6.10, Requirement 4.8): filter
-      //     the final ranking to the configured relevance threshold (reranker
-      //     score when reranking was applied, retrieval score otherwise) and
-      //     report an abstention signal when nothing qualifies. Applied after
+      //     the final ranking to the configured reranker threshold and report
+      //     an abstention signal when nothing qualifies; skipped (signalled)
+      //     when the scores are not reranker scores. Applied after
       //     grouping/slicing so the limit is not consumed by dropped hits.
       const minScoreOutcome = applyMinScore(
         results,
-        minRerankScore,
-        rerankApplied,
+        minRerankScore !== null ? { value: minRerankScore, kind: "rerank" } : null,
+        rerankApplied ? "rerank" : retrievalScoreKind({ ftsOnly: false, hybrid: hybridRequested }),
       );
       results = minScoreOutcome.results;
 

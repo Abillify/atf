@@ -40,7 +40,7 @@ const booleanHeader = (
  */
 const abstentionSchema = {
   type: "object",
-  required: ["threshold", "score_kind", "candidates", "kept", "abstain"],
+  required: ["threshold", "score_kind", "score_scale", "threshold_scale", "candidates", "kept", "abstain"],
   properties: {
     threshold: {
       type: "number",
@@ -50,8 +50,28 @@ const abstentionSchema = {
       type: "string",
       enum: ["rerank", "retrieval"],
       description:
-        "Which score the threshold was compared against: reranker score when " +
-        "reranking was applied, retrieval score otherwise.",
+        "Kind of the final scores: reranker score when reranking was applied, " +
+        "retrieval score otherwise. See score_scale for the exact scale.",
+    },
+    score_scale: {
+      type: "string",
+      enum: ["rerank", "cosine", "rrf", "fts"],
+      description:
+        "Exact scale of the final scores. They are not comparable across scales: " +
+        "rerank is a sigmoid in [0,1], cosine a similarity, rrf a pool-relative " +
+        "fusion score (≈0.016 per list), fts a lexical rank.",
+    },
+    threshold_scale: {
+      type: "string",
+      enum: ["rerank", "cosine", "rrf", "fts"],
+      description: "Scale the threshold was set for (MIN_RERANK_SCORE is always rerank).",
+    },
+    skipped: {
+      type: "string",
+      enum: ["scale_mismatch"],
+      description:
+        "Present when the threshold was not applied because the final scores are " +
+        "on another scale (e.g. the reranker fell back); results are then unfiltered.",
     },
     candidates: {
       type: "integer",

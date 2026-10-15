@@ -24,6 +24,7 @@ import type { QueryEmbeddingCache } from "../query-cache.js";
 import { runAsyncRerankStream } from "./search-async-rerank.js";
 import {
   applyMinScore,
+  retrievalScoreKind,
   buildRerankDocument,
   diversifyResults,
   documentGroupKey,
@@ -627,13 +628,14 @@ export function createSearchHandler(
       }
 
       // MIN_RERANK_SCORE / abstention (task 6.10, Requirement 4.8): filter the
-      // final ranking to the configured relevance threshold (reranker score
-      // when reranking was applied, retrieval score otherwise) and report an
-      // abstention signal when nothing qualifies. Unset = no-op, no field.
+      // final ranking to the configured reranker threshold and report an
+      // abstention signal when nothing qualifies. It is a cross-encoder
+      // threshold: without reranking the scores are on another scale and the
+      // filter is skipped (signalled). Unset = no-op, no field.
       const minScoreOutcome = applyMinScore(
         results,
-        minRerankScore,
-        rerankApplied,
+        minRerankScore !== null ? { value: minRerankScore, kind: "rerank" } : null,
+        rerankApplied ? "rerank" : retrievalScoreKind({ ftsOnly, hybrid: hybridRequested }),
       );
       results = minScoreOutcome.results;
       const abstention = minScoreOutcome.abstention;

@@ -84,11 +84,13 @@ export interface Config {
   rerankInputSeparator: string; // RERANK_SEPARATOR (default: "\n")
   rerankCandidateMultiplier: number; // RERANK_CANDIDATE_MULTIPLIER (default: 4)
   /**
-   * Optional relevance threshold (Requirement 4.8). When set, final search
-   * results are filtered to `score >= MIN_RERANK_SCORE` (reranker score when
-   * reranking was applied, retrieval score otherwise) and the response
-   * carries an `abstention` signal; `abstain: true` when every candidate
-   * fell below the threshold. Empty / unset = disabled, no field emitted.
+   * Optional relevance threshold (Requirement 4.8) on the reranker scale
+   * (sigmoid in [0, 1]). When set and reranking was applied, final results are
+   * filtered to `score >= MIN_RERANK_SCORE` and the response carries an
+   * `abstention` signal (`abstain: true` when every candidate fell below).
+   * Without reranking (not requested, or the reranker fell back) the scores
+   * are cosine/RRF/FTS values on other scales, so the filter is skipped and
+   * the signal says `skipped: "scale_mismatch"`. Empty / unset = disabled.
    */
   minRerankScore: number | null; // MIN_RERANK_SCORE (default: empty = off)
   rerankEndpoint: "embeddings" | "rerank"; // RERANK_ENDPOINT (default: "rerank")

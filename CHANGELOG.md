@@ -178,6 +178,16 @@ releases:
   string including error messages and stacks, and strings are bounded. Token
   counters such as `prompt_tokens` stay readable.
 
+- **Search score thresholds respect the score scale**: `MIN_RERANK_SCORE` was
+  compared with whatever score the result carried — after a reranker fallback
+  that meant RRF scores (≈ 0.016) or cosine/FTS values, so a threshold of 0.3
+  dropped every hybrid result and reported abstention. Thresholds now carry
+  their scale: `MIN_RERANK_SCORE` applies only to reranker scores, an MCP
+  per-request `minScore` applies to the scale the call asked for. On a
+  mismatch the results stay unfiltered and the response says
+  `skipped: "scale_mismatch"`; `score_scale` (`rerank`/`cosine`/`rrf`/`fts`)
+  names the exact scale of the final scores.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

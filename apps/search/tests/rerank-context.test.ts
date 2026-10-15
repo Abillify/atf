@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import pino from "pino";
 import {
   applyMinScore,
+  retrievalScoreKind,
   buildRerankDocument,
   diversifyResults,
   groupResultsBySection,
@@ -425,31 +426,30 @@ describe("fitRerankInputs", () => {
 // ─── applyMinScore (task 6.10, Requirement 4.8) ──────────────────────────────
 
 describe("applyMinScore", () => {
-  it("passes results through untouched when the threshold is null", () => {
+  const rerankAt = (value: number) => ({ value, kind: "rerank" as const });
+
+  it("passes results through untouched when there is no threshold", () => {
     const input = [result({ score: 0.1 }), result({ score: 0.9 })];
-    const outcome = applyMinScore(input, null, false);
-    expect(outcome.results).toBe(input);
-    expect(outcome.abstention).toBeUndefined();
+    for (const threshold of [null, undefined]) {
+      const outcome = applyMinScore(input, threshold, "rerank");
+      expect(outcome.results).toBe(input);
+      expect(outcome.abstention).toBeUndefined();
+    }
   });
 
-  it("passes results through untouched when the threshold is undefined", () => {
-    const input = [result({ score: 0.1 })];
-    const outcome = applyMinScore(input, undefined, true);
-    expect(outcome.results).toBe(input);
-    expect(outcome.abstention).toBeUndefined();
-  });
-
-  it("keeps results at or above the threshold and reports kept counts", () => {
+  it("keeps results at or above the threshold on the matching scale", () => {
     const input = [
       result({ id: "a", score: 0.9 }),
       result({ id: "b", score: 0.75 }),
       result({ id: "c", score: 0.74 }),
     ];
-    const outcome = applyMinScore(input, 0.75, false);
+    const outcome = applyMinScore(input, rerankAt(0.75), "rerank");
     expect(outcome.results.map((r) => r.id)).toEqual(["a", "b"]);
     expect(outcome.abstention).toEqual({
       threshold: 0.75,
-      score_kind: "retrieval",
+      score_kind: "rerank",
+      score_scale: "rerank",
+      threshold_scale: "rerank",
       candidates: 3,
       kept: 2,
       abstain: false,
@@ -458,32 +458,41 @@ describe("applyMinScore", () => {
 
   it("abstains when every result falls below the threshold", () => {
     const input = [result({ score: 0.5 }), result({ score: 0.4 })];
-    const outcome = applyMinScore(input, 0.6, false);
+    const outcome = applyMinScore(input, { value: 0.6, kind: "cosine" }, "cosine");
     expect(outcome.results).toEqual([]);
-    expect(outcome.abstention?.abstain).toBe(true);
-    expect(outcome.abstention?.kept).toBe(0);
-    expect(outcome.abstention?.candidates).toBe(2);
+    expect(outcome.abstention).toMatchObject({ abstain: true, kept: 0, candidates: 2, score_kind: "retrieval" });
   });
 
-  it("reports score_kind rerank only when reranking was applied", () => {
-    const input = [result({ score: 0.9 })];
-    expect(
-      applyMinScore(input, 0.5, true).abstention?.score_kind,
-    ).toBe("rerank");
-    expect(
-      applyMinScore(input, 0.5, false).abstention?.score_kind,
-    ).toBe("retrieval");
+  it("skips a threshold set for another scale instead of filtering on it", () => {
+    // MIN_RERANK_SCORE=0.3 against RRF scores (≈0.016) would drop everything.
+    const input = [result({ id: "a", score: 0.0164 }), result({ id: "b", score: 0.0159 })];
+    for (const scale of ["rrf", "cosine", "fts"] as const) {
+      const outcome = applyMinScore(input, rerankAt(0.3), scale);
+      expect(outcome.results).toBe(input);
+      expect(outcome.abstention).toEqual({
+        threshold: 0.3,
+        score_kind: "retrieval",
+        score_scale: scale,
+        threshold_scale: "rerank",
+        skipped: "scale_mismatch",
+        candidates: 2,
+        kept: 2,
+        abstain: false,
+      });
+    }
   });
 
   it("emits an abstention signal for an empty candidate list", () => {
-    const outcome = applyMinScore([], 0.5, false);
+    const outcome = applyMinScore([], rerankAt(0.5), "rerank");
     expect(outcome.results).toEqual([]);
-    expect(outcome.abstention).toEqual({
-      threshold: 0.5,
-      score_kind: "retrieval",
-      candidates: 0,
-      kept: 0,
-      abstain: true,
-    });
+    expect(outcome.abstention).toMatchObject({ candidates: 0, kept: 0, abstain: true });
+  });
+});
+
+describe("retrievalScoreKind", () => {
+  it("names the scale of each search mode", () => {
+    expect(retrievalScoreKind({ ftsOnly: true, hybrid: false })).toBe("fts");
+    expect(retrievalScoreKind({ ftsOnly: false, hybrid: true })).toBe("rrf");
+    expect(retrievalScoreKind({ ftsOnly: false, hybrid: false })).toBe("cosine");
   });
 });

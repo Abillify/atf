@@ -20,7 +20,7 @@ import { DEFAULT_EXPAND_BUDGET_CHARS, MAX_EXPAND_BUDGET_CHARS, defaultBudgetChar
 import { FIGURE_KINDS } from "../figure-kinds.js";
 import { FILTER_V2, UNIT_FILTER_V2, normalizeFilterV2, unitFilterV2HasPredicates, type UnitFilterV2 } from "../metadata.js";
 import { decodeCursor, encodeCursor, type FigureUnitInfo } from "../postgres-client.js";
-import { diversifyResults, groupResultsBySection, groupResultsV2, type GroupByMode } from "../rerank-context.js";
+import { applyMinScore, diversifyResults, groupResultsBySection, groupResultsV2, retrievalScoreKind, type GroupByMode, type ScoreKind, type ScoreThreshold } from "../rerank-context.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 import { shapeHitV2, type IncludeAssets } from "../search-v2-response.js";
 import { getUsageContext } from "../usage-context.js";
@@ -270,8 +270,22 @@ export function registerSearchTool(opts: McpToolContext): void {
       const rerankRequested = rerank === true;
       const rerankActive = rerankRequested && rerankerClient !== null;
       // MIN_RERANK_SCORE (task 6.10, Requirement 4.8): the server-side default
-      // threshold applies when the call omits its per-request minScore.
+      // threshold applies when the call omits its per-request minScore. Each
+      // threshold carries its scale: the server default is a reranker
+      // threshold; a per-request minScore is on the scale the call asked for
+      // (rerank when it requested reranking, else its retrieval mode).
       const effectiveMinScore = minScore ?? minRerankScore ?? undefined;
+      const minScoreThreshold: ScoreThreshold | undefined =
+        minScore !== undefined
+          ? {
+              value: minScore,
+              kind: rerankRequested
+                ? "rerank"
+                : retrievalScoreKind({ ftsOnly: false, hybrid: useHybrid }),
+            }
+          : minRerankScore !== null && minRerankScore !== undefined
+            ? { value: minRerankScore, kind: "rerank" }
+            : undefined;
       // v2 mode (Req 15.2): any Requirement-13.3 parameter switches on the v2
       // extras (identifier list, v2 hit fields, assets). A legacy call with none
       // of them keeps its exact previous request/response (Req 13.7).
@@ -569,11 +583,11 @@ export function registerSearchTool(opts: McpToolContext): void {
         );
       }
       const countBeforeMinScore = rankedResults.length;
-      if (effectiveMinScore !== undefined) {
-        rankedResults = rankedResults.filter(
-          (result) => result.score >= effectiveMinScore,
-        );
-      }
+      const finalScoreKind: ScoreKind = rerankStatus.applied
+        ? "rerank"
+        : retrievalScoreKind({ ftsOnly: false, hybrid: useHybrid });
+      const minScoreOutcome = applyMinScore(rankedResults, minScoreThreshold, finalScoreKind);
+      rankedResults = minScoreOutcome.results;
       const countAfterMinScore = rankedResults.length;
       // Preserve compact provenance for every fully reranked candidate before
       // the normal response limit truncates content-heavy result objects. This
@@ -768,26 +782,23 @@ export function registerSearchTool(opts: McpToolContext): void {
                   fallbackReason: hydeFallbackReason,
                 },
                 score_kind: rerankStatus.applied ? "rerank" : "retrieval",
+                score_scale: finalScoreKind,
                 minScore: effectiveMinScore ?? null,
                 score_filter: {
-                  applied: effectiveMinScore !== undefined,
+                  applied:
+                    minScoreOutcome.abstention !== undefined &&
+                    minScoreOutcome.abstention.skipped === undefined,
                   score_kind: rerankStatus.applied ? "rerank" : "retrieval",
+                  score_scale: finalScoreKind,
+                  ...(minScoreOutcome.abstention?.skipped !== undefined
+                    ? { skipped: minScoreOutcome.abstention.skipped }
+                    : {}),
                   before: countBeforeMinScore,
                   after: countAfterMinScore,
                   removed: countBeforeMinScore - countAfterMinScore,
                 },
-                ...(effectiveMinScore !== undefined
-                  ? {
-                      abstention: {
-                        threshold: effectiveMinScore,
-                        score_kind: rerankStatus.applied
-                          ? "rerank"
-                          : "retrieval",
-                        candidates: countBeforeMinScore,
-                        kept: countAfterMinScore,
-                        abstain: countAfterMinScore === 0,
-                      },
-                    }
+                ...(minScoreOutcome.abstention !== undefined
+                  ? { abstention: minScoreOutcome.abstention }
                   : {}),
                 ...(sections ? { sections } : {}),
                 ...(nextCursor ? { next_cursor: nextCursor } : {}),

@@ -385,6 +385,24 @@ describe("MCP navigation tools (task 3.9)", () => {
     expect(figures[0]).toMatchObject({ figure_id: "fig-7", asset_id: "asset-1" });
   });
 
+  it("search: a reranked minScore is not applied to retrieval scores when reranking is unavailable", async () => {
+    // No reranker is configured here, so rerank:true falls back to retrieval
+    // scores; comparing them with a cross-encoder threshold would be arbitrary.
+    const res = (await client.callTool({
+      name: "search",
+      arguments: { query: "Anmeldung", rerank: true, minScore: 0.3, hybrid: true },
+    })) as ToolResult;
+    if (res.isError) throw new Error(`search errored: ${textOf(res)}`);
+    const doc = jsonOf(res) as {
+      score_scale?: string;
+      score_filter?: { applied: boolean; skipped?: string };
+      abstention?: { skipped?: string; threshold_scale?: string; abstain: boolean };
+    };
+    expect(doc.score_scale).toBe("rrf");
+    expect(doc.score_filter).toMatchObject({ applied: false, skipped: "scale_mismatch" });
+    expect(doc.abstention).toMatchObject({ skipped: "scale_mismatch", threshold_scale: "rerank", abstain: false });
+  });
+
   it("(i) search accepts the v2 params (expand/budget_chars/group_by_section) without error", async () => {
     // The MCP `search` tool exposes the task-13.3 v2 params; they flow through
     // the shared v1/v2 search path (expansion + section grouping).
