@@ -639,8 +639,12 @@ describe("Transaction runtime deadlines and hash canonicalization", () => {
   it("aborts a running action at its deadline even without maxDurationMs", async () => {
     const fabric = new TransactionFabric(baseConfig);
     let abortReason = "";
+    // The deadline is part of the signed token, so it cannot be computed after
+    // signing. The headroom keeps token signing and verification under load
+    // from consuming the whole window before run() starts; the action timer
+    // stays well beyond the deadline so only the deadline can abort it.
     const result = await fabric.execute({
-      token: await token(envelope({ trace: { deadlineAt: Date.now() + 50 } })),
+      token: await token(envelope({ trace: { deadlineAt: Date.now() + 250 } })),
       tool: "write",
       args: {},
       requiredScopes: [],
@@ -655,7 +659,7 @@ describe("Transaction runtime deadlines and hash canonicalization", () => {
             },
             { once: true },
           );
-          setTimeout(() => resolve(ok), 500).unref?.();
+          setTimeout(() => resolve(ok), 2000).unref?.();
         }),
     });
     expect(abortReason).toContain("Transaction deadline exceeded");
