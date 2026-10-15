@@ -247,6 +247,11 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
   production (`TOOL_OUTPUT_VALIDATOR_ENABLED`, unset = on when `APP_ENV=production`); a finding
   is neutralised (`TOOL_OUTPUT_VALIDATOR_MODE=redact`) and recorded on the consuming node's trace
   as `indirect_prompt_injection` and in `aiperator_indirect_injection_total`.
+  Retrieved chunks reach the model as a delimited untrusted-data block (`RETRIEVAL_CONTEXT_MODE`,
+  unset = `spotlight` in production), and after a finding any tool not declared `readOnlyHint`
+  needs human approval for the rest of the run (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`, unset = on
+  in production; recorded as `tainted_write_tool_approval`). Search results carry
+  `content_trust: untrusted` and an `injection_risk` hint.
 - **Declarative tool authorization.** Which principal may invoke which tool is policy, not
   code, and it fails closed by default (`TOOL_AUTHZ_FAIL_CLOSED`).
 - **Groundedness checking.** Answers are scored against the retrieved sources, semantically

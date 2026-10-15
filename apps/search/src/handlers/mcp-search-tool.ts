@@ -28,6 +28,7 @@ import { newActivityId } from "./activity-stream.js";
 import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
 import { BadRequest, parseFilters, resolveReferencedFigures } from "./search-v2.js";
 import { buildSearchDetail, buildSearchSummary, groupResultsByDocument, rerankResultsWithStatus } from "./search.js";
+import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
 export function registerSearchTool(opts: McpToolContext): void {
@@ -658,6 +659,8 @@ export function registerSearchTool(opts: McpToolContext): void {
           link: r.link ?? null,
           tags: r.tags ?? [],
           content: r.content,
+          // Retrieved text is untrusted data; injection_risk is a heuristic hint.
+          ...trustLabels(r.content),
           chunk: r.chunk ?? null,
           evidence: r.evidence ?? null,
           asset_url: r.asset_url ?? null,
@@ -771,6 +774,7 @@ export function registerSearchTool(opts: McpToolContext): void {
               {
                 results: hits,
                 count: hits.length,
+                ...aggregateTrustLabels(hits.map((h) => h.injection_risk)),
                 rerank: rerankStatus,
                 ...(rerankScoreHits.length > 0
                   ? { rerank_score_hits: rerankScoreHits }

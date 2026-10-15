@@ -335,6 +335,8 @@ export function loadConfig(): AppConfig {
     toolOutputValidatorEnabled: env.TOOL_OUTPUT_VALIDATOR_ENABLED,
     toolOutputValidatorMode: env.TOOL_OUTPUT_VALIDATOR_MODE,
     toolOutputValidatorThreshold: env.TOOL_OUTPUT_VALIDATOR_THRESHOLD,
+    retrievalContextMode: env.RETRIEVAL_CONTEXT_MODE,
+    taintWriteToolsRequireApproval: env.TAINT_WRITE_TOOLS_REQUIRE_APPROVAL,
     approvalGateEnabled: env.APPROVAL_GATE_ENABLED,
     approvalRequireTools: env.APPROVAL_REQUIRE_TOOLS,
     approvalTimeoutMs: env.APPROVAL_TIMEOUT_MS,

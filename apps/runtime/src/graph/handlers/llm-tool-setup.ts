@@ -38,6 +38,7 @@ import { buildCostAttribution } from "../../observability/cost.js";
 import { buildAssetFetch } from "./llm-asset-fetch.js";
 import { buildLoopGuardedExecuteToolCall } from "./llm-tool-loop-guard.js";
 import { reportingValidator } from "../injection-findings.js";
+import { taintGuardForNode } from "../execution-taint.js";
 
 /**
  * Tool refs a safe assistant retry may force back into the tool pool without a
@@ -120,6 +121,7 @@ export async function setupLlmTools(params: {
     runtime,
     node,
   );
+  const taintGuard = taintGuardForNode(runtime, node.id);
   // A semantic hit only becomes actionable when its MCP schema was bound to
   // an AI-SDK tool key. Keep the best bound score separately: the visibility
   // threshold is intentionally permissive, while mandatory tool use needs a
@@ -210,6 +212,9 @@ export async function setupLlmTools(params: {
           ...(loopGuardedExecuteToolCall !== undefined
             ? { executeToolCall: loopGuardedExecuteToolCall }
             : {}),
+          // Write tools need approval once the injection scan has flagged
+          // content in this run (no-op for a clean run or read-only tools).
+          ...(taintGuard !== undefined ? { taint: taintGuard } : {}),
           // Ref-handle indirection (config.refHandles): resolve the model's
           // short handles back to real references and mask references in
           // tool results, per node opt-in only.

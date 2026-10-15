@@ -161,6 +161,17 @@ export function checkProductionReadiness(
     );
   }
 
+  if (isProd && config.taintWriteToolsRequireApproval === false) {
+    warnings.push(
+      "TAINT_WRITE_TOOLS_REQUIRE_APPROVAL=false: after the injection scan flags retrieved or tool text, write tools still run without human approval.",
+    );
+  }
+  if (isProd && config.retrievalContextMode === "legacy") {
+    warnings.push(
+      "RETRIEVAL_CONTEXT_MODE=legacy: retrieved chunks are handed to the model as a plain list, not as a delimited untrusted-data block.",
+    );
+  }
+
   if (config.corsOrigins.includes("*")) {
     const msg =
       "CORS_ORIGINS is set to '*' (any origin). Set an explicit allow-list of origins.";

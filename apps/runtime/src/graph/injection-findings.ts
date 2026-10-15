@@ -20,7 +20,10 @@ import type {
 
 /** A validator whose findings are reported on `nodeId`'s trace. */
 export function reportingValidator(
-  runtime: Pick<ExecRuntime, "toolOutputValidator" | "onNodeDiagnostic" | "metrics">,
+  runtime: Pick<
+    ExecRuntime,
+    "toolOutputValidator" | "onNodeDiagnostic" | "metrics" | "taint"
+  >,
   nodeId: string,
 ): ToolOutputValidator | undefined {
   const validator = runtime.toolOutputValidator;
@@ -30,6 +33,8 @@ export function reportingValidator(
     validate(content, sourceRef): ToolOutputValidationResult {
       const result = validator.validate(content, sourceRef);
       if (result.flagged) {
+        // A finding taints the rest of the run: write tools then need approval.
+        runtime.taint?.mark(sourceRef);
         runtime.onNodeDiagnostic?.(nodeId, {
           level: "warn",
           code: "indirect_prompt_injection",

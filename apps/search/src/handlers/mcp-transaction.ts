@@ -19,6 +19,7 @@ import { normalizePathPrefix } from "../postgres-client.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 import { canonicalActionContractHash, enforceRetrievalBudget, getTransactionContext, stableHash, transactionCorrelation } from "../transaction-context.js";
 import { rerankResultsWithStatus } from "./search.js";
+import { aggregateTrustLabels, trustLabels } from "../content-trust.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
 export function registerTransactionTools(opts: McpToolContext): void {
@@ -72,7 +73,7 @@ export function registerTransactionTools(opts: McpToolContext): void {
         legacyOptionalCalls: "unchanged",
       },
       idempotency: { supported: true, key: ["principal","executionId","invocationId"], fingerprint: "sha256(tool+stableArgs+executionId)", committedReplay: true, mismatchConflict: true, inFlightConflict: true, mutatingUnknownOutcome: "outcome_unknown", states: ["pending","running","committed","failed","outcome_unknown","compensated"], durability: opts.invocationLedger!.durability },
-      tools: { retrieve_evidence: { readOnly: true, aclFiltered: true, provenance: "sha256" }, verified_evidence_pack: { readOnly: true, aclFiltered: true, provenance: "sha256", contentTrust: "untrusted" }, get_document_asset: { readOnly: true, aclFiltered: true, contentType: "image" }, ingest: { readOnly: false, idempotent: true }, delete_document: { readOnly: false, idempotent: true } },
+      tools: { retrieve_evidence: { readOnly: true, aclFiltered: true, provenance: "sha256", contentTrust: "untrusted" }, verified_evidence_pack: { readOnly: true, aclFiltered: true, provenance: "sha256", contentTrust: "untrusted" }, get_document_asset: { readOnly: true, aclFiltered: true, contentType: "image" }, ingest: { readOnly: false, idempotent: true }, delete_document: { readOnly: false, idempotent: true } },
     }) }] }),
   );
 
@@ -104,10 +105,10 @@ export function registerTransactionTools(opts: McpToolContext): void {
         const chunk = hit.chunk?.chunk_index ?? 0;
         const version = typeof hit.metadata?.["version"] === "string" ? hit.metadata["version"] : hit.modified.toISOString();
         const contentHash = stableHash(hit.content);
-        return { evidenceId: stableHash(`${col}\n${hit.reference}\n${chunk}\n${version}\n${contentHash}\n${hit.effective_valid_from.toISOString()}`), collection: col, reference: hit.reference, chunk, version, score: hit.score, content: hit.content, contentHash, queryHash, retrievedAt, valid_from: hit.valid_from?.toISOString() ?? null, effective_valid_from: hit.effective_valid_from.toISOString(), temporal_mode: { include_all_versions: include_all_versions ?? false, valid_at: parseRfc3339DateTime(valid_at) ?? null }, evidence: hit.evidence, asset_url: hit.asset_url, invocationId: transaction?.invocationId, executionId: transaction?.executionId, traceId: transaction?.trace.traceId };
+        return { evidenceId: stableHash(`${col}\n${hit.reference}\n${chunk}\n${version}\n${contentHash}\n${hit.effective_valid_from.toISOString()}`), collection: col, reference: hit.reference, chunk, version, score: hit.score, content: hit.content, ...trustLabels(hit.content), contentHash, queryHash, retrievedAt, valid_from: hit.valid_from?.toISOString() ?? null, effective_valid_from: hit.effective_valid_from.toISOString(), temporal_mode: { include_all_versions: include_all_versions ?? false, valid_at: parseRfc3339DateTime(valid_at) ?? null }, evidence: hit.evidence, asset_url: hit.asset_url, invocationId: transaction?.invocationId, executionId: transaction?.executionId, traceId: transaction?.trace.traceId };
       });
       emitQueryActivity({ tool: "retrieve_evidence", summary: `${evidence.length} evidence items from ${col}`, status: "ok", startTime, detail: { collection: col, count: evidence.length, queryHash, evidenceIds: evidence.map((item) => item.evidenceId) } });
-      return { content: [{ type: "text", text: JSON.stringify({ evidence, count: evidence.length, queryHash, retrievedAt, ...(transaction ? { actionContractHash: canonicalActionContractHash(transaction) } : {}), ...transactionCorrelation() }) }] };
+      return { content: [{ type: "text", text: JSON.stringify({ evidence, count: evidence.length, ...aggregateTrustLabels(evidence.map((item) => item.injection_risk)), queryHash, retrievedAt, ...(transaction ? { actionContractHash: canonicalActionContractHash(transaction) } : {}), ...transactionCorrelation() }) }] };
     },
   );
 

@@ -481,6 +481,10 @@ export interface AppConfig {
   toolOutputValidatorEnabled?: boolean;
   toolOutputValidatorMode?: "flag" | "redact";
   toolOutputValidatorThreshold?: number;
+  /** `spotlight` | `legacy`; unset = spotlight in production. */
+  retrievalContextMode?: "spotlight" | "legacy";
+  /** Write tools need approval after an injection finding; unset = on in production. */
+  taintWriteToolsRequireApproval?: boolean;
   approvalGateEnabled?: boolean;
   approvalRequireTools?: string[];
   approvalTimeoutMs?: number;
@@ -1787,6 +1791,31 @@ export const EnvSchema = z.object({
     ),
   TOOL_OUTPUT_VALIDATOR_MODE: z.enum(["flag", "redact"]).default("redact"),
   TOOL_OUTPUT_VALIDATOR_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
+  /**
+   * SECURITY. How the `retrieval` node hands retrieved chunks to the model.
+   * `spotlight` wraps them in a delimited block marked as untrusted data, not
+   * instructions (random per-run delimiter, `[n]` citations unchanged).
+   * `legacy` keeps the plain `[n] text` list. Unset = `spotlight` in production
+   * (APP_ENV=production), `legacy` elsewhere.
+   */
+  RETRIEVAL_CONTEXT_MODE: z.enum(["spotlight", "legacy"]).optional(),
+  /**
+   * SECURITY. After the injection scan flags retrieved or tool-produced text,
+   * every tool that is not declared read-only (`readOnlyHint`) needs human
+   * approval for the rest of that run. Tools without annotations count as write
+   * tools. Read-only tools are unaffected. Without an approval gate
+   * (`APPROVAL_GATE_ENABLED`) such a call is denied. Needs the scan
+   * (`TOOL_OUTPUT_VALIDATOR_ENABLED`) to have any effect. Unset = on in
+   * production (APP_ENV=production), off elsewhere; "false" switches it off.
+   */
+  TAINT_WRITE_TOOLS_REQUIRE_APPROVAL: z
+    .string()
+    .optional()
+    .transform((raw): boolean | undefined =>
+      raw === undefined || raw.trim() === ""
+        ? undefined
+        : raw === "true" || raw === "1",
+    ),
   /** Enable human-in-the-loop approval for tool calls matching APPROVAL_REQUIRE_TOOLS or a node's own list. */
   APPROVAL_GATE_ENABLED: z
     .string()

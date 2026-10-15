@@ -544,6 +544,18 @@ export interface ExecRuntime {
    */
   toolOutputValidator?: import("../mcp/tool-output-validator.js").ToolOutputValidator;
   /**
+   * Per-execution injection taint. Present when `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`
+   * is on: a validator finding marks it, and a tool that is not read-only then
+   * needs approval (see `execution-taint.ts`). Absent → no taint enforcement.
+   */
+  taint?: import("./execution-taint.js").ExecutionTaint;
+  /**
+   * How retrieved chunks are handed to the model: `spotlight` wraps them in a
+   * delimited untrusted-data block, `legacy` keeps the plain `[n] text` list.
+   * Absent → `legacy`.
+   */
+  retrievalContextMode?: "spotlight" | "legacy";
+  /**
    * Optional declarative compliance policy (`compliance-policy.yaml`, ADR-0009).
    * Consulted by `buildAiTools` (`agent-tools.ts`) so a tool matching an
    * `approvalRules` pattern requires human approval even when it is not

@@ -92,6 +92,7 @@ import {
 } from "../expansion.js";
 import type { TokenCounter } from "../token-counter.js";
 import { readHeader } from "../header-utils.js";
+import { responseTrustLabels } from "../content-trust.js";
 import { getPrincipal } from "../request-principal.js";
 import {
 	shapeHitV2,
@@ -651,6 +652,12 @@ export function createSearchV2Handler(
         });
       }
 
+      // Retrieved text is untrusted data; injection_risk is a heuristic hint.
+      const trust = responseTrustLabels(hits.map((h) => h.content));
+      const trustFields = {
+        content_trust: trust.content_trust,
+        injection_risk: trust.injection_risk,
+      };
       res
         .status(200)
         .json(
@@ -658,9 +665,10 @@ export function createSearchV2Handler(
             ? {
                 results: hits,
                 score_scale: finalScoreScale,
+                ...trustFields,
                 abstention: minScoreOutcome.abstention,
               }
-            : { results: hits, score_scale: finalScoreScale },
+            : { results: hits, score_scale: finalScoreScale, ...trustFields },
         );
     } catch (err) {
 			next(err);

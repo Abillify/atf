@@ -53,6 +53,7 @@ import { HashRefHandleRegistry } from "../ref-handles.js";
 import type { OutputGuardrail } from "../output-guardrails.js";
 import type { ToolEgressGuardrail } from "../output-guardrails.js";
 import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
+import { createExecutionTaint } from "../execution-taint.js";
 import {
   sideEffectFreeApprovalGate,
   type ApprovalRegistry,
@@ -1031,6 +1032,16 @@ class GraphEngineServiceImpl implements GraphEngineService {
         : {}),
       ...(this.toolOutputValidator?.enabled
         ? { toolOutputValidator: this.toolOutputValidator }
+        : {}),
+      // Injection hardening, safe by default in production: spotlighting of
+      // retrieved context and approval for write tools after an injection
+      // finding. Elsewhere both stay off, so existing flows are unchanged.
+      retrievalContextMode:
+        this.appConfig.retrievalContextMode ??
+        (this.appConfig.appEnv === "production" ? "spotlight" : "legacy"),
+      ...((this.appConfig.taintWriteToolsRequireApproval ??
+        this.appConfig.appEnv === "production")
+        ? { taint: createExecutionTaint() }
         : {}),
     };
 

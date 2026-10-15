@@ -43,6 +43,7 @@ import { attachDocumentGroups, attachExpansions } from "./expand-results.js";
 import { emitActivity } from "../activity-emitter.js";
 import { newActivityId } from "./activity-stream.js";
 import { getUsageContext } from "../usage-context.js";
+import { responseTrustLabels } from "../content-trust.js";
 import { getPrincipal } from "../request-principal.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 
@@ -737,6 +738,12 @@ export function createSearchHandler(
       if (hydeExpanded) response["hyde_query"] = hydeExpanded;
       if (includeQueryVector) response["query_vector"] = vector;
       if (abstention) response["abstention"] = abstention;
+      // Retrieved text is untrusted data; injection_risk is a heuristic hint.
+      {
+        const trust = responseTrustLabels(expandedResults.map((r) => r.content));
+        response["content_trust"] = trust.content_trust;
+        response["injection_risk"] = trust.injection_risk;
+      }
 
       // Record search stats after reranking so the `reranked` flag is accurate.
       postgresClient.recordSearchStat({

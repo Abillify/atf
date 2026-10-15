@@ -17,6 +17,10 @@ import type { FlowNode } from "../../types/flow.js";
 import type { ToolResultEntry } from "../../types/monitoring.js";
 import type { StreamError } from "../../types/openai.js";
 import {
+  enforceTaintApproval,
+  taintGuardForNode,
+} from "../execution-taint.js";
+import {
   getRuntime,
   lastUserQuery,
   RAG_CONTEXT_MARKER,
@@ -343,6 +347,39 @@ export function createToolNodeHandler(
                 await runtime.onToolError?.(
                   toolCallId,
                   `denied by policy rule ${decision.ruleId}`,
+                  0,
+                );
+                skipTool = true;
+                break;
+              }
+            }
+
+            // Taint: after an injection finding earlier in this run, a tool
+            // that is not declared read-only needs human approval.
+            const taintGuard = taintGuardForNode(runtime, node.id);
+            if (taintGuard?.taint.tainted === true) {
+              const annotations = await runtime.mcpWrapper
+                .getFilteredToolSchema(serverName, bareName, {
+                  authToken: runtime.ctx.ssoToken,
+                })
+                .then((schema) => schema.annotations)
+                .catch(() => undefined);
+              const taintDecision = await enforceTaintApproval(taintGuard, {
+                toolRef,
+                nodeId: node.id,
+                args,
+                annotations,
+                ctx: runtime.ctx,
+              });
+              if (!taintDecision.allowed) {
+                errors.push({
+                  message: `Tool "${toolRef}" was not approved: ${taintDecision.reason}`,
+                  type: "tool_error",
+                  details: { node_id: node.id, tool: toolRef, tainted: true },
+                });
+                await runtime.onToolError?.(
+                  toolCallId,
+                  `not approved: ${taintDecision.reason}`,
                   0,
                 );
                 skipTool = true;

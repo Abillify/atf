@@ -41,6 +41,7 @@ import type { ApprovalRegistry, PendingApproval } from "./approval-gate.js";
 import type { ToolEgressGuardrail } from "./output-guardrails.js";
 import { hasFindings } from "./output-guardrails.js";
 import type { ToolOutputValidator } from "../mcp/tool-output-validator.js";
+import { enforceTaintApproval, type TaintGuard } from "./execution-taint.js";
 import type { AppConfig } from "../config/index.js";
 import type { CompliancePolicy } from "../compliance/policy-schema.js";
 import type { LlmProviderFactory, ProviderResolution, UsageAccumulator } from "./graph-engine.js";
@@ -388,6 +389,12 @@ export async function buildAiTools(
      * those real references. Ignored when `refHandles` is set.
      */
     refObserver?: RefHandleRegistry;
+    /**
+     * Injection taint rule. After a validator finding in this run, a tool
+     * that is not declared read-only needs human approval before the call.
+     * Absent → no taint enforcement.
+     */
+    taint?: TaintGuard;
   },
 ): Promise<{
   tools: ToolSet;
@@ -591,6 +598,26 @@ export async function buildAiTools(
               };
             }
             outboundArgs = scrubbed.args;
+          }
+        }
+        // Injection taint: earlier content in this run was flagged by the
+        // injection scan, so a write tool must be confirmed by a human. Read-
+        // only tools skip this entirely (no extra latency, no behaviour change).
+        if (opts?.taint?.taint.tainted === true) {
+          const taintDecision = await enforceTaintApproval(opts.taint, {
+            toolRef,
+            nodeId: node.id,
+            args: outboundArgs,
+            annotations: filtered.annotations,
+            ctx,
+          });
+          if (!taintDecision.allowed) {
+            return {
+              isError: true,
+              error: "approval_denied",
+              message: taintDecision.reason,
+              tainted: true,
+            };
           }
         }
         const contextualized = await enrichToolArguments(

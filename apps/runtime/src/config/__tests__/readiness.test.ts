@@ -65,6 +65,15 @@ describe("checkProductionReadiness", () => {
     expect(bound.fatal.some((f) => f.includes("JWT_ISSUER_TENANTS"))).toBe(false);
   });
 
+  test("warns on an explicit opt-out of taint approval or spotlighting in production, not on the defaults", () => {
+    const taintOff = checkProductionReadiness(productionConfig({ taintWriteToolsRequireApproval: false }));
+    expect(taintOff.warnings.some((w) => w.includes("TAINT_WRITE_TOOLS_REQUIRE_APPROVAL=false"))).toBe(true);
+    const legacy = checkProductionReadiness(productionConfig({ retrievalContextMode: "legacy" }));
+    expect(legacy.warnings.some((w) => w.includes("RETRIEVAL_CONTEXT_MODE=legacy"))).toBe(true);
+    const unset = checkProductionReadiness(productionConfig());
+    expect(unset.warnings.some((w) => w.includes("TAINT_WRITE_TOOLS") || w.includes("RETRIEVAL_CONTEXT_MODE"))).toBe(false);
+  });
+
   test("warns when the indirect-injection scan is switched off in production", () => {
     const off = checkProductionReadiness(productionConfig({ toolOutputValidatorEnabled: false }));
     expect(off.warnings.some((w) => w.includes("TOOL_OUTPUT_VALIDATOR_ENABLED=false"))).toBe(true);
