@@ -29,7 +29,7 @@ import {
   TableRow,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
-import { formatTime } from "../lib/i18n";
+import { translate, formatTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Result shapes mirrored from the runtime replay API (kept structural so the
@@ -120,14 +120,14 @@ export function PolicyReplayPanel({
         try {
           body["candidateToolAuthzPolicy"] = JSON.parse(toolAuthz);
         } catch {
-          throw new Error("Candidate tool-authz policy is not valid JSON.");
+          throw new Error(translate("policyReplayPanel.toolAuthzNotJson"));
         }
       }
       if (compliance.trim() !== "") {
         try {
           body["candidateCompliancePolicy"] = JSON.parse(compliance);
         } catch {
-          throw new Error("Candidate compliance policy is not valid JSON.");
+          throw new Error(translate("policyReplayPanel.complianceNotJson"));
         }
       }
       const max = Number.parseInt(maxExecutions, 10);
@@ -161,11 +161,10 @@ export function PolicyReplayPanel({
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
       <h2 className="text-sm font-semibold text-foreground">
-        Policy Replay Simulator
+        {translate("policyReplayPanel.policyReplaySimulator")}
       </h2>
       <p className="text-xs text-muted-foreground">
-        Replay stored executions against candidate policies without executing
-        anything — the current live policies are the baseline of the diff.
+        {translate("policyReplayPanel.replayStoredExecutionsAgainstCandidate")}
       </p>
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -174,13 +173,13 @@ export function PolicyReplayPanel({
             htmlFor="replay-toolauthz"
             className="block text-xs font-medium text-muted-foreground mb-1"
           >
-            Candidate tool-authz policy (JSON, optional)
+            {translate("policyReplayPanel.candidateToolAuthzPolicyJSON")}
           </label>
           <textarea
             id="replay-toolauthz"
             value={toolAuthz}
             onChange={(e) => setToolAuthz(e.target.value)}
-            placeholder={'{ "rules": [ { "id": "deny-write", "tools": ["*"], "action": "deny" } ] }'}
+            placeholder={translate("policyReplayPanel.rulesIdDenyWriteTools")}
             rows={5}
             spellCheck={false}
             className="w-full rounded border border-border bg-background px-3 py-1.5 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -191,7 +190,7 @@ export function PolicyReplayPanel({
             htmlFor="replay-compliance"
             className="block text-xs font-medium text-muted-foreground mb-1"
           >
-            Candidate compliance policy (JSON, optional)
+            {translate("policyReplayPanel.candidateCompliancePolicyJSONOptional")}
           </label>
           <textarea
             id="replay-compliance"
@@ -211,7 +210,7 @@ export function PolicyReplayPanel({
             htmlFor="replay-max"
             className="block text-xs font-medium text-muted-foreground mb-1"
           >
-            Max executions
+            {translate("policyReplayPanel.maxExecutions")}
           </label>
           <input
             id="replay-max"
@@ -224,7 +223,7 @@ export function PolicyReplayPanel({
           />
         </div>
         <Button variant="outline" size="sm" onClick={() => void run()} disabled={loading}>
-          {loading ? "Replaying…" : "Run replay"}
+          {loading ? translate("policyReplayPanel.replaying") : translate("policyReplayPanel.runReplay")}
         </Button>
       </div>
 
@@ -240,27 +239,27 @@ export function PolicyReplayPanel({
           <div className="rounded border border-border bg-muted p-3 space-y-2">
             <div className="flex flex-wrap gap-4 text-sm">
               <span>
-                <span className="font-medium">Evaluated: </span>
+                <span className="font-medium">{translate("policyReplayPanel.evaluated")} </span>
                 {result.summary.evaluated}
               </span>
               <span>
-                <span className="font-medium">Changed: </span>
+                <span className="font-medium">{translate("policyReplayPanel.changed")} </span>
                 {result.summary.changed}
               </span>
               <span>
-                <span className="font-medium">Newly denied: </span>
+                <span className="font-medium">{translate("policyReplayPanel.newlyDenied")} </span>
                 <span className={result.summary.newlyDenied > 0 ? "text-danger font-medium" : undefined}>
                   {result.summary.newlyDenied}
                 </span>
               </span>
               <span>
-                <span className="font-medium">Newly allowed: </span>
+                <span className="font-medium">{translate("policyReplayPanel.newlyAllowed")} </span>
                 <span className={result.summary.newlyAllowed > 0 ? "text-warning font-medium" : undefined}>
                   {result.summary.newlyAllowed}
                 </span>
               </span>
               <span>
-                <span className="font-medium">Tool-call flips: </span>
+                <span className="font-medium">{translate("policyReplayPanel.toolCallFlips")} </span>
                 {result.summary.toolCallFlips} / {result.summary.toolCallsEvaluated}
               </span>
             </div>
@@ -283,7 +282,7 @@ export function PolicyReplayPanel({
                 onChange={(e) => setOnlyChanged(e.target.checked)}
                 className="mr-1 align-middle"
               />
-              Only changed executions
+              {translate("policyReplayPanel.onlyChangedExecutions")}
             </label>
             <span className="text-xs text-muted-foreground">
               ({rows.length} of {result.results.length})
@@ -293,18 +292,18 @@ export function PolicyReplayPanel({
           {rows.length === 0 ? (
             <p className="text-sm text-muted-foreground">
               {result.results.length === 0
-                ? "No stored executions matched the replay window."
-                : "No execution changed its outcome under the candidate policies."}
+                ? translate("policyReplayPanel.noStoredExecutionsMatchedThe")
+                : translate("policyReplayPanel.noExecutionChangedItsOutcome")}
             </p>
           ) : (
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableHeaderCell>Execution</TableHeaderCell>
-                  <TableHeaderCell>Flow</TableHeaderCell>
-                  <TableHeaderCell>Started</TableHeaderCell>
-                  <TableHeaderCell>Outcome</TableHeaderCell>
-                  <TableHeaderCell>Tool calls</TableHeaderCell>
+                  <TableHeaderCell>{translate("policyReplayPanel.execution")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("policyReplayPanel.flow")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("policyReplayPanel.started")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("policyReplayPanel.outcome")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("policyReplayPanel.toolCalls")}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -326,7 +325,7 @@ export function PolicyReplayPanel({
                       </TableCell>
                       <TableCell className="text-xs">
                         {flips.length === 0 ? (
-                          <span className="text-muted-foreground">no flips</span>
+                          <span className="text-muted-foreground">{translate("policyReplayPanel.noFlips")}</span>
                         ) : (
                           <ul className="space-y-0.5">
                             {flips.map((t) => (

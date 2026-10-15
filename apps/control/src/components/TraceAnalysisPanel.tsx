@@ -12,6 +12,7 @@ import type {
 } from "../types/trace-analysis";
 import { Badge, Button } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
+import { translate } from "../lib/i18n";
 
 export interface TraceAnalysisPanelProps {
   /** The analysis to render, or null when none/failed. */
@@ -96,7 +97,7 @@ function FindingRow({ finding }: { finding: TraceFinding }): React.JSX.Element {
       <p className="text-foreground">{finding.observation}</p>
       {finding.evidence && (
         <p className="mt-1 text-xs text-muted-foreground">
-          Evidence: {finding.evidence}
+          {translate("traceAnalysisPanel.evidenceEvidence", { evidence: finding.evidence })}
         </p>
       )}
     </li>
@@ -127,7 +128,7 @@ function SuggestionRow({
         </span>
         <span className="font-medium text-foreground">{suggestion.title}</span>
         {hasEdit && (
-          <Badge variant="default" title="The optimizer can build a variant from this suggestion directly">
+          <Badge variant="default" title={translate("traceAnalysisPanel.theOptimizerCanBuildA")}>
             auto-applicable
           </Badge>
         )}
@@ -138,16 +139,16 @@ function SuggestionRow({
             className="ml-auto"
             onClick={() => onCreateVariant(suggestion)}
             disabled={isCreating}
-            title="Evaluate this suggestion as an optimizer variant against real production cases, then promote it if it wins"
+            title={translate("traceAnalysisPanel.evaluateThisSuggestionAsAn")}
           >
-            {isCreating ? "Starting…" : "Create variant"}
+            {isCreating ? translate("traceAnalysisPanel.starting") : translate("traceAnalysisPanel.createVariant")}
           </Button>
         )}
       </div>
       <p className="text-muted-foreground">{suggestion.rationale}</p>
       {suggestion.expectedImpact && (
         <p className="mt-1 text-xs text-foreground">
-          Expected impact: {suggestion.expectedImpact}
+          {translate("traceAnalysisPanel.expectedImpactExpectedImpact", { expectedImpact: suggestion.expectedImpact })}
         </p>
       )}
     </li>
@@ -181,7 +182,7 @@ export function TraceAnalysisPanel({
     <section className="mb-4 rounded-lg border border-border bg-card p-4 shadow-sm">
       <div className="mb-2 flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-foreground">
-          Trace analysis
+          {translate("traceAnalysisPanel.traceAnalysis")}
           {analysis && (
             <span className="ml-2 font-mono text-xs font-normal text-muted-foreground">
               {analysis.executionId.slice(0, 8)}
@@ -191,14 +192,14 @@ export function TraceAnalysisPanel({
         </h3>
         {onClear && (
           <Button variant="secondary" size="sm" onClick={onClear}>
-            Dismiss
+            {translate("traceAnalysisPanel.dismiss")}
           </Button>
         )}
       </div>
 
       {isAnalyzing && (
         <p className="py-4 text-center text-sm text-muted-foreground">
-          Analysing trace… (LLM post-mortem — this can take a few seconds)
+          {translate("traceAnalysisPanel.analysingTraceLLMPostMortem")}
         </p>
       )}
 
@@ -220,7 +221,7 @@ export function TraceAnalysisPanel({
           {analysis.rootCause && (
             <div className="rounded-md border border-danger-border bg-danger-soft px-3 py-2 dark:border-danger-border dark:bg-danger-soft">
               <div className="text-[11px] font-semibold uppercase tracking-wide text-danger">
-                Root cause
+                {translate("traceAnalysisPanel.rootCause")}
               </div>
               <p className="text-sm text-danger">
                 {analysis.rootCause}
@@ -231,7 +232,7 @@ export function TraceAnalysisPanel({
           {/* Scope note */}
           {analysis.scopeNodeIds && analysis.scopeNodeIds.length > 0 && (
             <p className="text-xs text-muted-foreground">
-              Scoped to:{" "}
+              {translate("traceAnalysisPanel.scopedTo")}{" "}
               <span className="font-mono">
                 {analysis.scopeNodeIds.join(", ")}
               </span>
@@ -240,33 +241,33 @@ export function TraceAnalysisPanel({
 
           {/* Metrics */}
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
-            <Metric label="Nodes" value={String(analysis.metrics.nodeCount)} />
+            <Metric label={translate("traceAnalysisPanel.nodes")} value={String(analysis.metrics.nodeCount)} />
             <Metric
-              label="Errors"
+              label={translate("traceAnalysisPanel.errors")}
               value={String(analysis.metrics.errorNodeCount)}
               accent={analysis.metrics.errorNodeCount > 0 ? "error" : undefined}
             />
             <Metric
-              label="Latency"
+              label={translate("traceAnalysisPanel.latency")}
               value={`${analysis.metrics.totalLatencyMs} ms`}
             />
             {analysis.metrics.wallClockMs !== undefined && (
               <Metric
-                label="Wall clock"
+                label={translate("traceAnalysisPanel.wallClock")}
                 value={`${analysis.metrics.wallClockMs} ms`}
               />
             )}
             <Metric
-              label="Cost"
+              label={translate("traceAnalysisPanel.cost")}
               value={formatCost(analysis.metrics.totalCost)}
               accent="cost"
             />
             <Metric
-              label="Tokens"
+              label={translate("traceAnalysisPanel.tokens")}
               value={String(analysis.metrics.totalTokens)}
             />
             <Metric
-              label="Tool calls"
+              label={translate("traceAnalysisPanel.toolCalls")}
               value={`${analysis.metrics.toolCallCount}${
                 analysis.metrics.toolErrorCount > 0
                   ? ` (${analysis.metrics.toolErrorCount} err)`
@@ -277,26 +278,26 @@ export function TraceAnalysisPanel({
               }
             />
             <Metric
-              label="Diagnostics"
+              label={translate("traceAnalysisPanel.diagnostics")}
               value={`${analysis.metrics.diagnosticCounts.warn}w / ${analysis.metrics.diagnosticCounts.error}e`}
             />
             {analysis.metrics.groundednessFailures > 0 && (
               <Metric
-                label="Groundedness fails"
+                label={translate("traceAnalysisPanel.groundednessFails")}
                 value={String(analysis.metrics.groundednessFailures)}
                 accent="error"
               />
             )}
             {analysis.metrics.slowestNode && (
               <Metric
-                label="Slowest node"
+                label={translate("traceAnalysisPanel.slowestNode")}
                 value={`${analysis.metrics.slowestNode.nodeId} (${analysis.metrics.slowestNode.latencyMs} ms)`}
               />
             )}
             {analysis.metrics.costliestNode &&
               analysis.metrics.costliestNode.cost > 0 && (
                 <Metric
-                  label="Costliest node"
+                  label={translate("traceAnalysisPanel.costliestNode")}
                   value={`${analysis.metrics.costliestNode.nodeId} (${formatCost(analysis.metrics.costliestNode.cost)})`}
                 />
               )}
@@ -306,7 +307,7 @@ export function TraceAnalysisPanel({
           {analysis.findings.length > 0 && (
             <div>
               <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Findings ({analysis.findings.length})
+                {translate("traceAnalysisPanel.findingsLength", { length: analysis.findings.length })}
               </h4>
               <ul className="space-y-1.5">
                 {analysis.findings.map((f, i) => (
@@ -321,7 +322,7 @@ export function TraceAnalysisPanel({
           {analysis.suggestions.length > 0 && (
             <div>
               <h4 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Suggestions ({analysis.suggestions.length})
+                {translate("traceAnalysisPanel.suggestionsLength", { length: analysis.suggestions.length })}
               </h4>
               {variantError && (
                 <p

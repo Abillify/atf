@@ -5,6 +5,7 @@
 import type React from "react";
 import { useId, useRef } from "react";
 import { useModalBehavior, usePresence } from "./useModalBehavior";
+import { translate } from "../i18n";
 
 export interface DialogProps {
   open: boolean;
@@ -83,7 +84,7 @@ export function Dialog({
             )}
           </div>
           <button type="button"
-            aria-label="Close dialog"
+            aria-label={translate("dialog.closeDialog")}
             onClick={onClose}
             className={[
               "ml-4 flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground",

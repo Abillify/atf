@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Approvals route (Req. 12.3).
@@ -11,7 +12,7 @@ export default function ApprovalsLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading approvals"
+      aria-label={translate("approvals.loadingApprovals")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-36" height="h-6" />

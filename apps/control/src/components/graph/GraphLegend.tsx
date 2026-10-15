@@ -15,17 +15,18 @@ import {
   statusIndicator,
   type NodeVisualType,
 } from "./graphUtils";
+import { translate, type MessageKey } from "../../lib/i18n";
 
-const LEGEND_TYPES: Array<{ type: NodeVisualType; label: string }> = [
-  { type: "boundary", label: "Request / Response" },
-  { type: "llm", label: "LLM" },
-  { type: "classifier", label: "Classifier" },
-  { type: "router", label: "Router" },
-  { type: "parallel", label: "Parallel" },
-  { type: "retrieval", label: "Retrieval / RAG" },
-  { type: "memory", label: "Memory" },
-  { type: "tool", label: "Tool" },
-  { type: "unknown", label: "Other" },
+const LEGEND_TYPES: Array<{ type: NodeVisualType; label: MessageKey }> = [
+  { type: "boundary", label: "graphLegend.type.requestResponse" },
+  { type: "llm", label: "graphLegend.type.llm" },
+  { type: "classifier", label: "graphLegend.type.classifier" },
+  { type: "router", label: "graphLegend.type.router" },
+  { type: "parallel", label: "graphLegend.type.parallel" },
+  { type: "retrieval", label: "graphLegend.type.retrievalRag" },
+  { type: "memory", label: "graphLegend.type.memory" },
+  { type: "tool", label: "graphLegend.type.tool" },
+  { type: "unknown", label: "graphLegend.type.other" },
 ];
 
 interface GraphLegendProps {
@@ -39,7 +40,7 @@ export function GraphLegend({ present }: GraphLegendProps) {
   return (
     <div className="absolute top-2 left-2 z-10 rounded-lg border border-border bg-card/90 px-3 py-2 text-[11px] shadow-sm backdrop-blur-sm">
       <div className="mb-1 font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">
-        Node type
+        {translate("graphLegend.nodeType")}
       </div>
       <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
         {types.map((t) => (
@@ -48,12 +49,12 @@ export function GraphLegend({ present }: GraphLegendProps) {
               className="inline-block w-3 h-3 rounded-sm border border-black/10 shrink-0"
               style={{ backgroundColor: nodeTypeHex(t.type) }}
             />
-            <span className="text-foreground">{t.label}</span>
+            <span className="text-foreground">{translate(t.label)}</span>
           </div>
         ))}
       </div>
       <div className="mt-1.5 mb-1 font-semibold text-muted-foreground uppercase tracking-wide text-[10px]">
-        Status
+        {translate("graphLegend.status")}
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-0.5">
         {(["completed", "running", "error", "pending"] as const).map((s) => {

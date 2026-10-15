@@ -22,7 +22,7 @@ import { request } from "../lib/control-api";
 import { FlowPicker } from "./FlowPicker";
 import { Badge, Button } from "../lib/ui";
 import { useDocumentVisibility } from "../hooks/useDocumentVisibility";
-import { formatTime } from "../lib/i18n";
+import { translate, formatTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors src/autopilot/autopilot-engine.ts)
@@ -111,7 +111,7 @@ function RunRow({ run }: { run: AutopilotRun }) {
           <span className="text-success">→ v{run.promotedVersion}</span>
         )}
         {run.canaryRegistered === true && (
-          <span className="text-copilot">canary ↗</span>
+          <span className="text-copilot">{translate("autopilotPanel.canary")}</span>
         )}
       </div>
 
@@ -124,7 +124,7 @@ function RunRow({ run }: { run: AutopilotRun }) {
           href={`/optimizer?flow=${encodeURIComponent(run.flowId)}`}
           className="inline-block text-[10px] font-medium text-primary hover:underline"
         >
-          Show variants &amp; scores →
+          {translate("autopilotPanel.showVariantsScores")}
         </a>
       )}
     </div>
@@ -197,7 +197,7 @@ export function AutopilotPanel({
     enabled: ready,
     retry: false,
     queryFn: async () => {
-      if (!isAuthenticated) throw new Error("Not signed in.");
+      if (!isAuthenticated) throw new Error(translate("autopilotPanel.notSignedIn"));
       const path = flowId
         ? `/autopilot/runs/flow/${encodeURIComponent(flowId)}?limit=${limit}`
         : `/autopilot/runs?limit=${limit}`;
@@ -295,14 +295,14 @@ export function AutopilotPanel({
       <div className="flex items-center justify-between">
         {!hideHeading && (
           <h3 className="text-sm font-semibold text-foreground">
-            🔄 Autopilot
+            {translate("autopilotPanel.autopilot")}
           </h3>
         )}
         <Button
           variant="ghost"
           size="sm"
           onClick={() => void runsQuery.refetch()}
-          aria-label="Refresh autopilot runs"
+          aria-label={translate("autopilotPanel.refreshAutopilotRuns")}
         >
           ↻
         </Button>
@@ -313,11 +313,11 @@ export function AutopilotPanel({
         <div className="rounded border border-border bg-muted px-3 py-2 text-[10px] flex flex-wrap gap-2">
           <Badge variant={governance.requireHumanApproval ? "default" : "warning"}>
             {governance.requireHumanApproval
-              ? "Human approval required"
-              : "Auto-promote enabled"}
+              ? translate("autopilotPanel.humanApprovalRequired")
+              : translate("autopilotPanel.autoPromoteEnabled")}
           </Badge>
           <Badge variant="secondary">
-            drift-guard: max {governance.maxAutoPromotionsPerWindow} auto-promotion(s) /{" "}
+            {translate("autopilotPanel.driftGuardMaxMaxAutoPromotionsPerWindowAuto", { maxAutoPromotionsPerWindow: governance.maxAutoPromotionsPerWindow })}{" "}
             {Math.round(governance.driftWindowMs / 3_600_000)}h
           </Badge>
         </div>
@@ -325,7 +325,7 @@ export function AutopilotPanel({
 
       {unavailable && (
         <div className="rounded border border-dashed border-border bg-muted px-3 py-2 text-[11px] text-muted-foreground">
-          <span className="font-medium text-foreground">Not available: </span>
+          <span className="font-medium text-foreground">{translate("autopilotPanel.notAvailable")} </span>
           {unavailable}
         </div>
       )}
@@ -336,9 +336,9 @@ export function AutopilotPanel({
           {fixedFlow ? (
             <span
               className="min-w-0 flex-1 truncate rounded border border-border bg-muted px-2 py-1 font-mono text-xs text-muted-foreground"
-              title="Chosen in the Studio's flow picker"
+              title={translate("autopilotPanel.chosenInTheStudioS")}
             >
-              {triggerFlowId || "no flow selected"}
+              {triggerFlowId || translate("autopilotPanel.noFlowSelected")}
             </span>
           ) : flows ? (
             <div className="min-w-0 flex-1">
@@ -346,7 +346,7 @@ export function AutopilotPanel({
                 flows={flows}
                 value={triggerFlowId}
                 onChange={setTriggerFlowId}
-                ariaLabel="Flow for manual autopilot trigger"
+                ariaLabel={translate("autopilotPanel.flowForManualAutopilotTrigger")}
                 className="w-full"
               />
             </div>
@@ -356,7 +356,7 @@ export function AutopilotPanel({
               onChange={(e) => setTriggerFlowId(e.target.value)}
               placeholder="flow-id"
               className="flex-1 rounded border border-border px-2 py-1 text-xs font-mono"
-              aria-label="Flow ID for manual autopilot trigger"
+              aria-label={translate("autopilotPanel.flowIDForManualAutopilot")}
             />
           )}
           <Button
@@ -366,7 +366,7 @@ export function AutopilotPanel({
             title={writeGate.title}
             onClick={() => void handleTrigger()}
           >
-            {triggering ? "…" : "Trigger"}
+            {triggering ? "…" : translate("autopilotPanel.trigger")}
           </Button>
         </div>
         {triggerMsg && (
@@ -378,13 +378,12 @@ export function AutopilotPanel({
 
       {/* Runs list */}
       {unavailable ? null : loading ? (
-        <div className="text-xs text-muted-foreground">Loading…</div>
+        <div className="text-xs text-muted-foreground">{translate("autopilotPanel.loading")}</div>
       ) : error ? (
         <div className="text-xs text-danger">{error}</div>
       ) : runs.length === 0 ? (
         <div className="text-xs text-muted-foreground">
-          No autopilot runs yet. Trigger one manually or enable RED_TEAM_ENABLED
-          to start the automated loop.
+          {translate("autopilotPanel.noAutopilotRunsYetTrigger")}
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">

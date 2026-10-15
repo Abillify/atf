@@ -4,6 +4,7 @@
 
 import type React from "react";
 import { useRef } from "react";
+import { translate } from "../lib/i18n";
 
 /**
  * Vertical drag handle that resizes the panel next to it. Place it as a flex
@@ -75,7 +76,7 @@ export function ResizeHandle({
       aria-valuemax={max}
       aria-valuenow={width}
       tabIndex={0}
-      title={`${label} — drag, or focus and use ←/→ (double-click resets)`}
+      title={translate("resizeHandle.labelDragOrFocusAnd", { label })}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={endDrag}

@@ -18,6 +18,7 @@ import type React from "react";
 import { useEffect, useState } from "react";
 import { Dialog } from "../lib/ui";
 import { fetchSubflows, type SubflowInfo, subflowLabel, subflowPathFor } from "../lib/subflows";
+import { translate } from "../lib/i18n";
 
 /** dataTransfer payload of a sub-flow card dragged onto the canvas (the file path). */
 export const SUBFLOW_DND_TYPE = "application/x-aiperator-subflow";
@@ -63,26 +64,26 @@ function IncludeDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title="Include a sub-flow"
-      description="Its nodes and edges are placed on the canvas in their own box and stay in their file; saving adds the file to this flow's metadata.$include."
+      title={translate("subflowPalette.includeASubFlow")}
+      description={translate("subflowPalette.itsNodesAndEdgesAre")}
       className="max-w-2xl"
     >
       <div className="space-y-2">
         <div className="flex items-center gap-1.5 rounded border border-border px-2 py-1">
           <Search size={12} aria-hidden className="text-muted-foreground" />
           <input
-            aria-label="Search sub-flows"
+            aria-label={translate("subflowPalette.searchSubFlows")}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search by file, name, description or node id…"
+            placeholder={translate("subflowPalette.searchByFileNameDescription")}
             className="min-w-0 flex-1 bg-transparent text-xs outline-none"
           />
         </div>
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
         {message && <p className="text-xs text-subflow">{message}</p>}
-        {list === null && !error && <p className="text-xs text-muted-foreground">Loading…</p>}
+        {list === null && !error && <p className="text-xs text-muted-foreground">{translate("subflowPalette.loading")}</p>}
         {list !== null && list.length === 0 && (
-          <p className="text-xs text-muted-foreground">No files in subflows/ yet — create one with “New subflow”.</p>
+          <p className="text-xs text-muted-foreground">{translate("subflowPalette.noFilesInSubflowsYet")}</p>
         )}
         <ul className="max-h-96 space-y-1.5 overflow-auto">
           {shown.map((s) => {
@@ -99,9 +100,9 @@ function IncludeDialog({
                       </p>
                     )}
                     <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      {s.nodeIds.length} node(s): <code>{s.nodeIds.slice(0, 6).join(", ")}{s.nodeIds.length > 6 ? ", …" : ""}</code>
-                      {s.edgeCount > 0 ? ` · ${s.edgeCount} edge(s)` : ""}
-                      {s.usedBy.length > 0 ? ` · used by ${s.usedBy.join(", ")}` : ""}
+                      {translate("subflowPalette.lengthNodeS", { length: s.nodeIds.length })} <code>{s.nodeIds.slice(0, 6).join(", ")}{s.nodeIds.length > 6 ? ", …" : ""}</code>
+                      {s.edgeCount > 0 ? translate("subflowPalette.edgeCountEdgeS", { edgeCount: s.edgeCount }) : ""}
+                      {s.usedBy.length > 0 ? translate("subflowPalette.usedByValue", { value: s.usedBy.join(", ") }) : ""}
                     </p>
                   </div>
                   <button
@@ -123,7 +124,7 @@ function IncludeDialog({
                     }}
                     className="shrink-0 rounded bg-primary px-2 py-1 text-[11px] font-medium text-primary-foreground hover:opacity-90 disabled:opacity-40"
                   >
-                    {onCanvas ? "On canvas" : busy === s.path ? "Including…" : "Include"}
+                    {onCanvas ? translate("subflowPalette.onCanvas") : busy === s.path ? translate("subflowPalette.including") : translate("subflowPalette.include")}
                   </button>
                 </div>
               </li>
@@ -197,8 +198,8 @@ export function SubflowPalette({
         <button
           type="button"
           onClick={() => setIncluding(true)}
-          title="Include a sub-flow"
-          aria-label="Include a sub-flow"
+          title={translate("subflowPalette.includeASubFlow")}
+          aria-label={translate("subflowPalette.includeASubFlow")}
           className="flex h-8 w-8 items-center justify-center rounded-md border border-subflow-border bg-subflow-soft text-subflow hover:bg-subflow-soft dark:border-subflow-border dark:bg-subflow-soft dark:text-subflow"
         >
           <FolderInput size={15} aria-hidden />
@@ -218,14 +219,14 @@ export function SubflowPalette({
   );
 
   return (
-    <section aria-label="Subflows" className="rounded-md border border-subflow-border bg-subflow-soft p-2 dark:border-subflow-border dark:bg-subflow-soft">
+    <section aria-label={translate("subflowPalette.subflows")} className="rounded-md border border-subflow-border bg-subflow-soft p-2 dark:border-subflow-border dark:bg-subflow-soft">
       <div className="mb-1.5 flex items-center gap-1.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wide text-subflow">Subflows</p>
+        <p className="text-[10px] font-semibold uppercase tracking-wide text-subflow">{translate("subflowPalette.subflows")}</p>
         <button
           type="button"
           onClick={() => setReloadNonce((n) => n + 1)}
-          title="Reload the sub-flow list"
-          aria-label="Reload the sub-flow list"
+          title={translate("subflowPalette.reloadTheSubFlowList")}
+          aria-label={translate("subflowPalette.reloadTheSubFlowList")}
           className="ml-auto rounded p-0.5 text-subflow hover:bg-subflow-soft dark:text-subflow dark:hover:bg-subflow-solid-hover/40"
         >
           <RefreshCw size={12} aria-hidden />
@@ -242,14 +243,14 @@ export function SubflowPalette({
           className="flex flex-1 items-center justify-center gap-1 rounded border border-subflow-border bg-card px-1.5 py-1 text-[11px] font-medium text-subflow hover:bg-subflow-soft dark:border-subflow-border dark:text-subflow dark:hover:bg-subflow-solid-hover/40"
         >
           <FilePlus2 size={13} aria-hidden />
-          New subflow
+          {translate("subflowPalette.newSubflow")}
         </button>
       </div>
       {creating && (
         <div className="mt-2 space-y-1">
           <div className="flex gap-1">
             <input
-              aria-label="New sub-flow name"
+              aria-label={translate("subflowPalette.newSubFlowName")}
               value={name}
               // Focus on mount (the field only exists while creating): replaces
               // autoFocus, which Biome flags (WCAG 3.2.2).
@@ -262,7 +263,7 @@ export function SubflowPalette({
                 if (e.key === "Enter") create();
                 if (e.key === "Escape") setCreating(false);
               }}
-              placeholder="name, e.g. retrieval"
+              placeholder={translate("subflowPalette.nameEGRetrieval")}
               className="min-w-0 flex-1 rounded border border-border bg-background px-1.5 py-1 text-xs"
             />
             <button
@@ -271,14 +272,14 @@ export function SubflowPalette({
               disabled={!path}
               className="rounded bg-subflow-solid px-2 py-1 text-[11px] font-medium text-on-solid hover:bg-subflow-solid-hover disabled:opacity-40"
             >
-              Create
+              {translate("subflowPalette.create")}
             </button>
           </div>
           <p className="text-[10px] leading-snug text-muted-foreground">
-            {path ? <code>{path}</code> : "subflows/<name>.yaml"} —{" "}
+            {path ? <code>{path}</code> : translate("subflowPalette.subflowsNameYaml")} —{" "}
             {actions.selectedCount > 0
-              ? `the ${actions.selectedCount} selected node(s) move into it.`
-              : "starts with one node; drop more nodes onto its box. Select nodes first to move them in."}
+              ? translate("subflowPalette.theSelectedCountSelectedNodeS", { selectedCount: actions.selectedCount })
+              : translate("subflowPalette.startsWithOneNodeDrop")}
           </p>
           {error && <p role="alert" className="text-[10px] text-danger">{error}</p>}
         </div>
@@ -286,23 +287,23 @@ export function SubflowPalette({
       <div className="mt-2 flex items-center gap-1.5 rounded border border-border bg-card px-2 py-1">
         <Search size={12} aria-hidden className="shrink-0 text-muted-foreground" />
         <input
-          aria-label="Search sub-flows"
+          aria-label={translate("subflowPalette.searchSubFlows")}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search by file, name, description or node id…"
+          placeholder={translate("subflowPalette.searchByFileNameDescription")}
           className="min-w-0 flex-1 bg-transparent text-xs outline-none"
         />
       </div>
       {message && <p className="mt-1.5 text-[10px] leading-snug text-subflow">{message}</p>}
       {listError && <p role="alert" className="mt-1.5 text-[10px] text-danger">{listError}</p>}
-      {list === null && !listError && <p className="mt-1.5 text-[10px] text-muted-foreground">Loading…</p>}
+      {list === null && !listError && <p className="mt-1.5 text-[10px] text-muted-foreground">{translate("subflowPalette.loading")}</p>}
       {list !== null && list.length === 0 && (
         <p className="mt-1.5 text-[10px] leading-snug text-muted-foreground">
-          No files in subflows/ yet — create one with “New subflow”.
+          {translate("subflowPalette.noFilesInSubflowsYet")}
         </p>
       )}
       {list !== null && list.length > 0 && shown.length === 0 && (
-        <p className="mt-1.5 text-[10px] text-muted-foreground">No match.</p>
+        <p className="mt-1.5 text-[10px] text-muted-foreground">{translate("subflowPalette.noMatch")}</p>
       )}
       <ul className="mt-1.5 max-h-72 space-y-1.5 overflow-auto pr-0.5">
         {shown.map((s) => {
@@ -320,8 +321,8 @@ export function SubflowPalette({
               }}
               title={
                 onCanvas
-                  ? "Already on the canvas."
-                  : `${s.path} — drag onto the canvas, or double-click to include`
+                  ? translate("subflowPalette.alreadyOnTheCanvas")
+                  : translate("subflowPalette.pathDragOntoTheCanvas", { path: s.path })
               }
               className={`rounded border border-border bg-card p-1.5 ${
                 onCanvas ? "opacity-60" : "cursor-grab select-none transition-colors hover:border-subflow-border active:cursor-grabbing"
@@ -336,10 +337,10 @@ export function SubflowPalette({
                       {s.description}
                     </p>
                   )}
-                  <p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={`${s.nodeIds.length} node(s): ${s.nodeIds.join(", ")}`}>
-                    {s.nodeIds.length} node(s): <code>{s.nodeIds.slice(0, 4).join(", ")}{s.nodeIds.length > 4 ? ", …" : ""}</code>
-                    {s.edgeCount > 0 ? ` · ${s.edgeCount} edge(s)` : ""}
-                    {s.usedBy.length > 0 ? ` · used by ${s.usedBy.join(", ")}` : ""}
+                  <p className="mt-0.5 truncate text-[10px] text-muted-foreground" title={translate("subflowPalette.lengthNodeSValue", { length: s.nodeIds.length, value: s.nodeIds.join(", ") })}>
+                    {translate("subflowPalette.lengthNodeS", { length: s.nodeIds.length })} <code>{s.nodeIds.slice(0, 4).join(", ")}{s.nodeIds.length > 4 ? ", …" : ""}</code>
+                    {s.edgeCount > 0 ? translate("subflowPalette.edgeCountEdgeS", { edgeCount: s.edgeCount }) : ""}
+                    {s.usedBy.length > 0 ? translate("subflowPalette.usedByValue", { value: s.usedBy.join(", ") }) : ""}
                   </p>
                 </div>
                 <button
@@ -348,7 +349,7 @@ export function SubflowPalette({
                   onClick={() => include(s.path)}
                   className="shrink-0 rounded bg-subflow-solid px-1.5 py-0.5 text-[10px] font-medium text-on-solid hover:bg-subflow-solid-hover disabled:bg-muted disabled:text-muted-foreground"
                 >
-                  {onCanvas ? "On canvas" : busy === s.path ? "…" : "Include"}
+                  {onCanvas ? translate("subflowPalette.onCanvas") : busy === s.path ? "…" : translate("subflowPalette.include")}
                 </button>
               </div>
             </li>

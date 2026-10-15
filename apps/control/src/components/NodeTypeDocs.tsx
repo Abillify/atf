@@ -14,6 +14,7 @@ import type React from "react";
 import { useEffect, useRef } from "react";
 import type { ConfigField, NodeTypeDoc } from "../lib/node-types";
 import { formatDefault } from "../lib/node-types";
+import { translate } from "../lib/i18n";
 
 /** Minimal inline Markdown: `code` and **bold**. Everything else is text. */
 function inlineMd(text: string): React.ReactNode[] {
@@ -91,17 +92,17 @@ function FieldDoc({
         <span className="text-[10px] text-muted-foreground">
           {KIND_LABEL[field.kind]}
           {field.options ? `: ${field.options.join(" | ")}` : ""}
-          {field.required ? " · required" : ""}
+          {field.required ? translate("nodeTypeDocs.required") : ""}
         </span>
       </div>
       <p className="mt-0.5 text-[11px] leading-snug text-foreground/90">{inlineMd(field.description)}</p>
       {(def !== undefined || field.min !== undefined || field.max !== undefined) && (
         <p className="mt-0.5 text-[10px] text-muted-foreground">
-          {def !== undefined && <>Default: {inlineMd(def)}. </>}
+          {def !== undefined && <>{translate("nodeTypeDocs.default")} {inlineMd(def)}. </>}
           {(field.min !== undefined || field.max !== undefined) && (
             <>
-              Range: {field.min ?? "…"} – {field.max ?? "…"}
-              {field.integer ? " (integer)" : ""}.
+              {translate("nodeTypeDocs.rangeValueValue2", { value: field.min ?? "…", value2: field.max ?? "…" })}
+              {field.integer ? translate("nodeTypeDocs.integer") : ""}.
             </>
           )}
         </p>
@@ -170,7 +171,7 @@ export function NodeTypeDocs({
           <h3 className="text-sm font-semibold text-foreground">{doc.title} node</h3>
           <code className="text-[10px] text-muted-foreground">type: {doc.type}</code>
         </div>
-        {nodeId && <p className="text-[10px] text-muted-foreground">Selected: <code>{nodeId}</code></p>}
+        {nodeId && <p className="text-[10px] text-muted-foreground">{translate("nodeTypeDocs.selected")} <code>{nodeId}</code></p>}
         <p className="mt-1 text-[11px] text-foreground/90">{inlineMd(doc.summary)}</p>
       </header>
 
@@ -184,7 +185,7 @@ export function NodeTypeDocs({
 
       {doc.whenToUse.length > 0 && (
         <section>
-          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">When to use</h4>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{translate("nodeTypeDocs.whenToUse")}</h4>
           <ul className="list-disc space-y-0.5 pl-4 text-[11px]">
             {doc.whenToUse.map((w) => (
               <li key={w}>{inlineMd(w)}</li>
@@ -195,7 +196,7 @@ export function NodeTypeDocs({
 
       {doc.topLevel.length > 0 && (
         <section>
-          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Node fields</h4>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{translate("nodeTypeDocs.nodeFields")}</h4>
           <dl className="space-y-1">
             {doc.topLevel.map((t) => (
               <div
@@ -219,7 +220,7 @@ export function NodeTypeDocs({
       {llmFields !== undefined && llmFields.length > 0 && (
         <section>
           <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-            Model selection (<code>llm</code>) — {llmFields.length}
+            {translate("nodeTypeDocs.modelSelection")}<code>llm</code>) — {llmFields.length}
           </h4>
           <div className="space-y-1">
             {llmFields.map((f) => (
@@ -231,10 +232,10 @@ export function NodeTypeDocs({
 
       <section>
         <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Settings (<code>config</code>) — {doc.config.length}
+          {translate("nodeTypeDocs.settings")}<code>config</code>) — {doc.config.length}
         </h4>
         {doc.config.length === 0 ? (
-          <p className="text-[11px] text-muted-foreground">No type-specific settings.</p>
+          <p className="text-[11px] text-muted-foreground">{translate("nodeTypeDocs.noTypeSpecificSettings")}</p>
         ) : (
           <div className="space-y-1">
             {doc.config.map((f) => (
@@ -246,7 +247,7 @@ export function NodeTypeDocs({
 
       <section>
         <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Available on every node
+          {translate("nodeTypeDocs.availableOnEveryNode")}
         </h4>
         <div className="space-y-1">
           {common.map((f) => (
@@ -257,7 +258,7 @@ export function NodeTypeDocs({
 
       {doc.examples.length > 0 && (
         <section>
-          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Examples</h4>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{translate("nodeTypeDocs.examples")}</h4>
           {doc.examples.map((ex) => (
             <div key={ex.title} className="mb-2">
               <p className="text-[11px] font-medium">{ex.title}</p>
@@ -269,7 +270,7 @@ export function NodeTypeDocs({
 
       {doc.notes.length > 0 && (
         <section>
-          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Notes</h4>
+          <h4 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{translate("nodeTypeDocs.notes")}</h4>
           <ul className="list-disc space-y-0.5 pl-4 text-[11px]">
             {doc.notes.map((n) => (
               <li key={n}>{inlineMd(n)}</li>

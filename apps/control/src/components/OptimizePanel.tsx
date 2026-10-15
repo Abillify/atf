@@ -20,6 +20,7 @@ import { useCanWrite } from "../lib/auth/useCanWrite";
 import { Button } from "../lib/ui";
 import { request } from "../lib/control-api";
 import type { FlowDefinition } from "../types/flow";
+import { translate } from "../lib/i18n";
 
 export interface RoutingRecommendation {
   flowId: string;
@@ -69,9 +70,7 @@ export async function fetchCanvasRoutingAdvice(
   });
   if (resp.status === 404 || resp.status === 405) {
     // An older runtime: no POST route (or no optimizer router at all).
-    throw new Error(
-      "This runtime can't check the canvas yet — update/restart the runtime, or check the Live flows instead.",
-    );
+    throw new Error(translate("optimizePanel.runtimeCannotCheckCanvas"));
   }
   return readAdvice(resp);
 }
@@ -150,7 +149,7 @@ export function OptimizePanel({
       const def = getCanvasDefinition?.() ?? null;
       setCanvasCandidates(nodesWithCandidates(def));
       if (source === "canvas") {
-        if (!def) throw new Error("The canvas has not loaded yet.");
+        if (!def) throw new Error(translate("optimizePanel.canvasNotLoaded"));
         setCheckedId(def.id);
         return fetchCanvasRoutingAdvice(def, token ?? undefined);
       }
@@ -181,20 +180,19 @@ export function OptimizePanel({
   return (
     <section className="space-y-3">
       {!hideHeading && (
-        <h3 className="text-sm font-semibold text-foreground">Optimize</h3>
+        <h3 className="text-sm font-semibold text-foreground">{translate("optimizePanel.optimize")}</h3>
       )}
 
       {!selectedFlowId && !getCanvasDefinition ? (
-        <p className="text-xs text-muted-foreground">Select a flow to see routing recommendations.</p>
+        <p className="text-xs text-muted-foreground">{translate("optimizePanel.selectAFlowToSee")}</p>
       ) : (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            Cheaper models for this flow&apos;s nodes that keep quality within the threshold. Only nodes that
-            declare <code className="font-mono">config.routing.candidates</code> are considered.
+            {translate("optimizePanel.cheaperModelsForThisFlow")} <code className="font-mono">config.routing.candidates</code> {translate("optimizePanel.areConsidered")}
           </p>
 
           <fieldset className="m-0 flex overflow-hidden rounded border border-border p-0">
-            <legend className="sr-only">What to check</legend>
+            <legend className="sr-only">{translate("optimizePanel.whatToCheck")}</legend>
             {sourceBtn("canvas", "Canvas", "The definition in the builder — drafts and unsaved edits included. Nothing is saved.")}
             {sourceBtn("live", "Live", "The flow versions the runtime has loaded and serves.")}
           </fieldset>
@@ -207,7 +205,7 @@ export function OptimizePanel({
             title={writeGate.title}
             onClick={() => void advice.refetch()}
           >
-            {advice.isFetching ? "Checking…" : advice.data ? "Check again" : "Check routing recommendations"}
+            {advice.isFetching ? translate("optimizePanel.checking") : advice.data ? translate("optimizePanel.checkAgain") : translate("optimizePanel.checkRoutingRecommendations")}
           </Button>
 
           {advice.error && <p className="text-xs text-danger">{advice.error.message}</p>}
@@ -230,22 +228,21 @@ export function OptimizePanel({
               className="space-y-1 rounded border border-border bg-muted p-2 text-xs"
             >
               <div className="font-medium text-foreground">
-                Node <span className="font-mono">{r.nodeId}</span>
+                {translate("optimizePanel.node")} <span className="font-mono">{r.nodeId}</span>
               </div>
               <div className="font-mono text-[11px]">
                 {r.currentModel} → <span className="text-success">{r.suggestedModel}</span>
               </div>
               <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
-                <span className="text-success">−{r.expectedCostSavingPct.toFixed(0)}% cost</span>
-                <span>−{r.expectedQualityLossPct.toFixed(1)}% quality</span>
+                <span className="text-success">{translate("optimizePanel.valueCost", { value: r.expectedCostSavingPct.toFixed(0) })}</span>
+                <span>{translate("optimizePanel.valueQuality", { value: r.expectedQualityLossPct.toFixed(1) })}</span>
                 <span>({r.source})</span>
               </div>
               {r.canary && (
                 <details>
-                  <summary className="cursor-pointer text-[11px] text-muted-foreground">Trial it as a canary</summary>
+                  <summary className="cursor-pointer text-[11px] text-muted-foreground">{translate("optimizePanel.trialItAsACanary")}</summary>
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    Create flow <span className="font-mono">{r.canary.candidate}</span> with the suggested model, then
-                    add to <span className="font-mono">flows/canary.yaml</span>:
+                    {translate("optimizePanel.createFlow")} <span className="font-mono">{r.canary.candidate}</span> {translate("optimizePanel.withTheSuggestedModelThen")} <span className="font-mono">flows/canary.yaml</span>:
                   </p>
                   <pre className="mt-1 overflow-auto rounded bg-card p-1.5 font-mono text-[10px]">{`- flow: ${r.canary.flow}
   candidate: ${r.canary.candidate}

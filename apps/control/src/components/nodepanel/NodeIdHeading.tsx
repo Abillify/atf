@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from "react";
 import type React from "react";
 import { inputCls } from "../form-controls";
+import { translate } from "../../lib/i18n";
 
 export function NodeIdHeading({
   id,
@@ -29,7 +30,7 @@ export function NodeIdHeading({
   if (!editing) {
     return (
       <h4 className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-foreground">
-        Node
+        {translate("nodeIdHeading.node")}
         <span className="truncate font-mono text-xs text-muted-foreground">{id}</span>
         {onRename && (
           <button
@@ -39,7 +40,7 @@ export function NodeIdHeading({
               setError(null);
               setEditing(true);
             }}
-            title="Rename this node — edges and references in other nodes are updated too"
+            title={translate("nodeIdHeading.renameThisNodeEdgesAnd")}
             className="rounded px-1 text-[10px] font-normal text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             rename
@@ -60,7 +61,7 @@ export function NodeIdHeading({
       <div className="flex items-center gap-1">
         <input
           ref={inputRef}
-          aria-label="Node id"
+          aria-label={translate("nodeIdHeading.nodeId")}
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {

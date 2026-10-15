@@ -195,7 +195,7 @@ describe("PersistedHistory", () => {
 
   test("renders no action column when no action callbacks are wired", () => {
     render(<PersistedHistory executions={[exec("e1")]} />);
-    expect(screen.queryByText("Aktionen")).toBeNull();
+    expect(screen.queryByText("Actions")).toBeNull();
     expect(
       screen.queryByRole("button", { name: /trace viewer/i }),
     ).toBeNull();
@@ -212,7 +212,7 @@ describe("PersistedHistory", () => {
         onReplay={vi.fn()}
       />,
     );
-    expect(screen.getByText("Aktionen")).toBeInTheDocument();
+    expect(screen.getByText("Actions")).toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: "Open in Live Graph" }),
     ).toBeInTheDocument();
@@ -404,7 +404,7 @@ describe("PersistedHistory", () => {
       fireEvent.click(
         screen.getByRole("button", { name: /Filter: flows and users/ }),
       );
-      fireEvent.change(screen.getByLabelText(/User suchen/), {
+      fireEvent.change(screen.getByLabelText(/search users/i), {
         target: { value: "second" },
       });
       expect(

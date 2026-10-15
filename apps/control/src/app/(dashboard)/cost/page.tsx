@@ -15,6 +15,7 @@ import dynamic from "next/dynamic";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useMetrics } from "../../../hooks/useMetrics";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 // Heavy chart panel — loaded client-side only (Req. 12.3).
 const CostPanel = dynamic(
@@ -42,8 +43,8 @@ export default function CostPage() {
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <Tabs value={tab} onValueChange={(v) => setTab(v as CostTab)}>
         <TabsList className="mb-4">
-          <TabsTrigger value="spend">Spend &amp; Tokens</TabsTrigger>
-          <TabsTrigger value="finops">FinOps Forecast</TabsTrigger>
+          <TabsTrigger value="spend">{translate("cost.spendTokens")}</TabsTrigger>
+          <TabsTrigger value="finops">{translate("cost.finOpsForecast")}</TabsTrigger>
         </TabsList>
         {/* Panels are wrapped in TabsContent so the tabs expose real
             role="tabpanel" targets (valid aria-controls); the heavy, code-split

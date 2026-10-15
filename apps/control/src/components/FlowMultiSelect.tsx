@@ -5,6 +5,7 @@
 import type React from "react";
 import { useMemo, useState } from "react";
 import { sortFlowsByName } from "../lib/flow-sort";
+import { translate } from "../lib/i18n";
 
 export interface FlowMultiSelectProps {
   label: string;
@@ -53,15 +54,15 @@ export function FlowMultiSelect({
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name or id…"
-            aria-label={`${label}: search flows`}
+            placeholder={translate("flowMultiSelect.searchByNameOrId")}
+            aria-label={translate("flowMultiSelect.labelSearchFlows", { label })}
             className="mb-1 w-full rounded border border-border bg-background px-1.5 py-1 text-xs outline-none"
           />
         )}
         {options.length === 0 ? (
-          <p className="px-1 py-2 text-xs text-muted-foreground">Keine Flows verfügbar</p>
+          <p className="px-1 py-2 text-xs text-muted-foreground">{translate("flowMultiSelect.keineFlowsVerfuGbar")}</p>
         ) : listed.length === 0 ? (
-          <p className="px-1 py-2 text-xs text-muted-foreground">No flow matches “{query}”.</p>
+          <p className="px-1 py-2 text-xs text-muted-foreground">{translate("flowMultiSelect.noFlowMatchesQuery", { query })}</p>
         ) : (
           listed.map((flow) => (
             <label key={flow.id} className="flex cursor-pointer items-center gap-2 px-1 py-1 text-xs text-foreground hover:bg-muted">
@@ -83,7 +84,7 @@ export function FlowMultiSelect({
             className="mt-1 w-full border-t border-border px-1 pt-2 text-left text-xs text-accent"
             onClick={() => onChange([])}
           >
-            Auswahl löschen
+            {translate("flowMultiSelect.auswahlLoSchen")}
           </button>
         )}
       </div>

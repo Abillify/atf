@@ -32,7 +32,7 @@ import {
   type AssistantStatus,
 } from "./assistantShared";
 import { AssistantDetailView } from "./AssistantDetailView";
-import { formatDateTime } from "../../lib/i18n";
+import { translate, formatDateTime } from "../../lib/i18n";
 
 function fetchAssistants(
   token: string | undefined,
@@ -82,7 +82,7 @@ export function AssistantsEstatePanel(): React.JSX.Element {
 
   return (
     <div className="grid gap-4 lg:grid-cols-[minmax(0,3fr)_minmax(0,2fr)]">
-      <Panel heading="Assistants">
+      <Panel heading={translate("assistantsEstatePanel.assistants")}>
         <div className="mb-3 flex flex-wrap items-center gap-2">
           {(["active", "suspended", "archived"] as const).map((value) => (
             <Button
@@ -109,32 +109,31 @@ export function AssistantsEstatePanel(): React.JSX.Element {
           </Button>
           <input
             className="ml-auto rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
-            placeholder="Filter by user id…"
+            placeholder={translate("assistantsEstatePanel.filterByUserId")}
             value={search}
             onChange={(event) => {
               setSearch(event.target.value);
               setOffset(0);
             }}
-            aria-label="Filter assistants by user id"
+            aria-label={translate("assistantsEstatePanel.filterAssistantsByUserId")}
           />
         </div>
 
         {isLoading && (
           <div className="text-xs text-muted-foreground" aria-busy="true">
-            Loading assistants…
+            {translate("assistantsEstatePanel.loadingAssistants")}
           </div>
         )}
         {error && (
           <div role="alert" className="text-xs text-danger">
-            Failed to load assistants: {error.message}
+            {translate("assistantsEstatePanel.failedToLoadAssistantsMessage", { message: error.message })}
           </div>
         )}
         {!isLoading && !error && rows.length === 0 && (
           <div className="rounded-lg border border-dashed border-border py-10 text-center text-xs text-muted-foreground">
-            No assistants. They are provisioned on a user&apos;s first turn against the{" "}
-            <code className="font-mono">assistant</code> flow — set{" "}
-            <code className="font-mono">ASSISTANTS_ENABLED=true</code> if that has not
-            happened yet.
+            {translate("assistantsEstatePanel.noAssistantsTheyAreProvisioned")}{" "}
+            <code className="font-mono">assistant</code> {translate("assistantsEstatePanel.flowSet")}{" "}
+            <code className="font-mono">ASSISTANTS_ENABLED=true</code> {translate("assistantsEstatePanel.ifThatHasNotHappened")}
           </div>
         )}
 
@@ -143,12 +142,12 @@ export function AssistantsEstatePanel(): React.JSX.Element {
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableHeaderCell>User</TableHeaderCell>
-                  <TableHeaderCell>Assistant</TableHeaderCell>
-                  <TableHeaderCell>Autonomy</TableHeaderCell>
-                  <TableHeaderCell>Skills</TableHeaderCell>
-                  <TableHeaderCell>Pending</TableHeaderCell>
-                  <TableHeaderCell>Last active</TableHeaderCell>
+                  <TableHeaderCell>{translate("assistantsEstatePanel.user")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("assistantsEstatePanel.assistant")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("assistantsEstatePanel.autonomy")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("assistantsEstatePanel.skills")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("assistantsEstatePanel.pending")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("assistantsEstatePanel.lastActive")}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>
@@ -199,7 +198,7 @@ export function AssistantsEstatePanel(): React.JSX.Element {
                 disabled={offset === 0}
                 onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
               >
-                Previous
+                {translate("assistantsEstatePanel.previous")}
               </Button>
               <Button
                 size="sm"
@@ -207,7 +206,7 @@ export function AssistantsEstatePanel(): React.JSX.Element {
                 disabled={offset + rows.length >= total}
                 onClick={() => setOffset(offset + PAGE_SIZE)}
               >
-                Next
+                {translate("assistantsEstatePanel.next")}
               </Button>
             </div>
           </>
@@ -217,15 +216,13 @@ export function AssistantsEstatePanel(): React.JSX.Element {
       <Panel
         heading={
           selected === null
-            ? "Select an assistant"
+            ? translate("assistantsEstatePanel.selectAnAssistant")
             : `${selected.userId} / ${selected.assistantId}`
         }
       >
         {selected === null || token === undefined ? (
           <p className="text-xs text-muted-foreground">
-            Pick a row to see its soul, learned procedures, proposal queue and
-            delegated credentials — and to set the operator constraints that override
-            both the assistant and its user.
+            {translate("assistantsEstatePanel.pickARowToSee")}
           </p>
         ) : (
           <AssistantDetailView row={selected} token={token} />

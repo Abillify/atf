@@ -24,6 +24,7 @@ import { FindingsTable, SmartValue } from "./SmartValue";
 import { VariablesTable } from "./VariablesTable";
 import { HeadersTable } from "./HeadersTable";
 import { ToolCallEntry } from "./ErrorRecording";
+import { translate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Per-node-type detail renderers
@@ -51,14 +52,14 @@ export function RequestNodeDetail({ state }: { state: NodeState }) {
 
   if (filteredSectionNames.length === 0 && !state.prompt) {
     return (
-      <p className="text-xs text-muted-foreground italic">No request data available.</p>
+      <p className="text-xs text-muted-foreground italic">{translate("nodeDetailRenderers.noRequestDataAvailable")}</p>
     );
   }
 
   // If we couldn't parse sections, show fallback
   if (filteredSectionNames.length === 0 && state.prompt) {
     return (
-      <AccordionSection title="Request Data" defaultOpen badge={`${state.prompt.length} chars`}>
+      <AccordionSection title={translate("nodeDetailRenderers.requestData")} defaultOpen badge={`${state.prompt.length} chars`}>
         <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words text-xs text-foreground">
           {state.prompt}
         </pre>
@@ -107,7 +108,7 @@ export function LlmNodeDetail({ state }: { state: NodeState }) {
       {/* Prompt / Messages */}
       {state.prompt && (
         <AccordionSection
-          title="Prompt (Messages)"
+          title={translate("nodeDetailRenderers.promptMessages")}
           defaultOpen
           badge={messages ? `${messages.length} messages` : `${state.prompt.length} chars`}
         >
@@ -134,7 +135,7 @@ export function LlmNodeDetail({ state }: { state: NodeState }) {
       {/* Response */}
       {state.response && (
         <AccordionSection
-          title="Response"
+          title={translate("nodeDetailRenderers.response")}
           defaultOpen
           badge={`${state.response.length} chars`}
         >
@@ -175,7 +176,7 @@ export function RetrievalNodeDetail({ state }: { state: NodeState }) {
     <div className="space-y-2">
       {/* Input: search query or tool args */}
       {state.prompt && (
-        <AccordionSection title="Input (Query / Args)" defaultOpen>
+        <AccordionSection title={translate("nodeDetailRenderers.inputQueryArgs")} defaultOpen>
           <FormattedOrRaw
             text={state.prompt}
             renderFormatted={() => <SmartValue text={state.prompt!} />}
@@ -186,7 +187,7 @@ export function RetrievalNodeDetail({ state }: { state: NodeState }) {
       {/* Output: findings table */}
       {findings && (
         <AccordionSection
-          title="Output (Findings)"
+          title={translate("nodeDetailRenderers.outputFindings")}
           defaultOpen
           badge={`${findings.totalMatches} matches`}
         >
@@ -199,7 +200,7 @@ export function RetrievalNodeDetail({ state }: { state: NodeState }) {
 
       {/* Fallback: raw response if no structured findings */}
       {!findings && responseText && (
-        <AccordionSection title="Output (Raw)" defaultOpen badge={`${responseText.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.outputRaw")} defaultOpen badge={`${responseText.length} chars`}>
           <FormattedOrRaw
             text={responseText}
             renderFormatted={() => <SmartValue text={responseText} />}
@@ -209,7 +210,7 @@ export function RetrievalNodeDetail({ state }: { state: NodeState }) {
 
       {/* Tool call detail */}
       {retrievalToolCall && (
-        <AccordionSection title="Tool Call" badge={retrievalToolCall.name}>
+        <AccordionSection title={translate("nodeDetailRenderers.toolCall")} badge={retrievalToolCall.name}>
           <ToolCallEntry tc={retrievalToolCall} />
         </AccordionSection>
       )}
@@ -225,7 +226,7 @@ export function ParallelNodeDetail({ state }: { state: NodeState }) {
     <div className="space-y-2">
       {/* Input: which children / RAG sources ran this turn */}
       {state.prompt && (
-        <AccordionSection title="Input (Sources & Query)" defaultOpen>
+        <AccordionSection title={translate("nodeDetailRenderers.inputSourcesQuery")} defaultOpen>
           <FormattedOrRaw
             text={state.prompt}
             renderFormatted={() => <SmartValue text={state.prompt!} />}
@@ -236,7 +237,7 @@ export function ParallelNodeDetail({ state }: { state: NodeState }) {
       {/* Output: assembled findings (id/title/score + total) */}
       {findings && (
         <AccordionSection
-          title="Output (Assembled Findings)"
+          title={translate("nodeDetailRenderers.outputAssembledFindings")}
           defaultOpen
           badge={`${findings.totalMatches} matches`}
         >
@@ -250,7 +251,7 @@ export function ParallelNodeDetail({ state }: { state: NodeState }) {
       {/* Output: raw assembled result (summary counts) */}
       {state.response && (
         <AccordionSection
-          title="Output (Summary)"
+          title={translate("nodeDetailRenderers.outputSummary")}
           defaultOpen={!findings}
           badge={`${state.response.length} chars`}
         >
@@ -264,8 +265,7 @@ export function ParallelNodeDetail({ state }: { state: NodeState }) {
       {/* If no data at all, show a hint */}
       {!state.prompt && !state.response && (
         <p className="text-xs text-muted-foreground italic">
-          No I/O data captured for this node. The parallel node collects results
-          from child nodes and passes the assembled context downstream.
+          {translate("nodeDetailRenderers.noIODataCaptured")}
         </p>
       )}
     </div>
@@ -277,7 +277,7 @@ export function RouterNodeDetail({ state }: { state: NodeState }) {
   return (
     <div className="space-y-2">
       {state.routing_decision && (
-        <AccordionSection title="Routing Decision" defaultOpen>
+        <AccordionSection title={translate("nodeDetailRenderers.routingDecision")} defaultOpen>
           <div className="space-y-2">
             <KvGrid
               data={[
@@ -285,7 +285,7 @@ export function RouterNodeDetail({ state }: { state: NodeState }) {
                   "Chosen",
                   <span key="t" className="font-mono font-semibold text-foreground">
                     {state.routing_decision.target === "__end__"
-                      ? "— (no match → end)"
+                      ? translate("nodeDetailRenderers.noMatchEnd")
                       : state.routing_decision.target}
                   </span>,
                 ],
@@ -305,7 +305,7 @@ export function RouterNodeDetail({ state }: { state: NodeState }) {
             {state.routing_decision.candidates.length > 0 && (
               <div className="mt-2 space-y-1">
                 <div className="text-[10px] font-semibold text-muted-foreground uppercase">
-                  Candidates
+                  {translate("nodeDetailRenderers.candidates")}
                 </div>
                 {state.routing_decision.candidates.map((c, i) => (
                   <div
@@ -345,12 +345,12 @@ export function RouterNodeDetail({ state }: { state: NodeState }) {
 
       {/* Input / Output fallback */}
       {state.prompt && (
-        <AccordionSection title="Input" badge={`${state.prompt.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.input")} badge={`${state.prompt.length} chars`}>
           <pre className="whitespace-pre-wrap break-words max-h-48 overflow-auto">{state.prompt}</pre>
         </AccordionSection>
       )}
       {state.response && (
-        <AccordionSection title="Output" badge={`${state.response.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.output")} badge={`${state.response.length} chars`}>
           <pre className="whitespace-pre-wrap break-words max-h-48 overflow-auto">{state.response}</pre>
         </AccordionSection>
       )}
@@ -366,7 +366,7 @@ export function ClassifierNodeDetail({ state }: { state: NodeState }) {
     <div className="space-y-2">
       {state.prompt && (
         <AccordionSection
-          title="Input (Classifier Prompt)"
+          title={translate("nodeDetailRenderers.inputClassifierPrompt")}
           defaultOpen
           badge={messages ? `${messages.length} messages` : `${state.prompt.length} chars`}
         >
@@ -389,7 +389,7 @@ export function ClassifierNodeDetail({ state }: { state: NodeState }) {
       )}
 
       {state.response && (
-        <AccordionSection title="Output (Classification)" defaultOpen badge={`${state.response.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.outputClassification")} defaultOpen badge={`${state.response.length} chars`}>
           <FormattedOrRaw
             text={state.response}
             renderFormatted={() => <SmartValue text={state.response!} />}
@@ -409,7 +409,7 @@ export function GenericNodeDetail({ state }: { state: NodeState }) {
   return (
     <div className="space-y-2">
       {state.prompt && (
-        <AccordionSection title="Input" defaultOpen badge={`${state.prompt.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.input")} defaultOpen badge={`${state.prompt.length} chars`}>
           <FormattedOrRaw
             text={state.prompt}
             renderFormatted={() => <SmartValue text={state.prompt!} />}
@@ -419,7 +419,7 @@ export function GenericNodeDetail({ state }: { state: NodeState }) {
 
       {findings && (
         <AccordionSection
-          title="Output (Findings)"
+          title={translate("nodeDetailRenderers.outputFindings")}
           defaultOpen
           badge={`${findings.totalMatches} matches`}
         >
@@ -431,7 +431,7 @@ export function GenericNodeDetail({ state }: { state: NodeState }) {
       )}
 
       {state.response && !findings && (
-        <AccordionSection title="Output" defaultOpen badge={`${state.response.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.output")} defaultOpen badge={`${state.response.length} chars`}>
           <FormattedOrRaw
             text={state.response}
             renderFormatted={() => <SmartValue text={state.response!} />}
@@ -440,7 +440,7 @@ export function GenericNodeDetail({ state }: { state: NodeState }) {
       )}
 
       {!state.prompt && !state.response && (
-        <p className="text-xs text-muted-foreground italic">No I/O data captured for this node.</p>
+        <p className="text-xs text-muted-foreground italic">{translate("nodeDetailRenderers.noIODataCaptured2")}</p>
       )}
     </div>
   );
@@ -451,7 +451,7 @@ export function ResponseNodeDetail({ state }: { state: NodeState }) {
   return (
     <div className="space-y-2">
       {state.response && (
-        <AccordionSection title="Response Payload" defaultOpen badge={`${state.response.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.responsePayload")} defaultOpen badge={`${state.response.length} chars`}>
           <FormattedOrRaw
             text={state.response}
             renderFormatted={() => <SmartValue text={state.response!} />}
@@ -459,7 +459,7 @@ export function ResponseNodeDetail({ state }: { state: NodeState }) {
         </AccordionSection>
       )}
       {state.prompt && (
-        <AccordionSection title="Input" badge={`${state.prompt.length} chars`}>
+        <AccordionSection title={translate("nodeDetailRenderers.input")} badge={`${state.prompt.length} chars`}>
           <pre className="whitespace-pre-wrap break-words max-h-48 overflow-auto">{state.prompt}</pre>
         </AccordionSection>
       )}

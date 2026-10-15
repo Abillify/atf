@@ -19,6 +19,7 @@ import type { NodeType } from "../types/flow";
 import { type SubflowActions, SubflowPalette } from "./SubflowPalette";
 import { nodeTypeColor } from "./graph/graphUtils";
 import { nodeTypeIcon } from "./graph/nodeIcons";
+import { translate } from "../lib/i18n";
 
 export interface FlowNodePaletteProps {
   onAddNode: (type: NodeType) => void;
@@ -37,63 +38,66 @@ interface PaletteEntry {
   description: string;
 }
 
-const NODE_CATALOG: PaletteEntry[] = [
+/** Built per render so the labels follow the active language. */
+function nodeCatalog(): PaletteEntry[] {
+  return [
   {
     type: "llm",
-    label: "LLM",
-    description: "Streaming model call with an optional tool loop",
+    label: translate("flowNodePalette.node.LLM"),
+    description: translate("flowNodePalette.node.LLMDescription"),
   },
   {
     type: "tool",
-    label: "Tool",
-    description: "Deterministic MCP tool invocation",
+    label: translate("flowNodePalette.node.tool"),
+    description: translate("flowNodePalette.node.toolDescription"),
   },
   {
     type: "router",
-    label: "Router",
-    description: "Routing-only — evaluates outgoing edge conditions",
+    label: translate("flowNodePalette.node.router"),
+    description: translate("flowNodePalette.node.routerDescription"),
   },
   {
     type: "classifier",
-    label: "Classifier",
-    description: "Structured output; writes state.classification",
+    label: translate("flowNodePalette.node.classifier"),
+    description: translate("flowNodePalette.node.classifierDescription"),
   },
   {
     type: "parallel",
-    label: "Parallel",
-    description: "Fan-out to concurrently executed child nodes",
+    label: translate("flowNodePalette.node.parallel"),
+    description: translate("flowNodePalette.node.parallelDescription"),
   },
   {
     type: "retrieval",
-    label: "Retrieval",
-    description: "RAG — embeds the query and fetches grounding context",
+    label: translate("flowNodePalette.node.retrieval"),
+    description: translate("flowNodePalette.node.retrievalDescription"),
   },
   {
     type: "memory",
-    label: "Memory",
-    description: "Recalls long-term memories for personalisation",
+    label: translate("flowNodePalette.node.memory"),
+    description: translate("flowNodePalette.node.memoryDescription"),
   },
   {
     type: "agent-harness",
-    label: "Agent harness",
-    description: "Planner/worker loop with budgets, verification and delegation",
+    label: translate("flowNodePalette.node.agentHarness"),
+    description: translate("flowNodePalette.node.agentHarnessDescription"),
   },
   {
     type: "transform",
-    label: "Transform",
-    description: "Deterministic derive/extract rules on the flow state",
+    label: translate("flowNodePalette.node.transform"),
+    description: translate("flowNodePalette.node.transformDescription"),
   },
   {
     type: "assistant-context",
-    label: "Assistant context",
-    description: "Loads a per-user assistant's context into the run",
+    label: translate("flowNodePalette.node.assistantContext"),
+    description: translate("flowNodePalette.node.assistantContextDescription"),
   },
   {
     type: "assistant-learn",
-    label: "Assistant learn",
-    description: "Writes learnings back to the per-user assistant",
+    label: translate("flowNodePalette.node.assistantLearn"),
+    description: translate("flowNodePalette.node.assistantLearnDescription"),
   },
-];
+  ];
+}
 
 /** The node type's icon on its canvas colour, as the card on the canvas shows it. */
 function PaletteIcon({ type }: { type: NodeType }): React.JSX.Element {
@@ -120,8 +124,9 @@ export function FlowNodePalette({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return NODE_CATALOG;
-    return NODE_CATALOG.filter(
+    const catalog = nodeCatalog();
+    if (!q) return catalog;
+    return catalog.filter(
       (n) =>
         n.label.toLowerCase().includes(q) ||
         n.type.toLowerCase().includes(q) ||
@@ -133,7 +138,7 @@ export function FlowNodePalette({
     return (
       <div className="flex h-full w-9 shrink-0 flex-col items-center gap-1 overflow-auto">
         {subflows && <SubflowPalette actions={subflows} collapsed />}
-        {NODE_CATALOG.map((n) => (
+        {nodeCatalog().map((n) => (
           /* biome-ignore lint/a11y/useSemanticElements: draggable palette item with block layout content; <button> cannot host the drag payload markup and would fight the HTML5 drag API */
           <div
             key={n.type}
@@ -148,8 +153,8 @@ export function FlowNodePalette({
             onKeyDown={(e) => {
               if (e.key === "Enter") onAddNode(n.type);
             }}
-            title={`${n.label} — ${n.description} (drag or double-click)`}
-            aria-label={`Add ${n.label} node`}
+            title={translate("flowNodePalette.labelDescriptionDragOrDouble", { label: n.label, description: n.description })}
+            aria-label={translate("flowNodePalette.addLabelNode", { label: n.label })}
             className="flex h-8 w-8 cursor-grab select-none items-center justify-center rounded-md border border-border bg-card text-sm hover:bg-accent/10 active:cursor-grabbing"
           >
             <PaletteIcon type={n.type} />
@@ -165,8 +170,8 @@ export function FlowNodePalette({
         type="search"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search nodes…"
-        aria-label="Search node palette"
+        placeholder={translate("flowNodePalette.searchNodes")}
+        aria-label={translate("flowNodePalette.searchNodePalette")}
         className="rounded border border-border bg-card px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
       <div className="flex-1 space-y-1.5 overflow-auto pr-0.5">
@@ -186,7 +191,7 @@ export function FlowNodePalette({
             onKeyDown={(e) => {
               if (e.key === "Enter") onAddNode(n.type);
             }}
-            title={`${n.description} — drag onto the canvas or double-click to add`}
+            title={translate("flowNodePalette.descriptionDragOntoTheCanvas", { description: n.description })}
             className="cursor-grab select-none rounded-md border border-border bg-card px-2 py-1.5 text-xs transition-colors hover:border-accent/40 hover:bg-accent/10 active:cursor-grabbing"
           >
             <div className="flex items-center gap-1.5 font-medium text-foreground">
@@ -200,7 +205,7 @@ export function FlowNodePalette({
         ))}
         {filtered.length === 0 && (
           <p className="py-4 text-center text-[11px] text-muted-foreground">
-            No matches.
+            {translate("flowNodePalette.noMatches")}
           </p>
         )}
       </div>

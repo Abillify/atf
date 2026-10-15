@@ -12,14 +12,14 @@
 
 import type React from "react";
 import { AssistantsPanel } from "../../../components/AssistantsPanel";
+import { translate } from "../../../lib/i18n";
 
 export default function AssistantsPage(): React.JSX.Element {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
-      <h1 className="mb-1 text-xl font-semibold text-foreground">Assistants</h1>
+      <h1 className="mb-1 text-xl font-semibold text-foreground">{translate("assistants.assistants")}</h1>
       <p className="mb-4 text-xs text-muted-foreground">
-        Every user&apos;s personal assistant: its identity, its learned procedures, the
-        credentials delegated to it, and the operator constraints it must obey.
+        {translate("assistants.everyUserSPersonalAssistant")}
       </p>
       <AssistantsPanel />
     </div>

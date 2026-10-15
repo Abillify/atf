@@ -25,7 +25,7 @@ import {
 import { answerText } from "../lib/run-attach";
 import { RunPicker, type RunsContext } from "./FormulaEditor";
 import type { NodeState } from "./graph/graphUtils";
-import { formatDateTime } from "../lib/i18n";
+import { translate, formatDateTime } from "../lib/i18n";
 
 export interface BoundaryPanelProps {
   kind: "start" | "end";
@@ -139,12 +139,12 @@ function StartInput({ sample, labelPrefix }: { sample: Record<string, unknown>; 
     key: k,
     label,
     value: context[k],
-    hint: `{{context.${k}}}`,
+    hint: translate("boundaryPanel.contextK", { k }),
   }));
   const others = Object.keys(context)
     .filter((k) => k !== "claims" && !CONTEXT_LABELS.has(k) && present(context[k]))
     .sort()
-    .map((k) => ({ key: k, label: k, value: context[k], hint: `{{context.${k}}}` }));
+    .map((k) => ({ key: k, label: k, value: context[k], hint: translate("boundaryPanel.contextK", { k }) }));
   const rows = [...known, ...others];
   const claims = context["claims"];
   return (
@@ -153,7 +153,7 @@ function StartInput({ sample, labelPrefix }: { sample: Record<string, unknown>; 
         <div className="mb-0.5 flex items-baseline justify-between text-[11px]">
           <code className="font-mono text-foreground">{"{{query}}"}</code>
           {typeof sample["messageCount"] === "number" && (
-            <span className="text-muted-foreground">{sample["messageCount"]} message(s) in the request</span>
+            <span className="text-muted-foreground">{sample["messageCount"]} {translate("boundaryPanel.messageSInTheRequest")}</span>
           )}
         </div>
         <Text value={String(sample["query"] ?? "")} label={`${labelPrefix} query`} />
@@ -161,13 +161,13 @@ function StartInput({ sample, labelPrefix }: { sample: Record<string, unknown>; 
       {rows.length > 0 && <KeyValues rows={rows} />}
       {claims !== undefined && (
         <details className="text-[11px]">
-          <summary className="cursor-pointer text-muted-foreground">Token claims ({"{{context.claims}}"})</summary>
-          <Json value={claims} label="Token claims" />
+          <summary className="cursor-pointer text-muted-foreground">{translate("boundaryPanel.tokenClaims")}{translate("boundaryPanel.contextClaims")})</summary>
+          <Json value={claims} label={translate("boundaryPanel.tokenClaims2")} />
         </details>
       )}
       <details className="text-[11px]">
-        <summary className="cursor-pointer text-muted-foreground">All template &amp; condition values</summary>
-        <Json value={sample} label="Template and condition values" />
+        <summary className="cursor-pointer text-muted-foreground">{translate("boundaryPanel.allTemplateConditionValues")}</summary>
+        <Json value={sample} label={translate("boundaryPanel.templateAndConditionValues")} />
       </details>
     </div>
   );
@@ -197,7 +197,7 @@ const ROLE_BADGE: Record<string, string> = {
 
 function RequestMessages({ messages }: { messages: RunTraceMessage[] }): React.JSX.Element {
   if (messages.length === 0) {
-    return <p className="text-[11px] text-muted-foreground">The request carried no messages.</p>;
+    return <p className="text-[11px] text-muted-foreground">{translate("boundaryPanel.theRequestCarriedNoMessages")}</p>;
   }
   return (
     <ol className="space-y-2">
@@ -205,10 +205,10 @@ function RequestMessages({ messages }: { messages: RunTraceMessage[] }): React.J
         const text = messageText(m.content);
         const body = (
           <>
-            {text !== "" && <Text value={text} label={`Message ${i + 1} (${m.role})`} />}
+            {text !== "" && <Text value={text} label={translate("boundaryPanel.messageValueRole", { value: i + 1, role: m.role })} />}
             {(m.tool_calls ?? []).map((tc) => (
               <div key={tc.id} className="text-[11px] text-muted-foreground">
-                → calls <code className="font-mono text-foreground">{tc.function.name}</code>
+                {translate("boundaryPanel.calls")} <code className="font-mono text-foreground">{tc.function.name}</code>
                 {tc.function.arguments && <span className="break-all font-mono"> {tc.function.arguments}</span>}
               </div>
             ))}
@@ -252,12 +252,12 @@ function formatTime(iso: string | null | undefined): string | undefined {
 
 function TraceMetadata({ trace }: { trace: RunTrace }): React.JSX.Element {
   const run = [
-    { key: "execution_id", label: "Execution", value: trace.execution_id },
-    { key: "flow_id", label: "Flow", value: trace.flow_id },
-    { key: "flow_version", label: "Flow version", value: trace.flow_version },
-    { key: "status", label: "Status", value: trace.status },
-    { key: "started_at", label: "Started", value: formatTime(trace.started_at) },
-    { key: "finished_at", label: "Finished", value: formatTime(trace.finished_at) },
+    { key: "execution_id", label: translate("boundaryPanel.execution"), value: trace.execution_id },
+    { key: "flow_id", label: translate("boundaryPanel.flow"), value: trace.flow_id },
+    { key: "flow_version", label: translate("boundaryPanel.flowVersion"), value: trace.flow_version },
+    { key: "status", label: translate("boundaryPanel.status"), value: trace.status },
+    { key: "started_at", label: translate("boundaryPanel.started"), value: formatTime(trace.started_at) },
+    { key: "finished_at", label: translate("boundaryPanel.finished"), value: formatTime(trace.finished_at) },
   ].filter((r) => present(r.value));
   const ctx = trace.context ?? {};
   const { jwt_claims: jwtClaims } = ctx;
@@ -275,8 +275,8 @@ function TraceMetadata({ trace }: { trace: RunTrace }): React.JSX.Element {
       <KeyValues rows={[...run, ...context]} />
       {jwtClaims !== undefined && (
         <details className="text-[11px]">
-          <summary className="cursor-pointer text-muted-foreground">Token claims (jwt_claims)</summary>
-          <Json value={jwtClaims} label="Trace token claims" />
+          <summary className="cursor-pointer text-muted-foreground">{translate("boundaryPanel.tokenClaimsJwtClaims")}</summary>
+          <Json value={jwtClaims} label={translate("boundaryPanel.traceTokenClaims")} />
         </details>
       )}
     </div>
@@ -336,28 +336,27 @@ function RunInput({
       <Section
         title={
           trace.state === "ok"
-            ? `Request — ${trace.value.input_messages.length} message(s)`
-            : "Request"
+            ? translate("boundaryPanel.requestLengthMessageS", { length: trace.value.input_messages.length })
+            : translate("boundaryPanel.request")
         }
       >
-        {trace.state === "loading" && <p className="text-[11px] text-muted-foreground">Loading the run's request…</p>}
+        {trace.state === "loading" && <p className="text-[11px] text-muted-foreground">{translate("boundaryPanel.loadingTheRunSRequest")}</p>}
         {trace.state === "error" && (
           <p className="text-[11px] text-muted-foreground">
-            The run's full trace is not available ({trace.message}). Traces are kept for the last 200 executions
-            only{sample ? " — the recorded input values are shown below." : "."}
+            {translate("boundaryPanel.theRunSFullTrace", { message: trace.message })}{sample ? translate("boundaryPanel.theRecordedInputValuesAre") : "."}
           </p>
         )}
         {trace.state === "ok" && <RequestMessages messages={trace.value.input_messages} />}
       </Section>
 
       {sample && (
-        <Section title="Input values">
+        <Section title={translate("boundaryPanel.inputValues")}>
           <StartInput sample={sample} labelPrefix={labelPrefix} />
         </Section>
       )}
 
       {trace.state === "ok" && (
-        <Section title="Metadata">
+        <Section title={translate("boundaryPanel.metadata")}>
           <TraceMetadata trace={trace.value} />
         </Section>
       )}
@@ -393,9 +392,9 @@ export function BoundaryPanel({
   const inputRun: { id: string; label: string; sample?: Record<string, unknown> } | null = !start
     ? null
     : showCurrent && currentId !== null
-      ? { id: currentId, label: "Current", ...(pinned?.executionId === currentId ? { sample: pinned.sample } : {}) }
+      ? { id: currentId, label: translate("boundaryPanel.current"), ...(pinned?.executionId === currentId ? { sample: pinned.sample } : {}) }
       : pinned
-        ? { id: pinned.executionId, label: "Pinned", sample: pinned.sample }
+        ? { id: pinned.executionId, label: translate("boundaryPanel.pinned"), sample: pinned.sample }
         : null;
   const bothSources = start && currentId !== null && pinned !== null && pinned.executionId !== currentId;
 
@@ -403,20 +402,20 @@ export function BoundaryPanel({
     <div className="space-y-3" data-testid={`boundary-panel-${kind}`}>
       <div>
         <h4 className="text-sm font-semibold text-foreground">
-          {start ? (inputRun ? "▶ Start — run input" : "▶ Start") : "■ End"}
+          {start ? (inputRun ? translate("boundaryPanel.startRunInput") : translate("boundaryPanel.start")) : translate("boundaryPanel.end")}
         </h4>
         <p className="mt-0.5 text-[11px] text-muted-foreground">
           {start
             ? inputRun
-              ? `What the ${inputRun.label.toLowerCase()} run brought into the flow.`
-              : "Where a chat request enters the flow. Not a node of the flow — drawn so the entry is visible."
-            : "Where the flow hands its answer back to the caller. Not a node of the flow."}
+              ? translate("boundaryPanel.whatTheValueRunBrought", { value: inputRun.label.toLowerCase() })
+              : translate("boundaryPanel.whereAChatRequestEnters")
+            : translate("boundaryPanel.whereTheFlowHandsIts")}
         </p>
       </div>
 
       {bothSources && (
         <fieldset className="flex gap-0.5 rounded-md border border-border p-0.5 text-[11px]">
-          <legend className="sr-only">Show the input of</legend>
+          <legend className="sr-only">{translate("boundaryPanel.showTheInputOf")}</legend>
           {(["current", "pinned"] as const).map((s) => (
             <button
               key={s}
@@ -427,7 +426,7 @@ export function BoundaryPanel({
                 source === s ? "bg-muted font-semibold text-foreground" : "text-muted-foreground hover:bg-muted/60"
               }`}
             >
-              {s === "current" ? "Current run" : "📌 Pinned run"}
+              {s === "current" ? translate("boundaryPanel.currentRun") : translate("boundaryPanel.pinnedRun")}
             </button>
           ))}
         </fieldset>
@@ -445,15 +444,15 @@ export function BoundaryPanel({
       )}
 
       {start ? (
-        <Section title="Entry">
+        <Section title={translate("boundaryPanel.entry")}>
           <div className="text-[11px] text-foreground">
             {boundaries.entryId === null ? (
-              <span className="text-muted-foreground">The flow has no nodes yet.</span>
+              <span className="text-muted-foreground">{translate("boundaryPanel.theFlowHasNoNodes")}</span>
             ) : (
               <>
-                Runs start at <NodeLink id={boundaries.entryId} onSelect={onSelectNode} />
+                {translate("boundaryPanel.runsStartAt")} <NodeLink id={boundaries.entryId} onSelect={onSelectNode} />
                 <span className="text-muted-foreground">
-                  {" "}— the first node of the flow. Drag from Start to another node to make that the entry.
+                  {" "}{translate("boundaryPanel.theFirstNodeOfThe")}
                 </span>
               </>
             )}
@@ -462,64 +461,63 @@ export function BoundaryPanel({
       ) : (
         <div className="space-y-1 text-[11px] text-foreground">
           {boundaries.exits.length === 0 ? (
-            <span className="text-muted-foreground">No node ends the run — check the flow for loops.</span>
+            <span className="text-muted-foreground">{translate("boundaryPanel.noNodeEndsTheRun")}</span>
           ) : (
             <>
-              <div>The run can end after:</div>
+              <div>{translate("boundaryPanel.theRunCanEndAfter")}</div>
               <ul className="space-y-0.5 pl-3">
                 {boundaries.exits.map((x) => (
                   <li key={x.nodeId}>
                     <NodeLink id={x.nodeId} onSelect={onSelectNode} />{" "}
                     <span className="text-muted-foreground">
-                      {x.kind === "last" ? "— no outgoing edge" : "— when none of its edge conditions matches"}
+                      {x.kind === "last" ? translate("boundaryPanel.noOutgoingEdge") : translate("boundaryPanel.whenNoneOfItsEdge")}
                     </span>
                   </li>
                 ))}
               </ul>
-              <p className="text-muted-foreground">Its last assistant message is the answer.</p>
+              <p className="text-muted-foreground">{translate("boundaryPanel.itsLastAssistantMessageIs")}</p>
             </>
           )}
         </div>
       )}
 
       {!start && currentText !== undefined && currentText !== "" && (
-        <Section title="Current run — answer">
-          <Text value={currentText} label="Current answer" />
+        <Section title={translate("boundaryPanel.currentRunAnswer")}>
+          <Text value={currentText} label={translate("boundaryPanel.currentAnswer")} />
         </Section>
       )}
       {start && !inputRun && currentText !== undefined && currentText !== "" && (
-        <Section title="Current run — request">
-          <Text value={currentText} label="Current request" />
+        <Section title={translate("boundaryPanel.currentRunRequest")}>
+          <Text value={currentText} label={translate("boundaryPanel.currentRequest")} />
         </Section>
       )}
 
-      <Section title={start ? "Pinned request" : "Pinned request — answer"}>
+      <Section title={start ? translate("boundaryPanel.pinnedRequest") : translate("boundaryPanel.pinnedRequestAnswer")}>
         {runs && <RunPicker runs={runs} className="" />}
         {!runs ? (
-          <p className="text-[11px] text-muted-foreground">Save the flow to pin recorded requests.</p>
+          <p className="text-[11px] text-muted-foreground">{translate("boundaryPanel.saveTheFlowToPin")}</p>
         ) : !pinned ? (
           <p className="text-[11px] text-muted-foreground">
-            Pin a recorded request to see {start ? "what it brought into the flow" : "what the flow answered"}.
+            {translate("boundaryPanel.pinARecordedRequestTo")} {start ? translate("boundaryPanel.whatItBroughtIntoThe") : translate("boundaryPanel.whatTheFlowAnswered")}.
           </p>
         ) : start ? (
           inputRun?.id !== pinned.executionId && (
             <p className="text-[11px] text-muted-foreground">
-              Pinned: {pinned.preview || "(no message)"} — switch to “Pinned run” above to see its input.
+              {translate("boundaryPanel.pinned2")} {pinned.preview || translate("boundaryPanel.noMessage")} {translate("boundaryPanel.switchToPinnedRunAbove")}
             </p>
           )
         ) : pinned.response !== undefined ? (
           <div className="space-y-1">
             {pinned.responseNodeId && (
               <div className="text-[11px] text-muted-foreground">
-                Answered by <NodeLink id={pinned.responseNodeId} onSelect={onSelectNode} />
+                {translate("boundaryPanel.answeredBy")} <NodeLink id={pinned.responseNodeId} onSelect={onSelectNode} />
               </div>
             )}
-            <Text value={pinned.response} label="Pinned answer" />
+            <Text value={pinned.response} label={translate("boundaryPanel.pinnedAnswer")} />
           </div>
         ) : (
           <p className="text-[11px] text-muted-foreground">
-            This pin has no recorded answer (pinned before answers were kept, or the run returned none) — pin it
-            again to fetch it.
+            {translate("boundaryPanel.thisPinHasNoRecorded")}
           </p>
         )}
       </Section>

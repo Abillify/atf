@@ -65,6 +65,7 @@ import {
 import { isOverlayEdgeId } from "./graph/canvasIds";
 import { useCanvasOverlay } from "../hooks/useCanvasOverlay";
 import { useCanvasGraph } from "../hooks/useCanvasGraph";
+import { translate } from "../lib/i18n";
 
 // Req 9.3: the types stay exportable under their previous path;
 // hooks (useStudioValidation, useStudioBuilder) and tests import them here.
@@ -479,21 +480,21 @@ function FlowCanvasInner({
         >
           <CanvasButton
             label=""
-            title="Zoom in"
+            title={translate("flowCanvas.zoomIn")}
             onClick={() => void zoomIn({ duration: 150 })}
           >
             <ZoomIn size={14} aria-hidden />
           </CanvasButton>
           <CanvasButton
             label=""
-            title="Zoom out"
+            title={translate("flowCanvas.zoomOut")}
             onClick={() => void zoomOut({ duration: 150 })}
           >
             <ZoomOut size={14} aria-hidden />
           </CanvasButton>
           <CanvasButton
-            label="Fit"
-            title="Fit the whole flow into view"
+            label={translate("flowCanvas.fit")}
+            title={translate("flowCanvas.fitTheWholeFlowInto")}
             onClick={() =>
               void fitView({ padding: 0.1, duration: 300, maxZoom: 1 })
             }
@@ -502,8 +503,8 @@ function FlowCanvasInner({
           </CanvasButton>
           {onAutoLayout && (
             <CanvasButton
-              label="Tidy up"
-              title="Re-arrange all nodes top-down by their connections (undo with Cmd/Ctrl+Z)"
+              label={translate("flowCanvas.tidyUp")}
+              title={translate("flowCanvas.reArrangeAllNodesTop")}
               onClick={onAutoLayout}
             >
               <Network size={14} aria-hidden />
@@ -511,8 +512,8 @@ function FlowCanvasInner({
           )}
           {referenceEdges && referenceEdges.length > 0 && (
             <CanvasButton
-              label="Tool links"
-              title="Show tool connections — nodes one node calls (parallel children, harness workers and verifier), defined in its settings. They dock right → left and are dashed; the run's flow runs top → bottom."
+              label={translate("flowCanvas.toolLinks")}
+              title={translate("flowCanvas.showToolConnectionsNodesOne")}
               onClick={() => setShowReferences((v) => !v)}
               pressed={showReferences}
             >
@@ -520,8 +521,8 @@ function FlowCanvasInner({
             </CanvasButton>
           )}
           <CanvasButton
-            label="Map"
-            title="Show/hide the overview map (bottom right)"
+            label={translate("flowCanvas.map")}
+            title={translate("flowCanvas.showHideTheOverviewMap")}
             onClick={() => setShowMiniMap((v) => !v)}
             pressed={showMiniMap}
           >
@@ -532,7 +533,7 @@ function FlowCanvasInner({
           <MiniMap
             zoomable
             pannable
-            ariaLabel="Overview map — drag to pan, scroll to zoom"
+            ariaLabel={translate("flowCanvas.overviewMapDragToPan")}
             nodeColor={(n) =>
               nodeTypeHex(
                 (n.data as EditableNodeData | undefined)?.flowNode?.type,

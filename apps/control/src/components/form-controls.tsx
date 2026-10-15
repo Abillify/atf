@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { FormulaEditorDialog, FormulaInput, FxPicker } from "./FormulaEditor";
 import type { FormulaKind } from "../lib/formula";
 import { jsonKeyPathAt } from "../lib/json-key-path";
+import { translate } from "../lib/i18n";
 
 export function Field({
   label,
@@ -192,7 +193,7 @@ export function JsonEditor({
         setError(null);
         onChange(undefined);
       } else {
-        setError("Must not be empty.");
+        setError(translate("form-controls.mustNotBeEmpty"));
       }
       return;
     }
@@ -202,7 +203,7 @@ export function JsonEditor({
       onChange(parsed);
     } catch (err) {
       setError(
-        `Invalid JSON — not applied (${err instanceof Error ? err.message : String(err)})`,
+        translate("form-controls.invalidJSONNotAppliedValue", { value: err instanceof Error ? err.message : String(err) }),
       );
     }
   };

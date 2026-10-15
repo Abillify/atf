@@ -6,6 +6,7 @@ import type React from "react";
 import type { MetricsSummary } from "../types/metrics";
 import { Card } from "../lib/ui";
 import { currencySymbol } from "../lib/currency";
+import { translate } from "../lib/i18n";
 
 export interface StatsBarProps {
   summary: MetricsSummary;
@@ -77,38 +78,38 @@ export function StatsBar({ summary }: StatsBarProps): React.JSX.Element {
 
   return (
     <div className="flex flex-wrap gap-3 border-b border-border bg-muted px-6 py-3">
-      <Kpi label="Requests" value={formatNumber(summary.requestsTotal)} />
+      <Kpi label={translate("statsBar.requests")} value={formatNumber(summary.requestsTotal)} />
       <Kpi
-        label="Active"
+        label={translate("statsBar.active")}
         value={String(summary.activeExecutions)}
         accent="text-warning"
         hint={
-          summary.queueDepth > 0 ? `${summary.queueDepth} queued` : "no backlog"
+          summary.queueDepth > 0 ? `${summary.queueDepth} queued` : translate("statsBar.noBacklog")
         }
       />
-      <Kpi label="LLM calls" value={formatNumber(summary.llmCallsTotal)} />
+      <Kpi label={translate("statsBar.lLMCalls")} value={formatNumber(summary.llmCallsTotal)} />
       <Kpi
-        label="Tokens"
+        label={translate("statsBar.tokens")}
         value={formatNumber(totalTokens)}
-        hint={`${formatNumber(summary.tokensPrompt)} in / ${formatNumber(summary.tokensCompletion)} out`}
+        hint={translate("statsBar.valueInValue2Out", { value: formatNumber(summary.tokensPrompt), value2: formatNumber(summary.tokensCompletion) })}
       />
       <Kpi
-        label="Est. cost"
+        label={translate("statsBar.estCost")}
         value={formatCurrency(summary.costTotal)}
         accent="text-success"
       />
       <Kpi
-        label="Avg node"
+        label={translate("statsBar.avgNode")}
         value={`${summary.avgNodeLatencyMs.toFixed(0)} ms`}
       />
       <Kpi
-        label="Error rate"
+        label={translate("statsBar.errorRate")}
         value={`${errorRate.toFixed(1)}%`}
         accent={errorRate > 5 ? "text-danger" : "text-foreground"}
       />
       {groundednessTotal > 0 && (
         <Kpi
-          label="Grounded"
+          label={translate("statsBar.grounded")}
           value={`${groundedPct.toFixed(0)}%`}
           accent={groundedPct < 80 ? "text-warning" : "text-foreground"}
           hint={`${summary.groundednessFailed} ungrounded`}
@@ -116,9 +117,9 @@ export function StatsBar({ summary }: StatsBarProps): React.JSX.Element {
       )}
       {approvalsTotal > 0 && (
         <Kpi
-          label="Approvals"
+          label={translate("statsBar.approvals")}
           value={String(approvalsTotal)}
-          hint={`${summary.approvalsApproved} ok / ${summary.approvalsDenied} denied`}
+          hint={translate("statsBar.approvalsApprovedOkApprovalsDeniedDenied", { approvalsApproved: summary.approvalsApproved, approvalsDenied: summary.approvalsDenied })}
         />
       )}
     </div>

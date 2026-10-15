@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Provider Testing route (Req. 9.6).
@@ -11,7 +12,7 @@ export default function ProviderTestingLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading provider tests"
+      aria-label={translate("providerTesting.loadingProviderTests")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-56" height="h-6" />

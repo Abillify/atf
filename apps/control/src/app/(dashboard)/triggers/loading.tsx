@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Triggers route (Req. 9.6).
@@ -11,7 +12,7 @@ export default function TriggersLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading triggers"
+      aria-label={translate("triggers.loadingTriggers")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-48" height="h-6" />

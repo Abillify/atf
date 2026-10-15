@@ -32,6 +32,7 @@ import {
 } from "./graphUtils";
 import { Wrench } from "lucide-react";
 import { nodeTypeIcon } from "./nodeIcons";
+import { translate } from "../../lib/i18n";
 
 // Defined as a `type` (not `interface`) so it satisfies React Flow v12's
 // `Node<Data extends Record<string, unknown>>` constraint via TS's implicit
@@ -215,7 +216,7 @@ export function NodeCard({
             state.latency_ms != null ||
             state.model) && (
             <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs opacity-85">
-              {state.status === "running" && <span>⏳ running…</span>}
+              {state.status === "running" && <span>{translate("nodeRenderer.running")}</span>}
               {state.latency_ms != null && state.status !== "running" && (
                 <span>{state.latency_ms}ms</span>
               )}

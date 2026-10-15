@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Live Graph route (Req. 12.3).
@@ -11,7 +12,7 @@ export default function GraphLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading Live Graph"
+      aria-label={translate("graph.loadingLiveGraph")}
       className="flex h-full overflow-hidden"
     >
       {/* Execution picker sidebar skeleton */}

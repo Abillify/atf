@@ -9,8 +9,10 @@
  */
 
 import type { Catalog } from "./en";
+import { uiDe } from "./ui.de";
 
 export const de: Catalog = {
+  ...uiDe,
   "nav.group.research": "Recherche & Optimierung",
   "nav.group.monitoring": "Monitoring",
   "nav.group.configuration": "Konfiguration",

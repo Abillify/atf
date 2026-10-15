@@ -15,6 +15,7 @@ import { useAuth } from "../../../lib/auth/useAuth";
 import { useQuery } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
+import { translate } from "../../../lib/i18n";
 
 interface GuardrailSection {
   enabled?: boolean;
@@ -65,7 +66,7 @@ function SectionBadge({
       }`}
     >
       <span className="font-medium">{label}</span>
-      {disabled && <span className="ml-1">(disabled)</span>}
+      {disabled && <span className="ml-1">{translate("guardrails.disabled")}</span>}
       {!disabled && section.mode && (
         <span className="ml-1 text-accent">mode: {section.mode}</span>
       )}
@@ -75,7 +76,7 @@ function SectionBadge({
         </span>
       )}
       {!disabled && section.redactPii && (
-        <span className="ml-1 text-accent">redacts PII</span>
+        <span className="ml-1 text-accent">{translate("guardrails.redactsPII")}</span>
       )}
     </div>
   );
@@ -97,7 +98,7 @@ export default function GuardrailsPage() {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">
-        Guardrail Policy
+        {translate("guardrails.guardrailPolicy")}
       </h1>
 
       {isLoading && (
@@ -106,7 +107,7 @@ export default function GuardrailsPage() {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Loading policy…
+          {translate("guardrails.loadingPolicy")}
         </div>
       )}
 
@@ -115,20 +116,19 @@ export default function GuardrailsPage() {
           role="alert"
           className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load guardrails: {error.message}
+          {translate("guardrails.failedToLoadGuardrailsMessage", { message: error.message })}
         </div>
       )}
 
       {!isLoading && !error && data && !data.hasPolicy && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          No guardrails.yaml found. Create one in FLOWS_DIR to configure
-          per-flow input/output/egress guardrail overrides.
+          {translate("guardrails.noGuardrailsYamlFoundCreate")}
         </div>
       )}
 
       {!isLoading && !error && data?.hasPolicy && data.rules.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          Policy loaded but has no rules.
+          {translate("guardrails.policyLoadedButHasNo")}
         </div>
       )}
 
@@ -139,7 +139,7 @@ export default function GuardrailsPage() {
             className="rounded-lg border border-border bg-card px-4 py-3 shadow-sm"
           >
             <div className="mb-2 font-mono text-sm text-foreground">
-              {rule.flow === "*" ? "* (all flows)" : rule.flow}
+              {rule.flow === "*" ? translate("guardrails.allFlows") : rule.flow}
             </div>
             <div className="flex flex-wrap gap-2">
               <SectionBadge label="input" section={rule.input} />

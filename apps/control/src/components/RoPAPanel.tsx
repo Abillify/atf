@@ -18,6 +18,7 @@ import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
 import { downloadAuthenticated } from "../lib/authenticated-download";
+import { translate } from "../lib/i18n";
 
 interface FlowProcessor {
   provider: string;
@@ -104,11 +105,10 @@ export function RoPAPanel(): React.JSX.Element {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">
-            🗺️ Record of Processing Activities (Art. 30)
+            {translate("roPAPanel.recordOfProcessingActivitiesArt")}
           </h2>
           <p className="text-xs text-muted-foreground">
-            Per-flow data lineage: declared data classes → processing providers
-            → residency assessment against the policy.
+            {translate("roPAPanel.perFlowDataLineageDeclared")}
           </p>
         </div>
         <div className="flex gap-2">
@@ -118,7 +118,7 @@ export function RoPAPanel(): React.JSX.Element {
             onClick={() => void fetchMap()}
             disabled={loading}
           >
-            {loading ? "Loading…" : "↻ Refresh"}
+            {loading ? translate("roPAPanel.loading") : translate("roPAPanel.refresh")}
           </Button>
           {isAuthenticated && (
             <Button
@@ -127,7 +127,7 @@ export function RoPAPanel(): React.JSX.Element {
               onClick={() => void downloadMarkdown()}
               disabled={downloading}
             >
-              {downloading ? "Downloading…" : "↓ Download Markdown"}
+              {downloading ? translate("roPAPanel.downloading") : translate("roPAPanel.downloadMarkdown")}
             </Button>
           )}
         </div>
@@ -142,12 +142,11 @@ export function RoPAPanel(): React.JSX.Element {
       {map && (
         <>
           <p className="text-xs text-muted-foreground">
-            {map.summary.flows} flow(s), {map.summary.withDataClasses} with
-            declared data classes,{" "}
+            {translate("roPAPanel.flowsFlowSWithDataClassesWith", { flows: map.summary.flows, withDataClasses: map.summary.withDataClasses })}{" "}
             <span className={map.summary.violations > 0 ? "text-danger font-medium" : ""}>
-              {map.summary.violations} residency violation(s)
+              {translate("roPAPanel.violationsResidencyViolationS", { violations: map.summary.violations })}
             </span>
-            . Providers: {map.summary.providers.join(", ") || "none"}.
+            {translate("roPAPanel.providers")} {map.summary.providers.join(", ") || "none"}.
           </p>
 
           <div className="flex flex-col gap-2">
@@ -178,13 +177,13 @@ export function RoPAPanel(): React.JSX.Element {
                     ))
                   ) : (
                     <span className="text-muted-foreground italic">
-                      no data classes declared
+                      {translate("roPAPanel.noDataClassesDeclared")}
                     </span>
                   )}
                 </div>
                 {e.processors.length > 0 && (
                   <div className="mt-1 text-[11px] text-muted-foreground">
-                    Processors:{" "}
+                    {translate("roPAPanel.processors")}{" "}
                     {e.processors
                       .map(
                         (p) =>

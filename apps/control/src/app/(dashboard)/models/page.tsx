@@ -19,7 +19,7 @@ import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Button, Badge } from "../../../lib/ui";
-import { formatDate } from "../../../lib/i18n";
+import { translate, formatDate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors src/routes/models.ts ModelObject)
@@ -89,20 +89,20 @@ function ModelDetail({
     <div className="border-t border-border px-4 py-3 space-y-3 bg-muted/40">
       <div className="flex items-center justify-between">
         <span className="text-sm font-medium text-foreground">
-          Model detail — <span className="font-mono">{id}</span>
+          {translate("models.modelDetail")} <span className="font-mono">{id}</span>
         </span>
-        <Button variant="ghost" size="sm" onClick={onClose}>✕ Close</Button>
+        <Button variant="ghost" size="sm" onClick={onClose}>{translate("models.close")}</Button>
       </div>
-      {loading && <p className="text-sm text-muted-foreground">Loading…</p>}
+      {loading && <p className="text-sm text-muted-foreground">{translate("models.loading")}</p>}
       {error && <p className="text-sm text-danger">{error}</p>}
       {model && (
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
             {[
               { label: "ID", value: model.id },
-              { label: "Display name", value: model.name ?? "—" },
-              { label: "Owned by", value: model.owned_by },
-              { label: "Created", value: formatDate(model.created * 1000) },
+              { label: translate("models.displayName"), value: model.name ?? "—" },
+              { label: translate("models.ownedBy"), value: model.owned_by },
+              { label: translate("models.created"), value: formatDate(model.created * 1000) },
             ].map(({ label, value }) => (
               <div key={label} className="rounded border border-border bg-background p-2">
                 <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
@@ -113,7 +113,7 @@ function ModelDetail({
           {/* Capabilities */}
           {model.info?.meta?.capabilities && (
             <div>
-              <p className="text-xs font-medium text-muted-foreground mb-1">Capabilities</p>
+              <p className="text-xs font-medium text-muted-foreground mb-1">{translate("models.capabilities")}</p>
               <div className="flex flex-wrap gap-2">
                 {Object.entries(model.info.meta.capabilities).map(([cap, enabled]) => (
                   <Badge key={cap} variant={enabled ? "success" : "secondary"}>
@@ -126,7 +126,7 @@ function ModelDetail({
           {/* Raw JSON */}
           <details className="text-xs">
             <summary className="cursor-pointer text-muted-foreground hover:text-foreground select-none">
-              Raw JSON
+              {translate("models.rawJSON")}
             </summary>
             <pre className="mt-2 overflow-auto rounded border border-border bg-background p-3 text-foreground">
               {JSON.stringify(model, null, 2)}
@@ -134,7 +134,7 @@ function ModelDetail({
           </details>
           {/* Usage hint */}
           <div className="rounded border border-accent/30 bg-accent/10 px-3 py-2 text-xs text-accent">
-            Use this model in API calls:{" "}
+            {translate("models.useThisModelInAPI")}{" "}
             <code className="font-mono">&quot;model&quot;: &quot;{model.id}&quot;</code> in{" "}
             <code className="font-mono">POST /v1/chat/completions</code>
           </div>
@@ -184,14 +184,13 @@ export default function ModelsPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">Model Catalog</h1>
+          <h1 className="text-lg font-semibold text-foreground">{translate("models.modelCatalog")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Every loaded flow is exposed as an OpenAI-compatible model.
-            Use the model ID in <code className="font-mono text-xs">POST /v1/chat/completions</code>.
+            {translate("models.everyLoadedFlowIsExposed")} <code className="font-mono text-xs">POST /v1/chat/completions</code>.
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => void load()} disabled={loading}>
-          {loading ? "Loading…" : "↻ Refresh"}
+          {loading ? translate("models.loading") : translate("models.refresh")}
         </Button>
       </div>
 
@@ -200,7 +199,7 @@ export default function ModelsPage() {
         type="search"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
-        placeholder="Search by id or name…"
+        placeholder={translate("models.searchByIdOrName")}
         className="w-full max-w-sm rounded border border-border bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       />
 
@@ -212,7 +211,7 @@ export default function ModelsPage() {
 
       {!loading && filtered.length === 0 && !error && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-sm text-muted-foreground">
-          {search ? "No models match your search." : "No models found. Load a flow YAML to register a model."}
+          {search ? translate("models.noModelsMatchYourSearch") : translate("models.noModelsFoundLoadA")}
         </div>
       )}
 
@@ -242,7 +241,7 @@ export default function ModelsPage() {
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
                   {hasReasoning && (
-                    <Badge variant="default" title="Supports reasoning/thinking blocks">
+                    <Badge variant="default" title={translate("models.supportsReasoningThinkingBlocks")}>
                       reasoning
                     </Badge>
                   )}
@@ -270,8 +269,8 @@ export default function ModelsPage() {
       {/* Count footer */}
       {filtered.length > 0 && (
         <p className="text-xs text-muted-foreground">
-          {filtered.length} of {models.length} model(s)
-          {search && ` matching "${search}"`}
+          {translate("models.lengthOfLength2ModelS", { length: filtered.length, length2: models.length })}
+          {search && translate("models.matchingSearch", { search })}
         </p>
       )}
     </div>

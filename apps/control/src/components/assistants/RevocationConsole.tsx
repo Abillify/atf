@@ -27,7 +27,7 @@ import {
   useConfirm,
 } from "../../lib/ui";
 import { PAGE_SIZE, readJson, type DelegationView } from "./assistantShared";
-import { formatDateTime } from "../../lib/i18n";
+import { translate, formatDateTime } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Panel
@@ -153,11 +153,7 @@ export function RevocationConsole(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-muted-foreground">
-        Every delegated OIDC grant across every tenant and user, in one place.
-        Revoking here does two things at once: the stored grant can no longer
-        mint a new access token, and any token already minted from it and
-        still cached is dropped too — so a revoked assistant stops acting
-        immediately rather than at that cached token&apos;s own expiry.
+        {translate("revocationConsole.everyDelegatedOIDCGrantAcross")}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <Button
@@ -185,24 +181,24 @@ export function RevocationConsole(): React.JSX.Element {
         ))}
         <input
           className="ml-auto rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
-          placeholder="Filter by user id…"
+          placeholder={translate("revocationConsole.filterByUserId")}
           value={search}
           onChange={(event) => {
             setSearch(event.target.value);
             setOffset(0);
           }}
-          aria-label="Filter delegations by user id"
+          aria-label={translate("revocationConsole.filterDelegationsByUserId")}
         />
       </div>
 
       {isLoading && (
         <div className="text-xs text-muted-foreground" aria-busy="true">
-          Loading delegations…
+          {translate("revocationConsole.loadingDelegations")}
         </div>
       )}
       {error && (
         <div role="alert" className="text-xs text-danger">
-          Failed to load delegations: {error.message}
+          {translate("revocationConsole.failedToLoadDelegationsMessage", { message: error.message })}
         </div>
       )}
       {revoke.error && (
@@ -212,7 +208,7 @@ export function RevocationConsole(): React.JSX.Element {
       )}
       {!isLoading && !error && rows.length === 0 && (
         <div className="rounded-lg border border-dashed border-border py-10 text-center text-xs text-muted-foreground">
-          No delegation grants match this filter.
+          {translate("revocationConsole.noDelegationGrantsMatchThis")}
         </div>
       )}
 
@@ -221,11 +217,11 @@ export function RevocationConsole(): React.JSX.Element {
           <Table>
             <TableHead>
               <TableRow>
-                <TableHeaderCell>User</TableHeaderCell>
-                <TableHeaderCell>Assistant</TableHeaderCell>
-                <TableHeaderCell>Issuer</TableHeaderCell>
-                <TableHeaderCell>State</TableHeaderCell>
-                <TableHeaderCell>Granted</TableHeaderCell>
+                <TableHeaderCell>{translate("revocationConsole.user")}</TableHeaderCell>
+                <TableHeaderCell>{translate("revocationConsole.assistant")}</TableHeaderCell>
+                <TableHeaderCell>{translate("revocationConsole.issuer")}</TableHeaderCell>
+                <TableHeaderCell>{translate("revocationConsole.state")}</TableHeaderCell>
+                <TableHeaderCell>{translate("revocationConsole.granted")}</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
             </TableHead>
@@ -264,16 +260,16 @@ export function RevocationConsole(): React.JSX.Element {
                         title={writeGate.title}
                         onClick={async () => {
                           const ok = await confirmDialog({
-                            title: "Revoke delegation?",
-                            message: `${row.assistantId} of ${row.userId} loses its ${row.issuer} delegation at once; the user has to consent again to restore it.`,
-                            confirmLabel: "Revoke",
+                            title: translate("revocationConsole.revokeDelegation"),
+                            message: translate("revocationConsole.assistantIdOfUserIdLosesIts", { assistantId: row.assistantId, userId: row.userId, issuer: row.issuer }),
+                            confirmLabel: translate("revocationConsole.revoke"),
                             destructive: true,
                           });
                           if (ok) revoke.mutate(row);
                         }}
-                        aria-label={`Revoke delegation for ${row.userId} / ${row.assistantId} / ${row.issuer}`}
+                        aria-label={translate("revocationConsole.revokeDelegationForUserIdAssistantId", { userId: row.userId, assistantId: row.assistantId, issuer: row.issuer })}
                       >
-                        Revoke
+                        {translate("revocationConsole.revoke")}
                       </Button>
                     )}
                   </TableCell>
@@ -292,7 +288,7 @@ export function RevocationConsole(): React.JSX.Element {
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
             >
-              Previous
+              {translate("revocationConsole.previous")}
             </Button>
             <Button
               size="sm"
@@ -300,7 +296,7 @@ export function RevocationConsole(): React.JSX.Element {
               disabled={offset + rows.length >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
             >
-              Next
+              {translate("revocationConsole.next")}
             </Button>
           </div>
         </>

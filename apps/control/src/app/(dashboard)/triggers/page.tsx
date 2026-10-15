@@ -21,6 +21,7 @@ import { useCanWrite } from "../../../lib/auth/useCanWrite";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Badge, Button, } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors GET /triggers response from src/routes/triggers.ts)
@@ -93,12 +94,12 @@ function TestFirePanel({
   return (
     <div className="mt-3 rounded border border-border bg-muted p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-sm font-medium text-foreground">Test fire — <span className="font-mono">{flowId}</span></span>
+        <span className="text-sm font-medium text-foreground">{translate("triggers.testFire")} <span className="font-mono">{flowId}</span></span>
         <Button variant="ghost" size="sm" onClick={onClose}>✕</Button>
       </div>
       <div>
         <label htmlFor="trigger-test-payload" className="block text-xs font-medium text-muted-foreground mb-1">
-          Payload (JSON or plain text)
+          {translate("triggers.payloadJSONOrPlainText")}
         </label>
         <textarea
           id="trigger-test-payload"
@@ -106,15 +107,15 @@ function TestFirePanel({
           onChange={(e) => setPayload(e.target.value)}
           rows={4}
           className="w-full rounded border border-border bg-background px-3 py-2 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring resize-y"
-          placeholder='{"event": "test"}'
+          placeholder={translate("triggers.eventTest")}
         />
       </div>
       <div className="flex items-center gap-2">
         <Button variant="primary" size="sm" onClick={() => void fire()} disabled={loading || !writeGate.allowed} title={writeGate.title}>
-          {loading ? "Firing…" : "Fire (sync)"}
+          {loading ? translate("triggers.firing") : translate("triggers.fireSync")}
         </Button>
         <p className="text-xs text-muted-foreground">
-          Only works for flows without a webhookSecret. Runs synchronously and returns the response.
+          {translate("triggers.onlyWorksForFlowsWithout")}
         </p>
       </div>
       {result && (
@@ -123,7 +124,7 @@ function TestFirePanel({
             <span>✗ {result.error}</span>
           ) : (
             <div className="space-y-1">
-              <div>✓ Accepted {result.executionId && <span className="font-mono text-xs">({result.executionId.slice(0, 8)})</span>}</div>
+              <div>{translate("triggers.accepted")} {result.executionId && <span className="font-mono text-xs">({result.executionId.slice(0, 8)})</span>}</div>
               {result.response && (
                 <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-foreground">{result.response}</pre>
               )}
@@ -180,14 +181,13 @@ export default function TriggersPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">Webhook Triggers</h1>
+          <h1 className="text-lg font-semibold text-foreground">{translate("triggers.webhookTriggers")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            Flows with a <code className="font-mono text-xs">trigger</code> node in webhook mode.
-            POST to <code className="font-mono text-xs">{endpointBase}/triggers/:flowId</code> to fire them.
+            {translate("triggers.flowsWithA")} <code className="font-mono text-xs">trigger</code> {translate("triggers.nodeInWebhookModePOST")} <code className="font-mono text-xs">{endpointBase}/triggers/:flowId</code> {translate("triggers.toFireThem")}
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => void fetchTriggers()} disabled={loading}>
-          {loading ? "Loading…" : "↻ Refresh"}
+          {loading ? translate("triggers.loading") : translate("triggers.refresh")}
         </Button>
       </div>
 
@@ -199,16 +199,14 @@ export default function TriggersPage() {
 
       {/* Auth note */}
       <div className="rounded border border-accent/30 bg-accent/10 px-4 py-3 text-sm text-foreground">
-        <strong>Authentication:</strong> Webhook requests use HMAC-SHA256 signatures, not JWT.
-        Send <code className="font-mono text-xs">X-Trigger-Signature: sha256=&lt;hex&gt;</code> with the
-        shared secret configured per flow. Flows without a secret accept unsigned requests.
+        <strong>{translate("triggers.authentication")}</strong> {translate("triggers.webhookRequestsUseHMACSHA256")} <code className="font-mono text-xs">X-Trigger-Signature: sha256=&lt;hex&gt;</code> {translate("triggers.withTheSharedSecretConfigured")}
       </div>
 
       {/* Flow list */}
       {!loading && flows.length === 0 && !error && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-sm text-muted-foreground">
-          No webhook-trigger flows found. Add a <code className="font-mono">type: trigger</code> node with{" "}
-          <code className="font-mono">config.mode: webhook</code> to a flow YAML to register it here.
+          {translate("triggers.noWebhookTriggerFlowsFound")} <code className="font-mono">type: trigger</code> {translate("triggers.nodeWith")}{" "}
+          <code className="font-mono">config.mode: webhook</code> {translate("triggers.toAFlowYAMLTo")}
         </div>
       )}
 
@@ -231,7 +229,7 @@ export default function TriggersPage() {
                   POST {endpointBase}/triggers/{f.flowId}
                 </p>
                 {f.tenantId && (
-                  <p className="text-xs text-muted-foreground">Tenant: <span className="font-mono">{f.tenantId}</span></p>
+                  <p className="text-xs text-muted-foreground">{translate("triggers.tenant")} <span className="font-mono">{f.tenantId}</span></p>
                 )}
               </div>
               <Button
@@ -241,7 +239,7 @@ export default function TriggersPage() {
                 disabled={!writeGate.allowed}
                 title={writeGate.title}
               >
-                {firingId === f.flowId ? "Close test" : "Test fire"}
+                {firingId === f.flowId ? translate("triggers.closeTest") : translate("triggers.testFire2")}
               </Button>
             </div>
             {firingId === f.flowId && isAuthenticated && (

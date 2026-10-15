@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Providers route (Req. 13.5).
@@ -11,7 +12,7 @@ export default function ProvidersLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading provider keys"
+      aria-label={translate("providers.loadingProviderKeys")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-44" height="h-6" />

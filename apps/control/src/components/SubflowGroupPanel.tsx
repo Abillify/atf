@@ -12,6 +12,7 @@ import type React from "react";
 import { Redo2, RotateCcw, Save, Trash2, Undo2 } from "lucide-react";
 import { Button } from "../lib/ui";
 import { subflowLabel } from "../lib/subflows";
+import { translate } from "../lib/i18n";
 
 export interface SubflowGroupPanelProps {
   path: string;
@@ -46,7 +47,7 @@ export function SubflowGroupPanel({
           📄 {subflowLabel(path)}
           {dirty && (
             <span
-              title="Unsaved changes in this sub-flow"
+              title={translate("subflowGroupPanel.unsavedChangesInThisSub")}
               className="rounded bg-warning-soft px-1 py-0.5 text-[10px] font-medium text-warning dark:bg-warning-soft dark:text-warning"
             >
               unsaved
@@ -54,8 +55,7 @@ export function SubflowGroupPanel({
           )}
         </h4>
         <p className="text-[11px] text-muted-foreground">
-          Sub-flow group · {nodeCount} node{nodeCount === 1 ? "" : "s"}. Actions below apply to this
-          sub-flow only.
+          {translate("subflowGroupPanel.subFlowGroupNodeCountNode", { nodeCount })}{nodeCount === 1 ? "" : "s"}{translate("subflowGroupPanel.actionsBelowApplyToThis")}
         </p>
       </div>
 
@@ -64,10 +64,10 @@ export function SubflowGroupPanel({
           variant="secondary"
           size="sm"
           onClick={onSave}
-          title="Write this sub-flow to its own file (subflows/…), independent of the parent flow"
+          title={translate("subflowGroupPanel.writeThisSubFlowTo")}
         >
           <Save size={14} aria-hidden className="mr-1" />
-          Save this sub-flow
+          {translate("subflowGroupPanel.saveThisSubFlow")}
         </Button>
 
         <div className="flex gap-1.5">
@@ -76,22 +76,22 @@ export function SubflowGroupPanel({
             size="sm"
             onClick={onUndo}
             disabled={!canUndo}
-            title="Undo the last edit in this sub-flow"
+            title={translate("subflowGroupPanel.undoTheLastEditIn")}
             className="flex-1"
           >
             <Undo2 size={14} aria-hidden className="mr-1" />
-            Undo
+            {translate("subflowGroupPanel.undo")}
           </Button>
           <Button
             variant="secondary"
             size="sm"
             onClick={onRedo}
             disabled={!canRedo}
-            title="Redo the last undone edit in this sub-flow"
+            title={translate("subflowGroupPanel.redoTheLastUndoneEdit")}
             className="flex-1"
           >
             <Redo2 size={14} aria-hidden className="mr-1" />
-            Redo
+            {translate("subflowGroupPanel.redo")}
           </Button>
         </div>
 
@@ -100,20 +100,20 @@ export function SubflowGroupPanel({
           size="sm"
           onClick={onReset}
           disabled={!dirty}
-          title="Discard this sub-flow's unsaved changes and reload it from its file"
+          title={translate("subflowGroupPanel.discardThisSubFlowS")}
         >
           <RotateCcw size={14} aria-hidden className="mr-1" />
-          Reset to saved
+          {translate("subflowGroupPanel.resetToSaved")}
         </Button>
 
         <Button
           variant="destructive"
           size="sm"
           onClick={onRemove}
-          title="Remove this sub-flow from the current flow. Its file is kept; only the include is dropped on save."
+          title={translate("subflowGroupPanel.removeThisSubFlowFrom")}
         >
           <Trash2 size={14} aria-hidden className="mr-1" />
-          Remove from this flow
+          {translate("subflowGroupPanel.removeFromThisFlow")}
         </Button>
       </div>
     </div>

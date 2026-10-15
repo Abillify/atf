@@ -17,6 +17,7 @@ import { useEffect } from "react";
 
 import { Button } from "../../lib/ui";
 import { reportClientError } from "../../lib/telemetry";
+import { translate } from "../../lib/i18n";
 
 export interface ErrorProps {
   /** The error that was thrown. */
@@ -64,25 +65,25 @@ export default function DashboardError({ error, reset }: ErrorProps) {
 
       <div>
         <h2 className="text-lg font-semibold text-foreground">
-          Something went wrong
+          {translate("error.somethingWentWrong")}
         </h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          An unexpected error occurred while rendering this page.
+          {translate("error.anUnexpectedErrorOccurredWhile")}
         </p>
         {error.digest && (
           <p className="mt-1 font-mono text-xs text-muted-foreground">
-            Error ID: {error.digest}
+            {translate("error.errorIDDigest", { digest: error.digest })}
           </p>
         )}
         {error.requestId && (
           <p className="mt-1 font-mono text-xs text-muted-foreground">
-            Request ID: {error.requestId}
+            {translate("error.requestIDRequestId", { requestId: error.requestId })}
           </p>
         )}
       </div>
 
       <Button variant="primary" onClick={reset}>
-        Try again
+        {translate("error.tryAgain")}
       </Button>
     </div>
   );

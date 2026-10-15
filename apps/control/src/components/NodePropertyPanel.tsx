@@ -39,6 +39,7 @@ import { NodeClassifierSection } from "./nodepanel/NodeClassifierSection";
 import { NodeParallelSection } from "./nodepanel/NodeParallelSection";
 import { ToolArgsList } from "./nodepanel/ToolArgsList";
 import { TOOL_SECTION_FLASH, UnreadFieldNotice } from "./nodepanel/shared";
+import { translate } from "../lib/i18n";
 
 export { JsonEditor } from "./form-controls";
 export type { EdgeSelection } from "./nodepanel/EdgeDetailsPanel";
@@ -166,7 +167,7 @@ export function NodePropertyPanel({
       <>
         {emptyContent ?? (
           <p className="py-8 text-center text-xs text-muted-foreground">
-            Select a node or edge to edit, or add a node from the toolbar.
+            {translate("nodePropertyPanel.selectANodeOrEdge")}
           </p>
         )}
       </>
@@ -241,18 +242,18 @@ export function NodePropertyPanel({
       {onOriginChange && (
         <label className="flex items-center gap-2 text-[11px]">
           <span className="shrink-0 font-medium uppercase tracking-wide text-muted-foreground">
-            Saved in
+            {translate("nodePropertyPanel.savedIn")}
           </span>
           <select
-            aria-label="Saved in"
+            aria-label={translate("nodePropertyPanel.savedIn")}
             value={origin ?? ""}
             onChange={(e) =>
               onOriginChange(e.target.value === "" ? null : e.target.value)
             }
             className="min-w-0 flex-1 rounded border border-border bg-card px-1.5 py-0.5 font-mono text-[11px]"
-            title="The file this node is written to on save — the flow file or a sub-flow (use “New subflow” in the palette to create one)"
+            title={translate("nodePropertyPanel.theFileThisNodeIs")}
           >
-            <option value="">this flow's file</option>
+            <option value="">{translate("nodePropertyPanel.thisFlowSFile")}</option>
             {[...new Set([...originOptions, ...(origin ? [origin] : [])])]
               .sort()
               .map((p) => (
@@ -278,7 +279,7 @@ export function NodePropertyPanel({
                 : "text-muted-foreground hover:bg-muted"
             }`}
           >
-            {t === "form" ? "Form" : "JSON (all fields)"}
+            {t === "form" ? translate("nodePropertyPanel.form") : translate("nodePropertyPanel.jSONAllFields")}
           </button>
         ))}
       </div>
@@ -286,8 +287,8 @@ export function NodePropertyPanel({
       {tab === "json" ? (
         <JsonEditor
           key={node.id}
-          label="Node definition"
-          hint="Edits apply while the JSON is valid. The id cannot be changed here."
+          label={translate("nodePropertyPanel.nodeDefinition")}
+          hint={translate("nodePropertyPanel.editsApplyWhileTheJSON")}
           rows={24}
           allowEmpty={false}
           value={node}
@@ -308,10 +309,10 @@ export function NodePropertyPanel({
         />
       ) : (
         <>
-          <Field label="Label">
+          <Field label={translate("nodePropertyPanel.label")}>
             <FormulaInput
               kind="vars"
-              ariaLabel="Label"
+              ariaLabel={translate("nodePropertyPanel.label")}
               className={inputCls}
               value={node.label ?? ""}
               onFocus={() => onFocusField?.("label")}
@@ -322,7 +323,7 @@ export function NodePropertyPanel({
               priority; on any other type the number is read by nobody. */}
           {showPriority && (
             <>
-              <Field label="Priority" hint="Queue priority; higher runs first.">
+              <Field label={translate("nodePropertyPanel.priority")} hint={translate("nodePropertyPanel.queuePriorityHigherRunsFirst")}>
                 <input
                   type="number"
                   className={inputCls}
@@ -353,13 +354,13 @@ export function NodePropertyPanel({
           )}
 
           {showPrompt && (
-            <Section title="System prompt">
+            <Section title={translate("nodePropertyPanel.systemPrompt")}>
               {isUnread("systemPrompt") && (
                 <UnreadFieldNotice field="systemPrompt" type={node.type} />
               )}
               <FormulaTextarea
-                ariaLabel="System prompt"
-                title={`System prompt — ${node.id}`}
+                ariaLabel={translate("nodePropertyPanel.systemPrompt")}
+                title={translate("nodePropertyPanel.systemPromptId", { id: node.id })}
                 className={`${inputCls} w-full resize-y text-xs`}
                 rows={10}
                 value={node.systemPrompt ?? ""}
@@ -382,18 +383,18 @@ export function NodePropertyPanel({
 
           {showTools && (
             <Section
-              title={`Tools (${node.tools?.length ?? 0})`}
+              title={translate("nodePropertyPanel.toolsValue", { value: node.tools?.length ?? 0 })}
               sectionId="tools"
             >
               {isUnread("tools") && (
                 <UnreadFieldNotice field="tools" type={node.type} />
               )}
               <Field
-                label="MCP tools"
+                label={translate("nodePropertyPanel.mCPTools")}
                 hint={
                   catalog && catalog.tools.length > 0
-                    ? `Suggestions: ${catalog.tools.length} tools of connected MCP servers. Patterns like server/* are allowed.`
-                    : "Tool ids like vectorsearch/search; patterns like server/* are allowed."
+                    ? translate("nodePropertyPanel.suggestionsLengthToolsOfConnected", { length: catalog.tools.length })
+                    : translate("nodePropertyPanel.toolIdsLikeVectorsearchSearch")
                 }
               >
                 <fieldset
@@ -406,7 +407,7 @@ export function NodePropertyPanel({
                     onChange={(v) => set({ tools: v })}
                     highlight={toolHighlight}
                     {...(catalog ? { suggestions: catalog.tools } : {})}
-                    placeholder="Add tool… (Enter)"
+                    placeholder={translate("nodePropertyPanel.addToolEnter")}
                   />
                 </fieldset>
               </Field>
@@ -438,7 +439,7 @@ export function NodePropertyPanel({
           )}
 
           <Section
-            title={`Settings${node.config ? ` (${Object.keys(node.config).length} set)` : ""}`}
+            title={translate("nodePropertyPanel.settingsValue", { value: node.config ? ` (${Object.keys(node.config).length} set)` : "" })}
             defaultOpen={typeDoc !== undefined || node.config !== undefined}
           >
             {typeDoc && catalog ? (
@@ -456,11 +457,11 @@ export function NodePropertyPanel({
             ) : (
               <JsonEditor
                 key={`${node.id}-config`}
-                label="Node config"
+                label={translate("nodePropertyPanel.nodeConfig")}
                 hint={
                   catalog
-                    ? `No settings catalog for type "${node.type}" (plugin type?) — edit as JSON.`
-                    : "Type-specific settings as JSON (the settings catalog is loading or unavailable)."
+                    ? translate("nodePropertyPanel.noSettingsCatalogForType", { type: node.type })
+                    : translate("nodePropertyPanel.typeSpecificSettingsAsJSON")
                 }
                 rows={12}
                 value={node.config}
@@ -472,7 +473,7 @@ export function NodePropertyPanel({
           </Section>
 
           {showOverrides && (
-            <Section title="Overrides" defaultOpen={false}>
+            <Section title={translate("nodePropertyPanel.overrides")} defaultOpen={false}>
               {/* Only `llm` and `tool` nodes consult `overrides`
                   (graph-engine/node-config.ts). A classifier in particular
                   reads llm/systemPrompt directly and skips them. */}
@@ -485,7 +486,7 @@ export function NodePropertyPanel({
               >
                 <JsonEditor
                   key={`${node.id}-overrides`}
-                  label="Overrides"
+                  label={translate("nodePropertyPanel.overrides")}
                   rows={6}
                   value={node.overrides}
                   onChange={(v) =>
@@ -504,7 +505,7 @@ export function NodePropertyPanel({
           size="sm"
           onClick={() => onDeleteNode(node.id)}
         >
-          Delete node
+          {translate("nodePropertyPanel.deleteNode")}
         </Button>
       </div>
     </div>

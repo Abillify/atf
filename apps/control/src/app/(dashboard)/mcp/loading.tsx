@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the MCP route (Req. 13.5).
@@ -11,7 +12,7 @@ export default function McpLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading MCP servers"
+      aria-label={translate("mcp.loadingMCPServers")}
       className="flex flex-col gap-4 p-6"
     >
       <Skeleton width="w-52" height="h-6" />

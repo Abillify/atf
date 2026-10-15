@@ -15,7 +15,7 @@ import {
   TableCell,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
-import { formatTime } from "../lib/i18n";
+import { translate, formatTime } from "../lib/i18n";
 
 export interface ExecutionHistoryProps {
   events: NodeExecutionEvent[];
@@ -105,23 +105,23 @@ export function ExecutionHistory({
   return (
     <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
       <h3 className="mb-2 text-sm font-semibold text-foreground">
-        Execution history{" "}
+        {translate("executionHistory.executionHistory")}{" "}
         <span className="font-normal text-muted-foreground">({rows.length})</span>
       </h3>
       {rows.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          No executions yet.
+          {translate("executionHistory.noExecutionsYet")}
         </p>
       ) : (
         <Table>
           <TableHead>
             <TableRow className="uppercase tracking-wide">
-              <TableHeaderCell>Execution</TableHeaderCell>
-              <TableHeaderCell className="text-right">Nodes</TableHeaderCell>
-              <TableHeaderCell className="text-right">Latency</TableHeaderCell>
-              <TableHeaderCell className="text-right">Cost</TableHeaderCell>
-              <TableHeaderCell className="text-center">Status</TableHeaderCell>
-              <TableHeaderCell className="text-right">Started</TableHeaderCell>
+              <TableHeaderCell>{translate("executionHistory.execution")}</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("executionHistory.nodes")}</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("executionHistory.latency")}</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("executionHistory.cost")}</TableHeaderCell>
+              <TableHeaderCell className="text-center">{translate("executionHistory.status")}</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("executionHistory.started")}</TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>

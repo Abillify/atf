@@ -6,6 +6,7 @@ import type React from "react";
 import { useState, useRef, useEffect } from "react";
 import { beginLogin, logout } from "../lib/oidc";
 import { Button } from "../lib/ui";
+import { translate } from "../lib/i18n";
 
 export interface TokenSettingsProps {
   token: string;
@@ -82,8 +83,8 @@ export function TokenSettings({
         variant="outline"
         size="sm"
         onClick={() => setOpen((o) => !o)}
-        title={hasToken ? "Monitoring token set" : "Set monitoring token"}
-        aria-label="Monitoring token settings"
+        title={hasToken ? translate("tokenSettings.monitoringTokenSet") : translate("tokenSettings.setMonitoringToken")}
+        aria-label={translate("tokenSettings.monitoringTokenSettings")}
         className="text-muted-foreground"
       >
         <span
@@ -91,7 +92,7 @@ export function TokenSettings({
             hasToken ? "bg-success-solid" : "bg-muted-foreground/30"
           }`}
         />
-        Token
+        {translate("tokenSettings.token")}
       </Button>
 
       {open && (
@@ -99,11 +100,10 @@ export function TokenSettings({
           {oidcEnabled && (
             <div className="mb-3 border-b border-border pb-3">
               <span className="block text-xs font-medium text-muted-foreground">
-                Single sign-on
+                {translate("tokenSettings.singleSignOn")}
               </span>
               <p className="mb-2 mt-0.5 text-[11px] leading-snug text-muted-foreground">
-                Authenticate with your identity provider (OIDC). The issued
-                token is verified against the provider&apos;s JWKS.
+                {translate("tokenSettings.authenticateWithYourIdentityProvider")}
               </p>
               {hasToken ? (
                 <Button
@@ -112,7 +112,7 @@ export function TokenSettings({
                   onClick={handleSignOut}
                   className="w-full"
                 >
-                  Sign out
+                  {translate("tokenSettings.signOut")}
                 </Button>
               ) : (
                 <Button
@@ -121,19 +121,18 @@ export function TokenSettings({
                   onClick={handleSsoSignIn}
                   className="w-full"
                 >
-                  Sign in with SSO
+                  {translate("tokenSettings.signInWithSSO")}
                 </Button>
               )}
             </div>
           )}
           <label htmlFor="monitoring-token-input" className="block text-xs font-medium text-muted-foreground">
-            {oidcEnabled ? "Or paste a token" : "Monitoring token"}
+            {oidcEnabled ? translate("tokenSettings.orPasteAToken") : translate("tokenSettings.monitoringToken")}
           </label>
           <p className="mb-2 mt-0.5 text-[11px] leading-snug text-muted-foreground">
-            Sent as <span className="font-mono">?token=</span> to{" "}
-            <span className="font-mono">/monitoring/*</span>. Required when{" "}
-            <span className="font-mono">MONITORING_AUTH=true</span>. Stored in
-            this browser only.
+            {translate("tokenSettings.sentAs")} <span className="font-mono">?token=</span> to{" "}
+            <span className="font-mono">{translate("tokenSettings.monitoring")}</span>{translate("tokenSettings.requiredWhen")}{" "}
+            <span className="font-mono">{translate("tokenSettings.mONITORINGAUTHTrue")}</span>{translate("tokenSettings.storedInThisBrowserOnly")}
           </p>
           <input
             id="monitoring-token-input"
@@ -144,7 +143,7 @@ export function TokenSettings({
             onKeyDown={(e) => {
               if (e.key === "Enter") save();
             }}
-            placeholder="eyJhbGc…"
+            placeholder={translate("tokenSettings.eyJhbGc")}
             className="w-full rounded border border-border px-2 py-1 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <div className="mt-2 flex justify-end gap-2">
@@ -157,10 +156,10 @@ export function TokenSettings({
                 setOpen(false);
               }}
             >
-              Clear
+              {translate("tokenSettings.clear")}
             </Button>
             <Button variant="primary" size="sm" onClick={save}>
-              Save
+              {translate("tokenSettings.save")}
             </Button>
           </div>
         </div>

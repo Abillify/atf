@@ -32,7 +32,7 @@ import {
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
   useConfirm,
 } from "../../../lib/ui";
-import { formatDateTime, formatTime } from "../../../lib/i18n";
+import { translate, formatDateTime, formatTime } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -131,7 +131,7 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
     const subject: Record<string, string> = {};
     if (forgetTenantId.trim()) subject["tenantId"] = forgetTenantId.trim();
     if (forgetUserId.trim()) subject["userId"] = forgetUserId.trim();
-    if (!Object.keys(subject).length) { setError("Provide at least a tenantId or userId."); return; }
+    if (!Object.keys(subject).length) { setError(translate("compliance.provideAtLeastATenantId")); return; }
     setForgetting(true); setError(null); setForgetResult(null);
     try {
       const r = await authFetch(backendUrl("/admin/compliance/forget"), token, {
@@ -150,7 +150,7 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-4">
       <h2 className="text-sm font-semibold text-foreground">
-        Data Retention &amp; RTBF
+        {translate("compliance.dataRetentionRTBF")}
       </h2>
       {error && (
         <p role="alert" className="text-sm text-danger">
@@ -162,7 +162,7 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
       {status && status.targets.length > 0 && (
         <div className="space-y-1">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            Configured targets ({status.targets.length})
+            {translate("compliance.configuredTargetsLength", { length: status.targets.length })}
           </p>
           <div className="flex flex-wrap gap-2">
             {status.targets.map((t) => (
@@ -180,20 +180,19 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
       {/* Sweep */}
       <div className="space-y-2">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Retention sweep
+          {translate("compliance.retentionSweep")}
         </p>
         <p className="text-xs text-muted-foreground">
-          Purge data older than its configured retention window across all
-          targets.
+          {translate("compliance.purgeDataOlderThanIts")}
         </p>
         <Button
           variant="outline"
           size="sm"
           onClick={async () => {
             const ok = await confirmDialog({
-              title: "Run retention sweep now?",
-              message: "Every record older than its configured retention window is deleted permanently.",
-              confirmLabel: "Run sweep",
+              title: translate("compliance.runRetentionSweepNow"),
+              message: translate("compliance.everyRecordOlderThanIts"),
+              confirmLabel: translate("compliance.runSweep"),
               destructive: true,
             });
             if (ok) await runSweep();
@@ -201,12 +200,12 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
           disabled={sweeping || !writeGate.allowed}
           title={writeGate.title}
         >
-          {sweeping ? "Running sweep…" : "Run sweep now"}
+          {sweeping ? translate("compliance.runningSweep") : translate("compliance.runSweepNow")}
         </Button>
         {sweepResult && (
           <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success space-y-1">
             <p className="font-medium">
-              Sweep complete — {sweepResult.purged} record(s) purged
+              {translate("compliance.sweepCompletePurgedRecordS", { purged: sweepResult.purged })}
             </p>
             {sweepResult.report.map((e) => (
               <p key={e.target} className="text-xs">
@@ -225,25 +224,24 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
       {/* Forget (RTBF) */}
       <div className="space-y-2">
         <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-          Right to be forgotten (Art. 17 GDPR)
+          {translate("compliance.rightToBeForgottenArt")}
         </p>
         <p className="text-xs text-muted-foreground">
-          Erase all data for a subject. Requires at least one of tenantId /
-          userId.
+          {translate("compliance.eraseAllDataForA")}
         </p>
         <div className="flex flex-wrap gap-2">
           {[
             {
-              label: "Tenant ID",
+              label: translate("compliance.tenantID"),
               value: forgetTenantId,
               set: setForgetTenantId,
               placeholder: "tenant-uuid",
             },
             {
-              label: "User ID / email",
+              label: translate("compliance.userIDEmail"),
               value: forgetUserId,
               set: setForgetUserId,
-              placeholder: "user@example.com",
+              placeholder: translate("compliance.userSampleCom"),
             },
           ].map(({ label, value, set, placeholder }) => (
             <div key={label}>
@@ -274,9 +272,9 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
               .filter(Boolean)
               .join(" / ");
             const ok = await confirmDialog({
-              title: "Erase this subject?",
-              message: `All data held for ${who} is erased in every store. This cannot be undone.`,
-              confirmLabel: "Erase",
+              title: translate("compliance.eraseThisSubject"),
+              message: translate("compliance.allDataHeldForWho", { who }),
+              confirmLabel: translate("compliance.erase"),
               destructive: true,
             });
             if (ok) await runForget();
@@ -288,12 +286,12 @@ function RetentionActionsPanel({ token }: { token: string | undefined }) {
           }
           title={writeGate.title}
         >
-          {forgetting ? "Erasing…" : "Erase subject data"}
+          {forgetting ? translate("compliance.erasing") : translate("compliance.eraseSubjectData")}
         </Button>
         {forgetResult && (
           <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success space-y-1">
             <p className="font-medium">
-              {forgetResult.erased} record(s) erased for{" "}
+              {translate("compliance.erasedRecordSErasedFor", { erased: forgetResult.erased })}{" "}
               {Object.entries(forgetResult.subject)
                 .map(([k, v]) => `${k}=${v}`)
                 .join(", ")}
@@ -347,35 +345,35 @@ function AuditAnchorPanel({ token }: { token: string | undefined }) {
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
-        <h2 className="text-sm font-semibold text-foreground">Audit Chain Anchor</h2>
+        <h2 className="text-sm font-semibold text-foreground">{translate("compliance.auditChainAnchor")}</h2>
         <div className="flex gap-2">
-          <Button variant="secondary" size="sm" onClick={() => void fetchAnchor()}>↻ Check</Button>
+          <Button variant="secondary" size="sm" onClick={() => void fetchAnchor()}>{translate("compliance.check")}</Button>
           <Button variant="outline" size="sm" onClick={() => void createAnchor()} disabled={anchoring || !writeGate.allowed} title={writeGate.title}>
-            {anchoring ? "Anchoring…" : "Create anchor now"}
+            {anchoring ? translate("compliance.anchoring") : translate("compliance.createAnchorNow")}
           </Button>
         </div>
       </div>
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       {anchor && !anchor.active && (
         <div className="rounded border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning">
-          {anchor.reason ?? "Audit anchoring is not configured (set AUDIT_ANCHOR_SECRET)."}
+          {anchor.reason ?? translate("compliance.auditAnchoringIsNotConfigured")}
         </div>
       )}
       {anchor?.active && (
         <div className="space-y-2 text-sm">
           <div className="flex items-center gap-2">
             <Badge variant={anchor.valid ? "success" : "destructive"}>
-              {anchor.valid ? "chain valid" : "chain INVALID"}
+              {anchor.valid ? translate("compliance.chainValid") : translate("compliance.chainINVALID")}
             </Badge>
             {anchor.createdAt && (
               <span className="text-xs text-muted-foreground">
-                Last anchor: {formatDateTime(anchor.createdAt)}
+                {translate("compliance.lastAnchorValue", { value: formatDateTime(anchor.createdAt) })}
               </span>
             )}
           </div>
           {anchor.uptoId && (
             <p className="text-xs text-muted-foreground">
-              Anchored up to audit entry <span className="font-mono">{anchor.uptoId}</span>
+              {translate("compliance.anchoredUpToAuditEntry")} <span className="font-mono">{anchor.uptoId}</span>
             </p>
           )}
           {anchor.signature && (
@@ -403,20 +401,20 @@ function PolicySummaryPanel({ token }: { token: string | undefined }) {
       .finally(() => setLoading(false));
   }, [token]);
 
-  if (loading) return <p className="text-sm text-muted-foreground">Loading policy…</p>;
+  if (loading) return <p className="text-sm text-muted-foreground">{translate("compliance.loadingPolicy")}</p>;
   if (!cfg) return null;
 
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
-      <h2 className="text-sm font-semibold text-foreground">Policy Summary</h2>
+      <h2 className="text-sm font-semibold text-foreground">{translate("compliance.policySummary")}</h2>
       {!cfg.enabled ? (
         <div className="rounded border border-warning-border bg-warning-soft px-3 py-2 text-sm text-warning">
-          {cfg.message ?? "No compliance-policy.yaml found. Create one in FLOWS_DIR to enable enforcement."}
+          {cfg.message ?? translate("compliance.noCompliancePolicyYamlFound")}
         </div>
       ) : (
         <>
           <div className="rounded border border-success-border bg-success-soft px-3 py-2 text-sm text-success flex flex-wrap items-center gap-2">
-            <span className="font-medium">✓ Policy active (v{cfg.version})</span>
+            <span className="font-medium">{translate("compliance.policyActiveVVersion", { version: cfg.version })}</span>
             {cfg.failClosed && <Badge variant="destructive">fail-closed</Badge>}
             {cfg.description && <span className="text-success text-xs">{cfg.description}</span>}
           </div>
@@ -450,7 +448,7 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
       if (tenantId.trim()) body["tenantId"] = tenantId.trim();
       if (model.trim()) {
         const separator = model.indexOf("/");
-        if (separator <= 0 || separator === model.length - 1) throw new Error("Model must use provider/model format.");
+        if (separator <= 0 || separator === model.length - 1) throw new Error(translate("compliancePage.modelFormat"));
         body["llmConfig"] = { provider: model.slice(0, separator), model: model.slice(separator + 1) };
       }
       if (dataClass.trim()) body["dataClasses"] = [dataClass.trim()];
@@ -470,34 +468,33 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
   return (
     <section className="rounded-lg border border-border bg-card p-4 space-y-3">
       <h2 className="text-sm font-semibold text-foreground">
-        Policy Dry-Run Evaluate
+        {translate("compliance.policyDryRunEvaluate")}
       </h2>
       <p className="text-xs text-muted-foreground">
-        Test a request context against the loaded policy without executing
-        anything.
+        {translate("compliance.testARequestContextAgainst")}
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {[
           {
-            label: "Action *",
+            label: translate("compliance.action"),
             value: action,
             set: setAction,
             placeholder: "chat.completion",
           },
           {
-            label: "Tenant ID",
+            label: translate("compliance.tenantID"),
             value: tenantId,
             set: setTenantId,
             placeholder: "optional",
           },
           {
-            label: "Model",
+            label: translate("compliance.model"),
             value: model,
             set: setModel,
             placeholder: "openai/gpt-4o",
           },
           {
-            label: "Data class",
+            label: translate("compliance.dataClass"),
             value: dataClass,
             set: setDataClass,
             placeholder: "personal",
@@ -531,18 +528,18 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
         onClick={() => void evaluate()}
         disabled={loading}
       >
-        {loading ? "Evaluating…" : "Evaluate"}
+        {loading ? translate("compliance.evaluating") : translate("compliance.evaluate")}
       </Button>
       {result && (
         <div className="rounded border border-border bg-muted p-3 space-y-1 text-sm">
           <p>
-            <span className="font-medium">Decision: </span>
+            <span className="font-medium">{translate("compliance.decision")} </span>
             <span className={`font-bold uppercase ${decisionColor}`}>
               {result.result.decision}
             </span>
             {!result.policyLoaded && (
               <span className="ml-2 text-xs text-warning">
-                (no policy loaded — default allow)
+                {translate("compliance.noPolicyLoadedDefaultAllow")}
               </span>
             )}
           </p>
@@ -554,7 +551,7 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
                   <span className="font-medium">{violation.rule}</span>:{" "}
                   {violation.message}
                   {violation.blocking === false && (
-                    <span className="ml-1 text-warning">(advisory)</span>
+                    <span className="ml-1 text-warning">{translate("compliance.advisory")}</span>
                   )}
                 </li>
               ))}
@@ -562,8 +559,7 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
           )}
           {result.result.policyAbsent && (
             <p className="text-xs text-warning">
-              No policy was loaded; the simulator used the compatibility allow
-              result.
+              {translate("compliance.noPolicyWasLoadedThe")}
             </p>
           )}
         </div>
@@ -579,16 +575,15 @@ function EvaluatePanel({ token }: { token: string | undefined }) {
 function DSARInfoPanel() {
   return (
     <section className="rounded-lg border border-accent/30 bg-accent/10 p-4 text-sm text-foreground space-y-2">
-      <h2 className="font-semibold text-foreground">Self-Service Data Access (DSAR — Art. 15 / Art. 17 GDPR)</h2>
+      <h2 className="font-semibold text-foreground">{translate("compliance.selfServiceDataAccessDSAR")}</h2>
       <p>
-        Authenticated users can access or erase their own data via the API. These endpoints
-        authenticate via the user&apos;s own JWT (not the operator token).
+        {translate("compliance.authenticatedUsersCanAccessOr")}
       </p>
       <div className="font-mono text-xs space-y-1">
-        <p><span className="font-bold">GET</span>  /v1/me/data — export a summary of all data held for the calling identity</p>
-        <p><span className="font-bold">DELETE</span> /v1/me/data — erase all data for the calling identity (right-to-be-forgotten)</p>
+        <p><span className="font-bold">GET</span>  {translate("compliance.v1MeDataExportA")}</p>
+        <p><span className="font-bold">DELETE</span> {translate("compliance.v1MeDataEraseAll")}</p>
       </div>
-      <p className="text-xs">The operator RTBF form above (Erase subject data) covers admin-initiated erasures.</p>
+      <p className="text-xs">{translate("compliance.theOperatorRTBFFormAbove")}</p>
     </section>
   );
 }
@@ -645,7 +640,7 @@ function AuditReportSection({ token }: { token: string | undefined }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h2 className="text-sm font-semibold text-foreground">
-          Audit Report (last 24 h)
+          {translate("compliance.auditReportLast24H")}
         </h2>
         <div className="flex gap-2">
           <Button
@@ -654,7 +649,7 @@ function AuditReportSection({ token }: { token: string | undefined }) {
             onClick={() => void fetchReport()}
             disabled={loading}
           >
-            {loading ? "Loading…" : "↻ Refresh"}
+            {loading ? translate("compliance.loading") : translate("compliance.refresh")}
           </Button>
           <Button
             variant="outline"
@@ -662,7 +657,7 @@ function AuditReportSection({ token }: { token: string | undefined }) {
             onClick={() => void downloadCsv()}
             disabled={downloading}
           >
-            {downloading ? "Exporting…" : "↓ Export CSV"}
+            {downloading ? translate("compliance.exporting") : translate("compliance.exportCSV")}
           </Button>
         </div>
       </div>
@@ -675,14 +670,13 @@ function AuditReportSection({ token }: { token: string | undefined }) {
         <>
           {!report.policy ? (
             <div className="rounded border border-warning-border bg-warning-soft px-4 py-3 text-sm text-warning">
-              <strong>No policy loaded.</strong> Create{" "}
-              <code className="font-mono">flows/compliance-policy.yaml</code> to
-              enable enforcement.
+              <strong>{translate("compliance.noPolicyLoaded")}</strong> {translate("compliance.create")}{" "}
+              <code className="font-mono">flows/compliance-policy.yaml</code> {translate("compliance.toEnableEnforcement")}
             </div>
           ) : (
             <div className="rounded border border-success-border bg-success-soft px-4 py-3 text-sm">
               <div className="flex items-center gap-2 font-medium text-success">
-                <span>✓ Policy active (v{report.policy.version})</span>
+                <span>{translate("compliance.policyActiveVVersion", { version: report.policy.version })}</span>
                 {report.policy.failClosed && (
                   <span className="rounded bg-danger-soft px-1.5 py-0.5 text-[10px] font-medium text-danger">
                     fail-closed
@@ -718,22 +712,22 @@ function AuditReportSection({ token }: { token: string | undefined }) {
           )}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <StatCard
-              label="Violations"
+              label={translate("compliance.violations")}
               value={report.violations.total}
               color={report.violations.total > 0 ? "red" : "green"}
             />
             <StatCard
-              label="Denied"
+              label={translate("compliance.denied")}
               value={report.violations.denied}
               color={report.violations.denied > 0 ? "red" : "gray"}
             />
             <StatCard
-              label="Required approval"
+              label={translate("compliance.requiredApproval")}
               value={report.violations.requireApproval}
               color="amber"
             />
             <StatCard
-              label="Approvals"
+              label={translate("compliance.approvals")}
               value={report.approvals.total}
               color="blue"
             />
@@ -743,11 +737,11 @@ function AuditReportSection({ token }: { token: string | undefined }) {
               <Table>
                 <TableHead className="uppercase">
                   <TableRow>
-                    <TableHeaderCell>Provider / Model</TableHeaderCell>
+                    <TableHeaderCell>{translate("compliance.providerModel")}</TableHeaderCell>
                     <TableHeaderCell className="text-right">
-                      Requests
+                      {translate("compliance.requests")}
                     </TableHeaderCell>
-                    <TableHeaderCell>Tenants</TableHeaderCell>
+                    <TableHeaderCell>{translate("compliance.tenants")}</TableHeaderCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -771,10 +765,10 @@ function AuditReportSection({ token }: { token: string | undefined }) {
               <Table>
                 <TableHead className="uppercase">
                   <TableRow>
-                    <TableHeaderCell>Time</TableHeaderCell>
-                    <TableHeaderCell>Actor</TableHeaderCell>
-                    <TableHeaderCell>Action</TableHeaderCell>
-                    <TableHeaderCell>Target</TableHeaderCell>
+                    <TableHeaderCell>{translate("compliance.time")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("compliance.actor")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("compliance.action2")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("compliance.target")}</TableHeaderCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -813,7 +807,7 @@ export default function CompliancePage() {
   if (!ready || !isAuthenticated) {
     return (
       <div className="flex h-64 items-center justify-center text-sm text-muted-foreground">
-        Loading…
+        {translate("compliance.loading")}
       </div>
     );
   }
@@ -822,11 +816,10 @@ export default function CompliancePage() {
     <div className="p-4 sm:p-6 max-w-4xl space-y-6">
       <div>
         <h1 className="text-lg font-semibold text-foreground">
-          Policy-as-Code Compliance
+          {translate("compliance.policyAsCodeCompliance")}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Declarative data-residency, model, approval and retention policies.
-          Last 24 hours.
+          {translate("compliance.declarativeDataResidencyModelApproval")}
         </p>
       </div>
 

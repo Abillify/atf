@@ -19,7 +19,7 @@ import {
   CHANNEL_STATUS_LABEL,
 } from "../../lib/edge-channels";
 import { Field, inputCls } from "../form-controls";
-import { formatNumber } from "../../lib/i18n";
+import { translate, formatNumber } from "../../lib/i18n";
 
 export interface EdgeSelection {
   id: string;
@@ -98,33 +98,32 @@ export function EdgeDetailsPanel({
   const flow = edge.flows?.[edge.flows.length - 1];
   return (
       <div className="space-y-3">
-        <h4 className="text-sm font-semibold text-foreground">Edge</h4>
+        <h4 className="text-sm font-semibold text-foreground">{translate("edgeDetailsPanel.edge")}</h4>
         {edge.readOnly ? (
           <p className="text-xs text-muted-foreground">
-            Impliziter Start-/Ende-Übergang — gehört nicht zur Flow-Definition
-            und kann nicht bearbeitet werden.
+            {translate("edgeDetailsPanel.impliziterStartEndeUBergang")}
           </p>
         ) : (
           <>
             <Field
-              label="Condition (routing expression)"
-              hint="Empty = unconditional edge."
+              label={translate("edgeDetailsPanel.conditionRoutingExpression")}
+              hint={translate("edgeDetailsPanel.emptyUnconditionalEdge")}
             >
               <FormulaTextarea
                 kind="condition"
-                ariaLabel="Condition (routing expression)"
-                title="Edge condition"
+                ariaLabel={translate("edgeDetailsPanel.conditionRoutingExpression")}
+                title={translate("edgeDetailsPanel.edgeCondition")}
                 className={`${inputCls} resize-y font-mono text-xs`}
                 rows={3}
                 value={edge.conditions}
-                placeholder="classification.route == 'RETOURE'"
+                placeholder={translate("edgeDetailsPanel.classificationRouteRETOURE")}
                 onChange={(v) => onEdgeChange({ ...edge, conditions: v })}
               />
             </Field>
-            <Field label="Label">
+            <Field label={translate("edgeDetailsPanel.label")}>
               <FormulaInput
                 kind="vars"
-                ariaLabel="Edge label"
+                ariaLabel={translate("edgeDetailsPanel.edgeLabel")}
                 className={inputCls}
                 value={edge.label}
                 onChange={(v) => onEdgeChange({ ...edge, label: v })}
@@ -135,17 +134,17 @@ export function EdgeDetailsPanel({
               size="sm"
               onClick={() => onDeleteEdge(edge.id)}
             >
-              Delete edge
+              {translate("edgeDetailsPanel.deleteEdge")}
             </Button>
           </>
         )}
         {flow !== undefined && flow.items.length > 0 && (
-          <section aria-label="Weitergegebene Daten" className="space-y-1.5">
+          <section aria-label={translate("edgeDetailsPanel.weitergegebeneDaten")} className="space-y-1.5">
             <h5 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Weitergegebene Daten
+              {translate("edgeDetailsPanel.weitergegebeneDaten")}
             </h5>
             <p className="text-[11px] text-muted-foreground">
-              Beim letzten Run über diese Kante ({flow.source} → {flow.target}).
+              {translate("edgeDetailsPanel.beimLetztenRunUBer", { source: flow.source, target: flow.target })}
             </p>
             <ul className="space-y-1.5">
               {flow.items.map((item, index) => (

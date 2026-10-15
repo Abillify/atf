@@ -12,7 +12,7 @@ import { useState } from "react";
 import type { NodeToolCall } from "../../../types/monitoring";
 import type { NodeState } from "../graphUtils";
 import { AccordionSection, ChevronIcon, JsonTree } from "./Shared";
-import { formatTime } from "../../../lib/i18n";
+import { translate, formatTime } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Tool call entry (shared)
@@ -108,7 +108,7 @@ export function ErrorRecording({ state }: { state: NodeState }) {
           <div className="px-3 py-2 bg-danger-soft space-y-2">
             <div className="flex items-center gap-2">
               <h4 className="text-xs font-semibold text-danger uppercase tracking-wide">
-                Error
+                {translate("errorRecording.error")}
               </h4>
               {state.error_type && (
                 <span className="rounded bg-danger-solid/10 px-1.5 py-0.5 font-mono text-[10px] font-semibold text-danger">
@@ -124,7 +124,7 @@ export function ErrorRecording({ state }: { state: NodeState }) {
             {state.tool_error_result !== undefined && (
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-danger/80">
-                  Tool result
+                  {translate("errorRecording.toolResult")}
                 </div>
                 <div className="mt-1 max-h-48 overflow-auto rounded border border-danger-border bg-card p-2 font-mono text-[11px] text-foreground">
                   <JsonTree data={state.tool_error_result} maxDepth={6} />
@@ -134,7 +134,7 @@ export function ErrorRecording({ state }: { state: NodeState }) {
             {state.error_details !== undefined && (
               <div>
                 <div className="text-[10px] font-semibold uppercase tracking-wide text-danger/80">
-                  Details
+                  {translate("errorRecording.details")}
                 </div>
                 <div className="mt-1 max-h-48 overflow-auto rounded border border-danger-border bg-card p-2 font-mono text-[11px] text-foreground">
                   <JsonTree data={state.error_details} maxDepth={6} />
@@ -146,7 +146,7 @@ export function ErrorRecording({ state }: { state: NodeState }) {
       )}
       {diagnostics.length > 0 && (
         <AccordionSection
-          title={`Diagnostics (${diagnostics.length})`}
+          title={translate("errorRecording.diagnosticsLength", { length: diagnostics.length })}
           defaultOpen={state.status === "error"}
         >
           <ol className="space-y-1.5" data-testid="node-diagnostics">

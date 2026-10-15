@@ -7,6 +7,7 @@
 
 import type React from "react";
 import { Eraser } from "lucide-react";
+import { translate } from "../../lib/i18n";
 
 type OperatorCategory = "start" | "arithmetic" | "comparison" | "logic" | "text" | "other";
 
@@ -67,11 +68,11 @@ export function OperatorToolbar({
       <button
         type="button"
         onClick={onClear}
-        title="Clear the expression"
+        title={translate("operatorToolbar.clearTheExpression")}
         className="ml-auto flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-danger hover:bg-danger-soft dark:hover:bg-danger-solid-hover/20"
       >
         <Eraser size={12} aria-hidden />
-        Clear
+        {translate("operatorToolbar.clear")}
       </button>
     </div>
   );

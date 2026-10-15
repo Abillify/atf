@@ -10,6 +10,7 @@
 
 import type React from "react";
 import type { FlowValidationReport } from "../../types/flow";
+import { translate } from "../../lib/i18n";
 
 export interface StudioProblemsPanelProps {
   validation: FlowValidationReport | null;
@@ -41,7 +42,7 @@ export function StudioProblemsPanel({
             onClick={() => onFixWithCopilot(issue.message)}
             className="shrink-0 rounded bg-copilot-soft px-1.5 py-0.5 text-[10px] font-medium text-copilot border border-copilot-border hover:bg-copilot-soft"
           >
-            Fix with Copilot
+            {translate("studioProblemsPanel.fixWithCopilot")}
           </button>
         </div>
       ))}
@@ -59,7 +60,7 @@ export function StudioProblemsPanel({
             onClick={() => onFixWithCopilot(issue.message)}
             className="shrink-0 rounded bg-copilot-soft px-1.5 py-0.5 text-[10px] font-medium text-copilot border border-copilot-border hover:bg-copilot-soft"
           >
-            Fix with Copilot
+            {translate("studioProblemsPanel.fixWithCopilot")}
           </button>
         </div>
       ))}
@@ -71,9 +72,7 @@ export function StudioProblemsPanel({
               (n, t) => n + t.size,
               0,
             )}{" "}
-            tool reference(s) on {unknownToolsByServer.size} MCP
-            server(s) this runtime isn&apos;t connected to — not
-            checkable here, not an error in the flow.
+            {translate("studioProblemsPanel.toolReferenceSOnSize", { size: unknownToolsByServer.size })}
           </summary>
           <ul className="mt-1 space-y-0.5 pl-4">
             {[...unknownToolsByServer.entries()].map(([server, tools]) => (

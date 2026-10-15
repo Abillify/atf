@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /** Loading skeleton for the Assistants route. */
 export default function AssistantsLoading() {
@@ -9,7 +10,7 @@ export default function AssistantsLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading assistants"
+      aria-label={translate("assistants.loadingAssistants")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-40" height="h-6" />

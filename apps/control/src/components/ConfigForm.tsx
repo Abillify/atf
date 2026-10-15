@@ -23,6 +23,7 @@ import { formatDefault } from "../lib/node-types";
 import { Field, JsonEditor, NumberOrVarInput, inputCls } from "./form-controls";
 import { FormulaInput, FormulaTextarea } from "./FormulaEditor";
 import type { FormulaKind } from "../lib/formula";
+import { translate } from "../lib/i18n";
 
 export interface ConfigFormProps {
   /** Type-specific fields, then the cross-cutting ones. */
@@ -68,7 +69,7 @@ function Hint({ field }: { field: ConfigField }): React.JSX.Element {
       {first}
       {(def || range) && (
         <span className="ml-1 text-muted-foreground/80">
-          {def && <>Default: {def}.</>} {range && <>Range: {range}.</>}
+          {def && <>{translate("configForm.defaultDef", { def })}</>} {range && <>{translate("configForm.rangeRange", { range })}</>}
         </span>
       )}
     </>
@@ -113,7 +114,7 @@ export function ListInput({
               {it}
               <button
                 type="button"
-                aria-label={`Remove ${it}`}
+                aria-label={translate("configForm.removeIt", { it })}
                 onClick={() => {
                   const rest = items.filter((x) => x !== it);
                   onChange(rest.length > 0 ? rest : undefined);
@@ -129,7 +130,7 @@ export function ListInput({
       <input
         className={`${inputCls} font-mono text-xs`}
         list={suggestions ? listId : undefined}
-        placeholder={placeholder ?? "Add… (Enter)"}
+        placeholder={placeholder ?? translate("configForm.addEnter")}
         onKeyDown={(e) => {
           if (e.key === "Enter") {
             e.preventDefault();
@@ -174,10 +175,10 @@ function LlmInput({
       <FormulaInput
         kind="vars"
         replace
-        ariaLabel="Model shortcut"
+        ariaLabel={translate("configForm.modelShortcut")}
         className={`${inputCls} font-mono text-xs`}
         list={listId}
-        placeholder={other ? `${String(other.provider ?? "")}/${String(other.model ?? "")}` : "shortcut, e.g. fast-pool"}
+        placeholder={other ? `${String(other.provider ?? "")}/${String(other.model ?? "")}` : translate("configForm.shortcutEGFastPool")}
         value={shortcut}
         onChange={(s) => {
           onChange(s ? { ...(obj && "shortcut" in obj ? obj : {}), shortcut: s } : other);
@@ -190,9 +191,9 @@ function LlmInput({
       </datalist>
       <details>
         <summary className="cursor-pointer text-[10px] text-muted-foreground">
-          provider/model/parameters as JSON
+          {translate("configForm.providerModelParametersAsJSON")}
         </summary>
-        <JsonEditor label="Model config" rows={4} value={value} onChange={onChange} />
+        <JsonEditor label={translate("configForm.modelConfig")} rows={4} value={value} onChange={onChange} />
       </details>
     </div>
   );
@@ -226,7 +227,7 @@ function FieldControl({
             onChange(e.target.value === "" ? undefined : e.target.value === "true")
           }
         >
-          <option value="">{def ? `— default (${def}) —` : "— not set —"}</option>
+          <option value="">{def ? translate("configForm.defaultDef2", { def }) : translate("configForm.notSet")}</option>
           <option value="true">on</option>
           <option value="false">off</option>
         </select>
@@ -241,7 +242,7 @@ function FieldControl({
               (field.max !== undefined && value > field.max) ||
               (field.integer && !Number.isInteger(value))) && (
               <p className="mt-0.5 text-[10px] text-warning">
-                Outside the allowed range{field.integer ? " / not an integer" : ""} — the runtime may reject or ignore it.
+                {translate("configForm.outsideTheAllowedRange")}{field.integer ? translate("configForm.notAnInteger") : ""} {translate("configForm.theRuntimeMayRejectOr")}
               </p>
             )}
         </fieldset>
@@ -256,7 +257,7 @@ function FieldControl({
           onChange={(e) => onChange(e.target.value || undefined)}
         >
           <option value="">
-            {field.default !== undefined ? `— default (${formatDefault(field.default)}) —` : "— not set —"}
+            {field.default !== undefined ? translate("configForm.defaultValue", { value: formatDefault(field.default) }) : translate("configForm.notSet")}
           </option>
           {(field.options ?? []).map((o) => (
             <option key={o} value={o}>
@@ -264,7 +265,7 @@ function FieldControl({
             </option>
           ))}
           {typeof value === "string" && value && !(field.options ?? []).includes(value) && (
-            <option value={value}>{value} (unknown)</option>
+            <option value={value}>{translate("configForm.valueUnknown", { value })}</option>
           )}
         </select>
       );
@@ -304,14 +305,14 @@ function FieldControl({
           value={typeof value === "string" ? value : ""}
           onChange={(e) => onChange(e.target.value || undefined)}
         >
-          <option value="">— none —</option>
+          <option value="">{translate("configForm.none")}</option>
           {ctx.nodeIds.map((n) => (
             <option key={n} value={n}>
               {n}
             </option>
           ))}
           {typeof value === "string" && value && !ctx.nodeIds.includes(value) && (
-            <option value={value}>{value} (not on canvas)</option>
+            <option value={value}>{translate("configForm.valueNotOnCanvas", { value })}</option>
           )}
         </select>
       );
@@ -325,9 +326,9 @@ function FieldControl({
             onChange={onChange}
             listId={listId}
             {...(field.kind === "node-list"
-              ? { suggestions: ctx.nodeIds, placeholder: "Add node id… (Enter)" }
+              ? { suggestions: ctx.nodeIds, placeholder: translate("configForm.addNodeIdEnter") }
               : field.kind === "tool-list"
-                ? { suggestions: ctx.tools, placeholder: "Add tool or pattern (server/*)… (Enter)" }
+                ? { suggestions: ctx.tools, placeholder: translate("configForm.addToolOrPatternServer") }
                 : {})}
           />
         </fieldset>
@@ -381,7 +382,7 @@ function FieldControl({
               onClick={() => onChange(field.example)}
               className="mt-0.5 text-[10px] text-muted-foreground underline hover:text-foreground"
             >
-              Insert example
+              {translate("configForm.insertSample")}
             </button>
           )}
         </fieldset>
@@ -414,7 +415,7 @@ function FieldRow({
             <button
               type="button"
               onClick={() => onChange(setKey(config, field.key, undefined))}
-              title="Remove this key (use the default)"
+              title={translate("configForm.removeThisKeyUseThe")}
               className="text-[10px] text-muted-foreground hover:text-foreground"
             >
               reset
@@ -459,28 +460,28 @@ export function ConfigForm({
   return (
     <div className="space-y-3">
       {essential.length === 0 && advanced.length === 0 && (
-        <p className="text-[11px] text-muted-foreground">This node type has no type-specific settings.</p>
+        <p className="text-[11px] text-muted-foreground">{translate("configForm.thisNodeTypeHasNo")}</p>
       )}
       {rows(essential)}
       {advanced.length > 0 && (
         <details open={anySet(advanced)} className="border-t border-border pt-2">
           <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-foreground">
-            Advanced ({advanced.length})
+            {translate("configForm.advancedLength", { length: advanced.length })}
           </summary>
           <div className="mt-2 space-y-3">{rows(advanced)}</div>
         </details>
       )}
       <details open={anySet(common)} className="border-t border-border pt-2">
         <summary className="cursor-pointer text-[11px] font-semibold uppercase tracking-wide text-foreground">
-          Error handling, approval &amp; progress
+          {translate("configForm.errorHandlingApprovalProgress")}
         </summary>
         <div className="mt-2 space-y-3">{rows(common)}</div>
       </details>
       {Object.keys(unknown).length > 0 && (
         <div className="border-t border-border pt-2">
           <JsonEditor
-            label={`Other keys (${Object.keys(unknown).length})`}
-            hint="Not documented for this node type — the runtime ignores them unless a plugin reads them. Kept as they are."
+            label={translate("configForm.otherKeysLength", { length: Object.keys(unknown).length })}
+            hint={translate("configForm.notDocumentedForThisNode")}
             rows={Math.min(10, JSON.stringify(unknown, null, 2).split("\n").length + 1)}
             value={unknown}
             onChange={(v) => {

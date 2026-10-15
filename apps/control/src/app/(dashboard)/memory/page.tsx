@@ -15,6 +15,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Badge, Button, useConfirm } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 interface MemoryEntry {
   id: string;
@@ -96,13 +97,13 @@ function SessionEntries({
   });
 
   if (isLoading) {
-    return <div className="text-xs text-muted-foreground">Loading entries…</div>;
+    return <div className="text-xs text-muted-foreground">{translate("memory.loadingEntries")}</div>;
   }
   if (error) {
     return <div className="text-xs text-danger">{error.message}</div>;
   }
   if (entries.length === 0) {
-    return <div className="text-xs text-muted-foreground">No entries.</div>;
+    return <div className="text-xs text-muted-foreground">{translate("memory.noEntries")}</div>;
   }
   return (
     <div className="mt-2 space-y-1 border-t border-border pt-2">
@@ -118,7 +119,7 @@ function SessionEntries({
       ))}
       {entries.length > 10 && (
         <div className="text-xs text-muted-foreground">
-          +{entries.length - 10} more entries…
+          {translate("memory.valueMoreEntries", { value: entries.length - 10 })}
         </div>
       )}
     </div>
@@ -161,7 +162,7 @@ export default function MemoryPage() {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">
-        Memory Sessions
+        {translate("memory.memorySessions")}
       </h1>
 
       {isLoading && (
@@ -170,7 +171,7 @@ export default function MemoryPage() {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Loading sessions…
+          {translate("memory.loadingSessions")}
         </div>
       )}
 
@@ -179,10 +180,7 @@ export default function MemoryPage() {
           role="status"
           className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground"
         >
-          Long-term memory is not enabled on this backend. Start the runtime
-          with <code className="font-mono">MEMORY_ENABLED=true</code> and a
-          configured <code className="font-mono">EMBEDDING_MODEL</code> to
-          manage memory sessions here.
+          {translate("memory.longTermMemoryIsNot")} <code className="font-mono">MEMORY_ENABLED=true</code> {translate("memory.andAConfigured")} <code className="font-mono">EMBEDDING_MODEL</code> {translate("memory.toManageMemorySessionsHere")}
         </div>
       )}
 
@@ -191,13 +189,13 @@ export default function MemoryPage() {
           role="alert"
           className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load sessions: {error.message}
+          {translate("memory.failedToLoadSessionsMessage", { message: error.message })}
         </div>
       )}
 
       {!isLoading && !error && sessions.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          No memory sessions found.
+          {translate("memory.noMemorySessionsFound")}
         </div>
       )}
 
@@ -215,8 +213,8 @@ export default function MemoryPage() {
                 }
               >
                 <div className="mt-0.5 flex gap-3 text-xs text-muted-foreground">
-                  <span>User: {session.userId}</span>
-                  {session.tenantId && <span>Tenant: {session.tenantId}</span>}
+                  <span>{translate("memory.userUserId", { userId: session.userId })}</span>
+                  {session.tenantId && <span>{translate("memory.tenantTenantId", { tenantId: session.tenantId })}</span>}
                   <span>{session.entryCount} entries</span>
                 </div>
               </button>
@@ -225,9 +223,9 @@ export default function MemoryPage() {
                 size="sm"
                 onClick={async () => {
                   const ok = await confirmDialog({
-                    title: "Clear session memory?",
-                    message: `All long-term memories of ${session.userId} in this session are deleted. This cannot be undone.`,
-                    confirmLabel: "Clear",
+                    title: translate("memory.clearSessionMemory"),
+                    message: translate("memory.allLongTermMemoriesOf", { userId: session.userId }),
+                    confirmLabel: translate("memory.clear"),
                     destructive: true,
                   });
                   if (ok) clearMutation.mutate(session.id);
@@ -235,9 +233,9 @@ export default function MemoryPage() {
                 disabled={clearMutation.isPending || !writeGate.allowed}
                 title={writeGate.title}
                 className="ml-4"
-                aria-label={`Clear session for ${session.userId}`}
+                aria-label={translate("memory.clearSessionForUserId", { userId: session.userId })}
               >
-                Clear
+                {translate("memory.clear")}
               </Button>
             </div>
 

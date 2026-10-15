@@ -9,6 +9,7 @@ import type {
 } from "../types/trace-analysis";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
+import { translate } from "../lib/i18n";
 
 export interface UseTraceAnalysisOptions {
   /** Operator token, sent as an Authorization header (needs `flows:write`). */
@@ -112,7 +113,7 @@ export function useTraceAnalysis(
 
         const data = (await res.json()) as { analysis?: TraceAnalysis };
         if (data.analysis === undefined) {
-          setError("Analysis returned no result.");
+          setError(translate("traceAnalysis.noResult"));
           return;
         }
         setAnalysis(data.analysis);

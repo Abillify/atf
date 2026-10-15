@@ -14,7 +14,7 @@ import type {
   VariantEvalResult,
   OptimizerRunOptions,
 } from "../types/optimizer";
-import { formatTime } from "../lib/i18n";
+import { translate, formatTime } from "../lib/i18n";
 
 export interface OptimizerFlowOption {
   id: string;
@@ -102,17 +102,17 @@ function CaseComparison({
             className="rounded border border-border bg-card p-2 text-xs"
           >
             <div className="font-medium text-foreground">
-              <span className="text-muted-foreground">Prompt:</span>{" "}
-              {vc.userPrompt || <em className="text-muted-foreground">(empty)</em>}
+              <span className="text-muted-foreground">{translate("optimizerPanel.prompt")}</span>{" "}
+              {vc.userPrompt || <em className="text-muted-foreground">{translate("optimizerPanel.empty")}</em>}
             </div>
             <div className="mt-1.5 grid grid-cols-1 gap-2 sm:grid-cols-2">
               <div className="rounded bg-muted p-1.5">
                 <div className="mb-0.5 flex items-center justify-between">
                   <span className="font-semibold uppercase tracking-wide text-muted-foreground">
-                    Baseline
+                    {translate("optimizerPanel.baseline")}
                   </span>
                   <span className="tabular-nums text-muted-foreground">
-                    Score {pct(bc?.score)}
+                    {translate("optimizerPanel.scoreValue", { value: pct(bc?.score) })}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap break-words text-foreground">
@@ -126,10 +126,10 @@ function CaseComparison({
               <div className="rounded bg-accent/10 p-1.5">
                 <div className="mb-0.5 flex items-center justify-between">
                   <span className="font-semibold uppercase tracking-wide text-accent">
-                    Variant
+                    {translate("optimizerPanel.variant")}
                   </span>
                   <span className="tabular-nums text-accent">
-                    Score {pct(vc.score)}
+                    {translate("optimizerPanel.scoreValue", { value: pct(vc.score) })}
                   </span>
                 </div>
                 <p className="whitespace-pre-wrap break-words text-foreground">
@@ -175,7 +175,7 @@ function VariantRow({
           <button type="button"
             onClick={() => setExpanded((e) => !e)}
             className="text-muted-foreground hover:text-foreground"
-            aria-label={expanded ? "Collapse" : "Expand"}
+            aria-label={expanded ? translate("optimizerPanel.collapse") : translate("optimizerPanel.expand")}
           >
             {expanded ? "▾" : "▸"}
           </button>
@@ -187,10 +187,10 @@ function VariantRow({
         </div>
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           <span className="tabular-nums">
-            Score <b>{pct(variant.avgScore)}</b>
+            {translate("optimizerPanel.score")} <b>{pct(variant.avgScore)}</b>
           </span>
           <span>Δ {scoreDelta(variant.avgScore, baselineScore)}</span>
-          <span className="tabular-nums">Pass {pct(variant.passRate)}</span>
+          <span className="tabular-nums">{translate("optimizerPanel.passValue", { value: pct(variant.passRate) })}</span>
           <span className="tabular-nums">
             {Math.round(variant.avgLatencyMs)}ms
           </span>
@@ -199,7 +199,7 @@ function VariantRow({
           </span>
           {canPromote && !variant.error && (
             <Button variant="primary" size="sm" onClick={onPromote}>
-              Promote
+              {translate("optimizerPanel.promote")}
             </Button>
           )}
         </div>
@@ -208,15 +208,14 @@ function VariantRow({
         <div className="border-t border-border p-2.5">
           <details className="mb-2">
             <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-              System prompt
+              {translate("optimizerPanel.systemPrompt")}
             </summary>
             <pre className="mt-1 whitespace-pre-wrap break-words rounded bg-muted p-2 text-xs text-foreground">
               {variant.systemPrompt}
             </pre>
           </details>
           <div className="text-xs font-medium text-muted-foreground">
-            Per-case evaluation ({variant.cases.length} cases) — baseline vs
-            variant
+            {translate("optimizerPanel.perCaseEvaluationLengthCases", { length: variant.cases.length })}
           </div>
           <CaseComparison
             baselineCases={baselineCases}
@@ -286,13 +285,13 @@ function RunCard({
             </p>
           )}
           {run.status === "skipped" && !run.error && (
-            <p className="mb-2 text-xs text-muted-foreground">Run skipped.</p>
+            <p className="mb-2 text-xs text-muted-foreground">{translate("optimizerPanel.runSkipped")}</p>
           )}
 
           {run.baselineSystemPrompt !== undefined && (
             <details className="mb-2">
               <summary className="cursor-pointer text-xs font-medium text-muted-foreground">
-                Baseline system prompt
+                {translate("optimizerPanel.baselineSystemPrompt")}
               </summary>
               <pre className="mt-1 whitespace-pre-wrap break-words rounded bg-muted p-2 text-xs text-foreground">
                 {run.baselineSystemPrompt || "(none)"}
@@ -302,7 +301,7 @@ function RunCard({
 
           {run.variants.length === 0 ? (
             <p className="text-xs text-muted-foreground">
-              {running ? "Evaluating…" : "No variants produced."}
+              {running ? translate("optimizerPanel.evaluating") : translate("optimizerPanel.noVariantsProduced")}
             </p>
           ) : (
             <div className="space-y-2">
@@ -349,18 +348,18 @@ function RunForm({
     <div className="rounded-lg border border-border bg-card p-3">
       <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         <label className="text-xs text-muted-foreground">
-          Optimization goal (optional)
+          {translate("optimizerPanel.optimizationGoalOptional")}
           <input
             type="text"
             value={goal}
             onChange={(e) => setGoal(e.target.value)}
-            placeholder="e.g. Improve factual precision for German legal text"
+            placeholder={translate("optimizerPanel.eGImproveFactualPrecision")}
             className="mt-0.5 w-full rounded border border-border px-2 py-1 text-sm"
           />
         </label>
         <div className="flex items-end gap-3">
           <label className="text-xs text-muted-foreground">
-            Variants
+            {translate("optimizerPanel.variants")}
             <input
               type="number"
               min={1}
@@ -371,7 +370,7 @@ function RunForm({
             />
           </label>
           <label className="text-xs text-muted-foreground">
-            Min samples
+            {translate("optimizerPanel.minSamples")}
             <input
               type="number"
               min={1}
@@ -386,7 +385,7 @@ function RunForm({
               checked={autoPromote}
               onChange={(e) => setAutoPromote(e.target.checked)}
             />
-            Auto-promote winner
+            {translate("optimizerPanel.autoPromoteWinner")}
           </label>
         </div>
       </div>
@@ -403,7 +402,7 @@ function RunForm({
             })
           }
         >
-          {isTriggering ? "Starting…" : "Run optimization"}
+          {isTriggering ? translate("optimizerPanel.starting") : translate("optimizerPanel.runOptimization")}
         </Button>
       </div>
     </div>
@@ -435,19 +434,19 @@ export function OptimizerPanel({
     <section className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-foreground">
-          Self-optimizing flows
+          {translate("optimizerPanel.selfOptimizingFlows")}
         </h3>
         {error && <span className="text-xs text-danger">{error}</span>}
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">Flow</span>
+        <span className="text-xs text-muted-foreground">{translate("optimizerPanel.flow")}</span>
         <FlowPicker
           flows={flows}
           value={selectedFlowId}
           onChange={onSelectFlow}
-          ariaLabel="Flow to optimize"
-          placeholder="— select a flow —"
+          ariaLabel={translate("optimizerPanel.flowToOptimize")}
+          placeholder={translate("optimizerPanel.selectAFlow")}
         />
       </div>
 
@@ -462,19 +461,19 @@ export function OptimizerPanel({
       {selectedFlowId === "" ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            Select a flow to view and run optimizations.
+            {translate("optimizerPanel.selectAFlowToView")}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Requires <span className="font-mono">OPTIMIZER_ENABLED</span>,{" "}
+            {translate("optimizerPanel.requires")} <span className="font-mono">OPTIMIZER_ENABLED</span>,{" "}
             <span className="font-mono">REPLAY_ENABLED</span> and{" "}
             <span className="font-mono">FLOW_EDITOR_ENABLED</span>.
           </p>
         </div>
       ) : isLoading && runs.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Loading…</p>
+        <p className="py-10 text-center text-sm text-muted-foreground">{translate("optimizerPanel.loading")}</p>
       ) : runs.length === 0 ? (
         <div className="rounded-lg border border-dashed border-border bg-card py-10 text-center text-sm text-muted-foreground">
-          No optimization runs yet for this flow. Trigger one above.
+          {translate("optimizerPanel.noOptimizationRunsYetFor")}
         </div>
       ) : (
         <div className="space-y-3">

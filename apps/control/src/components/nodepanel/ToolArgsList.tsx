@@ -10,6 +10,7 @@
 import type React from "react";
 import type { FlowNode } from "../../types/flow";
 import { JsonEditor } from "../form-controls";
+import { translate } from "../../lib/i18n";
 
 /**
  * Static arguments per tool (`config.toolArgs[ref]`), next to the tool list
@@ -51,17 +52,17 @@ export function ToolArgsList({
     // biome-ignore lint/a11y/noStaticElementInteractions: focus is only reported to the docs panel
     <div className="space-y-1.5" onFocus={onFocus} data-testid="tool-args-list">
       <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-        Static arguments <code className="normal-case text-[10px] text-muted-foreground/70">config.toolArgs</code>
+        {translate("toolArgsList.staticArguments")} <code className="normal-case text-[10px] text-muted-foreground/70">config.toolArgs</code>
       </div>
       <p className="text-[10px] leading-snug text-muted-foreground">
         {isToolNode
-          ? "The complete arguments of each call (no model involved)."
-          : "Fixed per tool and merged over what the model supplies — the model still fills the rest."}{" "}
-        Templates like {"{{query}}"} or {"{{classification.<field>}}"} are resolved against the run.
+          ? translate("toolArgsList.theCompleteArgumentsOfEach")
+          : translate("toolArgsList.fixedPerToolAndMerged")}{" "}
+        {translate("toolArgsList.templatesLike")} {translate("toolArgsList.query")} or {translate("toolArgsList.classificationField")} {translate("toolArgsList.areResolvedAgainstTheRun")}
       </p>
       {isToolNode && defaults !== undefined && (
         <p className="text-[10px] text-muted-foreground">
-          Tools without an entry get <code>config.args</code>: <code className="break-all">{JSON.stringify(defaults)}</code>
+          {translate("toolArgsList.toolsWithoutAnEntryGet")} <code>config.args</code>: <code className="break-all">{JSON.stringify(defaults)}</code>
         </p>
       )}
       <ul className="space-y-1">
@@ -87,13 +88,13 @@ export function ToolArgsList({
                       : isToolNode
                         ? defaults !== undefined
                           ? "config.args"
-                          : "no arguments"
-                        : "model decides all"}
+                          : translate("toolArgsList.noArguments")
+                        : translate("toolArgsList.modelDecidesAll")}
                   </span>
                 </summary>
                 <div className="mt-1">
                   <JsonEditor
-                    label={`Static arguments for ${ref}`}
+                    label={translate("toolArgsList.staticArgumentsForRef", { ref })}
                     formulaKind="template"
                     rows={Math.min(8, Math.max(3, JSON.stringify(args ?? {}, null, 2).split("\n").length + 1))}
                     value={args}
@@ -101,7 +102,7 @@ export function ToolArgsList({
                   />
                   {args === undefined && (
                     <p className="mt-0.5 text-[10px] text-muted-foreground">
-                      e.g. <code>{'{ "collection": "cases" }'}</code> — empty: nothing fixed.
+                      e.g. <code>{'{ "collection": "cases" }'}</code> {translate("toolArgsList.emptyNothingFixed")}
                     </p>
                   )}
                 </div>
@@ -112,8 +113,7 @@ export function ToolArgsList({
       </ul>
       {orphans.length > 0 && (
         <p className="text-[10px] text-warning">
-          Arguments for tools not in the list (no effect): {orphans.join(", ")} — edit them under Settings → Forced tool
-          arguments.
+          {translate("toolArgsList.argumentsForToolsNotIn", { value: orphans.join(", ") })}
         </p>
       )}
     </div>

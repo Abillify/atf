@@ -22,6 +22,7 @@ import type React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { request } from "../lib/control-api";
 import { DiffView } from "./FormulaEditor";
+import { translate } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend FlowDiff)
@@ -120,7 +121,7 @@ function ValueDetail({ change }: { change: ValueChange }): React.JSX.Element {
         <code className="break-all font-mono text-foreground">{change.path || "(value)"}</code>
       </div>
       {change.kind === "changed" ? (
-        <DiffView before={pretty(change.from)} after={pretty(change.to)} ariaLabel={`Change of ${change.path}`} />
+        <DiffView before={pretty(change.from)} after={pretty(change.to)} ariaLabel={translate("flowDiffPanel.changeOfPath", { path: change.path })} />
       ) : (
         <ValueBlock value={change.kind === "added" ? change.to : change.from} kind={change.kind} />
       )}
@@ -175,7 +176,7 @@ function DiffRow({
   }
   return (
     <details className={`group rounded border ${config.color}`}>
-      <summary className="flex cursor-pointer list-none items-start gap-2 px-2 py-1.5" title="Show the details">
+      <summary className="flex cursor-pointer list-none items-start gap-2 px-2 py-1.5" title={translate("flowDiffPanel.showTheDetails")}>
         {head}
         <span aria-hidden className="text-[10px] text-muted-foreground transition-transform group-open:rotate-90">
           ▸
@@ -265,7 +266,7 @@ export function FlowDiffPanel({
   if (loading) {
     return (
       <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-        <span className="animate-spin">⟳</span> Loading diff…
+        <span className="animate-spin">⟳</span> {translate("flowDiffPanel.loadingDiff")}
       </div>
     );
   }
@@ -280,7 +281,7 @@ export function FlowDiffPanel({
 
   if (!response) {
     return (
-      <div className="text-xs text-muted-foreground py-2">No diff available.</div>
+      <div className="text-xs text-muted-foreground py-2">{translate("flowDiffPanel.noDiffAvailable")}</div>
     );
   }
 
@@ -307,8 +308,8 @@ export function FlowDiffPanel({
         <button type="button"
           onClick={() => void diffQuery.refetch()}
           className="ml-auto text-accent hover:text-accent/80"
-          title="Refresh diff"
-          aria-label="Refresh diff"
+          title={translate("flowDiffPanel.refreshDiff")}
+          aria-label={translate("flowDiffPanel.refreshDiff")}
         >
           ↻
         </button>
@@ -316,7 +317,7 @@ export function FlowDiffPanel({
 
       {!diff.changed ? (
         <div className="rounded border border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-          ✓ No changes between {fromLabel} and {toLabel}.
+          {translate("flowDiffPanel.noChangesBetweenFromLabelAnd", { fromLabel, toLabel })}
         </div>
       ) : (
         <div className="flex flex-col gap-1.5">

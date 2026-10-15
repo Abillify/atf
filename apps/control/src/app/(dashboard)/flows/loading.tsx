@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Flows route (Req. 12.3).
@@ -11,7 +12,7 @@ export default function FlowsLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading flows"
+      aria-label={translate("flows.loadingFlows")}
       className="flex h-full overflow-hidden p-6"
     >
       {/* Sidebar: flow list */}

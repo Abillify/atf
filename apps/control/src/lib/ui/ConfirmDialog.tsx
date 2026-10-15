@@ -28,6 +28,7 @@ import {
 } from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
+import { translate } from "../i18n";
 
 export interface ConfirmOptions {
   title: string;
@@ -172,7 +173,7 @@ export function ConfirmProvider({
                   settle(request.kind === "prompt" ? null : false)
                 }
               >
-                {request.cancelLabel ?? "Cancel"}
+                {request.cancelLabel ?? translate("confirmDialog.cancel")}
               </Button>
               <Button
                 type="submit"
@@ -183,7 +184,7 @@ export function ConfirmProvider({
                     : "primary"
                 }
               >
-                {request.confirmLabel ?? "Confirm"}
+                {request.confirmLabel ?? translate("confirmDialog.confirm")}
               </Button>
             </div>
           </form>

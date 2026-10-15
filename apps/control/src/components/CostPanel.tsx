@@ -22,7 +22,7 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../lib/ui";
-import { formatNumber } from "../lib/i18n";
+import { translate, formatNumber } from "../lib/i18n";
 import { useChartPalette } from "../lib/theme/palette";
 
 export interface CostPanelProps {
@@ -88,11 +88,11 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {/* Cost by model */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Estimated cost by model ({activeCurrency()})
+          {translate("costPanel.estimatedCostByModelValue", { value: activeCurrency() })}
         </h3>
         {costData.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No cost recorded yet.
+            {translate("costPanel.noCostRecordedYet")}
           </p>
         ) : (
           <ResponsiveContainer
@@ -126,11 +126,11 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {/* Tokens by model */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Tokens by model
+          {translate("costPanel.tokensByModel")}
         </h3>
         {tokenData.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No token usage yet.
+            {translate("costPanel.noTokenUsageYet")}
           </p>
         ) : (
           <ResponsiveContainer
@@ -171,25 +171,25 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {totalCacheRequests > 0 && (
         <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
           <h3 className="mb-3 text-sm font-semibold text-foreground">
-            Response cache analytics
+            {translate("costPanel.responseCacheAnalytics")}
           </h3>
           <div className="mb-3 flex items-center gap-4">
             <div className="flex flex-col">
-              <span className="text-xs text-muted-foreground">Hit rate</span>
+              <span className="text-xs text-muted-foreground">{translate("costPanel.hitRate")}</span>
               <span className="text-2xl font-bold text-success">
                 {cacheHitRatePct}%
               </span>
             </div>
             <div className="flex flex-col">
               <span className="text-xs text-muted-foreground">
-                Total requests
+                {translate("costPanel.totalRequests")}
               </span>
               <span className="text-2xl font-bold text-foreground">
                 {formatNumber(totalCacheRequests)}
               </span>
             </div>
             <div className="flex flex-col">
-              <span className="text-xs text-muted-foreground">Hits saved</span>
+              <span className="text-xs text-muted-foreground">{translate("costPanel.hitsSaved")}</span>
               <span className="text-2xl font-bold text-accent">
                 {formatNumber(summary.cacheHits)}
               </span>
@@ -206,20 +206,20 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
           <Table>
             <TableHead>
               <TableRow className="uppercase tracking-wide">
-                <TableHeaderCell>Layer</TableHeaderCell>
-                <TableHeaderCell className="text-right">Hits</TableHeaderCell>
-                <TableHeaderCell className="text-right">Share</TableHeaderCell>
+                <TableHeaderCell>{translate("costPanel.layer")}</TableHeaderCell>
+                <TableHeaderCell className="text-right">{translate("costPanel.hits")}</TableHeaderCell>
+                <TableHeaderCell className="text-right">{translate("costPanel.share")}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {[
                 {
-                  label: "Exact match",
+                  label: translate("costPanel.exactMatch"),
                   hits: summary.cacheExactHits,
                   color: "bg-info-solid",
                 },
                 {
-                  label: "Semantic (near-dup)",
+                  label: translate("costPanel.semanticNearDup"),
                   hits: summary.cacheSemanticHits,
                   color: "bg-copilot-solid",
                 },
@@ -242,7 +242,7 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
                 </TableRow>
               ))}
               <TableRow className="font-medium">
-                <TableCell className="text-muted-foreground">Misses</TableCell>
+                <TableCell className="text-muted-foreground">{translate("costPanel.misses")}</TableCell>
                 <TableCell className="text-right tabular-nums">
                   {formatNumber(summary.cacheMisses)}
                 </TableCell>
@@ -260,20 +260,20 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {/* Per-tenant spend */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Per-tenant spend (24h)
+          {translate("costPanel.perTenantSpend24h")}
         </h3>
         {tenants.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No tenant spend recorded.
+            {translate("costPanel.noTenantSpendRecorded")}
           </p>
         ) : (
           <Table>
             <TableHead>
               <TableRow className="uppercase tracking-wide">
-                <TableHeaderCell>Tenant</TableHeaderCell>
-                <TableHeaderCell className="text-right">Spent</TableHeaderCell>
-                <TableHeaderCell className="text-right">Cap</TableHeaderCell>
-                <TableHeaderCell className="pl-3">Usage</TableHeaderCell>
+                <TableHeaderCell>{translate("costPanel.tenant")}</TableHeaderCell>
+                <TableHeaderCell className="text-right">{translate("costPanel.spent")}</TableHeaderCell>
+                <TableHeaderCell className="text-right">{translate("costPanel.cap")}</TableHeaderCell>
+                <TableHeaderCell className="pl-3">{translate("costPanel.usage")}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -317,19 +317,19 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {/* Spend per authenticated user */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Spend per user (24h)
+          {translate("costPanel.spendPerUser24h")}
         </h3>
         {users.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No user-attributed spend recorded.
+            {translate("costPanel.noUserAttributedSpendRecorded")}
           </p>
         ) : (
           <Table>
             <TableHead>
               <TableRow className="uppercase tracking-wide">
-                <TableHeaderCell>User</TableHeaderCell>
-                <TableHeaderCell className="text-right">Spent</TableHeaderCell>
-                <TableHeaderCell className="pl-3">Share</TableHeaderCell>
+                <TableHeaderCell>{translate("costPanel.user")}</TableHeaderCell>
+                <TableHeaderCell className="text-right">{translate("costPanel.spent")}</TableHeaderCell>
+                <TableHeaderCell className="pl-3">{translate("costPanel.share")}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -366,19 +366,19 @@ export function CostPanel({ summary }: CostPanelProps): React.JSX.Element {
       {/* Spend per flow */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Spend per flow (24h)
+          {translate("costPanel.spendPerFlow24h")}
         </h3>
         {flows.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No flow-attributed spend recorded.
+            {translate("costPanel.noFlowAttributedSpendRecorded")}
           </p>
         ) : (
           <Table>
             <TableHead>
               <TableRow className="uppercase tracking-wide">
-                <TableHeaderCell>Flow</TableHeaderCell>
-                <TableHeaderCell className="text-right">Spent</TableHeaderCell>
-                <TableHeaderCell className="pl-3">Share</TableHeaderCell>
+                <TableHeaderCell>{translate("costPanel.flow")}</TableHeaderCell>
+                <TableHeaderCell className="text-right">{translate("costPanel.spent")}</TableHeaderCell>
+                <TableHeaderCell className="pl-3">{translate("costPanel.share")}</TableHeaderCell>
               </TableRow>
             </TableHead>
             <TableBody>

@@ -21,7 +21,7 @@ import type { NodeExecutionEvent } from "../types/monitoring";
 import type { ExecutionPickerItem } from "./ExecutionPicker";
 import { Button } from "../lib/ui";
 import { FlowPicker } from "./FlowPicker";
-import { formatTime } from "../lib/i18n";
+import { translate, formatTime } from "../lib/i18n";
 import { useChartPalette } from "../lib/theme/palette";
 
 export interface MetricsSidebarProps {
@@ -218,7 +218,7 @@ function FullscreenChart({
       onClick={onClose}
       role="dialog"
       aria-modal="true"
-      aria-label="Request timeseries (fullscreen)"
+      aria-label={translate("metricsSidebar.requestTimeseriesFullscreen")}
     >
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: click swallowing only — real interaction happens on the controls inside the dialog */}
       {/* biome-ignore lint/a11y/noStaticElementInteractions: swallows backdrop clicks so clicks inside the dialog do not close it; the dialog itself and its controls carry the interactive semantics */}
@@ -231,7 +231,7 @@ function FullscreenChart({
           size="sm"
           onClick={onClose}
           className="absolute top-3 right-3"
-          aria-label="Close fullscreen chart"
+          aria-label={translate("metricsSidebar.closeFullscreenChart")}
         >
           <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20" fill="currentColor" className="w-5 h-5">
             <path
@@ -242,7 +242,7 @@ function FullscreenChart({
           </svg>
         </Button>
         <h3 className="text-sm font-semibold text-foreground mb-4">
-          Request Timeseries
+          {translate("metricsSidebar.requestTimeseries")}
         </h3>
         <ResponsiveContainer width="100%" height="85%">
           <LineChart data={data}>
@@ -352,7 +352,7 @@ export function MetricsSidebar({
       }
     >
       <h2 className="text-sm font-semibold uppercase tracking-wide text-foreground">
-        Live Metrics
+        {translate("metricsSidebar.liveMetrics")}
       </h2>
 
       {/* Time range selector */}
@@ -367,7 +367,7 @@ export function MetricsSidebar({
                 : "bg-muted text-muted-foreground hover:bg-muted-foreground/20"
             }`}
           >
-            {opt.label}
+            {opt.value === "all" ? translate("metricsSidebar.all") : opt.label}
           </button>
         ))}
       </div>
@@ -375,27 +375,27 @@ export function MetricsSidebar({
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-2">
         <StatCard
-          label="Active Requests"
+          label={translate("metricsSidebar.activeRequests")}
           value={metrics.activeRequests}
           valueClassName="text-warning"
         />
         <StatCard
-          label="Completed"
+          label={translate("metricsSidebar.completed")}
           value={metrics.completed}
           valueClassName="text-success"
         />
         <StatCard
-          label="Errors"
+          label={translate("metricsSidebar.errors")}
           value={metrics.errors}
           valueClassName="text-danger"
         />
-        <StatCard label="Total Nodes" value={metrics.totalNodes} />
+        <StatCard label={translate("metricsSidebar.totalNodes")} value={metrics.totalNodes} />
       </div>
 
       {/* Node status distribution */}
       <div className="rounded-lg border border-border bg-card p-2 shadow-sm">
         <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          Node Status
+          {translate("metricsSidebar.nodeStatus")}
         </p>
         <BarChart width={embedded ? 460 : 230} height={90} data={chartData}>
           <XAxis dataKey="name" tick={{ fontSize: 10 }} />
@@ -412,13 +412,13 @@ export function MetricsSidebar({
       <div className="rounded-lg border border-border bg-card p-2 shadow-sm">
         <div className="flex items-center justify-between mb-1">
           <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-            Request Timeseries
+            {translate("metricsSidebar.requestTimeseries")}
           </p>
           <Button
             variant="ghost"
             size="sm"
             onClick={() => setFullscreen(true)}
-            title="Open fullscreen"
+            title={translate("metricsSidebar.openFullscreen")}
           >
             ⛶
           </Button>
@@ -435,8 +435,8 @@ export function MetricsSidebar({
               value={flowFilter ?? ""}
               onChange={(id) => setFlowFilter(id === "" ? null : id)}
               emptyOption="All flows"
-              placeholder="All flows"
-              ariaLabel="Filter metrics by flow"
+              placeholder={translate("metricsSidebar.allFlows")}
+              ariaLabel={translate("metricsSidebar.filterMetricsByFlow")}
               className="w-full"
             />
           </div>
@@ -447,7 +447,7 @@ export function MetricsSidebar({
             type="button"
             className="block cursor-pointer"
             onClick={() => setFullscreen(true)}
-            title="Click to expand"
+            title={translate("metricsSidebar.clickToExpand")}
           >
             <LineChart width={embedded ? 460 : 230} height={100} data={tsData}>
               <CartesianGrid
@@ -504,7 +504,7 @@ export function MetricsSidebar({
           </button>
         ) : (
           <p className="text-[10px] text-muted-foreground py-4 text-center">
-            No data in selected range.
+            {translate("metricsSidebar.noDataInSelectedRange")}
           </p>
         )}
       </div>

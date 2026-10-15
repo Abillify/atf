@@ -34,6 +34,7 @@ import { BuilderHelp } from "./BuilderHelp";
 import { type ConditionCheck, ValueResult, ConditionResult } from "./ResultViews";
 import { RunPicker } from "./RunPicker";
 import { insertAt } from "./formulaUtils";
+import { translate } from "../../lib/i18n";
 
 /** Load-time references in a draft: variables, constants, env, calculations. */
 const LOAD_TIME_RE = /\{\{\s*(=|vars\.|const\.|env\.)/;
@@ -233,7 +234,7 @@ export function FormulaEditorDialog({
       <button
         type="button"
         tabIndex={-1}
-        aria-label="Dismiss editor"
+        aria-label={translate("formulaEditorDialog.dismissEditor")}
         onClick={onClose}
         className="absolute inset-0 cursor-default bg-black/40"
       />
@@ -260,15 +261,15 @@ export function FormulaEditorDialog({
           {vocabulary.runs && <RunPicker runs={vocabulary.runs} />}
           <span className="rounded bg-muted px-1.5 text-[10px] uppercase text-muted-foreground">
             {kind === "condition"
-              ? "condition expression"
+              ? translate("formulaEditorDialog.conditionExpression")
               : hasCalculation
-                ? "value · placeholders & calculations"
-                : "text with placeholders"}
+                ? translate("formulaEditorDialog.valuePlaceholdersCalculations")
+                : translate("formulaEditorDialog.textWithPlaceholders")}
           </span>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close formula editor"
+            aria-label={translate("formulaEditorDialog.closeFormulaEditor")}
             className="ml-auto rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
           >
             <X size={16} aria-hidden />
@@ -297,7 +298,7 @@ export function FormulaEditorDialog({
               }}
             />
             <OperatorToolbar
-              label={kind === "condition" ? "Operators" : "Calculation operators"}
+              label={kind === "condition" ? translate("formulaEditorDialog.operators") : translate("formulaEditorDialog.calculationOperators")}
               operators={
                 kind === "condition"
                   ? (vocabulary.reference?.conditionOperators ?? [])
@@ -337,7 +338,7 @@ export function FormulaEditorDialog({
             <div className="space-y-3">
               {kind === "condition" ? (
                 <div>
-                  <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Result</h3>
+                  <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">{translate("formulaEditorDialog.result")}</h3>
                   <ConditionResult check={check} />
                 </div>
               ) : (
@@ -345,7 +346,7 @@ export function FormulaEditorDialog({
                   {activeEvaluate && (
                     <div>
                       <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        When the flow loads
+                        {translate("formulaEditorDialog.whenTheFlowLoads")}
                       </h3>
                       <ValueResult result={evaluated} />
                     </div>
@@ -353,14 +354,14 @@ export function FormulaEditorDialog({
                   {(kind === "template" || !activeEvaluate) && (
                     <div className="space-y-1">
                       <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                        {kind === "template" ? "At run time (preview)" : "Preview"}
+                        {kind === "template" ? translate("formulaEditorDialog.atRunTimePreview") : translate("formulaEditorDialog.preview")}
                       </h3>
                       <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded bg-muted p-2 font-mono text-[11px]">
-                        {preview?.text || <span className="text-muted-foreground">(empty)</span>}
+                        {preview?.text || <span className="text-muted-foreground">{translate("formulaEditorDialog.empty")}</span>}
                       </pre>
                       {preview && preview.unresolved.length > 0 && (
                         <p className="text-[10px] text-warning">
-                          Without a value (renders empty): {preview.unresolved.join(", ")}
+                          {translate("formulaEditorDialog.withoutAValueRendersEmpty", { value: preview.unresolved.join(", ") })}
                         </p>
                       )}
                     </div>
@@ -371,11 +372,11 @@ export function FormulaEditorDialog({
 
             <div>
               <h3 className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Sample values
+                {translate("formulaEditorDialog.sampleValues")}
               </h3>
               {paths.length === 0 ? (
                 <p className="text-[11px] text-muted-foreground">
-                  The formula reads no run values{kind === "template" ? " (flow variables and date/time are filled automatically)" : ""}.
+                  {translate("formulaEditorDialog.theFormulaReadsNoRun")}{kind === "template" ? translate("formulaEditorDialog.flowVariablesAndDateTime") : ""}.
                 </p>
               ) : (
                 <div className="space-y-1.5">
@@ -385,9 +386,9 @@ export function FormulaEditorDialog({
                       <label key={p} className="block">
                         <code className="block truncate font-mono text-[10px] text-muted-foreground">{p}</code>
                         <input
-                          aria-label={`Sample value for ${p}`}
+                          aria-label={translate("formulaEditorDialog.sampleValueForP", { p })}
                           value={v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v)}
-                          placeholder="(no value)"
+                          placeholder={translate("formulaEditorDialog.noValue")}
                           onChange={(e) => setSample((s) => setPath(s, p, parseSampleValue(e.target.value)))}
                           className="w-full rounded border border-border bg-card px-2 py-1 font-mono text-[11px]"
                         />
@@ -395,7 +396,7 @@ export function FormulaEditorDialog({
                     );
                   })}
                   <p className="text-[10px] text-muted-foreground">
-                    Numbers, true/false, null and JSON are typed; anything else is text.
+                    {translate("formulaEditorDialog.numbersTrueFalseNullAnd")}
                   </p>
                 </div>
               )}
@@ -409,14 +410,14 @@ export function FormulaEditorDialog({
             onClick={onClose}
             className="rounded border border-border px-3 py-1 text-xs hover:bg-muted"
           >
-            Cancel
+            {translate("formulaEditorDialog.cancel")}
           </button>
           <button
             type="button"
             onClick={() => onApply(draft)}
             className="rounded bg-primary px-3 py-1 text-xs font-medium text-primary-foreground hover:opacity-90"
           >
-            Apply
+            {translate("formulaEditorDialog.apply")}
           </button>
         </footer>
       </div>

@@ -12,11 +12,12 @@
 import dynamic from "next/dynamic";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { useFlows } from "../../../hooks/useFlows";
+import { translate } from "../../../lib/i18n";
 
 const AutopilotPanel = dynamic(
   () =>
     import("../../../components/AutopilotPanel").then((m) => m.AutopilotPanel),
-  { ssr: false, loading: () => <div className="p-6 text-sm text-muted-foreground">Loading…</div> },
+  { ssr: false, loading: () => <div className="p-6 text-sm text-muted-foreground">{translate("autopilot.loading")}</div> },
 );
 
 export default function AutopilotPage() {
@@ -30,12 +31,10 @@ export default function AutopilotPage() {
     <div className="p-4 sm:p-6 max-w-2xl">
       <div className="mb-4">
         <h1 className="text-lg font-semibold text-foreground">
-          Continuous Safety & Quality Autopilot
+          {translate("autopilot.continuousSafetyQualityAutopilot")}
         </h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Closed feedback loop: Red-Team bypass detected → Optimizer generates
-          hardened prompt variants → best variant auto-promoted → Canary rollout
-          with automatic rollback on regression.
+          {translate("autopilot.closedFeedbackLoopRedTeam")}
         </p>
       </div>
       <AutopilotPanel limit={30} flows={flows.map((f) => ({ id: f.id, name: f.name }))} />

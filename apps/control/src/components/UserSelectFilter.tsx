@@ -5,6 +5,7 @@
 import type React from "react";
 import { useMemo, useState } from "react";
 import { Check, Search } from "lucide-react";
+import { translate } from "../lib/i18n";
 
 export interface UserSelectFilterProps {
   label: string;
@@ -47,8 +48,8 @@ export function UserSelectFilter({
         <input
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="User suchen…"
-          aria-label={`${label}: User suchen`}
+          placeholder={translate("userSelectFilter.userSuchen")}
+          aria-label={translate("userSelectFilter.labelUserSuchen", { label })}
           className="w-full rounded border border-border bg-background py-1 pl-6 pr-2 text-xs outline-none placeholder:text-muted-foreground focus:border-accent"
         />
       </div>
@@ -66,15 +67,15 @@ export function UserSelectFilter({
             aria-hidden
             className={value === "" ? "opacity-100" : "opacity-0"}
           />
-          Alle Benutzer
+          {translate("userSelectFilter.alleBenutzer")}
         </button>
         {options.length === 0 ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            Keine Users verfügbar
+            {translate("userSelectFilter.keineUsersVerfuGbar")}
           </p>
         ) : listed.length === 0 ? (
           <p className="px-2 py-1.5 text-xs text-muted-foreground">
-            Kein User passt zu „{query}“.
+            {translate("userSelectFilter.keinUserPasstZuQuery", { query })}
           </p>
         ) : (
           listed.map((user) => (

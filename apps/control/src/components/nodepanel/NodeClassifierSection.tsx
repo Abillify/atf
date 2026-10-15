@@ -10,6 +10,7 @@
 import type React from "react";
 import type { FlowNode } from "../../types/flow";
 import { Field, Section, inputCls, JsonEditor } from "../form-controls";
+import { translate } from "../../lib/i18n";
 
 export function NodeClassifierSection({
   node,
@@ -21,12 +22,12 @@ export function NodeClassifierSection({
   onFocusField?: (key: string) => void;
 }): React.JSX.Element {
   return (
-            <Section title="Classifier">
+            <Section title={translate("nodeClassifierSection.classifier")}>
               <fieldset
                 className="m-0 min-w-0 border-0 p-0"
                 onFocus={() => onFocusField?.("classifierSchema")}
               >
-                <Field label="Class key">
+                <Field label={translate("nodeClassifierSection.classKey")}>
                   <input
                     className={inputCls}
                     onFocus={() => onFocusField?.("classifierSchema")}
@@ -46,7 +47,7 @@ export function NodeClassifierSection({
                 </Field>
                 <JsonEditor
                   key={`${node.id}-schema`}
-                  label="Output schema (JSON Schema)"
+                  label={translate("nodeClassifierSection.outputSchemaJSONSchema")}
                   rows={8}
                   allowEmpty={false}
                   value={node.classifierSchema?.schema ?? {}}

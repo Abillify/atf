@@ -24,6 +24,7 @@ import {
   useConfirm,
 } from "../lib/ui";
 import type { FlowDefinition, FlowListEntry } from "../types/flow";
+import { translate } from "../lib/i18n";
 
 export interface FlowsTabProps {
   token?: string;
@@ -127,9 +128,9 @@ export function FlowsTab({
   const deleteFlow = async (id: string): Promise<void> => {
     if (
       !(await confirmDialog({
-        title: "Delete flow",
-        message: `Delete flow "${id}"? This removes its draft, published version and history.`,
-        confirmLabel: "Delete",
+        title: translate("flowsTab.deleteFlow"),
+        message: translate("flowsTab.deleteFlowIdThisRemoves", { id }),
+        confirmLabel: translate("flowsTab.delete"),
         destructive: true,
       }))
     ) {
@@ -163,9 +164,9 @@ export function FlowsTab({
     if (
       actions.flows.some((f) => f.id === id) &&
       !(await confirmDialog({
-        title: "Replace existing flow",
-        message: `Flow "${id}" exists. Replace its draft with the imported flow?`,
-        confirmLabel: "Replace",
+        title: translate("flowsTab.replaceExistingFlow"),
+        message: translate("flowsTab.flowIdExistsReplaceIts", { id }),
+        confirmLabel: translate("flowsTab.replace"),
         destructive: true,
       }))
     ) {
@@ -185,7 +186,7 @@ export function FlowsTab({
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">
-          Flows{" "}
+          {translate("flowsTab.flows")}{" "}
           <span className="font-normal text-muted-foreground">
             ({actions.flows.length})
           </span>
@@ -199,7 +200,7 @@ export function FlowsTab({
           <div
             className="flex overflow-hidden rounded border border-border text-xs"
             role="group"
-            aria-label="Stats time range"
+            aria-label={translate("flowsTab.statsTimeRange")}
           >
             {(["1h", "1d", "1w", "1m"] as StatsRange[]).map((p) => (
               <button
@@ -218,7 +219,7 @@ export function FlowsTab({
             ))}
           </div>
           <Button variant="outline" size="sm" onClick={() => actions.refresh()}>
-            Refresh
+            {translate("flowsTab.refresh")}
           </Button>
           {actions.onlineEditing && (
             <>
@@ -229,14 +230,14 @@ export function FlowsTab({
                 disabled={!writeGate.allowed}
                 title={writeGate.title}
               >
-                Import
+                {translate("flowsTab.import")}
               </Button>
               <input
                 ref={fileInput}
                 type="file"
                 accept="application/json,.json"
                 className="hidden"
-                aria-label="Import flow JSON"
+                aria-label={translate("flowsTab.importFlowJSON")}
                 onChange={(e) => {
                   const f = e.target.files?.[0];
                   if (f) void importFlow(f);
@@ -244,7 +245,7 @@ export function FlowsTab({
                 }}
               />
               <Link href={studioHref()} className={LINK_PRIMARY}>
-                + New flow
+                {translate("flowsTab.newFlow")}
               </Link>
             </>
           )}
@@ -253,28 +254,26 @@ export function FlowsTab({
 
       {!actions.onlineEditing && (
         <p className="rounded border border-dashed border-border bg-card p-3 text-xs text-muted-foreground">
-          Online editing is disabled — flows are inspected read-only and
-          validated in Studio. Set{" "}
-          <span className="font-mono">FLOW_EDITOR_ENABLED=true</span> (with{" "}
-          <span className="font-mono">DATABASE_URL</span> for durability) to
-          author flows online.
+          {translate("flowsTab.onlineEditingIsDisabledFlows")}{" "}
+          <span className="font-mono">{translate("flowsTab.fLOWEDITORENABLEDTrue")}</span> {translate("flowsTab.with")}{" "}
+          <span className="font-mono">DATABASE_URL</span> {translate("flowsTab.forDurabilityToAuthorFlows")}
         </p>
       )}
 
       {actions.flows.length === 0 ? (
         actions.isLoading ? (
           <p className="py-10 text-center text-sm text-muted-foreground">
-            Loading…
+            {translate("flowsTab.loading")}
           </p>
         ) : (
           <EmptyState
             icon={Workflow}
-            title="No flows yet."
-            description="Flows describe how requests are routed through nodes and edges. Create one in Studio or import a flow JSON file."
+            title={translate("flowsTab.noFlowsYet")}
+            description={translate("flowsTab.flowsDescribeHowRequestsAre")}
             action={
               actions.onlineEditing ? (
                 <Link href={studioHref()} className={LINK_PRIMARY}>
-                  + New flow
+                  {translate("flowsTab.newFlow")}
                 </Link>
               ) : undefined
             }
@@ -284,36 +283,36 @@ export function FlowsTab({
         <Table>
           <TableHead>
             <TableRow>
-              <TableHeaderCell>Flow</TableHeaderCell>
-              <TableHeaderCell>Source</TableHeaderCell>
-              <TableHeaderCell className="text-center">Status</TableHeaderCell>
-              <TableHeaderCell className="text-right">Nodes</TableHeaderCell>
-              <TableHeaderCell className="text-right">Ver.</TableHeaderCell>
+              <TableHeaderCell>{translate("flowsTab.flow")}</TableHeaderCell>
+              <TableHeaderCell>{translate("flowsTab.source")}</TableHeaderCell>
+              <TableHeaderCell className="text-center">{translate("flowsTab.status")}</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("flowsTab.nodes")}</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("flowsTab.ver")}</TableHeaderCell>
               <TableHeaderCell
                 className="text-right"
-                title={`Executions in the last ${range}`}
+                title={translate("flowsTab.executionsInTheLastRange", { range })}
               >
-                Runs
+                {translate("flowsTab.runs")}
               </TableHeaderCell>
               <TableHeaderCell
                 className="text-right"
-                title={`Average run duration in the last ${range}`}
+                title={translate("flowsTab.averageRunDurationInThe", { range })}
               >
-                Avg runtime
+                {translate("flowsTab.avgRuntime")}
               </TableHeaderCell>
               <TableHeaderCell
                 className="text-right"
-                title={`Average cost per run in the last ${range}`}
+                title={translate("flowsTab.averageCostPerRunIn", { range })}
               >
-                Avg cost
+                {translate("flowsTab.avgCost")}
               </TableHeaderCell>
               <TableHeaderCell
                 className="text-right"
-                title={`Total cost in the last ${range}`}
+                title={translate("flowsTab.totalCostInTheLast", { range })}
               >
-                Total cost
+                {translate("flowsTab.totalCost")}
               </TableHeaderCell>
-              <TableHeaderCell className="text-right">Actions</TableHeaderCell>
+              <TableHeaderCell className="text-right">{translate("flowsTab.actions")}</TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -332,7 +331,7 @@ export function FlowsTab({
                   </TableCell>
                   <TableCell className="text-xs text-muted-foreground">
                     {f.source}
-                    {f.shadowsFile ? " (overrides file)" : ""}
+                    {f.shadowsFile ? translate("flowsTab.overridesFile") : ""}
                   </TableCell>
                   <TableCell className="text-center">
                     <Badge variant={b.variant}>{b.label}</Badge>
@@ -362,16 +361,16 @@ export function FlowsTab({
                   <TableCell className="text-right">
                     <div className="flex justify-end gap-1.5">
                       <Link href={studioHref(f.id)} className={LINK_OUTLINE}>
-                        {f.editable ? "Edit" : "Inspect"}
+                        {f.editable ? translate("flowsTab.edit") : translate("flowsTab.inspect")}
                       </Link>
                       <Button
                         variant="ghost"
                         size="sm"
                         onClick={() => void exportFlow(f.id)}
                         disabled={busyId === f.id}
-                        title="Download the flow definition as JSON"
+                        title={translate("flowsTab.downloadTheFlowDefinitionAs")}
                       >
-                        Export
+                        {translate("flowsTab.export")}
                       </Button>
                       {actions.onlineEditing &&
                         f.source === "online" &&
@@ -384,7 +383,7 @@ export function FlowsTab({
                             title={writeGate.title}
                             className="text-danger"
                           >
-                            Delete
+                            {translate("flowsTab.delete")}
                           </Button>
                         )}
                     </div>

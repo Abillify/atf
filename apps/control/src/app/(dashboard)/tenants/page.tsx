@@ -24,7 +24,7 @@ import {
   Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell,
   useConfirm,
 } from "../../../lib/ui";
-import { formatNumber, formatDate } from "../../../lib/i18n";
+import { translate, formatNumber, formatDate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -146,9 +146,9 @@ function TenantForm({
       {error && <p role="alert" className="text-sm text-danger">{error}</p>}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
         {[
-          { label: "Name *", value: name, onChange: setName, placeholder: "ACME Corp" },
-          { label: "Plan", value: plan, onChange: setPlan, placeholder: "free" },
-          { label: "Daily budget ($)", value: budget, onChange: setBudget, placeholder: "e.g. 5.00" },
+          { label: translate("tenants.name"), value: name, onChange: setName, placeholder: translate("tenants.aCMECorp") },
+          { label: translate("tenants.plan"), value: plan, onChange: setPlan, placeholder: "free" },
+          { label: translate("tenants.dailyBudget"), value: budget, onChange: setBudget, placeholder: "e.g. 5.00" },
         ].map(({ label, value, onChange, placeholder }) => (
           <div key={label}>
             <label htmlFor={`tenant-${label.toLowerCase().replace(/[^a-z0-9]+/g, "-")}`} className="block text-xs font-medium text-muted-foreground mb-1">{label}</label>
@@ -159,9 +159,9 @@ function TenantForm({
       </div>
       <div className="flex gap-2">
         <Button variant="primary" size="sm" onClick={() => mutation.mutate()} disabled={mutation.isPending}>
-          {mutation.isPending ? "Saving…" : initial ? "Save changes" : "Create tenant"}
+          {mutation.isPending ? translate("tenants.saving") : initial ? translate("tenants.saveChanges") : translate("tenants.createTenant")}
         </Button>
-        <Button variant="secondary" size="sm" onClick={onCancel}>Cancel</Button>
+        <Button variant="secondary" size="sm" onClick={onCancel}>{translate("tenants.cancel")}</Button>
       </div>
     </div>
   );
@@ -199,28 +199,28 @@ function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefi
     <div className="space-y-4">
       {revealed && (
         <div className="rounded border border-success-border bg-success-soft p-3 text-sm text-success">
-          <p className="font-medium mb-1">Key created — copy it now, it won&apos;t be shown again.</p>
+          <p className="font-medium mb-1">{translate("tenants.keyCreatedCopyItNow")}</p>
           <code className="break-all font-mono text-xs">{revealed}</code>
-          <Button variant="secondary" size="sm" className="mt-2" onClick={() => setRevealed(null)}>Dismiss</Button>
+          <Button variant="secondary" size="sm" className="mt-2" onClick={() => setRevealed(null)}>{translate("tenants.dismiss")}</Button>
         </div>
       )}
       <div className="flex items-center gap-2">
-        <input value={newName} onChange={e => setNewName(e.target.value)} placeholder="Key name"
+        <input value={newName} onChange={e => setNewName(e.target.value)} placeholder={translate("tenants.keyName")}
           className="rounded border border-border bg-background px-3 py-1.5 text-sm w-48 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <Button variant="primary" size="sm" onClick={() => createMutation.mutate()} disabled={createMutation.isPending}>
-          {createMutation.isPending ? "…" : "+ Create key"}
+          {createMutation.isPending ? "…" : translate("tenants.createKey")}
         </Button>
       </div>
-      {isLoading ? <p className="text-sm text-muted-foreground">Loading…</p> : keys.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No API keys yet.</p>
+      {isLoading ? <p className="text-sm text-muted-foreground">{translate("tenants.loading")}</p> : keys.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{translate("tenants.noAPIKeysYet")}</p>
       ) : (
         <Table>
           <TableHead><TableRow className="uppercase tracking-wide">
-            <TableHeaderCell>Name</TableHeaderCell>
+            <TableHeaderCell>{translate("tenants.name2")}</TableHeaderCell>
             <TableHeaderCell>ID</TableHeaderCell>
-            <TableHeaderCell>Created</TableHeaderCell>
-            <TableHeaderCell>Last used</TableHeaderCell>
-            <TableHeaderCell className="text-center">Status</TableHeaderCell>
+            <TableHeaderCell>{translate("tenants.created")}</TableHeaderCell>
+            <TableHeaderCell>{translate("tenants.lastUsed")}</TableHeaderCell>
+            <TableHeaderCell className="text-center">{translate("tenants.status")}</TableHeaderCell>
             <TableHeaderCell />
           </TableRow></TableHead>
           <TableBody>
@@ -238,13 +238,13 @@ function KeysTab({ tenantId, token }: { tenantId: string; token: string | undefi
                     <Button variant="destructive" size="sm" disabled={revokeMutation.isPending}
                       onClick={async () => {
                         const ok = await confirmDialog({
-                          title: "Revoke API key?",
-                          message: `Every client using "${k.name}" is rejected immediately. This cannot be undone.`,
-                          confirmLabel: "Revoke",
+                          title: translate("tenants.revokeAPIKey"),
+                          message: translate("tenants.everyClientUsingNameIs", { name: k.name }),
+                          confirmLabel: translate("tenants.revoke"),
                           destructive: true,
                         });
                         if (ok) revokeMutation.mutate(k.id);
-                      }}>Revoke</Button>
+                      }}>{translate("tenants.revoke")}</Button>
                   )}
                 </TableCell>
               </TableRow>
@@ -266,7 +266,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
     queryFn: () => api.usage(token, tenantId),
   });
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (isLoading) return <p className="text-sm text-muted-foreground">{translate("tenants.loading")}</p>;
   if (error) return <p className="text-sm text-danger">{error.message}</p>;
   if (!summary) return null;
 
@@ -276,9 +276,9 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
     <div className="space-y-4">
       <div className="grid grid-cols-3 gap-3">
         {[
-          { label: "Requests", value: String(summary.totalRequests) },
-          { label: "Tokens", value: formatNumber(summary.totalTokens) },
-          { label: "Cost", value: withCurrency(fmt(summary.totalCost)), green: true },
+          { label: translate("tenants.requests"), value: String(summary.totalRequests) },
+          { label: translate("tenants.tokens"), value: formatNumber(summary.totalTokens) },
+          { label: translate("tenants.cost"), value: withCurrency(fmt(summary.totalCost)), green: true },
         ].map(({ label, value, green }) => (
           <div key={label} className="rounded border border-border bg-background p-3 text-center">
             <div className={`text-xl font-bold tabular-nums ${green ? "text-success" : "text-foreground"}`}>{value}</div>
@@ -289,10 +289,10 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
       {summary.byModel && summary.byModel.length > 0 && (
         <Table>
           <TableHead><TableRow className="uppercase tracking-wide">
-            <TableHeaderCell>Model</TableHeaderCell>
-            <TableHeaderCell className="text-right">Requests</TableHeaderCell>
-            <TableHeaderCell className="text-right">Tokens</TableHeaderCell>
-            <TableHeaderCell className="text-right">Cost</TableHeaderCell>
+            <TableHeaderCell>{translate("tenants.model")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{translate("tenants.requests")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{translate("tenants.tokens")}</TableHeaderCell>
+            <TableHeaderCell className="text-right">{translate("tenants.cost")}</TableHeaderCell>
           </TableRow></TableHead>
           <TableBody>
             {summary.byModel.map(m => (
@@ -306,7 +306,7 @@ function UsageTab({ tenantId, token }: { tenantId: string; token: string | undef
           </TableBody>
         </Table>
       )}
-      <p className="text-xs text-muted-foreground">Period: {summary.from}{summary.to ? ` → ${summary.to}` : " (last 30 days)"}</p>
+      <p className="text-xs text-muted-foreground">{translate("tenants.periodFrom", { from: summary.from })}{summary.to ? ` → ${summary.to}` : translate("tenants.last30Days")}</p>
     </div>
   );
 }
@@ -345,35 +345,34 @@ function BYOKTab({ tenantId, token }: { tenantId: string; token: string | undefi
 
   const configuredSet = new Set(keys.filter(k => k.configured).map(k => k.provider));
 
-  if (isLoading) return <p className="text-sm text-muted-foreground">Loading…</p>;
+  if (isLoading) return <p className="text-sm text-muted-foreground">{translate("tenants.loading")}</p>;
 
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Bring-Your-Own-Key (BYOK): override the platform&apos;s shared provider credentials with per-tenant keys.
-        Keys are stored encrypted server-side and never returned after setting.
+        {translate("tenants.bringYourOwnKeyBYOK")}
       </p>
       {opError && <p role="alert" className="text-sm text-danger">{opError}</p>}
       {editing && (
         <div className="rounded border border-border bg-muted p-3 space-y-2">
-          <p className="text-sm font-medium text-foreground">Set key for <span className="font-mono">{editing}</span></p>
+          <p className="text-sm font-medium text-foreground">{translate("tenants.setKeyFor")} <span className="font-mono">{editing}</span></p>
           <input type="password" value={keyValue} onChange={e => setKeyValue(e.target.value)}
-            placeholder="Paste API key…" autoComplete="off"
+            placeholder={translate("tenants.pasteAPIKey")} autoComplete="off"
             className="w-full rounded border border-border bg-background px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
           <div className="flex gap-2">
             <Button variant="primary" size="sm" disabled={setMutation.isPending || !keyValue.trim()}
               onClick={() => setMutation.mutate({ provider: editing, key: keyValue.trim() })}>
-              {setMutation.isPending ? "Saving…" : "Save"}
+              {setMutation.isPending ? translate("tenants.saving") : translate("tenants.save")}
             </Button>
-            <Button variant="secondary" size="sm" onClick={() => { setEditing(null); setKeyValue(""); }}>Cancel</Button>
+            <Button variant="secondary" size="sm" onClick={() => { setEditing(null); setKeyValue(""); }}>{translate("tenants.cancel")}</Button>
           </div>
         </div>
       )}
       <Table>
         <TableHead><TableRow className="uppercase tracking-wide">
-          <TableHeaderCell>Provider</TableHeaderCell>
-          <TableHeaderCell className="text-center">Status</TableHeaderCell>
-          <TableHeaderCell className="text-right">Actions</TableHeaderCell>
+          <TableHeaderCell>{translate("tenants.provider")}</TableHeaderCell>
+          <TableHeaderCell className="text-center">{translate("tenants.status")}</TableHeaderCell>
+          <TableHeaderCell className="text-right">{translate("tenants.actions")}</TableHeaderCell>
         </TableRow></TableHead>
         <TableBody>
           {BYOK_PROVIDERS.map(p => (
@@ -381,25 +380,25 @@ function BYOKTab({ tenantId, token }: { tenantId: string; token: string | undefi
               <TableCell className="font-mono">{p}</TableCell>
               <TableCell className="text-center">
                 <Badge variant={configuredSet.has(p) ? "success" : "secondary"}>
-                  {configuredSet.has(p) ? "configured" : "not set"}
+                  {configuredSet.has(p) ? "configured" : translate("tenants.notSet")}
                 </Badge>
               </TableCell>
               <TableCell className="text-right">
                 <div className="flex items-center justify-end gap-2">
                   <Button variant="outline" size="sm" onClick={() => { setEditing(p); setKeyValue(""); }}>
-                    {configuredSet.has(p) ? "Replace" : "Set key"}
+                    {configuredSet.has(p) ? translate("tenants.replace") : translate("tenants.setKey")}
                   </Button>
                   {configuredSet.has(p) && (
                     <Button variant="destructive" size="sm" disabled={deleteMutation.isPending}
                       onClick={async () => {
                         const ok = await confirmDialog({
-                          title: `Remove the ${p} key?`,
-                          message: "This tenant's requests to the provider fall back to the deployment key, or fail when keys are mandatory.",
-                          confirmLabel: "Remove",
+                          title: translate("tenants.removeThePKey", { p }),
+                          message: translate("tenants.thisTenantSRequestsTo"),
+                          confirmLabel: translate("tenants.remove"),
                           destructive: true,
                         });
                         if (ok) deleteMutation.mutate(p);
-                      }}>Remove</Button>
+                      }}>{translate("tenants.remove")}</Button>
                   )}
                 </div>
               </TableCell>
@@ -440,27 +439,27 @@ function TenantDetail({
           onCancel={() => setEditing(false)} />
       ) : (
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>Edit</Button>
+          <Button variant="outline" size="sm" onClick={() => setEditing(true)}>{translate("tenants.edit")}</Button>
           {confirmDelete ? (
             <>
-              <span className="text-xs text-danger">Delete &quot;{tenant.name}&quot;?</span>
+              <span className="text-xs text-danger">{translate("tenants.deleteName", { name: tenant.name })}</span>
               <Button variant="destructive" size="sm" disabled={deleteMutation.isPending}
                 onClick={() => deleteMutation.mutate()}>
-                {deleteMutation.isPending ? "…" : "Confirm delete"}
+                {deleteMutation.isPending ? "…" : translate("tenants.confirmDelete")}
               </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>Cancel</Button>
+              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(false)}>{translate("tenants.cancel")}</Button>
             </>
           ) : (
-            <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>Delete tenant</Button>
+            <Button variant="destructive" size="sm" onClick={() => setConfirmDelete(true)}>{translate("tenants.deleteTenant")}</Button>
           )}
         </div>
       )}
 
       <Tabs defaultValue="keys">
         <TabsList>
-          <TabsTrigger value="keys">API Keys</TabsTrigger>
-          <TabsTrigger value="usage">Usage</TabsTrigger>
-          <TabsTrigger value="byok">BYOK Keys</TabsTrigger>
+          <TabsTrigger value="keys">{translate("tenants.aPIKeys")}</TabsTrigger>
+          <TabsTrigger value="usage">{translate("tenants.usage")}</TabsTrigger>
+          <TabsTrigger value="byok">{translate("tenants.bYOKKeys")}</TabsTrigger>
         </TabsList>
         <TabsContent value="keys"><KeysTab tenantId={tenant.id} token={token} /></TabsContent>
         <TabsContent value="usage"><UsageTab tenantId={tenant.id} token={token} /></TabsContent>
@@ -502,28 +501,28 @@ function TenantList() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <input type="search" value={search} onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name or ID…"
+          placeholder={translate("tenants.searchByNameOrID")}
           className="rounded border border-border bg-background px-3 py-1.5 text-sm w-64 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
         <Button variant="primary" size="sm" onClick={() => { setCreating(v => !v); setExpanded(null); }}>
-          {creating ? "Cancel" : "+ New tenant"}
+          {creating ? translate("tenants.cancel") : translate("tenants.newTenant")}
         </Button>
-        <span className="text-xs text-muted-foreground">{tenants.length} tenant(s)</span>
+        <span className="text-xs text-muted-foreground">{translate("tenants.lengthTenantS", { length: tenants.length })}</span>
       </div>
 
       {creating && isAuthenticated && (
         <div className="rounded-lg border border-border bg-card p-4">
-          <p className="text-sm font-semibold text-foreground mb-3">Create tenant</p>
+          <p className="text-sm font-semibold text-foreground mb-3">{translate("tenants.createTenant")}</p>
           <TenantForm token={token}
             onSaved={() => { setCreating(false); void qc.invalidateQueries({ queryKey: ["admin", "tenants"] }); }}
             onCancel={() => setCreating(false)} />
         </div>
       )}
 
-      {isLoading && <p className="text-sm text-muted-foreground">Loading tenants…</p>}
+      {isLoading && <p className="text-sm text-muted-foreground">{translate("tenants.loadingTenants2")}</p>}
       {error && <p role="alert" className="text-sm text-danger">{error.message}</p>}
       {!isLoading && !error && filtered.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card py-10 text-center text-sm text-muted-foreground">
-          {search ? "No tenants match your search." : "No tenants yet. Create one above."}
+          {search ? translate("tenants.noTenantsMatchYourSearch") : translate("tenants.noTenantsYetCreateOne")}
         </div>
       )}
 
@@ -571,10 +570,10 @@ function TenantList() {
 export default function TenantsPage() {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
-      <h1 className="mb-4 text-xl font-semibold text-foreground">Tenant Administration</h1>
+      <h1 className="mb-4 text-xl font-semibold text-foreground">{translate("tenants.tenantAdministration")}</h1>
       <RequireRole minRole="admin" fallback={
         <div role="alert" className="rounded-lg border border-warning-border bg-warning-soft p-6 text-center text-sm text-warning">
-          Administrator access required to view tenant management.
+          {translate("tenants.administratorAccessRequiredToView")}
         </div>
       }>
         <TenantList />

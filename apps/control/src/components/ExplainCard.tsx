@@ -23,7 +23,7 @@ import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
 import { Badge, Button } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
-import { formatDateTime } from "../lib/i18n";
+import { translate, formatDateTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirror src/observability/explain.ts)
@@ -238,7 +238,7 @@ export function ExplainCard({
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true">
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-        Loading explainability card…
+        {translate("explainCard.loadingExplainabilityCard")}
       </div>
     );
   }
@@ -246,7 +246,7 @@ export function ExplainCard({
   if (error) {
     return (
       <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
-        Failed to load explainability card: {error.message}
+        {translate("explainCard.failedToLoadExplainabilityCard", { message: error.message })}
       </div>
     );
   }
@@ -254,7 +254,7 @@ export function ExplainCard({
   if (!card) {
     return (
       <p className="py-8 text-center text-sm text-muted-foreground">
-        No explainability card available for this execution.
+        {translate("explainCard.noExplainabilityCardAvailableFor")}
       </p>
     );
   }
@@ -265,10 +265,10 @@ export function ExplainCard({
       <div className="flex items-center justify-between rounded-lg border border-border bg-card p-4">
         <div>
           <h2 className="font-semibold text-foreground">
-            Decision-Provenance Card
+            {translate("explainCard.decisionProvenanceCard")}
           </h2>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            {card.flowId ?? "(unknown flow)"} ·{" "}
+            {card.flowId ?? translate("explainCard.unknownFlow")} ·{" "}
             {card.userName ?? "anonymous"} ·{" "}
             {formatDateTime(card.startedAt)}
           </p>
@@ -281,16 +281,16 @@ export function ExplainCard({
             onClick={() => void handleDownload()}
             disabled={downloading}
           >
-            {downloading ? "Downloading…" : "Download Markdown"}
+            {downloading ? translate("explainCard.downloading") : translate("explainCard.downloadMarkdown")}
           </Button>
           <Button
             variant="outline"
             size="sm"
             onClick={() => void handleDownloadBundle()}
             disabled={downloadingBundle}
-            title="Signed, machine-verifiable JSON artefact (verify offline with: bun run scripts/cli.ts verify-bundle)"
+            title={translate("explainCard.signedMachineVerifiableJSONArtefact")}
           >
-            {downloadingBundle ? "Downloading…" : "Download Evidence Bundle"}
+            {downloadingBundle ? translate("explainCard.downloading") : translate("explainCard.downloadEvidenceBundle")}
           </Button>
         </div>
       </div>
@@ -298,23 +298,23 @@ export function ExplainCard({
       {/* Summary stats */}
       <dl className="grid grid-cols-2 gap-4 rounded-lg border border-border bg-card p-4 sm:grid-cols-4">
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Latency</dt>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.latency")}</dt>
           <dd className="text-lg font-semibold text-foreground">
             {card.totalLatencyMs !== null ? `${card.totalLatencyMs} ms` : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Cost</dt>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.cost")}</dt>
           <dd className="text-lg font-semibold text-foreground">
             {card.totalCost !== null ? formatCost(card.totalCost) : "—"}
           </dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Steps</dt>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.steps")}</dt>
           <dd className="text-lg font-semibold text-foreground">{card.steps.length}</dd>
         </div>
         <div>
-          <dt className="text-xs uppercase tracking-wide text-muted-foreground">Models</dt>
+          <dt className="text-xs uppercase tracking-wide text-muted-foreground">{translate("explainCard.models")}</dt>
           <dd className="text-lg font-semibold text-foreground">{card.modelsUsed.length}</dd>
         </div>
       </dl>
@@ -322,7 +322,7 @@ export function ExplainCard({
       {card.userPrompt && (
         <div className="rounded-lg border border-border bg-card p-4">
           <h3 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            User prompt
+            {translate("explainCard.userPrompt")}
           </h3>
           <p className="text-sm text-foreground">{card.userPrompt}</p>
         </div>
@@ -331,7 +331,7 @@ export function ExplainCard({
       {/* Execution path */}
       <div className="rounded-lg border border-border bg-card p-4">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Execution path
+          {translate("explainCard.executionPath")}
         </h3>
         <ol className="flex flex-col gap-2">
           {card.steps.map((step, i) => (
@@ -346,7 +346,7 @@ export function ExplainCard({
                   {step.label ?? step.nodeId}
                 </span>
                 {step.kind === "tool" && (
-                  <span className="text-muted-foreground">(tool)</span>
+                  <span className="text-muted-foreground">{translate("explainCard.tool")}</span>
                 )}
                 {step.model !== undefined && (
                   <span className="ml-auto font-mono text-muted-foreground">
@@ -356,7 +356,7 @@ export function ExplainCard({
               </div>
               {step.routing !== undefined && (
                 <p className="mt-1 text-muted-foreground">
-                  routed to <code>{step.routing.target}</code>
+                  {translate("explainCard.routedTo")} <code>{step.routing.target}</code>
                   {step.routing.matched_condition !== undefined &&
                     ` (${step.routing.matched_condition})`}
                 </p>
@@ -377,7 +377,7 @@ export function ExplainCard({
               {step.objectiveSolver !== undefined && (
                 <div className="mt-1">
                   <p className="text-muted-foreground">
-                    objective-driven routing: selected{" "}
+                    {translate("explainCard.objectiveDrivenRoutingSelected")}{" "}
                     <code>{step.objectiveSolver.selected}</code>{" "}
                     <Badge
                       variant={
@@ -387,8 +387,8 @@ export function ExplainCard({
                       }
                     >
                       {step.objectiveSolver.satisfiedObjective
-                        ? "objective satisfied"
-                        : "fallback used"}
+                        ? translate("explainCard.objectiveSatisfied")
+                        : translate("explainCard.fallbackUsed")}
                     </Badge>
                   </p>
                   {step.objectiveSolver.attempts.length > 0 && (
@@ -400,9 +400,9 @@ export function ExplainCard({
                           {a.estimatedCostUsd !== undefined &&
                             ` · ${formatCost(a.estimatedCostUsd)}`}
                           {a.observedQuality !== undefined &&
-                            ` · quality ${(a.observedQuality * 100).toFixed(0)}% (${a.qualitySamples ?? 0} samples)`}
+                            translate("explainCard.qualityValueValue2Samples", { value: (a.observedQuality * 100).toFixed(0), value2: a.qualitySamples ?? 0 })}
                           {" — "}
-                          {a.satisfied ? "satisfied" : "did not satisfy"}
+                          {a.satisfied ? "satisfied" : translate("explainCard.didNotSatisfy")}
                         </li>
                       ))}
                     </ul>
@@ -420,18 +420,17 @@ export function ExplainCard({
       {/* Models used */}
       <div className="rounded-lg border border-border bg-card p-4">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Models used
+          {translate("explainCard.modelsUsed")}
         </h3>
         {card.modelsUsed.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No priced LLM calls recorded.</p>
+          <p className="text-sm text-muted-foreground">{translate("explainCard.noPricedLLMCallsRecorded")}</p>
         ) : (
           <ul className="flex flex-col gap-1 text-sm">
             {card.modelsUsed.map((m) => (
               <li key={m.model} className="flex items-center justify-between">
                 <span className="font-mono text-foreground">{m.model}</span>
                 <span className="text-muted-foreground">
-                  {m.callCount} call(s) · {m.inputTokens}/{m.outputTokens} tok ·
-                  {formatCost(m.cost)}
+                  {translate("explainCard.callCountCallSInputTokensOutputTokens", { callCount: m.callCount, inputTokens: m.inputTokens, outputTokens: m.outputTokens, value: formatCost(m.cost) })}
                 </span>
               </li>
             ))}
@@ -443,20 +442,20 @@ export function ExplainCard({
       {card.groundedness !== undefined && (
         <div className="rounded-lg border border-border bg-card p-4">
           <h3 className="mb-2 text-sm font-semibold text-foreground">
-            Groundedness (lowest-scoring node)
+            {translate("explainCard.groundednessLowestScoringNode")}
           </h3>
           <p className="text-sm text-foreground">
             <code>{card.groundedness.nodeId}</code> —{" "}
             {(card.groundedness.score * 100).toFixed(0)}% (
             {card.groundedness.passed ? "passed" : "failed"}),{" "}
-            {card.groundedness.checked_sentences} sentence(s) checked
+            {translate("explainCard.checkedSentencesSentenceSChecked", { checked_sentences: card.groundedness.checked_sentences })}
           </p>
           {card.groundedness.unsupported.length > 0 && (
             <ul className="mt-2 list-inside list-disc text-xs text-muted-foreground">
               {card.groundedness.unsupported.slice(0, 5).map((u, i) => (
                 // biome-ignore lint/suspicious/noArrayIndexKey: sentences are not unique; list is rendered once from an immutable API result payload; item order is the display order and never mutates in place
                 <li key={i}>
-                  &ldquo;{u.sentence}&rdquo; (support {(u.support * 100).toFixed(0)}%)
+                  {translate("explainCard.sentenceSupportValue", { sentence: u.sentence, value: (u.support * 100).toFixed(0) })}
                 </li>
               ))}
             </ul>
@@ -468,11 +467,10 @@ export function ExplainCard({
       {card.piiActions !== undefined && (
         <div className="rounded-lg border border-border bg-card p-4">
           <h3 className="mb-2 text-sm font-semibold text-foreground">
-            PII vault actions
+            {translate("explainCard.pIIVaultActions")}
           </h3>
           <p className="text-sm text-foreground">
-            {card.piiActions.totalTokenized} PII span(s) tokenized before
-            reaching any LLM provider.
+            {translate("explainCard.totalTokenizedPIISpanSTokenized", { totalTokenized: card.piiActions.totalTokenized })}
           </p>
           <ul className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
             {Object.entries(card.piiActions.byType).map(([type, count]) => (
@@ -487,11 +485,11 @@ export function ExplainCard({
       {/* Operator actions */}
       <div className="rounded-lg border border-border bg-card p-4">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Operator actions
+          {translate("explainCard.operatorActions")}
         </h3>
         {card.auditEntries.length === 0 ? (
           <p className="text-sm text-muted-foreground">
-            No operator actions recorded against this execution.
+            {translate("explainCard.noOperatorActionsRecordedAgainst")}
           </p>
         ) : (
           <ul className="flex flex-col gap-1 text-sm">

@@ -8,6 +8,7 @@ import { backendUrl } from "../lib/backend-url";
 import { request } from "../lib/control-api";
 import { MonitoringEventStore } from "../lib/monitoring-event-store";
 import { useDocumentVisibility } from "./useDocumentVisibility";
+import { translate } from "../lib/i18n";
 
 export type TransportType = "sse" | "websocket";
 
@@ -192,7 +193,7 @@ export function useMonitoringEvents(
           const renewed = onSessionExpired ? await onSessionExpired() : null;
           if (renewed === null) {
             setIsConnected(false);
-            setError("Session expired — please sign in again");
+            setError(translate("monitoringEvents.sessionExpired"));
           }
           return { stop: true };
         }
@@ -204,9 +205,7 @@ export function useMonitoringEvents(
         // fallback stays (development only) with a console warning.
         if (isHttpsPage()) {
           setIsConnected(false);
-          setError(
-            "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
-          );
+          setError(translate("monitoringEvents.ticketUnavailable"));
           scheduleReconnect();
           return { stop: true };
         }
@@ -221,9 +220,7 @@ export function useMonitoringEvents(
         // path: no token-in-URL over HTTPS (Req. 8.3), warn + fall back on HTTP.
         if (isHttpsPage()) {
           setIsConnected(false);
-          setError(
-            "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
-          );
+          setError(translate("monitoringEvents.ticketUnavailable"));
           scheduleReconnect();
           return { stop: true };
         }
@@ -280,7 +277,7 @@ export function useMonitoringEvents(
         es.close();
         connectionRef.current = null;
         setIsConnected(false);
-        setError("SSE connection error");
+        setError(translate("monitoringEvents.sseError"));
         scheduleReconnect();
       };
     }
@@ -328,7 +325,7 @@ export function useMonitoringEvents(
 
       ws.onerror = () => {
         if (destroyed) return;
-        setError("WebSocket connection error");
+        setError(translate("monitoringEvents.wsError"));
         // ws.onclose fires immediately after onerror, so the reconnect is
         // handled there to avoid double-scheduling.
       };

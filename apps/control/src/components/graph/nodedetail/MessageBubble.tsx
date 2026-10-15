@@ -10,6 +10,7 @@
 
 import { useState } from "react";
 import type React from "react";
+import { translate } from "../../../lib/i18n";
 
 /** Chat-style message bubble for LLM prompt messages */
 export function MessageBubble({
@@ -60,7 +61,7 @@ export function FormattedOrRaw({
           onClick={() => setRaw((v) => !v)}
           className="text-[10px] px-1.5 py-0.5 rounded border border-border text-muted-foreground hover:bg-muted"
         >
-          {raw ? "Formatted" : "Raw"}
+          {raw ? translate("messageBubble.formatted") : translate("messageBubble.raw")}
         </button>
       </div>
       {raw ? (

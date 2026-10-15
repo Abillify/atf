@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Studio route (Req. 12.3).
@@ -11,7 +12,7 @@ export default function StudioLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading studio"
+      aria-label={translate("studio.loadingStudio")}
       className="flex h-full gap-3 p-6"
     >
       <Skeleton width="w-56" height="h-full" className="shrink-0 rounded-lg" />

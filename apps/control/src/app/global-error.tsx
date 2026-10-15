@@ -14,6 +14,7 @@
 import { useEffect } from "react";
 
 import { reportClientError } from "../lib/telemetry";
+import { translate } from "../lib/i18n";
 
 export default function GlobalError({
   error,
@@ -51,14 +52,14 @@ export default function GlobalError({
           }}
         >
           <h1 style={{ fontSize: "20px", fontWeight: 600 }}>
-            Something went wrong
+            {translate("global-error.somethingWentWrong")}
           </h1>
           <p style={{ fontSize: "14px", opacity: 0.7 }}>
-            An unexpected error occurred while loading the application.
+            {translate("global-error.anUnexpectedErrorOccurredWhile")}
           </p>
           {error.digest && (
             <p style={{ fontFamily: "monospace", fontSize: "12px", opacity: 0.6 }}>
-              Error ID: {error.digest}
+              {translate("global-error.errorIDDigest", { digest: error.digest })}
             </p>
           )}
           <button
@@ -73,7 +74,7 @@ export default function GlobalError({
               background: "transparent",
             }}
           >
-            Try again
+            {translate("global-error.tryAgain")}
           </button>
         </div>
       </body>

@@ -14,6 +14,7 @@ import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Badge } from "../../../lib/ui";
 import type { BadgeVariant } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 interface McpTool {
   name: string;
@@ -62,7 +63,7 @@ export default function McpPage() {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">
-        MCP Servers &amp; Tool Authorization
+        {translate("mcp.mCPServersToolAuthorization")}
       </h1>
 
       {isLoading && (
@@ -71,7 +72,7 @@ export default function McpPage() {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Loading MCP servers…
+          {translate("mcp.loadingMCPServers2")}
         </div>
       )}
 
@@ -80,13 +81,13 @@ export default function McpPage() {
           role="alert"
           className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load MCP servers: {error.message}
+          {translate("mcp.failedToLoadMCPServers", { message: error.message })}
         </div>
       )}
 
       {!isLoading && !error && servers.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          No MCP servers registered.
+          {translate("mcp.noMCPServersRegistered")}
         </div>
       )}
 
@@ -111,11 +112,11 @@ export default function McpPage() {
             </div>
             <div className="p-4">
               <p className="mb-2 text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                Tools
+                {translate("mcp.tools")}
               </p>
               {server.tools.length === 0 && (
                 <p className="text-sm text-muted-foreground">
-                  No tools registered.
+                  {translate("mcp.noToolsRegistered")}
                 </p>
               )}
               <div className="space-y-1">
@@ -137,7 +138,7 @@ export default function McpPage() {
                     <span
                       className={`text-xs font-medium ${tool.authorized ? "text-success" : "text-danger"}`}
                     >
-                      {tool.authorized ? "✓ authorized" : "✗ blocked"}
+                      {tool.authorized ? translate("mcp.authorized") : translate("mcp.blocked")}
                     </span>
                   </div>
                 ))}

@@ -20,6 +20,7 @@ import {
 } from "../form-controls";
 import { ModelSourceFields } from "./ModelSourceFields";
 import { UnreadFieldNotice } from "./shared";
+import { translate } from "../../lib/i18n";
 
 const REASONING_EFFORTS = ["", "none", "minimal", "low", "medium", "high"];
 
@@ -49,7 +50,7 @@ export function NodeModelSection({
     Object.entries(params).filter(([k]) => !knownParams.has(k)),
   );
   return (
-            <Section title="Model">
+            <Section title={translate("nodeModelSection.model")}>
               {isUnread("llm") && (
                 <UnreadFieldNotice field="llm" type={node.type} />
               )}
@@ -62,20 +63,20 @@ export function NodeModelSection({
               />
               <div className="flex gap-2">
                 <NumberOrVarInput
-                  label="Temperature"
+                  label={translate("nodeModelSection.temperature")}
                   value={params.temperature}
                   onFocus={() => onFocusField?.("llm.parameters.temperature")}
                   onChange={(v) => setParam("temperature", v)}
                 />
                 <NumberOrVarInput
-                  label="Max tokens"
+                  label={translate("nodeModelSection.maxTokens")}
                   value={params.maxTokens}
                   onFocus={() => onFocusField?.("llm.parameters.maxTokens")}
                   onChange={(v) => setParam("maxTokens", v)}
                 />
               </div>
               <div className="flex gap-2">
-                <Field label="Reasoning effort">
+                <Field label={translate("nodeModelSection.reasoningEffort")}>
                   <select
                     className={inputCls}
                     onFocus={() =>
@@ -102,7 +103,7 @@ export function NodeModelSection({
                   </select>
                 </Field>
                 <NumberOrVarInput
-                  label="Context length"
+                  label={translate("nodeModelSection.contextLength")}
                   value={params.contextLength}
                   onFocus={() => onFocusField?.("llm.parameters.contextLength")}
                   onChange={(v) => setParam("contextLength", v)}
@@ -110,8 +111,8 @@ export function NodeModelSection({
               </div>
               <JsonEditor
                 key={`${node.id}-params`}
-                label="Other model parameters"
-                hint="chatTemplateKwargs, extraBody, visionInput, …"
+                label={translate("nodeModelSection.otherModelParameters")}
+                hint={translate("nodeModelSection.chatTemplateKwargsExtraBodyVisionInput")}
                 rows={4}
                 {...(onFocusField
                   ? { onCursorKey: (): void => onFocusField("llm.parameters") }
@@ -133,8 +134,8 @@ export function NodeModelSection({
               />
               <JsonEditor
                 key={`${node.id}-pool`}
-                label="Model pool"
-                hint="{ strategy, candidates: [{ provider, model }, …] } — first candidate should match the model above."
+                label={translate("nodeModelSection.modelPool")}
+                hint={translate("nodeModelSection.strategyCandidatesProviderModelFirst")}
                 rows={4}
                 {...(onFocusField
                   ? { onCursorKey: (): void => onFocusField("llm.pool") }

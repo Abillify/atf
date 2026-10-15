@@ -15,6 +15,7 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Headers table for request node
@@ -51,9 +52,9 @@ export function HeadersTable({ text }: { text: string }) {
         <TableHead>
           <TableRow>
             <TableHeaderCell className="whitespace-nowrap">
-              Header
+              {translate("headersTable.header")}
             </TableHeaderCell>
-            <TableHeaderCell>Value</TableHeaderCell>
+            <TableHeaderCell>{translate("headersTable.value")}</TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>

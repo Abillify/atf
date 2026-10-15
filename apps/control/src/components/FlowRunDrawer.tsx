@@ -49,6 +49,7 @@ import {
   type PlaygroundResult,
 } from "../lib/studio-run";
 import type { FlowDefinition, FlowValidationReport } from "../types/flow";
+import { translate } from "../lib/i18n";
 
 type RunTarget = "canvas" | "live";
 
@@ -335,10 +336,10 @@ export function FlowRunDrawer({
           model = reg.model;
         } else if ("unsupported" in reg && reg.unsupported) {
           if (!liveAvailable) {
-            setError("This runtime can't test unsaved canvases, and the flow isn't live yet — save it first.");
+            setError(translate("flowRunDrawer.thisRuntimeCanTTest"));
             return;
           }
-          setNotice("This runtime can't run the canvas directly — ran the LIVE version instead.");
+          setNotice(translate("flowRunDrawer.thisRuntimeCanTRun"));
         } else {
           if (reg.validation) onValidationFailed?.(reg.validation);
           setError(reg.error);
@@ -476,11 +477,11 @@ export function FlowRunDrawer({
     <div className="flex flex-col gap-2 rounded-lg border border-border bg-card p-2.5">
       <div className="flex items-center gap-2">
         <span className="shrink-0 text-xs font-semibold text-muted-foreground">
-          ▶ Run &amp; Trace
+          {translate("flowRunDrawer.runTrace")}
         </span>
         <div
           role="radiogroup"
-          aria-label="What to run"
+          aria-label={translate("flowRunDrawer.whatToRun")}
           className="flex shrink-0 overflow-hidden rounded border border-border"
         >
           {targetBtn(
@@ -521,7 +522,7 @@ export function FlowRunDrawer({
             accept="image/*"
             multiple
             className="hidden"
-            aria-label="Attach images to the test prompt"
+            aria-label={translate("flowRunDrawer.attachImagesToTheTest")}
             onChange={(e) => {
               if (e.target.files) void addImageFiles(e.target.files);
               e.target.value = "";
@@ -531,8 +532,8 @@ export function FlowRunDrawer({
             type="button"
             onClick={() => fileInputRef.current?.click()}
             disabled={busy}
-            aria-label="Attach image"
-            title="Attach image(s) to the prompt — or drop them here"
+            aria-label={translate("flowRunDrawer.attachImage")}
+            title={translate("flowRunDrawer.attachImageSToThe")}
             className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"
           >
             <ImagePlus size={14} aria-hidden />
@@ -548,11 +549,11 @@ export function FlowRunDrawer({
             }}
             placeholder={
               dragOver
-                ? "Drop images to attach…"
-                : "Test prompt… (images can be dropped here)"
+                ? translate("flowRunDrawer.dropImagesToAttach")
+                : translate("flowRunDrawer.testPromptImagesCanBe")
             }
             disabled={busy}
-            aria-label="Test prompt"
+            aria-label={translate("flowRunDrawer.testPrompt")}
             className="min-w-0 flex-1 bg-transparent px-1 py-1 text-xs focus-visible:outline-none"
           />
         </div>
@@ -562,11 +563,11 @@ export function FlowRunDrawer({
           onClick={() => void handleRun()}
           disabled={busy || !flowId || !prompt.trim()}
         >
-          {busy ? "Running…" : "Run"}
+          {busy ? translate("flowRunDrawer.running") : translate("flowRunDrawer.run")}
         </Button>
         {isRunning && (
           <Button variant="destructive" size="sm" onClick={handleStop}>
-            Stop
+            {translate("flowRunDrawer.stop")}
           </Button>
         )}
         {hasOutput && !busy && (
@@ -574,7 +575,7 @@ export function FlowRunDrawer({
             type="button"
             onClick={handleClear}
             className="rounded px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
-            title="Clear result and canvas trace"
+            title={translate("flowRunDrawer.clearResultAndCanvasTrace")}
           >
             ✕
           </button>
@@ -595,7 +596,7 @@ export function FlowRunDrawer({
               <button
                 type="button"
                 onClick={() => removeImage(img.id)}
-                aria-label={`Remove ${img.name}`}
+                aria-label={translate("flowRunDrawer.removeName", { name: img.name })}
                 className="absolute -right-1.5 -top-1.5 rounded-full border border-border bg-card p-0.5 text-muted-foreground shadow hover:text-foreground"
               >
                 <X size={10} aria-hidden />
@@ -610,12 +611,12 @@ export function FlowRunDrawer({
           {notice && <p className="text-warning">{notice}</p>}
           {attached && (
             <p className="text-muted-foreground" data-testid="attached-run">
-              Request <code className="font-mono">{attached.slice(0, 8)}</code>{" "}
-              opened from the Live Graph
+              {translate("flowRunDrawer.request")} <code className="font-mono">{attached.slice(0, 8)}</code>{" "}
+              {translate("flowRunDrawer.openedFromTheLiveGraph")}
               {attachedInfo?.flowId && attachedInfo.flowId !== flowId
-                ? ` (ran as ${attachedInfo.flowId})`
+                ? translate("flowRunDrawer.ranAsFlowId", { flowId: attachedInfo.flowId })
                 : ""}
-              {attachedRunning ? " — still running, tracing live…" : "."}
+              {attachedRunning ? translate("flowRunDrawer.stillRunningTracingLive") : "."}
             </p>
           )}
           {/* Thinking (Open-WebUI style): the reasoning trail, open while it
@@ -635,7 +636,7 @@ export function FlowRunDrawer({
                 className="flex w-full items-center gap-1.5 px-2 py-1 text-[11px] font-medium text-muted-foreground hover:text-foreground"
               >
                 <Brain size={12} aria-hidden />
-                Thinking
+                {translate("flowRunDrawer.thinking")}
                 {busy && !streamingContent && (
                   <span
                     className="inline-block h-2.5 w-1 animate-pulse bg-muted-foreground"
@@ -676,9 +677,9 @@ export function FlowRunDrawer({
             (evalForm.state === "editing" || evalForm.state === "saving") && (
               <div className="space-y-1 rounded border border-border bg-card p-2">
                 <label className="block text-[11px] font-medium text-foreground">
-                  Expected answer (reference for the eval)
+                  {translate("flowRunDrawer.expectedAnswerReferenceForThe")}
                   <textarea
-                    aria-label="Expected answer"
+                    aria-label={translate("flowRunDrawer.expectedAnswer")}
                     rows={4}
                     value={evalForm.expected}
                     disabled={evalForm.state === "saving"}
@@ -692,8 +693,7 @@ export function FlowRunDrawer({
                   />
                 </label>
                 <p className="text-[10px] text-muted-foreground">
-                  Pre-filled with this run's answer — correct it to what the
-                  flow SHOULD answer. Evals compare future runs against it.
+                  {translate("flowRunDrawer.preFilledWithThisRun")}
                 </p>
                 {evalForm.error && (
                   <p role="alert" className="text-[11px] text-danger">
@@ -706,7 +706,7 @@ export function FlowRunDrawer({
                     onClick={() => setEvalForm({ state: "closed" })}
                     className="rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
                   >
-                    Cancel
+                    {translate("flowRunDrawer.cancel")}
                   </button>
                   <button
                     type="button"
@@ -746,7 +746,7 @@ export function FlowRunDrawer({
                     }}
                     className="rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground disabled:opacity-50"
                   >
-                    {evalForm.state === "saving" ? "Saving…" : "Save eval case"}
+                    {evalForm.state === "saving" ? translate("flowRunDrawer.saving") : translate("flowRunDrawer.saveEvalCase")}
                   </button>
                 </div>
               </div>
@@ -755,7 +755,7 @@ export function FlowRunDrawer({
             <div className="flex flex-wrap items-center gap-3 border-t border-border pt-1.5 text-[11px] text-muted-foreground">
               {totals ? (
                 <>
-                  <span>{totals.nodes} node(s) traced</span>
+                  <span>{translate("flowRunDrawer.nodesNodeSTraced", { nodes: totals.nodes })}</span>
                   <span>
                     ↑{totals.input} / ↓{totals.output} tokens
                   </span>
@@ -763,7 +763,7 @@ export function FlowRunDrawer({
                 </>
               ) : (
                 <span>
-                  No trace data received (monitoring stream unavailable?)
+                  {translate("flowRunDrawer.noTraceDataReceivedMonitoring")}
                 </span>
               )}
               {onPinRun && runExecutionId && (
@@ -784,18 +784,18 @@ export function FlowRunDrawer({
                     );
                   }}
                   className="ml-auto rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-card disabled:opacity-50"
-                  title="Use this run's node results, query and user context as preview values in the expression builder (ƒx)"
+                  title={translate("flowRunDrawer.useThisRunSNode")}
                 >
                   {pinState.state === "pinned"
-                    ? "📌 Pinned as sample data"
+                    ? translate("flowRunDrawer.pinnedAsSampleData")
                     : pinState.state === "pinning"
-                      ? "Pinning…"
-                      : "📌 Pin as sample data"}
+                      ? translate("flowRunDrawer.pinning")
+                      : translate("flowRunDrawer.pinAsSampleData")}
                 </button>
               )}
               {pinState.state === "error" && (
                 <span role="alert" className="text-danger">
-                  Not pinned: {pinState.message}
+                  {translate("flowRunDrawer.notPinnedMessage", { message: pinState.message })}
                 </span>
               )}
               {onSaveEvalCase &&
@@ -810,9 +810,9 @@ export function FlowRunDrawer({
                       })
                     }
                     className="rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-card"
-                    title="Store this prompt with a reference answer in the eval dataset"
+                    title={translate("flowRunDrawer.storeThisPromptWithA")}
                   >
-                    Save as eval case…
+                    {translate("flowRunDrawer.saveAsEvalCase")}
                   </button>
                 )}
               {(evalForm.state === "saved" ||
@@ -824,7 +824,7 @@ export function FlowRunDrawer({
                     </span>
                   ) : (
                     <span className="text-success">
-                      Saved to the eval dataset.
+                      {translate("flowRunDrawer.savedToTheEvalDataset")}
                     </span>
                   )}
                   {onDeleteEvalCase && evalForm.id && (
@@ -845,15 +845,15 @@ export function FlowRunDrawer({
                         );
                       }}
                       className="rounded border border-border px-2 py-0.5 text-[11px] text-foreground hover:bg-card disabled:opacity-50"
-                      title="Delete this eval case from the dataset again"
+                      title={translate("flowRunDrawer.deleteThisEvalCaseFrom")}
                     >
-                      {evalForm.state === "removing" ? "Removing…" : "Remove"}
+                      {evalForm.state === "removing" ? translate("flowRunDrawer.removing") : translate("flowRunDrawer.remove")}
                     </button>
                   )}
                 </span>
               )}
               {evalForm.state === "removed" && (
-                <span className="ml-auto">Eval case removed.</span>
+                <span className="ml-auto">{translate("flowRunDrawer.evalCaseRemoved")}</span>
               )}
             </div>
           )}

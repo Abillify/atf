@@ -10,6 +10,7 @@
 import type React from "react";
 import { parallelChildId, type FlowNode } from "../../types/flow";
 import { Field, Section, inputCls, JsonEditor } from "../form-controls";
+import { translate } from "../../lib/i18n";
 
 export function NodeParallelSection({
   node,
@@ -23,7 +24,7 @@ export function NodeParallelSection({
   const parallel = node.parallelNodes ?? [];
   const parallelHasConditions = parallel.some((p) => typeof p !== "string");
   return (
-            <Section title="Parallel children">
+            <Section title={translate("nodeParallelSection.parallelChildren")}>
               <fieldset
                 className="m-0 min-w-0 border-0 p-0"
                 onFocus={() => onFocusField?.("parallelNodes")}
@@ -31,8 +32,8 @@ export function NodeParallelSection({
                 {parallelHasConditions ? (
                   <JsonEditor
                     key={`${node.id}-parallel`}
-                    label="Children"
-                    hint='Plain ids or { "node": id, "condition": expr }.'
+                    label={translate("nodeParallelSection.children")}
+                    hint={translate("nodeParallelSection.plainIdsOrNodeId")}
                     rows={6}
                     value={parallel}
                     onChange={(v) =>
@@ -45,8 +46,8 @@ export function NodeParallelSection({
                   />
                 ) : (
                   <Field
-                    label="Child node ids (one per line)"
-                    hint={`${parallel.map(parallelChildId).length} child(ren)`}
+                    label={translate("nodeParallelSection.childNodeIdsOnePer")}
+                    hint={translate("nodeParallelSection.lengthChildRen", { length: parallel.map(parallelChildId).length })}
                   >
                     <textarea
                       className={`${inputCls} h-20 resize-y font-mono text-xs`}

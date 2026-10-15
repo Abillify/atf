@@ -16,6 +16,7 @@ import { backendUrl } from "../../lib/backend-url";
 import { authFetch } from "../../lib/auth-fetch";
 import { Button } from "../../lib/ui";
 import { detailPath, readJson, type AssistantDetail } from "./assistantShared";
+import { translate, type MessageKey } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Constraint editor
@@ -31,15 +32,15 @@ import { detailPath, readJson, type AssistantDetail } from "./assistantShared";
 const CONSTRAINT_FIELDS = [
   {
     key: "rules",
-    label: "Rules",
-    hint: 'Non-negotiable rules, e.g. "never send external email".',
+    label: "constraintsEditor.field.rules",
+    hint: "constraintsEditor.field.rulesHint",
   },
   {
     key: "compliance",
-    label: "Compliance",
-    hint: "Compliance or legal framing the assistant must respect.",
+    label: "constraintsEditor.field.compliance",
+    hint: "constraintsEditor.field.complianceHint",
   },
-] as const;
+] as const satisfies ReadonlyArray<{ key: string; label: MessageKey; hint: MessageKey }>;
 
 export function ConstraintsEditor({
   detail,
@@ -111,14 +112,12 @@ export function ConstraintsEditor({
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-muted-foreground">
-        Operator constraints. They render last in the assistant&apos;s prompt and are
-        never dropped to make room, so they win over both the assistant&apos;s own
-        identity and its user&apos;s directives.
+        {translate("constraintsEditor.operatorConstraintsTheyRenderLast")}
       </p>
       {CONSTRAINT_FIELDS.map((field) => (
         <label key={field.key} className="flex flex-col gap-1">
-          <span className="text-xs font-medium text-foreground">{field.label}</span>
-          <span className="text-[11px] text-muted-foreground">{field.hint}</span>
+          <span className="text-xs font-medium text-foreground">{translate(field.label)}</span>
+          <span className="text-[11px] text-muted-foreground">{translate(field.hint)}</span>
           <textarea
             className="min-h-[64px] rounded-md border border-border bg-background p-2 text-xs text-foreground"
             value={draft[field.key] ?? ""}
@@ -128,32 +127,31 @@ export function ConstraintsEditor({
                 [field.key]: event.target.value,
               }))
             }
-            aria-label={`${field.label} constraint`}
+            aria-label={translate("constraintsEditor.fieldConstraint", { label: translate(field.label) })}
           />
         </label>
       ))}
       <label className="flex flex-col gap-1">
-        <span className="text-xs font-medium text-foreground">Denied tools</span>
+        <span className="text-xs font-medium text-foreground">{translate("constraintsEditor.deniedTools")}</span>
         <span className="text-[11px] text-muted-foreground">
-          One tool id per line. Enforced by the authorization layer, not by prompt
-          text — the assistant is told why a tool is missing so it stops retrying it.
+          {translate("constraintsEditor.oneToolIdPerLine")}
         </span>
         <textarea
           className="min-h-[48px] rounded-md border border-border bg-background p-2 font-mono text-xs text-foreground"
           value={deniedTools}
           onChange={(event) => setDeniedTools(event.target.value)}
-          aria-label="Denied tool ids, one per line"
+          aria-label={translate("constraintsEditor.deniedToolIdsOnePer")}
         />
       </label>
       <label className="flex flex-col gap-1">
         <span className="text-xs font-medium text-foreground">
-          Reason (recorded in the soul history)
+          {translate("constraintsEditor.reasonRecordedInTheSoul")}
         </span>
         <input
           className="rounded-md border border-border bg-background p-2 text-xs text-foreground"
           value={reason}
           onChange={(event) => setReason(event.target.value)}
-          aria-label="Reason for the constraint change"
+          aria-label={translate("constraintsEditor.reasonForTheConstraintChange")}
         />
       </label>
       <div className="flex items-center gap-2">
@@ -163,7 +161,7 @@ export function ConstraintsEditor({
           title={writeGate.title}
           onClick={() => save.mutate()}
         >
-          {save.isPending ? "Saving…" : "Save constraints"}
+          {save.isPending ? translate("constraintsEditor.saving") : translate("constraintsEditor.saveConstraints")}
         </Button>
         <span className="text-[11px] text-muted-foreground">
           revision {detail.soul.revision}

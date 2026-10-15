@@ -18,6 +18,7 @@ import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { formatCost } from "../lib/currency";
 import { authFetch } from "../lib/auth-fetch";
+import { translate } from "../lib/i18n";
 
 interface SloTarget {
   flow: string;
@@ -85,11 +86,10 @@ export function SloPanel(): React.JSX.Element {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">
-            🎯 Cost / Quality SLOs
+            {translate("sloPanel.costQualitySLOs")}
           </h2>
           <p className="text-xs text-muted-foreground">
-            Declared per-flow objectives (min quality / max cost per request)
-            and their live attainment. Declare targets in{" "}
+            {translate("sloPanel.declaredPerFlowObjectivesMin")}{" "}
             <code className="font-mono">flows/slo.json</code>.
           </p>
         </div>
@@ -99,7 +99,7 @@ export function SloPanel(): React.JSX.Element {
           onClick={() => void fetchSlo()}
           disabled={loading}
         >
-          {loading ? "Loading…" : "↻ Refresh"}
+          {loading ? translate("sloPanel.loading") : translate("sloPanel.refresh")}
         </Button>
       </div>
 
@@ -111,12 +111,12 @@ export function SloPanel(): React.JSX.Element {
 
       {data && !data.enabled && (
         <div className="rounded border border-warning-border bg-warning-soft px-4 py-2 text-xs text-warning">
-          No SLOs declared. Create <code className="font-mono">flows/slo.json</code>{" "}
-          with entries like{" "}
+          {translate("sloPanel.noSLOsDeclaredCreate")} <code className="font-mono">flows/slo.json</code>{" "}
+          {translate("sloPanel.withEntriesLike")}{" "}
           <code className="font-mono">
             {"{ flow, minQualityScore, maxCostUsdPerRequest }"}
           </code>{" "}
-          to track cost/quality objectives.
+          {translate("sloPanel.toTrackCostQualityObjectives")}
         </div>
       )}
 
@@ -148,7 +148,7 @@ export function SloPanel(): React.JSX.Element {
                         : "—"}{" "}
                       / ≥ {(e.target.minQualityScore * 100).toFixed(0)}%{" "}
                       <span className="text-muted-foreground">
-                        ({e.qualitySamples} samples)
+                        {translate("sloPanel.qualitySamplesSamples", { qualitySamples: e.qualitySamples })}
                       </span>
                     </div>
                   )}
@@ -160,7 +160,7 @@ export function SloPanel(): React.JSX.Element {
                         : "—"}{" "}
                       / ≤ {formatCost(e.target.maxCostUsdPerRequest, 5)}{" "}
                       <span className="text-muted-foreground">
-                        ({e.costSamples} samples)
+                        {translate("sloPanel.costSamplesSamples", { costSamples: e.costSamples })}
                       </span>
                     </div>
                   )}

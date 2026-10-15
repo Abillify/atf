@@ -34,7 +34,7 @@ import {
   TableCell,
 } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
-import { formatNumber } from "../lib/i18n";
+import { translate, formatNumber } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirror src/observability/finops.ts)
@@ -155,7 +155,7 @@ export function FinOpsPanel(): React.JSX.Element {
       {/* Budget burn-rate forecast */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Budget burn-rate forecast
+          {translate("finOpsPanel.budgetBurnRateForecast")}
         </h3>
         <form
           className="mb-3 flex gap-2"
@@ -167,26 +167,26 @@ export function FinOpsPanel(): React.JSX.Element {
           <input
             value={tenantId}
             onChange={(e) => setTenantId(e.target.value)}
-            placeholder="Tenant id…"
-            aria-label="Tenant id"
+            placeholder={translate("finOpsPanel.tenantId")}
+            aria-label={translate("finOpsPanel.tenantId2")}
             className="w-56 rounded-md border border-border px-3 py-1.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
           <button
             type="submit"
             className="rounded-md bg-accent px-3 py-1.5 text-sm font-medium text-accent-foreground hover:bg-accent/90"
           >
-            Forecast
+            {translate("finOpsPanel.forecast")}
           </button>
         </form>
 
         {loadingForecast && (
           <p className="py-4 text-sm text-muted-foreground" aria-busy="true">
-            Loading forecast…
+            {translate("finOpsPanel.loadingForecast")}
           </p>
         )}
         {forecastError && (
           <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
-            Failed to load forecast: {forecastError.message}
+            {translate("finOpsPanel.failedToLoadForecastMessage", { message: forecastError.message })}
           </div>
         )}
         {forecast && !loadingForecast && (
@@ -197,8 +197,7 @@ export function FinOpsPanel(): React.JSX.Element {
               </Badge>
               {forecast.daysToExhaustion !== undefined && (
                 <span className="text-sm text-foreground">
-                  ≈ {forecast.daysToExhaustion.toFixed(1)} day(s) until cap
-                  exhaustion
+                  {translate("finOpsPanel.valueDaySUntilCap", { value: forecast.daysToExhaustion.toFixed(1) })}
                   {forecast.projectedExhaustionDate !== undefined &&
                     ` (${forecast.projectedExhaustionDate})`}
                 </span>
@@ -206,7 +205,7 @@ export function FinOpsPanel(): React.JSX.Element {
             </div>
             <dl className="grid grid-cols-2 gap-x-6 gap-y-1 text-xs text-muted-foreground sm:grid-cols-4">
               <div>
-                <dt className="uppercase tracking-wide">Cap/day</dt>
+                <dt className="uppercase tracking-wide">{translate("finOpsPanel.capDay")}</dt>
                 <dd className="text-foreground">
                   {forecast.capPerDay > 0
                     ? formatCost(forecast.capPerDay, 2)
@@ -214,30 +213,27 @@ export function FinOpsPanel(): React.JSX.Element {
                 </dd>
               </div>
               <div>
-                <dt className="uppercase tracking-wide">Current spend</dt>
+                <dt className="uppercase tracking-wide">{translate("finOpsPanel.currentSpend")}</dt>
                 <dd className="text-foreground">
                   {formatCost(forecast.currentSpend, 4)}
                 </dd>
               </div>
               <div>
-                <dt className="uppercase tracking-wide">Burn rate</dt>
+                <dt className="uppercase tracking-wide">{translate("finOpsPanel.burnRate")}</dt>
                 <dd className="text-foreground">
                   {formatCost(forecast.dailyBurnRate, 4)}/day
                 </dd>
               </div>
               <div>
-                <dt className="uppercase tracking-wide">Trend</dt>
+                <dt className="uppercase tracking-wide">{translate("finOpsPanel.trend")}</dt>
                 <dd className="text-foreground">
-                  {forecast.dailyTrend >= 0 ? "+" : ""}
-                  {formatCost(forecast.dailyTrend, 4)}/day²
+                  {translate("finOpsPanel.valueValue2Day2", { value: forecast.dailyTrend >= 0 ? "+" : "", value2: formatCost(forecast.dailyTrend, 4) })}
                 </dd>
               </div>
             </dl>
             {forecast.status === "insufficient_data" && (
               <p className="text-xs text-muted-foreground">
-                A daily spend history requires a durable (Postgres-backed) cost
-                store. Configure <code>DATABASE_URL</code> to enable this
-                forecast.
+                {translate("finOpsPanel.aDailySpendHistoryRequires")} <code>DATABASE_URL</code> {translate("finOpsPanel.toEnableThisForecast")}
               </p>
             )}
           </div>
@@ -247,58 +243,58 @@ export function FinOpsPanel(): React.JSX.Element {
       {/* CO2 / ESG report */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          CO2 / ESG accounting
+          {translate("finOpsPanel.cO2ESGAccounting")}
         </h3>
         {loadingCo2 && (
           <p className="py-4 text-sm text-muted-foreground" aria-busy="true">
-            Loading CO2 report…
+            {translate("finOpsPanel.loadingCO2Report")}
           </p>
         )}
         {co2Error && (
           <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
-            Failed to load CO2 report: {co2Error.message}
+            {translate("finOpsPanel.failedToLoadCO2Report", { message: co2Error.message })}
           </div>
         )}
         {co2Report && !loadingCo2 && (
           <>
             <div className="mb-3 flex flex-wrap items-center gap-6">
               <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">Est. energy</span>
+                <span className="text-xs text-muted-foreground">{translate("finOpsPanel.estEnergy")}</span>
                 <span className="text-2xl font-bold text-foreground">
-                  {co2Report.totalEstimatedKwh.toFixed(3)} kWh
+                  {translate("finOpsPanel.valueKWh", { value: co2Report.totalEstimatedKwh.toFixed(3) })}
                 </span>
               </div>
               <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">Est. emissions</span>
+                <span className="text-xs text-muted-foreground">{translate("finOpsPanel.estEmissions")}</span>
                 <span className="text-2xl font-bold text-success">
-                  {co2Report.totalEstimatedKgCo2e.toFixed(3)} kg CO2e
+                  {translate("finOpsPanel.valueKgCO2e", { value: co2Report.totalEstimatedKgCo2e.toFixed(3) })}
                 </span>
               </div>
               <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">≈ car km driven</span>
+                <span className="text-xs text-muted-foreground">{translate("finOpsPanel.carKmDriven")}</span>
                 <span className="text-2xl font-bold text-foreground">
                   {co2Report.carKmEquivalent.toFixed(1)} km
                 </span>
               </div>
               <div className="flex flex-col">
-                <span className="text-xs text-muted-foreground">Grid intensity</span>
+                <span className="text-xs text-muted-foreground">{translate("finOpsPanel.gridIntensity")}</span>
                 <span className="text-sm text-foreground">
-                  {co2Report.gridCarbonIntensity} kg CO2e/kWh
+                  {translate("finOpsPanel.gridCarbonIntensityKgCO2eKWh", { gridCarbonIntensity: co2Report.gridCarbonIntensity })}
                 </span>
               </div>
             </div>
             {co2Report.byModel.length === 0 ? (
               <p className="py-4 text-center text-sm text-muted-foreground">
-                No token usage recorded yet.
+                {translate("finOpsPanel.noTokenUsageRecordedYet")}
               </p>
             ) : (
               <Table>
                 <TableHead>
                   <TableRow className="uppercase tracking-wide">
-                    <TableHeaderCell>Model</TableHeaderCell>
-                    <TableHeaderCell className="text-right">Tokens</TableHeaderCell>
-                    <TableHeaderCell className="text-right">kWh</TableHeaderCell>
-                    <TableHeaderCell className="text-right">kg CO2e</TableHeaderCell>
+                    <TableHeaderCell>{translate("finOpsPanel.model")}</TableHeaderCell>
+                    <TableHeaderCell className="text-right">{translate("finOpsPanel.tokens")}</TableHeaderCell>
+                    <TableHeaderCell className="text-right">{translate("finOpsPanel.kWh")}</TableHeaderCell>
+                    <TableHeaderCell className="text-right">{translate("finOpsPanel.kgCO2e")}</TableHeaderCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -322,11 +318,9 @@ export function FinOpsPanel(): React.JSX.Element {
               </Table>
             )}
             <p className="mt-3 text-xs text-muted-foreground">
-              Estimates only — derived from published per-token energy studies
-              and a configurable grid carbon intensity (
+              {translate("finOpsPanel.estimatesOnlyDerivedFromPublished")}
               <code>CO2_GRID_CARBON_INTENSITY</code>,{" "}
-              <code>CO2_ENERGY_FACTORS</code>), not measured infrastructure
-              telemetry.
+              <code>CO2_ENERGY_FACTORS</code>{translate("finOpsPanel.notMeasuredInfrastructureTelemetry")}
             </p>
           </>
         )}

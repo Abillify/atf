@@ -12,6 +12,7 @@
  */
 
 import Link from "next/link";
+import { translate } from "../lib/i18n";
 
 export default function NotFound() {
   return (
@@ -20,15 +21,15 @@ export default function NotFound() {
       data-testid="not-found"
     >
       <p className="font-mono text-sm text-muted-foreground">404</p>
-      <h1 className="text-lg font-semibold text-foreground">Page not found</h1>
+      <h1 className="text-lg font-semibold text-foreground">{translate("not-found.pageNotFound")}</h1>
       <p className="max-w-md text-sm text-muted-foreground">
-        The page you are looking for does not exist or has been moved.
+        {translate("not-found.thePageYouAreLooking")}
       </p>
       <Link
         href="/"
         className="rounded-md border border-border px-4 py-2 text-sm text-foreground hover:bg-muted"
       >
-        Back to dashboard
+        {translate("not-found.backToDashboard")}
       </Link>
     </main>
   );

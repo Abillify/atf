@@ -5,6 +5,7 @@
 import type React from "react";
 import type { ReplayResult } from "../types/control";
 import { Badge, Button } from "../lib/ui";
+import { translate } from "../lib/i18n";
 
 export interface ReplayResultCardProps {
   result: ReplayResult | null;
@@ -23,14 +24,14 @@ export function ReplayResultCard({
   if (isRunning) {
     return (
       <div className="mb-4 rounded-lg border border-accent/30 bg-accent/10 p-4 text-sm text-accent">
-        Replaying execution…
+        {translate("replayResultCard.replayingExecution")}
       </div>
     );
   }
   if (error) {
     return (
       <div className="mb-4 flex items-center justify-between rounded-lg border border-danger-border bg-danger-soft p-4 text-sm text-danger">
-        <span>Replay failed: {error}</span>
+        <span>{translate("replayResultCard.replayFailedError", { error })}</span>
         {onClear && (
           <Button variant="ghost" size="sm" onClick={onClear} className="underline">
             dismiss
@@ -46,16 +47,16 @@ export function ReplayResultCard({
     <div className="mb-4 rounded-lg border border-border bg-card p-4 shadow-sm">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         <h4 className="text-sm font-semibold text-foreground">
-          Replay of{" "}
+          {translate("replayResultCard.replayOf")}{" "}
           <span className="font-mono">{result.executionId.slice(0, 8)}</span>
         </h4>
         <div className="flex items-center gap-2">
           <Badge variant={result.changed ? "warning" : "success"}>
-            {result.changed ? "changed" : "identical"} · {pct}% similar
+            {result.changed ? "changed" : "identical"} {translate("replayResultCard.pctSimilar", { pct })}
           </Badge>
           {onClear && (
             <Button variant="secondary" size="sm" onClick={onClear}>
-              Close
+              {translate("replayResultCard.close")}
             </Button>
           )}
         </div>
@@ -71,7 +72,7 @@ export function ReplayResultCard({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div>
           <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Original
+            {translate("replayResultCard.original")}
           </div>
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-muted p-2 text-xs text-foreground">
             {result.originalResponse || "—"}
@@ -79,7 +80,7 @@ export function ReplayResultCard({
         </div>
         <div>
           <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Replayed
+            {translate("replayResultCard.replayed")}
           </div>
           <pre className="max-h-60 overflow-auto whitespace-pre-wrap rounded bg-accent/10 p-2 text-xs text-foreground">
             {result.replayedResponse || "—"}

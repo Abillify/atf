@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the PII Tokenization Vault route.
@@ -11,7 +12,7 @@ export default function PiiVaultLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading PII vault status"
+      aria-label={translate("piiVault.loadingPIIVaultStatus")}
       className="flex flex-col gap-3 p-6 max-w-2xl"
     >
       <Skeleton width="w-56" height="h-6" />

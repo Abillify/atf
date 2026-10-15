@@ -151,8 +151,8 @@ function SortableHeader({
         type="button"
         className="inline-flex cursor-pointer items-center gap-1 hover:text-foreground"
         onClick={() => onSortChange(column)}
-        title={`Sort by ${label}`}
-        aria-label={`Sort by ${label}`}
+        title={translate("persistedHistory.sortByLabel", { label })}
+        aria-label={translate("persistedHistory.sortByLabel", { label })}
       >
         {label}
         {active ? (
@@ -364,8 +364,8 @@ function RequestRow({
                 size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onViewEvents(e.execution_id)}
-                title="Open in Live Graph — shows system prompt, tool calls and response per node"
-                aria-label="Open in Live Graph"
+                title={translate("persistedHistory.openInLiveGraphShows")}
+                aria-label={translate("persistedHistory.openInLiveGraph")}
               >
                 <Eye size={15} aria-hidden="true" />
               </Button>
@@ -376,8 +376,8 @@ function RequestRow({
                 size="icon"
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onOpenTrace(e.execution_id)}
-                title="Open in Trace Viewer — step replay, waterfall and the Decision-Provenance explainability card"
-                aria-label="Open in Trace Viewer"
+                title={translate("persistedHistory.openInTraceViewerStep")}
+                aria-label={translate("persistedHistory.openInTraceViewer")}
               >
                 <ScrollText size={15} aria-hidden="true" />
               </Button>
@@ -389,8 +389,8 @@ function RequestRow({
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onDownloadDebug(e.execution_id)}
                 disabled={downloadingId === e.execution_id}
-                title="Download the full debug trace as JSON — all prompts, LLM responses, tool calls with results, RAG chunks and tool selection"
-                aria-label="Download debug trace as JSON"
+                title={translate("persistedHistory.downloadTheFullDebugTrace")}
+                aria-label={translate("persistedHistory.downloadDebugTraceAsJSON")}
               >
                 {downloadingId === e.execution_id ? (
                   <Loader2
@@ -410,8 +410,8 @@ function RequestRow({
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onAnalyze(e.execution_id)}
                 disabled={analyzingId === e.execution_id}
-                title="Run an LLM post-mortem of this run — root cause, findings and improvement suggestions from its debug trace"
-                aria-label="Analyse this run with an LLM post-mortem"
+                title={translate("persistedHistory.runAnLLMPostMortem")}
+                aria-label={translate("persistedHistory.analyseThisRunWithAn")}
               >
                 {analyzingId === e.execution_id ? (
                   <Loader2
@@ -431,8 +431,8 @@ function RequestRow({
                 className={ACTION_BUTTON_CLASS}
                 onClick={() => onReplay(e.execution_id)}
                 disabled={replayingId === e.execution_id}
-                title="Replay this run — time-travel the flow with its original inputs"
-                aria-label="Replay this run"
+                title={translate("persistedHistory.replayThisRunTimeTravel")}
+                aria-label={translate("persistedHistory.replayThisRun")}
               >
                 {replayingId === e.execution_id ? (
                   <Loader2
@@ -588,7 +588,7 @@ export function PersistedHistory({
     <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-sm font-semibold text-foreground">
-          Execution history{" "}
+          {translate("persistedHistory.executionHistory")}{" "}
           <span className="font-normal text-muted-foreground">
             ({totalCount})
           </span>
@@ -637,7 +637,7 @@ export function PersistedHistory({
                   )}
                   {onUserFilterChange && (
                     <UserSelectFilter
-                      label="User"
+                      label={translate("persistedHistory.user")}
                       options={userOptions ?? []}
                       value={userFilter ?? ""}
                       onChange={onUserFilterChange}
@@ -654,41 +654,41 @@ export function PersistedHistory({
           )}
           {onRefresh && (
             <Button variant="secondary" size="sm" onClick={onRefresh}>
-              Refresh
+              {translate("persistedHistory.refresh")}
             </Button>
           )}
         </div>
       </div>
       {isLoading && executions.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          Loading…
+          {translate("persistedHistory.loading")}
         </p>
       ) : executions.length === 0 ? (
         <p className="py-6 text-center text-sm text-muted-foreground">
-          No executions recorded yet.
+          {translate("persistedHistory.noExecutionsRecordedYet")}
         </p>
       ) : (
         <div className="overflow-x-auto">
           <Table>
             <TableHead>
               <TableRow className="uppercase tracking-wide">
-                <TableHeaderCell>Execution</TableHeaderCell>
+                <TableHeaderCell>{translate("persistedHistory.execution")}</TableHeaderCell>
                 <SortableHeader
-                  label="Flow"
+                  label={translate("persistedHistory.flow")}
                   column="flow_id"
                   sortBy={sortBy}
                   sortDir={sortDir}
                   onSortChange={onSortChange}
                 />
                 <SortableHeader
-                  label="User"
+                  label={translate("persistedHistory.user")}
                   column="user_name"
                   sortBy={sortBy}
                   sortDir={sortDir}
                   onSortChange={onSortChange}
                 />
                 <SortableHeader
-                  label="Nodes"
+                  label={translate("persistedHistory.nodes")}
                   column="node_count"
                   sortBy={sortBy}
                   sortDir={sortDir}
@@ -696,7 +696,7 @@ export function PersistedHistory({
                   align="right"
                 />
                 <SortableHeader
-                  label="Latency"
+                  label={translate("persistedHistory.latency")}
                   column="total_latency_ms"
                   sortBy={sortBy}
                   sortDir={sortDir}
@@ -704,7 +704,7 @@ export function PersistedHistory({
                   align="right"
                 />
                 <SortableHeader
-                  label="Runtime"
+                  label={translate("persistedHistory.runtime")}
                   column="runtime"
                   sortBy={sortBy}
                   sortDir={sortDir}
@@ -712,7 +712,7 @@ export function PersistedHistory({
                   align="right"
                 />
                 <SortableHeader
-                  label="Cost"
+                  label={translate("persistedHistory.cost")}
                   column="total_cost"
                   sortBy={sortBy}
                   sortDir={sortDir}
@@ -720,10 +720,10 @@ export function PersistedHistory({
                   align="right"
                 />
                 <TableHeaderCell className="text-center">
-                  Status
+                  {translate("persistedHistory.status")}
                 </TableHeaderCell>
                 <SortableHeader
-                  label="Started"
+                  label={translate("persistedHistory.started")}
                   column="started_at"
                   sortBy={sortBy}
                   sortDir={sortDir}
@@ -736,7 +736,7 @@ export function PersistedHistory({
                   onOpenTrace ||
                   onReplay) && (
                   <TableHeaderCell className="text-right">
-                    Aktionen
+                    {translate("persistedHistory.aktionen")}
                   </TableHeaderCell>
                 )}
               </TableRow>
@@ -789,7 +789,7 @@ export function PersistedHistory({
                             {collapsed ? "▶" : "▼"}
                           </span>
                           <span className="rounded bg-primary/10 px-1.5 py-0.5 tabular-nums text-foreground">
-                            {thread.requests.length} Requests
+                            {translate("persistedHistory.lengthRequests", { length: thread.requests.length })}
                           </span>
                         </button>
                       </TableCell>
@@ -865,7 +865,7 @@ export function PersistedHistory({
                 onOffsetChange?.(Math.max(currentOffset - size, 0))
               }
             >
-              Previous
+              {translate("persistedHistory.previous")}
             </Button>
             <Button
               variant="secondary"
@@ -873,7 +873,7 @@ export function PersistedHistory({
               disabled={!canNext}
               onClick={() => onOffsetChange?.(currentOffset + size)}
             >
-              Next
+              {translate("persistedHistory.next")}
             </Button>
           </div>
         </div>

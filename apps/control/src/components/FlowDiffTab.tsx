@@ -23,6 +23,7 @@ import {
   FlowEndpointPicker,
   type FlowEndpoint,
 } from "./FlowEndpointPicker";
+import { translate } from "../lib/i18n";
 
 interface FieldChange<T = unknown> {
   from: T;
@@ -130,7 +131,7 @@ export function FlowDiffTab(): React.JSX.Element {
     queryFn: (): Promise<FlowDiffResponse> => {
       // `enabled` keeps the query idle until a comparison was submitted.
       if (submitted === null) {
-        return Promise.reject(new Error("No comparison submitted."));
+        return Promise.reject(new Error(translate("flowDiffTab.noComparisonSubmitted")));
       }
       const { from: fromEndpoint, to: toEndpoint } = submitted;
       return compare({
@@ -157,27 +158,27 @@ export function FlowDiffTab(): React.JSX.Element {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold text-foreground">
-        Flow Diff Viewer
+        {translate("flowDiffTab.flowDiffViewer")}
       </h2>
 
       {/* Endpoint pickers */}
       <div className="flex flex-wrap items-end gap-2">
         <div className="flex min-w-[16rem] flex-1 flex-col gap-1">
-          <span className="text-xs font-medium text-muted-foreground">Von</span>
+          <span className="text-xs font-medium text-muted-foreground">{translate("flowDiffTab.von")}</span>
           <FlowEndpointPicker
             flows={flows}
             value={from}
             onChange={setFrom}
             loading={flowsLoading}
             showDrafts={showDrafts}
-            placeholder="— Flow wählen —"
-            ariaLabel="Vergleichsquelle (von)"
+            placeholder={translate("flowDiffTab.flowWaHlen")}
+            ariaLabel={translate("flowDiffTab.vergleichsquelleVon")}
             className="w-full"
           />
         </div>
         <div className="flex min-w-[16rem] flex-1 flex-col gap-1">
           <span className="text-xs font-medium text-muted-foreground">
-            Nach
+            {translate("flowDiffTab.nach")}
           </span>
           <FlowEndpointPicker
             flows={flows}
@@ -185,8 +186,8 @@ export function FlowDiffTab(): React.JSX.Element {
             onChange={setTo}
             loading={flowsLoading}
             showDrafts={showDrafts}
-            placeholder="— Flow wählen —"
-            ariaLabel="Vergleichsziel (nach)"
+            placeholder={translate("flowDiffTab.flowWaHlen")}
+            ariaLabel={translate("flowDiffTab.vergleichszielNach")}
             className="w-full"
           />
         </div>
@@ -196,7 +197,7 @@ export function FlowDiffTab(): React.JSX.Element {
             checked={showDrafts}
             onChange={(e) => setShowDrafts(e.target.checked)}
           />
-          Draft
+          {translate("flowDiffTab.draft")}
         </label>
         <Button
           variant="primary"
@@ -205,15 +206,14 @@ export function FlowDiffTab(): React.JSX.Element {
           }
           disabled={!canSubmit}
         >
-          Show Diff
+          {translate("flowDiffTab.showDiff")}
         </Button>
       </div>
 
       {/* Idle */}
       {!submitted && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          Two flows to compare. With “Draft” checked, each dropdown also lists
-          the drafts under its flow.
+          {translate("flowDiffTab.twoFlowsToCompareWith")}
         </div>
       )}
 
@@ -224,7 +224,7 @@ export function FlowDiffTab(): React.JSX.Element {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Fetching diff…
+          {translate("flowDiffTab.fetchingDiff")}
         </div>
       )}
 
@@ -234,7 +234,7 @@ export function FlowDiffTab(): React.JSX.Element {
           role="alert"
           className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load diff: {error.message}
+          {translate("flowDiffTab.failedToLoadDiffMessage", { message: error.message })}
         </div>
       )}
 
@@ -261,7 +261,7 @@ export function FlowDiffTab(): React.JSX.Element {
 
           {!diff.changed ? (
             <div className="py-8 text-center text-sm text-muted-foreground">
-              No changes between versions.
+              {translate("flowDiffTab.noChangesBetweenVersions")}
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 p-4 md:grid-cols-2">
@@ -292,7 +292,7 @@ export function FlowDiffTab(): React.JSX.Element {
                   )}
                   {diff.metadataChanged && (
                     <div className="text-muted-foreground">
-                      metadata changed
+                      {translate("flowDiffTab.metadataChanged")}
                     </div>
                   )}
                 </div>
@@ -300,17 +300,17 @@ export function FlowDiffTab(): React.JSX.Element {
 
               <div>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Nodes
+                  {translate("flowDiffTab.nodes")}
                 </h2>
                 <div className="space-y-2">
                   <IdList
                     ids={diff.nodes.added}
-                    emptyLabel="No nodes added."
+                    emptyLabel={translate("flowDiffTab.noNodesAdded")}
                     tone="added"
                   />
                   <IdList
                     ids={diff.nodes.removed}
-                    emptyLabel="No nodes removed."
+                    emptyLabel={translate("flowDiffTab.noNodesRemoved")}
                     tone="removed"
                   />
                   {diff.nodes.changed.length > 0 && (
@@ -333,17 +333,17 @@ export function FlowDiffTab(): React.JSX.Element {
 
               <div>
                 <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Edges
+                  {translate("flowDiffTab.edges")}
                 </h2>
                 <div className="space-y-2">
                   <IdList
                     ids={diff.edges.added}
-                    emptyLabel="No edges added."
+                    emptyLabel={translate("flowDiffTab.noEdgesAdded")}
                     tone="added"
                   />
                   <IdList
                     ids={diff.edges.removed}
-                    emptyLabel="No edges removed."
+                    emptyLabel={translate("flowDiffTab.noEdgesRemoved")}
                     tone="removed"
                   />
                   {diff.edges.changed.length > 0 && (

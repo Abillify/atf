@@ -16,6 +16,7 @@ import type { RFEdge, RFNode } from "../../lib/flow-graph";
 import type { FlowDefinition, FlowDraftInfo } from "../../types/flow";
 import type { DiffOverlay } from "../../lib/flow-diff-view";
 import { Play, Redo2, Settings, Sparkles, Undo2 } from "lucide-react";
+import { translate } from "../../lib/i18n";
 
 export interface StudioToolbarProps {
   baseId: string;
@@ -74,13 +75,13 @@ function revisionBadgeOf(
           text: `live v${liveKind.version}`,
           cls: "bg-success-soft text-success border border-success-border",
           title:
-            "Viewing the live (published) revision. Switch back to Draft to edit; 'Save draft' here stages this content into the active draft.",
+            translate("studioToolbar.viewingTheLivePublishedRevision"),
         }
       : {
           text: "live · file",
           cls: "bg-muted text-muted-foreground",
           title:
-            "Viewing the file revision that serves traffic. Switch back to Draft to edit.",
+            translate("studioToolbar.viewingTheFileRevisionThat"),
         };
   }
   switch (loadedKind.kind) {
@@ -88,14 +89,14 @@ function revisionBadgeOf(
       return {
         text: "new · unsaved",
         cls: "bg-muted text-muted-foreground",
-        title: "Not stored anywhere yet.",
+        title: translate("studioToolbar.notStoredAnywhereYet"),
       };
     case "file":
       return {
         text: "file",
         cls: "bg-muted text-muted-foreground",
         title:
-          "Loaded from FLOWS_DIR. Save draft creates an online draft; nothing goes live until you publish.",
+          translate("studioToolbar.loadedFromFLOWSDIRSave"),
       };
     case "draft":
       return {
@@ -104,14 +105,14 @@ function revisionBadgeOf(
             ? "draft"
             : `draft · ${loadedKind.draftId}`,
         cls: "bg-warning-soft text-warning border border-warning-border",
-        title: "Editing the unpublished draft. The live flow is unchanged.",
+        title: translate("studioToolbar.editingTheUnpublishedDraftThe"),
       };
     case "published":
       return {
         text: `published v${loadedKind.version}`,
         cls: "bg-success-soft text-success border border-success-border",
         title:
-          "Editing a copy of the live version. Save draft to stage changes.",
+          translate("studioToolbar.editingACopyOfThe"),
       };
   }
 }
@@ -176,7 +177,7 @@ export function StudioToolbar({
       {onlineEditing && flowSource === "online" && (
         <div className="flex items-center gap-1">
           <select
-            aria-label="Active draft"
+            aria-label={translate("studioToolbar.activeDraft")}
             value={viewingLive ? "__live__" : activeDraftId}
             onChange={(e) => {
               const v = e.target.value;
@@ -189,24 +190,24 @@ export function StudioToolbar({
               }
             }}
             className="rounded border border-border bg-card px-1.5 py-1 text-xs text-foreground"
-            title="Choose which draft to edit, or view the live revision."
+            title={translate("studioToolbar.chooseWhichDraftToEdit")}
           >
             {drafts.length === 0 && (
-              <option value={DEFAULT_DRAFT_ID}>draft · default</option>
+              <option value={DEFAULT_DRAFT_ID}>{translate("studioToolbar.draftDefault")}</option>
             )}
             {drafts.map((d) => (
               <option key={d.draftId} value={d.draftId}>
-                draft · {d.label || d.draftId}
+                {translate("studioToolbar.draftValue", { value: d.label || d.draftId })}
               </option>
             ))}
             {liveDefinition !== null && (
               <option value="__live__">
                 {liveKind?.kind === "published"
-                  ? `live · v${liveKind.version}`
-                  : "live · file"}
+                  ? translate("studioToolbar.liveVVersion", { version: liveKind.version })
+                  : translate("studioToolbar.liveFile")}
               </option>
             )}
-            <option value="__new__">＋ new draft…</option>
+            <option value="__new__">{translate("studioToolbar.newDraft")}</option>
           </select>
           {liveDefinition !== null && (
             <Button
@@ -215,11 +216,11 @@ export function StudioToolbar({
               onClick={onToggleViewLive}
               title={
                 viewingLive
-                  ? "Switch back to the active draft"
-                  : "View the live revision (read the version serving traffic)"
+                  ? translate("studioToolbar.switchBackToTheActive")
+                  : translate("studioToolbar.viewTheLiveRevisionRead")
               }
             >
-              {viewingLive ? "← Draft" : "View live"}
+              {viewingLive ? translate("studioToolbar.draft") : translate("studioToolbar.viewLive")}
             </Button>
           )}
           {!viewingLive && activeDraftId !== DEFAULT_DRAFT_ID && (
@@ -228,9 +229,9 @@ export function StudioToolbar({
               size="sm"
               disabled={isSaving}
               onClick={onDeleteDraft}
-              title={`Delete draft '${activeDraftId}' (the live flow is not affected)`}
+              title={translate("studioToolbar.deleteDraftActiveDraftIdTheLive", { activeDraftId })}
             >
-              Delete draft
+              {translate("studioToolbar.deleteDraft")}
             </Button>
           )}
         </div>
@@ -238,9 +239,9 @@ export function StudioToolbar({
       {dirty && (
         <span
           className="rounded bg-info-soft px-1.5 text-[10px] font-medium uppercase text-info border border-info-border"
-          title="The canvas has changes that are not stored anywhere yet."
+          title={translate("studioToolbar.theCanvasHasChangesThat")}
         >
-          ● unsaved
+          {translate("studioToolbar.unsaved")}
         </span>
       )}
 
@@ -250,29 +251,29 @@ export function StudioToolbar({
       <div
         className="flex items-center overflow-hidden rounded-md border border-border bg-card shadow-sm"
         role="group"
-        aria-label="History"
+        aria-label={translate("studioToolbar.history")}
       >
         <button
           type="button"
           onClick={onUndo}
           disabled={!canUndo}
-          title="Undo the last change (Cmd/Ctrl+Z)"
-          aria-label="Undo"
+          title={translate("studioToolbar.undoTheLastChangeCmd")}
+          aria-label={translate("studioToolbar.undo")}
           className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent"
         >
           <Undo2 size={14} aria-hidden />
-          Undo
+          {translate("studioToolbar.undo")}
         </button>
         <button
           type="button"
           onClick={onRedo}
           disabled={!canRedo}
-          title="Redo the last undone change (Cmd/Ctrl+Shift+Z)"
-          aria-label="Redo"
+          title={translate("studioToolbar.redoTheLastUndoneChange")}
+          aria-label={translate("studioToolbar.redo")}
           className="flex items-center gap-1 border-l border-border px-2 py-1 text-xs font-medium text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground/50 disabled:hover:bg-transparent"
         >
           <Redo2 size={14} aria-hidden />
-          Redo
+          {translate("studioToolbar.redo")}
         </button>
       </div>
 
@@ -283,14 +284,14 @@ export function StudioToolbar({
         <div
           className="flex items-center overflow-hidden rounded-md border border-border bg-card shadow-sm"
           role="group"
-          aria-label="Panels"
+          aria-label={translate("studioToolbar.panels")}
         >
           <button
             type="button"
             onClick={() => onTogglePanel("copilot")}
             aria-pressed={!copilotHidden}
             title={
-              copilotHidden ? "Show the Copilot panel" : "Hide the Copilot panel"
+              copilotHidden ? translate("studioToolbar.showTheCopilotPanel") : translate("studioToolbar.hideTheCopilotPanel")
             }
             className={`flex items-center gap-1 px-2 py-1 text-xs font-medium transition-colors ${
               copilotHidden
@@ -299,7 +300,7 @@ export function StudioToolbar({
             }`}
           >
             <Sparkles size={14} aria-hidden />
-            Copilot
+            {translate("studioToolbar.copilot")}
           </button>
           <button
             type="button"
@@ -307,8 +308,8 @@ export function StudioToolbar({
             aria-pressed={!runTraceHidden}
             title={
               runTraceHidden
-                ? "Show the Run & Trace panel"
-                : "Hide the Run & Trace panel"
+                ? translate("studioToolbar.showTheRunTracePanel")
+                : translate("studioToolbar.hideTheRunTracePanel")
             }
             className={`flex items-center gap-1 border-l border-border px-2 py-1 text-xs font-medium transition-colors ${
               runTraceHidden
@@ -317,7 +318,7 @@ export function StudioToolbar({
             }`}
           >
             <Play size={14} aria-hidden />
-            Run & Trace
+            {translate("studioToolbar.runTrace")}
           </button>
         </div>
       )}
@@ -331,8 +332,8 @@ export function StudioToolbar({
           aria-pressed={flowSettingsOpen}
           title={
             flowSettingsOpen
-              ? "Hide the flow settings panel"
-              : "Show the flow settings (id, name, description, variables)"
+              ? translate("studioToolbar.hideTheFlowSettingsPanel")
+              : translate("studioToolbar.showTheFlowSettingsId")
           }
           className={`flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors ${
             flowSettingsOpen
@@ -341,7 +342,7 @@ export function StudioToolbar({
           }`}
         >
           <Settings size={14} aria-hidden />
-          Flow settings
+          {translate("studioToolbar.flowSettings")}
         </button>
       )}
 
@@ -357,18 +358,18 @@ export function StudioToolbar({
           }`}
         >
           {totalErrors > 0
-            ? `${totalErrors} error(s)`
-            : `${totalWarnings} warning(s)`}
+            ? translate("studioToolbar.totalErrorsErrorS", { totalErrors })
+            : translate("studioToolbar.totalWarningsWarningS", { totalWarnings })}
         </button>
       )}
       {unknownToolsByServer.size > 0 && (
         <button
           type="button"
           onClick={onToggleProblems}
-          title={`Tools on MCP servers this runtime isn't connected to: ${[...unknownToolsByServer.keys()].join(", ")}. They can't be checked here; they will work where those servers are connected.`}
+          title={translate("studioToolbar.toolsOnMCPServersThis", { value: [...unknownToolsByServer.keys()].join(", ") })}
           className="rounded border border-border bg-muted px-2 py-0.5 text-[11px] text-muted-foreground"
         >
-          {unknownToolsByServer.size} MCP server(s) not connected
+          {translate("studioToolbar.sizeMCPServerSNot", { size: unknownToolsByServer.size })}
         </button>
       )}
 
@@ -389,9 +390,9 @@ export function StudioToolbar({
             size="sm"
             disabled={isSaving}
             onClick={onDiscard}
-            title="Reload the stored version and drop canvas changes"
+            title={translate("studioToolbar.reloadTheStoredVersionAnd")}
           >
-            Discard
+            {translate("studioToolbar.discard")}
           </Button>
         )}
         {showFileWrite && (
@@ -400,9 +401,9 @@ export function StudioToolbar({
             size="sm"
             disabled={isSaving}
             onClick={onSave}
-            title="Write straight into the flow file in FLOWS_DIR — live immediately, no draft."
+            title={translate("studioToolbar.writeStraightIntoTheFlow")}
           >
-            Write to file
+            {translate("studioToolbar.writeToFile")}
           </Button>
         )}
         {onlineEditing && (
@@ -412,9 +413,9 @@ export function StudioToolbar({
               size="sm"
               disabled={isSaving}
               onClick={onSaveDraft}
-              title="Store the canvas as an unpublished draft. Nothing goes live."
+              title={translate("studioToolbar.storeTheCanvasAsAn")}
             >
-              {isSaving ? "Saving…" : "Save draft"}
+              {isSaving ? translate("studioToolbar.saving") : translate("studioToolbar.saveDraft")}
             </Button>
             <Button
               variant="primary"
@@ -423,11 +424,11 @@ export function StudioToolbar({
               onClick={onPublish}
               title={
                 totalErrors > 0
-                  ? "Fix the validation errors first."
-                  : "Save the draft and make it the live version."
+                  ? translate("studioToolbar.fixTheValidationErrorsFirst")
+                  : translate("studioToolbar.saveTheDraftAndMake")
               }
             >
-              Publish
+              {translate("studioToolbar.publish")}
             </Button>
           </>
         )}

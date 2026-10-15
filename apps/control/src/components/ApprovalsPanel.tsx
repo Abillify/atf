@@ -8,6 +8,7 @@ import { Inbox } from "lucide-react";
 import type { PendingApproval } from "../types/control";
 import { Badge, Button, EmptyState } from "../lib/ui";
 import { RequireRole } from "../lib/auth";
+import { translate } from "../lib/i18n";
 
 export interface ApprovalsPanelProps {
   pending: PendingApproval[];
@@ -54,7 +55,7 @@ function ApprovalCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
-            <Badge variant="warning">awaiting approval</Badge>
+            <Badge variant="warning">{translate("approvalsPanel.awaitingApproval")}</Badge>
             <span className="font-mono text-sm font-semibold text-foreground">
               {item.tool}
             </span>
@@ -63,7 +64,7 @@ function ApprovalCard({
             node <span className="font-mono">{item.nodeId}</span>
             {item.tenantId ? (
               <>
-                {" · tenant "}
+                {translate("approvalsPanel.tenant")}
                 <span className="font-mono">{item.tenantId}</span>
               </>
             ) : null}
@@ -76,7 +77,7 @@ function ApprovalCard({
           minRole="operator"
           fallback={
             <span className="shrink-0 text-xs text-muted-foreground">
-              An operator decides this request.
+              {translate("approvalsPanel.anOperatorDecidesThisRequest")}
             </span>
           }
         >
@@ -87,7 +88,7 @@ function ApprovalCard({
               disabled={busy}
               onClick={() => void act(true)}
             >
-              Approve
+              {translate("approvalsPanel.approve")}
             </Button>
             <Button
               variant="destructive"
@@ -95,7 +96,7 @@ function ApprovalCard({
               disabled={busy}
               onClick={() => void act(false)}
             >
-              Deny
+              {translate("approvalsPanel.deny")}
             </Button>
           </div>
         </RequireRole>
@@ -123,7 +124,7 @@ export function ApprovalsPanel({
     <section className="space-y-3">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">
-          Pending approvals{" "}
+          {translate("approvalsPanel.pendingApprovals")}{" "}
           <span className="font-normal text-muted-foreground">
             ({pending.length})
           </span>
@@ -132,13 +133,13 @@ export function ApprovalsPanel({
       </div>
       {isLoading && pending.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
-          Loading…
+          {translate("approvalsPanel.loading")}
         </p>
       ) : pending.length === 0 ? (
         <EmptyState
           icon={Inbox}
-          title="No tool calls are awaiting approval."
-          description="Flagged consequential tools will appear here for review."
+          title={translate("approvalsPanel.noToolCallsAreAwaiting")}
+          description={translate("approvalsPanel.flaggedConsequentialToolsWillAppear")}
         />
       ) : (
         <div className="space-y-3">

@@ -18,6 +18,7 @@ import {
   varRefRe,
 } from "../VariablesEditor";
 import { Field, JsonEditor, inputCls, compact } from "../form-controls";
+import { translate } from "../../lib/i18n";
 
 /** Top-level keys owned by the canvas or edited by dedicated fields. */
 const FLOW_OWNED_KEYS = new Set([
@@ -88,13 +89,13 @@ export function FlowSettingsPanel({
 
   return (
     <div className="space-y-3">
-      <h4 className="text-sm font-semibold text-foreground">Flow settings</h4>
+      <h4 className="text-sm font-semibold text-foreground">{translate("flowSettingsPanel.flowSettings")}</h4>
       <p className="text-[10px] text-muted-foreground">
-        Nothing selected — select a node or edge on the canvas to edit it.
+        {translate("flowSettingsPanel.nothingSelectedSelectANode")}
       </p>
       <Field
-        label="Flow id"
-        hint={idEditable ? "Lowercase letters, digits and dashes." : undefined}
+        label={translate("flowSettingsPanel.flowId")}
+        hint={idEditable ? translate("flowSettingsPanel.lowercaseLettersDigitsAndDashes") : undefined}
       >
         <input
           className={`${inputCls} font-mono`}
@@ -108,20 +109,20 @@ export function FlowSettingsPanel({
           }
         />
       </Field>
-      <Field label="Name">
+      <Field label={translate("flowSettingsPanel.name")}>
         <FormulaInput
           kind="vars"
-          ariaLabel="Name"
+          ariaLabel={translate("flowSettingsPanel.name")}
           className={inputCls}
           value={flow.name}
           onChange={(v) => onChange({ ...flow, name: v })}
         />
       </Field>
-      <Field label="Description">
+      <Field label={translate("flowSettingsPanel.description")}>
         <FormulaTextarea
           kind="vars"
-          ariaLabel="Description"
-          title="Flow description"
+          ariaLabel={translate("flowSettingsPanel.description")}
+          title={translate("flowSettingsPanel.flowDescription")}
           className={`${inputCls} w-full resize-y`}
           rows={3}
           value={flow.description ?? ""}
@@ -152,8 +153,8 @@ export function FlowSettingsPanel({
         {...(evaluateVariables ? { evaluate: evaluateVariables } : {})}
       />
       <JsonEditor
-        label="Other flow fields"
-        hint="pricing, dataClasses, recovery, … — everything not edited above."
+        label={translate("flowSettingsPanel.otherFlowFields")}
+        hint={translate("flowSettingsPanel.pricingDataClassesRecoveryEverythingNot")}
         rows={10}
         value={extra}
         onChange={(v) => {

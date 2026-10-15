@@ -40,6 +40,7 @@ import {
   type StudioBuilderPanels,
   type StudioBuilderProps,
 } from "../hooks/useStudioBuilder";
+import { translate } from "../lib/i18n";
 
 // Req 9.3 (Task 13.4): the props types belong to the composition hook.
 export type { StudioBuilderPanels, StudioBuilderProps };
@@ -258,13 +259,13 @@ export function StudioBuilder(props: StudioBuilderProps): React.JSX.Element {
                 }}
                 className="ml-2 rounded bg-warning-soft px-2 py-0.5 text-warning border border-warning-border hover:bg-warning-soft"
               >
-                Overwrite anyway
+                {translate("studioBuilder.overwriteAnyway")}
               </button>
             )}
             <button
               type="button"
               onClick={() => setStatus(null)}
-              aria-label="Dismiss status"
+              aria-label={translate("studioBuilder.dismissStatus")}
               className="ml-auto rounded px-1 text-muted-foreground hover:text-foreground"
             >
               ×

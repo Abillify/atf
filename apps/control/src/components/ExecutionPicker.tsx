@@ -136,7 +136,7 @@ export function ExecutionPicker({
     <aside className="flex w-full shrink-0 flex-col border-r border-border bg-card lg:w-64">
       <div className="flex items-center justify-between border-b border-border px-3 py-2">
         <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Requests
+          {translate("executionPicker.requests")}
         </h3>
         <button type="button"
           onClick={onFollowLive}
@@ -152,7 +152,7 @@ export function ExecutionPicker({
               following ? "bg-card" : "bg-accent"
             }`}
           />
-          Live
+          {translate("executionPicker.live")}
         </button>
       </div>
 
@@ -227,7 +227,7 @@ export function ExecutionPicker({
                   )}
                   {onUserFilterChange && (
                     <UserSelectFilter
-                      label="User"
+                      label={translate("executionPicker.user")}
                       options={userOptions ?? []}
                       value={userFilter}
                       onChange={onUserFilterChange}
@@ -243,7 +243,7 @@ export function ExecutionPicker({
       <div className="flex-1 overflow-y-auto">
         {items.length === 0 ? (
           <p className="px-3 py-6 text-center text-xs text-muted-foreground">
-            No requests yet.
+            {translate("executionPicker.noRequestsYet")}
           </p>
         ) : (
           <ul className="divide-y divide-border">
@@ -267,13 +267,13 @@ export function ExecutionPicker({
                       <span className="truncate text-xs font-medium text-foreground">
                         {it.user && it.user.trim() !== ""
                           ? it.user
-                          : "Anonymous"}
+                          : translate("executionPicker.anonymous")}
                       </span>
                       {!it.live && (
                         <Badge
                           variant="outline"
                           className="ml-auto uppercase"
-                          title="Loaded from durable history"
+                          title={translate("executionPicker.loadedFromDurableHistory")}
                         >
                           hist
                         </Badge>
@@ -282,7 +282,7 @@ export function ExecutionPicker({
                     {it.flowId && (
                       <div
                         className="flex items-center gap-1 text-[11px] font-medium text-accent"
-                        title={`Flow: ${it.flowId}`}
+                        title={translate("executionPicker.flowFlowId", { flowId: it.flowId })}
                       >
                         <svg
                           className="h-3 w-3 shrink-0 text-accent"
@@ -323,7 +323,7 @@ export function ExecutionPicker({
                         {it.cost != null && (
                           <span
                             className="ml-1 font-medium text-success"
-                            title="Estimated cost"
+                            title={translate("executionPicker.estimatedCost")}
                           >
                             · {it.cost.toFixed(4)}
                           </span>
@@ -367,9 +367,9 @@ export function ExecutionPicker({
             onClick={onClearHistory}
             disabled={items.length === 0}
             className="w-full"
-            title="Delete all stored requests from the history"
+            title={translate("executionPicker.deleteAllStoredRequestsFrom")}
           >
-            Clear history
+            {translate("executionPicker.clearHistory")}
           </Button>
         </div>
       )}

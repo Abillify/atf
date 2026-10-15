@@ -24,6 +24,7 @@ type ValueEvaluator = (
 ) => Promise<{ value?: unknown; error?: string }>;
 
 import { inputCls, JsonEditor } from "./form-controls";
+import { translate } from "../lib/i18n";
 
 
 /**
@@ -53,8 +54,8 @@ export function variableValueGroups(
 	});
 	if (catalog && catalog.shortcuts.length > 0) {
 		groups.push({
-			title: "Model shortcuts",
-			hint: "Replaces the whole value.",
+			title: translate("variablesEditor.modelShortcuts"),
+			hint: translate("variablesEditor.replacesTheWholeValue"),
 			symbols: catalog.shortcuts.map((name) => ({
 				path: `shortcut.${name}`,
 				insert: name,
@@ -65,13 +66,13 @@ export function variableValueGroups(
 	}
 	if ((catalog?.models?.length ?? 0) > 0) {
 		groups.push({
-			title: "Models",
-			hint: "Concrete model ids (for llm.model); replaces the whole value.",
+			title: translate("variablesEditor.models"),
+			hint: translate("variablesEditor.concreteModelIdsForLlm"),
 			symbols: (catalog?.models ?? []).map((id) => ({
 				path: `model.${id}`,
 				insert: id,
 				replace: true,
-				description: "concrete model id",
+				description: translate("variablesEditor.concreteModelId"),
 			})),
 		});
 	}
@@ -163,7 +164,7 @@ function NameInput({
 	return (
 		<div className="min-w-0 flex-1">
 			<input
-				aria-label={`Variable name ${name}`}
+				aria-label={translate("variablesEditor.variableNameName", { name })}
 				className={`${inputCls} font-mono text-xs font-semibold ${error ? "border-danger-border" : ""}`}
 				placeholder="name"
 				value={draft}
@@ -208,7 +209,7 @@ function JsonValueInput({
 	return (
 		<div>
 			<textarea
-				aria-label={`Value of ${name}`}
+				aria-label={translate("variablesEditor.valueOfName", { name })}
 				rows={Math.min(8, Math.max(2, text.split("\n").length))}
 				spellCheck={false}
 				className={`${inputCls} resize-y font-mono text-xs ${error ? "border-danger-border" : ""}`}
@@ -219,7 +220,7 @@ function JsonValueInput({
 						onChange(JSON.parse(e.target.value));
 						setError(null);
 					} catch {
-						setError("Invalid JSON — not applied.");
+						setError(translate("variablesEditor.invalidJSONNotApplied"));
 					}
 				}}
 			/>
@@ -252,7 +253,7 @@ function NumberValueInput({
 	return (
 		<div className="relative flex items-center">
 			<input
-				aria-label={`Value of ${name}`}
+				aria-label={translate("variablesEditor.valueOfName", { name })}
 				type="number"
 				className={`${inputCls} pr-9 font-mono text-xs`}
 				value={text}
@@ -264,7 +265,7 @@ function NumberValueInput({
 			/>
 			<FxPicker
 				kind="vars"
-				label={`Value of ${name}`}
+				label={translate("variablesEditor.valueOfName", { name })}
 				groups={groups}
 				onPick={() => {}}
 				onOpenEditor={() => setEditorOpen(true)}
@@ -273,7 +274,7 @@ function NumberValueInput({
 			{editorOpen && (
 				<FormulaEditorDialog
 					open
-					title={`Variable ${name}`}
+					title={translate("variablesEditor.variableName", { name })}
 					kind="vars"
 					value={String(value)}
 					groups={groups}
@@ -309,12 +310,12 @@ function ValueInput({
 			return (
 				<FormulaInput
 					kind="vars"
-					ariaLabel={`Value of ${name}`}
+					ariaLabel={translate("variablesEditor.valueOfName", { name })}
 					className={`${inputCls} font-mono text-xs`}
 					value={value as string}
 					onChange={onChange}
 					groups={groups}
-					title={`Variable ${name}`}
+					title={translate("variablesEditor.variableName", { name })}
 					{...(evaluate ? { evaluate } : {})}
 				/>
 			);
@@ -332,7 +333,7 @@ function ValueInput({
 			return (
 				<label className="flex items-center gap-1.5 py-1 text-xs">
 					<input
-						aria-label={`Value of ${name}`}
+						aria-label={translate("variablesEditor.valueOfName", { name })}
 						type="checkbox"
 						checked={value as boolean}
 						onChange={(e) => onChange(e.target.checked)}
@@ -454,7 +455,7 @@ export function VariablesEditor({
 		<div>
 			<div className="mb-1 flex items-center justify-between">
 				<span className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-					Variables{" "}
+					{translate("variablesEditor.variables")}{" "}
 					{names.length > 0 && (
 						<span className="normal-case">({names.length})</span>
 					)}
@@ -464,10 +465,10 @@ export function VariablesEditor({
 					aria-pressed={asJson}
 					onClick={() => setAsJson((j) => !j)}
 					className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
-					title="Switch between the table and the raw JSON"
+					title={translate("variablesEditor.switchBetweenTheTableAnd")}
 				>
 					<Braces className="h-3 w-3" aria-hidden />
-					{asJson ? "Table" : "JSON"}
+					{asJson ? translate("variablesEditor.table") : "JSON"}
 				</button>
 			</div>
 
@@ -487,7 +488,7 @@ export function VariablesEditor({
 				<div className="space-y-1.5">
 					{names.length === 0 && (
 						<p className="rounded border border-dashed border-border px-2 py-2 text-center text-[11px] text-muted-foreground">
-							No variables yet.
+							{translate("variablesEditor.noVariablesYet")}
 						</p>
 					)}
 					{names.map((name) => {
@@ -506,8 +507,8 @@ export function VariablesEditor({
 									/>
 									<button
 										type="button"
-										aria-label={`Copy reference to ${name}`}
-										title={`Copy {{vars.${name}}}`}
+										aria-label={translate("variablesEditor.copyReferenceToName", { name })}
+										title={translate("variablesEditor.copyVarsName", { name })}
 										onClick={() => copyRef(name)}
 										className="shrink-0 rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
 									>
@@ -515,8 +516,8 @@ export function VariablesEditor({
 									</button>
 									<button
 										type="button"
-										aria-label={`Delete variable ${name}`}
-										title="Delete variable"
+										aria-label={translate("variablesEditor.deleteVariableName", { name })}
+										title={translate("variablesEditor.deleteVariable")}
 										onClick={() =>
 											used > 0 ? setConfirmDelete(name) : remove(name)
 										}
@@ -527,7 +528,7 @@ export function VariablesEditor({
 								</div>
 								<div className="flex items-start gap-1">
 									<select
-										aria-label={`Type of ${name}`}
+										aria-label={translate("variablesEditor.typeOfName", { name })}
 										className="w-[5.5rem] shrink-0 rounded border border-border bg-card px-1 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 										value={type}
 										onChange={(e) =>
@@ -569,20 +570,20 @@ export function VariablesEditor({
 										role="alert"
 										className="flex flex-wrap items-center gap-2 text-[10px] text-danger"
 									>
-										Still used {used}× — references would stay unresolved.
+										{translate("variablesEditor.stillUsedUsedReferencesWould", { used })}
 										<button
 											type="button"
 											onClick={() => remove(name)}
 											className="rounded bg-danger-solid px-1.5 py-0.5 font-medium text-on-solid"
 										>
-											Delete anyway
+											{translate("variablesEditor.deleteAnyway")}
 										</button>
 										<button
 											type="button"
 											onClick={() => setConfirmDelete(null)}
 											className="rounded border border-border px-1.5 py-0.5 text-foreground"
 										>
-											Cancel
+											{translate("variablesEditor.cancel")}
 										</button>
 									</div>
 								) : (
@@ -592,8 +593,8 @@ export function VariablesEditor({
 										{copied === name
 											? "copied"
 											: used > 0
-												? `used ${used}×`
-												: "not used yet"}
+												? translate("variablesEditor.usedUsed", { used })
+												: translate("variablesEditor.notUsedYet")}
 									</p>
 								)}
 								{isFormula(vars[name]) && preview && (
@@ -611,13 +612,12 @@ export function VariablesEditor({
 						className="flex w-full items-center justify-center gap-1 rounded border border-dashed border-border py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
 					>
 						<Plus className="h-3 w-3" aria-hidden />
-						Add variable
+						{translate("variablesEditor.addVariable")}
 					</button>
 				</div>
 			)}
 			<span className="mt-0.5 block text-[10px] text-muted-foreground">
-				Referenced from nodes/edges as {"{{vars.<name>}}"}. Renaming updates
-				those references.
+				{translate("variablesEditor.referencedFromNodesEdgesAs")} {translate("variablesEditor.varsName")}{translate("variablesEditor.renamingUpdatesThoseReferences")}
 			</span>
 		</div>
 	);

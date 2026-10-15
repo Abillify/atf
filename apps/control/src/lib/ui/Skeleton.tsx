@@ -3,6 +3,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type React from "react";
+import { translate } from "../i18n";
 
 export interface SkeletonProps extends React.HTMLAttributes<HTMLDivElement> {
   /** Explicit width (e.g. "w-32") — defaults to w-full */
@@ -23,7 +24,7 @@ export function Skeleton({
   return (
     <div
       role="status"
-      aria-label="Loading…"
+      aria-label={translate("skeleton.loading")}
       aria-busy="true"
       className={[
         "animate-pulse bg-muted motion-reduce:animate-none",

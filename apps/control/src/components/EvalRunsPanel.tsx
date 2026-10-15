@@ -21,7 +21,7 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../lib/ui";
-import { formatDateTime } from "../lib/i18n";
+import { translate, formatDateTime } from "../lib/i18n";
 
 interface AssertionResult {
   assertion: { type: string };
@@ -183,15 +183,15 @@ function TraceDetail({ runId, cell, token }: {
   });
 
   if (!cell.traceAvailable) {
-    return <span className="text-xs text-muted-foreground">No trace archived</span>;
+    return <span className="text-xs text-muted-foreground">{translate("evalRunsPanel.noTraceArchived")}</span>;
   }
   return (
     <div className="mt-2">
       <Button type="button" size="sm" variant="outline" onClick={() => setEnabled((value) => !value)}>
-        {enabled ? "Close trace" : "Open trace"}
+        {enabled ? translate("evalRunsPanel.closeTrace") : translate("evalRunsPanel.openTrace")}
       </Button>
-      {enabled && isLoading && <p className="mt-2 text-xs text-muted-foreground">Loading trace…</p>}
-      {enabled && error && <p className="mt-2 text-xs text-danger">Failed to load trace: {error.message}</p>}
+      {enabled && isLoading && <p className="mt-2 text-xs text-muted-foreground">{translate("evalRunsPanel.loadingTrace")}</p>}
+      {enabled && error && <p className="mt-2 text-xs text-danger">{translate("evalRunsPanel.failedToLoadTraceMessage", { message: error.message })}</p>}
       {enabled && data && (
         <pre className="mt-2 max-h-96 overflow-auto rounded bg-muted p-3 text-[11px] text-foreground">
           {JSON.stringify(data.trace, null, 2)}
@@ -210,11 +210,11 @@ function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string | undef
           <section key={task.id} className="rounded-lg border border-border bg-background p-3">
             <div className="mb-3 grid gap-2 lg:grid-cols-2">
               <div>
-                <div className="text-[11px] font-semibold uppercase text-muted-foreground">Task · {task.id}</div>
+                <div className="text-[11px] font-semibold uppercase text-muted-foreground">{translate("evalRunsPanel.taskId", { id: task.id })}</div>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{task.prompt}</p>
               </div>
               <div>
-                <div className="text-[11px] font-semibold uppercase text-muted-foreground">Perfect answer</div>
+                <div className="text-[11px] font-semibold uppercase text-muted-foreground">{translate("evalRunsPanel.perfectAnswer")}</div>
                 <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{task.expected}</p>
               </div>
             </div>
@@ -228,15 +228,15 @@ function MatrixRunDetail({ run, token }: { run: MatrixRun; token: string | undef
                     <Badge variant={statusVariant(cell.status)}>{cell.status}</Badge>
                   </div>
                   <div className="mt-2 flex flex-wrap gap-3 text-xs text-muted-foreground">
-                    <span>Score: {cell.score === undefined ? "—" : <strong className={scoreColor(cell.score)}>{(cell.score * 100).toFixed(1)}%</strong>}</span>
-                    <span>Latency: {cell.latencyMs === undefined ? "—" : `${cell.latencyMs}ms`}</span>
-                    <span>Cost: {cell.cost === undefined ? "—" : formatCost(cell.cost)}</span>
+                    <span>{translate("evalRunsPanel.score")} {cell.score === undefined ? "—" : <strong className={scoreColor(cell.score)}>{(cell.score * 100).toFixed(1)}%</strong>}</span>
+                    <span>{translate("evalRunsPanel.latency")} {cell.latencyMs === undefined ? "—" : `${cell.latencyMs}ms`}</span>
+                    <span>{translate("evalRunsPanel.costValue", { value: cell.cost === undefined ? "—" : formatCost(cell.cost) })}</span>
                   </div>
-                  {cell.executionId && <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">Execution: {cell.executionId}</div>}
+                  {cell.executionId && <div className="mt-1 break-all font-mono text-[10px] text-muted-foreground">{translate("evalRunsPanel.executionExecutionId", { executionId: cell.executionId })}</div>}
                   {cell.error && <div className="mt-2 text-xs text-danger">{cell.error}</div>}
-                  <div className="mt-3 text-[11px] font-semibold uppercase text-muted-foreground">Response</div>
+                  <div className="mt-3 text-[11px] font-semibold uppercase text-muted-foreground">{translate("evalRunsPanel.response")}</div>
                   <p className="mt-1 max-h-60 overflow-auto whitespace-pre-wrap text-sm text-foreground">
-                    {cell.responseText || (cell.status === "running" ? "Flow running…" : "Not started yet")}
+                    {cell.responseText || (cell.status === "running" ? translate("evalRunsPanel.flowRunning") : translate("evalRunsPanel.notStartedYet"))}
                   </p>
                   <TraceDetail runId={run.id} cell={cell} token={token} />
                 </article>
@@ -271,7 +271,7 @@ function MatrixRunCard({ run, token }: { run: MatrixRun; token: string | undefin
           <div>
             <div className="font-semibold text-foreground">{run.name}</div>
             <div className="mt-1 text-xs text-muted-foreground">
-              {run.tasks.length} tasks × {run.flows.length} flows · {formatDateTime(run.createdAt)}
+              {translate("evalRunsPanel.lengthTasksLength2FlowsValue", { length: run.tasks.length, length2: run.flows.length, value: formatDateTime(run.createdAt) })}
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -283,8 +283,8 @@ function MatrixRunCard({ run, token }: { run: MatrixRun; token: string | undefin
           <div className="h-full bg-accent transition-all" style={{ width: `${progress * 100}%` }} />
         </div>
       </summary>
-      {expanded && isLoading && <p className="border-t border-border p-4 text-xs text-muted-foreground">Loading details…</p>}
-      {expanded && error && <p className="border-t border-border p-4 text-xs text-danger">Failed to load details: {error.message}</p>}
+      {expanded && isLoading && <p className="border-t border-border p-4 text-xs text-muted-foreground">{translate("evalRunsPanel.loadingDetails")}</p>}
+      {expanded && error && <p className="border-t border-border p-4 text-xs text-danger">{translate("evalRunsPanel.failedToLoadDetailsMessage", { message: error.message })}</p>}
       {expanded && detail && <MatrixRunDetail run={detail} token={token} />}
     </details>
   );
@@ -292,7 +292,7 @@ function MatrixRunCard({ run, token }: { run: MatrixRun; token: string | undefin
 
 function MatrixRuns({ runs, token }: { runs: MatrixRun[]; token: string | undefined }): React.JSX.Element {
   if (runs.length === 0) {
-    return <div className="rounded-lg border border-dashed border-border py-6 text-center text-sm text-muted-foreground">No matrix evaluation started yet.</div>;
+    return <div className="rounded-lg border border-dashed border-border py-6 text-center text-sm text-muted-foreground">{translate("evalRunsPanel.noMatrixEvaluationStartedYet")}</div>;
   }
   return (
     <div className="space-y-3">
@@ -330,7 +330,7 @@ function RunRow({ run, expanded, onToggle }: {
       {expanded && failedCases.length > 0 && (
         <TableRow>
           <TableCell colSpan={7} className="bg-muted/30 p-3">
-            <div className="mb-2 text-xs font-semibold text-foreground">Failed cases ({failedCases.length})</div>
+            <div className="mb-2 text-xs font-semibold text-foreground">{translate("evalRunsPanel.failedCasesLength", { length: failedCases.length })}</div>
             <div className="flex flex-col gap-1.5">
               {failedCases.map((evalCase) => (
                 <div key={evalCase.id} className="rounded border border-border bg-card px-2 py-1.5 text-xs">
@@ -394,10 +394,10 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
       try {
         tasks = JSON.parse(tasksJson) as unknown;
       } catch {
-        throw new Error("Tasks must be valid JSON.");
+        throw new Error(translate("evalRunsPanel.tasksNotJson"));
       }
-      if (!Array.isArray(tasks)) throw new Error("Tasks must be a JSON array.");
-      if (selectedFlows.length === 0) throw new Error("Select at least one flow.");
+      if (!Array.isArray(tasks)) throw new Error(translate("evalRunsPanel.tasksNotArray"));
+      if (selectedFlows.length === 0) throw new Error(translate("evalRunsPanel.selectFlow"));
       const response = await authFetch(backendUrl("/admin/eval/matrix-runs"), token, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -416,49 +416,49 @@ export function EvalRunsPanel({ limit = 20 }: EvalRunsPanelProps): React.JSX.Ele
   return (
     <div className="flex flex-col gap-6">
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
-        <h2 className="text-sm font-semibold text-foreground">Evaluate a new flow matrix</h2>
+        <h2 className="text-sm font-semibold text-foreground">{translate("evalRunsPanel.evaluateANewFlowMatrix")}</h2>
         <p className="mt-1 text-xs text-muted-foreground">
-          Every task is executed against every selected flow. Runs continue asynchronously; for each result the execution ID, flow version and the full bounded debug trace are archived.
+          {translate("evalRunsPanel.everyTaskIsExecutedAgainst")}
         </p>
         <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_12rem]">
           <label className="text-xs font-medium text-foreground">
-            Name
+            {translate("evalRunsPanel.name")}
             <input value={name} onChange={(event) => setName(event.target.value)} className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm" />
           </label>
           <label className="text-xs font-medium text-foreground">
-            Concurrency
+            {translate("evalRunsPanel.concurrency")}
             <input type="number" min={1} max={10} value={concurrency} onChange={(event) => setConcurrency(Number(event.target.value))} className="mt-1 h-9 w-full rounded-md border border-border bg-background px-3 text-sm" />
           </label>
         </div>
         <div className="mt-4">
-          <FlowMultiSelect label="Select flows" options={flows.map((flow) => flow.id)} names={flowNames} value={selectedFlows} onChange={setSelectedFlows} />
+          <FlowMultiSelect label={translate("evalRunsPanel.selectFlows")} options={flows.map((flow) => flow.id)} names={flowNames} value={selectedFlows} onChange={setSelectedFlows} />
         </div>
         <label className="mt-4 block text-xs font-medium text-foreground">
-          Tasks and perfect answers (JSON)
+          {translate("evalRunsPanel.tasksAndPerfectAnswersJSON")}
           <textarea value={tasksJson} onChange={(event) => setTasksJson(event.target.value)} rows={12} spellCheck={false} className="mt-1 w-full rounded-md border border-border bg-background p-3 font-mono text-xs" />
         </label>
         {formError && <div role="alert" className="mt-3 rounded bg-danger-soft p-3 text-xs text-danger">{formError}</div>}
         <Button type="button" className="mt-4" loading={startMutation.isPending} disabled={!writeGate.allowed} title={writeGate.title} onClick={() => startMutation.mutate()}>
-          Start matrix ({selectedFlows.length} flows)
+          {translate("evalRunsPanel.startMatrixLengthFlows", { length: selectedFlows.length })}
         </Button>
       </section>
 
       <section>
-        <h2 className="mb-3 text-sm font-semibold text-foreground">Asynchronous matrix runs</h2>
-        {matrixError && <div role="alert" className="mb-3 rounded bg-danger-soft p-3 text-xs text-danger">Failed to load matrix runs: {matrixError.message}</div>}
+        <h2 className="mb-3 text-sm font-semibold text-foreground">{translate("evalRunsPanel.asynchronousMatrixRuns")}</h2>
+        {matrixError && <div role="alert" className="mb-3 rounded bg-danger-soft p-3 text-xs text-danger">{translate("evalRunsPanel.failedToLoadMatrixRuns", { message: matrixError.message })}</div>}
         <MatrixRuns runs={matrixRuns} token={token ?? ""} />
       </section>
 
       <section className="flex flex-col gap-3">
-        <h2 className="text-sm font-semibold text-foreground">Recorded Eval Runs</h2>
-        <p className="text-xs text-muted-foreground">Results from replaying an eval dataset against a flow (<code className="font-mono">bun run src/eval/run.ts</code>, typically CI). Click a row to see failed cases.</p>
-        {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true"><div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />Loading eval runs…</div>}
-        {error && <div role="alert" className="rounded-md bg-danger-soft p-4 text-sm text-danger">Failed to load eval runs: {error.message}</div>}
-        {!isLoading && !error && runs.length === 0 && <div className="rounded-lg border border-dashed border-border bg-card py-8 text-center text-sm text-muted-foreground">No eval runs recorded yet. Record one with <code className="font-mono text-xs">POST /admin/eval/runs</code> (see the eval:regression CI job).</div>}
+        <h2 className="text-sm font-semibold text-foreground">{translate("evalRunsPanel.recordedEvalRuns")}</h2>
+        <p className="text-xs text-muted-foreground">{translate("evalRunsPanel.resultsFromReplayingAnEval")}<code className="font-mono">bun run src/eval/run.ts</code>{translate("evalRunsPanel.typicallyCIClickARow")}</p>
+        {isLoading && <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true"><div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />{translate("evalRunsPanel.loadingEvalRuns")}</div>}
+        {error && <div role="alert" className="rounded-md bg-danger-soft p-4 text-sm text-danger">{translate("evalRunsPanel.failedToLoadEvalRuns", { message: error.message })}</div>}
+        {!isLoading && !error && runs.length === 0 && <div className="rounded-lg border border-dashed border-border bg-card py-8 text-center text-sm text-muted-foreground">{translate("evalRunsPanel.noEvalRunsRecordedYet")} <code className="font-mono text-xs">POST /admin/eval/runs</code> {translate("evalRunsPanel.seeTheEvalRegressionCI")}</div>}
         {runs.length > 0 && (
           <div className="overflow-hidden rounded-lg border border-border bg-card shadow-sm">
             <Table>
-              <TableHead><TableRow><TableHeaderCell>Dataset</TableHeaderCell><TableHeaderCell>Source</TableHeaderCell><TableHeaderCell>Pass rate</TableHeaderCell><TableHeaderCell>Avg latency</TableHeaderCell><TableHeaderCell>Total cost</TableHeaderCell><TableHeaderCell>Avg score</TableHeaderCell><TableHeaderCell>Recorded</TableHeaderCell></TableRow></TableHead>
+              <TableHead><TableRow><TableHeaderCell>{translate("evalRunsPanel.dataset")}</TableHeaderCell><TableHeaderCell>{translate("evalRunsPanel.source")}</TableHeaderCell><TableHeaderCell>{translate("evalRunsPanel.passRate")}</TableHeaderCell><TableHeaderCell>{translate("evalRunsPanel.avgLatency")}</TableHeaderCell><TableHeaderCell>{translate("evalRunsPanel.totalCost")}</TableHeaderCell><TableHeaderCell>{translate("evalRunsPanel.avgScore")}</TableHeaderCell><TableHeaderCell>{translate("evalRunsPanel.recorded")}</TableHeaderCell></TableRow></TableHead>
               <TableBody>{runs.map((run) => <RunRow key={run.id} run={run} expanded={expandedId === run.id} onToggle={() => setExpandedId((current) => current === run.id ? null : run.id)} />)}</TableBody>
             </Table>
           </div>

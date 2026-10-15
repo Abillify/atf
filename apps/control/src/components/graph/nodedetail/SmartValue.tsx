@@ -10,6 +10,7 @@
 
 import { JsonTree } from "./Shared";
 import { isJsonString, stripCodeFence } from "./parsers";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Renders text as a JSON tree when it parses as JSON (incl. JSON wrapped in a
@@ -45,10 +46,10 @@ export function FindingsTable({
   return (
     <div className="space-y-1">
       <div className="text-[10px] text-muted-foreground font-semibold mb-1">
-        Total matches: {totalMatches}
+        {translate("smartValue.totalMatchesTotalMatches", { totalMatches })}
       </div>
       {findings.length === 0 ? (
-        <p className="text-[10px] text-muted-foreground italic">No findings.</p>
+        <p className="text-[10px] text-muted-foreground italic">{translate("smartValue.noFindings")}</p>
       ) : (
         <div className="max-h-48 overflow-y-auto space-y-1">
           {findings.map((f, i) => (

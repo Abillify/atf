@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Guardrails route (Req. 13.5).
@@ -11,7 +12,7 @@ export default function GuardrailsLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading guardrail policies"
+      aria-label={translate("guardrails.loadingGuardrailPolicies")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-44" height="h-6" />

@@ -24,6 +24,7 @@ import {
   type ProposalRow,
 } from "./assistantShared";
 import { ConstraintsEditor } from "./ConstraintsEditor";
+import { translate } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Detail
@@ -44,7 +45,7 @@ function ReadOnlySection({
       <span className="text-xs font-medium text-foreground">{title}</span>
       <span className="text-[11px] text-muted-foreground">{note}</span>
       {entries.length === 0 ? (
-        <span className="text-xs text-muted-foreground">Empty.</span>
+        <span className="text-xs text-muted-foreground">{translate("assistantDetailView.empty")}</span>
       ) : (
         <dl className="space-y-1">
           {entries.map(([key, value]) => (
@@ -162,7 +163,7 @@ export function AssistantDetailView({
   });
 
   if (isLoading) {
-    return <div className="text-xs text-muted-foreground">Loading assistant…</div>;
+    return <div className="text-xs text-muted-foreground">{translate("assistantDetailView.loadingAssistant")}</div>;
   }
   if (error) {
     return (
@@ -191,7 +192,7 @@ export function AssistantDetailView({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Autonomy:</span>
+        <span className="text-xs text-muted-foreground">{translate("assistantDetailView.autonomy")}</span>
         {(["supervised", "assisted", "autonomous"] as const).map((level) => (
           <Button
             key={level}
@@ -212,7 +213,7 @@ export function AssistantDetailView({
             title={writeGate.title}
             onClick={() => setStatus.mutate("suspended")}
           >
-            Suspend
+            {translate("assistantDetailView.suspend")}
           </Button>
         ) : (
           <Button
@@ -222,7 +223,7 @@ export function AssistantDetailView({
             title={writeGate.title}
             onClick={() => setStatus.mutate("active")}
           >
-            Reactivate
+            {translate("assistantDetailView.reactivate")}
           </Button>
         )}
       </div>
@@ -239,22 +240,22 @@ export function AssistantDetailView({
       />
 
       <ReadOnlySection
-        title="Directives (the user's)"
+        title={translate("assistantDetailView.directivesTheUserS")}
         note="Read-only here. These are the user's own instructions to their assistant."
         values={detail.soul.directives}
       />
       <ReadOnlySection
-        title="Identity (the assistant's)"
+        title={translate("assistantDetailView.identityTheAssistantS")}
         note="Read-only here. The assistant maintains this itself."
         values={detail.soul.identity}
       />
 
       <div className="flex flex-col gap-1">
         <span className="text-xs font-medium text-foreground">
-          Learned procedures ({detail.skills.length})
+          {translate("assistantDetailView.learnedProceduresLength", { length: detail.skills.length })}
         </span>
         {detail.skills.length === 0 ? (
-          <span className="text-xs text-muted-foreground">None.</span>
+          <span className="text-xs text-muted-foreground">{translate("assistantDetailView.none")}</span>
         ) : (
           <ul className="space-y-1">
             {detail.skills.map((skill) => (
@@ -275,14 +276,13 @@ export function AssistantDetailView({
 
       <div className="flex flex-col gap-1">
         <span className="text-xs font-medium text-foreground">
-          Proposal queue — {pending.length} pending, {quarantined.length} quarantined
+          {translate("assistantDetailView.proposalQueueLengthPendingLength2", { length: pending.length, length2: quarantined.length })}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          An operator can reject, not apply: approving new behaviour into someone&apos;s
-          assistant is that person&apos;s decision.
+          {translate("assistantDetailView.anOperatorCanRejectNot")}
         </span>
         {pending.length + quarantined.length === 0 ? (
-          <span className="text-xs text-muted-foreground">Nothing awaiting review.</span>
+          <span className="text-xs text-muted-foreground">{translate("assistantDetailView.nothingAwaitingReview")}</span>
         ) : (
           <ul className="space-y-2">
             {[...quarantined, ...pending].map((proposal) => (
@@ -300,7 +300,7 @@ export function AssistantDetailView({
                     {proposal.title ?? proposal.kind}
                   </span>
                   {proposal.autonomousCapture && (
-                    <Badge variant="warning">captured autonomously</Badge>
+                    <Badge variant="warning">{translate("assistantDetailView.capturedAutonomously")}</Badge>
                   )}
                   <Button
                     size="sm"
@@ -310,7 +310,7 @@ export function AssistantDetailView({
                     title={writeGate.title}
                     onClick={() => rejectProposal.mutate(proposal.id)}
                   >
-                    Reject
+                    {translate("assistantDetailView.reject")}
                   </Button>
                 </div>
                 {proposal.triggerLine && (
@@ -332,14 +332,14 @@ export function AssistantDetailView({
 
       <div className="flex flex-col gap-1">
         <span className="text-xs font-medium text-foreground">
-          Delegated credentials ({detail.delegations.length})
+          {translate("assistantDetailView.delegatedCredentialsLength", { length: detail.delegations.length })}
         </span>
         <span className="text-[11px] text-muted-foreground">
-          Summaries only — no plane returns the refresh token, operator included.
+          {translate("assistantDetailView.summariesOnlyNoPlaneReturns")}
         </span>
         {detail.delegations.length === 0 ? (
           <span className="text-xs text-muted-foreground">
-            None. Background turns run without the user&apos;s authority.
+            {translate("assistantDetailView.noneBackgroundTurnsRunWithout")}
           </span>
         ) : (
           <ul className="space-y-1">
@@ -362,16 +362,16 @@ export function AssistantDetailView({
                     title={writeGate.title}
                     onClick={async () => {
                       const ok = await confirmDialog({
-                        title: "Revoke delegation?",
-                        message: `The assistant loses its ${grant.issuer} delegation at once; the user has to consent again to restore it.`,
-                        confirmLabel: "Revoke",
+                        title: translate("assistantDetailView.revokeDelegation"),
+                        message: translate("assistantDetailView.theAssistantLosesItsIssuer", { issuer: grant.issuer }),
+                        confirmLabel: translate("assistantDetailView.revoke"),
                         destructive: true,
                       });
                       if (ok) revokeDelegation.mutate(grant.issuer);
                     }}
-                    aria-label={`Revoke delegation for issuer ${grant.issuer}`}
+                    aria-label={translate("assistantDetailView.revokeDelegationForIssuerIssuer", { issuer: grant.issuer })}
                   >
-                    Revoke
+                    {translate("assistantDetailView.revoke")}
                   </Button>
                 )}
               </li>

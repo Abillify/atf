@@ -19,19 +19,23 @@ import { beginLogin } from "../../lib/oidc";
 import { safeReturnTo } from "../../lib/safe-navigation";
 import { Button } from "../../lib/ui/Button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../lib/ui/Card";
+import { translate } from "../../lib/i18n";
 
-const AUTH_ERROR_MESSAGES: Record<string, string> = {
-  forbidden: "Your identity provider account has no operator role assigned.",
-  state_expired: "The sign-in attempt expired. Please try again.",
-  state_mismatch: "The sign-in attempt could not be verified. Please try again.",
-  missing_code: "The identity provider did not return an authorization code.",
-  token_exchange_failed: "Could not exchange the authorization code for a session.",
-  no_id_token: "The identity provider did not return an ID token.",
-  callback_failed: "Sign-in failed unexpectedly. Please try again.",
-};
+const AUTH_ERROR_KEYS = {
+  forbidden: "authPage.errorForbidden",
+  state_expired: "authPage.errorStateExpired",
+  state_mismatch: "authPage.errorStateMismatch",
+  missing_code: "authPage.errorMissingCode",
+  token_exchange_failed: "authPage.errorTokenExchangeFailed",
+  no_id_token: "authPage.errorNoIdToken",
+  callback_failed: "authPage.errorCallbackFailed",
+} as const;
 
 function describeAuthError(code: string): string {
-  return AUTH_ERROR_MESSAGES[code] ?? `Sign-in failed (${code}).`;
+  if (Object.hasOwn(AUTH_ERROR_KEYS, code)) {
+    return translate(AUTH_ERROR_KEYS[code as keyof typeof AUTH_ERROR_KEYS]);
+  }
+  return translate("authPage.errorUnknown", { code });
 }
 
 export default function AuthPage(): React.JSX.Element {
@@ -87,9 +91,9 @@ function AuthPageContent(): React.JSX.Element {
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle>Sign in to Aiperator</CardTitle>
+          <CardTitle>{translate("auth.signInToAiperator")}</CardTitle>
           <p className="text-sm text-muted-foreground">
-            Authenticate to access the operator dashboard.
+            {translate("auth.authenticateToAccessTheOperator")}
           </p>
         </CardHeader>
         <CardContent>
@@ -110,7 +114,7 @@ function AuthPageContent(): React.JSX.Element {
                 className="w-full"
                 onClick={handleSsoSignIn}
               >
-                Sign in with SSO
+                {translate("auth.signInWithSSO")}
               </Button>
             </div>
           )}
@@ -128,7 +132,7 @@ function AuthPageContent(): React.JSX.Element {
               htmlFor="operator-token"
               className="text-xs font-medium text-muted-foreground"
             >
-              Operator token
+              {translate("auth.operatorToken")}
             </label>
             <input
               id="operator-token"
@@ -136,11 +140,11 @@ function AuthPageContent(): React.JSX.Element {
               type="password"
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
-              placeholder="eyJhbGc…"
+              placeholder={translate("auth.eyJhbGc")}
               className="rounded-md border border-border bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <Button type="submit" variant="secondary" disabled={draft.trim() === ""}>
-              Continue with token
+              {translate("auth.continueWithToken")}
             </Button>
           </form>
         </CardContent>

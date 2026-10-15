@@ -32,7 +32,7 @@ import type {
   FlowDiffResponse,
   FlowVersionEntry,
 } from "../types/flow";
-import { formatDate } from "../lib/i18n";
+import { translate, formatDate } from "../lib/i18n";
 
 export interface FlowVersionBarProps {
   flowId: string;
@@ -201,7 +201,7 @@ export function FlowVersionBar({
   return (
     <div className="flex flex-wrap items-center gap-2 text-xs">
       <label htmlFor="version-compare" className="text-muted-foreground">
-        Compare
+        {translate("flowVersionBar.compare")}
       </label>
       <select
         id="version-compare"
@@ -215,8 +215,8 @@ export function FlowVersionBar({
         onChange={(e) => handleSelectChange(e.target.value)}
         className="rounded border border-border bg-card px-1.5 py-0.5 text-xs"
       >
-        <option value="">— none —</option>
-        {hasDraft && <option value="draft">Draft ↔ live version</option>}
+        <option value="">{translate("flowVersionBar.none")}</option>
+        {hasDraft && <option value="draft">{translate("flowVersionBar.draftLiveVersion")}</option>}
         {versions
           .filter((v) => v.version !== latestVersion)
           .map((v) => (
@@ -230,20 +230,20 @@ export function FlowVersionBar({
         <>
           {confirmingRollback ? (
             <span className="flex items-center gap-1">
-              <span className="text-muted-foreground">Really roll back?</span>
+              <span className="text-muted-foreground">{translate("flowVersionBar.reallyRollBack")}</span>
               <Button
                 variant="destructive"
                 size="sm"
                 onClick={() => void handleRollback()}
               >
-                Yes, rollback
+                {translate("flowVersionBar.yesRollback")}
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
                 onClick={() => setConfirmingRollback(false)}
               >
-                Cancel
+                {translate("flowVersionBar.cancel")}
               </Button>
             </span>
           ) : (
@@ -254,7 +254,7 @@ export function FlowVersionBar({
               disabled={!writeGate.allowed}
               title={writeGate.title}
             >
-              Rollback to v{selected.version}
+              {translate("flowVersionBar.rollbackToVVersion", { version: selected.version })}
             </Button>
           )}
         </>

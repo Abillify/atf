@@ -33,7 +33,7 @@ import {
   TabsContent,
 } from "../../../lib/ui";
 import { EvalRunsPanel } from "../../../components/EvalRunsPanel";
-import { formatDateTime } from "../../../lib/i18n";
+import { translate, formatDateTime } from "../../../lib/i18n";
 
 interface EvalCase {
   id: string;
@@ -98,13 +98,13 @@ export default function EvalPage() {
   return (
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">
-        Eval
+        {translate("eval.eval")}
       </h1>
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as "cases" | "runs")} className="mb-4">
         <TabsList>
-          <TabsTrigger value="cases">Cases</TabsTrigger>
-          <TabsTrigger value="runs">Runs</TabsTrigger>
+          <TabsTrigger value="cases">{translate("eval.cases")}</TabsTrigger>
+          <TabsTrigger value="runs">{translate("eval.runs")}</TabsTrigger>
         </TabsList>
         <TabsContent value="cases" className="mt-4">
 
@@ -114,7 +114,7 @@ export default function EvalPage() {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Loading eval cases…
+          {translate("eval.loadingEvalCases2")}
         </div>
       )}
 
@@ -123,20 +123,19 @@ export default function EvalPage() {
           role="alert"
           className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load eval cases: {error.message}
+          {translate("eval.failedToLoadEvalCases", { message: error.message })}
         </div>
       )}
 
       {deleteMutation.error && (
         <div role="alert" className="mb-3 rounded-md bg-danger-soft p-3 text-sm text-danger">
-          Failed to delete eval case: {deleteMutation.error.message}
+          {translate("eval.failedToDeleteEvalCase", { message: deleteMutation.error.message })}
         </div>
       )}
 
       {!isLoading && !error && cases.length === 0 && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          No eval cases found. Save a Playground run as an eval case from
-          Studio to build a regression dataset.
+          {translate("eval.noEvalCasesFoundSave")}
         </div>
       )}
 
@@ -145,10 +144,10 @@ export default function EvalPage() {
           <Table>
             <TableHead>
               <TableRow>
-                <TableHeaderCell>Flow</TableHeaderCell>
-                <TableHeaderCell>Prompt</TableHeaderCell>
-                <TableHeaderCell>Created by</TableHeaderCell>
-                <TableHeaderCell>Created</TableHeaderCell>
+                <TableHeaderCell>{translate("eval.flow")}</TableHeaderCell>
+                <TableHeaderCell>{translate("eval.prompt")}</TableHeaderCell>
+                <TableHeaderCell>{translate("eval.createdBy")}</TableHeaderCell>
+                <TableHeaderCell>{translate("eval.created")}</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
             </TableHead>
@@ -173,9 +172,9 @@ export default function EvalPage() {
                           size="sm"
                           onClick={() => deleteMutation.mutate(c.id)}
                           disabled={deleteMutation.isPending}
-                          aria-label={`Confirm delete of eval case ${c.id}`}
+                          aria-label={translate("eval.confirmDeleteOfEvalCase", { id: c.id })}
                         >
-                          {deleteMutation.isPending ? "Deleting…" : "Confirm delete"}
+                          {deleteMutation.isPending ? translate("eval.deleting") : translate("eval.confirmDelete")}
                         </Button>
                         <Button
                           variant="outline"
@@ -183,7 +182,7 @@ export default function EvalPage() {
                           onClick={() => setConfirmId(null)}
                           disabled={deleteMutation.isPending}
                         >
-                          Cancel
+                          {translate("eval.cancel")}
                         </Button>
                       </div>
                     ) : (
@@ -196,9 +195,9 @@ export default function EvalPage() {
                         }}
                         disabled={deleteMutation.isPending || !writeGate.allowed}
                         title={writeGate.title}
-                        aria-label={`Delete eval case ${c.id}`}
+                        aria-label={translate("eval.deleteEvalCaseId", { id: c.id })}
                       >
-                        Delete
+                        {translate("eval.delete")}
                       </Button>
                     )}
                   </TableCell>

@@ -27,7 +27,7 @@ import { authFetch } from "../lib/auth-fetch";
 import { parseJobView, type JobStatus, type JobView } from "../contracts/jobs";
 import { Badge, Button, Panel } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
-import { formatDateTime } from "../lib/i18n";
+import { translate, formatDateTime } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Wire contract is centralized in ../contracts/jobs.
@@ -107,15 +107,11 @@ export function JobsPanel({
   };
 
   return (
-    <Panel heading="Async job status">
+    <Panel heading={translate("jobsPanel.asyncJobStatus")}>
       <p className="mb-3 text-xs text-muted-foreground">
-        Look up an async/batch job (submitted with{" "}
-        <code className="font-mono">metadata.async: true</code> or header{" "}
-        <code className="font-mono">X-Async: true</code>) by the id it was
-        returned with. When the Durable Agent Runtime is enabled
-        (<code className="font-mono">JOB_RECOVERY_ENABLED</code>), a job whose
-        executing replica crashed is automatically retried up to a bounded
-        number of attempts — visible below as{" "}
+        {translate("jobsPanel.lookUpAnAsyncBatch")}{" "}
+        <code className="font-mono">metadata.async: true</code> {translate("jobsPanel.orHeader")}{" "}
+        <code className="font-mono">X-Async: true</code>{translate("jobsPanel.byTheIdItWas")}<code className="font-mono">JOB_RECOVERY_ENABLED</code>{translate("jobsPanel.aJobWhoseExecutingReplica")}{" "}
         <code className="font-mono">attempt</code> /{" "}
         <code className="font-mono">max attempts</code>.
       </p>
@@ -128,21 +124,21 @@ export function JobsPanel({
           onKeyDown={(e) => {
             if (e.key === "Enter") submit();
           }}
-          aria-label="Job id"
+          aria-label={translate("jobsPanel.jobId")}
         />
         <Button size="sm" variant="primary" onClick={submit} disabled={input.trim() === ""}>
-          Look up
+          {translate("jobsPanel.lookUp")}
         </Button>
       </div>
 
       {jobId === undefined ? (
         <p className="py-8 text-center text-sm text-muted-foreground">
-          Enter a job id to check its status.
+          {translate("jobsPanel.enterAJobIdTo")}
         </p>
       ) : isLoading ? (
         <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true">
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Looking up {jobId}…
+          {translate("jobsPanel.lookingUpJobId", { jobId })}
         </div>
       ) : error ? (
         <div role="alert" className="rounded-md bg-danger-soft p-3 text-sm text-danger">
@@ -156,38 +152,38 @@ export function JobsPanel({
             <span className="font-mono text-sm text-foreground">{job.id}</span>
             <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
             {job.attempt > 1 && (
-              <Badge variant="warning" title="This job survived a crash and was retried">
-                recovered — attempt {job.attempt}/{job.max_attempts}
+              <Badge variant="warning" title={translate("jobsPanel.thisJobSurvivedACrash")}>
+                {translate("jobsPanel.recoveredAttemptAttemptMaxAttempts", { attempt: job.attempt, max_attempts: job.max_attempts })}
               </Badge>
             )}
           </div>
           <dl className="grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
             <div>
-              <dt className="text-muted-foreground">Model / flow</dt>
+              <dt className="text-muted-foreground">{translate("jobsPanel.modelFlow")}</dt>
               <dd className="font-mono text-foreground">{job.model}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Attempt</dt>
+              <dt className="text-muted-foreground">{translate("jobsPanel.attempt")}</dt>
               <dd className="text-foreground">
                 {job.attempt} / {job.max_attempts}
               </dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Created</dt>
+              <dt className="text-muted-foreground">{translate("jobsPanel.created")}</dt>
               <dd className="text-foreground">{formatDateTime(job.created_at)}</dd>
             </div>
             <div>
-              <dt className="text-muted-foreground">Updated</dt>
+              <dt className="text-muted-foreground">{translate("jobsPanel.updated")}</dt>
               <dd className="text-foreground">{formatDateTime(job.updated_at)}</dd>
             </div>
           </dl>
           {job.result !== undefined && (
             <div className="rounded-md border border-border bg-card p-3">
               <h4 className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                Result
+                {translate("jobsPanel.result")}
               </h4>
               <p className="whitespace-pre-wrap text-sm text-foreground">
-                {job.result.choices[0]?.message.content ?? "(empty)"}
+                {job.result.choices[0]?.message.content ?? translate("jobsPanel.empty")}
               </p>
             </div>
           )}

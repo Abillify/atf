@@ -42,6 +42,7 @@ bun run --filter @atf/control build
 | Tenants | Tenants, provider keys, budgets, limits |
 | Assistants | Assistant and skill registry administration |
 | Monitoring | Live execution events, SLO panels |
+| Language | German and English UI (cookie `NEXT_LOCALE`, switch in the header) |
 
 ## Configuration
 
@@ -77,6 +78,13 @@ Three optional variables are documented in [`.env.example`](.env.example):
   `bun run check:budgets` and enforced by `bun run check:budgets:ci`.
 
 ## Conventions
+
+All user-visible text goes through the i18n catalogs in `src/lib/i18n/catalogs/` (`ui.en.ts`,
+`ui.de.ts`; the German catalog must translate every key and keep every `{placeholder}`). Use
+`translate("area.key", { name })` or `useI18n().t`. `src/__tests__/i18n-coverage.test.ts` fails on
+hard-coded JSX text, descriptive attributes, and strings passed to `new Error(...)`, `setError(...)`
+and toasts. `e2e/i18n-de.spec.ts` renders every dashboard route in German.
+
 
 Component and styling conventions are in
 [`docs/UI-STYLE-GUIDE.md`](../../docs/UI-STYLE-GUIDE.md). New interactive elements need keyboard

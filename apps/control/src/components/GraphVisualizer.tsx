@@ -58,6 +58,7 @@ import {
   type ApprovalState,
 } from "./graph/graphUtils";
 import type { DebugTrace } from "../types/debug-trace";
+import { translate } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Public props — must not change (Req 11.2)
@@ -278,9 +279,9 @@ function ViewToggle({
             ? "bg-accent text-accent-foreground"
             : "text-muted-foreground hover:bg-muted"
         }`}
-        title="Top-down flow layout (intuitive)"
+        title={translate("graphVisualizer.topDownFlowLayoutIntuitive")}
       >
-        ⬇ Flow
+        {translate("graphVisualizer.flow")}
       </button>
       <button type="button"
         onClick={() => onChange("timeline")}
@@ -289,9 +290,9 @@ function ViewToggle({
             ? "bg-accent text-accent-foreground"
             : "text-muted-foreground hover:bg-muted"
         }`}
-        title="Chronological waterfall timeline"
+        title={translate("graphVisualizer.chronologicalWaterfallTimeline")}
       >
-        ⏱ Timeline
+        {translate("graphVisualizer.timeline")}
       </button>
     </div>
   );
@@ -790,7 +791,7 @@ export function GraphVisualizer({
         </ReactFlow>
       ) : (
         <div className="flex h-full items-center justify-center text-muted-foreground text-sm">
-          No execution events yet.
+          {translate("graphVisualizer.noExecutionEventsYet")}
         </div>
       )}
 

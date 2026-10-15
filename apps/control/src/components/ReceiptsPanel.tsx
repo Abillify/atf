@@ -21,7 +21,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge, Button } from "../lib/ui";
 import type { BadgeVariant } from "../lib/ui";
 import { formatCost } from "../lib/currency";
-import { formatTime } from "../lib/i18n";
+import { translate, formatTime } from "../lib/i18n";
 import {
   downloadAllReceipts,
   downloadReceipt,
@@ -127,7 +127,7 @@ function VerifyBadge({ state }: { state: VerifyState }) {
   if (state.loading) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-semibold text-accent animate-pulse">
-        verifying…
+        {translate("receiptsPanel.verifying")}
       </span>
     );
   }
@@ -146,32 +146,32 @@ function VerifyBadge({ state }: { state: VerifyState }) {
     return (
       <span
         className="inline-flex items-center gap-1 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger"
-        title={state.signature.error ?? "signature invalid"}
+        title={state.signature.error ?? translate("receiptsPanel.signatureInvalid2")}
       >
-        ✕ signature invalid
+        {translate("receiptsPanel.signatureInvalid")}
       </span>
     );
   }
   if (state.inclusion === undefined) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">
-        ✓ signature valid
+        {translate("receiptsPanel.signatureValid")}
       </span>
     );
   }
   if (state.inclusion.inclusionValid && state.inclusion.headSignatureValid) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">
-        ✓ signature + inclusion valid
+        {translate("receiptsPanel.signatureInclusionValid")}
       </span>
     );
   }
   return (
     <span
       className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning"
-      title={state.inclusion.error ?? "inclusion invalid"}
+      title={state.inclusion.error ?? translate("receiptsPanel.inclusionInvalid")}
     >
-      ⚠ inclusion unverified
+      {translate("receiptsPanel.inclusionUnverified")}
     </span>
   );
 }
@@ -243,17 +243,17 @@ function ReceiptRow({ receipt, token, jwksReady }: ReceiptRowProps) {
           size="sm"
           onClick={verifyNow}
           disabled={!jwksReady || verify.loading}
-          title="Verify signature and Merkle inclusion in the browser"
+          title={translate("receiptsPanel.verifySignatureAndMerkleInclusion")}
         >
-          Verify
+          {translate("receiptsPanel.verify")}
         </Button>
         <Button
           variant="outline"
           size="sm"
           onClick={() => downloadReceipt(receipt, verify.proof)}
-          title="Download this receipt (JSON with COSE bytes)"
+          title={translate("receiptsPanel.downloadThisReceiptJSONWith")}
         >
-          Export
+          {translate("receiptsPanel.export")}
         </Button>
       </div>
 
@@ -265,7 +265,7 @@ function ReceiptRow({ receipt, token, jwksReady }: ReceiptRowProps) {
             <Field label="PII" value={summary.piiLabel} />
             <Field label="retrieval" value={String(summary.retrievalCount)} />
             <Field label="approvals" value={String(summary.approvalCount)} />
-            <Field label="tool calls" value={String(summary.toolCallCount)} />
+            <Field label={translate("receiptsPanel.toolCalls")} value={String(summary.toolCallCount)} />
             <Field
               label="cost"
               value={summary.costUsd !== undefined ? formatCost(summary.costUsd) : undefined}
@@ -287,8 +287,8 @@ function ReceiptRow({ receipt, token, jwksReady }: ReceiptRowProps) {
           {verify.inclusion !== undefined && (
             <div className="rounded bg-muted px-2 py-1.5 font-mono text-[11px] text-muted-foreground">
               <div>
-                leaf {verify.inclusion.leafIndex} · tree {verify.inclusion.treeSize} · head{" "}
-                {verify.inclusion.headSignatureValid ? "signed ✓" : "signed ✕"}
+                {translate("receiptsPanel.leafLeafIndexTreeTreeSizeHead", { leafIndex: verify.inclusion.leafIndex, treeSize: verify.inclusion.treeSize })}{" "}
+                {verify.inclusion.headSignatureValid ? translate("receiptsPanel.signed") : translate("receiptsPanel.signed2")}
               </div>
               {verify.inclusion.rootHash && <div>root {verify.inclusion.rootHash}</div>}
               {verify.inclusion.headTimestamp && (
@@ -346,7 +346,7 @@ export function ReceiptsPanel({ executionId, token, enabled }: ReceiptsPanelProp
     return (
       <div className="flex items-center gap-2 text-sm text-muted-foreground" aria-busy="true">
         <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-        Loading receipts…
+        {translate("receiptsPanel.loadingReceipts")}
       </div>
     );
   }
@@ -354,7 +354,7 @@ export function ReceiptsPanel({ executionId, token, enabled }: ReceiptsPanelProp
   if (error !== null && error !== undefined) {
     return (
       <div className="rounded-lg border border-border bg-card py-10 text-center text-sm text-muted-foreground">
-        Receipts are not available for this deployment
+        {translate("receiptsPanel.receiptsAreNotAvailableFor")}
         <span className="ml-1 text-xs">({error.message})</span>.
       </div>
     );
@@ -363,9 +363,9 @@ export function ReceiptsPanel({ executionId, token, enabled }: ReceiptsPanelProp
   if (receipts.length === 0) {
     return (
       <div className="rounded-lg border border-border bg-card py-10 text-center text-sm text-muted-foreground">
-        No decision receipts for this execution.
+        {translate("receiptsPanel.noDecisionReceiptsForThis")}
         <div className="mt-2 text-xs">
-          Receipts are issued when DECISION_RECEIPTS_ENABLED is on.
+          {translate("receiptsPanel.receiptsAreIssuedWhenDECISION")}
         </div>
       </div>
     );
@@ -383,7 +383,7 @@ export function ReceiptsPanel({ executionId, token, enabled }: ReceiptsPanelProp
           size="sm"
           onClick={() => downloadAllReceipts(executionId, receipts)}
         >
-          Export all
+          {translate("receiptsPanel.exportAll")}
         </Button>
       </div>
       <div className="space-y-2">

@@ -33,7 +33,7 @@ import {
   RouterNodeDetail,
 } from "./nodedetail/NodeDetailRenderers";
 import { ErrorRecording, ToolCallEntry } from "./nodedetail/ErrorRecording";
-import { formatNumber, formatTime } from "../../lib/i18n";
+import { translate, formatNumber, formatTime } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Main panel
@@ -76,7 +76,7 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
   return (
     <div className="space-y-3 text-sm text-foreground">
       {/* Timing — always shown */}
-      <AccordionSection title="Timing" defaultOpen>
+      <AccordionSection title={translate("nodeDetailPanel.timing")} defaultOpen>
         <KvGrid
           data={[
             ["Start", fmt(state.start_time)],
@@ -102,7 +102,7 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
         state.input_tokens != null ||
         state.output_tokens != null ||
         state.cost != null) && (
-        <AccordionSection title={"Model, Tokens & Cost"} defaultOpen>
+        <AccordionSection title={translate("nodeDetailPanel.modelTokensCost")} defaultOpen>
           <KvGrid
             data={[
               ...(state.model
@@ -158,7 +158,7 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
 
       {/* User info — when present */}
       {(state.user_name != null || state.user_prompt != null) && (
-        <AccordionSection title="User">
+        <AccordionSection title={translate("nodeDetailPanel.user")}>
           <div className="space-y-1">
             {state.user_name && <KvGrid data={[["Name", state.user_name]]} />}
             {state.user_prompt && (
@@ -177,7 +177,7 @@ export function NodeDetailContent({ state }: { state: NodeState }) {
       {state.tool_calls &&
         state.tool_calls.length > 0 &&
         state.nodeType !== "retrieval" && (
-          <AccordionSection title={`Tool Calls (${state.tool_calls.length})`}>
+          <AccordionSection title={translate("nodeDetailPanel.toolCallsLength", { length: state.tool_calls.length })}>
             <div className="space-y-2">
               {state.tool_calls.map((tc, i) => (
                 <ToolCallEntry key={tc.id ?? i} tc={tc} />
@@ -238,7 +238,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
       ref={panelRef}
       className="absolute top-2 right-2 z-20 w-96 rounded-xl border border-border bg-card shadow-xl overflow-hidden"
       role="dialog"
-      aria-label={`Node details: ${state.label}`}
+      aria-label={translate("nodeDetailPanel.nodeDetailsLabel", { label: state.label })}
     >
       {/* Header */}
       <div
@@ -261,7 +261,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
         <button type="button"
           onClick={onClose}
           className="rounded-full p-1 hover:bg-card/20 focus:outline-none focus:ring-1 focus:ring-on-solid"
-          aria-label="Close detail panel"
+          aria-label={translate("nodeDetailPanel.closeDetailPanel")}
         >
           <svg aria-hidden="true" focusable="false" viewBox="0 0 20 20" fill="currentColor" className="w-4 h-4">
             <path
@@ -276,7 +276,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
       {/* Body */}
       <div className="p-4 space-y-3 max-h-[75vh] overflow-y-auto text-sm text-foreground">
         {/* Timing — always shown */}
-        <AccordionSection title="Timing" defaultOpen>
+        <AccordionSection title={translate("nodeDetailPanel.timing")} defaultOpen>
           <KvGrid
             data={[
               ["Start", fmt(state.start_time)],
@@ -302,7 +302,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
           state.input_tokens != null ||
           state.output_tokens != null ||
           state.cost != null) && (
-          <AccordionSection title={"Model, Tokens & Cost"} defaultOpen>
+          <AccordionSection title={translate("nodeDetailPanel.modelTokensCost")} defaultOpen>
             <KvGrid
               data={[
                 ...(state.model
@@ -361,7 +361,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
 
         {/* User info — when present */}
         {(state.user_name != null || state.user_prompt != null) && (
-          <AccordionSection title="User">
+          <AccordionSection title={translate("nodeDetailPanel.user")}>
             <div className="space-y-1">
               {state.user_name && <KvGrid data={[["Name", state.user_name]]} />}
               {state.user_prompt && (
@@ -380,7 +380,7 @@ export function NodeDetailPanel({ state, onClose }: NodeDetailPanelProps) {
         {state.tool_calls &&
           state.tool_calls.length > 0 &&
           state.nodeType !== "retrieval" && (
-            <AccordionSection title={`Tool Calls (${state.tool_calls.length})`}>
+            <AccordionSection title={translate("nodeDetailPanel.toolCallsLength", { length: state.tool_calls.length })}>
               <div className="space-y-2">
                 {state.tool_calls.map((tc, i) => (
                   <ToolCallEntry key={tc.id ?? i} tc={tc} />

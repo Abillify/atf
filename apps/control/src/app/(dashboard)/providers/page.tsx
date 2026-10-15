@@ -36,6 +36,7 @@ import {
   EmptyState,
 } from "../../../lib/ui";
 import type { BadgeVariant } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 // Test bench — loaded client-side only, and only when its tab is active
 // (Req. 12.3).
@@ -181,7 +182,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
   return (
     <div className="space-y-4">
       <h2 className="text-lg font-semibold text-foreground">
-        Provider Monitoring
+        {translate("providers.providerMonitoring")}
       </h2>
 
       {monitoring.error && (
@@ -189,7 +190,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           role="alert"
           className="mb-4 rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load provider monitoring: {monitoring.error.message}
+          {translate("providers.failedToLoadProviderMonitoring", { message: monitoring.error.message })}
         </div>
       )}
       {monitoring.data && (
@@ -197,7 +198,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           <div className="mb-4 grid gap-3 sm:grid-cols-2">
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                Global queue depth
+                {translate("providers.globalQueueDepth")}
               </div>
               <div className="mt-1 text-2xl font-semibold text-foreground">
                 {monitoring.data.global.queueDepth}
@@ -205,7 +206,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
             </div>
             <div className="rounded-lg border border-border bg-card p-4">
               <div className="text-xs uppercase tracking-wide text-muted-foreground">
-                Active executions
+                {translate("providers.activeExecutions")}
               </div>
               <div className="mt-1 text-2xl font-semibold text-foreground">
                 {monitoring.data.global.activeExecutions}
@@ -214,23 +215,23 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           </div>
 
           <h2 className="mb-3 text-lg font-semibold text-foreground">
-            Providers
+            {translate("providers.providers")}
           </h2>
           <div className="mb-8 overflow-x-auto rounded-lg border border-border bg-card shadow-sm">
             <Table>
               <TableHead>
                 <TableRow>
-                  <TableHeaderCell>Provider</TableHeaderCell>
-                  <TableHeaderCell>Capabilities</TableHeaderCell>
-                  <TableHeaderCell>Status</TableHeaderCell>
+                  <TableHeaderCell>{translate("providers.provider")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("providers.capabilities")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("providers.status")}</TableHeaderCell>
                   <TableHeaderCell className="text-right">
-                    Calls
+                    {translate("providers.calls")}
                   </TableHeaderCell>
                   <TableHeaderCell className="text-right">
-                    Errors
+                    {translate("providers.errors")}
                   </TableHeaderCell>
                   <TableHeaderCell className="text-right">
-                    Tokens
+                    {translate("providers.tokens")}
                   </TableHeaderCell>
                 </TableRow>
               </TableHead>
@@ -238,7 +239,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
                 {monitoring.data.providers.length === 0 && (
                   <TableRow>
                     <TableCell className="text-sm text-muted-foreground">
-                      No providers configured or observed yet.
+                      {translate("providers.noProvidersConfiguredOrObserved")}
                     </TableCell>
                   </TableRow>
                 )}
@@ -249,13 +250,13 @@ function ProviderMonitoringPanel(): React.JSX.Element {
                         {provider.name}
                         {!provider.configured && (
                           <span className="ml-2 text-xs font-normal text-muted-foreground">
-                            (not configured)
+                            {translate("providers.notConfigured")}
                           </span>
                         )}
                       </div>
                       <div className="text-xs text-muted-foreground">
-                        {provider.protocol ?? "unknown protocol"} ·{" "}
-                        {provider.models.join(", ") || "no calls yet"}
+                        {provider.protocol ?? translate("providers.unknownProtocol")} ·{" "}
+                        {provider.models.join(", ") || translate("providers.noCallsYet")}
                       </div>
                     </TableCell>
                     <TableCell>
@@ -280,11 +281,11 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           </div>
 
           <h2 className="mb-3 text-lg font-semibold text-foreground">
-            Configured pools
+            {translate("providers.configuredPools")}
           </h2>
           {monitoring.data.pools.length === 0 && (
             <p className="mb-8 text-sm text-muted-foreground">
-              No model-shortcut pools are configured.
+              {translate("providers.noModelShortcutPoolsAre")}
             </p>
           )}
           {monitoring.data.pools.length > 0 && (
@@ -292,15 +293,15 @@ function ProviderMonitoringPanel(): React.JSX.Element {
               <Table>
                 <TableHead>
                   <TableRow>
-                    <TableHeaderCell>Pool</TableHeaderCell>
-                    <TableHeaderCell>Strategy</TableHeaderCell>
-                    <TableHeaderCell>Providers</TableHeaderCell>
-                    <TableHeaderCell>Status</TableHeaderCell>
+                    <TableHeaderCell>{translate("providers.pool")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("providers.strategy")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("providers.providers")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("providers.status")}</TableHeaderCell>
                     <TableHeaderCell className="text-right">
-                      Calls
+                      {translate("providers.calls")}
                     </TableHeaderCell>
                     <TableHeaderCell className="text-right">
-                      Errors
+                      {translate("providers.errors")}
                     </TableHeaderCell>
                   </TableRow>
                 </TableHead>
@@ -335,7 +336,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
       )}
 
       <h2 className="mb-3 text-lg font-semibold text-foreground">
-        Provider key pool
+        {translate("providers.providerKeyPool")}
       </h2>
 
       {isLoading && (
@@ -344,7 +345,7 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Loading provider keys…
+          {translate("providers.loadingProviderKeys2")}
         </div>
       )}
 
@@ -353,15 +354,15 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           role="alert"
           className="rounded-md bg-danger-soft p-4 text-sm text-danger"
         >
-          Failed to load provider keys: {error.message}
+          {translate("providers.failedToLoadProviderKeys", { message: error.message })}
         </div>
       )}
 
       {!isLoading && !error && keys.length === 0 && (
         <EmptyState
           icon={KeyRound}
-          title="No provider keys configured."
-          description="Add a provider key so ATF can call model APIs. Keys are stored server-side and shown masked here."
+          title={translate("providers.noProviderKeysConfigured")}
+          description={translate("providers.addAProviderKeySo")}
         />
       )}
 
@@ -370,14 +371,14 @@ function ProviderMonitoringPanel(): React.JSX.Element {
           <Table>
             <TableHead>
               <TableRow>
-                <TableHeaderCell>Provider</TableHeaderCell>
-                <TableHeaderCell>Key</TableHeaderCell>
-                <TableHeaderCell>Status</TableHeaderCell>
+                <TableHeaderCell>{translate("providers.provider")}</TableHeaderCell>
+                <TableHeaderCell>{translate("providers.key")}</TableHeaderCell>
+                <TableHeaderCell>{translate("providers.status")}</TableHeaderCell>
                 <TableHeaderCell className="text-right">
-                  Successes
+                  {translate("providers.successes")}
                 </TableHeaderCell>
                 <TableHeaderCell className="text-right">
-                  Failures
+                  {translate("providers.failures")}
                 </TableHeaderCell>
               </TableRow>
             </TableHead>
@@ -424,8 +425,8 @@ export default function ProvidersPage() {
     <div className="mx-auto w-full max-w-screen-2xl p-4 sm:p-6">
       <Tabs value={tab} onValueChange={(v) => setTab(v as ProvidersTab)}>
         <TabsList className="mb-4">
-          <TabsTrigger value="monitoring">Monitoring</TabsTrigger>
-          <TabsTrigger value="testing">Test bench</TabsTrigger>
+          <TabsTrigger value="monitoring">{translate("providers.monitoring")}</TabsTrigger>
+          <TabsTrigger value="testing">{translate("providers.testBench")}</TabsTrigger>
         </TabsList>
         {/* Panels are wrapped in TabsContent so the tabs expose real
             role="tabpanel" targets (valid aria-controls); the heavy, code-split

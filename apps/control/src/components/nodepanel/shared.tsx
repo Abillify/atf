@@ -9,6 +9,7 @@
  */
 
 import type React from "react";
+import { translate } from "../../lib/i18n";
 
 /** Classes that briefly frame the Tools section after a jump to it. */
 export const TOOL_SECTION_FLASH = ["ring-2", "ring-info", "ring-offset-2", "ring-offset-background"];
@@ -27,9 +28,8 @@ export function UnreadFieldNotice({
 }): React.JSX.Element {
   return (
     <p className="rounded border border-warning-border bg-warning-solid/10 px-2 py-1 text-[10px] text-warning">
-      A <span className="font-mono">{type}</span> node does not read{" "}
-      <span className="font-mono">{field}</span>. It is set here but has no
-      effect — clear it unless you are about to change the node type.
+      A <span className="font-mono">{type}</span> {translate("shared.nodeDoesNotRead")}{" "}
+      <span className="font-mono">{field}</span>{translate("shared.itIsSetHereBut")}
     </p>
   );
 }

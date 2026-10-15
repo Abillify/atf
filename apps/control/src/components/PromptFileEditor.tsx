@@ -32,6 +32,7 @@ import {
   rewritePromptRef,
   writePromptFile,
 } from "../lib/prompt-files";
+import { translate } from "../lib/i18n";
 
 type Status =
   | { kind: "loading" }
@@ -158,21 +159,21 @@ function PromptFileCard({
           📝 {path}
         </span>
         <span className="flex shrink-0 items-center gap-2 text-[10px] text-muted-foreground">
-          {status.kind === "loading" && <span>loading…</span>}
-          {status.kind === "saving" && <span>saving…</span>}
+          {status.kind === "loading" && <span>{translate("promptFileEditor.loading")}</span>}
+          {status.kind === "saving" && <span>{translate("promptFileEditor.saving")}</span>}
           {status.kind === "saved" && !dirty && <span>saved</span>}
           {dirty && status.kind !== "saving" && (
             <span className="text-warning">
-              unsaved changes
+              {translate("promptFileEditor.unsavedChanges")}
             </span>
           )}
           {!writable && status.kind === "ready" && (
-            <span title="FLOWS_DIR is not writable on this runtime">
+            <span title={translate("promptFileEditor.fLOWSDIRIsNotWritable")}>
               read-only
             </span>
           )}
           <span>
-            {lineCount} lines · {text.length} chars
+            {translate("promptFileEditor.lineCountLinesLengthChars", { lineCount, length: text.length })}
           </span>
         </span>
       </div>
@@ -181,13 +182,13 @@ function PromptFileCard({
         <div className="space-y-2 p-2">
           <p className="text-[11px] text-destructive">{status.message}</p>
           <Button size="sm" variant="secondary" onClick={() => void load()}>
-            Retry
+            {translate("promptFileEditor.retry")}
           </Button>
         </div>
       ) : (
         <div className="space-y-2 p-2">
           <textarea
-            aria-label={`Prompt file ${path}`}
+            aria-label={translate("promptFileEditor.promptFilePath", { path })}
             className="w-full resize-y rounded border border-border bg-card px-2 py-1 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             rows={16}
             spellCheck={false}
@@ -202,11 +203,11 @@ function PromptFileCard({
               disabled={!writable || !dirty || status.kind === "saving"}
               title={
                 writable
-                  ? "Writes this prompt file — every flow including it is affected"
-                  : "The runtime's flow directory is mounted read-only"
+                  ? translate("promptFileEditor.writesThisPromptFileEvery")
+                  : translate("promptFileEditor.theRuntimeSFlowDirectory")
               }
             >
-              Save prompt file
+              {translate("promptFileEditor.savePromptFile")}
             </Button>
             {onSystemPromptChange && (
               <Button
@@ -217,9 +218,9 @@ function PromptFileCard({
                   setSaveAsOpen((open) => !open);
                 }}
                 disabled={!writable || status.kind === "saving"}
-                title="Writes a copy under a new name and points only this flow at it — other flows keep the old file"
+                title={translate("promptFileEditor.writesACopyUnderA")}
               >
-                Save as…
+                {translate("promptFileEditor.saveAs")}
               </Button>
             )}
             {onSystemPromptChange && (
@@ -228,9 +229,9 @@ function PromptFileCard({
                 variant="secondary"
                 onClick={copyIntoFlow}
                 disabled={status.kind === "saving"}
-                title="Moves the prompt text into this flow and removes the include — the file on disk stays as it is"
+                title={translate("promptFileEditor.movesThePromptTextInto")}
               >
-                Copy into flow
+                {translate("promptFileEditor.copyIntoFlow")}
               </Button>
             )}
             <Button
@@ -238,15 +239,15 @@ function PromptFileCard({
               variant="secondary"
               onClick={() => void load()}
               disabled={status.kind === "saving"}
-              title="Discards local edits and reloads the file from disk"
+              title={translate("promptFileEditor.discardsLocalEditsAndReloads")}
             >
-              Reload
+              {translate("promptFileEditor.reload")}
             </Button>
           </div>
           {saveAsOpen && (
             <div className="flex flex-wrap items-center gap-2">
               <input
-                aria-label={`New prompt file path for ${path}`}
+                aria-label={translate("promptFileEditor.newPromptFilePathFor", { path })}
                 className="min-w-0 flex-1 rounded border border-border bg-card px-2 py-1 font-mono text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 value={saveAsPath}
                 onChange={(e) => setSaveAsPath(e.target.value)}
@@ -260,14 +261,14 @@ function PromptFileCard({
                   status.kind === "saving"
                 }
               >
-                Save as
+                {translate("promptFileEditor.saveAs2")}
               </Button>
               <Button
                 size="sm"
                 variant="secondary"
                 onClick={() => setSaveAsOpen(false)}
               >
-                Cancel
+                {translate("promptFileEditor.cancel")}
               </Button>
             </div>
           )}
@@ -307,11 +308,10 @@ export function PromptFileEditor({
   return (
     <div className="space-y-2">
       <p className="text-[10px] text-muted-foreground">
-        The prompt text lives in{" "}
-        {refs.length === 1 ? "this file" : "these files"}, not in the flow.
-        Saving the file changes every flow that includes it;
+        {translate("promptFileEditor.thePromptTextLivesIn")}{" "}
+        {refs.length === 1 ? translate("promptFileEditor.thisFile") : translate("promptFileEditor.theseFiles")}{translate("promptFileEditor.notInTheFlowSaving")}
         {onSystemPromptChange
-          ? " \u201CSave as\u2026\u201D and \u201CCopy into flow\u201D apply the edit to this flow only."
+          ? translate("promptFileEditor.saveAsAndCopyInto")
           : ""}
       </p>
       {refs.map((ref) =>
@@ -326,9 +326,8 @@ export function PromptFileEditor({
           />
         ) : (
           <p key={ref.path} className="text-[11px] text-muted-foreground">
-            <span className="font-mono">{ref.path}</span> cannot be edited here:
-            only Markdown files under{" "}
-            <span className="font-mono">prompts/</span> are editable.
+            <span className="font-mono">{ref.path}</span> {translate("promptFileEditor.cannotBeEditedHereOnly")}{" "}
+            <span className="font-mono">prompts/</span> {translate("promptFileEditor.areEditable")}
           </p>
         ),
       )}

@@ -16,6 +16,7 @@ import type React from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, Search } from "lucide-react";
 import { sortFlowsByName } from "../lib/flow-sort";
+import { translate } from "../lib/i18n";
 
 const EMPTY = "";
 
@@ -127,7 +128,7 @@ export function FlowPicker({
             <span className="text-muted-foreground">{placeholder}</span>
           )}
         </span>
-        {loading && <span className="text-muted-foreground">loading…</span>}
+        {loading && <span className="text-muted-foreground">{translate("flowPicker.loading")}</span>}
         <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
       </button>
 
@@ -158,8 +159,8 @@ export function FlowPicker({
                   setOpen(false);
                 }
               }}
-              placeholder={`Search ${flows.length} flows by name or id…`}
-              aria-label="Search flows"
+              placeholder={translate("flowPicker.searchLengthFlowsByName", { length: flows.length })}
+              aria-label={translate("flowPicker.searchFlows")}
               role="combobox"
               aria-expanded
               aria-controls={listId}
@@ -203,7 +204,7 @@ export function FlowPicker({
               </div>
             ))}
             {options.length === offset && query && (
-              <p className="px-2 py-2 text-xs text-muted-foreground">No flow matches “{query}”.</p>
+              <p className="px-2 py-2 text-xs text-muted-foreground">{translate("flowPicker.noFlowMatchesQuery", { query })}</p>
             )}
           </div>
         </div>

@@ -9,6 +9,7 @@
  */
 
 import { useState } from "react";
+import { translate } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Variables table (Request node) — copyable, ready-to-use references
@@ -42,7 +43,7 @@ function CopyChip({ text }: { text: string }) {
     <button
       type="button"
       onClick={onCopy}
-      title={`Copy "${text}"`}
+      title={translate("variablesTable.copyText", { text })}
       className="inline-flex items-center gap-1 rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[11px] text-accent hover:bg-muted"
     >
       <span className="break-all">{text}</span>
@@ -183,20 +184,19 @@ export function VariablesTable({ text }: { text: string }) {
   return (
     <div className="space-y-3">
       <p className="text-[10px] text-muted-foreground">
-        Click a reference to copy it. Use in prompts as{" "}
-        <span className="font-mono">{"{{context.userName}}"}</span> or in
-        conditions directly.
+        {translate("variablesTable.clickAReferenceToCopy")}{" "}
+        <span className="font-mono">{translate("variablesTable.contextUserName")}</span> {translate("variablesTable.orInConditionsDirectly")}
       </p>
       {identity.length > 0 && (
         <VarGroup
-          title="Identity & routing — use as context.*"
+          title={translate("variablesTable.identityRoutingUseAsContext")}
           rows={identity}
           refPrefix="context."
         />
       )}
       {params.length > 0 && (
         <VarGroup
-          title="Request params — use as params.*"
+          title={translate("variablesTable.requestParamsUseAsParams")}
           rows={params}
           refPrefix="params."
         />
@@ -204,7 +204,7 @@ export function VariablesTable({ text }: { text: string }) {
       {scopes.length > 0 && (
         <div>
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            OAuth scopes — diagnostic values from the verified JWT
+            {translate("variablesTable.oAuthScopesDiagnosticValuesFrom")}
           </div>
           <div className="divide-y divide-border rounded border border-border">
             {scopes.map((scope) => (
@@ -229,7 +229,7 @@ export function VariablesTable({ text }: { text: string }) {
       )}
       {claimValues.length > 0 && (
         <VarGroup
-          title="JWT claim values — decoded diagnostic data"
+          title={translate("variablesTable.jWTClaimValuesDecodedDiagnostic")}
           rows={claimValues}
           refPrefix="claims."
         />
@@ -237,7 +237,7 @@ export function VariablesTable({ text }: { text: string }) {
       {claims.length > 0 && (
         <div>
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-            JWT claims — use as claims.*
+            {translate("variablesTable.jWTClaimsUseAsClaims")}
           </div>
           <div className="flex flex-wrap gap-1">
             {claims.map((name) => (

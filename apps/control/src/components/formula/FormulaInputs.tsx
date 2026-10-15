@@ -19,6 +19,7 @@ import { useVocabulary } from "./FormulaContext";
 import { VariableBrowser } from "./VariableBrowser";
 import { insertAt } from "./formulaUtils";
 import { FormulaEditorDialog } from "./FormulaEditorDialog";
+import { translate } from "../../lib/i18n";
 
 /** The ƒx chip: clearly visible inside the right edge of a field. */
 const FX_BUTTON =
@@ -108,7 +109,7 @@ export function FxPicker({
       <button
         ref={buttonRef}
         type="button"
-        aria-label={onOpenEditor ? `Open the expression builder for ${label}` : `Insert a variable into ${label}`}
+        aria-label={onOpenEditor ? translate("formulaInputs.openTheExpressionBuilderFor", { label }) : translate("formulaInputs.insertAVariableIntoLabel", { label })}
         aria-expanded={open}
         title={hint}
         onMouseDown={(e) => e.preventDefault()}
@@ -145,7 +146,7 @@ export function FxPicker({
               }}
               className="mt-1.5 w-full rounded border border-border px-2 py-1 text-[11px] hover:bg-muted"
             >
-              Open editor{kind === "condition" ? " (check & test)" : " (preview)"}…
+              {translate("formulaInputs.openEditor")}{kind === "condition" ? translate("formulaInputs.checkTest") : translate("formulaInputs.preview")}…
             </button>
           )}
         </div>,
@@ -295,8 +296,8 @@ export function FormulaTextarea({
       />
       <button
         type="button"
-        aria-label={`Open the formula editor for ${ariaLabel}`}
-        title={kind === "condition" ? "Open the condition editor (variables, operators, live test)" : "Open the editor (variables, preview)"}
+        aria-label={translate("formulaInputs.openTheFormulaEditorFor", { ariaLabel })}
+        title={kind === "condition" ? translate("formulaInputs.openTheConditionEditorVariables") : translate("formulaInputs.openTheEditorVariablesPreview")}
         onClick={() => setEditorOpen(true)}
         className={`${FX_BUTTON} absolute right-1.5 top-1.5`}
       >

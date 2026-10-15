@@ -23,6 +23,7 @@ import { Button } from "../lib/ui";
 import { buildProposalOverlay, type DiffOverlay } from "../lib/flow-diff-view";
 import type { RFNode, RFEdge } from "../lib/flow-graph";
 import type { FlowDefinition, FlowValidationReport } from "../types/flow";
+import { translate } from "../lib/i18n";
 
 interface CopilotSuccessResponse {
   ok: true;
@@ -195,13 +196,13 @@ export function FlowCopilotPanel({
         <button type="button"
           onClick={() => setExpanded((v) => !v)}
           aria-expanded={expanded}
-          aria-label={expanded ? "Collapse copilot" : "Expand copilot"}
+          aria-label={expanded ? translate("flowCopilotPanel.collapseCopilot") : translate("flowCopilotPanel.expandCopilot")}
           className="text-xs text-copilot hover:text-copilot"
         >
           {expanded ? "▾" : "▸"}
         </button>
         <span className="text-xs font-semibold text-copilot">
-          ✨ Copilot
+          {translate("flowCopilotPanel.copilot")}
         </span>
         <input
           value={instruction}
@@ -213,10 +214,10 @@ export function FlowCopilotPanel({
             }
           }}
           placeholder={
-            'Describe an edit… e.g. "add a guardrail node before the LLM node"'
+            translate("flowCopilotPanel.describeAnEditEG")
           }
           disabled={isLoading}
-          aria-label="Copilot instruction"
+          aria-label={translate("flowCopilotPanel.copilotInstruction")}
           className="min-w-0 flex-1 rounded border border-copilot-border bg-card px-2 py-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
         <Button
@@ -226,15 +227,15 @@ export function FlowCopilotPanel({
           disabled={isLoading || !writeGate.allowed || !instruction.trim()}
           title={writeGate.title}
         >
-          {isLoading ? "Thinking…" : "Ask"}
+          {isLoading ? translate("flowCopilotPanel.thinking") : translate("flowCopilotPanel.ask")}
         </Button>
       </div>
 
       {focus && (focus.nodeIds.length > 0 || focus.edge) && (
         <div className="flex items-center gap-1.5 pl-5 text-[11px] text-muted-foreground" data-testid="copilot-focus">
-          <label className="flex min-w-0 items-center gap-1.5" title="Send the selection so “this node”, “here” or “the selected text” refer to it">
+          <label className="flex min-w-0 items-center gap-1.5" title={translate("flowCopilotPanel.sendTheSelectionSoThis")}>
             <input type="checkbox" checked={useFocus} onChange={(e) => setUseFocus(e.target.checked)} />
-            <span className="shrink-0">Refers to:</span>
+            <span className="shrink-0">{translate("flowCopilotPanel.refersTo")}</span>
             <span className={`truncate ${useFocus ? "text-foreground" : "line-through"}`}>{describeCopilotFocus(focus)}</span>
           </label>
         </div>
@@ -262,13 +263,13 @@ export function FlowCopilotPanel({
           <p className="italic text-muted-foreground">{proposal.summary}</p>
           <div className="flex items-center gap-2">
             <Button variant="primary" size="sm" onClick={handleAccept}>
-              Accept
+              {translate("flowCopilotPanel.accept")}
             </Button>
             <Button variant="secondary" size="sm" onClick={handleReject}>
-              Reject
+              {translate("flowCopilotPanel.reject")}
             </Button>
             <span className="text-muted-foreground">
-              Preview shown on canvas — accept to apply, or keep editing.
+              {translate("flowCopilotPanel.previewShownOnCanvasAccept")}
             </span>
           </div>
         </div>

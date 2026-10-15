@@ -11,6 +11,7 @@ import {
   useEffect,
   useRef,
 } from "react";
+import { translate } from "../i18n";
 
 export type ToastVariant = "default" | "success" | "warning" | "destructive";
 
@@ -120,7 +121,7 @@ function ToastEntry({
       <div className="flex items-start justify-between gap-2">
         <p className="text-sm font-semibold">{title}</p>
         <button type="button"
-          aria-label="Dismiss notification"
+          aria-label={translate("toast.dismissNotification")}
           onClick={() => removeToast(id)}
           className={[
             "flex h-6 w-6 shrink-0 items-center justify-center rounded opacity-70 transition-opacity",
@@ -160,7 +161,7 @@ function ToastViewport({
 }: ToastViewportProps): React.JSX.Element {
   return (
     <section
-      aria-label="Notifications"
+      aria-label={translate("toast.notifications")}
       className="pointer-events-none fixed bottom-4 right-4 z-50 flex flex-col gap-2 sm:bottom-6 sm:right-6"
     >
       {toasts.map((t) => (

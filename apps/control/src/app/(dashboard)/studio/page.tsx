@@ -58,6 +58,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
+import { translate } from "../../../lib/i18n";
 
 // Lazy-load heavy components (Req. 12.3)
 const FlowDiffPanel = dynamic(
@@ -67,7 +68,7 @@ const FlowDiffPanel = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex items-center gap-2 text-xs text-muted-foreground py-2">
-        <span>Loading diff…</span>
+        <span>{translate("studio.loadingDiff")}</span>
       </div>
     ),
   },
@@ -78,7 +79,7 @@ const AutopilotPanel = dynamic(
     import("../../../components/AutopilotPanel").then((m) => m.AutopilotPanel),
   {
     ssr: false,
-    loading: () => <div className="text-xs text-muted-foreground py-2">Loading…</div>,
+    loading: () => <div className="text-xs text-muted-foreground py-2">{translate("studio.loading")}</div>,
   },
 );
 
@@ -89,7 +90,7 @@ const StudioBuilder = dynamic(
     ssr: false,
     loading: () => (
       <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
-        Loading builder…
+        {translate("studio.loadingBuilder")}
       </div>
     ),
   },
@@ -381,10 +382,10 @@ export default function StudioPage() {
       if (
         builderDirty &&
         !(await confirmDialog({
-          title: "Unsaved changes",
+          title: translate("studio.unsavedChanges"),
           message:
-            "The builder has unsaved changes. Switch flows and discard them?",
-          confirmLabel: "Discard and switch",
+            translate("studio.theBuilderHasUnsavedChanges"),
+          confirmLabel: translate("studio.discardAndSwitch"),
           destructive: true,
         }))
       ) {
@@ -420,7 +421,7 @@ export default function StudioPage() {
     }
   >({
     mutationFn: async ({ prompt, flowId, result, expected }) => {
-      if (!isAuthenticated) throw new Error("Not authenticated");
+      if (!isAuthenticated) throw new Error(translate("studioPage.notAuthenticated"));
 
       // Build the Studio eval case (Req. 16.1)
       const newCase = buildStudioEvalCase({
@@ -540,32 +541,32 @@ export default function StudioPage() {
       {/* Page header — flow picker and layout toggles live here so the builder
           itself needs no extra header row. */}
       <div className="flex flex-wrap items-center gap-3 border-b border-border bg-card px-4 py-2">
-        <h1 className="text-base font-semibold text-foreground">Studio</h1>
+        <h1 className="text-base font-semibold text-foreground">{translate("studio.studio")}</h1>
 
         <div className="flex min-w-0 items-center gap-2">
-          <span className="text-xs text-muted-foreground">Flow</span>
+          <span className="text-xs text-muted-foreground">{translate("studio.flow")}</span>
           <FlowPicker
             flows={flows}
             value={selectedFlowId}
             onChange={setSelectedFlowId}
             loading={flowsLoading}
             emptyOption="+ New flow"
-            placeholder="— new flow —"
-            ariaLabel="Select flow to edit in Builder"
+            placeholder={translate("studio.newFlow")}
+            ariaLabel={translate("studio.selectFlowToEditIn")}
           />
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <PanelToggleGroup caption="Show">
+          <PanelToggleGroup caption={translate("studio.show")}>
             <PanelToggle
-              label="Properties"
+              label={translate("studio.properties")}
               icon={<SlidersHorizontal size={13} />}
               on={propertiesOpen}
               onToggle={() => setPropertiesOpen((v) => !v)}
               what="the properties panel for the selected node/edge"
             />
             <PanelToggle
-              label="Sidebar"
+              label={translate("studio.sidebar")}
               icon={<PanelRight size={13} />}
               on={showSidebar && !sidebarCollapsed}
               disabled={focusMode}
@@ -579,8 +580,8 @@ export default function StudioPage() {
             aria-pressed={focusMode}
             title={
               focusMode
-                ? "Leave focus mode — bring the sidebar back"
-                : "Focus mode — hide the sidebar so the canvas gets the full width"
+                ? translate("studio.leaveFocusModeBringThe")
+                : translate("studio.focusModeHideTheSidebar")
             }
             className={`flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs ${
               focusMode
@@ -593,7 +594,7 @@ export default function StudioPage() {
             ) : (
               <Maximize2 size={13} aria-hidden />
             )}
-            {focusMode ? "Exit focus" : "Focus canvas"}
+            {focusMode ? translate("studio.exitFocus") : translate("studio.focusCanvas")}
           </button>
         </div>
       </div>
@@ -613,8 +614,7 @@ export default function StudioPage() {
                 mode="disable"
                 fallback={
                   <div className="flex h-64 items-center justify-center rounded border border-dashed border-border text-xs text-muted-foreground">
-                    You need the <strong className="mx-1">admin</strong> role
-                    to edit flows.
+                    {translate("studio.youNeedThe")} <strong className="mx-1">admin</strong> {translate("studio.roleToEditFlows")}
                   </div>
                 }
               >
@@ -667,7 +667,7 @@ export default function StudioPage() {
                   min={280}
                   max={720}
                   initial={384}
-                  label="Resize the documentation panel"
+                  label={translate("studio.resizeTheDocumentationPanel")}
                 />
                 <div
                   style={{ width: sidebarWidth }}
@@ -693,14 +693,14 @@ export default function StudioPage() {
                 <button
                   type="button"
                   onClick={() => setSidebarCollapsed(false)}
-                  title="Show the sidebar (Nodes, Subflows, Optimize, Diff, Autopilot, Docs)"
-                  aria-label="Show sidebar"
+                  title={translate("studio.showTheSidebarNodesSubflows")}
+                  aria-label={translate("studio.showSidebar")}
                   className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                 >
                   <PanelRightOpen size={15} aria-hidden />
                 </button>
                 <span className="mt-2 text-[10px] uppercase tracking-wide text-muted-foreground [writing-mode:vertical-rl]">
-                  Nodes · Subflows · Optimize · Diff · Autopilot · Docs
+                  {translate("studio.nodesSubflowsOptimizeDiffAutopilot")}
                 </span>
               </div>
             );
@@ -717,7 +717,7 @@ export default function StudioPage() {
                 min={280}
                 max={720}
                 initial={384}
-                label="Resize the sidebar"
+                label={translate("studio.resizeTheSidebar")}
               />
               <div
                 style={{ width: sidebarWidth }}
@@ -727,11 +727,11 @@ export default function StudioPage() {
                   <button
                     type="button"
                     onClick={() => setSidebarCollapsed(true)}
-                    title="Hide the sidebar to give the canvas more room"
+                    title={translate("studio.hideTheSidebarToGive")}
                     className="flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
                   >
                     <PanelRightClose size={14} aria-hidden />
-                    Hide
+                    {translate("studio.hide")}
                   </button>
                 </div>
 
@@ -740,7 +740,7 @@ export default function StudioPage() {
                   current={sidebarSection}
                   onToggle={toggleSidebarSection}
                   icon={<Shapes size={13} aria-hidden />}
-                  title="Nodes"
+                  title={translate("studio.nodes")}
                 >
                   {/* The builder's node palette is portalled into this element —
                     drag cards from here onto the canvas. */}
@@ -756,7 +756,7 @@ export default function StudioPage() {
                     current={sidebarSection}
                     onToggle={toggleSidebarSection}
                     icon={<FolderInput size={13} aria-hidden />}
-                    title="Subflows"
+                    title={translate("studio.subflows")}
                   >
                     <div ref={setSubflowsHost} />
                   </SidebarSection>
@@ -767,14 +767,16 @@ export default function StudioPage() {
                   current={sidebarSection}
                   onToggle={toggleSidebarSection}
                   icon={<Gauge size={13} aria-hidden />}
-                  title="Optimize"
+                  title={translate("studio.optimize")}
                 >
                   <OptimizePanel
                     selectedFlowId={selectedFlowId}
                     token={token ?? null}
                     getCanvasDefinition={getCanvasDefinition}
                     canvasLabel={
-                      builderDirty ? "canvas (unsaved changes)" : "canvas"
+                      builderDirty
+                        ? translate("studio.canvasUnsavedChanges")
+                        : translate("studio.canvas")
                     }
                     hideHeading
                   />
@@ -788,7 +790,7 @@ export default function StudioPage() {
                     current={sidebarSection}
                     onToggle={toggleSidebarSection}
                     icon={<GitCompare size={13} aria-hidden />}
-                    title="Diff (live → draft)"
+                    title={translate("studio.diffLiveDraft")}
                   >
                     <FlowDiffPanel
                       flowId={selectedFlowId}
@@ -803,7 +805,7 @@ export default function StudioPage() {
                   current={sidebarSection}
                   onToggle={toggleSidebarSection}
                   icon={<RefreshCw size={13} aria-hidden />}
-                  title="Autopilot"
+                  title={translate("studio.autopilot")}
                 >
                   <AutopilotPanel
                     flowId={selectedFlowId || undefined}
@@ -819,19 +821,19 @@ export default function StudioPage() {
                     current={sidebarSection}
                     onToggle={toggleSidebarSection}
                     icon={<BookOpen size={13} aria-hidden />}
-                    title="Documentation"
+                    title={translate("studio.documentation")}
                   >
                     {docsVisible ? (
                       <>
                         <div className="mb-2 flex items-center justify-between">
                           <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                            Node documentation
+                            {translate("studio.nodeDocumentation")}
                           </span>
                           <button
                             type="button"
                             onClick={nodeDocs.close}
-                            title="Hide the documentation for this node"
-                            aria-label="Hide node documentation"
+                            title={translate("studio.hideTheDocumentationForThis")}
+                            aria-label={translate("studio.hideNodeDocumentation")}
                             className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
                           >
                             ×
@@ -858,7 +860,7 @@ export default function StudioPage() {
                         className="flex items-center gap-1.5 self-start rounded border border-border px-2 py-1 text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
                       >
                         <BookOpen size={13} aria-hidden />
-                        Show {nodeDocs.hidden?.title} node documentation
+                        {translate("studio.showTitleNodeDocumentation", { title: nodeDocs.hidden?.title })}
                       </button>
                     )}
                   </SidebarSection>

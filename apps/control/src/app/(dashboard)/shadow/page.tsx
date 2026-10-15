@@ -18,7 +18,7 @@ import { useAuth } from "../../../lib/auth/useAuth";
 import { backendUrl } from "../../../lib/backend-url";
 import { authFetch } from "../../../lib/auth-fetch";
 import { Badge, Button, Table, TableHead, TableBody, TableRow, TableHeaderCell, TableCell } from "../../../lib/ui";
-import { formatTime } from "../../../lib/i18n";
+import { translate, formatTime } from "../../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,14 +143,13 @@ export default function ShadowPage() {
       {/* Header */}
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-foreground">Shadow Mode</h1>
+          <h1 className="text-lg font-semibold text-foreground">{translate("shadow.shadowMode")}</h1>
           <p className="text-sm text-muted-foreground mt-0.5">
-            A/B quality monitoring — each production request is silently replayed against
-            a shadow flow and the responses are scored side-by-side.
+            {translate("shadow.aBQualityMonitoringEach")}
           </p>
         </div>
         <Button variant="secondary" size="sm" onClick={() => void fetchAll()} disabled={loading}>
-          {loading ? "Loading…" : "↻ Refresh"}
+          {loading ? translate("shadow.loading") : translate("shadow.refresh")}
         </Button>
       </div>
 
@@ -164,24 +163,24 @@ export default function ShadowPage() {
       {overview && (
         <div className={`rounded border px-4 py-3 text-sm ${isEnabled ? "border-success-border bg-success-soft text-success" : "border-warning-border bg-warning-soft text-warning"}`}>
           {isEnabled
-            ? `✓ Shadow runner active — ${overview.configured} flow pair(s) configured.`
-            : "Shadow runner is not active on this deployment. Set SHADOW_ENABLED=true and configure shadow-flow pairs in your flow YAML to enable."}
+            ? translate("shadow.shadowRunnerActiveConfiguredFlow", { configured: overview.configured })
+            : translate("shadow.shadowRunnerIsNotActive")}
         </div>
       )}
 
       {/* Configured pairs */}
       {overview && overview.configs.length > 0 && (
         <section className="rounded-lg border border-border bg-card p-4">
-          <h2 className="text-sm font-semibold text-foreground mb-3">Configured Pairs</h2>
+          <h2 className="text-sm font-semibold text-foreground mb-3">{translate("shadow.configuredPairs")}</h2>
           <div className="overflow-x-auto">
             <Table>
               <TableHead>
                 <TableRow className="uppercase tracking-wide">
-                  <TableHeaderCell>Production flow</TableHeaderCell>
-                  <TableHeaderCell>Shadow flow</TableHeaderCell>
-                  <TableHeaderCell className="text-right">Sample rate</TableHeaderCell>
-                  <TableHeaderCell className="text-right">Regression δ</TableHeaderCell>
-                  <TableHeaderCell className="text-center">Status</TableHeaderCell>
+                  <TableHeaderCell>{translate("shadow.productionFlow")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("shadow.shadowFlow")}</TableHeaderCell>
+                  <TableHeaderCell className="text-right">{translate("shadow.sampleRate")}</TableHeaderCell>
+                  <TableHeaderCell className="text-right">{translate("shadow.regression")}</TableHeaderCell>
+                  <TableHeaderCell className="text-center">{translate("shadow.status")}</TableHeaderCell>
                   <TableHeaderCell />
                 </TableRow>
               </TableHead>
@@ -205,7 +204,7 @@ export default function ShadowPage() {
                           selectedFlow === c.productionFlow ? null : c.productionFlow
                         )}
                       >
-                        {selectedFlow === c.productionFlow ? "Hide stats" : "Stats"}
+                        {selectedFlow === c.productionFlow ? translate("shadow.hideStats") : translate("shadow.stats")}
                       </Button>
                     </TableCell>
                   </TableRow>
@@ -218,14 +217,14 @@ export default function ShadowPage() {
           {flowStats && selectedFlow && (
             <div className="mt-4 rounded border border-border bg-muted p-4">
               <h3 className="text-sm font-semibold text-foreground mb-3">
-                {selectedFlow} — detail
+                {translate("shadow.selectedFlowDetail", { selectedFlow })}
               </h3>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                 {[
-                  { label: "Total comparisons", value: flowStats.totalComparisons },
-                  { label: "Regressions", value: flowStats.regressions, red: true },
-                  { label: "Improvements", value: flowStats.improvements, green: true },
-                  { label: "Avg Δ score", value: flowStats.avgDelta !== undefined ? fmt(flowStats.avgDelta, 3) : "—", color: deltaColor(flowStats.avgDelta) },
+                  { label: translate("shadow.totalComparisons"), value: flowStats.totalComparisons },
+                  { label: translate("shadow.regressions"), value: flowStats.regressions, red: true },
+                  { label: translate("shadow.improvements"), value: flowStats.improvements, green: true },
+                  { label: translate("shadow.avgScore"), value: flowStats.avgDelta !== undefined ? fmt(flowStats.avgDelta, 3) : "—", color: deltaColor(flowStats.avgDelta) },
                 ].map(({ label, value, red, green, color }) => (
                   <div key={label} className="rounded border border-border bg-background p-3 text-center">
                     <div className={`text-xl font-bold tabular-nums ${red ? "text-danger" : green ? "text-success" : (color ?? "text-foreground")}`}>{value}</div>
@@ -241,25 +240,24 @@ export default function ShadowPage() {
       {/* Recent comparisons */}
       <section className="rounded-lg border border-border bg-card p-4">
         <h2 className="text-sm font-semibold text-foreground mb-3">
-          Recent Comparisons ({comparisons.length})
+          {translate("shadow.recentComparisonsLength", { length: comparisons.length })}
         </h2>
         {comparisons.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            No comparison records yet. Shadow comparisons appear here as production requests
-            are replayed.
+            {translate("shadow.noComparisonRecordsYetShadow")}
           </p>
         ) : (
           <div className="overflow-x-auto">
             <Table>
               <TableHead>
                 <TableRow className="uppercase tracking-wide">
-                  <TableHeaderCell>Production</TableHeaderCell>
-                  <TableHeaderCell>Shadow</TableHeaderCell>
-                  <TableHeaderCell className="text-right">Prod score</TableHeaderCell>
-                  <TableHeaderCell className="text-right">Shadow score</TableHeaderCell>
+                  <TableHeaderCell>{translate("shadow.production")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("shadow.shadow")}</TableHeaderCell>
+                  <TableHeaderCell className="text-right">{translate("shadow.prodScore")}</TableHeaderCell>
+                  <TableHeaderCell className="text-right">{translate("shadow.shadowScore")}</TableHeaderCell>
                   <TableHeaderCell className="text-right">Δ</TableHeaderCell>
-                  <TableHeaderCell className="text-center">Result</TableHeaderCell>
-                  <TableHeaderCell>Time</TableHeaderCell>
+                  <TableHeaderCell className="text-center">{translate("shadow.result")}</TableHeaderCell>
+                  <TableHeaderCell>{translate("shadow.time")}</TableHeaderCell>
                 </TableRow>
               </TableHead>
               <TableBody>

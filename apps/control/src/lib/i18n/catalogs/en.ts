@@ -9,7 +9,10 @@
  * (`nav.*`, `chrome.*`, `common.*`); `nav.*` mirrors `src/lib/nav.ts`.
  */
 
+import { uiEn } from "./ui.en";
+
 export const en = {
+  ...uiEn,
   "nav.group.research": "Research & Optimisation",
   "nav.group.monitoring": "Monitoring",
   "nav.group.configuration": "Configuration",

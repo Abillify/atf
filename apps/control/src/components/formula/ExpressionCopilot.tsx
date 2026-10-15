@@ -13,6 +13,7 @@ import { useCanWrite } from "../../lib/auth/useCanWrite";
 import { getPath, type FormulaGroup, type FormulaKind } from "../../lib/formula";
 import { snippet } from "./formulaUtils";
 import { DiffView } from "./DiffView";
+import { translate } from "../../lib/i18n";
 
 /** What the copilot is told about the field's data: every entry with its ref, value and availability. */
 function vocabularyForCopilot(
@@ -146,7 +147,7 @@ export function ExpressionCopilot({
       <div className="flex items-center gap-1.5">
         <Sparkles size={13} aria-hidden className="shrink-0 text-copilot" />
         <input
-          aria-label="Ask the expression copilot"
+          aria-label={translate("expressionCopilot.askTheExpressionCopilot")}
           value={instruction}
           onChange={(e) => setInstruction(e.target.value)}
           onKeyDown={(e) => {
@@ -157,8 +158,8 @@ export function ExpressionCopilot({
           }}
           placeholder={
             kind === "condition"
-              ? "Describe the condition, e.g. “route is RETOURE or the user asks about parking”"
-              : "Describe what to write or change, e.g. “half of the worker budget, rounded”"
+              ? translate("expressionCopilot.describeTheConditionEG")
+              : translate("expressionCopilot.describeWhatToWriteOr")
           }
           className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
         />
@@ -169,13 +170,13 @@ export function ExpressionCopilot({
           title={writeGate.title}
           className="rounded bg-copilot-solid px-2 py-1 text-xs font-medium text-on-solid hover:bg-copilot-solid-hover disabled:opacity-50"
         >
-          {st.state === "asking" ? "Thinking…" : "Ask"}
+          {st.state === "asking" ? translate("expressionCopilot.thinking") : translate("expressionCopilot.ask")}
         </button>
       </div>
       {selectionLabel && (
         <label
           className="mt-1 flex items-center gap-1.5 pl-5 text-[11px] text-muted-foreground"
-          title="Send the cursor / selection so “here” or “this part” refer to it"
+          title={translate("expressionCopilot.sendTheCursorSelectionSo")}
           data-testid="expression-copilot-selection"
         >
           <input
@@ -183,7 +184,7 @@ export function ExpressionCopilot({
             checked={useSelection}
             onChange={(e) => setUseSelection(e.target.checked)}
           />
-          <span className="shrink-0">Refers to:</span>
+          <span className="shrink-0">{translate("expressionCopilot.refersTo")}</span>
           <span
             className={`truncate ${useSelection ? "text-foreground" : "line-through"}`}
           >
@@ -200,7 +201,7 @@ export function ExpressionCopilot({
         // biome-ignore lint/a11y/useSemanticElements: labelled proposal container — <fieldset> is for form controls and would be wrong here
         <div
           className="mt-2 space-y-1.5"
-          aria-label="Copilot proposal"
+          aria-label={translate("expressionCopilot.copilotProposal")}
           role="group"
         >
           <p className="text-[11px] text-foreground">{st.explanation}</p>
@@ -208,7 +209,7 @@ export function ExpressionCopilot({
             <DiffView before={base.current} after={st.expression} />
           ) : (
             <p className="text-[11px] italic text-muted-foreground">
-              No change proposed.
+              {translate("expressionCopilot.noChangeProposed")}
             </p>
           )}
           <div className="flex justify-end gap-2">
@@ -217,7 +218,7 @@ export function ExpressionCopilot({
               onClick={() => setSt({ state: "idle" })}
               className="rounded border border-border px-2 py-0.5 text-[11px] hover:bg-muted"
             >
-              Discard
+              {translate("expressionCopilot.discard")}
             </button>
             {st.changed && (
               <button
@@ -229,14 +230,13 @@ export function ExpressionCopilot({
                 }}
                 className="rounded bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground hover:opacity-90"
               >
-                Accept
+                {translate("expressionCopilot.accept")}
               </button>
             )}
           </div>
           {current !== base.current && (
             <p className="text-[10px] text-warning">
-              The field changed since you asked — Accept replaces it with the
-              proposal.
+              {translate("expressionCopilot.theFieldChangedSinceYou")}
             </p>
           )}
         </div>

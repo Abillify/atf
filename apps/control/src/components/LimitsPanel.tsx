@@ -34,7 +34,7 @@ import type {
   TokenLimitInput,
   UsageBucket,
 } from "../types/limits";
-import { formatNumber, formatDateTime } from "../lib/i18n";
+import { translate, formatNumber, formatDateTime } from "../lib/i18n";
 import { useChartPalette } from "../lib/theme/palette";
 
 export interface LimitsPanelProps {
@@ -152,7 +152,7 @@ export function LimitsPanel({
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
           <h3 className="text-sm font-semibold text-foreground">
-            Token usage over time
+            {translate("limitsPanel.tokenUsageOverTime")}
           </h3>
           <div className="flex flex-wrap items-end gap-2 text-xs">
             {/* Range presets */}
@@ -167,14 +167,14 @@ export function LimitsPanel({
                       : "bg-card text-muted-foreground hover:bg-muted"
                   }`}
                 >
-                  {p === "custom" ? "Custom" : p}
+                  {p === "custom" ? translate("limitsPanel.custom") : p}
                 </button>
               ))}
             </div>
             {preset === "custom" && (
               <>
                 <label className="flex flex-col text-muted-foreground">
-                  From
+                  {translate("limitsPanel.from")}
                   <input
                     type="datetime-local"
                     value={customFrom}
@@ -183,7 +183,7 @@ export function LimitsPanel({
                   />
                 </label>
                 <label className="flex flex-col text-muted-foreground">
-                  To
+                  {translate("limitsPanel.to")}
                   <input
                     type="datetime-local"
                     value={customTo}
@@ -195,20 +195,20 @@ export function LimitsPanel({
             )}
             {/* Bucket */}
             <label className="flex flex-col text-muted-foreground">
-              Bucket
+              {translate("limitsPanel.bucket")}
               <select
                 value={bucket}
                 onChange={(e) => setBucket(e.target.value as UsageBucket)}
                 className="rounded border border-border px-1 py-0.5"
               >
-                <option value="hour">Hourly</option>
-                <option value="day">Daily</option>
-                <option value="week">Weekly</option>
+                <option value="hour">{translate("limitsPanel.hourly")}</option>
+                <option value="day">{translate("limitsPanel.daily")}</option>
+                <option value="week">{translate("limitsPanel.weekly")}</option>
               </select>
             </label>
             {/* Scope filter */}
             <label className="flex flex-col text-muted-foreground">
-              Scope
+              {translate("limitsPanel.scope")}
               <select
                 value={seriesScope}
                 onChange={(e) => {
@@ -217,31 +217,31 @@ export function LimitsPanel({
                 }}
                 className="rounded border border-border px-1 py-0.5"
               >
-                <option value="global">All</option>
-                <option value="user">User</option>
-                <option value="flow">Flow</option>
+                <option value="global">{translate("limitsPanel.all")}</option>
+                <option value="user">{translate("limitsPanel.user")}</option>
+                <option value="flow">{translate("limitsPanel.flow")}</option>
               </select>
             </label>
             {seriesScope !== "global" && (
               <label className="flex flex-col text-muted-foreground">
-                {seriesScope === "user" ? "User id" : "Flow id"}
+                {seriesScope === "user" ? translate("limitsPanel.userId") : translate("limitsPanel.flowId")}
                 <input
                   value={seriesScopeId}
                   onChange={(e) => setSeriesScopeId(e.target.value)}
-                  placeholder="(all)"
+                  placeholder={translate("limitsPanel.all2")}
                   className="rounded border border-border px-1 py-0.5"
                 />
               </label>
             )}
             {/* Model filter */}
             <label className="flex flex-col text-muted-foreground">
-              Model
+              {translate("limitsPanel.model")}
               <select
                 value={seriesModel}
                 onChange={(e) => setSeriesModel(e.target.value)}
                 className="rounded border border-border px-1 py-0.5"
               >
-                <option value="">All models</option>
+                <option value="">{translate("limitsPanel.allModels")}</option>
                 {models.map((m) => (
                   <option key={m} value={m}>
                     {m}
@@ -256,7 +256,7 @@ export function LimitsPanel({
           <p className="py-8 text-center text-sm text-danger">{seriesError}</p>
         ) : chartData.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">
-            No usage recorded in this range.
+            {translate("limitsPanel.noUsageRecordedInThis")}
           </p>
         ) : (
           <ResponsiveContainer width="100%" height={260}>
@@ -301,31 +301,29 @@ export function LimitsPanel({
       {/* Configured limits + consumption */}
       <section className="rounded-lg border border-border bg-card p-4 shadow-sm">
         <h3 className="mb-2 text-sm font-semibold text-foreground">
-          Configured limits &amp; consumption
+          {translate("limitsPanel.configuredLimitsConsumption")}
         </h3>
         <p className="mb-2 text-xs text-muted-foreground">
-          Enforced at request admission: a request is rejected once a matching
-          limit is exhausted for its window (soft cap — an in-flight request may
-          slightly exceed it).
+          {translate("limitsPanel.enforcedAtRequestAdmissionA")}
         </p>
         {limitsError !== null && (
           <p className="mb-2 text-xs text-danger">{limitsError}</p>
         )}
         {limits.length === 0 ? (
           <p className="py-4 text-center text-sm text-muted-foreground">
-            No limits configured yet. Add one below.
+            {translate("limitsPanel.noLimitsConfiguredYetAdd")}
           </p>
         ) : (
           <Table>
             <TableHead>
               <TableRow className="uppercase tracking-wide">
-                <TableHeaderCell>Scope</TableHeaderCell>
-                <TableHeaderCell>Model</TableHeaderCell>
-                <TableHeaderCell>Period</TableHeaderCell>
+                <TableHeaderCell>{translate("limitsPanel.scope")}</TableHeaderCell>
+                <TableHeaderCell>{translate("limitsPanel.model")}</TableHeaderCell>
+                <TableHeaderCell>{translate("limitsPanel.period")}</TableHeaderCell>
                 <TableHeaderCell className="text-right">
-                  Used / Limit
+                  {translate("limitsPanel.usedLimit")}
                 </TableHeaderCell>
-                <TableHeaderCell className="pl-3">Consumption</TableHeaderCell>
+                <TableHeaderCell className="pl-3">{translate("limitsPanel.consumption")}</TableHeaderCell>
                 <TableHeaderCell />
               </TableRow>
             </TableHead>
@@ -336,9 +334,9 @@ export function LimitsPanel({
                   limit={l}
                   onDelete={async () => {
                     const ok = await confirmDialog({
-                      title: "Delete token limit?",
-                      message: "The limit stops applying immediately.",
-                      confirmLabel: "Delete",
+                      title: translate("limitsPanel.deleteTokenLimit"),
+                      message: translate("limitsPanel.theLimitStopsApplyingImmediately"),
+                      confirmLabel: translate("limitsPanel.delete"),
                       destructive: true,
                     });
                     if (ok) await deleteLimit(l.id);
@@ -441,7 +439,7 @@ function LimitRow({
                 setEditing(false);
               }}
             >
-              Save
+              {translate("limitsPanel.save")}
             </Button>
             <Button
               variant="ghost"
@@ -452,7 +450,7 @@ function LimitRow({
                 setEditing(false);
               }}
             >
-              Cancel
+              {translate("limitsPanel.cancel")}
             </Button>
           </>
         ) : (
@@ -464,7 +462,7 @@ function LimitRow({
               disabled={!writeGate.allowed}
               title={writeGate.title}
             >
-              Edit
+              {translate("limitsPanel.edit")}
             </Button>
             <Button
               variant="destructive"
@@ -474,7 +472,7 @@ function LimitRow({
               disabled={!writeGate.allowed}
               title={writeGate.title}
             >
-              Delete
+              {translate("limitsPanel.delete")}
             </Button>
           </>
         )}
@@ -507,11 +505,11 @@ function AddLimitForm({
     setError(null);
     const n = Number(limitTokens);
     if (!Number.isFinite(n) || n <= 0) {
-      setError("Enter a positive token limit.");
+      setError(translate("limitsPanel.enterAPositiveTokenLimit"));
       return;
     }
     if (scopeType !== "global" && scopeId.trim() === "") {
-      setError(`A ${scopeType} limit needs a ${scopeType} id.`);
+      setError(translate("limitsPanel.aScopeTypeLimitNeedsA", { scopeType, scopeType2: scopeType }));
       return;
     }
     setSaving(true);
@@ -535,24 +533,24 @@ function AddLimitForm({
   return (
     <div className="mt-4 border-t border-border pt-3">
       <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        Add / update a limit
+        {translate("limitsPanel.addUpdateALimit")}
       </div>
       <div className="flex flex-wrap items-end gap-2 text-xs">
         <label className="flex flex-col text-muted-foreground">
-          Scope
+          {translate("limitsPanel.scope")}
           <select
             value={scopeType}
             onChange={(e) => setScopeType(e.target.value as LimitScopeType)}
             className="rounded border border-border px-1 py-1"
           >
-            <option value="global">Global</option>
-            <option value="user">Per user</option>
-            <option value="flow">Per flow</option>
+            <option value="global">{translate("limitsPanel.global")}</option>
+            <option value="user">{translate("limitsPanel.perUser")}</option>
+            <option value="flow">{translate("limitsPanel.perFlow")}</option>
           </select>
         </label>
         {scopeType !== "global" && (
           <label className="flex flex-col text-muted-foreground">
-            {scopeType === "user" ? "User id" : "Flow id"}
+            {scopeType === "user" ? translate("limitsPanel.userId") : translate("limitsPanel.flowId")}
             <input
               value={scopeId}
               onChange={(e) => setScopeId(e.target.value)}
@@ -561,13 +559,13 @@ function AddLimitForm({
           </label>
         )}
         <label className="flex flex-col text-muted-foreground">
-          Model
+          {translate("limitsPanel.model")}
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
             className="rounded border border-border px-1 py-1"
           >
-            <option value="">All models</option>
+            <option value="">{translate("limitsPanel.allModels")}</option>
             {models.map((m) => (
               <option key={m} value={m}>
                 {m}
@@ -576,19 +574,19 @@ function AddLimitForm({
           </select>
         </label>
         <label className="flex flex-col text-muted-foreground">
-          Period
+          {translate("limitsPanel.period")}
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value as LimitPeriod)}
             className="rounded border border-border px-1 py-1"
           >
-            <option value="day">Per day</option>
-            <option value="week">Per week</option>
-            <option value="month">Per month</option>
+            <option value="day">{translate("limitsPanel.perDay")}</option>
+            <option value="week">{translate("limitsPanel.perWeek")}</option>
+            <option value="month">{translate("limitsPanel.perMonth")}</option>
           </select>
         </label>
         <label className="flex flex-col text-muted-foreground">
-          Limit (tokens)
+          {translate("limitsPanel.limitTokens")}
           <input
             type="number"
             min={1}
@@ -605,7 +603,7 @@ function AddLimitForm({
           disabled={saving || !writeGate.allowed}
           title={writeGate.title}
         >
-          {saving ? "Saving…" : "Save limit"}
+          {saving ? translate("limitsPanel.saving") : translate("limitsPanel.saveLimit")}
         </Button>
       </div>
       {error !== null && <p className="mt-1 text-xs text-danger">{error}</p>}

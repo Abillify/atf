@@ -34,6 +34,7 @@ import type {
   FlowListEntry,
   FlowNode,
 } from "../../types/flow";
+import { translate } from "../../lib/i18n";
 
 export interface StudioInspectorProps {
   inspectorCollapsed: boolean;
@@ -156,14 +157,14 @@ export function StudioInspector({
         min={240}
         max={640}
         initial={320}
-        label="Resize the properties panel"
+        label={translate("studioInspector.resizeThePropertiesPanel")}
       />
       {/* tabIndex=0 so the scrollable region is keyboard-accessible even when
         it holds no focusable children (empty state) — WCAG 2.1.1. */}
       <aside
         // biome-ignore lint/a11y/noNoninteractiveTabindex: scrollable region must stay keyboard-reachable (WCAG 2.1.1 scrollable-region-focusable)
         tabIndex={0}
-        aria-label="Node properties"
+        aria-label={translate("studioInspector.nodeProperties")}
         style={{ width: inspectorWidth }}
         className="shrink-0 overflow-auto rounded-lg border border-border bg-card p-3 text-sm"
         onSelect={handlePanelSelect}
@@ -187,7 +188,7 @@ export function StudioInspector({
         ) : selectedNodeIds.length > 1 ? (
           <div className="space-y-3">
             <h4 className="text-sm font-semibold text-foreground">
-              {selectedNodeIds.length} nodes selected
+              {translate("studioInspector.lengthNodesSelected", { length: selectedNodeIds.length })}
             </h4>
             <div className="flex flex-col gap-2">
               <Button
@@ -195,10 +196,10 @@ export function StudioInspector({
                 size="sm"
                 onClick={handleDuplicateSelected}
               >
-                Duplicate (Cmd/Ctrl+D)
+                {translate("studioInspector.duplicateCmdCtrlD")}
               </Button>
               <Button variant="destructive" size="sm" onClick={handleBulkDelete}>
-                Delete selected
+                {translate("studioInspector.deleteSelected")}
               </Button>
             </div>
 
@@ -207,7 +208,7 @@ export function StudioInspector({
                 htmlFor="subflow-name"
                 className="mb-1 block text-[11px] font-medium uppercase tracking-wide text-muted-foreground"
               >
-                Extract to sub-flow
+                {translate("studioInspector.extractToSubFlow")}
               </label>
               <div className="flex gap-1.5">
                 <input
@@ -226,12 +227,11 @@ export function StudioInspector({
                   disabled={!subflowName.trim()}
                   className="rounded bg-subflow-soft px-2 py-1 text-xs font-medium text-subflow border border-subflow-border hover:bg-subflow-soft disabled:opacity-40"
                 >
-                  Extract
+                  {translate("studioInspector.extract")}
                 </button>
               </div>
               <p className="mt-1 text-[10px] text-muted-foreground">
-                Writes to subflows/{subflowName.trim() || "name"}.yaml on next
-                save. Nodes stay on this canvas.
+                {translate("studioInspector.writesToSubflows")}{subflowName.trim() || "name"}{translate("studioInspector.yamlOnNextSaveNodes")}
               </p>
             </div>
           </div>

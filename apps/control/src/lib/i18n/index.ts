@@ -6,8 +6,8 @@
  * format helpers and catalog types.
  */
 
-export { LocaleProvider, translate, useI18n } from "./LocaleProvider";
-export type { LocaleContextValue, LocaleProviderProps } from "./LocaleProvider";
+export { LocaleProvider, interpolate, translate, useI18n } from "./LocaleProvider";
+export type { LocaleContextValue, LocaleProviderProps, MessageParams } from "./LocaleProvider";
 export {
   DEFAULT_LOCALE,
   LOCALES,

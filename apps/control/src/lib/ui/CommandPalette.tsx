@@ -6,6 +6,7 @@ import type React from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { Search, CornerDownLeft, type LucideIcon } from "lucide-react";
 import { useModalBehavior, usePresence } from "./useModalBehavior";
+import { translate } from "../i18n";
 
 export interface CommandItem {
   id: string;
@@ -163,7 +164,7 @@ export function CommandPalette({
         ref={panelRef}
         role="dialog"
         aria-modal="true"
-        aria-label="Command palette"
+        aria-label={translate("commandPalette.commandPalette")}
         className={[
           "w-full max-w-xl overflow-hidden rounded-xl border border-border bg-popover text-popover-foreground shadow-2xl",
           "transition duration-150 motion-reduce:transition-none",
@@ -202,12 +203,12 @@ export function CommandPalette({
           id={listId}
           // biome-ignore lint/a11y/noNoninteractiveElementToInteractiveRole: listbox of the combobox pattern — <ul role="listbox"> is the ARIA-recommended structure, keyboard handling lives on the input
           role="listbox"
-          aria-label="Results"
+          aria-label={translate("commandPalette.results")}
           className="max-h-[50vh] overflow-y-auto p-2"
         >
           {results.length === 0 ? (
             <li className="px-3 py-6 text-center text-sm text-muted-foreground">
-              No matches for “{query}”.
+              {translate("commandPalette.noMatchesForQuery", { query })}
             </li>
           ) : (
             grouped.map(({ group, entries }) => (

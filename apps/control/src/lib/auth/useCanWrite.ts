@@ -16,12 +16,13 @@
  * Use it where wrapping the control in `<RequireRole>` would disturb layout:
  * spread `disabled` and `title` onto the button. The Runtime still enforces
  * the permission; this only stops the UI from offering an action that would
- * answer 401.
+ * answer 403.
  */
 
 import { hasMinimumRole } from "./RequireRole";
 import type { AuthRole } from "./types";
 import { useAuth } from "./useAuth";
+import { translate } from "../i18n";
 
 export interface WriteGate {
   /** True when the signed-in role may perform the action. */
@@ -35,6 +36,6 @@ export function useCanWrite(minRole: AuthRole): WriteGate {
   const allowed = hasMinimumRole(role, minRole);
   return {
     allowed,
-    title: allowed ? undefined : `Requires the ${minRole} role`,
+    title: allowed ? undefined : translate("useCanWrite.requiresRole", { role: minRole }),
   };
 }

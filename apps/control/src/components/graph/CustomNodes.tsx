@@ -29,6 +29,7 @@ import {
 import { SUBFLOW_COLORS, subflowLabel } from "../../lib/subflows";
 import type { FlowNode } from "../../types/flow";
 import { TOOL_IN, TOOL_OUT, TOOLS_RAIL_OUT } from "./canvasIds";
+import { translate } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Editable node — reuses the exact NodeCard presentation the live monitor
@@ -178,7 +179,7 @@ export function EditableNode({
           type="source"
           position={Position.Right}
           isConnectable={false}
-          title="Calls other nodes as tools (defined in this node's settings)"
+          title={translate("customNodes.callsOtherNodesAsTools")}
           className="!h-2.5 !w-2.5 !rounded-[2px] !border !border-copilot-border !bg-copilot-solid"
         />
       )}
@@ -188,7 +189,7 @@ export function EditableNode({
           type="target"
           position={Position.Left}
           isConnectable={false}
-          title="Called as a tool by another node"
+          title={translate("customNodes.calledAsAToolBy")}
           className="!h-2.5 !w-2.5 !rounded-[2px] !border !border-copilot-border !bg-copilot-solid"
         />
       )}
@@ -198,7 +199,7 @@ export function EditableNode({
           type="source"
           position={Position.Right}
           isConnectable={false}
-          title="Tools this node offers its model"
+          title={translate("customNodes.toolsThisNodeOffersIts")}
           style={{ top: `${toolRailAnchor(toolOut ?? false) * 100}%` }}
           className="!h-2 !w-2 !rounded-full !border !border-subflow-border !bg-subflow-solid"
         />
@@ -261,7 +262,7 @@ export function ToolRailNode({ data }: NodeProps<Node<ToolRailData, "toolRail">>
       <Handle type="target" position={Position.Left} isConnectable={false} className="!h-1.5 !w-1.5 !border-0 !bg-subflow-solid" />
       <ul
         ref={listRef}
-        aria-label={`Tools (${data.chips.length})`}
+        aria-label={translate("customNodes.toolsLength", { length: data.chips.length })}
         // nowheel: the wheel scrolls the list instead of zooming the canvas.
         className={`flex flex-col rounded-lg border border-dashed border-subflow-border bg-background/80 backdrop-blur-sm ${
           data.scrolls ? "nowheel overflow-y-auto overscroll-contain [scrollbar-width:thin]" : "overflow-hidden"
@@ -291,7 +292,7 @@ export function ToolRailNode({ data }: NodeProps<Node<ToolRailData, "toolRail">>
                 <span className="flex shrink-0 items-center gap-0.5 opacity-80" data-testid="tool-chip-static-args">
                   <Pin size={10} aria-hidden />
                   <span className="text-[9px]">{c.staticArgs.length}</span>
-                  <span className="sr-only"> static arguments</span>
+                  <span className="sr-only"> {translate("customNodes.staticArguments")}</span>
                 </span>
               )}
               {c.calls > 1 && (
@@ -350,7 +351,7 @@ export function SubflowBoxNode({ data }: NodeProps<Node<SubflowBoxData, "subflow
           data.onSelect?.(data.path);
         }}
         aria-pressed={data.selected ?? false}
-        title={`Sub-flow ${data.path} — click to select the whole group. Its nodes are saved to this file and merged into the flow via metadata.$include.`}
+        title={translate("customNodes.subFlowPathClickTo", { path: data.path })}
         className={`pointer-events-auto absolute left-2 top-1.5 inline-flex max-w-[calc(100%-1rem)] cursor-pointer items-center gap-1 truncate rounded px-1.5 py-0.5 text-[10px] font-semibold hover:brightness-95 ${
           data.selected ? "bg-info-solid text-on-solid ring-2 ring-info dark:bg-info-solid dark:text-info" : (c?.label ?? "")
         }`}
@@ -410,16 +411,16 @@ export function BoundaryNode({ data, selected }: NodeProps<Node<BoundaryNodeData
         } ${selected ? "outline outline-2 outline-offset-2 outline-info" : ""} ${ring}`}
         title={
           start
-            ? "Where a request enters the flow. Click for the pinned request's input; drag from here to a node to make it the entry."
-            : "Where the flow returns its answer. Click for the pinned request's answer and the nodes the run can end after."
+            ? translate("customNodes.whereARequestEntersThe")
+            : translate("customNodes.whereTheFlowReturnsIts")
         }
       >
         <div className="flex items-center gap-1.5 text-xs font-semibold text-foreground">
           <span aria-hidden className={start ? "text-success" : "text-muted-foreground"}>
             {start ? "▶" : "■"}
           </span>
-          {start ? "Start" : "End"}
-          <span className="font-normal text-muted-foreground">{start ? "· request in" : "· answer out"}</span>
+          {start ? translate("customNodes.start") : translate("customNodes.end")}
+          <span className="font-normal text-muted-foreground">{start ? translate("customNodes.requestIn") : translate("customNodes.answerOut")}</span>
         </div>
         {data.info.summary && (
           <div className="truncate text-[10px] text-muted-foreground">{data.info.summary}</div>

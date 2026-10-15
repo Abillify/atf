@@ -14,6 +14,7 @@ import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
 import { useAuth } from "../../../lib/auth/useAuth";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 // Flow registry — editing happens in Studio; loaded client-side only (Req. 12.3).
 const FlowsTab = dynamic(
@@ -47,8 +48,8 @@ export default function FlowsPage() {
     <div className="h-full overflow-hidden p-4 sm:p-6">
       <Tabs value={tab} onValueChange={(v) => setTab(v as FlowsPageTab)}>
         <TabsList className="mb-4">
-          <TabsTrigger value="registry">Registry</TabsTrigger>
-          <TabsTrigger value="diff">Diff</TabsTrigger>
+          <TabsTrigger value="registry">{translate("flows.registry")}</TabsTrigger>
+          <TabsTrigger value="diff">{translate("flows.diff")}</TabsTrigger>
         </TabsList>
         {/* Panels are wrapped in TabsContent so the tabs expose real
             role="tabpanel" targets (valid aria-controls); the heavy, code-split

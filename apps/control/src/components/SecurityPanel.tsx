@@ -15,7 +15,7 @@ import type {
   ToolAuthzPolicyView,
   McpServerInfo,
 } from "../types/security";
-import { formatDateTime } from "../lib/i18n";
+import { translate, formatDateTime } from "../lib/i18n";
 
 export interface SecurityPanelProps {
   posture: PostureResponse | null;
@@ -129,7 +129,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
     <section className="space-y-6">
       <div className="flex items-center justify-between">
         <h2 className="text-base font-semibold text-foreground">
-          AI Security Posture
+          {translate("securityPanel.aISecurityPosture")}
         </h2>
         {error && <span className="text-xs text-danger">{error}</span>}
       </div>
@@ -140,7 +140,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
       {/* biome-ignore lint/a11y/useSemanticElements: group of navigation buttons — <fieldset> is for form controls and would be wrong here */}
       <div
         role="group"
-        aria-label="Security sections"
+        aria-label={translate("securityPanel.securitySections")}
         className="flex flex-wrap gap-1 border-b border-border"
       >
         {(
@@ -177,12 +177,9 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
         <div className="space-y-5">
           {!redTeamEnabled && (
             <div className="rounded-lg border border-dashed border-warning-border bg-warning-soft p-4 text-sm text-warning">
-              The red-team engine is disabled. Set{" "}
-              <code className="font-mono">RED_TEAM_ENABLED=true</code> to run
-              adversarial tests, or configure{" "}
-              <code className="font-mono">RED_TEAM_SCHEDULE_FLOWS</code> for
-              automatic runs. The attack library, tool-authorization policy, and
-              MCP views below remain available.
+              {translate("securityPanel.theRedTeamEngineIs")}{" "}
+              <code className="font-mono">RED_TEAM_ENABLED=true</code> {translate("securityPanel.toRunAdversarialTestsOr")}{" "}
+              <code className="font-mono">RED_TEAM_SCHEDULE_FLOWS</code> {translate("securityPanel.forAutomaticRunsTheAttack")}
             </div>
           )}
 
@@ -221,11 +218,11 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
 
           {posture && (
             <p className="text-xs text-muted-foreground">
-              Current input-guardrail threshold:{" "}
+              {translate("securityPanel.currentInputGuardrailThreshold")}{" "}
               <span className="font-mono font-semibold">
                 {posture.guardrailThreshold.toFixed(2)}
               </span>{" "}
-              (lower = stricter; auto-tuned when RED_TEAM_AUTO_TUNE is on)
+              {translate("securityPanel.lowerStricterAutoTunedWhen")}
             </p>
           )}
 
@@ -235,8 +232,8 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
               flows={flows}
               value={selectedFlow}
               onChange={setSelectedFlow}
-              ariaLabel="Flow to red-team"
-              placeholder="Select a flow…"
+              ariaLabel={translate("securityPanel.flowToRedTeam")}
+              placeholder={translate("securityPanel.selectAFlow")}
             />
             <Button
               variant="destructive"
@@ -244,19 +241,19 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
               title={writeGate.title}
               onClick={() => onRun(selectedFlow)}
             >
-              {isRunning ? "Running attacks…" : "Run Red-Team"}
+              {isRunning ? translate("securityPanel.runningAttacks") : translate("securityPanel.runRedTeam")}
             </Button>
           </div>
 
           {/* Run history */}
           <div>
             <h3 className="mb-2 text-sm font-semibold text-foreground">
-              Recent runs{" "}
+              {translate("securityPanel.recentRuns")}{" "}
               <span className="font-normal text-muted-foreground">({runs.length})</span>
             </h3>
             {runs.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border bg-card py-8 text-center text-sm text-muted-foreground">
-                No red-team runs yet.
+                {translate("securityPanel.noRedTeamRunsYet")}
               </div>
             ) : (
               <div className="space-y-2">
@@ -306,7 +303,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
             <div className="rounded-lg border border-border bg-card p-4 shadow">
               <div className="mb-3 flex items-center justify-between">
                 <h4 className="text-sm font-semibold text-foreground">
-                  Run detail ·{" "}
+                  {translate("securityPanel.runDetail")}{" "}
                   <span className="font-mono">{expandedRun.flowId}</span>
                 </h4>
                 <Button
@@ -314,7 +311,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                   size="sm"
                   onClick={() => setExpandedRun(null)}
                 >
-                  Close
+                  {translate("securityPanel.close")}
                 </Button>
               </div>
               <div className="max-h-96 space-y-1.5 overflow-auto">
@@ -346,10 +343,9 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                       </Badge>
                     </div>
                     <div className="mt-1 text-muted-foreground">
-                      {CATEGORY_LABELS[t.attackCategory] ?? t.attackCategory} ·
-                      severity {t.severity.toFixed(2)}
+                      {translate("securityPanel.valueSeverityValue2", { value: CATEGORY_LABELS[t.attackCategory] ?? t.attackCategory, value2: t.severity.toFixed(2) })}
                       {t.judgeScore !== undefined &&
-                        ` · judge ${t.judgeScore.toFixed(2)}`}
+                        translate("securityPanel.judgeValue", { value: t.judgeScore.toFixed(2) })}
                     </div>
                     {t.reasoning && (
                       <div className="mt-1 italic text-muted-foreground">
@@ -368,8 +364,7 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
       {section === "attacks" && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            These are the adversarial payloads the red-team harness fires at
-            your flows.
+            {translate("securityPanel.theseAreTheAdversarialPayloads")}
           </p>
           {attacks.map((a) => (
             <div
@@ -402,13 +397,11 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <p className="text-xs text-muted-foreground">
-              Machine-enforced rules gating tool calls by tenant, role, and
-              argument constraints. First matching rule wins; hot-reloaded on
-              save.
+              {translate("securityPanel.machineEnforcedRulesGatingTool")}
             </p>
             {onSaveToolAuthz !== undefined && !editing && (
               <Button variant="primary" size="sm" onClick={startEditing} disabled={!writeGate.allowed} title={writeGate.title}>
-                {toolAuthz?.active ? "Edit policy" : "Create policy"}
+                {toolAuthz?.active ? translate("securityPanel.editPolicy") : translate("securityPanel.createPolicy")}
               </Button>
             )}
           </div>
@@ -416,14 +409,14 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
           {editing ? (
             <div className="space-y-2">
               <p className="text-xs text-muted-foreground">
-                Edit the policy JSON. Each rule needs{" "}
+                {translate("securityPanel.editThePolicyJSONEach")}{" "}
                 <code className="font-mono">id</code>,{" "}
-                <code className="font-mono">tool</code> (exact{" "}
-                <code className="font-mono">server/tool</code> or glob{" "}
-                <code className="font-mono">server/*</code>), and{" "}
+                <code className="font-mono">tool</code> {translate("securityPanel.exact")}{" "}
+                <code className="font-mono">server/tool</code> {translate("securityPanel.orGlob")}{" "}
+                <code className="font-mono">server/*</code>{translate("securityPanel.and")}{" "}
                 <code className="font-mono">action</code> (
                 <code className="font-mono">allow</code>/
-                <code className="font-mono">deny</code>). Optional:{" "}
+                <code className="font-mono">deny</code>{translate("securityPanel.optional")}{" "}
                 <code className="font-mono">match</code>,{" "}
                 <code className="font-mono">constraints</code>,{" "}
                 <code className="font-mono">reason</code>.
@@ -445,31 +438,29 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                   disabled={saving}
                   onClick={() => void handleSave()}
                 >
-                  {saving ? "Saving…" : "Save & reload"}
+                  {saving ? translate("securityPanel.saving") : translate("securityPanel.saveReload")}
                 </Button>
                 <Button
                   variant="secondary"
                   disabled={saving}
                   onClick={() => setEditing(false)}
                 >
-                  Cancel
+                  {translate("securityPanel.cancel")}
                 </Button>
               </div>
             </div>
           ) : toolAuthz === null || !toolAuthz.active ? (
             <div className="rounded-lg border border-dashed border-border bg-card p-4 text-sm text-muted-foreground">
-              No tool-authorization policy is active. Add{" "}
-              <code className="font-mono">flows/tool-authz.json</code> to gate
-              tool calls by tenant, role, and argument constraints
-              (hot-reloaded)
+              {translate("securityPanel.noToolAuthorizationPolicyIs")}{" "}
+              <code className="font-mono">flows/tool-authz.json</code> {translate("securityPanel.toGateToolCallsBy")}
               {onSaveToolAuthz !== undefined
-                ? ", or click “Create policy” above."
+                ? translate("securityPanel.orClickCreatePolicyAbove")
                 : "."}
             </div>
           ) : (
             <>
               <p className="text-xs text-muted-foreground">
-                {toolAuthz.ruleCount} rule(s) · default action:{" "}
+                {translate("securityPanel.ruleCountRuleSDefaultAction", { ruleCount: toolAuthz.ruleCount })}{" "}
                 <span
                   className={`font-semibold ${
                     toolAuthz.defaultAction === "deny"
@@ -498,11 +489,11 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
                   <div className="mt-1 text-xs text-muted-foreground">
                     tool <span className="font-mono">{rule.tool}</span>
                     {rule.match && Object.keys(rule.match).length > 0 && (
-                      <> · match {JSON.stringify(rule.match)}</>
+                      <> {translate("securityPanel.matchValue", { value: JSON.stringify(rule.match) })}</>
                     )}
                     {rule.constraints &&
                       Object.keys(rule.constraints).length > 0 && (
-                        <> · constraints {JSON.stringify(rule.constraints)}</>
+                        <> {translate("securityPanel.constraintsValue", { value: JSON.stringify(rule.constraints) })}</>
                       )}
                   </div>
                   {rule.reason && (
@@ -522,18 +513,17 @@ export function SecurityPanel(props: SecurityPanelProps): React.JSX.Element {
         <div className="space-y-3">
           <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
             <p className="text-sm text-foreground">
-              Every published flow is callable as an MCP tool at:
+              {translate("securityPanel.everyPublishedFlowIsCallable")}
             </p>
             <code className="mt-1 block rounded bg-muted px-3 py-2 font-mono text-sm text-success">
               POST {mcp.endpoint}
             </code>
             <p className="mt-2 text-xs text-muted-foreground">
-              Transport: {mcp.transport}. Authenticate with the same Bearer
-              token as /v1/chat.
+              {translate("securityPanel.transportTransportAuthenticateWithThe", { transport: mcp.transport })}
             </p>
           </div>
           <h3 className="text-sm font-semibold text-foreground">
-            Exposed flow tools{" "}
+            {translate("securityPanel.exposedFlowTools")}{" "}
             <span className="font-normal text-muted-foreground">
               ({mcp.flows.length})
             </span>

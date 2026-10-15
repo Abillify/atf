@@ -34,6 +34,7 @@ import { useApprovals } from "../../../hooks/useApprovals";
 import { useFlows } from "../../../hooks/useFlows";
 import { useExecutionScoping } from "../../../hooks/useExecutionScoping";
 import { useFlowTopology } from "../../../hooks/useFlowTopology";
+import { translate } from "../../../lib/i18n";
 
 // Heavy visualisation panel — loaded client-side only to keep the initial
 // bundle lean (Req. 12.3).
@@ -206,17 +207,17 @@ export default function GraphPage() {
             }`}
           />
           <span className={isConnected ? "text-success" : "text-danger"}>
-            {isConnected ? "Connected" : "Disconnected"}
+            {isConnected ? translate("graph.connected") : translate("graph.disconnected")}
           </span>
           {error && <span className="text-xs text-danger">{error}</span>}
           {studioHref !== null && (
             <Link
               href={studioHref}
               className="ml-auto inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-2.5 py-1 text-xs font-medium text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              title="Open this request in the Studio's Run & Trace, as if it had been started there — trace it on the canvas and pin it as sample data"
+              title={translate("graph.openThisRequestInThe")}
             >
               <Workflow size={14} aria-hidden />
-              Open in Studio
+              {translate("graph.openInStudio")}
             </Link>
           )}
         </div>
@@ -227,21 +228,21 @@ export default function GraphPage() {
           <div className="flex h-full items-center justify-center">
             <EmptyState
               icon={Workflow}
-              title="No execution events yet."
-              description="Send a chat request to watch it flow through the graph node by node — or set up a provider first if none is configured yet."
+              title={translate("graph.noExecutionEventsYet")}
+              description={translate("graph.sendAChatRequestTo")}
               action={
                 <>
                   <Link
                     href="/studio"
                     className="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-foreground shadow-sm hover:bg-accent/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    Open Studio
+                    {translate("graph.openStudio")}
                   </Link>
                   <Link
                     href="/providers"
                     className="inline-flex items-center gap-1.5 rounded-md border border-border bg-card px-3 py-1.5 text-xs font-medium text-foreground shadow-sm hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   >
-                    Configure providers
+                    {translate("graph.configureProviders")}
                   </Link>
                 </>
               }
@@ -249,7 +250,7 @@ export default function GraphPage() {
           </div>
         ) : scoping.displayEvents.length === 0 ? (
           <div className="flex h-full items-center justify-center text-muted-foreground">
-            <p>No events for this execution.</p>
+            <p>{translate("graph.noEventsForThisExecution")}</p>
           </div>
         ) : (
           <div className="flex-1 overflow-hidden rounded-lg border border-border bg-card shadow-sm">
@@ -278,7 +279,7 @@ export default function GraphPage() {
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
-            Details
+            {translate("graph.details")}
           </button>
           <button type="button"
             onClick={() => setSidebarTab("metrics")}
@@ -288,7 +289,7 @@ export default function GraphPage() {
                 : "text-muted-foreground hover:bg-muted hover:text-foreground"
             }`}
           >
-            Live Metrics
+            {translate("graph.liveMetrics")}
           </button>
         </div>
 
@@ -320,7 +321,7 @@ export default function GraphPage() {
             ) : (
               <div className="flex h-full items-center justify-center text-muted-foreground p-4">
                 <p className="text-sm text-center">
-                  Click a node in the graph to view its details.
+                  {translate("graph.clickANodeInThe")}
                 </p>
               </div>
             )

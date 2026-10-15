@@ -7,6 +7,7 @@
 
 import type React from "react";
 import type { FormulaKind } from "../../lib/formula";
+import { translate } from "../../lib/i18n";
 
 const EXAMPLES: Record<FormulaKind, string[]> = {
   condition: [
@@ -46,13 +47,13 @@ export function BuilderHelp({
   return (
     <div className="space-y-2 text-[11px]">
       <div>
-        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Examples</p>
+        <p className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{translate("builderHelp.examples")}</p>
         <div className="flex flex-wrap gap-1">
           {EXAMPLES[kind].map((ex) => (
             <button
               type="button"
               key={ex}
-              title="Insert this example"
+              title={translate("builderHelp.insertThisSample")}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => onInsert(ex)}
               className="rounded bg-muted px-1.5 py-0.5 text-left font-mono text-[10px] hover:bg-muted/70"
@@ -64,33 +65,33 @@ export function BuilderHelp({
       </div>
       {kind === "condition" ? (
         <details className="rounded border border-border p-2">
-          <summary className="cursor-pointer font-medium">How conditions work</summary>
+          <summary className="cursor-pointer font-medium">{translate("builderHelp.howConditionsWork")}</summary>
           <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
-            <li>Names read the run state: classification fields, node results, user and request data, run state (see the tree).</li>
-            <li>Text in single quotes: <code>route == 'RETOURE'</code>. Combine with <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> and parentheses.</li>
-            <li><code>=~</code> is a case-insensitive regex match; <code>.includes()</code>, <code>.startsWith()</code>, <code>.endsWith()</code>, <code>.length</code> work on text and lists.</li>
-            <li>Flow variables and constants are replaced textually when the flow loads — quote text: <code>'{"{{vars.x}}"}'</code>.</li>
-            <li>An empty condition means: always follow this edge.</li>
+            <li>{translate("builderHelp.namesReadTheRunState")}</li>
+            <li>{translate("builderHelp.textInSingleQuotes")} <code>route == 'RETOURE'</code>{translate("builderHelp.combineWith")} <code>&amp;&amp;</code>, <code>||</code>, <code>!</code> {translate("builderHelp.andParentheses")}</li>
+            <li><code>=~</code> {translate("builderHelp.isACaseInsensitiveRegex")} <code>.includes()</code>, <code>.startsWith()</code>, <code>.endsWith()</code>, <code>.length</code> {translate("builderHelp.workOnTextAndLists")}</li>
+            <li>{translate("builderHelp.flowVariablesAndConstantsAre")} <code>'{"{{vars.x}}"}'</code>.</li>
+            <li>{translate("builderHelp.anEmptyConditionMeansAlways")}</li>
           </ul>
         </details>
       ) : (
         calculations && (
           <details className="rounded border border-border p-2">
-            <summary className="cursor-pointer font-medium">How calculations work</summary>
+            <summary className="cursor-pointer font-medium">{translate("builderHelp.howCalculationsWork")}</summary>
             <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted-foreground">
               <li>
-                Wrap a calculation in <code>{"{{= … }}"}</code>, e.g. <code>{"{{= round(vars.max_tokens / 2) }}"}</code>.
+                {translate("builderHelp.wrapACalculationIn")} <code>{"{{= … }}"}</code>, e.g. <code>{"{{= round(vars.max_tokens / 2) }}"}</code>.
               </li>
               <li>
-                Inside it, write references without braces: <code>vars.x</code>, <code>const.y</code>, <code>env.FLOW_PUBLIC_Z</code>; text in single quotes.
+                {translate("builderHelp.insideItWriteReferencesWithout")} <code>vars.x</code>, <code>const.y</code>, <code>env.FLOW_PUBLIC_Z</code>{translate("builderHelp.textInSingleQuotes2")}
               </li>
               <li>
-                Operators: <code>+ - * / %</code> (<code>+</code> joins text), comparisons, <code>&amp;&amp; || !</code>, and <code>a ? b : c</code>.
+                {translate("builderHelp.operators")} <code>+ - * / %</code> (<code>+</code> {translate("builderHelp.joinsTextComparisons")} <code>&amp;&amp; || !</code>{translate("builderHelp.and")} <code>a ? b : c</code>.
               </li>
               <li>
-                Evaluated once when the flow loads — it cannot read run-time values such as <code>context.*</code> or <code>classification.*</code>.
+                {translate("builderHelp.evaluatedOnceWhenTheFlow")} <code>context.*</code> or <code>classification.*</code>.
               </li>
-              <li>If the whole field is one calculation, the result keeps its type (a number stays a number).</li>
+              <li>{translate("builderHelp.ifTheWholeFieldIs")}</li>
             </ul>
             {functions.length > 0 && (
               <table className="mt-2 w-full text-[10px]">
@@ -100,7 +101,7 @@ export function BuilderHelp({
                       <td className="py-0.5 pr-2">
                         <button
                           type="button"
-                          title="Insert"
+                          title={translate("builderHelp.insert")}
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => onInsertFunction(fn.text)}
                           className="font-mono text-primary hover:underline"

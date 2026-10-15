@@ -5,6 +5,7 @@
 import type React from "react";
 import type { CanaryStatusEntry, CanaryStats } from "../types/control";
 import { Badge } from "../lib/ui";
+import { translate } from "../lib/i18n";
 
 export interface CanaryPanelProps {
   deployments: CanaryStatusEntry[];
@@ -39,15 +40,15 @@ function VariantStats({
       </div>
       <dl className="mt-1.5 space-y-0.5 text-xs text-muted-foreground">
         <div className="flex justify-between">
-          <dt>Samples</dt>
+          <dt>{translate("canaryPanel.samples")}</dt>
           <dd className="tabular-nums">{stats.samples}</dd>
         </div>
         <div className="flex justify-between">
-          <dt>Error rate</dt>
+          <dt>{translate("canaryPanel.errorRate")}</dt>
           <dd className="tabular-nums">{errorRate(stats).toFixed(1)}%</dd>
         </div>
         <div className="flex justify-between">
-          <dt>Mean score</dt>
+          <dt>{translate("canaryPanel.meanScore")}</dt>
           <dd className="tabular-nums">
             {score === null ? "—" : score.toFixed(3)}
           </dd>
@@ -70,7 +71,7 @@ export function CanaryPanel({
     <section className="space-y-4">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">
-          Canary rollouts{" "}
+          {translate("canaryPanel.canaryRollouts")}{" "}
           <span className="font-normal text-muted-foreground">
             ({deployments.length})
           </span>
@@ -79,15 +80,14 @@ export function CanaryPanel({
       </div>
 
       {isLoading && deployments.length === 0 ? (
-        <p className="py-10 text-center text-sm text-muted-foreground">Loading…</p>
+        <p className="py-10 text-center text-sm text-muted-foreground">{translate("canaryPanel.loading")}</p>
       ) : deployments.length === 0 ? (
         <div className="flex flex-col items-center justify-center rounded-lg border border-dashed border-border bg-card py-12 text-center">
           <p className="text-sm text-muted-foreground">
-            No canary deployments configured.
+            {translate("canaryPanel.noCanaryDeploymentsConfigured")}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Add <span className="font-mono">flows/canary.json</span> to roll out
-            a candidate flow.
+            {translate("canaryPanel.add")} <span className="font-mono">flows/canary.json</span> {translate("canaryPanel.toRollOutACandidate")}
           </p>
         </div>
       ) : (
@@ -109,10 +109,10 @@ export function CanaryPanel({
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge variant="secondary">
-                    {d.rolledBack ? "0" : d.trafficPercent}% canary
+                    {translate("canaryPanel.valueCanary", { value: d.rolledBack ? "0" : d.trafficPercent })}
                   </Badge>
                   {d.rolledBack ? (
-                    <Badge variant="destructive">rolled back</Badge>
+                    <Badge variant="destructive">{translate("canaryPanel.rolledBack")}</Badge>
                   ) : (
                     <Badge variant="success">active</Badge>
                   )}
@@ -120,12 +120,12 @@ export function CanaryPanel({
               </div>
               <div className="mt-3 flex gap-3">
                 <VariantStats
-                  label="Stable"
+                  label={translate("canaryPanel.stable")}
                   stats={d.stable}
                   accent="text-muted-foreground"
                 />
                 <VariantStats
-                  label="Candidate"
+                  label={translate("canaryPanel.candidate")}
                   stats={d.canary}
                   accent="text-info"
                 />

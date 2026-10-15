@@ -33,7 +33,7 @@ import { Badge, Button, Tabs, TabsList, TabsTrigger } from "../../../lib/ui";
 import type { BadgeVariant } from "../../../lib/ui";
 import type { NodeExecutionEvent, NodeToolCall } from "../../../types/monitoring";
 import type { PendingApproval, ResolvedApproval } from "../../../types/control";
-import { formatTime } from "../../../lib/i18n";
+import { translate, formatTime } from "../../../lib/i18n";
 
 // Heavy detail panel — loaded client-side only.
 const ExplainCard = dynamic(
@@ -164,12 +164,12 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
       return (
         <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 rounded-full bg-warning-soft px-2 py-0.5 text-[11px] font-semibold text-warning">
-            ⏱ auto-closed
+            {translate("traces.autoClosed")}
           </span>
           {waitMs !== null && waitMs >= 0 && (
             <span
               className="text-[11px] text-muted-foreground"
-              title="Time until timeout auto-deny"
+              title={translate("traces.timeUntilTimeoutAutoDeny")}
             >
               after {formatWait(waitMs)}
             </span>
@@ -182,7 +182,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
       return (
         <span className="inline-flex flex-wrap items-center gap-1.5">
           <span className="inline-flex items-center gap-1 rounded-full bg-success-soft px-2 py-0.5 text-[11px] font-semibold text-success">
-            ✓ approved
+            {translate("traces.approved")}
           </span>
           {resolved.by !== undefined && (
             <span className="text-[11px] text-muted-foreground">
@@ -192,7 +192,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
           {waitMs !== null && waitMs >= 0 && (
             <span
               className="text-[11px] text-muted-foreground"
-              title="Time from request to decision"
+              title={translate("traces.timeFromRequestToDecision")}
             >
               in {formatWait(waitMs)}
             </span>
@@ -205,7 +205,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
     return (
       <span className="inline-flex flex-wrap items-center gap-1.5">
         <span className="inline-flex items-center gap-1 rounded-full bg-danger-soft px-2 py-0.5 text-[11px] font-semibold text-danger">
-          ✕ denied
+          {translate("traces.denied")}
         </span>
         {resolved.by !== undefined && (
           <span className="text-[11px] text-muted-foreground">
@@ -215,7 +215,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
         {waitMs !== null && waitMs >= 0 && (
           <span
             className="text-[11px] text-muted-foreground"
-            title="Time from request to decision"
+            title={translate("traces.timeFromRequestToDecision")}
           >
             in {formatWait(waitMs)}
           </span>
@@ -227,7 +227,7 @@ function ApprovalOutcomeBadge({ resolved, pending }: ApprovalOutcomeBadgeProps) 
   // Still pending (unlikely in a completed trace, but possible for in-flight ones)
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-accent/20 px-2 py-0.5 text-[11px] font-semibold text-accent animate-pulse">
-      ⏳ awaiting approval
+      {translate("traces.awaitingApproval")}
     </span>
   );
 }
@@ -384,7 +384,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
   const sections: Array<{ label: string; content: string; expandable?: boolean; expanded?: boolean; toggle?: () => void }> = [];
   if (event.prompt) {
     sections.push({
-      label: "System Prompt / Input",
+      label: translate("traces.systemPromptInput"),
       content: event.prompt,
       expandable: true,
       expanded: expandPrompt,
@@ -393,7 +393,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
   }
   if (event.response) {
     sections.push({
-      label: "Model Response",
+      label: translate("traces.modelResponse"),
       content: event.response,
       expandable: true,
       expanded: expandResponse,
@@ -401,7 +401,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
     });
   }
   if (event.error_message) {
-    sections.push({ label: "Error", content: event.error_message });
+    sections.push({ label: translate("traces.error"), content: event.error_message });
   }
 
   return (
@@ -452,7 +452,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
       {nodeApprovals.length > 0 && (
         <div className="rounded-md border border-accent/20 bg-accent/5 px-3 py-2">
           <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-accent">
-            Approvals ({nodeApprovals.length})
+            {translate("traces.approvalsLength", { length: nodeApprovals.length })}
           </div>
           <div className="space-y-1.5">
             {nodeApprovals.map((a) => {
@@ -498,20 +498,20 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
                   <ApprovalOutcomeBadge resolved={resolved} pending={pending} />
                   {neverExecuted && (
                     <span className="text-[11px] italic text-muted-foreground">
-                      tool not executed
+                      {translate("traces.toolNotExecuted")}
                     </span>
                   )}
                   {requestedAt && (
                     <span
                       className="text-[11px] text-muted-foreground"
-                      title="When approval was requested"
+                      title={translate("traces.whenApprovalWasRequested")}
                     >
                       requested {formatTime(requestedAt)}
                     </span>
                   )}
                   {waitMs !== null && waitMs >= 0 && (
                     <span className="text-[11px] text-muted-foreground">
-                      · wait {formatWait(waitMs)}
+                      {translate("traces.waitValue", { value: formatWait(waitMs) })}
                     </span>
                   )}
                 </div>
@@ -532,7 +532,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
             className="flex w-full items-center justify-between px-3 py-2 text-left text-xs font-semibold text-muted-foreground hover:bg-muted"
             onClick={sec.toggle}
             aria-expanded={sec.expandable ? sec.expanded : undefined}
-            aria-label={`Toggle ${sec.label}`}
+            aria-label={translate("traces.toggleLabel", { label: sec.label })}
           >
             <span>{sec.label}</span>
             {sec.expandable && (
@@ -553,7 +553,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
       {event.tool_calls && event.tool_calls.length > 0 && (
         <div className="rounded-md border border-accent/20 bg-card">
           <div className="border-b border-accent/20 px-3 py-2 text-xs font-semibold text-accent">
-            Tool Calls ({event.tool_calls.length})
+            {translate("traces.toolCallsLength", { length: event.tool_calls.length })}
           </div>
           <div className="divide-y divide-border">
             {event.tool_calls.map((tc: NodeToolCall) => {
@@ -597,7 +597,7 @@ function NodeIOPanel({ event, resolvedApprovals, pendingApprovals }: NodeIOPanel
       {event.routing_decision && (
         <div className="rounded-md border border-warning-border bg-card">
           <div className="border-b border-warning-border px-3 py-2 text-xs font-semibold text-warning">
-            Routing Decision → {event.routing_decision.target ?? "end"}
+            {translate("traces.routingDecision")} {event.routing_decision.target ?? "end"}
           </div>
           <div className="divide-y divide-border">
             {event.routing_decision.candidates?.map((c, i) => (
@@ -867,7 +867,7 @@ export default function TracesPage() {
   return (
     <div className="flex h-full flex-col p-4 sm:p-6">
       <h1 className="mb-4 text-xl font-semibold text-foreground">
-        Execution Trace Viewer
+        {translate("traces.executionTraceViewer")}
       </h1>
 
       {/* Lookup bar */}
@@ -876,19 +876,19 @@ export default function TracesPage() {
           type="text"
           value={executionId}
           onChange={(e) => setExecutionId(e.target.value)}
-          placeholder="Execution ID…"
+          placeholder={translate("traces.executionID")}
           className="flex-1 rounded-md border border-border px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onKeyDown={(e) => {
             if (e.key === "Enter") handleSubmit();
           }}
-          aria-label="Execution ID"
+          aria-label={translate("traces.executionID2")}
         />
         <Button
           variant="primary"
           onClick={handleSubmit}
           disabled={!executionId.trim()}
         >
-          Load
+          {translate("traces.load")}
         </Button>
       </div>
 
@@ -904,12 +904,12 @@ export default function TracesPage() {
               (t) => (
                 <TabsTrigger key={t} value={t}>
                   {t === "steps"
-                    ? "Step-by-Step"
+                    ? translate("traces.stepByStep")
                     : t === "waterfall"
-                      ? "Span Waterfall"
+                      ? translate("traces.spanWaterfall")
                       : t === "explain"
-                        ? "Explain"
-                        : "Receipts"}
+                        ? translate("traces.explain")
+                        : translate("traces.receipts")}
                 </TabsTrigger>
               ),
             )}
@@ -920,9 +920,9 @@ export default function TracesPage() {
       {/* Idle state */}
       {!submittedId && (
         <div className="rounded-lg border border-dashed border-border bg-card py-12 text-center text-muted-foreground">
-          Enter an execution ID to inspect its trace.
+          {translate("traces.enterAnExecutionIDTo")}
           <div className="mt-2 text-xs text-muted-foreground">
-            Find execution IDs in the History tab or the Live Graph view.
+            {translate("traces.findExecutionIDsInThe")}
           </div>
         </div>
       )}
@@ -934,7 +934,7 @@ export default function TracesPage() {
           aria-busy="true"
         >
           <div className="h-4 w-4 animate-spin rounded-full border-2 border-accent border-t-transparent" />
-          Loading trace…
+          {translate("traces.loadingTrace")}
         </div>
       )}
 
@@ -946,13 +946,13 @@ export default function TracesPage() {
               role="alert"
               className="rounded-md bg-danger-soft p-3 text-sm text-danger"
             >
-              Failed to load events: {eventsError.message}
+              {translate("traces.failedToLoadEventsMessage", { message: eventsError.message })}
             </div>
           )}
 
           {!eventsError && sortedEvents.length === 0 && (
             <div className="rounded-lg border border-border bg-card py-10 text-center text-sm text-muted-foreground">
-              No events found for this execution.
+              {translate("traces.noEventsFoundForThis")}
             </div>
           )}
 
@@ -985,7 +985,7 @@ export default function TracesPage() {
                         </h2>
                         <div className="mt-0.5 font-mono text-xs text-muted-foreground">
                           {activeEvent.node_id}
-                          {activeEvent.kind === "tool" && " (tool)"}
+                          {activeEvent.kind === "tool" && translate("traces.tool")}
                         </div>
                       </div>
                       <StatusBadge status={activeEvent.status} />
@@ -1011,9 +1011,9 @@ export default function TracesPage() {
                         size="sm"
                         onClick={() => setActiveStep((s) => Math.max(0, s - 1))}
                         disabled={activeStep === 0}
-                        aria-label="Previous step"
+                        aria-label={translate("traces.previousStep")}
                       >
-                        ← Prev
+                        {translate("traces.prev")}
                       </Button>
                       <span className="text-xs text-muted-foreground">
                         {activeStep + 1} / {sortedEvents.length}
@@ -1027,9 +1027,9 @@ export default function TracesPage() {
                           )
                         }
                         disabled={activeStep === sortedEvents.length - 1}
-                        aria-label="Next step"
+                        aria-label={translate("traces.nextStep")}
                       >
-                        Next →
+                        {translate("traces.next")}
                       </Button>
                     </div>
                   </>
@@ -1048,27 +1048,26 @@ export default function TracesPage() {
               role="alert"
               className="rounded-md bg-warning-soft p-3 text-sm text-warning"
             >
-              OTel spans unavailable: {spansError.message}.
+              {translate("traces.oTelSpansUnavailableMessage", { message: spansError.message })}
               <span className="ml-1 text-warning">
-                Ensure TRACING_ENABLED=true and OTEL_EXPORTER_OTLP_ENDPOINT is
-                configured.
+                {translate("traces.ensureTRACINGENABLEDTrueAnd")}
               </span>
             </div>
           )}
           {!spansError && sortedSpans.length === 0 && (
             <div className="rounded-lg border border-border bg-card py-10 text-center text-sm text-muted-foreground">
-              No OTel spans found for this execution.
+              {translate("traces.noOTelSpansFoundFor")}
             </div>
           )}
           {sortedSpans.length > 0 && (
             <div className="rounded-lg border border-border bg-card p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between text-xs text-muted-foreground">
                 <span>
-                  Execution: <code className="font-mono">{submittedId}</code>
+                  {translate("traces.execution")} <code className="font-mono">{submittedId}</code>
                 </span>
                 <span>
                   {sortedSpans.length} span{sortedSpans.length !== 1 ? "s" : ""}{" "}
-                  · {totalDuration} ms total
+                  {translate("traces.totalDurationMsTotal", { totalDuration })}
                 </span>
               </div>
               <div className="divide-y divide-border">

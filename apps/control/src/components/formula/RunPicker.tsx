@@ -14,7 +14,7 @@ import {
   type RunSummary,
 } from "../../lib/run-samples";
 import type { RunsContext } from "./FormulaContext";
-import { formatDateTime } from "../../lib/i18n";
+import { translate, formatDateTime } from "../../lib/i18n";
 
 /** Pick a recorded run of the flow whose values fill the previews (📌 pinned). */
 export function RunPicker({ runs, className = "ml-4" }: { runs: RunsContext; className?: string }): React.JSX.Element {
@@ -69,17 +69,17 @@ export function RunPicker({ runs, className = "ml-4" }: { runs: RunsContext; cla
   }
   return (
     <div className={`${className} flex min-w-0 items-center gap-1.5 text-[11px]`}>
-      <span className="shrink-0 text-muted-foreground" title="Values of a recorded run fill the previews and the tree">
-        📌 Sample data
+      <span className="shrink-0 text-muted-foreground" title={translate("runPicker.valuesOfARecordedRun")}>
+        {translate("runPicker.sampleData")}
       </span>
       <select
-        aria-label="Pinned run"
+        aria-label={translate("runPicker.pinnedRun")}
         value={pinned?.executionId ?? ""}
         disabled={busy}
         onChange={(e) => choose(e.target.value)}
         className="min-w-0 max-w-[26rem] truncate rounded border border-border bg-background px-1.5 py-0.5 text-[11px]"
       >
-        <option value="">— none (example values) —</option>
+        <option value="">{translate("runPicker.noneSampleValues")}</option>
         {options.map((r) => (
           <option key={r.execution_id} value={r.execution_id}>
             {label(r)}
@@ -89,13 +89,13 @@ export function RunPicker({ runs, className = "ml-4" }: { runs: RunsContext; cla
       <button
         type="button"
         onClick={load}
-        title="Reload the list of runs (run the flow in Run & Trace to add one)"
+        title={translate("runPicker.reloadTheListOfRuns")}
         className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
       >
         ↻
       </button>
       {list !== null && list.length === 0 && !pinned && (
-        <span className="text-muted-foreground">No runs yet — run the flow in Run &amp; Trace.</span>
+        <span className="text-muted-foreground">{translate("runPicker.noRunsYetRunThe")}</span>
       )}
       {error && <span role="alert" className="truncate text-danger">{error}</span>}
     </div>

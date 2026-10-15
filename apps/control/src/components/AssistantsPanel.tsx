@@ -33,6 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../lib/ui";
 import { AssistantsEstatePanel } from "./assistants/AssistantsEstatePanel";
 import { RevocationConsole } from "./assistants/RevocationConsole";
 import { SkillRegistryConsole } from "./assistants/SkillRegistryConsole";
+import { translate } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Top-level export — Estate + Revocation Console tabs
@@ -54,9 +55,9 @@ export function AssistantsPanel(): React.JSX.Element {
       onValueChange={(v) => setTab(v as "estate" | "revocation" | "skill-registry")}
     >
       <TabsList className="mb-4">
-        <TabsTrigger value="estate">Estate</TabsTrigger>
-        <TabsTrigger value="revocation">Revocation Console</TabsTrigger>
-        <TabsTrigger value="skill-registry">Skill Registry</TabsTrigger>
+        <TabsTrigger value="estate">{translate("assistantsPanel.estate")}</TabsTrigger>
+        <TabsTrigger value="revocation">{translate("assistantsPanel.revocationConsole")}</TabsTrigger>
+        <TabsTrigger value="skill-registry">{translate("assistantsPanel.skillRegistry")}</TabsTrigger>
       </TabsList>
       <TabsContent value="estate">
         <AssistantsEstatePanel />

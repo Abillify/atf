@@ -13,6 +13,7 @@ import type React from "react";
 import type { FlowNode, Provider } from "../../types/flow";
 import { FormulaInput } from "../FormulaEditor";
 import { Field, inputCls } from "../form-controls";
+import { translate } from "../../lib/i18n";
 
 const PROVIDERS: Provider[] = [
   "openai",
@@ -82,23 +83,23 @@ export function ModelSourceFields({
 
   return (
     <div className="space-y-2">
-      <div role="tablist" aria-label="Model source" className="flex overflow-hidden rounded border border-border">
+      <div role="tablist" aria-label={translate("modelSourceFields.modelSource")} className="flex overflow-hidden rounded border border-border">
         {tab("shortcut", "Shortcut", "A named preset from flows/model-shortcuts.yaml (provider, model and parameters)")}
         {tab("explicit", "Provider + model", "Name the provider and model directly")}
       </div>
       {mode === "shortcut" ? (
         <Field
-          label="Shortcut"
-          hint="A name from flows/model-shortcuts.yaml or {{vars.…}}. It sets provider, model and the preset's parameters; parameters below override the preset's."
+          label={translate("modelSourceFields.shortcut")}
+          hint={translate("modelSourceFields.aNameFromFlowsModel")}
         >
           <FormulaInput
             kind="vars"
             replace
-            ariaLabel="Shortcut"
-            title="Model shortcut"
+            ariaLabel={translate("modelSourceFields.shortcut")}
+            title={translate("modelSourceFields.modelShortcut")}
             className={`${inputCls} font-mono text-xs`}
             value={llm?.shortcut ?? ""}
-            placeholder="e.g. fast-pool or {{vars.model_main}}"
+            placeholder={translate("modelSourceFields.eGFastPoolOr")}
             list={`shortcuts-${node.id}`}
             onFocus={() => onFocusField?.("llm.shortcut")}
             onChange={(v) => setLlm({ shortcut: v || undefined })}
@@ -113,11 +114,11 @@ export function ModelSourceFields({
         </Field>
       ) : (
         <div className="flex gap-2">
-          <Field label="Provider">
+          <Field label={translate("modelSourceFields.provider")}>
             <FormulaInput
               kind="vars"
               replace
-              ariaLabel="Provider"
+              ariaLabel={translate("modelSourceFields.provider")}
               className={inputCls}
               list="studio-provider-options"
               value={llm?.provider ?? ""}
@@ -130,11 +131,11 @@ export function ModelSourceFields({
               ))}
             </datalist>
           </Field>
-          <Field label="Model">
+          <Field label={translate("modelSourceFields.model")}>
             <FormulaInput
               kind="vars"
               replace
-              ariaLabel="Model"
+              ariaLabel={translate("modelSourceFields.model")}
               className={inputCls}
               value={llm?.model ?? ""}
               onFocus={() => onFocusField?.("llm.model")}
@@ -146,15 +147,14 @@ export function ModelSourceFields({
       {mode === "shortcut" && hasExplicit && (
         <p role="alert" className="flex items-start gap-2 text-[11px] text-warning">
           <span>
-            This node also sets provider/model ({[llm?.provider, llm?.model].filter(Boolean).join(" · ")}), which the
-            shortcut overwrites.
+            {translate("modelSourceFields.thisNodeAlsoSetsProvider", { value: [llm?.provider, llm?.model].filter(Boolean).join(" · ") })}
           </span>
           <button
             type="button"
             onClick={() => setLlm({ provider: undefined, model: undefined })}
             className="shrink-0 rounded border border-border px-1.5 py-0.5 text-foreground hover:bg-muted"
           >
-            Remove
+            {translate("modelSourceFields.remove")}
           </button>
         </p>
       )}

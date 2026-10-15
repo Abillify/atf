@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Eval route (Req. 13.5).
@@ -11,7 +12,7 @@ export default function EvalLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading eval cases"
+      aria-label={translate("eval.loadingEvalCases")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-44" height="h-6" />

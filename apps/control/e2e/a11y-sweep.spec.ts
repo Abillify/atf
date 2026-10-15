@@ -11,29 +11,10 @@
  * brittle to lower-severity, content-dependent findings.)
  */
 
-import { existsSync, readdirSync } from "node:fs";
-import { dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
+import { DASHBOARD_ROUTES as ROUTES } from "./helpers/dashboard-routes";
 import { mockBackend, setTestToken } from "./helpers/mock-backend";
-
-/**
- * Every dashboard page, read from the app directory so the sweep cannot drift
- * from the routes that actually ship (a hard-coded list kept scanning a
- * removed page — its 404 also has a <main>, so the check passed silently).
- */
-const DASHBOARD_DIR = join(
-  dirname(fileURLToPath(import.meta.url)),
-  "..",
-  "src",
-  "app",
-  "(dashboard)",
-);
-const ROUTES = readdirSync(DASHBOARD_DIR, { withFileTypes: true })
-  .filter((entry) => entry.isDirectory() && existsSync(join(DASHBOARD_DIR, entry.name, "page.tsx")))
-  .map((entry) => `/${entry.name}`)
-  .sort();
 
 test.describe("Full-page a11y sweep", () => {
   test.beforeEach(async ({ page }) => {

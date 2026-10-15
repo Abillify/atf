@@ -18,6 +18,7 @@ import type React from "react";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { ChevronDown, GitBranch, Search } from "lucide-react";
 import { sortFlowsByName } from "../lib/flow-sort";
+import { translate } from "../lib/i18n";
 
 /** One selectable endpoint: a flow (published/file) or one of its drafts. */
 export interface FlowEndpoint {
@@ -198,7 +199,7 @@ export function FlowEndpointPicker({
             <span className="text-muted-foreground">{placeholder}</span>
           )}
         </span>
-        {loading && <span className="text-muted-foreground">loading…</span>}
+        {loading && <span className="text-muted-foreground">{translate("flowEndpointPicker.loading")}</span>}
         <ChevronDown size={13} aria-hidden className="shrink-0 text-muted-foreground" />
       </button>
 
@@ -227,8 +228,8 @@ export function FlowEndpointPicker({
                   setOpen(false);
                 }
               }}
-              placeholder={`Search ${flows.length} flows by name or id…`}
-              aria-label={`${ariaLabel}: search flows`}
+              placeholder={translate("flowEndpointPicker.searchLengthFlowsByName", { length: flows.length })}
+              aria-label={translate("flowEndpointPicker.ariaLabelSearchFlows", { ariaLabel })}
               role="combobox"
               aria-expanded
               aria-controls={listId}
@@ -284,7 +285,7 @@ export function FlowEndpointPicker({
             ))}
             {options.length === 0 && query && (
               <p className="px-2 py-2 text-xs text-muted-foreground">
-                No flow matches “{query}”.
+                {translate("flowEndpointPicker.noFlowMatchesQuery", { query })}
               </p>
             )}
           </div>

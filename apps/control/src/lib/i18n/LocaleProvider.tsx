@@ -46,13 +46,31 @@ import {
 
 const CATALOGS: Record<Locale, Record<MessageKey, string>> = { en, de };
 
+/** Values for `{name}` placeholders in a message. */
+export type MessageParams = Record<string, string | number | boolean | null | undefined>;
+
+/**
+ * Fills `{name}` placeholders. A missing value leaves the placeholder visible
+ * rather than rendering "undefined", so a wrong call site is noticed.
+ */
+export function interpolate(message: string, params?: MessageParams): string {
+  if (params === undefined) return message;
+  return message.replace(/\{(\w+)\}/g, (match, name: string) => {
+    const value = params[name];
+    return value === undefined || value === null ? match : String(value);
+  });
+}
+
 export interface LocaleContextValue {
   /** Active UI language. */
   locale: Locale;
   /** Sets the language, persists it in the cookie and updates `lang`. */
   setLocale: (locale: Locale) => void;
-  /** Translates a catalog key into the active language. */
-  t: (key: MessageKey) => string;
+  /**
+   * Translates a catalog key into the active language; `{name}` placeholders
+   * in the message are filled from `params`.
+   */
+  t: (key: MessageKey, params?: MessageParams) => string;
   /** Locale-aware number/date/currency formatters. */
   formatters: Formatters;
 }
@@ -108,7 +126,8 @@ export function LocaleProvider({
     return {
       locale,
       setLocale,
-      t: (key: MessageKey) => catalog[key] ?? en[key] ?? key,
+      t: (key: MessageKey, params?: MessageParams) =>
+        interpolate(catalog[key] ?? en[key] ?? key, params),
       formatters: createFormatters(locale),
     };
   }, [locale, setLocale]);
@@ -131,8 +150,8 @@ export function LocaleProvider({
  * outside a provider in tests. A language switch remounts the tree under the
  * provider (see `key={locale}` above), so callers pick up the new language.
  */
-export function translate(key: MessageKey): string {
-  return CATALOGS[getActiveLocale()][key] ?? en[key] ?? key;
+export function translate(key: MessageKey, params?: MessageParams): string {
+  return interpolate(CATALOGS[getActiveLocale()][key] ?? en[key] ?? key, params);
 }
 
 /** Access to the language, `t()` and formatters. Throws without a provider. */

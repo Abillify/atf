@@ -16,6 +16,7 @@ import { backendUrl } from "../../lib/backend-url";
 import { authFetch } from "../../lib/auth-fetch";
 import { Badge, Button } from "../../lib/ui";
 import { PAGE_SIZE, readJson } from "./assistantShared";
+import { translate } from "../../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Org Skill Registry — cross-tenant browse + deprecate
@@ -121,23 +122,18 @@ export function SkillRegistryConsole(): React.JSX.Element {
   return (
     <div className="flex flex-col gap-3">
       <p className="text-xs text-muted-foreground">
-        The tenant-wide catalog of learned skills a user published from their
-        own assistant for reuse by others. Installing a catalog entry never
-        writes a live skill directly — it creates an ordinary proposal in the
-        installing assistant&apos;s own queue, re-scanned and subject to that
-        assistant&apos;s own consent path exactly like a self-learned
-        proposal.
+        {translate("skillRegistryConsole.theTenantWideCatalogOf")}
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <input
           className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground"
-          placeholder="Tenant id…"
+          placeholder={translate("skillRegistryConsole.tenantId")}
           value={tenantId}
           onChange={(event) => {
             setTenantId(event.target.value);
             setOffset(0);
           }}
-          aria-label="Tenant id to browse"
+          aria-label={translate("skillRegistryConsole.tenantIdToBrowse")}
         />
         <Button
           size="sm"
@@ -173,17 +169,17 @@ export function SkillRegistryConsole(): React.JSX.Element {
 
       {tenantId.trim() === "" && (
         <div className="rounded-lg border border-dashed border-border py-10 text-center text-xs text-muted-foreground">
-          Enter a tenant id to browse its skill catalog.
+          {translate("skillRegistryConsole.enterATenantIdTo")}
         </div>
       )}
       {isLoading && (
         <div className="text-xs text-muted-foreground" aria-busy="true">
-          Loading catalog…
+          {translate("skillRegistryConsole.loadingCatalog")}
         </div>
       )}
       {error && (
         <div role="alert" className="text-xs text-danger">
-          Failed to load the catalog: {error.message}
+          {translate("skillRegistryConsole.failedToLoadTheCatalog", { message: error.message })}
         </div>
       )}
       {deprecate.error && (
@@ -193,7 +189,7 @@ export function SkillRegistryConsole(): React.JSX.Element {
       )}
       {!isLoading && !error && tenantId.trim() !== "" && rows.length === 0 && (
         <div className="rounded-lg border border-dashed border-border py-10 text-center text-xs text-muted-foreground">
-          No catalog entries match this filter.
+          {translate("skillRegistryConsole.noCatalogEntriesMatchThis")}
         </div>
       )}
 
@@ -218,7 +214,7 @@ export function SkillRegistryConsole(): React.JSX.Element {
                       title={writeGate.title}
                       onClick={() => deprecate.mutate(row)}
                     >
-                      Deprecate
+                      {translate("skillRegistryConsole.deprecate")}
                     </Button>
                   )}
                 </div>
@@ -227,8 +223,7 @@ export function SkillRegistryConsole(): React.JSX.Element {
                   <p className="mt-1 text-foreground">{row.summary}</p>
                 )}
                 <p className="mt-1 font-mono text-[11px] text-muted-foreground">
-                  published by {row.publishedBy} · from {row.sourceUserId}/
-                  {row.sourceAssistantId}
+                  {translate("skillRegistryConsole.publishedByPublishedByFromSourceUserId", { publishedBy: row.publishedBy, sourceUserId: row.sourceUserId, sourceAssistantId: row.sourceAssistantId })}
                 </p>
               </li>
             ))}
@@ -244,7 +239,7 @@ export function SkillRegistryConsole(): React.JSX.Element {
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
             >
-              Previous
+              {translate("skillRegistryConsole.previous")}
             </Button>
             <Button
               size="sm"
@@ -252,7 +247,7 @@ export function SkillRegistryConsole(): React.JSX.Element {
               disabled={offset + rows.length >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
             >
-              Next
+              {translate("skillRegistryConsole.next")}
             </Button>
           </div>
         </>

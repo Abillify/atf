@@ -9,6 +9,7 @@
  */
 
 import React, { useState } from "react";
+import { translate } from "../../../lib/i18n";
 
 /** Chevron icon for collapsible sections */
 export function ChevronIcon({ open }: { open: boolean }) {
@@ -121,7 +122,7 @@ export function JsonTree({
   if (Array.isArray(data)) {
     if (data.length === 0) return <span className="text-muted-foreground">[]</span>;
     if (depth >= maxDepth) {
-      return <span className="text-muted-foreground">[…{data.length} items]</span>;
+      return <span className="text-muted-foreground">{translate("shared.lengthItems", { length: data.length })}</span>;
     }
     return (
       <div className="ml-2">

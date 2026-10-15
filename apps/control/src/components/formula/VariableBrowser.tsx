@@ -26,6 +26,7 @@ import {
   type FormulaSymbol,
 } from "../../lib/formula";
 import { snippet } from "./formulaUtils";
+import { translate } from "../../lib/i18n";
 
 const TYPE_ICON: Record<ReturnType<typeof symbolType>, React.ComponentType<{ size?: number; className?: string }>> = {
   text: Type,
@@ -69,7 +70,7 @@ function SymbolRow({
       <span className="min-w-0 flex-1">
         <code className="block truncate font-mono text-[11px] text-foreground">{shown}</code>
         {value !== undefined && typeof value !== "object" && !sym.path.startsWith("vars.") && !sym.path.startsWith("const.") && !sym.path.startsWith("env.") && (
-          <span className="block truncate font-mono text-[10px] text-success" title="Value in the pinned run">
+          <span className="block truncate font-mono text-[10px] text-success" title={translate("variableBrowser.valueInThePinnedRun")}>
             📌 {JSON.stringify(value)}
           </span>
         )}
@@ -184,8 +185,8 @@ export function VariableBrowser({
           ref={searchRef}
           value={q}
           onChange={(e) => setQ(e.target.value)}
-          placeholder="Search variables, fields, functions…"
-          aria-label="Search variables"
+          placeholder={translate("variableBrowser.searchVariablesFieldsFunctions")}
+          aria-label={translate("variableBrowser.searchVariables")}
           className="min-w-0 flex-1 bg-transparent text-xs outline-none"
         />
       </div>
@@ -236,7 +237,7 @@ export function VariableBrowser({
         })}
         {filtered.length === 0 && (
           <p className="px-1 py-2 text-[11px] text-muted-foreground">
-            {groups.length === 0 ? (emptyText ?? "Nothing to insert here.") : "No match."}
+            {groups.length === 0 ? (emptyText ?? translate("variableBrowser.nothingToInsertHere")) : translate("variableBrowser.noMatch")}
           </p>
         )}
       </div>

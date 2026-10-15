@@ -18,6 +18,7 @@ import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
 import { Badge, Button } from "../lib/ui";
+import { translate } from "../lib/i18n";
 
 interface PiiVaultStatus {
   enabled: boolean;
@@ -56,40 +57,37 @@ export function PiiVaultPanel(): React.JSX.Element {
     <div className="flex flex-col gap-3 text-sm">
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-foreground">
-          🔒 PII Tokenization Vault
+          {translate("piiVaultPanel.pIITokenizationVault")}
         </h3>
         <Button
           variant="ghost"
           size="sm"
           onClick={() => void fetchStatus()}
-          aria-label="Refresh PII vault status"
+          aria-label={translate("piiVaultPanel.refreshPIIVaultStatus")}
         >
           ↻
         </Button>
       </div>
 
       {loading ? (
-        <div className="text-xs text-muted-foreground">Loading…</div>
+        <div className="text-xs text-muted-foreground">{translate("piiVaultPanel.loading")}</div>
       ) : error ? (
         <div className="text-xs text-danger">{error}</div>
       ) : status === null ? null : !status.enabled ? (
         <div className="rounded border border-dashed border-border bg-muted px-3 py-2 text-xs text-muted-foreground">
-          Disabled. Set <code className="font-mono">PII_VAULT_ENABLED=true</code>{" "}
-          (+ <code className="font-mono">PII_VAULT_ENCRYPTION_KEY</code>) to
-          tokenize PII in outbound prompts before any LLM sees it.
+          {translate("piiVaultPanel.disabledSet")} <code className="font-mono">PII_VAULT_ENABLED=true</code>{" "}
+          (+ <code className="font-mono">PII_VAULT_ENCRYPTION_KEY</code>{translate("piiVaultPanel.toTokenizePIIInOutbound")}
         </div>
       ) : (
         <div className="rounded border border-success-border bg-success-soft px-3 py-2 text-xs space-y-2">
           <div className="flex items-center gap-2 font-medium text-success">
-            <span>✓ Active</span>
+            <span>{translate("piiVaultPanel.active")}</span>
             <Badge variant={status.durable ? "default" : "warning"}>
-              {status.durable ? "durable, encrypted" : "in-memory, per-replica"}
+              {status.durable ? translate("piiVaultPanel.durableEncrypted") : translate("piiVaultPanel.inMemoryPerReplica")}
             </Badge>
           </div>
           <p className="text-success">
-            Detected PII is replaced with an encrypted placeholder before any
-            LLM provider sees the prompt, and transparently restored in the
-            streamed response.
+            {translate("piiVaultPanel.detectedPIIIsReplacedWith")}
           </p>
           <div className="flex flex-wrap gap-1">
             {(status.piiTypes === "all" ? ["all types"] : status.piiTypes).map(
@@ -118,9 +116,8 @@ export function PiiVaultPanel(): React.JSX.Element {
           )}
           {!status.durable && (
             <p className="text-warning">
-              ⚠ No database configured — vault mappings are per-replica and
-              lost on restart. Set <code className="font-mono">DATABASE_URL</code>{" "}
-              for durable, encrypted storage.
+              {translate("piiVaultPanel.noDatabaseConfiguredVaultMappings")} <code className="font-mono">DATABASE_URL</code>{" "}
+              {translate("piiVaultPanel.forDurableEncryptedStorage")}
             </p>
           )}
         </div>

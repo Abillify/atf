@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { Skeleton } from "../../../lib/ui";
+import { translate } from "../../../lib/i18n";
 
 /**
  * Loading skeleton for the Tenants Admin route (Req. 13.4).
@@ -11,7 +12,7 @@ export default function TenantsLoading() {
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading tenants"
+      aria-label={translate("tenants.loadingTenants")}
       className="flex flex-col gap-3 p-6"
     >
       <Skeleton width="w-48" height="h-6" />

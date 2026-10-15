@@ -26,7 +26,7 @@ import { useAuth } from "../lib/auth/useAuth";
 import { backendUrl } from "../lib/backend-url";
 import { authFetch } from "../lib/auth-fetch";
 import { downloadAuthenticated } from "../lib/authenticated-download";
-import { formatDateTime, formatDate } from "../lib/i18n";
+import { translate, formatDateTime, formatDate } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types (mirrors backend src/compliance/dossier.ts)
@@ -167,11 +167,10 @@ export function DossierPanel(): React.JSX.Element {
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h2 className="text-sm font-semibold text-foreground">
-            📋 Compliance Dossier
+            {translate("dossierPanel.complianceDossier")}
           </h2>
           <p className="text-xs text-muted-foreground">
-            Evidentiary document for an auditor — audit-chain integrity, RTBF
-            proof, retention posture, eval and security-posture evidence.
+            {translate("dossierPanel.evidentiaryDocumentForAnAuditor")}
           </p>
         </div>
         <div className="flex gap-2">
@@ -181,7 +180,7 @@ export function DossierPanel(): React.JSX.Element {
             onClick={() => void fetchDossier()}
             disabled={loading}
           >
-            {loading ? "Loading…" : "↻ Refresh"}
+            {loading ? translate("dossierPanel.loading") : translate("dossierPanel.refresh")}
           </Button>
           {isAuthenticated && (
             <Button
@@ -190,7 +189,7 @@ export function DossierPanel(): React.JSX.Element {
               onClick={() => void downloadMarkdown()}
               disabled={downloading}
             >
-              {downloading ? "Downloading…" : "↓ Download Markdown"}
+              {downloading ? translate("dossierPanel.downloading") : translate("dossierPanel.downloadMarkdown")}
             </Button>
           )}
         </div>
@@ -205,7 +204,7 @@ export function DossierPanel(): React.JSX.Element {
       {dossier && (
         <>
           <p className="text-xs text-muted-foreground">
-            Generated {formatDateTime(dossier.generatedAt)} — window{" "}
+            {translate("dossierPanel.generatedValueWindow", { value: formatDateTime(dossier.generatedAt) })}{" "}
             {formatDate(dossier.windowStart)} →{" "}
             {formatDate(dossier.windowEnd)}
           </p>
@@ -213,18 +212,15 @@ export function DossierPanel(): React.JSX.Element {
           {/* Audit chain integrity */}
           <section>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-              Audit Trail Integrity
+              {translate("dossierPanel.auditTrailIntegrity")}
             </h3>
             {dossier.auditIntegrity.chainVerification.valid ? (
               <div className="rounded border border-success-border bg-success-soft px-3 py-2 text-xs text-success">
-                ✓ Verified — {dossier.auditIntegrity.chainVerification.checked} record(s)
-                checked, hash chain intact from genesis.
+                {translate("dossierPanel.verifiedCheckedRecordSChecked", { checked: dossier.auditIntegrity.chainVerification.checked })}
               </div>
             ) : (
               <div className="rounded border border-danger-border bg-danger-soft px-3 py-2 text-xs text-danger">
-                ✗ TAMPER DETECTED — broken at record #
-                {dossier.auditIntegrity.chainVerification.brokenAt?.id} (
-                {dossier.auditIntegrity.chainVerification.brokenAt?.reason})
+                {translate("dossierPanel.tAMPERDETECTEDBrokenAtRecord", { id: dossier.auditIntegrity.chainVerification.brokenAt?.id, reason: dossier.auditIntegrity.chainVerification.brokenAt?.reason })}
               </div>
             )}
           </section>
@@ -232,22 +228,21 @@ export function DossierPanel(): React.JSX.Element {
           {/* RTBF evidence */}
           <section>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-              Right-to-be-Forgotten Evidence
+              {translate("dossierPanel.rightToBeForgottenEvidence")}
             </h3>
             <p className="text-xs text-muted-foreground mb-1">
-              {dossier.rtbfEvidence.totalOperations} erasure operation(s),{" "}
-              {dossier.rtbfEvidence.totalRecordsErased} record(s) erased in
-              window.
+              {translate("dossierPanel.totalOperationsErasureOperationS", { totalOperations: dossier.rtbfEvidence.totalOperations })}{" "}
+              {translate("dossierPanel.totalRecordsErasedRecordSErasedIn", { totalRecordsErased: dossier.rtbfEvidence.totalRecordsErased })}
             </p>
             {dossier.rtbfEvidence.operations.length > 0 && (
               <div className="rounded border border-border bg-card overflow-hidden">
                 <Table>
                   <TableHead className="uppercase">
                     <TableRow>
-                      <TableHeaderCell>Time</TableHeaderCell>
-                      <TableHeaderCell>Actor</TableHeaderCell>
-                      <TableHeaderCell>Action</TableHeaderCell>
-                      <TableHeaderCell className="text-right">Erased</TableHeaderCell>
+                      <TableHeaderCell>{translate("dossierPanel.time")}</TableHeaderCell>
+                      <TableHeaderCell>{translate("dossierPanel.actor")}</TableHeaderCell>
+                      <TableHeaderCell>{translate("dossierPanel.action")}</TableHeaderCell>
+                      <TableHeaderCell className="text-right">{translate("dossierPanel.erased")}</TableHeaderCell>
                     </TableRow>
                   </TableHead>
                   <TableBody>
@@ -271,7 +266,7 @@ export function DossierPanel(): React.JSX.Element {
           {/* Retention posture */}
           <section>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-              Retention Posture
+              {translate("dossierPanel.retentionPosture")}
             </h3>
             <div className="flex flex-wrap gap-2">
               {dossier.retentionPosture.targets.map((t) => (
@@ -280,9 +275,9 @@ export function DossierPanel(): React.JSX.Element {
                   className="rounded border border-border bg-card px-2 py-1 text-xs"
                 >
                   <span className="font-medium">{t.name}</span>:{" "}
-                  {t.maxAgeDays !== null ? `${t.maxAgeDays}d` : "no window"}
+                  {t.maxAgeDays !== null ? `${t.maxAgeDays}d` : translate("dossierPanel.noWindow")}
                   {t.subjectErase && (
-                    <span className="ml-1 text-success">RTBF-capable</span>
+                    <span className="ml-1 text-success">{translate("dossierPanel.rTBFCapable")}</span>
                   )}
                 </span>
               ))}
@@ -292,12 +287,11 @@ export function DossierPanel(): React.JSX.Element {
           {/* Eval evidence */}
           <section>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-              Model Quality (Eval Evidence)
+              {translate("dossierPanel.modelQualityEvalEvidence")}
             </h3>
             {dossier.evalEvidence.length === 0 ? (
               <p className="text-xs text-muted-foreground">
-                No eval runs recorded. POST a report to /admin/eval/runs (e.g.
-                from CI) to add evidence here.
+                {translate("dossierPanel.noEvalRunsRecordedPOST")}
               </p>
             ) : (
               <div className="flex flex-col gap-1">
@@ -312,7 +306,7 @@ export function DossierPanel(): React.JSX.Element {
                         e.passRate >= 0.9 ? "text-success" : "text-warning"
                       }
                     >
-                      {e.passed}/{e.total} passed ({(e.passRate * 100).toFixed(0)}%)
+                      {translate("dossierPanel.passedTotalPassedValue", { passed: e.passed, total: e.total, value: (e.passRate * 100).toFixed(0) })}
                     </span>
                     <span className="text-muted-foreground">
                       {formatDate(e.recordedAt)} [{e.source}]
@@ -326,11 +320,11 @@ export function DossierPanel(): React.JSX.Element {
           {/* Security posture */}
           <section>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-              Security Posture
+              {translate("dossierPanel.securityPosture")}
             </h3>
             {!dossier.securityPosture.enabled ? (
               <p className="text-xs text-muted-foreground">
-                Red-team / security posture engine not enabled.
+                {translate("dossierPanel.redTeamSecurityPostureEngine")}
               </p>
             ) : (
               <div className="flex flex-wrap gap-2">
@@ -356,13 +350,12 @@ export function DossierPanel(): React.JSX.Element {
           {dossier.dlpEffectiveness && (
             <section>
               <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-                DLP Effectiveness (measured PII recall)
+                {translate("dossierPanel.dLPEffectivenessMeasuredPIIRecall")}
               </h3>
               <div className="rounded border border-border bg-card px-3 py-2 text-xs">
                 <div className="mb-1">
-                  Corpus{" "}
-                  <span className="font-mono">{dossier.dlpEffectiveness.dataset}</span> (
-                  {dossier.dlpEffectiveness.cases} cases):{" "}
+                  {translate("dossierPanel.corpus")}{" "}
+                  <span className="font-mono">{dossier.dlpEffectiveness.dataset}</span> {translate("dossierPanel.casesCases", { cases: dossier.dlpEffectiveness.cases })}{" "}
                   <span
                     className={
                       dossier.dlpEffectiveness.overall.recall >= 0.9
@@ -372,9 +365,8 @@ export function DossierPanel(): React.JSX.Element {
                   >
                     recall {(dossier.dlpEffectiveness.overall.recall * 100).toFixed(1)}%
                   </span>
-                  , precision{" "}
-                  {(dossier.dlpEffectiveness.overall.precision * 100).toFixed(1)}% (
-                  {dossier.dlpEffectiveness.overall.falseNegatives} miss(es))
+                  {translate("dossierPanel.precision")}{" "}
+                  {translate("dossierPanel.valueFalseNegativesMissEs", { value: (dossier.dlpEffectiveness.overall.precision * 100).toFixed(1), falseNegatives: dossier.dlpEffectiveness.overall.falseNegatives })}
                 </div>
                 <div className="flex flex-wrap gap-1.5">
                   {dossier.dlpEffectiveness.byType.map((t) => (
@@ -393,7 +385,7 @@ export function DossierPanel(): React.JSX.Element {
           {/* Architectural guarantees */}
           <section>
             <h3 className="text-xs font-semibold text-muted-foreground mb-1">
-              Architectural Guarantees
+              {translate("dossierPanel.architecturalGuarantees")}
             </h3>
             <div className="flex flex-col gap-1.5">
               {dossier.architecturalGuarantees.map((g) => (

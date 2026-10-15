@@ -36,6 +36,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
+    "@babel/parser": "7.29.9",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.1.18",
     "@testing-library/jest-dom": "6.9.1",

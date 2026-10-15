@@ -39,6 +39,7 @@ import {
   TableHeaderCell,
   TableCell,
 } from "../lib/ui";
+import { translate } from "../lib/i18n";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -226,23 +227,23 @@ export function ProviderTestingPanel(): React.JSX.Element {
     <div className="space-y-6">
       <div>
         <h2 className="mb-1 text-lg font-semibold text-foreground">
-          Provider &amp; model testing
+          {translate("providerTestingPanel.providerModelTesting")}
         </h2>
         <p className="text-sm text-muted-foreground">
-          Tests run live against the selected provider and incur real cost.
+          {translate("providerTestingPanel.testsRunLiveAgainstThe")}
         </p>
       </div>
 
       {/* ── Selection ─────────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle>Selection</CardTitle>
+          <CardTitle>{translate("providerTestingPanel.selection")}</CardTitle>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-muted-foreground">
-                Provider
+                {translate("providerTestingPanel.provider")}
               </span>
               <select
                 className={selectClass}
@@ -253,7 +254,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
                   setManualModel("");
                 }}
               >
-                <option value="">Select a provider…</option>
+                <option value="">{translate("providerTestingPanel.selectAProvider")}</option>
                 {(providers.data ?? []).map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name}
@@ -270,7 +271,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
 
             <label className="block">
               <span className="mb-1 block text-xs font-medium text-muted-foreground">
-                Model
+                {translate("providerTestingPanel.model")}
               </span>
               <select
                 className={selectClass}
@@ -280,10 +281,10 @@ export function ProviderTestingPanel(): React.JSX.Element {
               >
                 <option value="">
                   {models.isLoading
-                    ? "Loading models…"
+                    ? translate("providerTestingPanel.loadingModels")
                     : models.data && models.data.length > 0
-                      ? "Select a model…"
-                      : "No models listed — enter manually"}
+                      ? translate("providerTestingPanel.selectAModel")
+                      : translate("providerTestingPanel.noModelsListedEnterManually")}
                 </option>
                 {(models.data ?? []).map((m) => (
                   <option key={m.id} value={m.id}>
@@ -294,14 +295,13 @@ export function ProviderTestingPanel(): React.JSX.Element {
               </select>
               {models.error && (
                 <span className="mt-1 block text-xs text-warning">
-                  Could not list models ({models.error.message}). Enter the model
-                  id manually below.
+                  {translate("providerTestingPanel.couldNotListModelsMessage", { message: models.error.message })}
                 </span>
               )}
               {(model === "" || models.error) && (
                 <input
                   className={`${selectClass} mt-2`}
-                  placeholder="Or type a model id manually"
+                  placeholder={translate("providerTestingPanel.orTypeAModelId")}
                   value={manualModel}
                   disabled={provider === ""}
                   onChange={(e) => setManualModel(e.target.value)}
@@ -315,12 +315,11 @@ export function ProviderTestingPanel(): React.JSX.Element {
       {/* ── Capability auto-test ──────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle>Capability auto-test</CardTitle>
+          <CardTitle>{translate("providerTestingPanel.capabilityAutoTest")}</CardTitle>
         </CardHeader>
         <CardContent>
           <p className="mb-3 text-sm text-muted-foreground">
-            Probes reasoning, tool-calling and vision against the live model and
-            compares the result with the declared capabilities.
+            {translate("providerTestingPanel.probesReasoningToolCallingAnd")}
           </p>
           <Button
             variant="primary"
@@ -329,7 +328,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
             title={writeGate.title}
             onClick={() => capabilityTest.mutate()}
           >
-            Run capability test
+            {translate("providerTestingPanel.runCapabilityTest")}
           </Button>
           {capabilityTest.error && (
             <div role="alert" className="mt-3 text-sm text-danger">
@@ -341,14 +340,14 @@ export function ProviderTestingPanel(): React.JSX.Element {
               <Table>
                 <TableHead>
                   <TableRow>
-                    <TableHeaderCell>Capability</TableHeaderCell>
-                    <TableHeaderCell>Declared</TableHeaderCell>
-                    <TableHeaderCell>Observed</TableHeaderCell>
-                    <TableHeaderCell>Result</TableHeaderCell>
+                    <TableHeaderCell>{translate("providerTestingPanel.capability")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("providerTestingPanel.declared")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("providerTestingPanel.observed")}</TableHeaderCell>
+                    <TableHeaderCell>{translate("providerTestingPanel.result")}</TableHeaderCell>
                     <TableHeaderCell className="text-right">
-                      Latency
+                      {translate("providerTestingPanel.latency")}
                     </TableHeaderCell>
-                    <TableHeaderCell>Details</TableHeaderCell>
+                    <TableHeaderCell>{translate("providerTestingPanel.details")}</TableHeaderCell>
                   </TableRow>
                 </TableHead>
                 <TableBody>
@@ -384,12 +383,12 @@ export function ProviderTestingPanel(): React.JSX.Element {
       {/* ── Prompt test ───────────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle>Prompt test</CardTitle>
+          <CardTitle>{translate("providerTestingPanel.promptTest")}</CardTitle>
         </CardHeader>
         <CardContent>
           <label className="mb-3 block">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">
-              System prompt (optional)
+              {translate("providerTestingPanel.systemPromptOptional")}
             </span>
             <textarea
               className="min-h-[60px] w-full rounded-md border border-border bg-card p-2 text-sm text-foreground"
@@ -399,11 +398,11 @@ export function ProviderTestingPanel(): React.JSX.Element {
           </label>
           <label className="mb-3 block">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">
-              Prompt
+              {translate("providerTestingPanel.prompt")}
             </span>
             <textarea
               className="min-h-[100px] w-full rounded-md border border-border bg-card p-2 text-sm text-foreground"
-              placeholder="Type a prompt to run against the model…"
+              placeholder={translate("providerTestingPanel.typeAPromptToRun")}
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
             />
@@ -415,7 +414,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
             title={writeGate.title}
             onClick={() => promptTest.mutate()}
           >
-            Run prompt
+            {translate("providerTestingPanel.runPrompt")}
           </Button>
           {promptTest.error && (
             <div role="alert" className="mt-3 text-sm text-danger">
@@ -427,7 +426,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
               {promptTest.data.reasoningText && (
                 <div className="rounded-md border border-border bg-muted/40 p-3">
                   <div className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">
-                    Reasoning
+                    {translate("providerTestingPanel.reasoning")}
                   </div>
                   <pre className="whitespace-pre-wrap text-xs text-muted-foreground">
                     {promptTest.data.reasoningText}
@@ -436,7 +435,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
               )}
               <div className="rounded-md border border-border bg-card p-3">
                 <div className="mb-1 text-xs uppercase tracking-wide text-muted-foreground">
-                  Response
+                  {translate("providerTestingPanel.response")}
                 </div>
                 <pre className="whitespace-pre-wrap text-sm text-foreground">
                   {promptTest.data.text}
@@ -444,7 +443,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
               </div>
               {promptTest.data.toolCalls.length > 0 && (
                 <div className="rounded-md border border-border bg-card p-3 text-xs text-muted-foreground">
-                  Tool calls:{" "}
+                  {translate("providerTestingPanel.toolCalls")}{" "}
                   {promptTest.data.toolCalls.map((t) => t.name).join(", ")}
                 </div>
               )}
@@ -470,12 +469,12 @@ export function ProviderTestingPanel(): React.JSX.Element {
       {/* ── Performance test ──────────────────────────────────────── */}
       <Card>
         <CardHeader>
-          <CardTitle>Performance test</CardTitle>
+          <CardTitle>{translate("providerTestingPanel.performanceTest")}</CardTitle>
         </CardHeader>
         <CardContent>
           <label className="mb-3 block max-w-[200px]">
             <span className="mb-1 block text-xs font-medium text-muted-foreground">
-              Runs (1–20)
+              {translate("providerTestingPanel.runs120")}
             </span>
             <input
               type="number"
@@ -497,7 +496,7 @@ export function ProviderTestingPanel(): React.JSX.Element {
             title={writeGate.title}
             onClick={() => performanceTest.mutate()}
           >
-            Run performance test
+            {translate("providerTestingPanel.runPerformanceTest")}
           </Button>
           {performanceTest.error && (
             <div role="alert" className="mt-3 text-sm text-danger">
@@ -506,20 +505,20 @@ export function ProviderTestingPanel(): React.JSX.Element {
           )}
           {performanceTest.data && (
             <div className="grid gap-3 sm:grid-cols-3 lg:grid-cols-4">
-              <Metric label="Runs" value={`${performanceTest.data.succeeded}/${performanceTest.data.runs}`} />
-              <Metric label="Failures" value={String(performanceTest.data.failures)} />
-              <Metric label="Latency avg" value={`${performanceTest.data.latencyMs.avg} ms`} />
-              <Metric label="Latency p95" value={`${performanceTest.data.latencyMs.p95} ms`} />
-              <Metric label="Latency min" value={`${performanceTest.data.latencyMs.min} ms`} />
-              <Metric label="Latency max" value={`${performanceTest.data.latencyMs.max} ms`} />
-              <Metric label="Throughput" value={`${performanceTest.data.tokensPerSecond} tok/s`} />
+              <Metric label={translate("providerTestingPanel.runs")} value={`${performanceTest.data.succeeded}/${performanceTest.data.runs}`} />
+              <Metric label={translate("providerTestingPanel.failures")} value={String(performanceTest.data.failures)} />
+              <Metric label={translate("providerTestingPanel.latencyAvg")} value={`${performanceTest.data.latencyMs.avg} ms`} />
+              <Metric label={translate("providerTestingPanel.latencyP95")} value={`${performanceTest.data.latencyMs.p95} ms`} />
+              <Metric label={translate("providerTestingPanel.latencyMin")} value={`${performanceTest.data.latencyMs.min} ms`} />
+              <Metric label={translate("providerTestingPanel.latencyMax")} value={`${performanceTest.data.latencyMs.max} ms`} />
+              <Metric label={translate("providerTestingPanel.throughput")} value={`${performanceTest.data.tokensPerSecond} tok/s`} />
               <Metric
-                label="Total cost"
+                label={translate("providerTestingPanel.totalCost")}
                 value={formatCost(performanceTest.data.totalCost)}
               />
               {performanceTest.data.firstError && (
                 <div className="sm:col-span-3 lg:col-span-4 text-xs text-warning">
-                  First error: {performanceTest.data.firstError}
+                  {translate("providerTestingPanel.firstErrorFirstError", { firstError: performanceTest.data.firstError })}
                 </div>
               )}
             </div>

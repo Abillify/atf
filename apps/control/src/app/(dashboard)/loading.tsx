@@ -13,13 +13,14 @@
  * does not define one.
  */
 import { Skeleton } from "../../lib/ui";
+import { translate } from "../../lib/i18n";
 
 export default function DashboardLoading() {
   return (
     <div
       role="status"
       aria-busy="true"
-      aria-label="Loading content"
+      aria-label={translate("loading.loadingContent")}
       className="flex h-full flex-col gap-4 p-6"
     >
       {/* Page-title skeleton */}
