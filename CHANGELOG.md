@@ -113,6 +113,24 @@ releases:
   token); `/monitor/logout` clears it. **Breaking:** `?token=` is no longer
   accepted on any monitor endpoint — scripts must send
   `Authorization: Bearer <token>`.
+- **German full-text search** (`@atf/search`): `FTS_LANGUAGE` now defaults to
+  `german` (Snowball stemming) instead of `simple` and is validated at startup.
+  Existing collections keep their language; the new `fts:language` script
+  switches one and recomputes its vectors. `FTS_EXTRA_LANGUAGES` admits
+  operator-installed configurations such as a Hunspell `german_compound` for
+  compound splitting (checked against `pg_ts_config` at startup); setup in
+  `docs/operations-and-retrieval.md`. **Upgrade:** deployments with mainly
+  non-German content set `FTS_LANGUAGE` explicitly (for example `english` or
+  `simple`).
+- **Configuration reference** (`docs/CONFIGURATION.md`): Search and Extract
+  variables now carry their member's JSDoc instead of only "Config member …",
+  undocumented Runtime variables fall back to the JSDoc of the `AppConfig`
+  member they load into, and Gate, Rocket.Chat-connect and agent-transaction
+  variables have curated descriptions. Every security-relevant variable
+  (credentials, trust anchors, authentication, isolation and debug switches) is
+  described; the generator now fails when one is not, so a new one cannot ship
+  undocumented. Variables without a description: 271 → 123 (strict count incl.
+  placeholder and "read directly"-only notes: ≈ 560 → 216).
 
 ### Added
 

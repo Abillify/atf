@@ -135,6 +135,17 @@ function cleanDoc(block: string | undefined): string | undefined {
 }
 
 /**
+ * The leading sentence of a cleaned doc block, for fallback descriptions taken
+ * from a neighbouring declaration where the full block would swamp the table.
+ */
+function leadSentence(text: string | undefined): string | undefined {
+	if (!text) return undefined;
+	const match = /^(.{20,}?[.!?])(?:\s|$)/.exec(text);
+	const sentence = (match?.[1] ?? text).trim();
+	return sentence.length > 240 ? `${sentence.slice(0, 237)}…` : sentence;
+}
+
+/**
  * Returns the JSDoc block that ends immediately before the end of `text`, or undefined when
  * the text does not end with one. "Immediately" allows only whitespace in between, so a
  * comment that documents an earlier entry is not attributed to this one.
@@ -229,6 +240,53 @@ function parseRuntime(source: string): Variable[] {
 	return variables;
 }
 
+/**
+ * Runtime fallback: many `EnvSchema` keys carry no JSDoc, while the `AppConfig`
+ * member they are loaded into does. `load.ts` maps each variable onto its member
+ * (`member: env.NAME`); for every undocumented variable the member's JSDoc
+ * supplies the description.
+ */
+function withAppConfigDocs(
+	variables: Variable[],
+	schemaSource: string,
+	loadSource: string,
+): Variable[] {
+	const memberOf = new Map<string, string>();
+	for (const [, member, name] of loadSource.matchAll(
+		/\b(\w+):\s*env\.([A-Z][A-Z0-9_]*)\b/g,
+	)) {
+		if (!memberOf.has(name)) memberOf.set(name, member);
+	}
+	const start = schemaSource.indexOf("export interface AppConfig");
+	if (start === -1) return variables;
+	const open = schemaSource.indexOf("{", start);
+	let depth = 0;
+	let end = open;
+	for (let index = open; index < schemaSource.length; index++) {
+		if (schemaSource[index] === "{") depth++;
+		else if (schemaSource[index] === "}" && --depth === 0) {
+			end = index;
+			break;
+		}
+	}
+	const body = schemaSource.slice(open, end);
+	const docOf = new Map<string, string>();
+	for (const match of body.matchAll(/^[\t ]{2}(\w+)\??:/gm)) {
+		const doc = leadSentence(
+			cleanDoc(lastAdjacentDocBlock(body.slice(0, match.index ?? 0))),
+		);
+		if (doc !== undefined && !docOf.has(match[1])) docOf.set(match[1], doc);
+	}
+	return variables.map((variable) => {
+		if (variable.description) return variable;
+		const member = memberOf.get(variable.name);
+		const doc = member === undefined ? undefined : docOf.get(member);
+		return doc === undefined
+			? variable
+			: { ...variable, description: `${doc} (\`${member}\`)` };
+	});
+}
+
 // ---------------------------------------------------------------------------
 // Search and Extract: a `Config` interface with trailing comments
 //
@@ -268,6 +326,9 @@ function parseConfigInterface(source: string, sourcePath: string): Variable[] {
 
 	for (const match of body.matchAll(pattern)) {
 		const [, member, tsType, name, annotation] = match;
+		// `// OIDC_* (…)` marks a member that groups a whole block of variables
+		// (each listed on its own); it is not a variable itself.
+		if (name.endsWith("_")) continue;
 		if (seen.has(name)) continue;
 		seen.add(name);
 
@@ -286,13 +347,22 @@ function parseConfigInterface(source: string, sourcePath: string): Variable[] {
 				? [...tsType.matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
 				: undefined;
 
+		// The member's own JSDoc, when it has one, says what the variable does;
+		// the member name alone does not.
+		const doc = leadSentence(
+			cleanDoc(lastAdjacentDocBlock(body.slice(0, match.index ?? 0))),
+		);
+		const extra = note && !defaultMatch && !required ? ` — ${note}` : "";
 		variables.push({
 			name,
 			type,
 			required,
 			default: defaultMatch?.[1]?.trim().replace(/^["']|["']$/g, ""),
 			allowed,
-			description: `Config member \`${member}\`${note && !defaultMatch && !required ? ` — ${note}` : ""}`,
+			description:
+				doc !== undefined
+					? `${doc}${extra} (\`${member}\`)`
+					: `Config member \`${member}\`${extra}`,
 		});
 	}
 
@@ -552,6 +622,160 @@ function render(sections: Section[]): string {
 
 // ---------------------------------------------------------------------------
 // Main
+
+// ---------------------------------------------------------------------------
+// Curated descriptions
+//
+// Variables read directly from the environment (Gate, Control, the
+// out-of-schema reads) and `Config` members without JSDoc have no description
+// in their source. These entries fill the gap, security-relevant ones first.
+// A key `Service:NAME` wins over a plain `NAME`, which covers the access-control
+// block Search and Extract deliberately share. Prefer a JSDoc at the source
+// where a structured contract exists; this table is for the rest.
+// ---------------------------------------------------------------------------
+
+const CURATED_DESCRIPTIONS: Record<string, string> = {
+	// Shared access control (Search, Extract)
+	AUTHN_MODE:
+		"API authentication: `disabled`, `token` (API_TOKEN), `oidc` (API_OIDC_ISSUERS) or `token_or_oidc`. Inferred from what is configured when unset; a mode without its credentials fails startup",
+	AUTHZ_ENABLED:
+		"Enforce scope-based authorization on the API (canonical switch; replaces AUTHZ_ENFORCEMENT). Default `false`",
+	AUTHZ_ENFORCEMENT:
+		"Legacy form of AUTHZ_ENABLED (`off`/`required`); `optional` is refused unless AUTHZ_ENABLED is set explicitly",
+	TENANT_ISOLATION_ENABLED:
+		"Scope every request to the caller's tenant (from the token) instead of the single default tenant. Default `false`",
+	DEFAULT_TENANT_ID:
+		"Tenant used for callers whose credential carries none (service token, single-tenant deployments). Default `default`",
+	API_SERVICE_TENANT_ID: "Legacy alias of DEFAULT_TENANT_ID for service-token callers; must match it when both are set",
+	API_OIDC_DEFAULT_TENANT_ID: "Legacy alias of DEFAULT_TENANT_ID for OIDC callers; must match API_SERVICE_TENANT_ID when both are set",
+	API_SERVICE_SCOPES: "Scopes granted to the static API_TOKEN caller (comma- or space-separated) when AUTHZ_ENABLED is on",
+	API_OIDC_ISSUERS:
+		"JSON array of trusted API token issuers, `[{\"issuer\": \"https://…\", \"audience\": \"optional\"}]`; tokens are verified against each issuer's JWKS",
+	ACL_REQUIRE_IDENTITY:
+		"SECURITY: refuse searches that carry no user identity instead of applying no row-level ACL filter. Default `false`",
+	ACL_REQUIRE_IDENTITY_WAIVER:
+		"Documented reason for running with ACL_REQUIRE_IDENTITY=false; the production check asks for it",
+	DOCUMENT_ACL_DEFAULT:
+		"Visibility of a document without ACL entries: `allow` (default, visible to everyone in the tenant) or `deny` (visible to nobody)",
+	OIDC_ISSUER: "OIDC issuer URL for the built-in web UI login (authorization-code flow); enables the OIDC block below",
+	OIDC_CLIENT_ID: "OIDC client id of the web UI login",
+	OIDC_CLIENT_SECRET: "SECRET. OIDC client secret of the web UI login",
+	OIDC_REDIRECT_URI: "Callback URL registered at the IdP for the web UI login",
+	OIDC_SCOPES: "Scopes requested by the web UI login. Default `openid profile email`",
+	OIDC_SESSION_SECRET: "SECRET (≥ 16 characters). HMAC key of the web UI session cookie; rotating it ends all sessions",
+	OIDC_SESSION_TTL: "Web UI session lifetime in seconds (≥ 60). Default 28800 (8 h)",
+	OIDC_ALLOWED_EMAILS: "Comma-separated e-mail addresses allowed to log in to the web UI; empty allows any authenticated user unless a domain or group list applies",
+	OIDC_ALLOWED_EMAIL_DOMAINS: "Comma-separated e-mail domains allowed to log in to the web UI",
+	OIDC_GROUPS_CLAIM: "ID-token claim holding the user's groups (for UI_ALLOWED_GROUPS). Default `groups`",
+	UI_ALLOWED_GROUPS: "Groups allowed to use the web UI; empty allows any user that passed the e-mail checks",
+	UI_SCOPES: "Scopes granted to web UI sessions",
+	UI_TENANT_ID: "Tenant of web UI sessions. Default DEFAULT_TENANT_ID",
+	TLS_KEY_FILE: "SECRET. Private key (PEM) of the HTTPS listener; with TLS_CERT_FILE switches the server to TLS",
+	TLS_CLIENT_CA_FILE: "CA bundle (PEM) for verifying client certificates (mTLS) on the HTTPS listener",
+	TRUST_PROXY: "Trust `X-Forwarded-*` from a reverse proxy (client IP for rate limits, HTTPS detection for Secure cookies). Default `false`; enable only behind a proxy that sets them",
+	RATE_LIMIT: "Requests per minute per client IP; `0` disables. Default 120",
+	"Search:TRANSACTION_HS256_SECRET": "SECRET. HS256 key for verifying agent transaction tokens (TRANSACTION_ENFORCEMENT)",
+	"Search:TRANSACTION_ISSUER": "Expected issuer of agent transaction tokens. Default `vectorsearch-client`",
+	"Search:TRANSACTION_AUDIENCE": "Expected audience of agent transaction tokens. Default `vectorsearch`",
+	"Search:CONVERTER_TOKEN": "SECRET. Bearer token Search sends to the document converter (Extract) on `/ingest-file`",
+	"Search:CONVERTER_CA_CERT_FILE": "CA bundle (PEM) for verifying the converter's TLS certificate",
+	// Extract
+	"Extract:API_TOKEN": "SECRET. Static bearer token for the Extract API (AUTHN_MODE=token)",
+	"Extract:MONITOR_TOKEN": "SECRET. Token for the Extract monitoring UI login; without it (and without OIDC) the UI is not protected by a login",
+	"Extract:SEARCH_TOKEN": "SECRET. Bearer token Extract sends to Search when it forwards results to `/v1/ingest`",
+	"Extract:SEARCH_CA_CERT_FILE": "CA bundle (PEM) for verifying Search's TLS certificate",
+	"Extract:SUMMARY_API_KEY": "SECRET. API key of the summary LLM endpoint",
+	// Gate (process-level environment; substantive config is YAML)
+	"Gate:AUTHN_MODE": "Overrides `auth.mode` from YAML: `disabled`, `token` (static tokens), `oidc` or `token_or_oidc`",
+	"Gate:AUTHZ_ENABLED": "Overrides `authorization.enabled` (scope checks on tools). Canonical name; conflicts with AUTHORIZATION_ENABLED fail startup",
+	"Gate:AUTHORIZATION_ENABLED": "Legacy alias of AUTHZ_ENABLED",
+	"Gate:DEFAULT_TENANT_ID": "Overrides `tenantIsolation.defaultTenantId`: tenant for callers whose token carries none",
+	"Gate:TENANT_ISOLATION_DEFAULT_TENANT_ID": "Legacy alias of DEFAULT_TENANT_ID; must match it when both are set",
+	"Gate:TENANT_ISOLATION_ENABLED": "Overrides `tenantIsolation.enabled`: scope database tools to the caller's tenant",
+	"Gate:TENANT_ISOLATION_CLAIM_NAMES": "Comma-separated token claims read for the caller's tenant (first present wins)",
+	"Gate:TENANT_ISOLATION_ISOLATED_DATABASES": "Comma-separated database names whose tools are tenant-isolated",
+	"Gate:TENANT_ISOLATION_SQL_VALIDATION_MODE": "`report` logs SQL that may escape the tenant filter, `strict` refuses it",
+	"Gate:MCP_SCHEMA_COMPATIBILITY_MODE": "`report` logs incompatible tool schema changes, `strict` refuses them",
+	"Gate:MCPGATE_APPROVAL_SECRET": "SECRET. HMAC key for approval tokens when `approval.secret` is not set in YAML; without either, no approval token validates",
+	"Gate:MCPGATE_AUTH_ADDITIONAL_OIDC_ISSUER": "Additional trusted OIDC issuer; set together with …_JWKS_URI and …_AUDIENCE",
+	"Gate:MCPGATE_AUTH_ADDITIONAL_OIDC_JWKS_URI": "JWKS of the additional OIDC issuer",
+	"Gate:MCPGATE_AUTH_ADDITIONAL_OIDC_AUDIENCE": "Required audience for tokens of the additional OIDC issuer",
+	"Gate:MCPGATE_CONFIG_DIR": "Directory with the YAML configuration. Default `./config`",
+	"Gate:MCPGATE_DEBUG_HEARTBEAT": "`0` disables the 2-second debug heartbeat log line (memory/uptime)",
+	"Gate:MCPGATE_ENV": "Environment name for the production check (falls back to NODE_ENV, then `development`)",
+	"Gate:MCPGATE_LOG_JSON": "`1` writes JSON log lines",
+	"Gate:MCPGATE_LOG_LEVEL": "`debug` additionally logs database tool SQL",
+	"Gate:MCPGATE_LOG_REDACT": "SECURITY: `0` turns off redaction of sensitive fields in log context — local debugging only",
+	"Gate:MCPGATE_REPLICAS": "Replica count, for the production check that redeemed approval tokens are shared (Redis) when more than one replica runs. Default 1",
+	"Gate:MCPGATE_TRANSACTION_ENFORCEMENT": "Agent transaction tokens on tool calls: `off` (default), `optional` (verified when present) or `required`",
+	"Gate:MCPGATE_TRANSACTION_HS256_SECRET": "SECRET. HS256 key for verifying agent transaction tokens",
+	"Gate:MCPGATE_TRANSACTION_JWKS_URI": "JWKS for verifying asymmetrically signed agent transaction tokens",
+	"Gate:MCPGATE_TRANSACTION_ALGORITHMS": "Accepted transaction token algorithms (HS256, RS256, ES256, EdDSA)",
+	"Gate:MCPGATE_TRANSACTION_ISSUER": "Expected issuer of agent transaction tokens",
+	"Gate:MCPGATE_TRANSACTION_AUDIENCE": "Expected audience of agent transaction tokens",
+	"Gate:MCPGATE_TRANSACTION_USER_CLAIMS": "Claims read for the user of a transaction. Default `sub`",
+	"Gate:MCPGATE_TRANSACTION_TENANT_CLAIMS": "Claims read for the tenant of a transaction. Default `tenant,tid,client_id`",
+	"Gate:MCPGATE_TRANSACTION_GROUP_CLAIMS": "Claims read for the groups of a transaction. Default `groups`",
+	"Gate:MCPGATE_TRANSACTION_SESSION_CLAIMS": "Claims read for the session of a transaction. Default `sid,session_id`",
+	"Gate:MCPGATE_TRANSACTION_REDIS_URL": "Redis for transaction replay protection across replicas; in-memory per replica without it",
+	"Gate:MCPGATE_TRANSACTION_REDIS_PREFIX": "Key prefix in that Redis. Default `mcpgate:transaction:`",
+	"Gate:PUBLIC_URL": "Public base URL announced in the OpenAPI document",
+	"Gate:TRUST_PROXY": "Overrides `server.trustProxy`: `true`, `false` or a trusted proxy hop count",
+	// Runtime: read directly by subsystems with an injectable environment
+	"Runtime:AGENT_TRANSACTION_SECRET": "SECRET. HS256 key the Runtime signs agent transaction tokens with (alternatively TRANSACTION_SIGNING_ALG/TRANSACTION_SIGNING_KEY)",
+	"Runtime:AGENT_TRANSACTION_ISSUER": "Issuer of the agent transaction tokens the Runtime mints. Default `aiperator`",
+	"Runtime:AGENT_TRANSACTION_AUDIENCE": "Default audience of minted agent transaction tokens",
+	"Runtime:AGENT_TRANSACTION_AUDIENCES": "JSON object mapping MCP server names to the audience their transaction tokens carry",
+	"Runtime:AGENT_TRANSACTION_SCOPE_CLAIMS": "Claims copied into transaction tokens as scopes",
+	"Runtime:AGENT_TRANSACTION_ENFORCEMENT": "Agent transaction protocol per MCP call: `off`, `optional` or `required` (a server that does not advertise it fails the call)",
+	"Runtime:ROCKETCHAT_CONNECT_OIDC_ISSUER": "Issuer of the Rocket.Chat end-user connect-link login; must equal the assistants' delegation issuer, or the connect flow stays off",
+	"Runtime:ROCKETCHAT_CONNECT_OIDC_CLIENT_ID": "Client id of the Rocket.Chat connect-link login; must equal the delegation client id",
+	"Runtime:ROCKETCHAT_CONNECT_OIDC_CLIENT_SECRET": "SECRET. Client secret of the Rocket.Chat connect-link login; must equal ASSISTANT_DELEGATION_CLIENT_SECRET",
+	"Runtime:ROCKETCHAT_CONNECT_SESSION_SECRET": "SECRET. Signs the Rocket.Chat connect-link state; separate from the operator OIDC session",
+	"Runtime:ROCKETCHAT_CONNECT_PUBLIC_URL": "Public Runtime URL the Rocket.Chat connect links point to",
+	"Runtime:ATF_RUNTIME_TOKEN": "SECRET. Bearer token the eval CLI (`scripts/eval`) uses against the Runtime API",
+};
+
+function isUndescribed(variable: Variable): boolean {
+	return (
+		variable.description === undefined ||
+		variable.description === "" ||
+		/^Config member `\w+`$/.test(variable.description)
+	);
+}
+
+function withCuratedDescriptions(service: string, variables: Variable[]): Variable[] {
+	return variables.map((variable) => {
+		if (!isUndescribed(variable)) return variable;
+		const curated =
+			CURATED_DESCRIPTIONS[`${service}:${variable.name}`] ??
+			CURATED_DESCRIPTIONS[variable.name];
+		if (curated === undefined) return variable;
+		const member = /^Config member (`\w+`)$/.exec(variable.description ?? "")?.[1];
+		return {
+			...variable,
+			description: member === undefined ? curated : `${curated} (${member})`,
+		};
+	});
+}
+
+/**
+ * Names whose meaning an operator must not have to guess: credentials, trust
+ * anchors, authentication and isolation switches, and the debug toggles that
+ * weaken them. Every one needs a description; `--check` and the writer fail
+ * otherwise, so a new security variable cannot ship undocumented.
+ */
+const SECURITY_RELEVANT =
+	/SECRET|PASSWORD|ENCRYPTION|(^|_)API_KEY$|(^|_)TOKEN$|^JWT_|JWKS|^OIDC_|^API_OIDC|AUTHN|AUTHZ|(^|_)AUTH$|^TLS_|CA_CERT|CA_FILE|CORS|ALLOW_UNVERIFIED|TRUST_PROXY|_RLS_|TENANT_ISOLATION|^ACL_|FAIL_CLOSED|CAPTURE_REQUEST_TOKENS|LOG_REDACT|SANDBOX|ALLOWLIST/;
+
+function undocumentedSecurityVariables(sections: Section[]): string[] {
+	return sections.flatMap((section) =>
+		section.variables
+			.filter((v) => SECURITY_RELEVANT.test(v.name) && isUndescribed(v))
+			.map((v) => `${section.service}: ${v.name}`),
+	);
+}
+
 // ---------------------------------------------------------------------------
 
 const runtimeSource = await readFile(
@@ -567,7 +791,11 @@ const extractSource = await readFile(
 	"utf8",
 );
 
-const runtimeParsed = parseRuntime(runtimeSource);
+const runtimeParsed = withAppConfigDocs(
+	parseRuntime(runtimeSource),
+	runtimeSource,
+	await readFile(resolve(root, "apps/runtime/src/config/load.ts"), "utf8"),
+);
 const searchParsed = parseConfigInterface(
 	searchSource,
 	"apps/search/src/config.ts",
@@ -677,6 +905,17 @@ const sections: Section[] = [
     ],
   },
 ];
+
+for (const section of sections) {
+	section.variables = withCuratedDescriptions(section.service, section.variables);
+}
+const undocumented = undocumentedSecurityVariables(sections);
+if (undocumented.length > 0) {
+	console.error(
+		`Security-relevant configuration without a description (add a JSDoc at the source or a CURATED_DESCRIPTIONS entry):\n  ${undocumented.join("\n  ")}`,
+	);
+	process.exit(1);
+}
 
 const expected = render(sections);
 

@@ -791,6 +791,7 @@ export const EnvSchema = z.object({
   PORT: z.coerce.number().int().min(1).max(65535).default(3000),
   FLOWS_DIR: z.string().default("./flows"),
   PLUGINS_DIR: z.string().optional(),
+  /** Comma-separated node-type plugins that may be loaded from PLUGINS_DIR (`*` allows all). */
   PLUGINS_ALLOWLIST: z
     .string()
     .optional()
@@ -803,10 +804,12 @@ export const EnvSchema = z.object({
         .filter((s) => s.length > 0);
     }),
   PLUGINS_MANIFEST_PATH: z.string().optional(),
+  /** `true` runs node-type plugins in isolated Bun Workers without environment/secret access; otherwise plugin code runs in-process with full privileges. */
   PLUGINS_SANDBOX: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** Maximum run time of one sandboxed plugin call (PLUGINS_SANDBOX=true) before the worker is terminated, 1–300 s. */
   PLUGINS_SANDBOX_TIMEOUT_MS: z.coerce
     .number()
     .int()
@@ -908,6 +911,7 @@ export const EnvSchema = z.object({
    * inputs are split client-side into sequential batches. Default 32.
    */
   RERANK_BATCH_SIZE: z.coerce.number().int().min(1).max(1000).optional(),
+  /** Comma-separated origins allowed for cross-origin browser requests. Empty (default) allows none. */
   CORS_ORIGINS: z
     .string()
     .optional()
@@ -919,6 +923,7 @@ export const EnvSchema = z.object({
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
     }),
+  /** Require operator authentication for the monitoring/operator plane (`/monitoring/*`, `/admin/*`, flow management). Default `true` (secure default). */
   MONITORING_AUTH: z
     .string()
     .optional()
@@ -927,10 +932,12 @@ export const EnvSchema = z.object({
         ? SECURE_DEFAULTS.monitoringAuthRequired
         : raw === "true" || raw === "1",
     ),
+  /** SECURITY: `true` records request credentials in debug traces. Default `false`; never enable in production. */
   DEBUG_CAPTURE_REQUEST_TOKENS: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** SECRET (≥ 16 characters). Signs short-lived tickets that authenticate the monitoring SSE stream without putting the operator token in the URL. */
   MONITORING_TICKET_SECRET: z.string().min(16).optional(),
   AUDIT_ANCHOR_SECRET: z.string().min(16).optional(),
   /**
@@ -1080,11 +1087,16 @@ export const EnvSchema = z.object({
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
   DEFAULT_TENANT_ID: z.string().min(1).default("default"),
+  /** HS256 secret for verifying inbound end-user JWTs on `/v1/*`. One of JWT_SECRET, JWT_JWKS_URL or OIDC_ISSUER must be set for cryptographic verification; without any, the production gate refuses to start unless JWT_ALLOW_UNVERIFIED=true (development only). */
   JWT_SECRET: z.string().optional(),
+  /** JWKS endpoint for verifying inbound end-user JWTs (RS/ES algorithms). Alternative to JWT_SECRET. */
   JWT_JWKS_URL: z.string().url().optional(),
   JWT_ISSUER: z.string().url().optional(),
+  /** Expected `aud` claim of inbound end-user JWTs; tokens for another audience are rejected. */
   JWT_AUDIENCE: z.string().min(1).optional(),
+  /** OIDC issuer URL. Enables JWT verification via the issuer's discovery/JWKS and, with OIDC_CLIENT_ID/SECRET, the operator SSO login of the dashboard. */
   OIDC_ISSUER: z.string().url().optional(),
+  /** Expected `aud` claim of tokens verified against OIDC_ISSUER. */
   OIDC_AUDIENCE: z.string().min(1).optional(),
   FLOW_SCOPE_CLAIMS: z
     .string()
@@ -1096,6 +1108,7 @@ export const EnvSchema = z.object({
         .filter((claim) => claim !== "");
       return [...new Set(claims.length > 0 ? claims : ["scope", "scp"])];
     }),
+  /** JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. */
   JWT_ADDITIONAL_ISSUERS: z
     .string()
     .optional()
@@ -1130,24 +1143,33 @@ export const EnvSchema = z.object({
         return result.data;
       },
     ),
+  /** OIDC client id for the operator dashboard SSO login (authorization-code flow). */
   OIDC_CLIENT_ID: z.string().min(1).optional(),
+  /** SECRET. OIDC client secret for the operator dashboard SSO login. */
   OIDC_CLIENT_SECRET: z.string().min(1).optional(),
+  /** SECRET (≥ 32 characters). Signs the operator SSO state and refresh-session cookies; rotating it ends all dashboard sessions. */
   OIDC_SESSION_SECRET: z.string().min(32).optional(),
+  /** Lifetime of the operator session token minted after SSO login (60–86400 s). */
   OIDC_SESSION_TTL_SECONDS: z.coerce
     .number()
     .int()
     .min(60)
     .max(86400)
     .default(3600),
+  /** Scopes requested in the operator SSO login (space-separated). */
   OIDC_SCOPES: z.string().min(1).optional(),
+  /** Lifetime of the server-side refresh session (HttpOnly cookie) used for silent renewal (300 s – 1 year). */
   OIDC_REFRESH_SESSION_TTL_SECONDS: z.coerce
     .number()
     .int()
     .min(300)
     .max(31_536_000)
     .default(2_592_000),
+  /** Callback URL registered at the IdP for the operator SSO login (`…/monitoring/auth/callback`). */
   OIDC_REDIRECT_URI: z.string().url().optional(),
+  /** Dashboard URL the SSO callback may redirect back to with the session hand-off; redirects elsewhere are refused. */
   OIDC_DASHBOARD_URL: z.string().url().optional(),
+  /** `true` sends unauthenticated dashboard visitors straight into the SSO login instead of showing the token form. */
   OIDC_AUTO_LOGIN: z
     .string()
     .optional()
@@ -1170,6 +1192,7 @@ export const EnvSchema = z.object({
         ? undefined
         : raw === "true" || raw === "1",
     ),
+  /** Enforce PostgreSQL row-level security per tenant on tenant-scoped tables. Default `true`. */
   TENANT_RLS_ENABLED: z
     .string()
     .optional()
@@ -1178,6 +1201,7 @@ export const EnvSchema = z.object({
         ? SECURE_DEFAULTS.tenantRlsEnabled
         : raw === "true" || raw === "1",
     ),
+  /** Fail startup when RLS cannot be enforced (default `true`). `false` is an explicit opt-out the production gate rejects for tenant-isolated deployments. */
   TENANT_RLS_REQUIRED: z
     .string()
     .optional()
@@ -1250,22 +1274,26 @@ export const EnvSchema = z.object({
     .min(0)
     .max(2_592_000_000)
     .optional(),
+  /** Enable the retention sweep and the DSAR erasure endpoints (`DELETE /v1/me/data`, `/admin/compliance/forget`). */
   RETENTION_ENABLED: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** Interval of the background retention sweep (1 min – 7 days). */
   RETENTION_SWEEP_INTERVAL_MS: z.coerce
     .number()
     .int()
     .min(60_000)
     .max(604_800_000)
     .default(21_600_000),
+  /** Maximum age in days for retention targets that RETENTION_MAX_AGE_DAYS does not list; unset means no age purge for them. */
   RETENTION_DEFAULT_MAX_AGE_DAYS: z.coerce
     .number()
     .int()
     .min(1)
     .max(36_500)
     .optional(),
+  /** JSON map of retention target → maximum age in days, e.g. `{"execution_history": 90}`; target names are listed in docs/CAPABILITIES.md. */
   RETENTION_MAX_AGE_DAYS: z
     .string()
     .optional()
@@ -1295,6 +1323,7 @@ export const EnvSchema = z.object({
       }
       return result.data;
     }),
+  /** Enable tenant-supplied provider keys (bring your own key). */
   BYOK_ENABLED: z
     .string()
     .optional()
@@ -1304,6 +1333,7 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** SECRET (base64, 32 bytes — `openssl rand -base64 32`). Encrypts tenant provider keys at rest. Without it BYOK keys stay in process memory unencrypted; the production gate refuses that. */
   BYOK_ENCRYPTION_KEY: z.string().optional(),
   BYOK_CACHE_TTL_SECONDS: z.coerce
     .number()
@@ -1312,10 +1342,12 @@ export const EnvSchema = z.object({
     .max(86_400)
     .default(60),
   // ── Reversible PII tokenization vault ─────────────────────────────────────
+  /** Enable the reversible PII vault (tokenize PII before provider calls, restore it in the response). */
   PII_VAULT_ENABLED: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** SECRET (base64, 32 bytes). Encrypts PII vault entries at rest. Without it the vault is in-memory and unencrypted; the production gate refuses that. */
   PII_VAULT_ENCRYPTION_KEY: z.string().optional(),
   /** Comma-separated PiiType subset, e.g. "email,phone,iban". Empty = all types. */
   PII_VAULT_TYPES: z.string().optional(),
@@ -1500,14 +1532,17 @@ export const EnvSchema = z.object({
     .min(100)
     .max(10000)
     .default(2000),
+  /** `true` makes startup fail unless a JWT verifier (JWT_SECRET, JWT_JWKS_URL or OIDC_ISSUER) is configured. */
   JWT_REQUIRE_VERIFICATION: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** SECURITY: `true` accepts JWTs without signature verification (format-only) and lets any JWT-shaped bearer act as an admin operator when no verifier is configured. Development only — the production gate rejects it. */
   JWT_ALLOW_UNVERIFIED: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** An unreadable or invalid tool-authorization policy denies every tool call (default `true`); `false` falls back to allowing them. */
   TOOL_AUTHZ_FAIL_CLOSED: z
     .string()
     .optional()
@@ -1522,12 +1557,14 @@ export const EnvSchema = z.object({
     .min(1024)
     .max(104857600)
     .default(26214400),
+  /** Requests per minute per client on the inference API; `0` disables the limit. */
   RATE_LIMIT_PER_MINUTE: z.coerce
     .number()
     .int()
     .min(0)
     .max(100000)
     .default(120),
+  /** Requests per minute per end user on the inference API; `0` (default) disables the per-user limit. */
   RATE_LIMIT_PER_USER_PER_MINUTE: z.coerce
     .number()
     .int()
@@ -1556,6 +1593,7 @@ export const EnvSchema = z.object({
       (raw): boolean =>
         raw === undefined || raw === "" || raw === "true" || raw === "1",
     ),
+  /** Require authentication for `/metrics`. Default `true` (secure default); `false` exposes Prometheus metrics unauthenticated. */
   METRICS_AUTH: z
     .string()
     .optional()
@@ -1654,6 +1692,7 @@ export const EnvSchema = z.object({
       return result.data;
     }),
   GUARDRAIL_MODE: z.enum(["redact", "block"]).default("redact"),
+  /** `true` scans tool-call arguments for PII before they leave the runtime (DLP) and redacts according to GUARDRAIL_REDACT_PII/GUARDRAIL_PII_TYPES. Default off. */
   TOOL_EGRESS_GUARDRAIL: z
     .string()
     .optional()
@@ -1697,10 +1736,12 @@ export const EnvSchema = z.object({
     .transform((raw): boolean => raw === "true" || raw === "1"),
   TOOL_OUTPUT_VALIDATOR_MODE: z.enum(["flag", "redact"]).default("redact"),
   TOOL_OUTPUT_VALIDATOR_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
+  /** Enable human-in-the-loop approval for tool calls matching APPROVAL_REQUIRE_TOOLS or a node's own list. */
   APPROVAL_GATE_ENABLED: z
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** Comma-separated tool patterns (`server/tool`, wildcards allowed) that always need human approval. */
   APPROVAL_REQUIRE_TOOLS: z
     .string()
     .optional()
@@ -1711,6 +1752,7 @@ export const EnvSchema = z.object({
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
     }),
+  /** Time a pending approval waits before it is auto-denied (fail closed), 1 s – 1 h. */
   APPROVAL_TIMEOUT_MS: z.coerce
     .number()
     .int()
@@ -2007,6 +2049,7 @@ export const EnvSchema = z.object({
     .min(60_000)
     .max(86_400_000)
     .default(6 * 60 * 60_000),
+  /** SECRET. JSON map of provider → API key(s) for the deployment's own LLM provider accounts. */
   PROVIDER_KEYS: z
     .string()
     .optional()
@@ -2259,6 +2302,7 @@ export const EnvSchema = z.object({
     .transform((raw): boolean => raw !== "false" && raw !== "0"),
   ASSISTANT_DELEGATION_ISSUER: z.string().url().optional(),
   ASSISTANT_DELEGATION_CLIENT_ID: z.string().min(1).optional(),
+  /** SECRET. OAuth client secret the assistants' identity broker uses for delegated (on-behalf-of) token exchange. */
   ASSISTANT_DELEGATION_CLIENT_SECRET: z.string().min(1).optional(),
   ROCKETCHAT_CONNECT_OIDC_SCOPES: z
     .string()
@@ -2371,6 +2415,7 @@ export const EnvSchema = z.object({
       }
       return result.data as OperatorTokenEntry[];
     }),
+  /** JWT claim that carries the operator role (`viewer`, `operator`, `admin`) for the operator plane. */
   OPERATOR_ROLE_CLAIM: z.string().min(1).max(128).default("role"),
   OPERATOR_GROUPS_CLAIM: z.string().min(1).max(128).optional(),
   OPERATOR_ROLE_MAP: z
@@ -2405,6 +2450,7 @@ export const EnvSchema = z.object({
       return result.data;
     }),
   OPERATOR_DEFAULT_ROLE: z.enum(["viewer", "operator", "admin"]).optional(),
+  /** Enable the tenant management API (`/admin/tenants`: tenants, API keys, provider keys). */
   TENANT_MANAGEMENT_ENABLED: z
     .string()
     .optional()
@@ -2433,6 +2479,7 @@ export const EnvSchema = z.object({
     .string()
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
+  /** SECRET. Verifies the signature of GitOps webhook deliveries; without it signatures are not verified. */
   GITOPS_WEBHOOK_SECRET: z.string().min(1).optional(),
   // Refuse the GitOps webhook when no secret is configured (default true).
   // `POST /webhooks/git` replaces flow definitions, so an unsigned variant is
