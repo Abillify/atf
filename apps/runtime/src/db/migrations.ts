@@ -1606,6 +1606,19 @@ export const MIGRATIONS: readonly Migration[] = [
        $do$`,
     ],
   },
+  {
+    version: 47,
+    name: "executions + token_usage_log: iss — issuer-scoped self-service erasure",
+    statements: [
+      // The verified token issuer next to the user identifier, so a
+      // self-service erasure (DELETE /v1/me/data) removes only the caller
+      // issuer's rows when two trusted issuers hand out the same `sub`.
+      // Nullable: rows written before this migration keep matching by
+      // identifier alone. A public URL, not personal data — stored plain.
+      `ALTER TABLE token_usage_log ADD COLUMN IF NOT EXISTS iss TEXT`,
+      `ALTER TABLE executions ADD COLUMN IF NOT EXISTS iss TEXT`,
+    ],
+  },
 ];
 export const LATEST_SCHEMA_VERSION: number = MIGRATIONS.reduce(
   (max, m) => (m.version > max ? m.version : max),

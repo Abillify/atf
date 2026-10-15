@@ -688,6 +688,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
         : {}),
       ...(ctx.chatId !== undefined ? { chatId: ctx.chatId } : {}),
       ...(ctx.sessionId !== undefined ? { sessionId: ctx.sessionId } : {}),
+      ...(typeof ctx.claims?.iss === "string" && ctx.claims.iss !== ""
+        ? { issuer: ctx.claims.iss }
+        : {}),
     };
     // User attribution — derived once per execution and stamped on every node
     // event so the Live Graph and History view can show the requester even when

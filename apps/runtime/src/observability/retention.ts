@@ -8,8 +8,13 @@
  * any user identifier is tenant-wide, and only the operator plane builds one.
  * `userAliases` are further identifiers of the same person (JWT `sub` vs.
  * email) — stores attribute rows under whichever one the request carried.
+ *
+ * `issuer` is the verified token issuer of a self-service request. Stores that
+ * record the issuer match `(iss = issuer OR iss IS NULL)`: rows of another
+ * issuer with a colliding `sub` survive, legacy rows without `iss` still match
+ * by identifier alone. Stores that do not record it ignore the field.
  */
-export interface ErasureSubject { tenantId?: string; userId?: string; userAliases?: readonly string[]; }
+export interface ErasureSubject { tenantId?: string; userId?: string; userAliases?: readonly string[]; issuer?: string; }
 export interface RetentionTarget {
   name: string;
   purgeOlderThan?: (cutoffIso: string) => Promise<number>;

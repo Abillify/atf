@@ -228,6 +228,40 @@ suite("Postgres — execution history retention", () => {
     );
     expect(runs.map((r) => r.execution_id)).toEqual([colleague]);
   });
+
+  it("scopes self-erasure to the token issuer: colliding sub of another issuer survives, legacy rows (iss NULL) match", async () => {
+    const store = new PostgresExecutionStore(db);
+    const tenant = `acme-${uniq()}`;
+    const issA = "https://idp-a.example/";
+    const issB = "https://idp-b.example/";
+    const rows = {
+      a: { id: uniq(), iss: issA },
+      b: { id: uniq(), iss: issB },
+      legacy: { id: uniq(), iss: null },
+    };
+    for (const { id, iss } of Object.values(rows)) {
+      await db.query(
+        `INSERT INTO executions (execution_id, flow_id, tenant_id, status, started_at, iss)
+           VALUES ($1, 'flow', $2, 'completed', now(), $3)`,
+        [id, tenant, iss],
+      );
+      await db.query(
+        `INSERT INTO token_usage_log (execution_id, flow_id, tenant_id, user_id, created_at, iss)
+           VALUES ($1, 'flow', $2, 'same-sub', now(), $3)`,
+        [id, tenant, iss],
+      );
+    }
+    const subject = { tenantId: tenant, userId: "same-sub", issuer: issA };
+    expect((await store.executionIdsForSubject(subject)).sort()).toEqual(
+      [rows.a.id, rows.legacy.id].sort(),
+    );
+    expect(await store.eraseSubject(subject)).toBe(2);
+    const left = await db.query<{ execution_id: string }>(
+      `SELECT execution_id FROM token_usage_log WHERE tenant_id = $1`,
+      [tenant],
+    );
+    expect(left.map((r) => r.execution_id)).toEqual([rows.b.id]);
+  });
 });
 
 suite("Postgres — execution store batched node_events writes", () => {

@@ -232,6 +232,8 @@ export interface ExecutionEventMeta {
   conversationId?: string;
   chatId?: string;
   sessionId?: string;
+  /** Verified token issuer (`iss`); lets self-service erasure scope `sub`. */
+  issuer?: string;
 }
 
 /**
@@ -313,7 +315,9 @@ export interface ExecutionStore {
    * Right-to-be-forgotten. A subject carrying user identifiers erases only the
    * executions attributed to that user (`token_usage_log.user_id`/`user_label`
    * or `executions.user_name`), limited to `tenantId` when given, together
-   * with their node events and usage-log rows. Only a subject without user
+   * with their node events and usage-log rows. A subject `issuer` further
+   * limits this to rows with that `iss` or no recorded `iss` (legacy rows).
+   * Only a subject without user
    * identifiers erases the whole tenant. Returns the number of executions
    * removed.
    */
@@ -770,10 +774,11 @@ export class PostgresExecutionStore implements ExecutionStore {
       // without clobbering values already set.
       await db.query(
         `INSERT INTO executions
-           (execution_id, flow_id, tenant_id, user_name, user_prompt, conversation_id, chat_id, session_id, status, started_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9)
+           (execution_id, flow_id, tenant_id, user_name, user_prompt, conversation_id, chat_id, session_id, status, started_at, iss)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'running', $9, $10)
          ON CONFLICT (execution_id) DO UPDATE
            SET user_name      = COALESCE(executions.user_name, EXCLUDED.user_name),
+               iss            = COALESCE(executions.iss, EXCLUDED.iss),
                user_prompt    = COALESCE(executions.user_prompt, EXCLUDED.user_prompt),
                conversation_id = COALESCE(executions.conversation_id, EXCLUDED.conversation_id),
                chat_id        = COALESCE(executions.chat_id, EXCLUDED.chat_id),
@@ -788,6 +793,7 @@ export class PostgresExecutionStore implements ExecutionStore {
           meta?.chatId ?? null,
           meta?.sessionId ?? null,
           event.start_time,
+          meta?.issuer ?? null,
         ],
       );
 
@@ -797,10 +803,11 @@ export class PostgresExecutionStore implements ExecutionStore {
       // Token/cost/duration totals are rolled forward on terminal events below.
       await db.query(
         `INSERT INTO token_usage_log
-           (execution_id, flow_id, tenant_id, user_id, user_label, prompt_preview, created_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
+           (execution_id, flow_id, tenant_id, user_id, user_label, prompt_preview, created_at, iss)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
          ON CONFLICT (execution_id) DO UPDATE
-           SET flow_id        = COALESCE(token_usage_log.flow_id, EXCLUDED.flow_id),
+           SET iss            = COALESCE(token_usage_log.iss, EXCLUDED.iss),
+               flow_id        = COALESCE(token_usage_log.flow_id, EXCLUDED.flow_id),
                tenant_id      = COALESCE(token_usage_log.tenant_id, EXCLUDED.tenant_id),
                user_id        = COALESCE(token_usage_log.user_id, EXCLUDED.user_id),
                user_label     = COALESCE(token_usage_log.user_label, EXCLUDED.user_label),
@@ -813,6 +820,7 @@ export class PostgresExecutionStore implements ExecutionStore {
           event.user_name ?? null,
           event.user_prompt ?? null,
           event.start_time,
+          meta?.issuer ?? null,
         ],
       );
 
@@ -1229,7 +1237,8 @@ export class PostgresExecutionStore implements ExecutionStore {
 
   async eraseSubject(subject: ErasureSubject): Promise<number> {
     const userIds = subjectUserIds(subject);
-    if (userIds.length > 0) return this.eraseUser(userIds, subject.tenantId);
+    if (userIds.length > 0)
+      return this.eraseUser(userIds, subject.tenantId, subject.issuer);
     if (subject.tenantId === undefined) return 0;
     const tenantId = subject.tenantId;
     return this.scoped(tenantId, async (db) => {
@@ -1262,9 +1271,10 @@ export class PostgresExecutionStore implements ExecutionStore {
   private async eraseUser(
     userIds: string[],
     tenantId: string | undefined,
+    issuer: string | undefined,
   ): Promise<number> {
     const run = async (db: Database): Promise<number> => {
-      const ids = await ownedExecutionIds(db, userIds, tenantId);
+      const ids = await ownedExecutionIds(db, userIds, tenantId, issuer);
       if (ids.length === 0) return 0;
       const idList = JSON.stringify(ids);
       await db.query(
@@ -1295,8 +1305,9 @@ export class PostgresExecutionStore implements ExecutionStore {
   async executionIdsForSubject(subject: ErasureSubject): Promise<string[]> {
     const userIds = subjectUserIds(subject);
     if (userIds.length === 0) return [];
-    const { tenantId } = subject;
-    const run = (db: Database) => ownedExecutionIds(db, userIds, tenantId);
+    const { tenantId, issuer } = subject;
+    const run = (db: Database) =>
+      ownedExecutionIds(db, userIds, tenantId, issuer);
     return tenantId !== undefined
       ? this.scoped(tenantId, run)
       : this.db.withOperator(run);
@@ -1306,7 +1317,7 @@ export class PostgresExecutionStore implements ExecutionStore {
     subject: ErasureSubject,
   ): Promise<string[]> {
     const userIds = subjectUserIds(subject);
-    const { tenantId } = subject;
+    const { tenantId, issuer } = subject;
     if (userIds.length === 0 && tenantId === undefined) return [];
     const run = async (db: Database): Promise<string[]> => {
       const rows =
@@ -1317,7 +1328,11 @@ export class PostgresExecutionStore implements ExecutionStore {
                 WHERE execution_id::text IN
                       (SELECT jsonb_array_elements_text($1::text::jsonb))
                   AND flow_id IS NOT NULL AND conversation_id IS NOT NULL`,
-              [JSON.stringify(await ownedExecutionIds(db, userIds, tenantId))],
+              [
+                JSON.stringify(
+                  await ownedExecutionIds(db, userIds, tenantId, issuer),
+                ),
+              ],
             )
           : await db.query<{ thread: string }>(
               `SELECT DISTINCT flow_id || ':' || conversation_id AS thread
@@ -1351,21 +1366,32 @@ async function ownedExecutionIds(
   db: Database,
   userIds: string[],
   tenantId: string | undefined,
+  issuer?: string,
 ): Promise<string[]> {
   // A JSON list rather than a driver array parameter: Bun's SQL client sends
   // a JS array as a comma-joined string, which Postgres rejects. The `::text`
   // hop matters too — a bare `$1::jsonb` arrives as a JSON string scalar.
-  const tenantClause = tenantId !== undefined ? " AND tenant_id = $2" : "";
   const idList = JSON.stringify(userIds);
-  const params: unknown[] =
-    tenantId !== undefined ? [idList, tenantId] : [idList];
+  const params: unknown[] = [idList];
+  let tenantClause = "";
+  if (tenantId !== undefined) {
+    params.push(tenantId);
+    tenantClause = ` AND tenant_id = $${params.length}`;
+  }
+  // Issuer scoping: rows that recorded another issuer are someone else's even
+  // when `sub` collides; legacy rows (iss IS NULL) still match by identifier.
+  let issClause = "";
+  if (issuer !== undefined && issuer !== "") {
+    params.push(issuer);
+    issClause = ` AND (iss = $${params.length} OR iss IS NULL)`;
+  }
   const rows = await db.query<{ execution_id: string }>(
     `WITH ids AS (SELECT jsonb_array_elements_text($1::text::jsonb) AS id)
      SELECT execution_id FROM token_usage_log
-       WHERE (user_id IN (SELECT id FROM ids) OR user_label IN (SELECT id FROM ids))${tenantClause}
+       WHERE (user_id IN (SELECT id FROM ids) OR user_label IN (SELECT id FROM ids))${tenantClause}${issClause}
      UNION
      SELECT execution_id FROM executions
-       WHERE user_name IN (SELECT id FROM ids)${tenantClause}`,
+       WHERE user_name IN (SELECT id FROM ids)${tenantClause}${issClause}`,
     params,
   );
   return rows.map((r) => r.execution_id);

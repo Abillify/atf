@@ -149,7 +149,7 @@ Source of truth: `apps/runtime/src/config/schema.ts`.
 | `JOBS_ENABLED` | boolean | no | — | — |
 | `JOBS_MAX_ENTRIES` | number | no | `1000` | — |
 | `JOBS_TTL_SECONDS` | number | no | `3600` | — |
-| `JWT_ADDITIONAL_ISSUERS` | JSON | no | — | JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. |
+| `JWT_ADDITIONAL_ISSUERS` | JSON | no | — | JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. The list is platform-wide (operator-managed, not per tenant): every listed issuer is trusted for the whole runtime, so bind each one to its tenants with JWT_ISSUER_TENANTS. |
 | `JWT_ALLOW_UNVERIFIED` | boolean | no | — | SECURITY: `true` accepts JWTs without signature verification (format-only) and lets any JWT-shaped bearer act as an admin operator when no verifier is configured. Development only — the production gate rejects it. |
 | `JWT_AUDIENCE` | string | no | — | Expected `aud` claim of inbound end-user JWTs; tokens for another audience are rejected. |
 | `JWT_ISSUER` | string | no | — | Expected issuer/audience for a directly configured JWKS verifier. (`jwtIssuer`) |

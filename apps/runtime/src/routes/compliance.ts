@@ -576,9 +576,12 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
    * issuers can be trusted at once (JWT_ADDITIONAL_ISSUERS, token_or_oidc) and
    * many IdPs let users set their own email, so `email` is an identifier only
    * when the token also says `email_verified: true` — otherwise a token whose
-   * `email` names someone else would erase that person's data. Stores record
-   * the bare `sub` (not the issuer), so `iss` is required and audited but
-   * cannot narrow the store match itself.
+   * `email` names someone else would erase that person's data. `iss` is
+   * required and audited. The execution and usage-log stores record the issuer
+   * next to the `sub` and match `(iss = issuer OR iss IS NULL)`, so another
+   * issuer's colliding `sub` survives while legacy rows written before the
+   * column existed still match by `sub`. Other stores record the bare
+   * identifier only and cannot narrow by issuer.
    */
   const resolveCallerSubject = (
     ctx: Context<AuthContext>,
@@ -706,12 +709,16 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
         },
         dryRun: false,
       };
-      const operation = await deps.erasureOrchestrator.execute(request);
+      const operation = await deps.erasureOrchestrator.execute(request, {
+        issuer,
+      });
       requestId = operation.requestId;
       results = operation.results;
       status = operation.status;
     } else {
-      results = resultsFromReport(await retention.forget(subject));
+      results = resultsFromReport(
+        await retention.forget({ ...subject, issuer }),
+      );
       status = aggregateStatus(results);
     }
     const erased = results.reduce((n, r) => n + r.erased, 0);

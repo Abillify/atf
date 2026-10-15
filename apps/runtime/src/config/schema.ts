@@ -1115,7 +1115,7 @@ export const EnvSchema = z.object({
         .filter((claim) => claim !== "");
       return [...new Set(claims.length > 0 ? claims : ["scope", "scp"])];
     }),
-  /** JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. */
+  /** JSON array of further trusted token issuers, `[{"issuer": "…", "audience": "…"}]`, verified via their OIDC discovery/JWKS in addition to the primary issuer. The list is platform-wide (operator-managed, not per tenant): every listed issuer is trusted for the whole runtime, so bind each one to its tenants with JWT_ISSUER_TENANTS. */
   JWT_ADDITIONAL_ISSUERS: z
     .string()
     .optional()

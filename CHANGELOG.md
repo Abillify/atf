@@ -57,6 +57,14 @@ releases:
   subject user-scoped and no longer runs the local stores for a
   `reference`-scoped request. Retention targets now erase sequentially, PII
   vault first.
+- **Self-service erasure is scoped to the token issuer** (`DELETE /v1/me/data`):
+  two trusted issuers (`JWT_ADDITIONAL_ISSUERS`) in one tenant can hand out the
+  same `sub`; erasing one user no longer removes the other issuer's executions
+  and usage-log rows. Migration 47 adds a nullable `iss` column to `executions`
+  and `token_usage_log`, written at the request boundary. A row matches when its
+  `iss` equals the caller's issuer or is `NULL`, so rows written before the
+  migration still match by `sub`. The orchestrator keeps the issuer for retries.
+  `JWT_ADDITIONAL_ISSUERS` is documented as a platform-wide list.
 - **An invalid compliance policy no longer switches enforcement off**
   (`compliance-policy.yaml`): a hot-reload of an unreadable or schema-invalid
   file keeps the last valid policy in force instead of dropping to "no

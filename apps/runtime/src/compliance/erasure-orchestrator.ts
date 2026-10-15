@@ -59,7 +59,10 @@ export interface ErasureOperation {
   requestId: string;
   tenantId: string;
   scope: ErasureScope;
-  subject?: ContractErasureSubject;
+  subject?: ContractErasureSubject & {
+    /** Verified token issuer of a self-service erasure (scopes local stores). */
+    issuer?: string;
+  };
   references?: string[];
   status: ErasureOperationStatus;
   results: ErasureStoreResult[];
@@ -100,7 +103,10 @@ export interface ErasureOrchestratorOptions {
 
 export interface ErasureOrchestrator {
   /** Run (or replay, when the requestId is known) an erasure operation. */
-  execute(request: ErasureRequest): Promise<ErasureOperation>;
+  execute(
+    request: ErasureRequest,
+    options?: { issuer?: string },
+  ): Promise<ErasureOperation>;
   /** Re-run only the stores that reported `failed`. */
   retry(requestId: string): Promise<ErasureOperation | null>;
   /** Load a stored operation (operator-plane read). */
@@ -182,8 +188,8 @@ function errorMessage(error: unknown): string {
  * tenant-only subject — which the local stores read as "the whole tenant".
  */
 function localUserIdentity(
-  subject: ContractErasureSubject | undefined,
-): Pick<ErasureSubject, "userId" | "userAliases"> {
+  subject: ErasureOperation["subject"],
+): Pick<ErasureSubject, "userId" | "userAliases" | "issuer"> {
   const ids = [
     ...new Set(
       [subject?.userId, subject?.email, ...(subject?.externalIds ?? [])]
@@ -194,7 +200,12 @@ function localUserIdentity(
   ];
   const [userId, ...userAliases] = ids;
   if (userId === undefined) return {};
-  return userAliases.length > 0 ? { userId, userAliases } : { userId };
+  const issuer = subject?.issuer;
+  return {
+    userId,
+    ...(userAliases.length > 0 ? { userAliases } : {}),
+    ...(typeof issuer === "string" && issuer !== "" ? { issuer } : {}),
+  };
 }
 
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
@@ -493,13 +504,24 @@ export function createErasureOrchestrator(
 
   const execute = async (
     request: ErasureRequest,
+    options?: { issuer?: string },
   ): Promise<ErasureOperation> => {
     const now = new Date().toISOString();
+    const issuer = options?.issuer?.trim();
     const operation: ErasureOperation = {
       requestId: request.requestId,
       tenantId: request.tenantId,
       scope: request.scope,
-      ...(request.subject !== undefined ? { subject: request.subject } : {}),
+      // The issuer is kept on the persisted subject only (never sent to remote
+      // targets) so a retry scopes the local stores the same way.
+      ...(request.subject !== undefined
+        ? {
+            subject: {
+              ...request.subject,
+              ...(issuer !== undefined && issuer !== "" ? { issuer } : {}),
+            },
+          }
+        : {}),
       ...(request.references !== undefined
         ? { references: request.references }
         : {}),
@@ -515,7 +537,7 @@ export function createErasureOrchestrator(
 
     const subject: ErasureSubject = {
       tenantId: request.tenantId,
-      ...localUserIdentity(request.subject),
+      ...localUserIdentity(operation.subject),
     };
     // Only a tenant-scoped request may reach the local stores without a user:
     // they read a tenant-only subject as "erase the whole tenant". The runtime

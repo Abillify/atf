@@ -277,7 +277,9 @@ describe("DELETE /v1/me/data — honest per-store DSAR response (Req 2.10)", () 
       });
       const res = await app.request("/v1/me/data", deleteReq);
       expect(res.status).toBe(200);
-      expect(target.subjects).toEqual([{ userId: "u-1", tenantId: "acme" }]);
+      expect(target.subjects).toEqual([
+        { userId: "u-1", tenantId: "acme", issuer: ISSUER },
+      ]);
     }
   });
 
@@ -286,8 +288,36 @@ describe("DELETE /v1/me/data — honest per-store DSAR response (Req 2.10)", () 
     const { app } = buildDsarApp({ targets: [target] });
     await app.request("/v1/me/data", deleteReq);
     expect(target.subjects).toEqual([
-      { userId: "u-1", userAliases: ["u@x.de"], tenantId: "acme" },
+      {
+        userId: "u-1",
+        userAliases: ["u@x.de"],
+        tenantId: "acme",
+        issuer: ISSUER,
+      },
     ]);
+  });
+
+  it("hands the caller's issuer to the stores so a colliding sub of another issuer is not erased", async () => {
+    const OTHER = "https://other-idp.example/";
+    const mine = new FakeTarget("snapshots");
+    const theirs = new FakeTarget("snapshots");
+    await buildDsarApp({ targets: [mine] }).app.request("/v1/me/data", deleteReq);
+    await buildDsarApp({
+      targets: [theirs],
+      claims: { ...CALLER, iss: OTHER },
+    }).app.request("/v1/me/data", deleteReq);
+    expect(mine.subjects[0]?.issuer).toBe(ISSUER);
+    expect(theirs.subjects[0]).toMatchObject({ userId: "u-1", issuer: OTHER });
+  });
+
+  it("passes the issuer through the orchestrator to the local stores", async () => {
+    const target = new FakeTarget("snapshots");
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([target]),
+    });
+    const { app } = buildDsarApp({ targets: [], orchestrator: orch });
+    await app.request("/v1/me/data", deleteReq);
+    expect(target.subjects[0]).toMatchObject({ userId: "u-1", issuer: ISSUER });
   });
 
   it("403 TENANT_REQUIRED without a tenant claim — never erases across tenants", async () => {
