@@ -44,10 +44,17 @@ describe("tree-head sealer (Req 15.3 periodic signed tree heads)", () => {
     const heads: SignedTreeHead[] = [];
     const log = await makeLog(heads);
     await log.append("r-0", bytes(0));
-    const sealer = createTreeHeadSealer(log, 5);
+    // The interval must stay well above the time one seal takes (async
+    // signing plus the sink). With a few milliseconds, a loaded machine lets a
+    // second tick start before the first seal has recorded its head, and the
+    // same tree size is sealed twice.
+    const sealer = createTreeHeadSealer(log, 50);
     sealer.start();
     sealer.start(); // idempotent
-    await Bun.sleep(40);
+    // Wait for the first seal instead of sleeping a fixed time, then stop
+    // before the next tick.
+    const deadline = Date.now() + 5_000;
+    while (heads.length === 0 && Date.now() < deadline) await Bun.sleep(2);
     sealer.stop();
     expect(heads.map((h) => h.treeSize)).toEqual([1]);
     await log.append("r-1", bytes(1));
