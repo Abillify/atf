@@ -36,7 +36,7 @@ reference. The principal routes are:
 
 | Endpoint | Purpose |
 | --- | --- |
-| `POST /ingest`, `/ingest-batch`, `/ingest-stream` | Ingest single, batch, and streaming documents |
+| `POST /ingest`, `/ingest-batch`, `/ingest-stream` | Ingest single, batch, and streaming documents. With authorization enabled the first write into a collection that does not exist yet is let through (no stored ACL yet) so the handler can create it; the MCP ingest tool tolerates the same case. A trusted writer (service credential, or a principal holding `vectorsearch.acl.manage`) may set explicit per-document viewers with `X-Allowed-Users` / `X-Allowed-Groups`; everyone else keeps the ACL derived from the principal |
 | `POST /ingest-file` | Binary document ingest through `@atf/extract`. Mounted only when `CONVERTER_URL` is set, otherwise 404. Uploads the source to Extract (`/v2/uploads`), starts a v2 job and answers 202 with `job_id` and a `Location` for polling; the job's emitter stores the revision and the figure images |
 | `PUT`, `GET /document-assets/:assetId` | v1 figure images. The owning document must already be visible, otherwise the write is refused |
 | `POST /search` | Dense, hybrid, sparse, and optionally reranked retrieval (v1 shape, unchanged) |
@@ -131,6 +131,10 @@ Behaviour worth knowing:
 
 ### Duplicates, version order and e-mail threads
 
+- **Unknown collection.** On read and search routes a caller with a valid scope who addresses a
+  collection that does not exist gets 404 (typed `COLLECTION_NOT_FOUND`) instead of 403, so an empty
+  index is not reported as a permission failure. Write routes of the ingest family allow it for the
+  first write, see the route table above.
 - **Row ACL.** A revision is opened with the document's readers (`X-Allowed-Users/-Groups`,
   resolved by `rowAclForRevision`: a service caller's values as given, else the collection ACL;
   an end user only narrows to itself). It is stored on the revision and written onto every unit
