@@ -6,7 +6,7 @@
 A working aid for the controller. ATF provides the technical building
 blocks; the legal assessment is the responsibility of the controller and the
 data protection officer. This template is adapted to the ATF architecture
-(0.14) — the notes it ships (`→ ATF:`) are not legal advice; they show which
+(0.16) — the notes it ships (`→ ATF:`) are not legal advice; they show which
 controls the platform contributes.
 
 ## 1. Description of the processing
@@ -48,7 +48,7 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 | --- | --- | --- |
 | Access (Art. 15) | Export per subject/tenant through Control/API (`GET /v1/me/data`) | — |
 | Rectification (Art. 16) | Re-ingest replaces the document version | Revisions in Search |
-| Erasure (Art. 17) | Runtime erasure orchestrator (`DELETE /v1/me/data`, operator DSAR `POST /admin/compliance/forget`) fans out to the `POST /v1/erasure` endpoints of Search, Extract and Gate; the aggregate status is honest about partial results | Every erasure is audited; signed erasure receipt (`GET /v1/me/data/erasures/{id}`) |
+| Erasure (Art. 17) | Runtime erasure orchestrator (`DELETE /v1/me/data`, operator DSAR `POST /admin/compliance/forget`) fans out to the `POST /v1/erasure` endpoints of Search, Extract and Gate; the aggregate status is honest about partial results | Every erasure is audited; signed erasure receipt (`GET /v1/me/data/erasures/{id}`). Self-service erasure is keyed on the token's `iss` and `sub` (an `email` only when `email_verified` is true), requires a tenant claim, and covers executions, usage log, checkpoints, assistant data and other runtime stores; a store that cannot be erased automatically turns the result into `partial` |
 | Objection (Art. 21) | Disable the flow per tenant | — |
 
 - [ ] Deletion concept documented (periods per data category)
@@ -61,7 +61,8 @@ activities (`VVT-VORLAGE.md`); flows document the concrete data flow.
 | Unauthorised access to documents | | | AuthN/tenant scoping, volume encryption | |
 | PII exposure to the LLM provider | | | PII vault, output guardrails, egress allowlist | |
 | AI decision that cannot be traced | | | Decision provenance (ADR 0017), trace per execution, decision receipts | |
-| Data leaking through tool misuse (prompt injection) | | | Tool policy (ADR 0011), red-teaming (ADR 0010) | |
+| Data leaking through tool misuse (prompt injection) | | | Tool policy (ADR 0011), red-teaming (ADR 0010), retrieved context handed to the model as delimited untrusted data (`RETRIEVAL_CONTEXT_MODE`), injection scan on chunks and tool results, approval for write tools after a finding (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`); detection is heuristic | |
+| Personal data in service logs | | | Shared log redaction for credentials and tokens, no raw search queries or user ids in Search logs, hashed emails in OIDC logs | |
 | Audit tampering | | | Hash chain + externally stored signed anchor | |
 
 → Detailed attack surfaces: `THREAT-MODEL.md` (STRIDE per service).
