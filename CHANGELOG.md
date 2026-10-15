@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.16.0] — 2026-10-15
+
 ### Security
 
 - **Control** (`@atf/control`): `next` 16.3.6 → 16.3.8 (CVE-2026-94483, SSRF and
@@ -337,6 +339,17 @@ releases:
   the run or the replayed history contained is rejected, including paths that
   appear only in the user's message or the system prompt; the error tells the
   model to search or use `list_documents` instead.
+- **Documentation** (no behaviour change): `docs/runbooks/key-rotation.md` covers
+  receipt signing keys, `API_KEY_PEPPER`, `STATS_QUERY_PEPPER`, `API_TOKEN_NEXT`,
+  `CONTROL_SESSION_SECRET` and TLS/mTLS; `docs/runbooks/backup-restore.md` lists
+  keys, peppers and the FTS language in the backup scope;
+  `docs/THREAT-MODEL.md` adds the issuer→tenant binding, shadow/replay side effects,
+  log redaction, invalid-policy enforcement, the Gate monitor token and the Control
+  BFF cross-site guard; `ARCHITECTURE.md` lists seven contract packages and separates
+  package versions from wire constants; `DEPLOYMENT.md` describes the GHCR images
+  (cosign signature, SLSA provenance, SBOM attestation) with an image-verification
+  section and pinning by `image.digest`; `apps/outpost/README.md` names the
+  `outpost-v<version>` image instead of `:latest`.
 
 ### Fixed
 - **Search rerank scores keep their native scale** (`@atf/search`): Bedrock and
@@ -452,6 +465,52 @@ releases:
   retry budget is per request: on the last candidate, where the AI SDK
   retries itself (`maxRetries` 2), an unreachable endpoint costs up to 6
   connects per step instead of 3.
+- **Control a11y sweep** (`@atf/control`): the routes are read from the dashboard pages
+  instead of a hand-kept list, so the removed `/rag` page is no longer scanned and a new page is
+  covered automatically.
+
+### Migration
+
+Step-by-step instructions are in [docs/UPGRADE.md](docs/UPGRADE.md) (0.15 → 0.16).
+
+- **Gate monitor (breaking):** `?token=` is rejected on every monitor endpoint. Scripts send
+  `Authorization: Bearer <token>`; the dashboard uses `POST /monitor/session`.
+- **Search full-text language:** `FTS_LANGUAGE` defaults to `german`. Existing collections keep
+  their language; switch each one with `bun run --filter @atf/search fts:language <collection>
+  <language>` (needs `POSTGRES_URL`, recomputes the vectors). Deployments with mainly
+  non-German content set `FTS_LANGUAGE` explicitly. `german_compound` needs Hunspell files in
+  the PostgreSQL image and `FTS_EXTRA_LANGUAGES`.
+- **Runtime schema version 47:** nullable `iss` on `executions` and `token_usage_log`
+  (additive; run `bun run migrate` or the Helm hooks before rolling out in production).
+- **Trusted issuers:** with `JWT_ADDITIONAL_ISSUERS` and tenant isolation, set
+  `JWT_ISSUER_TENANTS`; without it production readiness fails and unbound issuer/tenant
+  pairs get 401.
+- **Self-service erasure:** `DELETE /v1/me/data` is scoped to the user and the token issuer,
+  needs `iss` (else 401) and a tenant claim (else 403 `TENANT_REQUIRED`), and uses `email` only
+  with `email_verified: true`. Operator DSAR with user identifiers no longer erases the whole
+  tenant.
+- **Compliance policy:** an invalid `compliance-policy.yaml` no longer disables enforcement; at
+  startup without a valid policy chat answers 503 until the file is fixed.
+- **Shadow and replay:** sampling defaults to 5 %. Both run without side effects: tools without
+  `readOnlyHint` are refused and approvals are denied. Custom MCP servers that should take part
+  declare `readOnlyHint` on their lookup tools.
+- **Prompt-injection defaults in production:** `RETRIEVAL_CONTEXT_MODE=spotlight`,
+  `TOOL_OUTPUT_VALIDATOR_ENABLED` on and `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL` on. After a
+  finding, write tools need approval (denied without an approval gate). Set them explicitly to
+  opt out; this raises a readiness warning.
+- **Search scores:** `RERANK_SCORE_TRANSFORM=auto` no longer squashes scores already in [0, 1];
+  re-tune `MIN_RERANK_SCORE` or set `sigmoid` to restore the old mapping. Responses always
+  carry `score_scale`, and a threshold on a different scale leaves results unfiltered
+  (`skipped: "scale_mismatch"`).
+- **Role gating:** `POST /autopilot/trigger` and the red-team run/refresh endpoints now need
+  `flows:write` (admin); viewers and operators lose them. Control approvals need the operator
+  role.
+- **Control:** `mutations.retry` is 0, so a failed mutation is no longer repeated. In BFF mode
+  behind a reverse proxy set `CONTROL_PUBLIC_ORIGIN`; there is no silent renewal, users sign in
+  again after expiry.
+- **Eval stack:** `scripts/eval/compose.eval.yaml` embeds with `BAAI/bge-m3`
+  (`EMBED_EXPECTED_DIMENSION=1024`). Re-ingest the eval corpus; production embedding settings
+  are unaffected, and the CI floors in `baseline/thresholds.json` are not yet recalibrated.
 
 ## [0.15.0] — 2026-10-13
 
@@ -3235,7 +3294,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/abillify/atf/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/abillify/atf/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/abillify/atf/compare/v0.13.2...v0.14.0
 [0.13.2]: https://github.com/abillify/atf/compare/v0.13.1...v0.13.2

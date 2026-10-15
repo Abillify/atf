@@ -1,6 +1,6 @@
 {
     "name": "@atf/system-integration",
-    "version": "0.15.0",
+    "version": "0.16.0",
     "private": true,
     "author": "Abillify Technology GmbH <info@abillify.me>",
     "license": "Elastic-2.0",
