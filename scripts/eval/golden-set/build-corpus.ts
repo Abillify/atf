@@ -190,7 +190,9 @@ function figureDescription(
 /** Build the structured corpus for every document of the golden set. PURE. */
 export function buildCorpus(set: GoldenSet): CorpusDocument[] {
 	return set.documents.map((doc, docIndex) => {
-		const questions = set.questions.filter((q) => q.document === doc.id);
+		const questions = set.questions.filter(
+			(q) => q.document === doc.id && q.abstain !== true,
+		);
 
 		// Aggregate figures across ALL questions of the document so each id is
 		// emitted exactly once (v1 figure units are keyed by reference).

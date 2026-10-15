@@ -21,6 +21,17 @@ against `POST /search`, derives references from every hit, and computes:
 | **Figure Recall@k** | same, over expected figures (a hit is a figure when its evidence is an image with a `figure_id`) |
 | **MRR** | reciprocal rank of the first correct hit at any granularity, averaged over questions |
 | **Figure-Hit-Rate@k** | fraction of figure questions with at least one expected figure in the top _k_ |
+| **Abstention precision / recall** | over the unanswerable questions (`abstain: true`): precision = share of abstentions that were on an unanswerable question, recall = share of unanswerable questions left unanswered |
+| **False-answer rate** | share of unanswerable questions that still got an answer (1 − abstention recall) |
+| **False-abstention rate** | share of answerable questions that got no answer (over-abstention) |
+
+A question counts as *answered* when a top-_k_ hit exists. A ranked retriever
+almost always returns something, so abstention only becomes informative with a
+score gate: `--abstain-min-score <n>` counts a question as answered only when a
+top-_k_ hit has a score of at least _n_. Scores are not comparable across search
+modes or rerankers, so set the gate per configuration. Offline runs without
+captured scores (older `--capture` files) cannot pass a gate. Abstention is
+reported as „nicht gemessen" for a run without any hit.
 
 References are derived from the Search result contract:
 
@@ -53,7 +64,7 @@ the retrieval baseline ships as a pending skeleton.
 
 ## German morphology set
 
-`golden-set/de-morphology.v1.json` re-asks 36 golden-set questions with other
+`golden-set/de-morphology.v1.json` re-asks 36 answerable golden-set questions (plus the abstain variants below) with other
 German word forms and keeps their expected answers:
 
 | Phenomenon | Example (base → variant) |
@@ -61,6 +72,9 @@ German word forms and keeps their expected answers:
 | inflection | „Wo werden die Berechtigungen beschrieben?" → „Wo wird die Berechtigung beschrieben?" |
 | compound | „Welche Pflichtfelder hat die Wareneingangsmaske?" → „Welches Pflichtfeld hat die Maske für den Wareneingang?" |
 | derivation | „Wie wird die Chargenverwaltung gefordert?" → „Wie werden Chargen verwaltet?" |
+
+Since fixture 1.1.0 the set also holds 7 variants of unanswerable questions
+(16 % of 43), so the abstention metrics cover German word forms too.
 
 The v1 questions appear verbatim in the corpus, so they score well even without
 stemming; the variants only score well when the full-text configuration
@@ -79,11 +93,14 @@ content word of its base and must not occur verbatim in the corpus.
 
 `golden-set/golden-set.v1.json` is the **versioned** fixture: four representative
 document types (WMS requirements DOCX, a BPMN process document, a UI-mask manual,
-a technical plan set) and 120 questions carrying expected page, figure and
-table-cell answers, plus ground-truth `extraction` annotations (expected table
+a technical plan set) and 144 questions: 120 answerable ones carrying expected
+page, figure and table-cell answers and 24 unanswerable ones (`abstain: true`,
+16.7 %, subject absent from the corpus, expected outcome „no hit"), plus ground-truth `extraction` annotations (expected table
 content, figure labels, BPMN nodes/edges) for the extraction-quality metrics.
 The `extraction` field is optional and was added in fixture `1.1.0` (T2.10);
-`1.0.0` readers ignore it.
+`1.0.0` readers ignore it. The optional `abstain` flag was added in fixture
+`1.3.0`; abstain questions carry no expected page, figure or cell, are skipped by
+the recall/MRR metrics and are left out of the generated corpus.
 
 The shipped fixture is **synthetic** — it contains no confidential material and
 therefore passes `bun run verify:public`. Regenerate it with:
@@ -132,6 +149,7 @@ All flags of `retrieval.ts`:
 | `--rerank` | off | cross-encoder reranking (`X-Rerank: true` / v2 body `rerank`) |
 | `--hyde` | off | HyDE query expansion (`X-Hyde: true`, v1 endpoint only) |
 | `--thresholds <path>` | — | regression gate: JSON file of floors, exit non-zero when any is missed (see below) |
+| `--abstain-min-score <n>` | — | abstention score gate: answered only when a top-_k_ hit scores at least _n_ (unset: any hit counts) |
 
 `SEARCH_BASE_URL` and `SEARCH_TOKEN` are environment fallbacks: an explicit
 `--base-url` / `--token` always wins. Prefer the environment variable for the
@@ -192,12 +210,25 @@ Optional release gates fail the process when a floor is not met:
 ## The eval stack (task 6.11)
 
 `compose.eval.yaml` is the eval-only stack: Search + Extract + a **real**
-TEI-CPU embedding model (`BAAI/bge-small-en-v1.5`, 384 dims) + a **real**
+TEI-CPU embedding model (`BAAI/bge-m3`, multilingual, 1024 dims) + a **real**
 TEI-CPU cross-encoder reranker (`BAAI/bge-reranker-base`) + a deterministic
 HyDE chat mock (`echo-mock.py`) + Postgres/pgvector. Unlike the quickstart
 stack (`deploy/examples/compose.yaml`), whose constant-vector mock can only
 prove plumbing, the vectors here come from a real model, so Recall/MRR/nDCG
 measure retrieval quality and a regression is a real regression.
+
+The stack moved from `BAAI/bge-small-en-v1.5` (384 dims, English-only) to
+`BAAI/bge-m3` because the golden set is German. Keep
+`EMBED_EXPECTED_DIMENSION` (1024) in `compose.eval.yaml` in sync with the model:
+Search rejects embeddings of another dimension when it is set. It is the only
+dimension setting in the stack; no other 384 is hard-coded in `apps/search/src`
+or the eval scripts (checked by search, not by a live run). TEI on CPU embeds bge-m3 noticeably slower than
+the small model, so expect a longer ingest and larger latencies. **Every number
+under `baseline/` was measured with bge-small-en-v1.5 on fixture 1.2.0.** Nothing
+has been measured with bge-m3 yet (see `baseline/retrieval.bge-m3.md`), and the
+floors in `baseline/thresholds.json` were calibrated on the old model. The CI job
+`eval` therefore runs an unmeasured configuration against those floors until a
+live run confirms or recalibrates them.
 
 ```bash
 # from the repository root
@@ -278,13 +309,32 @@ and cost latency (HyDE dominates: ~7× p50). The contextual-header variant is
 the quality winner — nearly every expected page lands in the top 5 — which is
 why it is the shape the v2 pipeline keeps.
 
+## Answer-level groundedness (mini set)
+
+Retrieval metrics do not show whether an answer stays within the retrieved
+context. `groundedness/answer-set.v1.json` holds 12 German items; each has a
+retrieval context and two curated candidate answers (one grounded, one with
+unsupported claims). `bun run eval:groundedness` scores them with the runtime
+Groundedness checker (`checkGroundedness`, lexical, no model call):
+
+- **Reference mode** (default) checks that the checker separates the curated
+  candidates. This calibrates the gate; it is not a measurement of any LLM.
+- **Answers mode** (`--answers <file>`, JSON map of item id → answer) scores
+  answers a live model produced. Producing them requires a live model; no such
+  numbers are recorded (`baseline/groundedness.live.md`: „nicht gemessen").
+
+The lexical checker measures word overlap, not meaning: paraphrases score lower
+and a wrong claim made from context words can pass. Treat it as a floor, not as
+a faithfulness judge.
+
 ## The committed baseline
 
 `baseline/retrieval.baseline.{json,md}` is the Ist-Stand reference, recorded
-against the compose.eval.yaml stack above (real bge-small vectors, German FTS)
-with the golden corpus ingested. The extraction block still ships pending
-(produced values 0) until a live Extract run over the golden documents feeds
-`--extractions`. Regenerate with:
+against the compose.eval.yaml stack as it was then (real **bge-small-en-v1.5**
+vectors, German FTS, fixture 1.2.0) with the golden corpus ingested. It predates
+the abstention metrics and the bge-m3 switch. The extraction block still ships
+pending (produced values 0, „nicht gemessen") until a live Extract run over the
+golden documents feeds `--extractions`. Regenerate with:
 
 ```bash
 # 1) capture a live run
@@ -300,6 +350,6 @@ bun run eval:retrieval -- --collection <name> \
 ## Tests and types
 
 ```bash
-bun run eval:test          # unit tests for metrics + fixture loader
+bun run eval:test          # unit tests for metrics, fixture loader, groundedness set
 bun run eval:typecheck     # tsc --noEmit for the harness
 ```

@@ -69,6 +69,18 @@ describe("de-morphology variant set", () => {
 		}
 	});
 
+	test("includes 15–20 % abstain variants answered by abstain bases", async () => {
+		const set = await loadGoldenSet(VARIANTS);
+		const abstain = set.questions.filter((q) => q.abstain === true);
+		const share = abstain.length / set.questions.length;
+		expect(share).toBeGreaterThanOrEqual(0.15);
+		expect(share).toBeLessThanOrEqual(0.2);
+		for (const q of abstain) {
+			expect(q.expectedPages).toEqual([]);
+			expect(q.expectedFigures).toEqual([]);
+		}
+	});
+
 	test("rejects an unknown base or an unchanged question", () => {
 		const base: GoldenSet = {
 			version: "1",

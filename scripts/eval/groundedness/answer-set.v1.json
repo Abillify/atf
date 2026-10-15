@@ -1,0 +1,246 @@
+{
+	"version": "1.0.0",
+	"description": "Answer-level groundedness mini set (German, synthetic). Each item has a retrieval context and two curated candidate answers: one grounded in the context and one that adds unsupported claims. The reference candidates validate the deterministic lexical Groundedness checker of the runtime (checkGroundedness) without any model call. Answers produced by a live model are scored with --answers; producing them requires a live model and is not part of this fixture. Content is synthetic and contains no confidential material.",
+	"items": [
+		{
+			"id": "g-01",
+			"language": "de",
+			"question": "Welche Pflichtfelder hat die Wareneingangsmaske?",
+			"context": [
+				"Die Wareneingangsmaske verlangt als Pflichtfelder die Lieferscheinnummer, die Artikelnummer und die gelieferte Menge. Das Feld Charge ist nur bei chargenpflichtigen Artikeln Pflicht."
+			],
+			"candidates": [
+				{
+					"id": "g-01-grounded",
+					"label": "grounded",
+					"answer": "Pflichtfelder der Wareneingangsmaske sind die Lieferscheinnummer, die Artikelnummer und die gelieferte Menge. Bei chargenpflichtigen Artikeln ist zusätzlich die Charge Pflicht."
+				},
+				{
+					"id": "g-01-ungrounded",
+					"label": "ungrounded",
+					"answer": "Die Wareneingangsmaske verlangt den Fahrzeugkennzeichen-Scan sowie eine Unterschrift des Fahrers. Außerdem prüft das System automatisch die Bonität des Lieferanten."
+				}
+			]
+		},
+		{
+			"id": "g-02",
+			"language": "de",
+			"question": "Wer darf die Teilfreigabe im Wareneingang erteilen?",
+			"context": [
+				"Eine Teilfreigabe im Wareneingang darf ausschließlich der Lagerleiter erteilen. Die Freigabe wird mit Zeitstempel und Benutzerkennung protokolliert."
+			],
+			"candidates": [
+				{
+					"id": "g-02-grounded",
+					"label": "grounded",
+					"answer": "Die Teilfreigabe im Wareneingang darf ausschließlich der Lagerleiter erteilen. Sie wird mit Zeitstempel und Benutzerkennung protokolliert."
+				},
+				{
+					"id": "g-02-ungrounded",
+					"label": "ungrounded",
+					"answer": "Jeder Lagermitarbeiter darf die Teilfreigabe im Wareneingang erteilen. Die Geschäftsführung erhält dazu stets eine Benachrichtigung per Mobiltelefon."
+				}
+			]
+		},
+		{
+			"id": "g-03",
+			"language": "de",
+			"question": "Wie lange werden Chargendaten aufbewahrt?",
+			"context": [
+				"Chargendaten werden zehn Jahre nach Auslieferung aufbewahrt. Danach werden sie automatisch gelöscht."
+			],
+			"candidates": [
+				{
+					"id": "g-03-grounded",
+					"label": "grounded",
+					"answer": "Chargendaten werden zehn Jahre nach Auslieferung aufbewahrt und danach automatisch gelöscht."
+				},
+				{
+					"id": "g-03-ungrounded",
+					"label": "ungrounded",
+					"answer": "Chargendaten werden dauerhaft im Cloud-Archiv gespeichert. Eine Löschung erfolgt ausschließlich auf schriftlichen Antrag des Kunden."
+				}
+			]
+		},
+		{
+			"id": "g-04",
+			"language": "de",
+			"question": "Welche Schnittstelle zum ERP wird verlangt?",
+			"context": [
+				"Die Anbindung an das ERP erfolgt über eine REST-Schnittstelle mit JSON-Nachrichten. Bestandsänderungen werden asynchron übertragen und bei Fehlern dreimal wiederholt."
+			],
+			"candidates": [
+				{
+					"id": "g-04-grounded",
+					"label": "grounded",
+					"answer": "Das ERP wird über eine REST-Schnittstelle mit JSON-Nachrichten angebunden. Bestandsänderungen werden asynchron übertragen und bei Fehlern dreimal wiederholt."
+				},
+				{
+					"id": "g-04-ungrounded",
+					"label": "ungrounded",
+					"answer": "Das ERP wird über eine SOAP-Schnittstelle mit XML-Dateien angebunden. Der Datenabgleich läuft nächtlich per FTP-Transfer auf einem Fileserver."
+				}
+			]
+		},
+		{
+			"id": "g-05",
+			"language": "de",
+			"question": "Was passiert bei einer Mengenabweichung im Wareneingang?",
+			"context": [
+				"Bei einer Mengenabweichung über fünf Prozent wird die Ware ins Sperrlager gebucht. Der Einkauf erhält eine Meldung zur Klärung."
+			],
+			"candidates": [
+				{
+					"id": "g-05-grounded",
+					"label": "grounded",
+					"answer": "Liegt die Mengenabweichung über fünf Prozent, wird die Ware ins Sperrlager gebucht. Der Einkauf erhält eine Meldung zur Klärung."
+				},
+				{
+					"id": "g-05-ungrounded",
+					"label": "ungrounded",
+					"answer": "Bei jeder Mengenabweichung wird die Lieferung sofort an den Lieferanten zurückgeschickt. Zusätzlich verhängt das System automatisch eine Vertragsstrafe."
+				}
+			]
+		},
+		{
+			"id": "g-06",
+			"language": "de",
+			"question": "Welche Rollen kennt das Berechtigungskonzept?",
+			"context": [
+				"Das Berechtigungskonzept kennt die Rollen Lagermitarbeiter, Lagerleiter und Administrator. Der Administrator verwaltet Benutzer, aber keine Bestände."
+			],
+			"candidates": [
+				{
+					"id": "g-06-grounded",
+					"label": "grounded",
+					"answer": "Das Berechtigungskonzept kennt die Rollen Lagermitarbeiter, Lagerleiter und Administrator. Der Administrator verwaltet Benutzer, aber keine Bestände."
+				},
+				{
+					"id": "g-06-ungrounded",
+					"label": "ungrounded",
+					"answer": "Das Berechtigungskonzept kennt die Rollen Einkäufer, Controller und Revisor. Der Revisor verwaltet sämtliche Buchungen und genehmigt Zahlungsläufe."
+				}
+			]
+		},
+		{
+			"id": "g-07",
+			"language": "de",
+			"question": "Welche Legende erklärt die Symbole im Hallenplan?",
+			"context": [
+				"Die Legende auf Planblatt 2 erklärt die Symbole für Brandschutztüren, Feuerlöscher und Fluchtwege. Fluchtwege sind grün dargestellt."
+			],
+			"candidates": [
+				{
+					"id": "g-07-grounded",
+					"label": "grounded",
+					"answer": "Planblatt 2 enthält die Legende mit den Symbolen für Brandschutztüren, Feuerlöscher und Fluchtwege. Fluchtwege sind grün dargestellt."
+				},
+				{
+					"id": "g-07-ungrounded",
+					"label": "ungrounded",
+					"answer": "Die Legende erklärt die Symbole für Photovoltaikmodule, Wärmepumpen und Ladesäulen. Sämtliche Leitungen sind violett dargestellt."
+				}
+			]
+		},
+		{
+			"id": "g-08",
+			"language": "de",
+			"question": "Wie läuft der Wareneingang als Prozess ab?",
+			"context": [
+				"Der Prozess Wareneingang beginnt mit der Anmeldung des Lieferanten. Danach folgen Entladung, Mengenprüfung und Einlagerung. Bei Abweichungen wird eine Reklamation angelegt."
+			],
+			"candidates": [
+				{
+					"id": "g-08-grounded",
+					"label": "grounded",
+					"answer": "Der Wareneingang beginnt mit der Anmeldung des Lieferanten. Danach folgen Entladung, Mengenprüfung und Einlagerung. Bei Abweichungen wird eine Reklamation angelegt."
+				},
+				{
+					"id": "g-08-ungrounded",
+					"label": "ungrounded",
+					"answer": "Der Wareneingang beginnt mit einer Qualitätsfreigabe durch den Vorstand. Danach folgen Zolldeklaration, Röntgenkontrolle und Vernichtung der Verpackung."
+				}
+			]
+		},
+		{
+			"id": "g-09",
+			"language": "de",
+			"question": "Welche Felder hat die Freigabemaske?",
+			"context": [
+				"Die Freigabemaske enthält die Felder Auftragsnummer, Freigabegrund und Freigeber. Mit der Schaltfläche Übernehmen wird die Freigabe gebucht."
+			],
+			"candidates": [
+				{
+					"id": "g-09-grounded",
+					"label": "grounded",
+					"answer": "Die Freigabemaske enthält Auftragsnummer, Freigabegrund und Freigeber. Mit Übernehmen wird die Freigabe gebucht."
+				},
+				{
+					"id": "g-09-ungrounded",
+					"label": "ungrounded",
+					"answer": "Die Freigabemaske enthält Kostenstelle, Budgetvolumen und Genehmigungsstufe. Mit der Schaltfläche Exportieren wird ein Bericht an die Buchhaltung versendet."
+				}
+			]
+		},
+		{
+			"id": "g-10",
+			"language": "de",
+			"question": "Wann wird eine Inventur ausgelöst?",
+			"context": [
+				"Eine Inventur wird zum Jahresende oder auf Anforderung des Lagerleiters ausgelöst. Während der Inventur sind Buchungen im betroffenen Lagerbereich gesperrt."
+			],
+			"candidates": [
+				{
+					"id": "g-10-grounded",
+					"label": "grounded",
+					"answer": "Die Inventur wird zum Jahresende oder auf Anforderung des Lagerleiters ausgelöst. Im betroffenen Lagerbereich sind währenddessen Buchungen gesperrt."
+				},
+				{
+					"id": "g-10-ungrounded",
+					"label": "ungrounded",
+					"answer": "Die Inventur wird jeden Montag automatisch durch Drohnen ausgelöst. Buchungen bleiben währenddessen uneingeschränkt möglich, Differenzen werden ignoriert."
+				}
+			]
+		},
+		{
+			"id": "g-11",
+			"language": "de",
+			"question": "Welche Maße nennt der Schnitt A-A?",
+			"context": [
+				"Der Schnitt A-A nennt eine lichte Hallenhöhe von 10,5 Metern und eine Torhöhe von 4,2 Metern."
+			],
+			"candidates": [
+				{
+					"id": "g-11-grounded",
+					"label": "grounded",
+					"answer": "Der Schnitt A-A nennt eine lichte Hallenhöhe von 10,5 Metern und eine Torhöhe von 4,2 Metern."
+				},
+				{
+					"id": "g-11-ungrounded",
+					"label": "ungrounded",
+					"answer": "Der Schnitt A-A nennt eine Deckenstärke von 40 Zentimetern und eine Kranbahnhöhe von 8 Metern. Die Fundamenttiefe beträgt 2,5 Meter."
+				}
+			]
+		},
+		{
+			"id": "g-12",
+			"language": "de",
+			"question": "Wie wird die Rückverfolgbarkeit gefordert?",
+			"context": [
+				"Die Rückverfolgbarkeit wird über die Chargennummer sichergestellt. Jede Bewegung einer Charge muss lückenlos protokolliert werden."
+			],
+			"candidates": [
+				{
+					"id": "g-12-grounded",
+					"label": "grounded",
+					"answer": "Die Rückverfolgbarkeit wird über die Chargennummer sichergestellt, und jede Bewegung einer Charge muss lückenlos protokolliert werden."
+				},
+				{
+					"id": "g-12-ungrounded",
+					"label": "ungrounded",
+					"answer": "Die Rückverfolgbarkeit wird über RFID-Transponder an jeder Palette sichergestellt. Bewegungsdaten werden wöchentlich in ein Data-Warehouse übertragen."
+				}
+			]
+		}
+	]
+}

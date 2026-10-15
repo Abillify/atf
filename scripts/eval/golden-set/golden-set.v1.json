@@ -1,6 +1,6 @@
 {
-	"version": "1.2.0",
-	"description": "Synthetic golden set for Document Intelligence v2 evaluation (tasks T0.1, T2.10). Four representative document types with 120 questions annotated with expected page, figure and table-cell answers, plus ground-truth extraction content (table cells, figure labels, BPMN nodes/edges) for the extraction-quality metrics. Content is synthetic and contains no confidential material.",
+	"version": "1.3.0",
+	"description": "Synthetic golden set for Document Intelligence v2 evaluation (tasks T0.1, T2.10). Four representative document types with 120 answerable questions annotated with expected page, figure and table-cell answers, 24 unanswerable (abstain) questions, plus ground-truth extraction content (table cells, figure labels, BPMN nodes/edges) for the extraction-quality metrics. Content is synthetic and contains no confidential material.",
 	"documents": [
 		{
 			"id": "wms-spec",
@@ -2687,6 +2687,222 @@
 					]
 				]
 			}
+		},
+		{
+			"id": "q-121",
+			"document": "wms-spec",
+			"question": "Welche Anforderung regelt die Kühlkettenüberwachung für Tiefkühlware?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-122",
+			"document": "wms-spec",
+			"question": "Wo ist die Lagerung von Gefahrgut der Klasse 7 beschrieben?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-123",
+			"document": "wms-spec",
+			"question": "Welche Schnittstelle zum Zolldeklarationssystem wird verlangt?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-124",
+			"document": "wms-spec",
+			"question": "Wie wird die Palettenverleihung an Subunternehmer abgerechnet?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-125",
+			"document": "wms-spec",
+			"question": "Welche Anforderung nennt die Sprachsteuerung per Headset?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-126",
+			"document": "wms-spec",
+			"question": "Wo steht die Regelung zur Drohneninventur im Hochregal?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-127",
+			"document": "process-bpmn",
+			"question": "Welcher Prozess beschreibt die Entsorgung von Altbatterien?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-128",
+			"document": "process-bpmn",
+			"question": "Wo ist das Verfahren zur Quarantäne bei Schädlingsbefall dokumentiert?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-129",
+			"document": "process-bpmn",
+			"question": "Welche Prozessschritte hat die Reklamation durch Endkunden?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-130",
+			"document": "process-bpmn",
+			"question": "Wie läuft der Nachtschichtwechsel der Pförtner ab?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-131",
+			"document": "process-bpmn",
+			"question": "Welches Diagramm zeigt die Zertifizierung nach Lebensmittelrecht?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-132",
+			"document": "process-bpmn",
+			"question": "Wo ist der Ablauf der Gebäudeevakuierung bei Hochwasser abgebildet?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-133",
+			"document": "ui-masks",
+			"question": "Welche Felder hat die Maske zur Fahrerregistrierung?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-134",
+			"document": "ui-masks",
+			"question": "Wo ist der Dialog für die Reifendruckprüfung abgebildet?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-135",
+			"document": "ui-masks",
+			"question": "Welche Schaltfläche startet den Barcode-Druck auf Thermotransfer-Etiketten?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-136",
+			"document": "ui-masks",
+			"question": "Wie sieht die Maske für den Gabelstapler-Führerscheinnachweis aus?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-137",
+			"document": "ui-masks",
+			"question": "Welche Pflichtfelder hat die Kantinenbestellung?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-138",
+			"document": "ui-masks",
+			"question": "Wo wird die Dunkelmodus-Einstellung des Handhelds beschrieben?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-139",
+			"document": "plan-set",
+			"question": "Welches Planblatt zeigt die Photovoltaikanlage auf dem Dach?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-140",
+			"document": "plan-set",
+			"question": "Wo ist die Sprinklerzentrale im Plan eingezeichnet?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-141",
+			"document": "plan-set",
+			"question": "Welche Bemaßung hat die Ladestation für Elektrofahrzeuge?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-142",
+			"document": "plan-set",
+			"question": "Welcher Plan zeigt die Regenwasserzisterne?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-143",
+			"document": "plan-set",
+			"question": "Wo ist der Kranbahnträger im Schnitt dargestellt?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
+		},
+		{
+			"id": "q-144",
+			"document": "plan-set",
+			"question": "Welche Legende erklärt die Lärmschutzwand am Grundstück?",
+			"expectedPages": [],
+			"expectedFigures": [],
+			"expectedCells": [],
+			"abstain": true
 		}
 	]
 }

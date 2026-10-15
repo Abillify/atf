@@ -230,6 +230,17 @@ releases:
   `aiperator_indirect_injection_total`.
 
 ### Added
+- **Eval harness** (`scripts/eval`): the golden set (fixture 1.3.0) holds 24 unanswerable
+  questions (`abstain: true`, 16.7 %); the German morphology set (1.1.0) adds 7 abstain
+  variants. `retrieval.ts` reports abstention precision/recall, false-answer and
+  false-abstention rate (`--abstain-min-score` sets the score gate). A German answer-level
+  groundedness mini set (`bun run eval:groundedness`) scores answers with the runtime lexical
+  Groundedness checker; live-model answers are "nicht gemessen" (requires live model).
+- **Eval stack** (`scripts/eval/compose.eval.yaml`): the embedding model is now `BAAI/bge-m3`
+  (multilingual, 1024 dimensions, `EMBED_EXPECTED_DIMENSION=1024`) instead of
+  `bge-small-en-v1.5`. No bge-m3 numbers are recorded yet (`baseline/retrieval.bge-m3.md`);
+  the committed baseline was measured with bge-small-en on fixture 1.2.0 and the CI floors in
+  `baseline/thresholds.json` are not yet recalibrated for bge-m3.
 - **Control** (`@atf/control`): the dashboard is localized in German and English
   (cookie `NEXT_LOCALE`). Texts live in `src/lib/i18n/catalogs/ui.en.ts` and `ui.de.ts`;
   `i18n-coverage.test.ts` fails on hard-coded UI text, thrown errors, `setError()` and

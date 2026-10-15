@@ -110,6 +110,12 @@ export interface GoldenQuestion {
 	 * (task T2.10). Absent for questions that only exercise retrieval.
 	 */
 	extraction?: ExtractionAnnotation;
+	/**
+	 * True for an unanswerable question: the corpus holds no answer, so the
+	 * expected outcome is "no hit" (abstention). Such a question carries no
+	 * expected page, figure or cell and is excluded from the corpus builder.
+	 */
+	abstain?: boolean;
 }
 
 /** The full versioned fixture. */
@@ -294,6 +300,12 @@ function parseQuestion(value: unknown, path: string): GoldenQuestion {
 			`${path}.extraction`,
 		);
 	}
+	if (value.abstain !== undefined) {
+		if (typeof value.abstain !== "boolean") {
+			throw new GoldenSetError(`${path}.abstain must be a boolean`);
+		}
+		if (value.abstain) question.abstain = true;
+	}
 	return question;
 }
 
@@ -335,11 +347,16 @@ export function parseGoldenSet(value: unknown): GoldenSet {
 				`question "${q.id}" references unknown document "${q.document}"`,
 			);
 		}
-		if (
-			q.expectedPages.length === 0 &&
-			q.expectedFigures.length === 0 &&
-			q.expectedCells.length === 0
-		) {
+		const hasExpectation =
+			q.expectedPages.length > 0 ||
+			q.expectedFigures.length > 0 ||
+			q.expectedCells.length > 0;
+		if (q.abstain === true && (hasExpectation || q.extraction !== undefined)) {
+			throw new GoldenSetError(
+				`question "${q.id}" is abstain but carries an expected answer`,
+			);
+		}
+		if (q.abstain !== true && !hasExpectation) {
 			throw new GoldenSetError(
 				`question "${q.id}" has no expected page, figure or cell`,
 			);
@@ -447,6 +464,7 @@ export function expandVariantSet(variants: VariantSet, base: GoldenSet): GoldenS
 			expectedPages: source.expectedPages,
 			expectedFigures: source.expectedFigures,
 			expectedCells: source.expectedCells,
+			...(source.abstain === true ? { abstain: true } : {}),
 		};
 	});
 	return {

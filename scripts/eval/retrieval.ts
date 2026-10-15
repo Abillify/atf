@@ -68,6 +68,7 @@ import {
 	pageRef,
 } from "./golden-set.ts";
 import {
+	abstentionMetrics,
 	type EvalCase,
 	figureHitRate,
 	figureMetrics,
@@ -89,6 +90,8 @@ interface SearchHit {
 	base_ref?: string;
 	reference: string;
 	evidence?: SearchEvidence;
+	/** Raw retrieval score; scale depends on the search mode (see score_scale). */
+	score?: number;
 }
 
 // ─── Minimal shape of a `/v2/search` hit we depend on (task 3.7) ──────────────
@@ -111,6 +114,7 @@ interface SearchHitV2 {
 	base_ref?: string;
 	reference: string;
 	unit_type?: string;
+	score?: number;
 	pages?: { start?: number; end?: number } | null;
 	assets?: SearchAssetV2[];
 	evidence?: SearchEvidence;
@@ -147,6 +151,7 @@ export function normalizeV2Hit(hit: SearchHitV2): SearchHit {
 		base_ref: hit.base_ref,
 		reference: hit.reference,
 		evidence,
+		...(typeof hit.score === "number" ? { score: hit.score } : {}),
 	};
 }
 
@@ -179,6 +184,13 @@ interface Args {
   hyde: boolean;
   /** Threshold file (task 6.11): regression below any floor fails the run. */
   thresholds?: string;
+  /**
+   * Abstention score gate: a question counts as answered only when a top-k hit
+   * has a score ≥ this value. Unset: any returned hit counts as an answer.
+   * Scores are NOT comparable across search modes or rerankers; pick the gate
+   * per configuration.
+   */
+  abstainMinScore?: number;
 }
 
 /** The retrieval-quality floors a thresholds file can carry (all 0–1). */
@@ -235,6 +247,15 @@ function parseArgs(argv: string[]): Args {
 		}
 		return value;
 	};
+	const finiteNumber = (name: string): number | undefined => {
+		const raw = get(name);
+		if (raw === undefined) return undefined;
+		const value = Number.parseFloat(raw);
+		if (!Number.isFinite(value)) {
+			throw new Error(`${name} must be a finite number`);
+		}
+		return value;
+	};
 	return {
     fixture: get("--fixture") ?? DEFAULT_FIXTURE,
     collection: get("--collection") ?? "documents",
@@ -257,6 +278,7 @@ function parseArgs(argv: string[]): Args {
     rerank: has("--rerank"),
     hyde: has("--hyde"),
     thresholds: get("--thresholds"),
+    abstainMinScore: finiteNumber("--abstain-min-score"),
   };
 }
 
@@ -310,6 +332,7 @@ function toRankedHits(hits: SearchHit[]): RankedHit[] {
 	return hits.map((hit) => ({
 		pageRefs: hitPageRefs(hit),
 		figureRefs: hitFigureRefs(hit),
+		...(typeof hit.score === "number" ? { score: hit.score } : {}),
 	}));
 }
 
@@ -452,7 +475,11 @@ interface Report {
     figure: Record<string, ReturnType<typeof figureMetrics>>;
     mrr: Record<string, number>;
     figure_hit_rate: Record<string, ReturnType<typeof figureHitRate>>;
+    /** Abstention on unanswerable questions, per cutoff (see `abstention_gate`). */
+    abstention: Record<string, ReturnType<typeof abstentionMetrics>>;
   };
+  /** Score gate used for abstention, or null when any hit counts as an answer. */
+  abstention_min_score: number | null;
   /**
    * Extraction-quality metrics (task T2.10, requirement 18.3). Scored offline
    * against the golden set's ground-truth annotations when a `--extractions`
@@ -462,6 +489,8 @@ interface Report {
   extraction: ExtractionMetrics;
   coverage: {
     by_kind: Record<string, number>;
+    /** Unanswerable questions (`abstain: true`). */
+    abstain_questions: number;
     page_questions: number;
     figure_questions: number;
     cell_questions: number;
@@ -533,7 +562,9 @@ function buildReport(
   const figure: Record<string, ReturnType<typeof figureMetrics>> = {};
   const mrr: Record<string, number> = {};
   const hitRate: Record<string, ReturnType<typeof figureHitRate>> = {};
+  const abstention: Record<string, ReturnType<typeof abstentionMetrics>> = {};
   for (const k of args.cutoffs) {
+    abstention[String(k)] = abstentionMetrics(cases, k, args.abstainMinScore);
     page[String(k)] = pageMetrics(cases, k);
     figure[String(k)] = figureMetrics(cases, k);
     mrr[String(k)] = overallMrr(cases, k);
@@ -579,10 +610,12 @@ function buildReport(
           },
         }
       : {}),
-    metrics: { page, figure, mrr, figure_hit_rate: hitRate },
+    metrics: { page, figure, mrr, figure_hit_rate: hitRate, abstention },
+    abstention_min_score: args.abstainMinScore ?? null,
     extraction,
     coverage: {
       by_kind: byKind,
+      abstain_questions: set.questions.filter((q) => q.abstain === true).length,
       page_questions: set.questions.filter((q) => q.expectedPages.length > 0)
         .length,
       figure_questions: set.questions.filter(
@@ -660,6 +693,38 @@ export function renderMarkdown(report: Report): string {
     lines.push(`| samples | ${latency.samples} |`);
     lines.push("");
   }
+	lines.push("## Abstention (unanswerable questions)");
+	lines.push("");
+	if (report.pending) {
+		lines.push(
+			"> **nicht gemessen.** No hits were observed, so abstention cannot be judged " +
+				"(an empty result would otherwise look like perfect abstention).",
+		);
+		lines.push("");
+	} else {
+		lines.push(
+			report.abstention_min_score === null
+				? "Answered = at least one hit in the top k (no score gate)."
+				: `Answered = a top-k hit with score ≥ ${report.abstention_min_score}.`,
+		);
+		lines.push("");
+		lines.push(`| ${header.join(" | ")} |`);
+		lines.push(`| ${header.map(() => "---").join(" | ")} |`);
+		const ab = (pick: (m: ReturnType<typeof abstentionMetrics>) => number) =>
+			cutoffs.map((k) => {
+				const m = report.metrics.abstention[String(k)];
+				return m === undefined || m.abstainQuestions === 0 ? "n/a" : pct(pick(m));
+			});
+		lines.push(`| Abstention precision | ${ab((m) => m.abstentionPrecision).join(" | ")} |`);
+		lines.push(`| Abstention recall | ${ab((m) => m.abstentionRecall).join(" | ")} |`);
+		lines.push(`| False-answer rate | ${ab((m) => m.falseAnswerRate).join(" | ")} |`);
+		lines.push(
+			`| False-abstention rate | ${cutoffs
+				.map((k) => pct(report.metrics.abstention[String(k)]?.falseAbstentionRate ?? 0))
+				.join(" | ")} |`,
+		);
+		lines.push("");
+	}
 	lines.push("## Extraction-quality metrics");
 	lines.push("");
 	const ex = report.extraction;
@@ -694,6 +759,7 @@ export function renderMarkdown(report: Report): string {
 	for (const [kind, count] of Object.entries(report.coverage.by_kind).sort()) {
 		lines.push(`| questions (${kind}) | ${count} |`);
 	}
+	lines.push(`| abstain questions | ${report.coverage.abstain_questions} |`);
 	lines.push(`| page questions | ${report.coverage.page_questions} |`);
 	lines.push(`| figure questions | ${report.coverage.figure_questions} |`);
 	lines.push(`| table-cell questions | ${report.coverage.cell_questions} |`);
@@ -756,6 +822,7 @@ async function main(): Promise<void> {
 			expectedPageRefs: expected.pages,
 			expectedFigureRefs: expected.figures,
 			hits: toRankedHits(hits),
+			...(question.abstain === true ? { abstain: true } : {}),
 		});
 	}
 

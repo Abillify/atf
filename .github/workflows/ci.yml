@@ -682,7 +682,7 @@ jobs:
   # Retrieval eval against REAL models (task 6.11, requirements 4.9/4.10): the
   # quickstart compose stack only proves plumbing (constant-vector mock), so
   # this job runs scripts/eval/compose.eval.yaml — Search, Extract, TEI-CPU
-  # embedding (bge-small), TEI-CPU cross-encoder rerank and a deterministic
+  # embedding (bge-m3), TEI-CPU cross-encoder rerank and a deterministic
   # HyDE mock — ingests the deterministic golden corpus and gates the baseline
   # against scripts/eval/baseline/thresholds.json. Reports land in artifacts,
   # never in the tree, so the committed baseline stays stable.

@@ -1,6 +1,6 @@
 # Eval stack for the retrieval baseline (task 6.11, requirements 4.9/4.10).
 #
-# Search + Extract + real TEI-CPU embedding (bge-small) + a real TEI-CPU
+# Search + Extract + real TEI-CPU embedding (bge-m3, multilingual) + a real TEI-CPU
 # cross-encoder reranker + a deterministic HyDE chat mock. Unlike the
 # quickstart stack (deploy/examples/compose.yaml), which runs a constant-vector
 # mock and can only prove the plumbing, this stack produces MEANINGFUL retrieval
@@ -38,9 +38,12 @@ services:
       timeout: 3s
       retries: 30
 
-  # Real embedding model on CPU (design §Eval: bge-small via TEI). 384 dimensions,
-  # multilingual-capable for the German golden set. The HF cache is a named volume
-  # so repeated runs do not re-download the weights.
+  # Real embedding model on CPU via TEI: BAAI/bge-m3, multilingual (strong German
+  # and long-context coverage), 1024 dimensions. Slower on CPU than a small model.
+  # Keep EMBED_EXPECTED_DIMENSION of the search service in sync with the model.
+  # The committed baseline under baseline/ was measured with bge-small-en-v1.5
+  # (384 dims, English-only); nothing has been measured with bge-m3 yet. The HF
+  # cache is a named volume so repeated runs do not re-download the weights.
   embedding:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     # TEI's default client batch size (32) is below the ingest batch Search
@@ -48,7 +51,7 @@ services:
     command:
       [
         "--model-id",
-        "BAAI/bge-small-en-v1.5",
+        "BAAI/bge-m3",
         "--max-client-batch-size",
         "512",
       ]
@@ -102,10 +105,10 @@ services:
       PORT: "3000"
       POSTGRES_URL: postgres://atf:atf-eval-only@postgres:5432/atf_eval
       EMBED_URL: http://embedding:80/embed
-      EMBED_MODEL: BAAI/bge-small-en-v1.5
+      EMBED_MODEL: BAAI/bge-m3
       EMBED_MODEL_REVISION: eval
       EMBED_INPUT_FIELD: inputs
-      EMBED_EXPECTED_DIMENSION: "384"
+      EMBED_EXPECTED_DIMENSION: "1024"
       RERANK_URL: http://rerank:80/rerank
       RERANK_MODEL: BAAI/bge-reranker-base
       RERANK_ENDPOINT: rerank

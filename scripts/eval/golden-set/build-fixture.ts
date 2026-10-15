@@ -27,7 +27,11 @@ import { parseGoldenSet } from "../golden-set.ts";
 // could never match the figure ids Search stores — figure recall was always
 // zero. Annotating with the contract shape keeps golden and indexed ids
 // aligned.
-const VERSION = "1.2.0";
+// 1.3.0: added 24 unanswerable questions (`abstain: true`, 6 per document) whose
+// subject appears nowhere in the corpus. The expected outcome is "no hit"; they
+// feed the abstention metrics and are skipped by the recall/MRR metrics and by
+// the corpus builder. Backward-compatible: `abstain` is optional.
+const VERSION = "1.3.0";
 
 interface DocSpec {
 	id: string;
@@ -87,6 +91,8 @@ interface QSpec {
 	figures?: string[];
 	cells?: { page: number; row: number; col: number }[];
 	extraction?: ExtractionSpec;
+	/** Unanswerable question: expected outcome is "no hit". */
+	abstain?: boolean;
 }
 
 // Deterministic page picker so questions spread across a document. Always
@@ -297,12 +303,56 @@ for (let i = 0; i < 10; i++) {
 	});
 }
 
+// Unanswerable questions (15–20 % of the set): each asks about a subject the
+// synthetic corpus never mentions, so the correct system behaviour is to find
+// nothing relevant. They stay in the base fixture so the German morphology set
+// can re-ask them with other word forms.
+const abstainTopics: Record<string, string[]> = {
+	"wms-spec": [
+		"Welche Anforderung regelt die Kühlkettenüberwachung für Tiefkühlware?",
+		"Wo ist die Lagerung von Gefahrgut der Klasse 7 beschrieben?",
+		"Welche Schnittstelle zum Zolldeklarationssystem wird verlangt?",
+		"Wie wird die Palettenverleihung an Subunternehmer abgerechnet?",
+		"Welche Anforderung nennt die Sprachsteuerung per Headset?",
+		"Wo steht die Regelung zur Drohneninventur im Hochregal?",
+	],
+	"process-bpmn": [
+		"Welcher Prozess beschreibt die Entsorgung von Altbatterien?",
+		"Wo ist das Verfahren zur Quarantäne bei Schädlingsbefall dokumentiert?",
+		"Welche Prozessschritte hat die Reklamation durch Endkunden?",
+		"Wie läuft der Nachtschichtwechsel der Pförtner ab?",
+		"Welches Diagramm zeigt die Zertifizierung nach Lebensmittelrecht?",
+		"Wo ist der Ablauf der Gebäudeevakuierung bei Hochwasser abgebildet?",
+	],
+	"ui-masks": [
+		"Welche Felder hat die Maske zur Fahrerregistrierung?",
+		"Wo ist der Dialog für die Reifendruckprüfung abgebildet?",
+		"Welche Schaltfläche startet den Barcode-Druck auf Thermotransfer-Etiketten?",
+		"Wie sieht die Maske für den Gabelstapler-Führerscheinnachweis aus?",
+		"Welche Pflichtfelder hat die Kantinenbestellung?",
+		"Wo wird die Dunkelmodus-Einstellung des Handhelds beschrieben?",
+	],
+	"plan-set": [
+		"Welches Planblatt zeigt die Photovoltaikanlage auf dem Dach?",
+		"Wo ist die Sprinklerzentrale im Plan eingezeichnet?",
+		"Welche Bemaßung hat die Ladestation für Elektrofahrzeuge?",
+		"Welcher Plan zeigt die Regenwasserzisterne?",
+		"Wo ist der Kranbahnträger im Schnitt dargestellt?",
+		"Welche Legende erklärt die Lärmschutzwand am Grundstück?",
+	],
+};
+for (const [document, texts] of Object.entries(abstainTopics)) {
+	for (const question of texts) {
+		questions.push({ document, question, abstain: true });
+	}
+}
+
 const set = {
 	version: VERSION,
 	description:
 		"Synthetic golden set for Document Intelligence v2 evaluation (tasks T0.1, T2.10). " +
-		"Four representative document types with 120 questions annotated with expected page, " +
-		"figure and table-cell answers, plus ground-truth extraction content (table cells, " +
+		"Four representative document types with 120 answerable questions annotated with expected page, " +
+		"figure and table-cell answers, 24 unanswerable (abstain) questions, plus ground-truth extraction content (table cells, " +
 		"figure labels, BPMN nodes/edges) for the extraction-quality metrics. Content is " +
 		"synthetic and contains no confidential material.",
 	documents: documents.map((d) => ({ ...d })),
@@ -314,6 +364,7 @@ const set = {
 		expectedFigures: q.figures ?? [],
 		expectedCells: q.cells ?? [],
 		...(q.extraction ? { extraction: q.extraction } : {}),
+		...(q.abstain ? { abstain: true } : {}),
 	})),
 };
 

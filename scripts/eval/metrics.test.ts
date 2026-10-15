@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import {
+	abstentionMetrics,
 	type EvalCase,
 	figureHitRate,
 	figureMetrics,
@@ -148,5 +149,79 @@ describe("empty input", () => {
 			figureQuestions: 0,
 			hits: 0,
 		});
+	});
+});
+
+describe("abstentionMetrics", () => {
+	const hit = (score?: number) => ({
+		pageRefs: ["d#page=1"],
+		figureRefs: [],
+		...(score !== undefined ? { score } : {}),
+	});
+	const abstainCase = (id: string, hits: EvalCase["hits"]): EvalCase => ({
+		id,
+		expectedPageRefs: [],
+		expectedFigureRefs: [],
+		hits,
+		abstain: true,
+	});
+	const answerCase = (id: string, hits: EvalCase["hits"]): EvalCase => ({
+		id,
+		expectedPageRefs: ["d#page=1"],
+		expectedFigureRefs: [],
+		hits,
+	});
+
+	test("scores precision, recall and the false-answer rate with a score gate", () => {
+		const cases = [
+			abstainCase("a1", [hit(0.2)]), // below gate -> correct abstention
+			abstainCase("a2", [hit(0.9)]), // above gate -> false answer
+			abstainCase("a3", []), // empty -> correct abstention
+			answerCase("q1", [hit(0.8)]), // answered
+			answerCase("q2", [hit(0.1)]), // over-abstention
+		];
+		const m = abstentionMetrics(cases, 5, 0.5);
+		expect(m.abstainQuestions).toBe(3);
+		expect(m.answerableQuestions).toBe(2);
+		expect(m.abstained).toBe(3);
+		expect(m.correctAbstentions).toBe(2);
+		expect(m.abstentionPrecision).toBeCloseTo(2 / 3, 9);
+		expect(m.abstentionRecall).toBeCloseTo(2 / 3, 9);
+		expect(m.falseAnswerRate).toBeCloseTo(1 / 3, 9);
+		expect(m.falseAbstentionRate).toBe(0.5);
+	});
+
+	test("without a score gate any returned hit counts as an answer", () => {
+		const m = abstentionMetrics(
+			[abstainCase("a1", [hit()]), abstainCase("a2", [])],
+			5,
+		);
+		expect(m.abstentionRecall).toBe(0.5);
+		expect(m.falseAnswerRate).toBe(0.5);
+	});
+
+	test("a hit without a captured score does not pass a score gate", () => {
+		expect(abstentionMetrics([abstainCase("a1", [hit()])], 5, 0.1).abstentionRecall).toBe(1);
+	});
+
+	test("only the top k hits are considered", () => {
+		const cases = [abstainCase("a1", [hit(0.1), hit(0.9)])];
+		expect(abstentionMetrics(cases, 1, 0.5).abstentionRecall).toBe(1);
+		expect(abstentionMetrics(cases, 2, 0.5).abstentionRecall).toBe(0);
+	});
+
+	test("abstain questions do not distort recall metrics", () => {
+		const cases = [answerCase("q1", [hit(0.8)]), abstainCase("a1", [hit(0.9)])];
+		const page = pageMetrics(cases, 5);
+		expect(page.evaluatedQueries).toBe(1);
+		expect(page.skippedQueries).toBe(1);
+		expect(page.recallAtK).toBe(1);
+	});
+
+	test("returns zeros for an empty set", () => {
+		const m = abstentionMetrics([], 5);
+		expect(m.abstentionPrecision).toBe(0);
+		expect(m.abstentionRecall).toBe(0);
+		expect(m.falseAnswerRate).toBe(0);
 	});
 });

@@ -27,6 +27,8 @@ export interface RankedResult {
 export interface RankedHit {
 	pageRefs: string[];
 	figureRefs: string[];
+	/** Raw retrieval score of the hit, when the harness captured one. */
+	score?: number;
 }
 
 /** One evaluation case: expected references plus the ranked hits. */
@@ -36,6 +38,8 @@ export interface EvalCase {
 	expectedFigureRefs: string[];
 	/** Ranked hits, best first. */
 	hits: RankedHit[];
+	/** Unanswerable question: the correct outcome is "no hit" (abstention). */
+	abstain?: boolean;
 }
 
 export interface RecallMetrics {
@@ -190,5 +194,87 @@ export function figureHitRate(
 		rate: figureQuestions ? round(hits / figureQuestions) : 0,
 		figureQuestions,
 		hits,
+	};
+}
+
+export interface AbstentionMetrics {
+	/** Questions with `abstain: true` (expected outcome: no hit). */
+	abstainQuestions: number;
+	/** Questions with an expected answer. */
+	answerableQuestions: number;
+	/** Cases for which the system returned no hit at the cutoff. */
+	abstained: number;
+	/** Abstain questions the system correctly left unanswered. */
+	correctAbstentions: number;
+	/** Of all abstentions, the share that was on an abstain question. */
+	abstentionPrecision: number;
+	/** Of the abstain questions, the share that was left unanswered. */
+	abstentionRecall: number;
+	/** Of the abstain questions, the share that still got a hit (1 − recall). */
+	falseAnswerRate: number;
+	/** Of the answerable questions, the share that got no hit (over-abstention). */
+	falseAbstentionRate: number;
+}
+
+/**
+ * Abstention metrics. A case counts as *answered* when at least one of the top
+ * `k` hits exists (and, when `minScore` is given, carries a score ≥ `minScore`;
+ * a hit without a captured score then does not count). Cases that neither
+ * expect an answer nor are marked `abstain` are ignored. Without a score gate a
+ * ranked retriever almost always returns a hit, so abstention recall is only
+ * meaningful when a score threshold (or an empty result) models "no answer".
+ */
+export function abstentionMetrics(
+	cases: EvalCase[],
+	k: number,
+	minScore?: number,
+): AbstentionMetrics {
+	const cutoff = Math.max(1, Math.floor(k));
+	let abstainQuestions = 0;
+	let answerableQuestions = 0;
+	let abstained = 0;
+	let correctAbstentions = 0;
+	let falseAbstentions = 0;
+	for (const testCase of cases) {
+		const answerable =
+			testCase.expectedPageRefs.length > 0 ||
+			testCase.expectedFigureRefs.length > 0;
+		if (testCase.abstain !== true && !answerable) continue;
+		const answered = testCase.hits
+			.slice(0, cutoff)
+			.some(
+				(hit) =>
+					minScore === undefined ||
+					(hit.score !== undefined && hit.score >= minScore),
+			);
+		if (testCase.abstain === true) {
+			abstainQuestions++;
+			if (!answered) {
+				abstained++;
+				correctAbstentions++;
+			}
+		} else {
+			answerableQuestions++;
+			if (!answered) {
+				abstained++;
+				falseAbstentions++;
+			}
+		}
+	}
+	return {
+		abstainQuestions,
+		answerableQuestions,
+		abstained,
+		correctAbstentions,
+		abstentionPrecision: abstained ? round(correctAbstentions / abstained) : 0,
+		abstentionRecall: abstainQuestions
+			? round(correctAbstentions / abstainQuestions)
+			: 0,
+		falseAnswerRate: abstainQuestions
+			? round((abstainQuestions - correctAbstentions) / abstainQuestions)
+			: 0,
+		falseAbstentionRate: answerableQuestions
+			? round(falseAbstentions / answerableQuestions)
+			: 0,
 	};
 }

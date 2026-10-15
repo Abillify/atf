@@ -1,6 +1,6 @@
 {
-	"version": "1.0.0",
-	"description": "German morphology variants of golden-set v1 questions: each re-asks a base question with a different inflection, a split compound (\"Wareneingangsmaske\" → \"Maske für den Wareneingang\") or a derivation (\"Chargenverwaltung\" → \"Chargen verwaltet\"). Expected answers are the base question's. The v1 questions appear verbatim in the corpus, so they cannot show whether stemming or compound splitting work; this set can (compare FTS_LANGUAGE=simple, german and a compound configuration).",
+	"version": "1.1.0",
+	"description": "German morphology variants of golden-set v1 questions: each re-asks a base question with a different inflection, a split compound (\"Wareneingangsmaske\" → \"Maske für den Wareneingang\") or a derivation (\"Chargenverwaltung\" → \"Chargen verwaltet\"). Expected answers are the base question's. The v1 questions appear verbatim in the corpus, so they cannot show whether stemming or compound splitting work; this set can (compare FTS_LANGUAGE=simple, german and a compound configuration). Version 1.1.0 adds 7 variants of unanswerable (abstain) base questions: the system must still find nothing relevant when the unanswerable question is phrased with other word forms.",
 	"baseFixture": "golden-set.v1.json",
 	"variants": [
 		{
@@ -310,6 +310,64 @@
 				"compound"
 			],
 			"question": "Welche Zonen zeigt der Plan zur Nutzung?"
+		},
+		{
+			"id": "de-037",
+			"base": "q-121",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Anforderung regelt die Überwachung der Kühlkette bei Tiefkühlware?"
+		},
+		{
+			"id": "de-038",
+			"base": "q-122",
+			"phenomena": [
+				"inflection"
+			],
+			"question": "Wo wird die Lagerung von Gefahrgütern der Klasse 7 beschrieben?"
+		},
+		{
+			"id": "de-039",
+			"base": "q-127",
+			"phenomena": [
+				"derivation"
+			],
+			"question": "Welcher Prozess beschreibt, wie Altbatterien entsorgt werden?"
+		},
+		{
+			"id": "de-040",
+			"base": "q-130",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Wie läuft der Wechsel der Nachtschicht bei den Pförtnern ab?"
+		},
+		{
+			"id": "de-041",
+			"base": "q-133",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Felder hat die Maske für die Registrierung von Fahrern?"
+		},
+		{
+			"id": "de-042",
+			"base": "q-139",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welches Planblatt zeigt die Anlage für Photovoltaik auf dem Dach?"
+		},
+		{
+			"id": "de-043",
+			"base": "q-143",
+			"phenomena": [
+				"derivation",
+				"inflection"
+			],
+			"question": "Welcher Plan zeigt die Zisternen für Regenwasser?"
 		}
 	]
 }

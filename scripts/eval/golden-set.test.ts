@@ -3,6 +3,7 @@
 
 import { describe, expect, test } from "bun:test";
 import { resolve } from "node:path";
+import { buildCorpus } from "./golden-set/build-corpus.ts";
 import {
 	cellRef,
 	extractionCoverage,
@@ -206,5 +207,67 @@ describe("extraction annotations", () => {
 	test("a question without an annotation reports none", () => {
 		const set = parseGoldenSet(validSet);
 		expect(hasExtractionAnnotation(set.questions[0] as never)).toBe(false);
+	});
+});
+
+describe("abstain questions", () => {
+	const abstainQuestion = {
+		id: "qa",
+		document: "d1",
+		question: "Wo steht etwas Unbekanntes?",
+		expectedPages: [],
+		expectedFigures: [],
+		expectedCells: [],
+		abstain: true,
+	};
+
+	test("accepts an abstain question without an expected answer", () => {
+		const set = parseGoldenSet({
+			...validSet,
+			questions: [...validSet.questions, abstainQuestion],
+		});
+		expect(set.questions.at(1)?.abstain).toBe(true);
+		expect(set.questions.at(0)?.abstain).toBeUndefined();
+	});
+
+	test("rejects an abstain question that carries an expected answer", () => {
+		expect(() =>
+			parseGoldenSet({
+				...validSet,
+				questions: [{ ...abstainQuestion, expectedPages: [2] }],
+			}),
+		).toThrow(/abstain but carries/);
+	});
+
+	test("rejects a non-boolean abstain flag", () => {
+		expect(() =>
+			parseGoldenSet({
+				...validSet,
+				questions: [{ ...abstainQuestion, abstain: "yes" }],
+			}),
+		).toThrow(/abstain must be a boolean/);
+	});
+
+	test("shipped fixture: 15–20 % abstain questions whose subject is absent from the corpus", async () => {
+		const set = await loadGoldenSet(
+			resolve(import.meta.dir, "golden-set", "golden-set.v1.json"),
+		);
+		const abstain = set.questions.filter((q) => q.abstain === true);
+		const share = abstain.length / set.questions.length;
+		expect(share).toBeGreaterThanOrEqual(0.15);
+		expect(share).toBeLessThanOrEqual(0.2);
+		// The corpus is built without abstain questions, so none of their wording
+		// may appear in it: every question needs a content word (>= 8 letters)
+		// that the generated corpus never uses.
+		const corpus = JSON.stringify(buildCorpus(set)).toLowerCase();
+		for (const q of abstain) {
+			expect(corpus.includes(q.question.toLowerCase())).toBe(false);
+			const words = q.question.toLowerCase().match(/[a-zäöüß-]{8,}/g) ?? [];
+			const absent = words.filter((w) => !corpus.includes(w));
+			expect({ id: q.id, absentWords: absent.length > 0 }).toEqual({
+				id: q.id,
+				absentWords: true,
+			});
+		}
 	});
 });
