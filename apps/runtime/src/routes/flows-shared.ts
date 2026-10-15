@@ -353,10 +353,12 @@ export async function splitByIncludeOrigin(
   const {
     $includeOrigins: _omit,
     $includeEdgeOrigins: _omitEdges,
+    $subflowVersions: _omitVersions,
     ...restMetadata
   } = (definition.metadata ?? {}) as Record<string, unknown>;
   void _omit;
   void _omitEdges;
+  void _omitVersions;
 
   // Keep the parent's existing `$include` directive (its other keys such as a
   // `_comment`, and its order — the merge order matters) and only reconcile

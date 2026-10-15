@@ -121,6 +121,7 @@ import {
 import { SseEmitter } from "./sse-emitter.js";
 import { CitationRegistry } from "./citation-registry.js";
 import { createRunState, startDebugTrace } from "./run-state.js";
+import { computeFlowDigest, subflowVersionsOf } from "../flow-revision.js";
 import { createToolCallbacks } from "./run-tool-callbacks.js";
 import { createNodeLifecycle } from "./run-node-lifecycle.js";
 import type { ExecutionEventMeta } from "../../monitoring/execution-store.js";
@@ -597,6 +598,9 @@ class GraphEngineServiceImpl implements GraphEngineService {
       typeof resolvedFlow.metadata?.version === "string"
         ? resolvedFlow.metadata.version
         : null;
+    // Revision identity beyond the declared version (see flow-revision.ts).
+    const flowDigest = computeFlowDigest(flowDef);
+    const subflowVersions = subflowVersionsOf(flowDef);
     // Progress is explicitly opt-in per node. This keeps ordinary chat flows
     // unchanged while Deep-Research flows can expose safe, server-authored
     // lifecycle updates instead of provider/model chain-of-thought.
@@ -788,6 +792,8 @@ class GraphEngineServiceImpl implements GraphEngineService {
       executionId,
       flowId,
       flowVersion,
+      flowDigest,
+      subflowVersions,
       ctx,
       messages,
     });

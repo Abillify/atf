@@ -75,10 +75,11 @@ jobs:
 
       # A flow change (including its prompt/sub-flow includes) must raise
       # metadata.version — the version identifies the revision in traces and
-      # receipts. Compared against the PR base, or the previous push.
+      # receipts. Compared against the PR base, or the previous push. The check fails
+      # closed in CI when no base is available; a manual run compares against main.
       - name: Flow version check
         env:
-          FLOW_VERSION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          FLOW_VERSION_BASE: ${{ github.event.pull_request.base.sha || github.event.before || 'origin/main' }}
         run: bun run check:flow-versions
 
       - name: SPDX headers
@@ -160,7 +161,7 @@ jobs:
 
       - name: Flow examples validate
         working-directory: apps/runtime
-        run: bun run scripts/cli.ts validate ../../deploy/examples/flows/
+        run: bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version
 
   typecheck:
     name: Typecheck

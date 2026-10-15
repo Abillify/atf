@@ -560,6 +560,20 @@ export function includeEdgeKey(edge: unknown): string | undefined {
 /** Source-form-only bookkeeping key; stripped before the runtime sees a flow. */
 export const INCLUDE_EDGE_ORIGINS_KEY = "$includeEdgeOrigins";
 
+/** The sub-flow file's own `metadata.version`, or null when unreadable/absent. */
+function declaredSubflowVersion(absPath: string): string | null {
+  try {
+    const raw = parseFlowFile(absPath) as Record<string, unknown> | null;
+    const version = (raw?.metadata as Record<string, unknown> | undefined)
+      ?.version;
+    return typeof version === "string" || typeof version === "number"
+      ? String(version)
+      : null;
+  } catch {
+    return null;
+  }
+}
+
 function mergeSubflows(
   raw: Record<string, unknown>,
   flowsDir: string,
@@ -595,7 +609,17 @@ function mergeSubflows(
       typeof metadata === "object" && metadata !== null
         ? (metadata as Record<string, unknown>)
         : {};
-    if (Object.keys(origins).length > 0) meta.$includeOrigins = origins;
+    if (Object.keys(origins).length > 0) {
+      meta.$includeOrigins = origins;
+      // The version each merged sub-flow file declares, so the debug trace can
+      // report `subflow_versions`. Load-time bookkeeping like `$includeOrigins`:
+      // dropped again before a flow is written back (routes/flows-shared.ts).
+      const versions: Record<string, string | null> = {};
+      for (const rel of new Set(Object.values(origins))) {
+        versions[rel] = declaredSubflowVersion(path.resolve(flowsDir, rel));
+      }
+      meta.$subflowVersions = versions;
+    }
     if (edgeOrigins !== undefined && Object.keys(edgeOrigins).length > 0) {
       meta[INCLUDE_EDGE_ORIGINS_KEY] = edgeOrigins;
     }

@@ -17,6 +17,7 @@ import type {
   DebugClassifierOutput,
   DebugNodeDiagnostic,
   DebugNodeAttemptContext,
+  DebugSubflowVersion,
 } from "../../types/debug-trace.js";
 import type { DebugTraceStore } from "../../monitoring/debug-trace-store.js";
 import { sanitizeJwtClaims } from "../../monitoring/trace-claims.js";
@@ -203,17 +204,31 @@ export function startDebugTrace(deps: {
   executionId: string;
   flowId: string;
   flowVersion: string | null;
+  flowDigest?: string | null;
+  subflowVersions?: DebugSubflowVersion[];
   ctx: RequestContext;
   messages: ChatMessage[];
 }) {
-  const { getDebugStore, executionId, flowId, flowVersion, ctx, messages } =
-    deps;
+  const {
+    getDebugStore,
+    executionId,
+    flowId,
+    flowVersion,
+    flowDigest,
+    subflowVersions,
+    ctx,
+    messages,
+  } = deps;
     const debugStore = getDebugStore();
     if (debugStore !== undefined) {
       debugStore.startTrace({
         execution_id: executionId,
         flow_id: flowId,
         flow_version: flowVersion,
+        ...(flowDigest !== undefined ? { flow_digest: flowDigest } : {}),
+        ...(subflowVersions !== undefined && subflowVersions.length > 0
+          ? { subflow_versions: subflowVersions }
+          : {}),
         status: "running",
         started_at: new Date().toISOString(),
         finished_at: null,

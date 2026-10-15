@@ -28,6 +28,14 @@ import type { EdgeFlowRecord } from "./edge-flow.js";
 // Top-level trace
 // ---------------------------------------------------------------------------
 
+/** A sub-flow file merged into the executed flow. */
+export interface DebugSubflowVersion {
+  /** Path relative to the flows directory, e.g. `subflows/guard.yaml`. */
+  path: string;
+  /** The sub-flow's own `metadata.version`; null when it declares none. */
+  version: string | null;
+}
+
 /** Full debug trace for one flow execution. */
 export interface DebugTrace {
   /** UUID correlating all events for this execution. */
@@ -36,6 +44,15 @@ export interface DebugTrace {
   flow_id: string | null;
   /** Declared `metadata.version` of the resolved entry flow; null if absent. */
   flow_version?: string | null;
+  /**
+   * `sha256:<hex>` over the flow definition the runtime executed (prompt
+   * files, sub-flows and model shortcuts expanded; layout and changelog
+   * excluded). Identical digests mean identical flow logic even when the
+   * declared `flow_version` was forgotten or reused.
+   */
+  flow_digest?: string | null;
+  /** Sub-flow files merged into the flow and the version each declares. */
+  subflow_versions?: DebugSubflowVersion[];
   /** Overall execution status. */
   status: "running" | "completed" | "error";
   /** ISO-8601 timestamp when execution started. */

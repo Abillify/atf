@@ -438,15 +438,15 @@ describe("createRerankerClient — Bedrock score scale (fixed response, scale un
     bedrockResponse.scores = [3.2];
     const result = await makeBedrock("auto").rerank("q", ["a"]);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.result[0]!.score).toBeCloseTo(0.96083, 4);
+    if (result.ok) expect(result.result[0]?.score).toBeCloseTo(0.96083, 4);
   });
 
   it("sigmoid mode restores the legacy squashing; none passes raw", async () => {
     bedrockResponse.scores = [0.9];
     const legacy = await makeBedrock("sigmoid").rerank("q", ["a"]);
     const raw = await makeBedrock("none").rerank("q", ["a"]);
-    if (legacy.ok) expect(legacy.result[0]!.score).toBeCloseTo(0.71095, 4);
-    if (raw.ok) expect(raw.result[0]!.score).toBe(0.9);
+    if (legacy.ok) expect(legacy.result[0]?.score).toBeCloseTo(0.71095, 4);
+    if (raw.ok) expect(raw.result[0]?.score).toBe(0.9);
   });
 });
 
@@ -471,6 +471,6 @@ describe("createRerankerClient — native rerank relevance_score scale", () => {
       logger,
     }).rerank("q", ["a"]);
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.result[0]!.score).toBe(0.9);
+    if (result.ok) expect(result.result[0]?.score).toBe(0.9);
   });
 });

@@ -48,7 +48,7 @@ bun run build
 ```
 
 CI additionally validates the example flows
-(`cd apps/runtime && bun run scripts/cli.ts validate ../../deploy/examples/flows/`) and starts
+(`cd apps/runtime && bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version`) and starts
 the quickstart Compose stack to check the documented health endpoints.
 
 The lint gate is a **regression** gate, not a zero-findings gate. The tree carries pre-existing

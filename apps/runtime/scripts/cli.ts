@@ -79,6 +79,8 @@ interface ParsedArgs {
   token: string;
   json: boolean;
   help: boolean;
+  /** validate: fail when an entry flow has no semantic `metadata.version`. */
+  requireVersion: boolean;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -90,6 +92,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     token: process.env["AIPERATOR_TOKEN"] ?? "",
     json: false,
     help: false,
+    requireVersion: false,
   };
 
   let i = 0;
@@ -97,6 +100,7 @@ function parseArgs(argv: string[]): ParsedArgs {
     const a = args[i] ?? "";
     if (a === "--help" || a === "-h") { result.help = true; i++; continue; }
     if (a === "--json") { result.json = true; i++; continue; }
+    if (a === "--require-version") { result.requireVersion = true; i++; continue; }
     if (a === "--server" && i + 1 < args.length) { result.server = args[++i] ?? ""; i++; continue; }
     if (a === "--token" && i + 1 < args.length) { result.token = args[++i] ?? ""; i++; continue; }
     if (!result.command && !a.startsWith("-")) { result.command = a; i++; continue; }
@@ -215,6 +219,29 @@ function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
   return validateFlow(resolved.data);
 }
 
+const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
+
+/**
+ * `validate --require-version`: the problem with a flow's declared
+ * `metadata.version`, or undefined when it is a semantic version (x.y.z). The
+ * version is what `flow_version` in the debug trace reports, so a flow without
+ * one cannot be verified after a rollout.
+ */
+export function flowVersionProblem(raw: unknown): string | undefined {
+  const metadata =
+    raw !== null && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>).metadata
+      : undefined;
+  const version =
+    metadata !== null && typeof metadata === "object" && !Array.isArray(metadata)
+      ? (metadata as Record<string, unknown>).version
+      : undefined;
+  if (typeof version === "string" && SEMVER_RE.test(version)) return undefined;
+  return version === undefined
+    ? "metadata.version is required (semantic version, e.g. 1.0.0)"
+    : `metadata.version must be a semantic version (x.y.z), found ${JSON.stringify(version)}`;
+}
+
 function isSubflowFile(filePath: string): boolean {
   const flowsDir = findFlowsDir(filePath);
   const relativePath = path.relative(flowsDir, filePath);
@@ -314,6 +341,13 @@ async function cmdValidate(args: ParsedArgs): Promise<number> {
 
   for (const file of files) {
     const report = validateFlowFile(file);
+    if (args.requireVersion) {
+      const problem = flowVersionProblem(loadFlowFile(file));
+      if (problem !== undefined) {
+        report.errors.push({ path: "metadata.version", message: problem });
+        report.valid = false;
+      }
+    }
 
     results.push({
       file,
@@ -846,7 +880,7 @@ ${bold("Usage:")}
   bun run scripts/cli.ts <command> [options]
 
 ${bold("Commands:")}
-  ${bold("validate")} <file|dir>             Validate flow YAML/JSON files offline
+  ${bold("validate")} <file|dir> [--require-version]  Validate flow YAML/JSON files offline (--require-version: metadata.version must be x.y.z)
   ${bold("diff")} <fileA> <fileB>            Show structural diff between two flows
   ${bold("deploy")} <file>                   Validate + publish a flow to a server
   ${bold("test")} <flowId>                   Send a test message to a flow

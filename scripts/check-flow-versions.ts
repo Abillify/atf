@@ -13,23 +13,39 @@
  *   - a changed flow differs in anything but `metadata.version` and its
  *     version did not increase (semantic versioning);
  *   - a new flow has no valid `metadata.version`;
- *   - a prompt (`prompts/…`) or sub-flow (`subflows/…`) file changed and a
- *     flow that includes it did not increase its version — the include
- *     changes the flow's behaviour just as much as an edit to the flow.
+ *   - a file the flow depends on changed and the flow did not increase its
+ *     version. Dependencies are resolved from the parsed flow, transitively,
+ *     the way the runtime's flow parser resolves them (all paths relative to
+ *     the flows directory):
+ *       · `metadata.$include.subflows` (sub-flow files, nested up to 3 levels)
+ *       · `#[[file:…]]` prompt includes in any `systemPrompt` (nodes and
+ *         overrides, in sub-flows too; prompt files may nest up to 5 levels)
+ *       · `model-shortcuts.*` when any node uses `llm.shortcut`
+ *       · the shared configuration files `guardrails`, `dispatch` and
+ *         `tool-authz`, which apply to every flow.
+ *
+ * Bump size (documented rule, reported as a warning, not a failure): a change
+ * to the step graph (node ids/types or edges) is a flow-contract change and
+ * should raise at least the minor version; prompt, parameter and include
+ * changes need a patch bump.
  *
  * Usage:
- *   bun run scripts/check-flow-versions.ts --base <git-ref> [flows-dir …]
+ *   bun run scripts/check-flow-versions.ts --base <git-ref> [--allow-missing-base] [flows-dir …]
  *
  * Flows directories default to `deploy/examples/flows`. Files are recognised
  * by content (an object with `id` and a `nodes` array); the reserved
  * configuration files of other subsystems and `*.example.*` templates are
- * skipped (docs/FLOWS.md). Without a usable base (first commit, unknown ref)
- * the check reports that and passes.
+ * skipped (docs/FLOWS.md).
+ *
+ * Without a usable base (no ref, all-zero ref, unknown ref) the check cannot
+ * compare anything. In CI (`CI=true` or `GITHUB_ACTIONS`) that FAILS, so a
+ * misconfigured pipeline cannot silently skip the gate; locally it warns and
+ * passes. `--allow-missing-base` opts out of the CI failure explicitly.
  */
 
 import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, relative } from "node:path";
+import { basename, extname, join, posix, relative } from "node:path";
 
 const RESERVED_BASENAMES = new Set([
   "dispatch",
@@ -109,8 +125,10 @@ export interface FlowChange {
   path: string;
   base: FlowDoc | undefined;
   head: FlowDoc;
-  /** Changed prompt/sub-flow files this flow includes. */
+  /** Changed files (prompts, sub-flows, shortcuts, shared config) this flow depends on. */
   changedIncludes: string[];
+  /** The step graph (node ids/types or edges) differs from the base. */
+  graphChanged?: boolean;
 }
 
 /** Violations for one flow; empty when the change is versioned correctly. */
@@ -126,11 +144,160 @@ export function checkFlowChange(change: FlowChange): string[] {
   if (order === undefined || order > 0) return [];
   const why = bodyChanged
     ? "its definition changed"
-    : `included file(s) changed: ${changedIncludes.join(", ")}`;
+    : `dependent file(s) changed: ${changedIncludes.join(", ")}`;
   return [
     `${path}: ${why} but metadata.version stayed ${head.version} (was ${base.version ?? "unset"}); increase it`,
   ];
 }
+
+/**
+ * Warnings about the SIZE of an otherwise sufficient bump: a changed step
+ * graph is a contract change and should raise at least the minor version.
+ */
+export function bumpWarnings(change: FlowChange): string[] {
+  const { path, base, head, graphChanged } = change;
+  if (graphChanged !== true || base?.version === undefined || head.version === undefined) return [];
+  const a = SEMVER.exec(base.version);
+  const b = SEMVER.exec(head.version);
+  if (a === null || b === null) return [];
+  const higherMajorOrMinor = Number(b[1]) > Number(a[1]) || (Number(b[1]) === Number(a[1]) && Number(b[2]) > Number(a[2]));
+  if (compareSemver(head.version, base.version) === 1 && !higherMajorOrMinor) {
+    return [
+      `${path}: the step graph (nodes/edges) changed; ${base.version} -> ${head.version} is only a patch bump, a graph change should raise at least the minor version`,
+    ];
+  }
+  return [];
+}
+
+// ─── Dependency resolution ───────────────────────────────────────────────────
+
+/** Reads a file relative to the flows directory; undefined when it does not exist. */
+export type ReadFlowFile = (relPath: string) => string | undefined;
+
+const PROMPT_INCLUDE = /#\[\[file:([^\]]+)\]\]/g;
+const MAX_SUBFLOW_DEPTH = 3;
+const MAX_PROMPT_DEPTH = 5;
+/** Shared configuration read for every flow (docs/FLOWS.md). */
+const SHARED_CONFIG = ["guardrails", "dispatch", "tool-authz"];
+const MODEL_SHORTCUTS = "model-shortcuts";
+
+function parseDocument(path: string, text: string): Record<string, unknown> | undefined {
+  try {
+    const raw = extname(path) === ".json" ? JSON.parse(text) : Bun.YAML.parse(text);
+    return raw !== null && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** True when any object in the tree has a string `shortcut` (an `llm.shortcut` reference). */
+function usesShortcut(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(usesShortcut);
+  if (value === null || typeof value !== "object") return false;
+  return Object.entries(value).some(
+    ([k, v]) => (k === "shortcut" && typeof v === "string") || usesShortcut(v),
+  );
+}
+
+/** `systemPrompt` strings of nodes and their overrides, where prompt includes are resolved. */
+function systemPrompts(doc: Record<string, unknown>): string[] {
+  const out: string[] = [];
+  const nodes = Array.isArray(doc.nodes) ? doc.nodes : [];
+  for (const node of nodes) {
+    if (node === null || typeof node !== "object") continue;
+    const n = node as Record<string, unknown>;
+    if (typeof n.systemPrompt === "string") out.push(n.systemPrompt);
+    if (Array.isArray(n.overrides)) {
+      for (const o of n.overrides) {
+        if (o !== null && typeof o === "object" && typeof (o as Record<string, unknown>).systemPrompt === "string") {
+          out.push((o as Record<string, string>).systemPrompt as string);
+        }
+      }
+    }
+  }
+  return out;
+}
+
+function normalizeRel(rel: string): string {
+  return posix.normalize(rel.trim().split("\\").join("/"));
+}
+
+/**
+ * Every file (relative to the flows directory) the flow's behaviour depends
+ * on, resolved from the parsed definition like the runtime's flow parser:
+ * sub-flows (transitively), prompt files (transitively) and, when the flow
+ * uses `llm.shortcut`, the model shortcuts; shared configuration always.
+ * The flow file itself is not included.
+ */
+export function resolveFlowDependencies(
+  entryPath: string,
+  entryText: string,
+  readFile: ReadFlowFile,
+  flowFiles: readonly string[] = [],
+): Set<string> {
+  const deps = new Set<string>();
+  let shortcuts = false;
+
+  const visitPrompt = (rel: string, depth: number): void => {
+    const file = normalizeRel(rel);
+    if (deps.has(file) || depth > MAX_PROMPT_DEPTH) return;
+    deps.add(file);
+    const text = readFile(file);
+    if (text === undefined) return;
+    for (const m of text.matchAll(PROMPT_INCLUDE)) visitPrompt(m[1] as string, depth + 1);
+  };
+
+  const visitDoc = (doc: Record<string, unknown>, depth: number, seen: Set<string>): void => {
+    if (usesShortcut(doc.nodes)) shortcuts = true;
+    for (const prompt of systemPrompts(doc)) {
+      for (const m of prompt.matchAll(PROMPT_INCLUDE)) visitPrompt(m[1] as string, 1);
+    }
+    const include = (doc.metadata as Record<string, unknown> | undefined)?.$include;
+    const subflows =
+      include !== null && typeof include === "object" ? (include as Record<string, unknown>).subflows : undefined;
+    if (!Array.isArray(subflows) || depth >= MAX_SUBFLOW_DEPTH) return;
+    for (const entry of subflows) {
+      if (typeof entry !== "string") continue;
+      const file = normalizeRel(entry);
+      if (seen.has(file)) continue;
+      seen.add(file);
+      deps.add(file);
+      const text = readFile(file);
+      const sub = text === undefined ? undefined : parseDocument(file, text);
+      if (sub !== undefined) visitDoc(sub, depth + 1, seen);
+    }
+  };
+
+  const entry = parseDocument(entryPath, entryText);
+  if (entry !== undefined) visitDoc(entry, 0, new Set([normalizeRel(entryPath)]));
+
+  const sharedNames = new Set(SHARED_CONFIG);
+  if (shortcuts) sharedNames.add(MODEL_SHORTCUTS);
+  for (const file of flowFiles) {
+    const rel = normalizeRel(file);
+    if (!rel.includes("/") && sharedNames.has(basename(rel, extname(rel)))) deps.add(rel);
+  }
+  return deps;
+}
+
+/** Sorted `id:type` of nodes and `source->target` of edges: the shape of the step graph. */
+export function graphShape(text: string, path: string): string | undefined {
+  const doc = parseDocument(path, text);
+  if (doc === undefined) return undefined;
+  const nodes = (Array.isArray(doc.nodes) ? doc.nodes : []).map((n) => {
+    const o = (n ?? {}) as Record<string, unknown>;
+    return `${String(o.id)}:${String(o.type)}`;
+  });
+  const edges = (Array.isArray(doc.edges) ? doc.edges : []).map((e) => {
+    const o = (e ?? {}) as Record<string, unknown>;
+    return `${String(o.source)}->${String(o.target)}`;
+  });
+  return JSON.stringify([nodes.sort(), edges.sort()]);
+}
+
+// ─── CLI ─────────────────────────────────────────────────────────────────────
 
 function git(args: string[]): string {
   return execFileSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
@@ -155,25 +322,43 @@ function listFiles(dir: string): string[] {
   return out;
 }
 
+/** True on CI runners, where a missing base must fail instead of skipping the gate. */
+export function isCi(env: Record<string, string | undefined> = process.env): boolean {
+  return env.CI === "true" || env.CI === "1" || (env.GITHUB_ACTIONS ?? "") !== "";
+}
+
+function missingBase(reason: string, allow: boolean): void {
+  if (isCi() && !allow) {
+    console.error(
+      `check-flow-versions: ${reason} - cannot compare flow versions. Failing because this is CI; ` +
+        "provide FLOW_VERSION_BASE / --base, or pass --allow-missing-base to skip deliberately.",
+    );
+    process.exit(1);
+  }
+  console.log(`check-flow-versions: ${reason} - nothing to compare, passing (not CI).`);
+}
+
 function main(): void {
   const argv = process.argv.slice(2);
   const baseIndex = argv.indexOf("--base");
   const base = baseIndex >= 0 ? argv[baseIndex + 1] : process.env.FLOW_VERSION_BASE;
-  const dirs = argv.filter((a, i) => a !== "--base" && i !== baseIndex + 1);
+  const allowMissingBase = argv.includes("--allow-missing-base");
+  const dirs = argv.filter((a, i) => a !== "--base" && i !== baseIndex + 1 && a !== "--allow-missing-base");
   const flowDirs = dirs.length > 0 ? dirs : ["deploy/examples/flows"];
 
   if (base === undefined || base === "" || /^0+$/.test(base)) {
-    console.log("check-flow-versions: no base revision given — nothing to compare, passing.");
+    missingBase("no base revision given", allowMissingBase);
     return;
   }
   try {
     git(["rev-parse", "--verify", `${base}^{commit}`]);
   } catch {
-    console.log(`check-flow-versions: base ${base} is not available — nothing to compare, passing.`);
+    missingBase(`base ${base} is not available`, allowMissingBase);
     return;
   }
 
   const violations: string[] = [];
+  const warnings: string[] = [];
   let checked = 0;
   for (const dir of flowDirs) {
     const changed = new Set(
@@ -182,31 +367,47 @@ function main(): void {
         .filter((p) => p !== ""),
     );
     if (changed.size === 0) continue;
-    const changedIncludeFiles = [...changed].filter((p) => {
-      const rel = relative(dir, p);
-      return rel.startsWith("prompts/") || rel.startsWith("subflows/");
-    });
+    const changedRel = new Set([...changed].map((p) => normalizeRel(relative(dir, p))));
+    const allFiles = listFiles(dir);
+    const topLevel = allFiles.map((f) => normalizeRel(relative(dir, f)));
+    const readHead = (rel: string): string | undefined => {
+      const abs = join(dir, rel);
+      return existsSync(abs) && statSync(abs).isFile() ? readFileSync(abs, "utf8") : undefined;
+    };
 
-    for (const path of listFiles(dir)) {
+    for (const path of allFiles) {
       if (!FLOW_EXTENSIONS.has(extname(path))) continue;
-      const rel = relative(dir, path);
+      const rel = normalizeRel(relative(dir, path));
       if (rel.startsWith("prompts/") || rel.startsWith("subflows/")) continue;
       const headText = readFileSync(path, "utf8");
       const head = parseFlow(path, headText);
       if (head === undefined) continue;
-      const includes = changedIncludeFiles.filter((inc) =>
-        headText.includes(relative(dirname(path), inc)) || headText.includes(basename(inc)),
-      );
-      if (!changed.has(path) && includes.length === 0) continue;
+      const deps = resolveFlowDependencies(rel, headText, readHead, topLevel);
+      const changedDeps = [...deps].filter((d) => changedRel.has(d)).sort();
+      if (!changed.has(path) && changedDeps.length === 0) continue;
       const baseText = gitShow(base, path);
       const baseDoc = baseText === undefined ? undefined : parseFlow(path, baseText);
       checked++;
-      violations.push(
-        ...checkFlowChange({ path, base: baseDoc, head, changedIncludes: includes }),
-      );
+
+      let graphChanged = false;
+      if (baseText !== undefined) {
+        const shapeOf = (t: string | undefined, p: string): string | undefined =>
+          t === undefined ? undefined : graphShape(t, p);
+        graphChanged = shapeOf(baseText, path) !== shapeOf(headText, path);
+        for (const dep of changedDeps) {
+          if (!dep.startsWith("subflows/")) continue;
+          const before = shapeOf(gitShow(base, join(dir, dep)), dep);
+          const after = shapeOf(readHead(dep), dep);
+          if (before !== after) graphChanged = true;
+        }
+      }
+      const change: FlowChange = { path, base: baseDoc, head, changedIncludes: changedDeps, graphChanged };
+      violations.push(...checkFlowChange(change));
+      warnings.push(...bumpWarnings(change));
     }
   }
 
+  for (const w of warnings) console.warn(`  warning: ${w}`);
   if (violations.length > 0) {
     console.error(`Flow version check failed (${violations.length}):`);
     for (const v of violations) console.error(`  - ${v}`);

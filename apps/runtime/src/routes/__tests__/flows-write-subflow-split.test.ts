@@ -69,7 +69,10 @@ const composedFlow: FlowDefinition = {
     { id: "guard-node", type: "tool" },
   ],
   edges: [{ source: "router", target: "guard-node" }],
-  metadata: { $includeOrigins: { "guard-node": "subflows/guard.yaml" } },
+  metadata: {
+    $includeOrigins: { "guard-node": "subflows/guard.yaml" },
+    $subflowVersions: { "subflows/guard.yaml": "1.0.0" },
+  },
 };
 
 describe("POST /flows/write — $includeOrigins split", () => {
@@ -116,6 +119,8 @@ describe("POST /flows/write — $includeOrigins split", () => {
     );
     const parentRaw = fs.readFileSync(path.join(tmpDir, "parent.yaml"), "utf-8");
     expect(parentRaw).not.toContain("includeOrigins");
+    // Load-time bookkeeping for the trace's subflow_versions; never persisted.
+    expect(parentRaw).not.toContain("subflowVersions");
   });
 
   test("a flow without $includeOrigins writes exactly as before (no split)", async () => {

@@ -68,7 +68,7 @@ edges: []
 | `recovery` | object | no | Crash recovery of async runs: `retry` states whether re-running from the start is safe; `maxAttempts` (1–10) lowers the global ceiling. |
 | `nodes` | list of object 1–100 | no | The steps; 1–100. In a flow file optional when `metadata.$include` merges them in from sub-flows. |
 | `edges` | list of object (≤ 500) | no | Connections between nodes; 0–500. The run starts at the first node; a node without an outgoing edge ends it. In a flow file optional when `metadata.$include` merges them in. |
-| `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces), `ui` (Studio layout), `$include.subflows` (sub-flow files), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable). |
+| `metadata` | object | no | Free-form. Known keys: `version` (appears as flow_version in debug traces, next to flow_digest, a hash of the executed definition, and subflow_versions), `ui` (Studio layout), `$include.subflows` (sub-flow files), `hidden` (true = omit from GET /v1/models; the flow stays loadable and dispatchable). |
 
 Keys starting with `_` (`_comment`, `_comment_tools`, …) are annotations on flows, nodes, edges and overrides; the parser ignores them. Any other unknown key is an error in `schemas/flow.schema.json`, which editors can use to validate flow files as you type (it describes the file form, including `llm.shortcut` and flows whose nodes come from `metadata.$include`).
 
