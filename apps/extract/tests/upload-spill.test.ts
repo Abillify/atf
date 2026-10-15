@@ -24,6 +24,7 @@
  */
 
 import { once } from "node:events";
+import { readdirSync } from "node:fs";
 import { createServer, type ServerResponse } from "node:http";
 import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -151,10 +152,10 @@ describe("POST /v1/convert with disk spooling (requirement 5.9)", () => {
   it("spools a large multipart upload and removes the scratch file afterwards", async () => {
     const seen: Uint8Array[] = [];
     // Captured from inside the extractor: the file must exist while the
-    // request owns it. readdir is async and onExtract is not awaited, so the
-    // promise is resolved in the assertions below — the handler's finally
-    // cannot have run before it.
-    let scratchDuring: Promise<string[]> | undefined;
+    // request owns it. The snapshot is taken synchronously, because an async
+    // readdir can be scheduled after the handler's finally has already removed
+    // the scratch file (observed under parallel load).
+    let scratchDuring: string[] | undefined;
     const response = await request(
       await app(
         {},
@@ -162,7 +163,11 @@ describe("POST /v1/convert with disk spooling (requirement 5.9)", () => {
           extractor: stubExtractor({
             onExtract: (input) => {
               seen.push(input.buffer);
-              scratchDuring = readdir(scratchRoot()).catch(() => []);
+              try {
+                scratchDuring = readdirSync(scratchRoot());
+              } catch {
+                scratchDuring = [];
+              }
             },
           }),
         },
@@ -172,8 +177,7 @@ describe("POST /v1/convert with disk spooling (requirement 5.9)", () => {
       .attach("document", LARGE, { filename: "gross.pdf", contentType: "application/pdf" });
 
     expect(response.status).toBe(200);
-    const during = await scratchDuring;
-    expect(during).toHaveLength(1);
+    expect(scratchDuring).toHaveLength(1);
     // The extractor must see the uploaded bytes, not a truncated spool.
     expect(Buffer.from(seen[0] ?? new Uint8Array())).toEqual(LARGE);
     expect(await scratchFiles()).toEqual([]);
