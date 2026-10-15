@@ -73,6 +73,14 @@ jobs:
       - name: Public-tree verification
         run: bun run verify:public
 
+      # A flow change (including its prompt/sub-flow includes) must raise
+      # metadata.version — the version identifies the revision in traces and
+      # receipts. Compared against the PR base, or the previous push.
+      - name: Flow version check
+        env:
+          FLOW_VERSION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bun run check:flow-versions
+
       - name: SPDX headers
         run: bun run verify:spdx
       # The product version is repeated in badge URLs, prose, a Zod default and two
@@ -148,6 +156,7 @@ jobs:
         run: |
           bun run atf-verify:test
           bun run atf-verify:typecheck
+          bun test ./scripts/check-flow-versions.test.ts
 
       - name: Flow examples validate
         working-directory: apps/runtime

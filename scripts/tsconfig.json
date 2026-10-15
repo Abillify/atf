@@ -4,5 +4,5 @@
 		"types": ["bun"],
 		"moduleDetection": "force"
 	},
-	"include": ["atf-verify.ts", "atf-verify.test.ts"]
+	"include": ["atf-verify.ts", "atf-verify.test.ts", "check-flow-versions.ts", "check-flow-versions.test.ts"]
 }

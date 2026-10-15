@@ -188,6 +188,14 @@ releases:
   `skipped: "scale_mismatch"`; `score_scale` (`rerank`/`cosine`/`rrf`/`fts`)
   names the exact scale of the final scores.
 
+- **CI flow version check** (`bun run check:flow-versions`, Hygiene job):
+  compared with the PR base (or the previous push), a flow whose definition
+  changed — or whose `prompts/`/`subflows/` include changed — must raise its
+  `metadata.version` (semver), and a new flow needs one. Otherwise two
+  behaviours share one `flow_version` in traces and receipts. Flows
+  directories are arguments, so deployment repositories can run the same
+  check.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the
