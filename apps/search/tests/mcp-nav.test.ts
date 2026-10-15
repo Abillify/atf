@@ -402,6 +402,21 @@ describe("MCP navigation tools (task 3.9)", () => {
     expect(doc).toHaveProperty("results");
   });
 
+  it("every tool declares readOnlyHint; only ingest and delete_document may write", async () => {
+    const tools = await client.listTools();
+    expect(tools.tools.length).toBeGreaterThan(0);
+    for (const tool of tools.tools) {
+      const writes = tool.name === "ingest" || tool.name === "delete_document";
+      expect({ name: tool.name, readOnlyHint: tool.annotations?.readOnlyHint }).toEqual({
+        name: tool.name,
+        readOnlyHint: !writes,
+      });
+    }
+    for (const name of ["search", "get_outline", "get_section", "get_document"]) {
+      expect(tools.tools.some((t) => t.name === name)).toBe(true);
+    }
+  });
+
   it("(i) the search tool advertises the v2 params in its schema", async () => {
     const tools = await client.listTools();
     const search = tools.tools.find((t) => t.name === "search");

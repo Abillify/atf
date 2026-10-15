@@ -132,6 +132,13 @@ releases:
   undocumented. Variables without a description: 271 → 123 (strict count incl.
   placeholder and "read directly"-only notes: ≈ 560 → 216).
 
+- **Search MCP tools declare behaviour hints**: every lookup tool (`search`,
+  `get_outline`, `get_section`, …) now sets `readOnlyHint`, `ingest` and
+  `delete_document` declare themselves as writes. Without the hint the
+  Runtime's side-effect guard refused all Search tools in shadow and replay
+  runs, so agentic RAG flows scored systematically worse there. A tool missing
+  from `SEARCH_TOOL_ANNOTATIONS` now fails Search at startup.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

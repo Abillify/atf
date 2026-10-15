@@ -53,6 +53,7 @@ import { z } from "zod";
 import type { Request, RequestHandler, Response } from "express";
 import type { Logger } from "pino";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolAnnotations } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import {
   AccessDeniedError,
@@ -102,6 +103,54 @@ import { registerIngestTools } from "./mcp-ingest.js";
 import { registerCatalogTools } from "./mcp-catalog.js";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
+
+/**
+ * Behaviour hints every Search tool declares. Clients act on them: the Runtime
+ * retries only read-only or idempotent tools and lets only `readOnlyHint` tools
+ * run in shadow and replay runs, so an unannotated lookup tool would be blocked
+ * there. Every tool must be listed — registering one that is missing fails at
+ * startup instead of silently shipping without hints.
+ */
+export const SEARCH_TOOL_ANNOTATIONS: Readonly<Record<string, ToolAnnotations>> = (() => {
+  const lookup: ToolAnnotations = {
+    readOnlyHint: true,
+    idempotentHint: true,
+    openWorldHint: false,
+  };
+  const readOnly = [
+    "search",
+    "list_collections",
+    "collection_stats",
+    "collection_overview",
+    "list_documents",
+    "list_folders",
+    "find_folders",
+    "get_document",
+    "get_thread",
+    "get_document_asset",
+    "get_documents",
+    "get_summary",
+    "get_summaries",
+    "get_outline",
+    "get_section",
+    "get_pages",
+    "get_context",
+    "list_figures",
+    "get_table",
+    "find_identifier",
+    "follow_ref",
+    "get_asset",
+    "transaction_capabilities",
+    "retrieve_evidence",
+    "verified_evidence_pack",
+  ];
+  return {
+    ...Object.fromEntries(readOnly.map((name) => [name, lookup])),
+    // Re-ingesting the same reference replaces it, so a retry is safe.
+    ingest: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+    delete_document: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
+  };
+})();
 
 export interface McpHandlerOptions {
   embeddingClient: EmbeddingClient;
@@ -335,7 +384,17 @@ function buildMcpServer(opts: McpHandlerOptions): McpServer {
         throw cause;
       }
     };
-    return (rawTool as (...args: unknown[]) => unknown)(...registration);
+    const annotations = SEARCH_TOOL_ANNOTATIONS[tool];
+    if (annotations === undefined) {
+      throw new Error(
+        `MCP tool "${tool}" has no entry in SEARCH_TOOL_ANNOTATIONS; declare its readOnlyHint before registering it`,
+      );
+    }
+    const registered = (rawTool as (...args: unknown[]) => {
+      update: (updates: { annotations: ToolAnnotations }) => void;
+    })(...registration);
+    registered.update({ annotations });
+    return registered;
   }) as typeof server.tool;
 
   // The tool implementations live in sibling modules (Requirement 13.6). They
