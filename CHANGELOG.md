@@ -18,6 +18,34 @@ releases:
 
 ## [Unreleased]
 
+## [0.16.2] — 2026-10-17
+
+### Fixed
+
+- **Search** (`@atf/search`): an unknown collection is now a typed 404
+  (`COLLECTION_NOT_FOUND`) instead of 403 on read and search routes, so a caller with a
+  valid scope sees an empty index rather than a permission failure.
+- **Search**: with authorization enabled, the first ingest into a brand-new collection was
+  refused because the collection-access middleware ran before `ensureCollection`. The ingest
+  routes (`/ingest`, `/ingest-batch`, `/ingest-stream`, app and ui) now use a write variant
+  that lets the first write through; the MCP ingest tool tolerates the same case.
+- **Runtime** (`@atf/runtime`): MCP image content with a bare base64 payload on `data`
+  (`{type:"image", data, mimeType}`, no `data:` prefix) is now recognised when image parts
+  are parked. Only an image MIME type with a strictly decodable base64 alphabet qualifies,
+  so remote `url`/`image` strings are never mistaken for payload bytes.
+
+### Added
+
+- **Search**: a trusted writer (service credential, or a principal holding
+  `vectorsearch.acl.manage`) may set explicit per-document viewer lists on ingest with
+  `X-Allowed-Users` / `X-Allowed-Groups`; all other callers keep the principal-derived ACL.
+- **Extract** (`@atf/extract`) and **Search**: a composite-code identifier class
+  (`composite_code`, e.g. `QAP-MDE-03`) is recognised before drawing numbers, so codes that
+  differ only in their prefix no longer collapse to the same normalised value. Revision-style
+  suffixes (`ZG-100`) and short alphanumeric codes (`WE01`, `VA01`) are matched as well.
+- **Search**: table units now carry the identifier codes of their section, so a lookup by
+  code no longer loses the table fragments to near-duplicate neighbours.
+
 ## [0.16.1] — 2026-10-16
 
 ### Fixed
@@ -3312,7 +3340,9 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.16.2...HEAD
+[0.16.2]: https://github.com/abillify/atf/compare/v0.16.1...v0.16.2
+[0.16.1]: https://github.com/abillify/atf/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/abillify/atf/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/abillify/atf/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/abillify/atf/compare/v0.13.2...v0.14.0
