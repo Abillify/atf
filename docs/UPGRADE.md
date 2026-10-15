@@ -99,6 +99,61 @@ No migration. OAuth 2.0 token exchange (`tokenExchange` in the Runtime,
   CHANGELOG: several production-gate rules now refuse configurations that
   used to start.
 
+#### Breaking or behaviour-changing, act before rolling out
+
+- **Gate monitor**: `?token=` is no longer accepted on any monitor endpoint.
+  Scripts send `Authorization: Bearer <token>`; the dashboard exchanges the
+  token once via `POST /monitor/session` for an HttpOnly cookie.
+- **Search full-text language**: `FTS_LANGUAGE` defaults to `german`. Existing
+  collections keep their language; switch one with `bun run fts:language` in
+  `apps/search` (recomputes its vectors). Deployments with mainly non-German content set
+  `FTS_LANGUAGE` explicitly (`english` or `simple`).
+- **Invalid compliance policy**: a broken `compliance-policy.yaml` no longer
+  means "no policy". A hot reload keeps the last valid policy; at startup with
+  no valid policy, chat and engine admission answer 503 until the file is
+  fixed. A missing file still means "no policy".
+- **Shadow runs**: sampling defaults to 5 % (`samplingRate` in `shadow.yaml`).
+  Shadow and replay runs refuse tools without `readOnlyHint` and skip the
+  assistant memory writes. Custom MCP servers that should take part in shadow
+  runs must declare `readOnlyHint` on their lookup tools.
+- **Control mutations** are no longer retried (`mutations.retry` 1 → 0).
+- **Trusted issuers**: with `JWT_ADDITIONAL_ISSUERS` and tenant isolation, set
+  `JWT_ISSUER_TENANTS` (JSON map issuer → tenants, `"*"` for all). Production
+  readiness fails without it when more than one issuer is trusted; a token
+  whose issuer is not bound to its tenant gets 401.
+- **Control behind a reverse proxy** (BFF mode): set `CONTROL_PUBLIC_ORIGIN` to
+  the public origin. Without it the proxy must overwrite `X-Forwarded-Host`.
+  In BFF mode there is no silent renewal; after expiry users sign in again.
+- **Search rerank scores**: `RERANK_SCORE_TRANSFORM` defaults to `auto`, so a
+  `relevance_score` already in [0, 1] is no longer passed through a sigmoid.
+  If `MIN_RERANK_SCORE` was tuned against the old values, re-tune it or set
+  `RERANK_SCORE_TRANSFORM=sigmoid`. Search responses always carry
+  `score_scale`; do not compare scores of different scales.
+- **Prompt-injection defences**: in production `RETRIEVAL_CONTEXT_MODE`
+  defaults to `spotlight`, `TOOL_OUTPUT_VALIDATOR_ENABLED` to on and
+  `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL` to on. After a finding, write tools
+  need approval, or are denied when `APPROVAL_GATE_ENABLED` is off; plan the
+  approver role before rollout. Read-only tools are unaffected.
+
+#### Schema and observability
+
+- Runtime schema version **47**: nullable `iss` on `executions` and
+  `token_usage_log`. Self-service erasure matches rows with the caller's issuer
+  or `NULL`, so older rows still match by `sub`. Roll all replicas to this
+  version before relying on the issuer scoping.
+- Debug traces carry `flow_digest` and `subflow_versions[]` next to
+  `flow_version`. Run `bun run scripts/cli.ts validate <flows-dir> --require-version` in
+  `apps/runtime` and `bun run check:flow-versions` in CI for your own flow
+  repositories.
+
+#### Eval stack
+
+The eval compose stack embeds with `BAAI/bge-m3` (1024 dimensions) instead of
+`bge-small-en-v1.5`. Re-ingest the eval corpus, then run
+`bun run eval:retrieval` and `bun run eval:retrieval:de`. No bge-m3 numbers
+are committed yet and the CI floors in `scripts/eval/baseline/thresholds.json`
+are not recalibrated; production embedding settings are not affected.
+
 ## Known upgrade blockers
 
 | Symptom | Cause | Fix |

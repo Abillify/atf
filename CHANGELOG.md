@@ -229,7 +229,41 @@ releases:
   (`indirect_prompt_injection`, with source and signals) and in
   `aiperator_indirect_injection_total`.
 
+- **Retrieved context is handed to the model as untrusted data** (Runtime,
+  `retrieval` node): `RETRIEVAL_CONTEXT_MODE=spotlight|legacy`. `spotlight`
+  puts the chunks between delimiters with a random per-call nonce and tells the
+  model that the block is data, not instructions; the `[n]` citation format and
+  the "answer only from the context" instruction are unchanged. Unset it is
+  `spotlight` with `APP_ENV=production` and `legacy` elsewhere. `legacy` in
+  production raises a readiness warning.
+- **Write tools need approval after an injection finding** (Runtime,
+  `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`): once the injection scan has flagged
+  retrieved or tool text, every tool that is not declared read-only
+  (`readOnlyHint`, without `destructiveHint`) needs human approval for the rest
+  of that run; tools without annotations count as write tools. Read-only tools
+  are unaffected. Without an approval gate (`APPROVAL_GATE_ENABLED`) the call is
+  denied. Unset it is on with `APP_ENV=production` and off elsewhere; it needs
+  the scan (`TOOL_OUTPUT_VALIDATOR_ENABLED`) to have any effect, and an explicit
+  `false` in production raises a readiness warning. Each forced approval writes
+  the trace diagnostic `tainted_write_tool_approval`
+  (`aiperator_taint_approvals_total`). The detection is heuristic; resistance
+  against paraphrased or encoded attacks has not been red-teamed.
+- **Search labels its results as untrusted** (`@atf/search`): `POST /search`,
+  `POST /v2/search` and the MCP tools `search` and `retrieve_evidence` return
+  `content_trust: "untrusted"` and an `injection_risk` hint (`none` or
+  `suspected`, from a deterministic English/German phrase list over the
+  returned text at query time, no model call, no re-ingest). `none` never means
+  safe. No ingest-time score is stored.
+
 ### Added
+- **Flow digest in the debug trace** (Runtime): `flow_digest` (`sha256:<hex>`
+  over the executed flow with prompt files, sub-flows and model shortcuts
+  expanded; layout and changelog excluded) and `subflow_versions[]` (path and
+  declared `metadata.version` per merged sub-flow) sit next to `flow_version`.
+  Equal digests mean equal flow logic even if a version was reused. The CLI
+  command `validate --require-version` fails for an entry flow without a
+  semantic `metadata.version`, and `check:flow-versions` now resolves includes
+  through the flow parser.
 - **Eval harness** (`scripts/eval`): the golden set (fixture 1.3.0) holds 24 unanswerable
   questions (`abstain: true`, 16.7 %); the German morphology set (1.1.0) adds 7 abstain
   variants. `retrieval.ts` reports abstention precision/recall, false-answer and
@@ -305,6 +339,18 @@ releases:
   model to search or use `list_documents` instead.
 
 ### Fixed
+- **Search rerank scores keep their native scale** (`@atf/search`): Bedrock and
+  OpenAI-compatible rerankers: `relevance_score` was squashed through a
+  sigmoid unconditionally, so a score that was already a probability in [0, 1]
+  was compressed into roughly [0.5, 0.73]. New `RERANK_SCORE_TRANSFORM`
+  (`auto`, default; `sigmoid`; `none`): `auto` keeps values in [0, 1] and applies
+  the sigmoid only to values outside it (logits). Set `sigmoid` to restore the
+  old mapping, for example when `MIN_RERANK_SCORE` was tuned against it. The
+  real Bedrock score scale was not verified against a live endpoint; the tests
+  use fixed responses. `POST /search` and `POST /v2/search` now always carry
+  `score_scale` (before: only in the abstention block), and the Runtime shows
+  RRF and FTS scores in a citation's `similarity_score` relative to the best hit
+  instead of clamping them as if they were cosine values.
 - **Control** (`@atf/control`): approval decisions that fail or are answered with 403 now show
   a localized message in the card instead of failing silently; an empty 403 from the API
   client reads "Your role does not permit this action." `useApprovals().resolve` returns
