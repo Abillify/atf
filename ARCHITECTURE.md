@@ -1,7 +1,7 @@
 # Architecture
 
 ATF is a Bun workspace monorepo containing seven independently deployable applications and
-ten shared packages — six versioned contract packages plus `security-kit`, `observability`
+ten shared packages — seven versioned contract packages plus `security-kit`, `observability`
 and `outpost-core`. The applications communicate over documented HTTP and MCP interfaces
 only. None imports another's source, and none reads another's private configuration. Five
 applications form the server footprint (Runtime, Control, Search, Gate, Extract); the two
@@ -269,15 +269,19 @@ process topology.
 with Zod validation and its own tests, plus three shared implementation packages
 (`security-kit`, `observability`, `outpost-core`).
 
-| Package | Version | Contract |
-| --- | --- | --- |
-| `@atf/identity-contract` | 1.1.0 | Verified principal and identity compatibility records |
-| `@atf/transaction-contract` | 1.1.0 | Transaction envelope compatibility records |
-| `@atf/evidence-contract` | 1.1.0 | Evidence and lineage compatibility records |
-| `@atf/schema-compatibility` | 1.0.0 | Deterministic schema-evolution classification |
-| `@atf/contract-adapter` | 1.0.0 | Explicit adapters between the contracts above |
-| `@atf/extract-contract` | 2.0.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath |
-| `@atf/erasure-contract` | 1.0.0 | DSAR erasure request, per-store result, and signed erasure receipt payload |
+| Package | Package version | Wire constant | Contract |
+| --- | --- | --- | --- |
+| `@atf/identity-contract` | 1.2.0 | 1.1.0 (accepts 1.0.0) | Verified principal and identity compatibility records |
+| `@atf/transaction-contract` | 1.1.0 | 1.0.0 | Transaction envelope compatibility records |
+| `@atf/evidence-contract` | 1.1.0 | 1.0.0 | Evidence and lineage compatibility records |
+| `@atf/schema-compatibility` | 1.0.0 | — | Deterministic schema-evolution classification |
+| `@atf/contract-adapter` | 1.0.0 | — | Explicit adapters between the contracts above |
+| `@atf/extract-contract` | 2.3.0 | 2.3.0 | v2 NDJSON record stream (typed block model, figure transcriptions, asset references, codec, validator, Markdown view); v1 marker grammar under the `/v1` subpath (wire 1.1.0) |
+| `@atf/erasure-contract` | 1.0.0 | 1.0.0 | DSAR erasure request, per-store result, and signed erasure receipt payload |
+
+The package version tracks the package; the wire constant is the version written into
+messages. They move independently, and `bun run verify:version` checks the constants of
+the packages that declare one.
 
 The remaining packages are shared implementations rather than wire contracts:
 `@atf/security-kit` (constant-time compare, base64url, SSRF egress guard, TLS helpers),
