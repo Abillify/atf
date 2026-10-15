@@ -3,20 +3,23 @@
 
 # Runbook: Backup and Restore
 
-Applicable to: ATF 0.14.x. All services are stateless except their databases and
+Applicable to: ATF 0.16.x. All services are stateless except their databases and
 the Extract scratch/outstore volumes; back up state, not containers.
 
 ## What must be backed up
 
 | State | Location | Notes |
 | --- | --- | --- |
-| Runtime database | Postgres, `DATABASE_URL` (Runtime) | Schema version 41; migrations run automatically on start |
+| Runtime database | Postgres, `DATABASE_URL` (Runtime) | Schema version 47 (see `docs/UPGRADE.md`); migrations run automatically on start outside production, `bun run migrate` or the Helm hooks apply them in production |
 | Gate database | Postgres, `POSTGRES_URL` (Gate) | Audit log, sessions, monitor credentials |
 | Search database | Postgres (`DATABASE_URL`, Search) | Index metadata; vector index can be rebuilt from source data |
 | Extract database | Postgres, `EXTRACT_DATABASE_URL` | Schema version 5 |
 | Extract outstore | Object storage / volume behind Extract | Source documents and derived artifacts |
 | Converter scratch | `TEMP_DIR` volume (Extract + isolated converter) | Ephemeral; do NOT back up — must be wiped on restore |
 | Audit anchor file | `AUDIT_ANCHOR_FILE` (Runtime) | Append-only hash chain; back up together with the Gate audit DB |
+| Signing keys and peppers | Secret store: `RECEIPT_SIGNING_KEY`, `ERASURE_RECEIPT_SIGNING_KEY`, `API_KEY_PEPPER`, `STATS_QUERY_PEPPER` | Without the receipt keys the signed receipts can no longer be verified against the JWKS; without `API_KEY_PEPPER` stored API-key hashes stop matching and every key must be reissued; without `STATS_QUERY_PEPPER` the stored query hashes no longer match. Back them up with the database, but in the secret store, not next to the dump |
+| Control session secret | Secret store: `CONTROL_SESSION_SECRET` (BFF mode) | Losing it only ends Control sessions; no data is lost |
+| Collection FTS language | Search database (per collection) | Part of the Search dump; `bun run fts:language` recomputes a collection's vectors if you restore into a deployment with a different `FTS_LANGUAGE` |
 | Secrets | Your secret store (K8s Secrets / vault) | Never store backups of secrets next to the data they protect |
 | Flow bundles | Deployment system (ConfigMaps / flow repo) | Flows are data-as-code; keep them in git, not only in the DB |
 
@@ -52,8 +55,10 @@ the Extract scratch/outstore volumes; back up state, not containers.
 3. Restore the outstore to the bucket/volume Extract expects, and place the
    anchor file at `AUDIT_ANCHOR_FILE` **before** starting Runtime.
 4. Start services in order: Postgres → Runtime → Gate → Search → Extract →
-   Control. Migrations apply automatically on first database access (advisory
-   lock, single transaction, additive).
+   Control. Outside production migrations apply on start; in production (with
+   `MIGRATE_ON_START` unset) run `bun run migrate` or the Helm hooks first
+   (advisory lock, additive). Provide the same signing keys and peppers as at
+   backup time before the services start.
 5. Verify:
 
    ```sh
