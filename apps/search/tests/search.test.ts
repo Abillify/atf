@@ -104,6 +104,32 @@ const logger = pino({ level: "silent" });
 // ─── Basic search tests ───────────────────────────────────────────────────────
 
 describe("search handler", () => {
+  it("never logs the raw query or the acting identity", async () => {
+    const lines: string[] = [];
+    const capture = pino(
+      { level: "trace" },
+      { write: (line: string) => void lines.push(line) },
+    );
+    const handler = createSearchHandler(
+      createMockEmbeddingClient({ ok: true, result: { vector: [0.1, 0.2] } }),
+      createMockPostgresClient({ search: { ok: true, result: [] } }),
+      capture,
+    );
+    const req = mockReq("Kündigung Max Mustermann");
+    (req as unknown as { principal: unknown }).principal = {
+      userId: "max@example.test",
+      userGroups: ["hr-confidential"],
+      source: "jwt",
+    };
+    await handler(req as never, mockRes() as never, vi.fn());
+
+    const logged = lines.join("\n");
+    expect(logged).toContain("Incoming search query");
+    expect(logged).not.toContain("Mustermann");
+    expect(logged).not.toContain("max@example.test");
+    expect(logged).not.toContain("hr-confidential");
+  });
+
   it("returns HTTP 200 with { results: [...] } on successful search", async () => {
     const mockResults: SearchResult[] = [
       {

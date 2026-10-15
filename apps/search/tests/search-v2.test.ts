@@ -186,6 +186,31 @@ function chunkHitWithRefs(): SearchResult {
 }
 
 describe("/v2/search handler", () => {
+	it("never logs the raw query or the acting identity", async () => {
+		const lines: string[] = [];
+		const capture = pino(
+			{ level: "trace" },
+			{ write: (line: string) => void lines.push(line) },
+		);
+		const handler = createSearchV2Handler(mockEmbedding(), mockPg(), capture, {
+			rerankerClient: null,
+		});
+		const req = mockReq({ query: "Kündigung Max Mustermann" });
+		(req as unknown as { principal: unknown }).principal = {
+			userId: "max@example.test",
+			userGroups: ["hr-confidential"],
+			tenantId: "t1",
+			source: "jwt",
+		};
+		await handler(req as never, mockRes() as never, vi.fn());
+
+		const logged = lines.join("\n");
+		expect(logged).toContain("Incoming v2 search query");
+		expect(logged).not.toContain("Mustermann");
+		expect(logged).not.toContain("max@example.test");
+		expect(logged).not.toContain("hr-confidential");
+	});
+
 	it("returns the v2 hit shape (section_path, pages, unit_type, assets, navigation, evidence)", async () => {
 		const pg = mockPg({ search: { ok: true, result: [chunkHitWithRefs()] } });
 		const handler = createSearchV2Handler(mockEmbedding(), pg, logger, {

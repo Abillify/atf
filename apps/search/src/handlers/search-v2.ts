@@ -479,9 +479,11 @@ export function createSearchV2Handler(
 
       const scope = accessScopeForRequest(req);
       const { userId, userGroups } = getPrincipal(req);
+      // Data minimisation (docs/operations-and-retrieval.md): raw query text
+      // and the acting identity never go into operator logs — only shapes.
       log.info(
         {
-          query,
+          queryLength: query.length,
           limit,
           collection,
           hybrid: hybridRequested,
@@ -490,8 +492,8 @@ export function createSearchV2Handler(
           includeAssets,
           groupBy,
           identifierList,
-          userId,
-          userGroups,
+          authenticatedUser: userId !== undefined,
+          userGroupCount: userGroups?.length ?? 0,
         },
         "Incoming v2 search query",
       );

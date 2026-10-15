@@ -398,9 +398,11 @@ export function createSearchHandler(
       //     everything".
       const { userId, userGroups } = getPrincipal(req);
 
+      // Data minimisation (docs/operations-and-retrieval.md): raw query text
+      // and the acting identity never go into operator logs — only shapes.
       log.info(
         {
-          query: body,
+          queryLength: body.length,
           limit,
           offset,
           cursor: cursor ? `${cursor.created}|${cursor.id}` : undefined,
@@ -417,8 +419,8 @@ export function createSearchHandler(
           metadata,
           xFilter: xFilterStr,
           tags: tagsFilter,
-          userId,
-          userGroups,
+          authenticatedUser: userId !== undefined,
+          userGroupCount: userGroups?.length ?? 0,
         },
         "Incoming search query",
       );

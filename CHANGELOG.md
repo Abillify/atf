@@ -64,6 +64,11 @@ releases:
   every run with 503 until the file is fixed. `GET /admin/compliance-policy`
   reports the load error (`loadError`, `stale` or `blocked`), and the loader
   logs at error level. A missing file still means "no policy".
+- **Search no longer logs raw queries or the acting identity**
+  (`POST /search`, `POST /v2/search`): the "Incoming search query" info log
+  carried the query text, user id and groups, contrary to the data-minimisation
+  rule in `docs/operations-and-retrieval.md`. It now records only
+  `queryLength`, `authenticatedUser` and `userGroupCount`.
 
 ### Added
 
