@@ -63,9 +63,9 @@ Migrations run as `pre-install`/`pre-upgrade` Jobs (`<service>.migration.enabled
 by hook weight: Runtime 10, Search 20, Extract 30) that execute `bun run scripts/migrate.ts`
 from the service image; the replicas themselves boot with `MIGRATE_ON_START=false`.
 
-Images default to `ghcr.io/abillify/atf-<service>` tagged with the chart `appVersion`;
-pin `global.image.tag` or the per-service `image.digest` to an immutable digest in
-production. Example:
+Images default to `ghcr.io/abillify/atf-<service>` tagged with the chart `appVersion`.
+`global.image.tag` renders a mutable `:tag` reference; in production pin the per-service
+`image.digest` (rendered as `@sha256:…`) to an immutable digest instead. Example:
 
 ```sh
 helm install atf deploy/helm/atf --namespace atf --create-namespace \
@@ -73,7 +73,7 @@ helm install atf deploy/helm/atf --namespace atf --create-namespace \
   --set global.secrets.search=atf-search --set global.secrets.extract=atf-extract \
   --set global.secrets.control=atf-control \
   --set runtime.flowsConfigMap=atf-flows --set gate.configMap=atf-gate-config \
-  --set global.image.tag=0.14.0
+  --set global.image.tag=0.16.0
 ```
 
 ## Inference provider configuration
@@ -280,10 +280,37 @@ geometry-driven refinements (heading candidates, bbox snapping, the text fast-pa
 `bbox_layout.supported` field in `/health` (or the boot log) to confirm S2 is available.
 
 Tag releases attach a checksummed bundle containing both native workspace inventories and all
-five Quickstart image inventories. The release workflow publishes no OCI image. Production
-images remain deployment-owned and require their own inventory, source-availability,
-replaceability, attribution, scanning, and immutable-digest review.
+five Quickstart image inventories. They also publish the five service images (`runtime`,
+`search`, `gate`, `extract`, `control`) to `ghcr.io/abillify/atf-<service>`, tagged with the
+release version and the exact commit SHA. The `Container images` job in
+`.github/workflows/release.yml` signs each image digest with cosign (keyless) and attaches a
+SLSA build-provenance attestation and a CycloneDX SBOM attestation. The images exist only after
+the tag run has finished. Production images remain deployment-owned and require their own
+inventory, source-availability, replaceability, attribution, scanning, and immutable-digest
+review. The 0.16 operating changes (`JWT_ISSUER_TENANTS`, `CONTROL_PUBLIC_ORIGIN`, the German
+full-text default) are listed in [docs/UPGRADE.md](docs/UPGRADE.md).
 
+### Image verification
+
+Verify an image before you pin its digest. Replace `<service>` and the version:
+
+```sh
+IMAGE=ghcr.io/abillify/atf-<service>:0.16.0
+DIGEST=$(docker buildx imagetools inspect "$IMAGE" --format '{{json .Manifest.Digest}}' | tr -d '"')
+
+# Signature: the identity is the release workflow at the release tag.
+cosign verify "ghcr.io/abillify/atf-<service>@${DIGEST}" \
+  --certificate-identity "https://github.com/Abillify/atf/.github/workflows/release.yml@refs/tags/v0.16.0" \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+
+# Build provenance and SBOM attestations.
+gh attestation verify "oci://ghcr.io/abillify/atf-<service>@${DIGEST}" --repo Abillify/atf
+gh attestation verify "oci://ghcr.io/abillify/atf-<service>@${DIGEST}" --repo Abillify/atf \
+  --predicate-type https://cyclonedx.org/bom
+```
+
+Deploy by the verified digest through the per-service `image.digest` value (for example
+`--set runtime.image.digest=${DIGEST}`), not by the mutable version tag in `global.image.tag`.
 ## Throughput tuning: `PAGE_CONCURRENCY` vs. the vLLM batch
 
 `PAGE_CONCURRENCY` (Extract) is the number of pages of **one job** Extract keeps in flight
