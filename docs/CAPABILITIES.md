@@ -316,10 +316,12 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 
 - **Policy as code, with an explicit activation boundary.** A valid
   `compliance-policy.yaml` in `FLOWS_DIR` can declare model allow/block rules, provider/data
-  rules, approval requirements, retention, and audit rules. Missing, unreadable, or
-  schema-invalid policy files currently disable this policy and therefore allow execution;
-  `failClosed` controls exceptions during evaluation, not loading. Deployments that rely on it
-  must validate the file and monitor Runtime's policy-loaded status. Start from
+  rules, approval requirements, retention, and audit rules. A missing file means no policy.
+  An unreadable or schema-invalid file does not: a hot reload keeps the last valid policy, and
+  at startup with no valid policy chat and engine admission answer 503 until the file is fixed
+  (`GET /admin/compliance-policy` reports `loadError`, `stale` or `blocked`). There is no
+  mandatory-policy mode yet, so a deleted file still disables the policy; `failClosed`
+  controls exceptions during evaluation, not loading. Start from
   [`deploy/examples/flows/compliance-policy.example.yaml`](../deploy/examples/flows/compliance-policy.example.yaml).
 - **Enforcement points and limits.** Model/data admission is applied by the centralized
   execution-admission path and chat preflight before graph execution; tool approval rules are
@@ -343,6 +345,13 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   and assistant stores without `DATABASE_URL`) is listed with its gap in `GET /v1/me/data` and
   the compliance dossier, and makes every erasure report `partial` rather than `complete`. The
   audit log and `erasure_requests` are retained as accountability records.
+- **Decision receipts.** With `DECISION_RECEIPTS_ENABLED` and `RECEIPT_SIGNING_KEY`, each chat
+  completion and tool call yields a signed COSE_Sign1 receipt (`GET /v1/receipts/:id`), appended
+  to a transparency log (`receipt_log`); the public key is served at
+  `/.well-known/atf-receipt-jwks.json`. Rotation notes: `runbooks/key-rotation.md`.
+- **Flow identity in traces.** Debug traces carry `flow_version`, `flow_digest` (a hash of the
+  executed flow with includes expanded) and `subflow_versions[]`; CI fails a flow change without
+  a `metadata.version` bump (`check:flow-versions`).
 - **Verifiable evidence bundles.** A signed bundle ties an execution to its inputs, policy
   decisions, sources, and outputs (`EVIDENCE_BUNDLE_SECRET`).
 - **Compliance dossier.** A single generated document collects the active policy, the audit
@@ -442,6 +451,12 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
 - **Authentication.** JWT with JWKS verification, multiple issuers, and audience checks; or
   OIDC with a backend-driven session for the operator plane
   (`AUTHN_MODE`, `JWT_*`, `OIDC_*`).
+- **Issuer to tenant binding.** With several trusted issuers, `JWT_ISSUER_TENANTS` limits the
+  tenants each issuer may claim; other combinations get 401.
+- **Token and key rotation.** Search and Extract accept `API_TOKEN_NEXT` next to `API_TOKEN`
+  during a rotation; API keys can be peppered (`API_KEY_PEPPER`, lazy hash migration).
+- **Transport security.** Search and Extract can serve HTTPS and verify client certificates
+  (`TLS_CERT_FILE`, `TLS_KEY_FILE`, `TLS_CLIENT_CA_FILE`).
 - **RBAC.** Operator roles are mapped from token claims (`OPERATOR_ROLE_CLAIM`,
   `OPERATOR_ROLE_MAP`).
 - **Agent identity broker.** Agents receive scoped, revocable identities rather than sharing a
@@ -552,7 +567,10 @@ Control is a Next.js application for operating the platform.
   The Live Graph enriches failed nodes with the error type, details, diagnostics timeline and
   failing tool result from the execution debug trace (`GET /monitoring/debug/:executionId`)
   while that trace is still held in memory.
-- Approval inbox with role-gated decisions.
+- Approval inbox; approve and deny need the operator role. The dashboard is available in German
+  and English (cookie `NEXT_LOCALE`). Control can run in BFF mode (`CONTROL_SESSION_MODE=bff`):
+  a sealed session cookie (`CONTROL_SESSION_SECRET`), a same-origin guard on the backend proxy
+  (`CONTROL_PUBLIC_ORIGIN`), and an allowlist of proxied paths.
 - Cost, budget, and FinOps panels.
 - Evaluation runs and eval cases (list and delete), canary status, shadow comparisons,
   autopilot state.
