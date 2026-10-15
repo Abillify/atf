@@ -45,6 +45,7 @@ import {
   groundToolResult,
   parseToolContextConfig,
 } from "../tool-context.js";
+import { reportingValidator } from "../injection-findings.js";
 
 const DEFAULT_PAGE_SIZE = 200;
 const DEFAULT_MAX_PAGES = 50;
@@ -450,9 +451,11 @@ export function createToolNodeHandler(
             runtime.ctx,
             runtime.signal,
           );
-          const safeContent = runtime.toolOutputValidator?.enabled
-            ? runtime.toolOutputValidator.validate(groundedContent, toolRef).content
-            : groundedContent;
+          const validator = reportingValidator(runtime, node.id);
+          const safeContent =
+            validator !== undefined
+              ? validator.validate(groundedContent, toolRef).content
+              : groundedContent;
           accumulated.push({
             tool_call_id: toolCallId,
             tool_name: toolRef,

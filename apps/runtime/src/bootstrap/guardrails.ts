@@ -245,12 +245,14 @@ export async function buildGuardrails(
     logger,
   );
 
-  // ── Tool output injection validator ──────────────────────────────────────
+  // ── Tool output / retrieval injection validator ──────────────────────────
   // Default mode is "redact", not "flag": an in-band warning next to
   // adversarial text is not a reliable defence for a model already
   // susceptible to it. See tool-output-validator.ts for the full reasoning.
   const toolOutputValidator = createToolOutputValidator({
-    enabled: config.toolOutputValidatorEnabled ?? false,
+    // On by default in production: retrieved and tool-produced text is the
+    // indirect-injection surface, and it reaches the model unseen by a human.
+    enabled: config.toolOutputValidatorEnabled ?? config.appEnv === "production",
     mode: config.toolOutputValidatorMode ?? "redact",
     threshold: config.toolOutputValidatorThreshold ?? 0.7,
     logger,

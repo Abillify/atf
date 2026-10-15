@@ -326,7 +326,7 @@ Source of truth: `apps/runtime/src/config/schema.ts`.
 | `TOOL_AUTHZ_FAIL_CLOSED` | boolean | no | — | An unreadable or invalid tool-authorization policy denies every tool call (default `true`); `false` falls back to allowing them. |
 | `TOOL_EGRESS_GUARDRAIL` | boolean | no | — | `true` scans tool-call arguments for PII before they leave the runtime (DLP) and redacts according to GUARDRAIL_REDACT_PII/GUARDRAIL_PII_TYPES. Default off. |
 | `TOOL_EGRESS_MODE` | enum | no | `redact` | one of `redact`, `block` |
-| `TOOL_OUTPUT_VALIDATOR_ENABLED` | boolean | no | — | — |
+| `TOOL_OUTPUT_VALIDATOR_ENABLED` | boolean | no | — | SECURITY. Scan MCP tool results and retrieved RAG chunks for indirect prompt injection before the model sees them. Unset = on in production (APP_ENV=production), off elsewhere; "false" switches it off explicitly. |
 | `TOOL_OUTPUT_VALIDATOR_MODE` | enum | no | `redact` | one of `flag`, `redact` |
 | `TOOL_OUTPUT_VALIDATOR_THRESHOLD` | number | no | `0.7` | — |
 | `TRACING_ENABLED` | boolean | no | — | — |

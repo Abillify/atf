@@ -155,6 +155,12 @@ export function checkProductionReadiness(
     else warnings.push(msg);
   }
 
+  if (isProd && config.toolOutputValidatorEnabled === false) {
+    warnings.push(
+      "TOOL_OUTPUT_VALIDATOR_ENABLED=false: MCP tool results and retrieved RAG chunks reach the model without an indirect prompt-injection scan.",
+    );
+  }
+
   if (config.corsOrigins.includes("*")) {
     const msg =
       "CORS_ORIGINS is set to '*' (any origin). Set an explicit allow-list of origins.";

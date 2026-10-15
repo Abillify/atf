@@ -1772,10 +1772,19 @@ export const EnvSchema = z.object({
   // Default timeout for guarded calls without a caller-provided signal.
   // 0 disables it so long-lived streaming calls are unaffected.
   EGRESS_TIMEOUT_MS: z.coerce.number().int().min(0).default(0),
+  /**
+   * SECURITY. Scan MCP tool results and retrieved RAG chunks for indirect
+   * prompt injection before the model sees them. Unset = on in production
+   * (APP_ENV=production), off elsewhere; "false" switches it off explicitly.
+   */
   TOOL_OUTPUT_VALIDATOR_ENABLED: z
     .string()
     .optional()
-    .transform((raw): boolean => raw === "true" || raw === "1"),
+    .transform((raw): boolean | undefined =>
+      raw === undefined || raw.trim() === ""
+        ? undefined
+        : raw === "true" || raw === "1",
+    ),
   TOOL_OUTPUT_VALIDATOR_MODE: z.enum(["flag", "redact"]).default("redact"),
   TOOL_OUTPUT_VALIDATOR_THRESHOLD: z.coerce.number().min(0).max(1).default(0.7),
   /** Enable human-in-the-loop approval for tool calls matching APPROVAL_REQUIRE_TOOLS or a node's own list. */

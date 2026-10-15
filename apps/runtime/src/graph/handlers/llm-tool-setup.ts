@@ -37,6 +37,7 @@ import {
 import { buildCostAttribution } from "../../observability/cost.js";
 import { buildAssetFetch } from "./llm-asset-fetch.js";
 import { buildLoopGuardedExecuteToolCall } from "./llm-tool-loop-guard.js";
+import { reportingValidator } from "../injection-findings.js";
 
 /**
  * Tool refs a safe assistant retry may force back into the tool pool without a
@@ -171,7 +172,7 @@ export async function setupLlmTools(params: {
                 ),
             }
           : undefined,
-        runtime.toolOutputValidator,
+        reportingValidator(runtime, node.id),
         runtime.compliancePolicy !== undefined
           ? {
               policy: runtime.compliancePolicy,

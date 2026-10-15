@@ -241,9 +241,12 @@ Gate is an MCP gateway that turns declarative configuration into governed tools.
   `TOOL_EGRESS_MODE`). This does not intercept direct model-provider calls made by
   `config.imageInspection`; its vision provider must independently satisfy model allowlisting,
   residency and privacy requirements.
-- **Tool output validation.** Data returned *by* a tool is inspected for injected
-  instructions before it flows back into the model. This closes the indirect prompt injection
-  path that output-only filtering misses (`TOOL_OUTPUT_VALIDATOR_ENABLED`).
+- **Tool output validation.** Data returned *by* a tool, and the chunks a `retrieval` node puts
+  into the prompt, are inspected for injected instructions before they reach the model. This
+  closes the indirect prompt injection path that output-only filtering misses. On by default in
+  production (`TOOL_OUTPUT_VALIDATOR_ENABLED`, unset = on when `APP_ENV=production`); a finding
+  is neutralised (`TOOL_OUTPUT_VALIDATOR_MODE=redact`) and recorded on the consuming node's trace
+  as `indirect_prompt_injection` and in `aiperator_indirect_injection_total`.
 - **Declarative tool authorization.** Which principal may invoke which tool is policy, not
   code, and it fails closed by default (`TOOL_AUTHZ_FAIL_CLOSED`).
 - **Groundedness checking.** Answers are scored against the retrieved sources, semantically

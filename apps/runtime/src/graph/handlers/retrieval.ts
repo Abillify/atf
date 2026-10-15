@@ -18,6 +18,7 @@ import type { ToolResultEntry } from "../../types/monitoring.js";
 import type { Citation } from "../../types/openai.js";
 import { getRuntime, lastUserQuery } from "../exec-runtime.js";
 import type { AgentState } from "../graph-engine.js";
+import { reportingValidator } from "../injection-findings.js";
 
 interface RetrievalNodeConfig {
   /** Vector collection to search (required for the node to do anything). */
@@ -165,9 +166,22 @@ export function createRetrievalNodeHandler(
         };
       }
 
+      // Retrieved chunks are untrusted third-party text (indirect prompt
+      // injection): scan them like tool output before the model sees them.
+      const validator = reportingValidator(runtime, node.id);
+      const chunkTexts =
+        validator !== undefined
+          ? ((validator.validate(
+              chunks.map((c) => c.text),
+              `retrieval/${collection}`,
+            ).content as unknown[]) ?? []).map((t, i) =>
+              typeof t === "string" ? t : (chunks[i]?.text ?? ""),
+            )
+          : chunks.map((c) => c.text);
+
       // Build a grounding context system message the next LLM node will see.
-      const contextBlock = chunks
-        .map((c, i) => `[${i + 1}] ${c.text}`)
+      const contextBlock = chunkTexts
+        .map((text, i) => `[${i + 1}] ${text}`)
         .join("\n\n");
       const systemMsg = new SystemMessage({
         content:

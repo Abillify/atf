@@ -203,6 +203,15 @@ releases:
   whether German stemming or compound splitting work; this set can. A test
   guards that every variant really departs from the corpus wording.
 
+- **Indirect prompt-injection detection on by default in production and for
+  RAG**: the tool-output validator was off unless enabled, and it never saw the
+  chunks a `retrieval` node puts into the prompt. It now defaults to on when
+  `APP_ENV=production` (explicit `TOOL_OUTPUT_VALIDATOR_ENABLED=false` opts out
+  and raises a readiness warning), scans retrieved chunks as well as MCP tool
+  results, and records every finding on the consuming node's debug trace
+  (`indirect_prompt_injection`, with source and signals) and in
+  `aiperator_indirect_injection_total`.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the
