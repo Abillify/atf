@@ -632,10 +632,13 @@ export function createSearchHandler(
       // abstention signal when nothing qualifies. It is a cross-encoder
       // threshold: without reranking the scores are on another scale and the
       // filter is skipped (signalled). Unset = no-op, no field.
+      const finalScoreScale = rerankApplied
+        ? "rerank"
+        : retrievalScoreKind({ ftsOnly, hybrid: hybridRequested });
       const minScoreOutcome = applyMinScore(
         results,
         minRerankScore !== null ? { value: minRerankScore, kind: "rerank" } : null,
-        rerankApplied ? "rerank" : retrievalScoreKind({ ftsOnly, hybrid: hybridRequested }),
+        finalScoreScale,
       );
       results = minScoreOutcome.results;
       const abstention = minScoreOutcome.abstention;
@@ -711,7 +714,12 @@ export function createSearchHandler(
         }
       }
 
-      const response: Record<string, unknown> = { results: expandedResults };
+      // score_scale is always present: scores of different scales (rerank,
+      // cosine, rrf, fts) are not comparable and must not be read as one.
+      const response: Record<string, unknown> = {
+        results: expandedResults,
+        score_scale: finalScoreScale,
+      };
       if (sectionGroups) {
         // When expansion ran, regroup the EXPANDED results so the nested section
         // view carries the same `expanded` fields as the flat `results`.

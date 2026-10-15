@@ -151,6 +151,15 @@ describe("Config", () => {
     expect(loadConfig()).toMatchObject({ minRerankScore: null });
   });
 
+  it("defaults RERANK_SCORE_TRANSFORM to auto and validates the value", () => {
+    delete process.env["RERANK_SCORE_TRANSFORM"];
+    expect(loadConfig()).toMatchObject({ rerankScoreTransform: "auto" });
+    process.env["RERANK_SCORE_TRANSFORM"] = "sigmoid";
+    expect(loadConfig()).toMatchObject({ rerankScoreTransform: "sigmoid" });
+    process.env["RERANK_SCORE_TRANSFORM"] = "bogus";
+    expect(() => loadConfig()).toThrow("RERANK_SCORE_TRANSFORM");
+    delete process.env["RERANK_SCORE_TRANSFORM"];
+  });
   it("rejects a non-numeric MIN_RERANK_SCORE", () => {
     process.env["MIN_RERANK_SCORE"] = "abc";
     expect(() => loadConfig()).toThrow(

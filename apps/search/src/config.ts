@@ -95,6 +95,13 @@ export interface Config {
   minRerankScore: number | null; // MIN_RERANK_SCORE (default: empty = off)
   rerankEndpoint: "embeddings" | "rerank"; // RERANK_ENDPOINT (default: "rerank")
   /**
+   * How raw reranker scores map to the public score scale (Bedrock and native
+   * rerank `relevance_score`). `auto` keeps values already in [0, 1] and
+   * applies a sigmoid to anything outside; `sigmoid` always squashes (legacy);
+   * `none` passes the raw value through.
+   */
+  rerankScoreTransform: "auto" | "sigmoid" | "none"; // RERANK_SCORE_TRANSFORM (default: auto)
+  /**
    * JSON field name used to pass documents in native rerank requests.
    * TEI expects "texts"; OpenAI-compatible servers expect "documents".
    * Default: "texts".
@@ -1257,6 +1264,11 @@ export function loadConfig(): Config {
     ["embeddings", "rerank"] as const,
     "rerank",
   );
+  const rerankScoreTransform = parseEnumEnv(
+    "RERANK_SCORE_TRANSFORM",
+    ["auto", "sigmoid", "none"] as const,
+    "auto",
+  );
   const rerankFallbackEndpoint = parseEnumEnv(
     "RERANK_FALLBACK_ENDPOINT",
     ["embeddings", "rerank"] as const,
@@ -1495,6 +1507,7 @@ export function loadConfig(): Config {
     rerankCandidateMultiplier,
     minRerankScore,
     rerankEndpoint,
+    rerankScoreTransform,
     rerankDocumentsField,
     rerankFallbackUrl,
     rerankFallbackModel,

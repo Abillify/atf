@@ -227,6 +227,8 @@
         "required": [
           "threshold",
           "score_kind",
+          "score_scale",
+          "threshold_scale",
           "candidates",
           "kept",
           "abstain"
@@ -242,7 +244,34 @@
               "rerank",
               "retrieval"
             ],
-            "description": "Which score the threshold was compared against: reranker score when reranking was applied, retrieval score otherwise."
+            "description": "Kind of the final scores: reranker score when reranking was applied, retrieval score otherwise. See score_scale for the exact scale."
+          },
+          "score_scale": {
+            "type": "string",
+            "enum": [
+              "rerank",
+              "cosine",
+              "rrf",
+              "fts"
+            ],
+            "description": "Exact scale of the final scores. They are not comparable across scales: rerank is the reranker score on [0,1] (native or sigmoid per RERANK_SCORE_TRANSFORM), cosine a similarity, rrf a pool-relative fusion score (≈0.016 per list), fts a lexical rank."
+          },
+          "threshold_scale": {
+            "type": "string",
+            "enum": [
+              "rerank",
+              "cosine",
+              "rrf",
+              "fts"
+            ],
+            "description": "Scale the threshold was set for (MIN_RERANK_SCORE is always rerank)."
+          },
+          "skipped": {
+            "type": "string",
+            "enum": [
+              "scale_mismatch"
+            ],
+            "description": "Present when the threshold was not applied because the final scores are on another scale (e.g. the reranker fell back); results are then unfiltered."
           },
           "candidates": {
             "type": "integer",
@@ -766,6 +795,16 @@
                         "type": "number"
                       },
                       "description": "Query embedding (opt-in via X-Include-Query-Vector)."
+                    },
+                    "score_scale": {
+                      "type": "string",
+                      "enum": [
+                        "rerank",
+                        "cosine",
+                        "rrf",
+                        "fts"
+                      ],
+                      "description": "Scale of the result scores (always present). Scales are not comparable: rerank is the reranker's score (native [0,1] kept, otherwise sigmoid; see RERANK_SCORE_TRANSFORM), cosine a similarity, rrf a pool-relative fusion score, fts a lexical rank."
                     },
                     "abstention": {
                       "$ref": "#/components/schemas/Abstention",
@@ -4738,6 +4777,16 @@
                           }
                         }
                       }
+                    },
+                    "score_scale": {
+                      "type": "string",
+                      "enum": [
+                        "rerank",
+                        "cosine",
+                        "rrf",
+                        "fts"
+                      ],
+                      "description": "Scale of the result scores (always present). Scales are not comparable: rerank is the reranker's score (native [0,1] kept, otherwise sigmoid; see RERANK_SCORE_TRANSFORM), cosine a similarity, rrf a pool-relative fusion score, fts a lexical rank."
                     },
                     "abstention": {
                       "$ref": "#/components/schemas/Abstention",

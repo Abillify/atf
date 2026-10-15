@@ -48,6 +48,11 @@ export interface RetrievedChunk {
   text: string;
   /** Cosine similarity to the query embedding, in [-1, 1] (typically [0,1]). */
   score: number;
+  /**
+   * Scale of `score` when the backend is not plain cosine (e.g. a search
+   * service exposing its `score_scale`). Absent means cosine.
+   */
+  scoreScale?: "cosine" | "rerank" | "rrf" | "fts";
   metadata?: Record<string, unknown>;
 }
 

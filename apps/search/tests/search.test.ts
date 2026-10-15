@@ -744,6 +744,32 @@ describe("search handler MIN_RERANK_SCORE abstention", () => {
     expect(body.abstention?.kept).toBe(0);
   });
 
+  it("always reports score_scale, with and without a threshold or rerank", async () => {
+    const withRerank = mockRes();
+    await handlerWith(undefined)(
+      mockReq("q", reranked) as never,
+      withRerank as never,
+      vi.fn(),
+    );
+    expect((withRerank.body as Record<string, unknown>)["score_scale"]).toBe("rerank");
+
+    const plain = mockRes();
+    await handlerWith(undefined)(
+      mockReq("q", { "x-hybrid": "0" }) as never,
+      plain as never,
+      vi.fn(),
+    );
+    expect((plain.body as Record<string, unknown>)["score_scale"]).toBe("cosine");
+
+    const hybrid = mockRes();
+    await handlerWith(null)(
+      mockReq("q", { "x-hybrid": "1" }) as never,
+      hybrid as never,
+      vi.fn(),
+    );
+    expect((hybrid.body as Record<string, unknown>)["score_scale"]).toBe("rrf");
+  });
+
   it("emits no abstention field when the threshold is unset", async () => {
     for (const options of [undefined, null] as const) {
       const handler = handlerWith(options);

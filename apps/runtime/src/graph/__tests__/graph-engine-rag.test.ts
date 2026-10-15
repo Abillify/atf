@@ -14,6 +14,7 @@ import { describe, test, expect } from "bun:test";
 import { MockLanguageModelV3 } from "ai/test";
 import { createGraphEngine } from "../graph-engine.js";
 import { InMemoryRagStore } from "../vector-store.js";
+import { citationSimilarityScores } from "../handlers/retrieval.js";
 import type { Embedder } from "../semantic-cache.js";
 import type { FlowRegistry } from "../flow-parser.js";
 import type { FlowDefinition } from "../../types/flow.js";
@@ -235,5 +236,36 @@ describe("RAG retrieval node — indirect prompt injection", () => {
     });
     await run(engine);
     expect(JSON.stringify(capture.prompt)).toContain("Ignore all previous instructions");
+  });
+});
+
+describe("citationSimilarityScores (score scale aware)", () => {
+  test("cosine and rerank scores are clamped to [0,1] and otherwise unchanged", () => {
+    expect(
+      citationSimilarityScores([
+        { score: 0.9 },
+        { score: 1.4, scoreScale: "cosine" },
+        { score: -0.2, scoreScale: "rerank" },
+      ]),
+    ).toEqual([0.9, 1, 0]);
+  });
+
+  test("rrf scores are not presented as cosine: expressed relative to the best hit", () => {
+    const out = citationSimilarityScores([
+      { score: 0.032, scoreScale: "rrf" },
+      { score: 0.016, scoreScale: "rrf" },
+    ]);
+    expect(out[0]).toBe(1);
+    expect(out[1]).toBeCloseTo(0.5, 5);
+  });
+
+  test("unbounded fts ranks stay in [0,1] and a zero-only set maps to 0", () => {
+    const out = citationSimilarityScores([
+      { score: 12.5, scoreScale: "fts" },
+      { score: 2.5, scoreScale: "fts" },
+    ]);
+    expect(out.every((v) => v >= 0 && v <= 1)).toBe(true);
+    expect(out[1]).toBeCloseTo(0.2, 5);
+    expect(citationSimilarityScores([{ score: 0, scoreScale: "fts" }])).toEqual([0]);
   });
 });

@@ -18,6 +18,7 @@ import type { ToolResultEntry } from "../../types/monitoring.js";
 import type { Citation } from "../../types/openai.js";
 import { getRuntime, lastUserQuery } from "../exec-runtime.js";
 import type { AgentState } from "../graph-engine.js";
+import type { RetrievedChunk } from "../vector-store.js";
 import { reportingValidator } from "../injection-findings.js";
 
 interface RetrievalNodeConfig {
@@ -27,6 +28,33 @@ interface RetrievalNodeConfig {
   topK?: number;
   /** Minimum cosine similarity for a chunk to be included. Default none. */
   minScore?: number;
+}
+
+/**
+ * Map raw chunk scores to the citation `similarity_score` contract [0, 1].
+ * Cosine and rerank scores are clamped as before. RRF and FTS scores live on
+ * pool-relative / unbounded scales and are NOT cosine: clamping them would
+ * present e.g. 0.016 as "1.6 % similar". They are expressed relative to the
+ * best hit of the same result set (best = 1) so ordering is kept without
+ * claiming a cosine value.
+ */
+export function citationSimilarityScores(
+  chunks: ReadonlyArray<Pick<RetrievedChunk, "score" | "scoreScale">>,
+): number[] {
+  const clamp = (x: number): number => Math.max(0, Math.min(1, x));
+  const relativeMax = Math.max(
+    0,
+    ...chunks
+      .filter((c) => c.scoreScale === "rrf" || c.scoreScale === "fts")
+      .map((c) => c.score),
+  );
+  return chunks.map((c) =>
+    c.scoreScale === "rrf" || c.scoreScale === "fts"
+      ? relativeMax > 0
+        ? clamp(c.score / relativeMax)
+        : 0
+      : clamp(c.score),
+  );
 }
 
 /**
@@ -190,6 +218,7 @@ export function createRetrievalNodeHandler(
           `say so explicitly.\n\n${contextBlock}`,
       });
 
+      const similarityScores = citationSimilarityScores(chunks);
       const citations: Citation[] = chunks.map((c, i) => {
         const md = c.metadata ?? {};
         const title =
@@ -201,7 +230,7 @@ export function createRetrievalNodeHandler(
           title,
           url,
           snippet: c.text.slice(0, 500),
-          similarity_score: Math.max(0, Math.min(1, c.score)),
+          similarity_score: similarityScores[i] ?? 0,
         };
       });
 
@@ -218,6 +247,7 @@ export function createRetrievalNodeHandler(
               id: c.id,
               text: c.text,
               score: c.score,
+              ...(c.scoreScale !== undefined ? { score_scale: c.scoreScale } : {}),
             })),
           },
           execution_time_seconds: Math.round(execTimeSec * 1000) / 1000,

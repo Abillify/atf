@@ -593,10 +593,13 @@ export function createSearchV2Handler(
       //     an abstention signal when nothing qualifies; skipped (signalled)
       //     when the scores are not reranker scores. Applied after
       //     grouping/slicing so the limit is not consumed by dropped hits.
+      const finalScoreScale = rerankApplied
+        ? "rerank"
+        : retrievalScoreKind({ ftsOnly: false, hybrid: hybridRequested });
       const minScoreOutcome = applyMinScore(
         results,
         minRerankScore !== null ? { value: minRerankScore, kind: "rerank" } : null,
-        rerankApplied ? "rerank" : retrievalScoreKind({ ftsOnly: false, hybrid: hybridRequested }),
+        finalScoreScale,
       );
       results = minScoreOutcome.results;
 
@@ -652,8 +655,12 @@ export function createSearchV2Handler(
         .status(200)
         .json(
           minScoreOutcome.abstention
-            ? { results: hits, abstention: minScoreOutcome.abstention }
-            : { results: hits },
+            ? {
+                results: hits,
+                score_scale: finalScoreScale,
+                abstention: minScoreOutcome.abstention,
+              }
+            : { results: hits, score_scale: finalScoreScale },
         );
     } catch (err) {
 			next(err);

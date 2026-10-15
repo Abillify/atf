@@ -43,6 +43,12 @@ export interface RerankerClientConfig {
    * Default: "texts".
    */
   documentsField: string;
+  /**
+   * Mapping of raw reranker scores (Bedrock `relevance_score`, native
+   * `relevance_score`). Default "auto". Not applied to the embeddings
+   * rank-pooling mode, whose raw output is always a logit.
+   */
+  scoreTransform?: RerankScoreTransform;
   logger: pino.Logger;
   /** Abort fetch calls after this many milliseconds. Default: 30 000. */
   timeoutMs?: number;
@@ -109,6 +115,26 @@ function sigmoid(x: number): number {
   if (x >= 0) return 1 / (1 + Math.exp(-x));
   const e = Math.exp(x);
   return e / (1 + e);
+}
+
+/** How raw reranker scores are mapped onto the public score scale. */
+export type RerankScoreTransform = "auto" | "sigmoid" | "none";
+
+/**
+ * Map a raw reranker score according to RERANK_SCORE_TRANSFORM.
+ *   - auto:    values already in [0, 1] are kept (a probability-like score such
+ *              as Cohere/Bedrock relevance_score is not squashed a second
+ *              time); anything outside is treated as a logit -> sigmoid.
+ *   - sigmoid: always sigmoid (legacy behavior).
+ *   - none:    raw value unchanged (operator knows the native scale).
+ */
+export function transformRerankScore(
+  raw: number,
+  mode: RerankScoreTransform = "auto",
+): number {
+  if (mode === "none") return raw;
+  if (mode === "sigmoid") return sigmoid(raw);
+  return raw >= 0 && raw <= 1 ? raw : sigmoid(raw);
 }
 
 /** Dot product of two equal-length vectors. */
@@ -341,6 +367,7 @@ export function createRerankerClient(
     separator,
     endpoint,
     documentsField = "texts",
+    scoreTransform = "auto",
     logger,
     timeoutMs = 30_000,
     circuitBreaker,
@@ -403,7 +430,7 @@ export function createRerankerClient(
             }>;
             const scores = results.map((r) => ({
               index: r.index,
-              score: sigmoid(r.relevance_score),
+              score: transformRerankScore(r.relevance_score, scoreTransform),
             }));
             const inputTokens =
               resBody.meta?.tokens?.input_tokens ??
@@ -532,6 +559,7 @@ export function createRerankerClient(
             query,
             documents,
             documentsField,
+            scoreTransform,
             logger,
             timeoutMs,
           ),
@@ -646,6 +674,7 @@ async function rerankViaNativeEndpoint(
   query: string,
   documents: string[],
   documentsField: string,
+  scoreTransform: RerankScoreTransform,
   logger: pino.Logger,
   timeoutMs: number,
 ): Promise<RerankResponse> {
@@ -756,10 +785,12 @@ async function rerankViaNativeEndpoint(
     }
     scores.push({
       index: typeof row?.index === "number" ? row.index : i,
+      // TEI `score` keeps its legacy clamp under "auto"; relevance_score is
+      // mapped by RERANK_SCORE_TRANSFORM.
       score:
-        typeof row?.score === "number"
+        typeof row?.score === "number" && scoreTransform === "auto"
           ? clampScore(row.score)
-          : sigmoid(rawScore),
+          : transformRerankScore(rawScore, scoreTransform),
     });
   }
 

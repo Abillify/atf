@@ -58,7 +58,7 @@ const abstentionSchema = {
       enum: ["rerank", "cosine", "rrf", "fts"],
       description:
         "Exact scale of the final scores. They are not comparable across scales: " +
-        "rerank is a sigmoid in [0,1], cosine a similarity, rrf a pool-relative " +
+        "rerank is the reranker score on [0,1] (native or sigmoid per RERANK_SCORE_TRANSFORM), cosine a similarity, rrf a pool-relative " +
         "fusion score (≈0.016 per list), fts a lexical rank.",
     },
     threshold_scale: {
@@ -624,6 +624,14 @@ export function buildOpenApiSpec(serverUrl: string) {
                         items: { type: "number" },
                         description:
                           "Query embedding (opt-in via X-Include-Query-Vector).",
+                      },
+                      score_scale: {
+                        type: "string",
+                        enum: ["rerank", "cosine", "rrf", "fts"],
+                        description:
+                          "Scale of the result scores (always present). Scales are not comparable: " +
+                          "rerank is the reranker's score (native [0,1] kept, otherwise sigmoid; see RERANK_SCORE_TRANSFORM), " +
+                          "cosine a similarity, rrf a pool-relative fusion score, fts a lexical rank.",
                       },
                       abstention: {
                         $ref: "#/components/schemas/Abstention",
@@ -3213,6 +3221,14 @@ export function buildOpenApiSpec(serverUrl: string) {
                             },
                           },
                         },
+                      },
+                      score_scale: {
+                        type: "string",
+                        enum: ["rerank", "cosine", "rrf", "fts"],
+                        description:
+                          "Scale of the result scores (always present). Scales are not comparable: " +
+                          "rerank is the reranker's score (native [0,1] kept, otherwise sigmoid; see RERANK_SCORE_TRANSFORM), " +
+                          "cosine a similarity, rrf a pool-relative fusion score, fts a lexical rank.",
                       },
                       abstention: {
                         $ref: "#/components/schemas/Abstention",

@@ -3,8 +3,39 @@
 
 // vectorsearch/tests/reranker-client.test.ts
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { createRerankerClient } from "../src/reranker-client.js";
+import {
+  createRerankerClient,
+  transformRerankScore,
+  type RerankScoreTransform,
+} from "../src/reranker-client.js";
 import pino from "pino";
+
+// Bedrock is mocked with a fixed response. ASSUMPTION (not verified live): the
+// Bedrock Cohere rerank API returns `relevance_score` already on [0, 1]; this
+// fixed-response test pins our handling of that documented shape, it does not
+// prove the real service scale.
+const bedrockResponse = vi.hoisted(() => ({
+  scores: [] as number[],
+}));
+vi.mock("@aws-sdk/client-bedrock-runtime", () => ({
+  BedrockRuntimeClient: class {
+    async send() {
+      return {
+        body: new TextEncoder().encode(
+          JSON.stringify({
+            results: bedrockResponse.scores.map((relevance_score, index) => ({
+              index,
+              relevance_score,
+            })),
+          }),
+        ),
+      };
+    }
+  },
+  InvokeModelCommand: class {
+    constructor(public input: unknown) {}
+  },
+}));
 
 const logger = pino({ level: "silent" });
 
@@ -360,5 +391,86 @@ describe("createRerankerClient — error handling", () => {
     const result = await makeClient().rerank("q", ["doc"]);
     expect(result.ok).toBe(false);
     if (!result.ok) expect(result.error.code).toBe("RERANK_INVALID_RESPONSE");
+  });
+});
+
+describe("transformRerankScore", () => {
+  it("auto keeps [0,1] values and squashes logits outside the range", () => {
+    expect(transformRerankScore(0.9, "auto")).toBe(0.9);
+    expect(transformRerankScore(0, "auto")).toBe(0);
+    expect(transformRerankScore(1, "auto")).toBe(1);
+    expect(transformRerankScore(3.2, "auto")).toBeCloseTo(0.96083, 4);
+    expect(transformRerankScore(-2.1, "auto")).toBeCloseTo(0.10909, 4);
+  });
+
+  it("sigmoid always squashes (legacy) and none passes the raw value", () => {
+    expect(transformRerankScore(0.9, "sigmoid")).toBeCloseTo(0.71095, 4);
+    expect(transformRerankScore(3.2, "none")).toBe(3.2);
+    expect(transformRerankScore(0.9, "none")).toBe(0.9);
+  });
+
+  it("defaults to auto", () => {
+    expect(transformRerankScore(0.9)).toBe(0.9);
+  });
+});
+
+describe("createRerankerClient — Bedrock score scale (fixed response, scale unverified live)", () => {
+  function makeBedrock(scoreTransform?: RerankScoreTransform) {
+    return createRerankerClient({
+      rerankUrl: "bedrock://us-east-1",
+      rerankModel: "cohere.rerank-v3-5:0",
+      separator: "\n",
+      endpoint: "rerank",
+      documentsField: "documents",
+      ...(scoreTransform ? { scoreTransform } : {}),
+      logger,
+    });
+  }
+
+  it("keeps a fixed relevance_score of 0.9 at 0.9 by default", async () => {
+    bedrockResponse.scores = [0.9, 0.2];
+    const result = await makeBedrock().rerank("q", ["a", "b"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.result.map((r) => r.score)).toEqual([0.9, 0.2]);
+  });
+
+  it("applies the sigmoid to a logit outside [0,1] in auto mode", async () => {
+    bedrockResponse.scores = [3.2];
+    const result = await makeBedrock("auto").rerank("q", ["a"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.result[0]!.score).toBeCloseTo(0.96083, 4);
+  });
+
+  it("sigmoid mode restores the legacy squashing; none passes raw", async () => {
+    bedrockResponse.scores = [0.9];
+    const legacy = await makeBedrock("sigmoid").rerank("q", ["a"]);
+    const raw = await makeBedrock("none").rerank("q", ["a"]);
+    if (legacy.ok) expect(legacy.result[0]!.score).toBeCloseTo(0.71095, 4);
+    if (raw.ok) expect(raw.result[0]!.score).toBe(0.9);
+  });
+});
+
+describe("createRerankerClient — native rerank relevance_score scale", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("keeps a [0,1] relevance_score unchanged in auto mode", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ results: [{ index: 0, relevance_score: 0.9 }] }),
+        text: async () => "",
+      }),
+    );
+    const result = await createRerankerClient({
+      rerankUrl: "http://llama-server:8082",
+      rerankModel: "m",
+      separator: "\n",
+      endpoint: "rerank",
+      documentsField: "documents",
+      logger,
+    }).rerank("q", ["a"]);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.result[0]!.score).toBe(0.9);
   });
 });
