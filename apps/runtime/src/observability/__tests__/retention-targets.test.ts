@@ -39,8 +39,10 @@ class FakePiiVaultStore implements PiiVaultStore {
   async resolve(): Promise<string | undefined> {
     return undefined;
   }
-  async clear(): Promise<number> {
-    return 0;
+  clearCalls: string[] = [];
+  async clear(executionId: string): Promise<number> {
+    this.clearCalls.push(executionId);
+    return 2;
   }
   async purgeOlderThan(cutoffIso: string): Promise<number> {
     this.purgeCalls.push(cutoffIso);
@@ -76,12 +78,29 @@ describe("piiVaultRetentionTarget", () => {
     expect(store.eraseCalls).toEqual(["tenant-a"]);
   });
 
-  it("returns 0 without calling eraseTenant when the subject has no tenantId", async () => {
+  it("erases only the user's executions for a user-scoped subject, never the tenant", async () => {
+    const store = new FakePiiVaultStore();
+    const lookups: ErasureSubject[] = [];
+    const target = piiVaultRetentionTarget(store, async (subject) => {
+      lookups.push(subject);
+      return ["exec-1", "exec-2"];
+    });
+    const subject = { tenantId: "tenant-a", userId: "u@x.de", userAliases: ["u-1"] };
+    const erased = await mustEraseSubject(target, subject);
+    expect(erased).toBe(4);
+    expect(lookups).toEqual([subject]);
+    expect(store.clearCalls).toEqual(["exec-1", "exec-2"]);
+    expect(store.eraseCalls).toHaveLength(0);
+  });
+
+  it("fails a user-scoped subject without an execution lookup instead of erasing the tenant", async () => {
     const store = new FakePiiVaultStore();
     const target = piiVaultRetentionTarget(store);
-    const erased = await mustEraseSubject(target, { userId: "user-only" });
-    expect(erased).toBe(0);
+    await expect(
+      mustEraseSubject(target, { tenantId: "tenant-a", userId: "u@x.de" }),
+    ).rejects.toThrow(/cannot be attributed/);
     expect(store.eraseCalls).toHaveLength(0);
+    expect(store.clearCalls).toHaveLength(0);
   });
 
   it("omits purgeOlderThan from the target when the store does not implement it", () => {

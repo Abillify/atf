@@ -26,6 +26,10 @@ import {
 } from "../types/monitoring.js";
 import type { Database } from "../db/database.js";
 import type { Logger } from "../observability/logger.js";
+import {
+  subjectUserIds,
+  type ErasureSubject,
+} from "../observability/retention.js";
 
 /** Per-request rollup derived from the node-event stream. */
 export interface ExecutionSummary {
@@ -306,14 +310,21 @@ export interface ExecutionStore {
    */
   purgeOlderThan(cutoffIso: string): Promise<number>;
   /**
-   * Right-to-be-forgotten: deletes executions attributable to the subject's
-   * tenant. (Execution rows are tenant-scoped, not user-scoped, so a user-only
-   * subject matches nothing here.) Returns the number of executions removed.
+   * Right-to-be-forgotten. A subject carrying user identifiers erases only the
+   * executions attributed to that user (`token_usage_log.user_id`/`user_label`
+   * or `executions.user_name`), limited to `tenantId` when given, together
+   * with their node events and usage-log rows. Only a subject without user
+   * identifiers erases the whole tenant. Returns the number of executions
+   * removed.
    */
-  eraseSubject(subject: {
-    tenantId?: string;
-    userId?: string;
-  }): Promise<number>;
+  eraseSubject(subject: ErasureSubject): Promise<number>;
+  /**
+   * Execution ids attributed to one of the subject's user identifiers (same
+   * attribution as {@link eraseSubject}); empty for a subject without user
+   * identifiers. Lets stores keyed only by execution id (the PII vault) erase
+   * one user's rows instead of the whole tenant's.
+   */
+  executionIdsForSubject(subject: ErasureSubject): Promise<string[]>;
 }
 
 const DEFAULT_TENANT_ID = "default";
@@ -549,21 +560,40 @@ export class InMemoryExecutionStore implements ExecutionStore {
     return removed;
   }
 
-  async eraseSubject(subject: {
-    tenantId?: string;
-    userId?: string;
-  }): Promise<number> {
-    // Execution rows are tenant-scoped only.
-    if (subject.tenantId === undefined) return 0;
+  async eraseSubject(subject: ErasureSubject): Promise<number> {
+    const userIds = new Set(subjectUserIds(subject));
+    if (userIds.size === 0 && subject.tenantId === undefined) return 0;
     let removed = 0;
     for (const [id, exec] of this.byId) {
-      if (exec.tenant_id === subject.tenantId) {
+      const inTenant =
+        subject.tenantId === undefined || exec.tenant_id === subject.tenantId;
+      const ownedByUser =
+        userIds.size === 0 ||
+        (exec.user_id !== null && userIds.has(exec.user_id)) ||
+        (exec.user_name !== null && userIds.has(exec.user_name));
+      if (inTenant && ownedByUser) {
         this.byId.delete(id);
         removed++;
       }
     }
     if (removed > 0) this.rebuildOrder();
     return removed;
+  }
+
+  async executionIdsForSubject(subject: ErasureSubject): Promise<string[]> {
+    const userIds = new Set(subjectUserIds(subject));
+    if (userIds.size === 0) return [];
+    const ids: string[] = [];
+    for (const [id, exec] of this.byId) {
+      if (subject.tenantId !== undefined && exec.tenant_id !== subject.tenantId)
+        continue;
+      if (
+        (exec.user_id !== null && userIds.has(exec.user_id)) ||
+        (exec.user_name !== null && userIds.has(exec.user_name))
+      )
+        ids.push(id);
+    }
+    return ids;
   }
 
   private rebuildOrder(): void {
@@ -1173,10 +1203,9 @@ export class PostgresExecutionStore implements ExecutionStore {
     });
   }
 
-  async eraseSubject(subject: {
-    tenantId?: string;
-    userId?: string;
-  }): Promise<number> {
+  async eraseSubject(subject: ErasureSubject): Promise<number> {
+    const userIds = subjectUserIds(subject);
+    if (userIds.length > 0) return this.eraseUser(userIds, subject.tenantId);
     if (subject.tenantId === undefined) return 0;
     const tenantId = subject.tenantId;
     return this.scoped(tenantId, async (db) => {
@@ -1199,6 +1228,56 @@ export class PostgresExecutionStore implements ExecutionStore {
     });
   }
 
+  /**
+   * User-scoped erase: only the executions attributed to one of `userIds`.
+   * The usage log is the durable attribution (it outlives retention purges
+   * and carries the stable `user_id`); `executions.user_name` covers rows
+   * whose usage-log entry is gone. Without a tenant the erase spans tenants
+   * and needs the operator connection.
+   */
+  private async eraseUser(
+    userIds: string[],
+    tenantId: string | undefined,
+  ): Promise<number> {
+    const run = async (db: Database): Promise<number> => {
+      const ids = await ownedExecutionIds(db, userIds, tenantId);
+      if (ids.length === 0) return 0;
+      const idList = JSON.stringify(ids);
+      await db.query(
+        `DELETE FROM node_events WHERE execution_id::text IN
+           (SELECT jsonb_array_elements_text($1::text::jsonb))`,
+        [idList],
+      );
+      // The permanent usage log carries the prompt preview (PII), so the
+      // user's rows go too — it is otherwise never pruned.
+      await db.query(
+        `DELETE FROM token_usage_log WHERE execution_id::text IN
+           (SELECT jsonb_array_elements_text($1::text::jsonb))`,
+        [idList],
+      );
+      const rows = await db.query<{ execution_id: string }>(
+        `DELETE FROM executions WHERE execution_id::text IN
+           (SELECT jsonb_array_elements_text($1::text::jsonb))
+         RETURNING execution_id`,
+        [idList],
+      );
+      return rows.length;
+    };
+    return tenantId !== undefined
+      ? this.scoped(tenantId, run)
+      : this.db.withOperator(run);
+  }
+
+  async executionIdsForSubject(subject: ErasureSubject): Promise<string[]> {
+    const userIds = subjectUserIds(subject);
+    if (userIds.length === 0) return [];
+    const { tenantId } = subject;
+    const run = (db: Database) => ownedExecutionIds(db, userIds, tenantId);
+    return tenantId !== undefined
+      ? this.scoped(tenantId, run)
+      : this.db.withOperator(run);
+  }
+
   async clear(): Promise<number> {
     // Operator-plane clear of the whole audit log. Spans tenants by design and
     // requires the BYPASSRLS operator connection under enforced RLS (ADR-0005).
@@ -1210,6 +1289,31 @@ export class PostgresExecutionStore implements ExecutionStore {
       return rows.length;
     });
   }
+}
+
+/** Execution ids attributed to one of `userIds` (see `eraseUser`). */
+async function ownedExecutionIds(
+  db: Database,
+  userIds: string[],
+  tenantId: string | undefined,
+): Promise<string[]> {
+  // A JSON list rather than a driver array parameter: Bun's SQL client sends
+  // a JS array as a comma-joined string, which Postgres rejects. The `::text`
+  // hop matters too — a bare `$1::jsonb` arrives as a JSON string scalar.
+  const tenantClause = tenantId !== undefined ? " AND tenant_id = $2" : "";
+  const idList = JSON.stringify(userIds);
+  const params: unknown[] =
+    tenantId !== undefined ? [idList, tenantId] : [idList];
+  const rows = await db.query<{ execution_id: string }>(
+    `WITH ids AS (SELECT jsonb_array_elements_text($1::text::jsonb) AS id)
+     SELECT execution_id FROM token_usage_log
+       WHERE (user_id IN (SELECT id FROM ids) OR user_label IN (SELECT id FROM ids))${tenantClause}
+     UNION
+     SELECT execution_id FROM executions
+       WHERE user_name IN (SELECT id FROM ids)${tenantClause}`,
+    params,
+  );
+  return rows.map((r) => r.execution_id);
 }
 
 interface ExecutionRow {

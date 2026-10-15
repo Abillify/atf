@@ -212,12 +212,21 @@ export function buildObservability(
     const targets = [];
     if (replayStore !== undefined)
       targets.push(replayRetentionTarget(replayStore));
+    // The PII vault resolves a user to their executions, so it must erase
+    // before the execution history removes that attribution.
+    if (piiVaultStore !== undefined)
+      targets.push(
+        piiVaultRetentionTarget(
+          piiVaultStore,
+          executionStore !== undefined
+            ? (subject) => executionStore.executionIdsForSubject(subject)
+            : undefined,
+        ),
+      );
     if (executionStore !== undefined)
       targets.push(executionHistoryRetentionTarget(executionStore));
     if (memoryStore !== undefined)
       targets.push(memoryRetentionTarget(memoryStore));
-    if (piiVaultStore !== undefined)
-      targets.push(piiVaultRetentionTarget(piiVaultStore));
 
     if (targets.length === 0) {
       logger.warn(

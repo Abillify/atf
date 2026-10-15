@@ -128,16 +128,39 @@ describe("InMemoryExecutionStore retention", () => {
     ]);
   });
 
-  it("erases executions by tenant, ignoring a user-only subject", async () => {
+  it("erases executions by tenant for a subject without user identifiers", async () => {
     const store = new InMemoryExecutionStore();
     store.recordEvent(ev({ execution_id: "a" }), { tenantId: "acme" });
     store.recordEvent(ev({ execution_id: "b" }), { tenantId: "other" });
 
-    expect(await store.eraseSubject({ userId: "someone" })).toBe(0); // no tenant → no match
+    expect(await store.eraseSubject({ userId: "someone" })).toBe(0); // owns nothing
     expect(await store.eraseSubject({ tenantId: "acme" })).toBe(1);
     expect((await store.listRecent(10)).map((e) => e.execution_id)).toEqual([
       "b",
     ]);
+  });
+
+  it("erases only the user's executions for a user-scoped subject (DSAR)", async () => {
+    const store = new InMemoryExecutionStore();
+    store.recordEvent({ ...ev({ execution_id: "mine-sub" }), user_id: "u-1" }, { tenantId: "acme" });
+    store.recordEvent({ ...ev({ execution_id: "mine-mail" }), user_name: "u@x.de" }, { tenantId: "acme" });
+    store.recordEvent({ ...ev({ execution_id: "colleague" }), user_id: "u-2" }, { tenantId: "acme" });
+    store.recordEvent({ ...ev({ execution_id: "anonymous" }) }, { tenantId: "acme" });
+    store.recordEvent({ ...ev({ execution_id: "elsewhere" }), user_id: "u-1" }, { tenantId: "other" });
+
+    const subject = { tenantId: "acme", userId: "u@x.de", userAliases: ["u-1"] };
+    expect((await store.executionIdsForSubject(subject)).sort()).toEqual([
+      "mine-mail",
+      "mine-sub",
+    ]);
+    expect(await store.eraseSubject(subject)).toBe(2);
+    expect((await store.listRecent(10)).map((e) => e.execution_id).sort()).toEqual([
+      "anonymous",
+      "colleague",
+      "elsewhere",
+    ]);
+    // A tenant-only subject still has no user to resolve.
+    expect(await store.executionIdsForSubject({ tenantId: "acme" })).toEqual([]);
   });
 });
 

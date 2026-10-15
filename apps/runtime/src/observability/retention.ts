@@ -2,7 +2,14 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /** Storage-agnostic retention controls for public deployments. */
-export interface ErasureSubject { tenantId?: string; userId?: string; }
+/**
+ * Who to erase. A subject with a `userId` is user-scoped: every target erases
+ * only that user's rows (inside `tenantId` when given). Only a subject without
+ * any user identifier is tenant-wide, and only the operator plane builds one.
+ * `userAliases` are further identifiers of the same person (JWT `sub` vs.
+ * email) — stores attribute rows under whichever one the request carried.
+ */
+export interface ErasureSubject { tenantId?: string; userId?: string; userAliases?: readonly string[]; }
 export interface RetentionTarget { name: string; purgeOlderThan?: (cutoffIso: string) => Promise<number>; eraseSubject?: (subject: ErasureSubject) => Promise<number>; }
 export interface RetentionTargetDescription { name: string; agePurge: boolean; subjectErase: boolean; maxAgeDays: number | null; }
 export interface RetentionSweepResult { target: string; maxAgeDays: number | null; purged: number; skipped: boolean; error?: string; }
@@ -10,6 +17,15 @@ export interface RetentionForgetResult { target: string; erased: number; error?:
 export interface RetentionServiceOptions { maxAgeDaysByTarget?: Record<string, number>; defaultMaxAgeDays?: number; }
 export interface RetentionLogger { info(message: string, fields?: Record<string, unknown>): void; warn(message: string, fields?: Record<string, unknown>): void; }
 export interface RetentionDependencies { logger?: RetentionLogger; clock?: () => number; }
+
+/** Distinct, non-blank user identifiers of a subject (`userId` first). */
+export function subjectUserIds(subject: ErasureSubject): string[] {
+  const ids = [subject.userId, ...(subject.userAliases ?? [])]
+    .filter((value): value is string => typeof value === "string")
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+  return [...new Set(ids)];
+}
 
 export function isValidSubject(subject: ErasureSubject): boolean {
   return [subject.tenantId, subject.userId].some((value) => typeof value === "string" && value.trim().length > 0);
@@ -89,30 +105,28 @@ export class RetentionService {
         "Retention erasure requires a non-empty tenantId or userId",
       );
     const only = onlyTargets === undefined ? undefined : new Set(onlyTargets);
-    return Promise.all(
-      this.targets
-        .filter(
-          (target) =>
-            target.eraseSubject !== undefined &&
-            (only === undefined || only.has(target.name)),
-        )
-        .map(async (target) => {
-          try {
-            return {
-              target: target.name,
-              erased: await target.eraseSubject!(subject),
-            };
-          } catch (error) {
-            const message =
-              error instanceof Error ? error.message : String(error);
-            this.deps.logger?.warn("Retention target erasure failed", {
-              target: target.name,
-              error: message,
-            });
-            return { target: target.name, erased: 0, error: message };
-          }
-        }),
-    );
+    // Sequential, in registration order: a target may resolve the subject
+    // through a store that a later target erases (the PII vault looks up the
+    // user's executions before the execution history deletes them).
+    const results: RetentionForgetResult[] = [];
+    for (const target of this.targets) {
+      if (target.eraseSubject === undefined) continue;
+      if (only !== undefined && !only.has(target.name)) continue;
+      try {
+        results.push({
+          target: target.name,
+          erased: await target.eraseSubject(subject),
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        this.deps.logger?.warn("Retention target erasure failed", {
+          target: target.name,
+          error: message,
+        });
+        results.push({ target: target.name, erased: 0, error: message });
+      }
+    }
+    return results;
   }
   start(intervalMs: number): boolean {
     if (!this.hasActiveWindows) return false;

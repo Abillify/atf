@@ -94,6 +94,31 @@ describe("createErasureOrchestrator — local stores", () => {
     const failed = op.results.find((r) => r.store === "b.bad");
     expect(failed).toMatchObject({ status: "failed", erased: 0, error: "boom" });
   });
+
+  it("keeps an email/external-id-only subject user-scoped instead of tenant-wide", async () => {
+    const seen: ErasureSubject[] = [];
+    const retention = new RetentionService([
+      { name: "runtime.history", eraseSubject: async (s) => (seen.push(s), 1) },
+    ]);
+    const orch = createErasureOrchestrator({ retention });
+    await orch.execute(
+      request({ subject: { email: "u@x.de", externalIds: ["u-1", "u@x.de"] } }),
+    );
+    expect(seen).toEqual([
+      { tenantId: "acme", userId: "u@x.de", userAliases: ["u-1"] },
+    ]);
+  });
+
+  it("never runs the local stores for a reference-scoped request", async () => {
+    const local = new FakeTarget("runtime.history");
+    const orch = createErasureOrchestrator({
+      retention: new RetentionService([local]),
+    });
+    await orch.execute(
+      request({ scope: "reference", subject: undefined, references: ["doc-1"] }),
+    );
+    expect(local.calls).toBe(0);
+  });
 });
 
 describe("createErasureOrchestrator — remote targets", () => {

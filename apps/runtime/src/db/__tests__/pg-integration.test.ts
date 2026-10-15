@@ -193,6 +193,41 @@ suite("Postgres — execution history retention", () => {
     const erased = await store.eraseSubject({ tenantId: tenant });
     expect(erased).toBe(1);
   });
+
+  it("erases only the DSAR subject's executions and usage-log rows, not the tenant's", async () => {
+    const store = new PostgresExecutionStore(db);
+    const tenant = `acme-${uniq()}`;
+    const mine = uniq();
+    const colleague = uniq();
+    for (const [execId, userId] of [
+      [mine, "u-1"],
+      [colleague, "u-2"],
+    ] as const) {
+      await db.query(
+        `INSERT INTO executions (execution_id, flow_id, tenant_id, status, started_at)
+           VALUES ($1, 'flow', $2, 'completed', now())`,
+        [execId, tenant],
+      );
+      await db.query(
+        `INSERT INTO token_usage_log (execution_id, flow_id, tenant_id, user_id, created_at)
+           VALUES ($1, 'flow', $2, $3, now())`,
+        [execId, tenant, userId],
+      );
+    }
+    const subject = { tenantId: tenant, userId: "u@x.de", userAliases: ["u-1"] };
+    expect(await store.executionIdsForSubject(subject)).toEqual([mine]);
+    expect(await store.eraseSubject(subject)).toBe(1);
+    const left = await db.query<{ execution_id: string }>(
+      `SELECT execution_id FROM token_usage_log WHERE tenant_id = $1`,
+      [tenant],
+    );
+    expect(left.map((r) => r.execution_id)).toEqual([colleague]);
+    const runs = await db.query<{ execution_id: string }>(
+      `SELECT execution_id FROM executions WHERE tenant_id = $1`,
+      [tenant],
+    );
+    expect(runs.map((r) => r.execution_id)).toEqual([colleague]);
+  });
 });
 
 suite("Postgres — execution store batched node_events writes", () => {

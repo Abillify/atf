@@ -12,7 +12,11 @@
  * No `any` at module boundaries.
  */
 
-import type { RetentionTarget, ErasureSubject } from "./retention.js";
+import {
+  subjectUserIds,
+  type RetentionTarget,
+  type ErasureSubject,
+} from "./retention.js";
 import type { ReplayStore } from "../graph/replay.js";
 import type { ExecutionStore } from "../monitoring/execution-store.js";
 import type { MemoryStore, MemoryScope } from "../graph/memory-store.js";
@@ -73,9 +77,20 @@ export function memoryRetentionTarget(store: MemoryStore): RetentionTarget {
 /**
  * Reversible PII vault entries: age-purge (safety net for orphaned entries
  * from a crashed/abandoned run — the vault itself already releases entries
- * when a run finishes streaming) + tenant-scoped right-to-be-forgotten.
+ * when a run finishes streaming) + right-to-be-forgotten.
+ *
+ * Vault entries are keyed by execution only, so a user-scoped subject is
+ * resolved to that user's executions through `executionIdsForSubject` (the
+ * execution history). Register this target BEFORE the execution-history
+ * target: {@link RetentionService.forget} runs targets in order, and the
+ * history erase removes the attribution this lookup relies on. Without the
+ * lookup a user-scoped erase fails instead of wiping the whole tenant. Only a
+ * subject without user identifiers erases every entry of its tenant.
  */
-export function piiVaultRetentionTarget(store: PiiVaultStore): RetentionTarget {
+export function piiVaultRetentionTarget(
+  store: PiiVaultStore,
+  executionIdsForSubject?: (subject: ErasureSubject) => Promise<string[]>,
+): RetentionTarget {
   // Bind now (while `purgeOlderThan` is narrowed to a function) so `this`
   // inside the store's real implementation stays bound to `store`.
   const purgeOlderThan = store.purgeOlderThan?.bind(store);
@@ -83,6 +98,16 @@ export function piiVaultRetentionTarget(store: PiiVaultStore): RetentionTarget {
     name: RETENTION_TARGET.piiVault,
     ...(purgeOlderThan !== undefined ? { purgeOlderThan } : {}),
     eraseSubject: async (subject: ErasureSubject): Promise<number> => {
+      if (subjectUserIds(subject).length > 0) {
+        if (executionIdsForSubject === undefined)
+          throw new Error(
+            "PII vault entries cannot be attributed to a user without the execution history",
+          );
+        let erased = 0;
+        for (const executionId of await executionIdsForSubject(subject))
+          erased += await store.clear(executionId);
+        return erased;
+      }
       if (
         store.eraseTenant === undefined ||
         subject.tenantId === undefined ||

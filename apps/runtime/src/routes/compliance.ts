@@ -31,9 +31,10 @@ import { randomUUID } from "node:crypto";
 import { Hono } from "hono";
 import type { Context } from "hono";
 import type { ErasureRequest, ErasureStoreResult } from "@atf/erasure-contract";
-import type {
-  RetentionService,
-  ErasureSubject,
+import {
+  subjectUserIds,
+  type RetentionService,
+  type ErasureSubject,
 } from "../observability/retention.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import type { JwtVerifier } from "../middleware/jwt-verifier.js";
@@ -592,6 +593,10 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
 
     const userId = email ?? sub;
     if (userId === undefined) return null;
+    // Stores attribute rows under whichever identifier the request carried
+    // (the usage log keeps the JWT `sub`), so both name the same person.
+    const userAliases =
+      email !== undefined && sub !== undefined && sub !== email ? [sub] : [];
 
     // Same tenant-claim precedence as the auth middleware (tenant_id →
     // client_id → tid) so the DSAR subject matches the authenticated tenant.
@@ -599,9 +604,10 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
 
     return {
       userId,
+      ...(userAliases.length > 0 ? { userAliases } : {}),
       ...(tenantId !== undefined ? { tenantId } : {}),
     };
-  };;
+  };
 
   // GET /v1/me/data — summary of data held for the calling identity.
   // Returns capability metadata per retention target (what is stored and for
@@ -673,7 +679,10 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
         requestId: randomUUID(),
         tenantId: subject.tenantId,
         scope: "subject",
-        subject: { userId: subject.userId ?? "", externalIds: [] },
+        subject: {
+          userId: subject.userId ?? "",
+          externalIds: [...(subject.userAliases ?? [])],
+        },
         dryRun: false,
       };
       const operation = await deps.erasureOrchestrator.execute(request);
@@ -802,7 +811,7 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     }
     if (envelope.payload.scope !== "tenant") {
       const callerHashes = new Set(
-        (subject.userId !== undefined ? [subject.userId] : []).map((id) =>
+        subjectUserIds(subject).map((id) =>
           erasureSubjectHash(subject.tenantId as string, id),
         ),
       );

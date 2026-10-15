@@ -45,6 +45,18 @@ releases:
   CVE-2026-84394); new pins `proxy-addr` 2.0.8 (CVE-2026-90711, via `express`) and
   `source-map-js` 1.2.2 (CVE-2026-93749). Third-party notices and the SBOM are
   regenerated.
+- **Runtime DSAR erasure is user-scoped** (`DELETE /v1/me/data`,
+  `POST /admin/compliance/forget`): a subject with a user identifier no longer
+  erases the execution history, the permanent usage log (`token_usage_log`) and
+  the PII vault of its whole tenant. Only the executions attributed to the user
+  (usage-log `user_id`/`user_label` or `executions.user_name`) and the vault
+  entries of those executions are erased; a tenant-wide erase needs a subject
+  without user identifiers, which only the operator plane builds. The caller's
+  email and JWT `sub` are both used as identifiers (and both appear hashed in
+  the erasure receipt). The orchestrator keeps an email- or external-id-only
+  subject user-scoped and no longer runs the local stores for a
+  `reference`-scoped request. Retention targets now erase sequentially, PII
+  vault first.
 
 ### Added
 

@@ -175,6 +175,28 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * The runtime-store identity of a contract subject. Every identifier the
+ * request names (userId, email, externalIds) is kept, so a subject given only
+ * by email or external id still erases user-scoped instead of degrading to a
+ * tenant-only subject — which the local stores read as "the whole tenant".
+ */
+function localUserIdentity(
+  subject: ContractErasureSubject | undefined,
+): Pick<ErasureSubject, "userId" | "userAliases"> {
+  const ids = [
+    ...new Set(
+      [subject?.userId, subject?.email, ...(subject?.externalIds ?? [])]
+        .filter((id): id is string => typeof id === "string")
+        .map((id) => id.trim())
+        .filter((id) => id.length > 0),
+    ),
+  ];
+  const [userId, ...userAliases] = ids;
+  if (userId === undefined) return {};
+  return userAliases.length > 0 ? { userId, userAliases } : { userId };
+}
+
 const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 
 /**
@@ -493,13 +515,19 @@ export function createErasureOrchestrator(
 
     const subject: ErasureSubject = {
       tenantId: request.tenantId,
-      ...(request.subject?.userId !== undefined
-        ? { userId: request.subject.userId }
-        : {}),
+      ...localUserIdentity(request.subject),
     };
+    // Only a tenant-scoped request may reach the local stores without a user:
+    // they read a tenant-only subject as "erase the whole tenant". The runtime
+    // holds no reference-addressed documents, so `reference` stays remote.
+    const runLocal =
+      request.scope === "tenant" ||
+      (request.scope === "subject" && subject.userId !== undefined);
 
     const [localResults, remoteGroups] = await Promise.all([
-      localForget(subject),
+      runLocal
+        ? localForget(subject)
+        : Promise.resolve<ErasureStoreResult[]>([]),
       runRemote(request),
     ]);
 
@@ -563,9 +591,7 @@ export function createErasureOrchestrator(
         ? localForget(
             {
               tenantId: existing.tenantId,
-              ...(existing.subject?.userId !== undefined
-                ? { userId: existing.subject.userId }
-                : {}),
+              ...localUserIdentity(existing.subject),
             },
             failedLocal,
           )

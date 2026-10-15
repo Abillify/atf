@@ -279,8 +279,10 @@ describe("GET /v1/me/data/erasures/{id} — signed Erasure_Receipt (Req 2.11)", 
     const body = (await res.json()) as { receipt: ErasureReceiptEnvelope };
     expect(body.receipt.payload.receiptId).toBe(receiptId);
     expect(body.receipt.payload.tenantId).toBe("acme");
-    expect(body.receipt.payload.subjectHashes).toHaveLength(1);
+    // Email and JWT `sub` both identify the caller, so both are hashed.
+    expect(body.receipt.payload.subjectHashes).toHaveLength(2);
     expect(JSON.stringify(body.receipt.payload)).not.toContain("u@x.de");
+    expect(JSON.stringify(body.receipt.payload)).not.toContain("u-1");
     expect(verifyReceipt(body.receipt, receiptKey)).toBe(true);
   });
 
