@@ -290,6 +290,9 @@ export async function buildEngine(
     const replayCtx: RequestContext = {
       ssoToken: token,
       executionId: crypto.randomUUID(),
+      // Replay and shadow runs re-execute for comparison only (see
+      // RequestContext.suppressSideEffects).
+      suppressSideEffects: true,
       ...(verified?.claims !== undefined ? { claims: verified.claims } : {}),
       ...(verified?.clientId !== undefined ? { clientId: verified.clientId } : {}),
       ...(verified?.userId !== undefined ? { userId: verified.userId } : {}),

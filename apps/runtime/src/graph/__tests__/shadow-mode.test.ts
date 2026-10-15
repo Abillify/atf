@@ -4,8 +4,11 @@
 /**
  * Tests for Shadow Mode continuous quality monitoring.
  */
-import { describe, test, expect } from "bun:test";
-import { createShadowModeService } from "../shadow-mode.js";
+import { describe, test, expect, spyOn } from "bun:test";
+import {
+  createShadowModeService,
+  DEFAULT_SHADOW_SAMPLING_RATE,
+} from "../shadow-mode.js";
 import type { Judge } from "../../eval/eval-runner.js";
 import type { ReplayExecutor } from "../replay.js";
 
@@ -34,13 +37,38 @@ function mustRunner(svc: ReturnType<typeof createShadowModeService>) {
 }
 
 describe("ShadowMode", () => {
+  test("samples only a small share of requests unless samplingRate is set", async () => {
+    expect(DEFAULT_SHADOW_SAMPLING_RATE).toBeLessThanOrEqual(0.05);
+    let runs = 0;
+    const svc = createShadowModeService({
+      judge: scriptedJudge({}),
+      executor: async () => {
+        runs++;
+        return { text: "S" };
+      },
+    });
+    svc.reload({ flows: [{ productionFlow: "f", shadowFlow: "f2" }] });
+    const random = spyOn(Math, "random");
+    try {
+      const input = { productionFlow: "f", productionResponse: "P", messages: [] };
+      random.mockReturnValue(DEFAULT_SHADOW_SAMPLING_RATE); // just outside the sample
+      mustRunner(svc).maybeRunShadow(input, svc.configs());
+      random.mockReturnValue(DEFAULT_SHADOW_SAMPLING_RATE / 2); // inside
+      mustRunner(svc).maybeRunShadow(input, svc.configs());
+      await tick();
+      expect(runs).toBe(1);
+    } finally {
+      random.mockRestore();
+    }
+  });
+
   test("records a comparison and aggregates stats", async () => {
     const svc = createShadowModeService({
       judge: scriptedJudge({ "PROD ANSWER": 0.6, "SHADOW ANSWER": 0.9 }),
       executor: scriptedExecutor("SHADOW ANSWER"),
     });
     svc.reload({
-      flows: [{ productionFlow: "helpdesk", shadowFlow: "helpdesk-v2" }],
+      flows: [{ productionFlow: "helpdesk", shadowFlow: "helpdesk-v2", samplingRate: 1 }],
     });
 
     mustRunner(svc).maybeRunShadow(
@@ -70,7 +98,7 @@ describe("ShadowMode", () => {
       executor: scriptedExecutor("SHADOW"),
     });
     svc.reload({
-      flows: [{ productionFlow: "f", shadowFlow: "f2", regressionDelta: 0.1 }],
+      flows: [{ productionFlow: "f", shadowFlow: "f2", regressionDelta: 0.1, samplingRate: 1 }],
     });
 
     mustRunner(svc).maybeRunShadow(

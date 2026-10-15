@@ -342,12 +342,19 @@ for their data. Only the request-scoped mapping is stored, encrypted, for restor
   Studio test runs, each with a reference answer, and removed again (`DELETE /eval/cases/:id`).
 - **Canary promotion.** A flow variant serves a fraction of traffic and is promoted or rolled
   back against configured criteria.
-- **Shadow mode.** Every production request additionally runs against a candidate flow. Both
+- **Shadow mode.** A sample of production requests (5 % unless an entry in `shadow.yaml` sets
+  `samplingRate`, `1` mirrors all traffic) additionally runs against a candidate flow. Both
   answers are judged, and results aggregate per flow pair. The user always receives the
   stable production answer, so a migration can be measured on real traffic without exposing
   anyone to a worse response.
 - **Replay.** An earlier execution can be re-run and compared against its original result
   (`REPLAY_ENABLED`).
+- **Side effects in shadow and replay runs.** Both re-runs are for comparison only and never
+  repeat side effects: only MCP tools that declare `readOnlyHint` are called (any other tool
+  call fails and the model sees the error), approval-gated tools are denied without asking a
+  reviewer, and assistant nodes skip their transcript, memory and preference writes. A
+  candidate flow whose answer depends on a write tool therefore scores lower in shadow mode
+  than it would in production.
 - **Self-optimizing loop.** The optimizer generates flow variants, evaluates them, and can
   promote a winner behind a canary gate, with cooldowns and a minimum score improvement
   (`OPTIMIZER_ENABLED`, `OPTIMIZER_SCHEDULE_*`). It optimizes flows that exist only as files in

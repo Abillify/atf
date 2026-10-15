@@ -235,6 +235,37 @@ export interface ApprovalRegistry {
   ): ResolvedApproval | undefined | Promise<ResolvedApproval | undefined>;
 }
 
+/**
+ * The gate a side-effect-free run (shadow, replay) sees: every approval is
+ * denied at once, so no reviewer is asked to approve an action that is only a
+ * re-run, and the gated tool is never called. Everything else delegates.
+ */
+export function sideEffectFreeApprovalGate(
+  gate: ApprovalRegistry,
+): ApprovalRegistry {
+  return {
+    get enabled() {
+      return gate.enabled;
+    },
+    get globalPatterns() {
+      return gate.globalPatterns;
+    },
+    get timeoutMs() {
+      return gate.timeoutMs;
+    },
+    requires: (toolRef, nodeConfig) => gate.requires(toolRef, nodeConfig),
+    request: async () => ({
+      approved: false,
+      reason:
+        "Not requested: side effects are suppressed in shadow and replay runs.",
+    }),
+    resolve: (id, decision) => gate.resolve(id, decision),
+    listPending: () => gate.listPending(),
+    listResolved: () => gate.listResolved(),
+    getResolved: (id) => gate.getResolved(id),
+  };
+}
+
 class ApprovalRegistryImpl implements ApprovalRegistry {
   readonly enabled = true;
   private readonly waiters = new Map<string, Waiter>();

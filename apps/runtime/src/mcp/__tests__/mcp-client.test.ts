@@ -1177,6 +1177,32 @@ describe("refreshSchemaIfChanged", () => {
 // ---------------------------------------------------------------------------
 
 describe("callTool", () => {
+  test("refuses a tool without readOnlyHint in a side-effect-free run, never calling it", async () => {
+    behavior.listTools = async () => ({
+      tools: [
+        { ...defaultTool("write"), annotations: { destructiveHint: true } },
+        defaultTool("unannotated"),
+        { ...defaultTool("read"), annotations: { readOnlyHint: true } },
+      ],
+    });
+    let calls = 0;
+    behavior.callTool = async () => {
+      calls += 1;
+      return { content: "ok" };
+    };
+    const w = mkWrapper();
+    await w.connect(mkConfig({ name: "srv" }));
+    const ctx = mkCtx({ suppressSideEffects: true });
+
+    await expect(w.callTool("srv", "write", {}, ctx)).rejects.toThrow(/readOnlyHint/);
+    await expect(w.callTool("srv", "unannotated", {}, ctx)).rejects.toThrow(/readOnlyHint/);
+    expect(calls).toBe(0);
+
+    await w.callTool("srv", "read", {}, ctx);
+    await w.callTool("srv", "write", {}, mkCtx());
+    expect(calls).toBe(2);
+  });
+
   test("throws when the SSO token is missing", async () => {
     const w = mkWrapper();
     await w.connect(mkConfig({ name: "srv" }));

@@ -10,6 +10,7 @@ import {
   toolRequiresApproval,
   nodeApprovalList,
   createApprovalGate,
+  sideEffectFreeApprovalGate,
   type ApprovalGateConfig,
 } from "../approval-gate.js";
 
@@ -184,5 +185,26 @@ describe("createApprovalGate", () => {
   test("resolve() returns false for an unknown id", () => {
     const gate = mustCreateApprovalGate({ enabled: true });
     expect(gate.resolve("nope", { approved: true })).toBe(false);
+  });
+});
+
+describe("sideEffectFreeApprovalGate", () => {
+  test("denies at once without registering a pending approval or notifying", async () => {
+    const gate = mustCreateApprovalGate({ requireApprovalTools: ["a/b"], timeoutMs: 5000 });
+    const shadow = sideEffectFreeApprovalGate(gate);
+    expect(shadow.requires("a/b", undefined)).toBe(true);
+    expect(shadow.enabled).toBe(true);
+
+    let notified = false;
+    const decision = await shadow.request(
+      { executionId: "e1", nodeId: "n1", tool: "a/b", args: {} },
+      () => {
+        notified = true;
+      },
+    );
+    expect(decision.approved).toBe(false);
+    expect(decision.reason).toMatch(/suppressed/);
+    expect(notified).toBe(false);
+    expect(await gate.listPending()).toHaveLength(0);
   });
 });

@@ -155,6 +155,10 @@ export function createAssistantLearnNodeHandler(
     // learning opportunity. Persist them synchronously so the next turn cannot
     // forget a promise the assistant just made.
     const preferences = extractExplicitAssistantPreferences(lastUserQuery(state));
+    // A shadow/replay re-run must not write the original turn's preferences again.
+    if (runtime.ctx.suppressSideEffects === true) {
+      return { currentNodeId: node.id };
+    }
     try {
       if (preferences.assistantName !== undefined) {
         await assistants.stores.assistants.update(scope, {

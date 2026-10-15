@@ -248,6 +248,13 @@ export interface AgentExecutionContext {
   authenticatedSessionId?: string;
   /** Id of the user message that triggered this run (Open WebUI `metadata.message_id`; a fresh UUID when absent). */
   messageId?: string;
+  /**
+   * Set for shadow and replay runs, which re-execute a flow for comparison
+   * only. MCP tools that do not declare `readOnlyHint` are refused, approval
+   * requests are denied without reaching a reviewer, and nodes skip their own
+   * durable writes — the re-run must not repeat the original's side effects.
+   */
+  suppressSideEffects?: boolean;
 
   // -------------------------------------------------------------------------
   // Decoded JWT payload claims — populated when JWT_SECRET / JWT_JWKS_URL is

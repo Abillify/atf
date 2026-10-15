@@ -4,7 +4,7 @@
 /**
  * Shadow Mode — Continuous Quality Monitoring (`src/graph/shadow-mode.ts`)
  *
- * The Killer Feature: every production request is silently re-executed against
+ * The Killer Feature: a sample of production requests is silently re-executed against
  * a configured "shadow" flow (a new model, a new prompt version, a new routing
  * strategy) and the two responses are automatically graded by an LLM judge.
  * The user ALWAYS sees the stable production answer. The shadow run is invisible
@@ -30,6 +30,12 @@
  *
  * Fail-safe design:
  *   - Shadow runs NEVER affect the production response or its latency.
+ *   - Shadow runs never repeat side effects: the executor marks them
+ *     `suppressSideEffects`, so only MCP tools declaring `readOnlyHint` run,
+ *     approvals are denied without reaching a reviewer and nodes skip their own
+ *     durable writes.
+ *   - Only a sample of requests is mirrored (default 5 %, see
+ *     `DEFAULT_SHADOW_SAMPLING_RATE`).
  *   - Errors in shadow runs are logged and discarded.
  *   - The LLM judge call is bounded by a configurable timeout.
  *   - Shadow runs count toward concurrency limits via a separate semaphore so
@@ -54,8 +60,10 @@ export interface ShadowFlowConfig {
   /** Shadow flow id to run in parallel. */
   shadowFlow: string;
   /**
-   * Fraction of production requests that trigger a shadow run, in (0, 1].
-   * Default 1.0 (every request). Set lower to reduce shadow execution cost.
+   * Fraction of production requests that trigger a shadow run, in [0, 1].
+   * Default {@link DEFAULT_SHADOW_SAMPLING_RATE} (5 %): every shadow run costs
+   * a full flow execution plus two judge calls, so mirroring all traffic is an
+   * explicit opt-in (`1`), not the default. Values outside [0, 1] are clamped.
    */
   samplingRate?: number;
   /**
@@ -78,6 +86,9 @@ export interface ShadowFlowConfig {
   /** When true, shadow comparison is disabled but config is preserved. */
   disabled?: boolean;
 }
+
+/** Sampling rate for a shadow entry that does not set `samplingRate`. */
+export const DEFAULT_SHADOW_SAMPLING_RATE = 0.05;
 
 export interface ShadowConfig {
   /** One entry per production flow that has a shadow counterpart. */
@@ -328,8 +339,11 @@ export class ShadowRunner {
     cfg: ShadowFlowConfig,
   ): Promise<void> {
     // Sampling gate
-    const samplingRate = cfg.samplingRate ?? 1.0;
-    if (samplingRate < 1.0 && Math.random() > samplingRate) return;
+    const samplingRate = Math.min(
+      1,
+      Math.max(0, cfg.samplingRate ?? DEFAULT_SHADOW_SAMPLING_RATE),
+    );
+    if (samplingRate < 1 && Math.random() >= samplingRate) return;
 
     const key = `${cfg.productionFlow}::${cfg.shadowFlow}`;
     const maxConcurrent = cfg.maxConcurrent ?? 2;

@@ -2157,6 +2157,14 @@ export class McpWrapper implements McpWrapperService {
       );
     }
     const annotations: ToolAnnotations | undefined = rawTool?.annotations;
+    // Shadow/replay re-runs must not repeat side effects. Only a tool that
+    // declares itself read-only may run; missing metadata fails safe.
+    if (ctx.suppressSideEffects === true && annotations?.readOnlyHint !== true) {
+      throw new Error(
+        `Tool '${serverName}/${toolName}' was not called: it does not declare readOnlyHint, ` +
+          "and side effects are suppressed in shadow and replay runs.",
+      );
+    }
     const retryable =
       annotations?.readOnlyHint === true ||
       annotations?.idempotentHint === true;

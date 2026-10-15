@@ -53,7 +53,10 @@ import { HashRefHandleRegistry } from "../ref-handles.js";
 import type { OutputGuardrail } from "../output-guardrails.js";
 import type { ToolEgressGuardrail } from "../output-guardrails.js";
 import type { FlowGuardrailOverride } from "../flow-guardrail-resolver.js";
-import type { ApprovalRegistry } from "../approval-gate.js";
+import {
+  sideEffectFreeApprovalGate,
+  type ApprovalRegistry,
+} from "../approval-gate.js";
 import type { GroundednessGate } from "../groundedness.js";
 import type { DistributedConcurrencyLimiter } from "../distributed-semaphore.js";
 import type { GlobalSlot } from "../distributed-semaphore.js";
@@ -971,7 +974,13 @@ class GraphEngineServiceImpl implements GraphEngineService {
         ? { semanticCache: this.semanticCache }
         : {}),
       ...(this.approvalGate !== undefined
-        ? { approvalGate: this.approvalGate, onApprovalRequired }
+        ? {
+            approvalGate:
+              ctx.suppressSideEffects === true
+                ? sideEffectFreeApprovalGate(this.approvalGate)
+                : this.approvalGate,
+            onApprovalRequired,
+          }
         : {}),
       ...(this.groundednessGate !== undefined
         ? { groundednessGate: this.groundednessGate, onGroundedness }

@@ -223,20 +223,23 @@ export function createAssistantContextNodeHandler(
     // crash-safety property of Hermes: a restart after a side effect never loses
     // the request that caused it. Transcript failure is observable but does not
     // turn an otherwise usable assistant into an unavailable one.
+    // A shadow/replay re-run must not append the original request a second time.
     let persistedUserEvent: Awaited<ReturnType<NonNullable<typeof assistants.stores.transcripts>["append"]>> | undefined;
-    try {
-      persistedUserEvent = await assistants.stores.transcripts?.append(scope, {
-        executionId: ctx.executionId,
-        conversationId,
-        role: "user",
-        content: lastUserQuery(state),
-      });
-    } catch (error) {
-      runtime.onNodeDiagnostic?.(node.id, {
-        level: "warn",
-        code: "assistant_transcript_user_persist_failed",
-        message: error instanceof Error ? error.message : String(error),
-      });
+    if (ctx.suppressSideEffects !== true) {
+      try {
+        persistedUserEvent = await assistants.stores.transcripts?.append(scope, {
+          executionId: ctx.executionId,
+          conversationId,
+          role: "user",
+          content: lastUserQuery(state),
+        });
+      } catch (error) {
+        runtime.onNodeDiagnostic?.(node.id, {
+          level: "warn",
+          code: "assistant_transcript_user_persist_failed",
+          message: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
     if (persistedUserEvent !== undefined) {
       try {

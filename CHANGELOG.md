@@ -69,6 +69,12 @@ releases:
   carried the query text, user id and groups, contrary to the data-minimisation
   rule in `docs/operations-and-retrieval.md`. It now records only
   `queryLength`, `authenticatedUser` and `userGroupCount`.
+- **Shadow and replay runs no longer repeat side effects**: both run with
+  `suppressSideEffects`, so the MCP wrapper refuses every tool that does not
+  declare `readOnlyHint`, approval-gated tools are denied without reaching a
+  reviewer, and `assistant-context`/`assistant-learn` skip their transcript,
+  memory and preference writes. Shadow sampling now defaults to 5 % instead of
+  100 % (`samplingRate` in `shadow.yaml`, clamped to [0, 1]).
 
 ### Added
 
