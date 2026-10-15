@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Elastic-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Abillify Technology GmbH -->
 
-# Upgrade guide 0.3 → current (0.14)
+# Upgrade guide 0.3 → current (0.16)
 
 Database migrations are additive and run under a PostgreSQL advisory lock,
 so a migration job and booting replicas serialize safely. Who runs them is
@@ -80,7 +80,7 @@ No migration. OAuth 2.0 token exchange (`tokenExchange` in the Runtime,
   volume (`TEMP_DIR`); `OCR_FALLBACK=tesseract` needs Tesseract and its
   language data installed.
 
-### 0.14 → unreleased (platform hardening)
+### 0.14 → 0.15 (platform hardening)
 
 - Production replicas no longer migrate on boot unless
   `MIGRATE_ON_START=true` is set; run `bun run migrate` (or the Helm hooks)
@@ -95,9 +95,38 @@ No migration. OAuth 2.0 token exchange (`tokenExchange` in the Runtime,
 - Search and Extract expose `/health/live` and `/health/ready`; `/health`
   stays unchanged. Runtime and Gate serve `/openapi.json` and
   `/openapi.yaml`.
-- Review the **Changed** and **Security** sections of `[Unreleased]` in the
+- Review the **Changed** and **Security** sections of `[0.15.0]` in the
   CHANGELOG: several production-gate rules now refuse configurations that
   used to start.
+
+### 0.15 → 0.16
+
+Review the `[0.16.0]` section of the [CHANGELOG](../CHANGELOG.md), in particular its
+**Migration** subsection. Steps, in order:
+
+1. Take a backup, then run the migrations (`bun run migrate` or the Helm hooks): Runtime
+   schema version **47** is the only schema change (see below). Search and Extract have none.
+2. Search: decide the full-text language per collection (see the first item below) and run
+   `bun run --filter @atf/search fts:language <collection> <language>` for each existing
+   collection you want to switch. The script needs `POSTGRES_URL`.
+3. Runtime, with several trusted issuers: set `JWT_ISSUER_TENANTS` before rolling out.
+4. Control in BFF mode: set `CONTROL_PUBLIC_ORIGIN`.
+5. Scripts and probes that call the Gate monitor: switch from `?token=` to the
+   `Authorization` header.
+6. Review the new defaults in the prompt-injection and shadow items below, then roll out
+   Runtime → Gate → Search → Extract → Control.
+
+New or changed environment variables (the full list with defaults is in
+[CONFIGURATION.md](CONFIGURATION.md)): `JWT_ISSUER_TENANTS`, `CONTROL_PUBLIC_ORIGIN`,
+`RETRIEVAL_CONTEXT_MODE`, `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`,
+`TOOL_OUTPUT_VALIDATOR_ENABLED` (now on by default in production), `RERANK_SCORE_TRANSFORM`,
+`RERANK_BATCH_SIZE`, `LLM_HTTP_KEEP_ALIVE`, `FTS_LANGUAGE` (default `german`),
+`FTS_EXTRA_LANGUAGES`.
+
+Contracts: no contract package changed in this release (`@atf/extract-contract` stays 2.3.0,
+`@atf/identity-contract` 1.2.0). Search responses gain fields (`score_scale`,
+`content_trust`, `injection_risk`); clients that validate strictly against the old shape must
+allow them. Extract's API is unchanged.
 
 #### Breaking or behaviour-changing, act before rolling out
 
@@ -117,6 +146,10 @@ No migration. OAuth 2.0 token exchange (`tokenExchange` in the Runtime,
   assistant memory writes. Custom MCP servers that should take part in shadow
   runs must declare `readOnlyHint` on their lookup tools.
 - **Control mutations** are no longer retried (`mutations.retry` 1 → 0).
+- **Self-service erasure** (`DELETE /v1/me/data`): the subject is the token's `iss` plus `sub`;
+  `email` counts only with `email_verified: true`. A token without `iss` gets 401, a token
+  without a tenant claim gets 403 `TENANT_REQUIRED`. Check that your IdP issues both claims
+  before you point users at the endpoint.
 - **Trusted issuers**: with `JWT_ADDITIONAL_ISSUERS` and tenant isolation, set
   `JWT_ISSUER_TENANTS` (JSON map issuer → tenants, `"*"` for all). Production
   readiness fails without it when more than one issuer is trusted; a token
@@ -163,10 +196,18 @@ are not recalibrated; production embedding settings are not affected.
 | Sessions gone after the upgrade | `OIDC_SESSION_SECRET` changed | Expected — log in again; use a rollout window if needed |
 | Extract jobs hang | Converter sidecar without the shared socket/volume | Configure the sidecar as described above |
 | Production replica starts against an old schema | `MIGRATE_ON_START` unset in production and no migration job ran | Run `bun run migrate` (or the Helm hooks) first |
+| 401 on `/v1/*` after the upgrade, several issuers | `JWT_ISSUER_TENANTS` unset or does not list the issuer/tenant | Set the issuer → tenants map (`"*"` for all) |
+| Monitor scripts fail with 401 | They send `?token=` to the Gate monitor | Send `Authorization: Bearer <token>` |
+| Chat answers 503 | `compliance-policy.yaml` is unreadable or schema-invalid and no valid policy was loaded | Fix the file; `GET /admin/compliance-policy` shows the load error |
+| A write tool is refused or waits for approval after a document search | Taint rule after an injection finding (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`) | Approve it, declare `readOnlyHint` on read-only tools, or opt out explicitly (readiness warning) |
+| Everything is dropped after rerank (abstention) | `MIN_RERANK_SCORE` tuned against the old sigmoid-squashed scores | Re-tune it or set `RERANK_SCORE_TRANSFORM=sigmoid` |
+| Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
 
 ## Rollback
 
 Migrations are additive, so rolling back to the previous version is possible
 as long as no new columns or tables were written (for 0.13/0.14:
-`flow_drafts`, `vision_daily_usage`). Otherwise restore from the pre-upgrade
+`flow_drafts`, `vision_daily_usage`; for 0.16: the nullable `iss` columns of
+migration 47, which the older binary ignores). After a rollback from 0.16, collections whose
+FTS language you switched keep `german` vectors; switch them back with `bun run fts:language`. Otherwise restore from the pre-upgrade
 backup (`runbooks/backup-restore.md`) — the outstore is forward compatible.
