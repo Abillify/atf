@@ -35,7 +35,11 @@ export interface AccessScope {
 export class AccessDeniedError extends Error {
   constructor(
     message = "Access denied",
-    public readonly code: "AUTH_SCOPE_DENIED" | "TENANT_REQUIRED" | "TENANT_MISMATCH" = "AUTH_SCOPE_DENIED",
+    public readonly code:
+      | "AUTH_SCOPE_DENIED"
+      | "TENANT_REQUIRED"
+      | "TENANT_MISMATCH"
+      | "COLLECTION_NOT_FOUND" = "AUTH_SCOPE_DENIED",
   ) {
     super(message);
     this.name = "AccessDeniedError";
@@ -147,8 +151,18 @@ export async function requireCollectionAccess(
   }
   const result = await postgres.getCollectionAcl(collection);
   if (!result.ok) {
-    if (scope.authorizationBypass && result.error.code === "COLLECTION_NOT_FOUND") {
-      return { allowedUsers: [], allowedGroups: [] };
+    if (result.error.code === "COLLECTION_NOT_FOUND") {
+      if (scope.authorizationBypass) {
+        return { allowedUsers: [], allowedGroups: [] };
+      }
+      // Not a permission decision: the collection was never created. The
+      // middleware answers 404 for readers (an index that does not exist
+      // holds nothing) and lets ingest routes through so the handler can
+      // create it on first write.
+      throw new AccessDeniedError(
+        `Collection "${collection}" does not exist`,
+        "COLLECTION_NOT_FOUND",
+      );
     }
     throw new AccessDeniedError(`Access denied to collection "${collection}"`);
   }
@@ -187,16 +201,52 @@ export interface MutationAcl extends CollectionAcl {
   preserveExistingOnConflict?: true;
 }
 
-/** ACL written for newly ingested rows; never emits an accidental public ACL. */
+/**
+ * The readers a caller asserts for the document it is writing
+ * (`X-Allowed-Users` / `X-Allowed-Groups` on the v1 ingest routes).
+ */
+export interface DelegatedAcl {
+  users: readonly string[];
+  groups: readonly string[];
+}
+
+function hasDelegatedEntries(delegated: DelegatedAcl | undefined): delegated is DelegatedAcl {
+  return (
+    delegated !== undefined &&
+    (delegated.users.some((v) => v.trim() !== "") ||
+      delegated.groups.some((v) => v.trim() !== ""))
+  );
+}
+
+/**
+ * ACL written for newly ingested rows; never emits an accidental public ACL.
+ *
+ *   - a bypass principal keeps the collection ACL and preserves existing row
+ *     ACLs on conflict;
+ *   - an explicitly requested acting user owns the row alone;
+ *   - a trusted writer — a service principal, or any principal carrying the
+ *     `vectorsearch.acl.manage` scope — may set the row ACL explicitly through
+ *     `delegated` (`X-Allowed-Users/-Groups`). This is what lets an indexing
+ *     worker publish a document to the viewers its domain model chose, rather
+ *     than to the worker's own identity. The same trust rule already governs
+ *     the v2 revision API (`rowAclForRevision`); a caller without that trust
+ *     has its asserted lists ignored, exactly as before.
+ *   - a service without an explicit ACL falls back to the collection ACL;
+ *   - anyone else writes rows readable by their own identity and groups.
+ *
+ * `collectionAcl` is undefined when the collection does not exist yet — the
+ * first write creates it, so there is no stored ACL to consult.
+ */
 export function aclForMutation(
   scope: AccessScope,
-  collectionAcl: CollectionAcl,
+  collectionAcl: CollectionAcl | undefined,
   requestedUser?: string,
+  delegated?: DelegatedAcl,
 ): MutationAcl {
   if (scope.authorizationBypass) {
     return {
-      allowedUsers: [...collectionAcl.allowedUsers],
-      allowedGroups: [...collectionAcl.allowedGroups],
+      allowedUsers: [...(collectionAcl?.allowedUsers ?? [])],
+      allowedGroups: [...(collectionAcl?.allowedGroups ?? [])],
       preserveExistingOnConflict: true,
     };
   }
@@ -206,8 +256,20 @@ export function aclForMutation(
     // unrelated members of the owner's groups must not see private sessions.
     return { allowedUsers: [requireActingUser(scope, requestedUser)], allowedGroups: [] };
   }
+  if (
+    hasDelegatedEntries(delegated) &&
+    (scope.service || scope.scopes.includes("vectorsearch.acl.manage"))
+  ) {
+    return {
+      allowedUsers: normalizeAclList(delegated.users),
+      allowedGroups: normalizeAclList(delegated.groups),
+    };
+  }
   if (scope.service) {
-    if (collectionAcl.allowedUsers.length === 0 && collectionAcl.allowedGroups.length === 0) {
+    if (
+      collectionAcl === undefined ||
+      (collectionAcl.allowedUsers.length === 0 && collectionAcl.allowedGroups.length === 0)
+    ) {
       throw new AccessDeniedError("Service ingest requires an explicit collection ACL or end-user principal");
     }
     return collectionAcl;

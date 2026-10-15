@@ -21,6 +21,7 @@ import type { EmbedFn } from "../semantic-chunker.js";
 import type { SummaryClient } from "../summary-client.js";
 import { getUsageContext } from "../usage-context.js";
 import { aclForMutation } from "../access-scope.js";
+import { readHeader } from "../header-utils.js";
 import { parseRfc3339DateTime } from "../rfc3339.js";
 
 export interface BatchDocument {
@@ -144,7 +145,31 @@ export function createIngestBatchHandler(
 
       const scope = (res.locals as { accessScope?: import("../access-scope.js").AccessScope }).accessScope;
       const collectionAcl = (res.locals as { collectionAcl?: import("../collection-access.js").CollectionAcl }).collectionAcl;
-      const writeAcl = scope && collectionAcl ? aclForMutation(scope, collectionAcl) : undefined;
+      // Delegated viewer lists come from the shared X-Allowed-Users /
+      // X-Allowed-Groups headers, same contract as single-document ingest.
+      // `collectionAcl` is undefined on a first ingest (the collection is
+      // created below); the write ACL then comes from the delegated header
+      // lists for a trusted writer, or the principal's own identity.
+      const allowedUsersRaw = readHeader(req, "x-allowed-users");
+      const allowedUsers = allowedUsersRaw
+        ? allowedUsersRaw
+            .split(",")
+            .map((u) => u.trim())
+            .filter(Boolean)
+        : [];
+      const allowedGroupsRaw = readHeader(req, "x-allowed-groups");
+      const allowedGroups = allowedGroupsRaw
+        ? allowedGroupsRaw
+            .split(",")
+            .map((g) => g.trim())
+            .filter(Boolean)
+        : [];
+      const writeAcl = scope
+        ? aclForMutation(scope, collectionAcl, undefined, {
+            users: allowedUsers,
+            groups: allowedGroups,
+          })
+        : undefined;
 
       const useSummarization =
         summaryClient !== null && summarizeOverride === true;

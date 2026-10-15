@@ -153,6 +153,7 @@ describe("extractPrincipal", () => {
 describe("createCollectionAccessMiddleware", () => {
   function mkRes() {
     const res = {
+      locals: {} as Record<string, unknown>,
       _status: undefined as number | undefined,
       _body: undefined as unknown,
       status(code: number) {
@@ -267,6 +268,58 @@ describe("createCollectionAccessMiddleware", () => {
       { userId: "bob", userGroups: undefined, source: "jwt" },
       holder,
     );
+    expect(next).not.toHaveBeenCalled();
+    expect(res._status).toBe(403);
+  });
+
+  it("answers 404 (not 403) for a collection that does not exist", async () => {
+    // A missing index holds nothing; that is an empty page, not a permission
+    // failure. The typed COLLECTION_NOT_FOUND must surface as 404.
+    const client = {
+      getCollectionAcl: async () => ({
+        ok: false as const,
+        error: { code: "COLLECTION_NOT_FOUND" as const, message: "missing" },
+      }),
+    } as unknown as PostgresClient;
+    const req = { headers: { "x-collection": "akten" } } as unknown as Request;
+    setPrincipal(req, { userId: "bob", userGroups: undefined, source: "jwt" });
+    const res = mkRes();
+    const next = vi.fn();
+    await createCollectionAccessMiddleware(client, collectionFromHeader)(req, res, next);
+    expect(next).not.toHaveBeenCalled();
+    expect(res._status).toBe(404);
+    expect((res._body as { code?: string }).code).toBe("COLLECTION_NOT_FOUND");
+  });
+
+  it("lets a first ingest proceed when allowUnknownCollection is set", async () => {
+    const client = {
+      getCollectionAcl: async () => ({
+        ok: false as const,
+        error: { code: "COLLECTION_NOT_FOUND" as const, message: "missing" },
+      }),
+    } as unknown as PostgresClient;
+    const req = { headers: { "x-collection": "akten" } } as unknown as Request;
+    setPrincipal(req, { userId: "bob", userGroups: undefined, source: "jwt" });
+    const res = mkRes();
+    const next = vi.fn();
+    await createCollectionAccessMiddleware(client, collectionFromHeader, {
+      allowUnknownCollection: true,
+    })(req, res, next);
+    expect(next).toHaveBeenCalledOnce();
+    expect(res._status).toBeUndefined();
+    expect((res as unknown as { locals: Record<string, unknown> }).locals["collectionAcl"]).toBeUndefined();
+    expect((res as unknown as { locals: Record<string, unknown> }).locals["resolvedCollection"]).toBe("akten");
+  });
+
+  it("still denies a real ACL violation when allowUnknownCollection is set", async () => {
+    const holder = mkClient({ allowedUsers: ["alice"], allowedGroups: [] });
+    const req = { headers: { "x-collection": "akten" } } as unknown as Request;
+    setPrincipal(req, { userId: "bob", userGroups: undefined, source: "jwt" });
+    const res = mkRes();
+    const next = vi.fn();
+    await createCollectionAccessMiddleware(holder.client, collectionFromHeader, {
+      allowUnknownCollection: true,
+    })(req, res, next);
     expect(next).not.toHaveBeenCalled();
     expect(res._status).toBe(403);
   });

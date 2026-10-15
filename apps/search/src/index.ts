@@ -905,6 +905,18 @@ export function createApp(
     collectionFromHeader,
     { defaultCollection: config.defaultCollection, logger },
   );
+  // The v1 ingest routes create the collection on first write
+  // (`ensureCollection` in the handler), so an unknown collection must not be
+  // rejected there — it is what a first ingest looks like.
+  const collectionAccessWrite = createCollectionAccessMiddleware(
+    postgresClient,
+    collectionFromHeader,
+    {
+      defaultCollection: config.defaultCollection,
+      logger,
+      allowUnknownCollection: true,
+    },
+  );
   const collectionAccessQuery = createCollectionAccessMiddleware(
     postgresClient,
     collectionFromQuery,
@@ -1006,7 +1018,7 @@ export function createApp(
     uiMutationGuard,
     authorizeWrite,
     metadataMiddleware,
-    collectionAccessHeader,
+    collectionAccessWrite,
     ingestHandler,
   );
   ui.post(
@@ -1015,7 +1027,7 @@ export function createApp(
     uiMutationGuard,
     authorizeWrite,
     metadataMiddleware,
-    collectionAccessHeader,
+    collectionAccessWrite,
     express.text({
       type: ["application/x-ndjson", "application/json"],
       limit: config.streamBodyLimit,
@@ -1272,7 +1284,7 @@ export function createApp(
     authMiddleware,
     authorizeWrite,
     metadataMiddleware,
-    collectionAccessHeader,
+    collectionAccessWrite,
     ingestHandler,
   );
   // ── Binary document ingest via the converter (opt-in) ─────────────────────
@@ -1311,7 +1323,7 @@ export function createApp(
     authMiddleware,
     authorizeWrite,
     metadataMiddleware,
-    collectionAccessHeader,
+    collectionAccessWrite,
     ingestBatchHandler,
   );
   app.post(
@@ -1320,7 +1332,7 @@ export function createApp(
     authMiddleware,
     authorizeWrite,
     metadataMiddleware,
-    collectionAccessHeader,
+    collectionAccessWrite,
     express.text({
       type: ["application/x-ndjson", "application/json"],
       limit: config.streamBodyLimit,

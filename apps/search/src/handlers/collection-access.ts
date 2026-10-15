@@ -26,6 +26,7 @@ import type { RequestHandler } from "express";
 import type { Logger } from "pino";
 import type { PostgresClient } from "../postgres-client.js";
 import { collectionTableName } from "../collection-ddl.js";
+import type { CollectionAcl } from "../collection-access.js";
 import { readHeader } from "../header-utils.js";
 import { getPrincipal, type RequestPrincipal } from "../request-principal.js";
 import {
@@ -62,7 +63,19 @@ export const collectionFromParam: CollectionResolver = (req) =>
 export function createCollectionAccessMiddleware(
   postgresClient: PostgresClient,
   resolve: CollectionResolver,
-  options: { defaultCollection?: string; logger?: Logger } = {},
+  options: {
+    defaultCollection?: string;
+    logger?: Logger;
+    /**
+     * Routes whose handler creates the collection on first write (the v1
+     * ingest endpoints call `ensureCollection`). For those, an unknown
+     * collection is not an error: the request proceeds with no stored ACL and
+     * the handler creates the collection. Every other route answers 404 —
+     * an index that does not exist holds nothing, which is not a permission
+     * failure and must not be reported as one.
+     */
+    allowUnknownCollection?: boolean;
+  } = {},
 ): RequestHandler {
   const defaultCollection = options.defaultCollection ?? "documents";
   return async (req, res, next) => {
@@ -79,14 +92,37 @@ export function createCollectionAccessMiddleware(
         return;
       }
       const scope = accessScopeForRequest(req);
-      const acl = await requireCollectionAccess(postgresClient, collection, scope);
+      let acl: CollectionAcl | undefined;
+      try {
+        acl = await requireCollectionAccess(postgresClient, collection, scope);
+      } catch (error) {
+        if (
+          error instanceof AccessDeniedError &&
+          error.code === "COLLECTION_NOT_FOUND" &&
+          options.allowUnknownCollection
+        ) {
+          // First write: there is no stored ACL yet, the handler creates it
+          // together with the collection.
+          acl = undefined;
+        } else {
+          throw error;
+        }
+      }
       res.locals["accessScope"] = scope;
       res.locals["collectionAcl"] = acl;
       res.locals["resolvedCollection"] = collection;
       next();
     } catch (err) {
       if (err instanceof AccessDeniedError) {
-        log?.warn({ collection: resolve(req) ?? defaultCollection }, err.message);
+        const collection = resolve(req) ?? defaultCollection;
+        if (err.code === "COLLECTION_NOT_FOUND") {
+          log?.info({ collection }, err.message);
+          res
+            .status(404)
+            .json({ error: err.message, code: "COLLECTION_NOT_FOUND" });
+          return;
+        }
+        log?.warn({ collection }, err.message);
         res.status(403).json({ error: err.message, code: err.code });
         return;
       }

@@ -171,7 +171,15 @@ export function createIngestHandler(
       }
       const scope = (res.locals as { accessScope?: import("../access-scope.js").AccessScope }).accessScope;
       const collectionAcl = (res.locals as { collectionAcl?: import("../collection-access.js").CollectionAcl }).collectionAcl;
-      const writeAcl = scope && collectionAcl ? aclForMutation(scope, collectionAcl) : undefined;
+      // `collectionAcl` is undefined on a first ingest (the collection is
+      // created below); the write ACL then comes from the delegated header
+      // lists for a trusted writer, or the principal's own identity.
+      const writeAcl = scope
+        ? aclForMutation(scope, collectionAcl, undefined, {
+            users: allowedUsers,
+            groups: allowedGroups,
+          })
+        : undefined;
 
       log.info(
         {

@@ -112,6 +112,149 @@ describe("central access scope", () => {
     expect(() => aclForMutation(service, { allowedUsers: [], allowedGroups: [] })).toThrow(AccessDeniedError);
     expect(aclForMutation(service, restricted)).toEqual(restricted);
   });
+
+  it("rejects a service write when the collection does not exist yet", () => {
+    const service = accessScopeFromPrincipal({ userId: undefined, userGroups: undefined, source: "service" });
+    expect(() => aclForMutation(service, undefined)).toThrow(AccessDeniedError);
+  });
+
+  it("uses an empty ACL for a first bypass write on an unknown collection", () => {
+    const bypass = accessScopeFromPrincipal({
+      userId: undefined,
+      userGroups: undefined,
+      tenantId: "tenant-a",
+      source: "anonymous",
+      authorizationBypass: true,
+    });
+    expect(aclForMutation(bypass, undefined)).toEqual({
+      allowedUsers: [],
+      allowedGroups: [],
+      preserveExistingOnConflict: true,
+    });
+  });
+});
+
+describe("delegated ingest ACLs", () => {
+  const delegated = { users: ["viewer-1", "viewer-2"], groups: ["client:acme"] };
+
+  it("honors delegated viewer lists for a principal holding vectorsearch.acl.manage", () => {
+    const writer = accessScopeFromPrincipal({
+      userId: "worker",
+      userGroups: [],
+      source: "jwt",
+      scopes: ["vectorsearch.write", "vectorsearch.acl.manage"],
+    });
+    expect(aclForMutation(writer, undefined, undefined, delegated)).toEqual({
+      allowedUsers: ["viewer-1", "viewer-2"],
+      allowedGroups: ["client:acme"],
+    });
+  });
+
+  it("normalizes delegated lists (trim, drop blanks, dedupe)", () => {
+    const writer = accessScopeFromPrincipal({
+      userId: "worker",
+      userGroups: [],
+      source: "jwt",
+      scopes: ["vectorsearch.acl.manage"],
+    });
+    expect(
+      aclForMutation(writer, undefined, undefined, {
+        users: [" bob ", "", "alice", "bob"],
+        groups: [" legal ", "legal"],
+      }),
+    ).toEqual({ allowedUsers: ["alice", "bob"], allowedGroups: ["legal"] });
+  });
+
+  it("ignores delegated lists for a principal without the manage scope", () => {
+    const user = accessScopeFromPrincipal({
+      userId: "alice",
+      userGroups: ["legal"],
+      source: "jwt",
+      scopes: ["vectorsearch.write"],
+    });
+    expect(aclForMutation(user, undefined, undefined, delegated)).toEqual({
+      allowedUsers: ["alice"],
+      allowedGroups: ["legal"],
+    });
+  });
+
+  it("honors delegated lists for a service credential on a new collection", () => {
+    const service = accessScopeFromPrincipal({ userId: undefined, userGroups: undefined, source: "service" });
+    expect(aclForMutation(service, undefined, undefined, delegated)).toEqual({
+      allowedUsers: ["viewer-1", "viewer-2"],
+      allowedGroups: ["client:acme"],
+    });
+  });
+
+  it("ignores empty delegated lists and keeps the principal-derived ACL", () => {
+    const writer = accessScopeFromPrincipal({
+      userId: "worker",
+      userGroups: [],
+      source: "jwt",
+      scopes: ["vectorsearch.acl.manage"],
+    });
+    expect(aclForMutation(writer, undefined, undefined, { users: ["  "], groups: [] })).toEqual({
+      allowedUsers: ["worker"],
+      allowedGroups: [],
+    });
+  });
+
+  it("lets an explicit private owner win over delegated lists", () => {
+    const writer = accessScopeFromPrincipal({
+      userId: "worker",
+      userGroups: [],
+      source: "jwt",
+      scopes: ["vectorsearch.acl.manage"],
+    });
+    expect(aclForMutation(writer, undefined, "worker", delegated)).toEqual({
+      allowedUsers: ["worker"],
+      allowedGroups: [],
+    });
+  });
+});
+
+describe("requireCollectionAccess unknown-collection typing", () => {
+  const missingClient = () =>
+    ({
+      getCollectionAcl: async () => ({
+        ok: false as const,
+        error: { code: "COLLECTION_NOT_FOUND" as const, message: "missing" },
+      }),
+    }) as unknown as PostgresClient;
+
+  it("surfaces COLLECTION_NOT_FOUND as a typed denial for readers", async () => {
+    const user = accessScopeFromPrincipal({ userId: "alice", userGroups: [], source: "jwt" });
+    const error = await requireCollectionAccess(missingClient(), "missing", user).catch((e) => e);
+    expect(error).toBeInstanceOf(AccessDeniedError);
+    expect((error as AccessDeniedError).code).toBe("COLLECTION_NOT_FOUND");
+  });
+
+  it("returns an empty ACL for a bypass caller so first ingest can create the collection", async () => {
+    const bypass = accessScopeFromPrincipal({
+      userId: undefined,
+      userGroups: undefined,
+      tenantId: "tenant-a",
+      source: "anonymous",
+      authorizationBypass: true,
+    });
+    await expect(requireCollectionAccess(missingClient(), "missing", bypass)).resolves.toEqual({
+      allowedUsers: [],
+      allowedGroups: [],
+    });
+  });
+
+  it("keeps generic ACL failures as untyped denials (fail closed)", async () => {
+    const client = {
+      getCollectionAcl: async () => ({
+        ok: false as const,
+        error: { code: "DB_ERROR" as const, message: "boom" },
+      }),
+    } as unknown as PostgresClient;
+    const user = accessScopeFromPrincipal({ userId: "alice", userGroups: [], source: "jwt" });
+    const error = await requireCollectionAccess(client, "docs", user).catch((e) => e);
+    expect(error).toBeInstanceOf(AccessDeniedError);
+    expect((error as AccessDeniedError).code).not.toBe("COLLECTION_NOT_FOUND");
+  });
 });
 
 
