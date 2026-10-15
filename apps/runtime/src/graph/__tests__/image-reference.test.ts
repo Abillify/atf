@@ -343,6 +343,78 @@ describe("offloadInlineImages", () => {
     expect(JSON.stringify(result.messages)).toContain("img-1");
   });
 
+  test("offloads a bare-base64 MCP image part (data + mimeType, no data: URL)", () => {
+    const { registry } = registryWith();
+    const bytes = pngBytes(8);
+    const base64 = Buffer.from(bytes).toString("base64");
+    // The exact shape MCP image content arrives in: {type, data, mimeType}
+    // with raw base64 on `data` and no `data:<mime>;base64,` prefix.
+    const messages = [
+      messageWithImage({ type: "image", data: base64, mimeType: "image/png" }),
+    ];
+    const result = offloadInlineImages(messages, registry);
+    expect(result.offloaded).toBe(1);
+    expect(result.unresolved).toBe(0);
+    expect(result.refs).toEqual(["img-1"]);
+    expect(result.bytesRemoved).toBe(bytes.byteLength);
+    const serialized = JSON.stringify(result.messages);
+    expect(serialized).not.toContain(base64);
+    expect(serialized).toContain("img-1");
+    expect(serialized).toContain("image/png");
+    const parked = registry.resolve("img-1");
+    expect(parked).toBeDefined();
+    expect(Buffer.from(parked?.data ?? []).toString("base64")).toBe(base64);
+  });
+
+  test("offloads a bare-base64 image nested in an MCP tool result", () => {
+    const { registry } = registryWith();
+    const base64 = Buffer.from(pngBytes(9)).toString("base64");
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-asset",
+            toolName: "vectorsearch__get_asset",
+            output: {
+              type: "json",
+              value: [
+                { type: "text", text: '{"asset_id":"a1"}' },
+                { type: "image", data: base64, mimeType: "image/png" },
+              ],
+            },
+          },
+        ],
+      } as unknown as ModelMessage,
+    ];
+    const result = offloadInlineImages(messages, registry);
+    expect(result.offloaded).toBe(1);
+    expect(result.unresolved).toBe(0);
+    expect(JSON.stringify(result.messages)).not.toContain(base64);
+    expect(registry.resolve("img-1")).toBeDefined();
+  });
+
+  test("does not mistake a non-base64 string on data for image bytes", () => {
+    const { registry } = registryWith();
+    // A url/image string without data: prefix stays remote (vision guard), and
+    // a `data` string that is not valid base64 must not be parked either.
+    const remote = messageWithImage({
+      type: "image",
+      url: "https://example.test/x.png",
+      mimeType: "image/png",
+    });
+    const malformed = messageWithImage({
+      type: "image",
+      data: "not base64 at all !!",
+      mimeType: "image/png",
+    });
+    const result = offloadInlineImages([remote, malformed], registry);
+    expect(result.offloaded).toBe(0);
+    expect(result.unresolved).toBe(2);
+    expect(registry.list()).toHaveLength(0);
+  });
+
   test("keeps a remote image untouched so the vision guard still applies", () => {
     const { registry } = registryWith();
     const message = messageWithImage({

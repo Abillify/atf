@@ -329,15 +329,21 @@ function isImagePart(part: Record<string, unknown>): boolean {
 
 /**
  * The bytes behind an image part, in whichever shape it arrives: a `data:` URL
- * string, a WHATWG `URL` (what `coreContentToModelMessages` builds), or raw
- * bytes. `bytes` is absent when the part points somewhere remote — there is
- * nothing to park, so callers must leave the part alone.
+ * string, a WHATWG `URL` (what `coreContentToModelMessages` builds), raw bytes,
+ * or a bare base64 payload on `data` as MCP image content delivers it
+ * (`{type:"image", data:"iVBOR…", mimeType:"image/png"}`, no `data:` prefix).
+ * `bytes` is absent when the part points somewhere remote — there is nothing to
+ * park, so callers must leave the part alone.
  */
 function imagePayloadOf(
   part: Record<string, unknown>,
 ): { bytes: Uint8Array; mediaType: string } | undefined {
   const mediaType =
-    typeof part.mediaType === "string" ? part.mediaType : "image";
+    typeof part.mediaType === "string"
+      ? part.mediaType
+      : typeof part.mimeType === "string"
+        ? part.mimeType
+        : "image";
   const raw = part.data ?? part.image ?? part.url;
   let encoded: string | undefined;
   if (typeof raw === "string") encoded = raw;
@@ -345,7 +351,17 @@ function imagePayloadOf(
   else if (raw instanceof Uint8Array) {
     return { bytes: raw, mediaType: mediaType || "image" };
   }
-  if (encoded === undefined || !encoded.startsWith("data:")) return undefined;
+  if (encoded === undefined) return undefined;
+  if (!encoded.startsWith("data:")) {
+    // Bare base64 (the MCP image-content shape): only the `data` field can be
+    // payload bytes — `url`/`image` strings are remote references and must stay
+    // untouched. Requires an image MIME type and a strictly decodable alphabet,
+    // so an `https://…` string can never be mistaken for base64.
+    if (raw !== part.data || !isImageMediaType(mediaType)) return undefined;
+    const bytes = decodeBase64Bytes(encoded);
+    if (bytes === undefined) return undefined;
+    return { bytes, mediaType };
+  }
   const decoded = decodeImageDataUrl(encoded);
   if (decoded === undefined) return undefined;
   return { bytes: decoded.data, mediaType: decoded.mediaType };
