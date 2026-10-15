@@ -11,16 +11,29 @@
  * brittle to lower-severity, content-dependent findings.)
  */
 
+import { existsSync, readdirSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test, expect } from "@playwright/test";
 import AxeBuilder from "@axe-core/playwright";
 import { mockBackend, setTestToken } from "./helpers/mock-backend";
 
-const ROUTES = [
-  "/studio", "/rag", "/memory", "/eval", "/optimizer", "/canary", "/autopilot",
-  "/graph", "/traces", "/history", "/approvals", "/shadow", "/security",
-  "/flows", "/flow-diff", "/triggers", "/assistants", "/providers", "/guardrails", "/pii-vault", "/compliance", "/mcp",
-  "/cost", "/limits", "/tenants", "/models", "/jobs",
-];
+/**
+ * Every dashboard page, read from the app directory so the sweep cannot drift
+ * from the routes that actually ship (a hard-coded list kept scanning a
+ * removed page — its 404 also has a <main>, so the check passed silently).
+ */
+const DASHBOARD_DIR = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "src",
+  "app",
+  "(dashboard)",
+);
+const ROUTES = readdirSync(DASHBOARD_DIR, { withFileTypes: true })
+  .filter((entry) => entry.isDirectory() && existsSync(join(DASHBOARD_DIR, entry.name, "page.tsx")))
+  .map((entry) => `/${entry.name}`)
+  .sort();
 
 test.describe("Full-page a11y sweep", () => {
   test.beforeEach(async ({ page }) => {
@@ -29,9 +42,18 @@ test.describe("Full-page a11y sweep", () => {
     await setTestToken(page);
   });
 
+  test("covers the dashboard pages", () => {
+    for (const route of ["/studio", "/graph", "/security", "/compliance", "/provider-testing"]) {
+      expect(ROUTES).toContain(route);
+    }
+    expect(ROUTES).not.toContain("/rag");
+  });
+
   for (const route of ROUTES) {
     test(`no critical/serious axe violations: ${route}`, async ({ page }) => {
-      await page.goto(route);
+      const res = await page.goto(route);
+      // A missing page renders a 404 that still has a <main>.
+      expect(res?.status(), `${route} must exist`).toBeLessThan(400);
       await expect(page.getByRole("main")).toBeVisible();
       // let client data settle into empty/error/loaded state
       await page.waitForTimeout(400);
