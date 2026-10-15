@@ -20,6 +20,7 @@ import {
   backendOrigin,
   resolveSession,
 } from "../../../../lib/bff-session";
+import { isSameOriginRequest } from "../../../../lib/same-origin";
 import { controlSessionMode } from "../../../../lib/session-mode";
 
 export const dynamic = "force-dynamic";
@@ -76,6 +77,18 @@ async function proxy(request: Request, routeParams: RouteParams): Promise<Respon
   );
   if (targetPath === null) {
     return new Response("Not found", { status: 404 });
+  }
+
+  // CSRF / cross-site read guard: the session cookie authenticates every
+  // request it rides on, so only this origin may use it. SameSite=Strict is
+  // the first line; this check is the second, and it also covers browsers or
+  // proxies that relax cookie attributes. Non-browser callers send neither
+  // header and cannot hold the operator's cookie in the first place.
+  if (!isSameOriginRequest(request)) {
+    return new Response(JSON.stringify({ error: "cross_site_request" }), {
+      status: 403,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 
   const session = await resolveSession(request);

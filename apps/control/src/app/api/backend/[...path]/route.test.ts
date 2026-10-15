@@ -237,3 +237,46 @@ describe("backend proxy — forwarding", () => {
     expect(seenBody).toContain("hi");
   });
 });
+
+describe("backend proxy — cross-site guard", () => {
+  test("403 for a cross-site request carrying the session cookie — backend never contacted", async () => {
+    const fetchFn = vi.fn();
+    vi.stubGlobal("fetch", fetchFn);
+    const variants: Record<string, string>[] = [
+      { "sec-fetch-site": "cross-site" },
+      { "sec-fetch-site": "same-site" },
+      { origin: "https://evil.example" },
+      { origin: "null" },
+    ];
+    for (const headers of variants) {
+      const res = await POST(
+        new Request("http://control.local/api/backend/admin/tenants", {
+          method: "POST",
+          headers: { cookie: await cookieHeader(), "content-type": "application/json", ...headers },
+          body: "{}",
+        }),
+        paramsFor("admin", "tenants"),
+      );
+      expect(res.status).toBe(403);
+    }
+    expect(fetchFn).not.toHaveBeenCalled();
+  });
+
+  test("a same-origin request passes the guard", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => Response.json({ ok: true })),
+    );
+    const res = await GET(
+      new Request("http://control.local/api/backend/flows", {
+        headers: {
+          cookie: await cookieHeader(),
+          "sec-fetch-site": "same-origin",
+          origin: "http://control.local",
+        },
+      }),
+      paramsFor("flows"),
+    );
+    expect(res.status).toBe(200);
+  });
+});
