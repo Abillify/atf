@@ -87,6 +87,16 @@ function fakeVerifier(claims: Record<string, unknown>): JwtVerifier {
   };
 }
 
+const ISSUER = "https://idp.example.test/";
+/** The default DSAR caller: verified email, tenant claim. */
+const CALLER = {
+  iss: ISSUER,
+  sub: "u-1",
+  email: "u@x.de",
+  email_verified: true,
+  tenant_id: "acme",
+};
+
 /** Mount the compliance router with a DSAR caller identity in context. */
 function buildDsarApp(opts: {
   targets?: RetentionTarget[];
@@ -106,7 +116,7 @@ function buildDsarApp(opts: {
       retention,
       operatorAuth: adminAuth,
       auditLog,
-      jwtVerifier: fakeVerifier(opts.claims ?? { sub: "u-1", email: "u@x.de", tenant_id: "acme" }),
+      jwtVerifier: fakeVerifier(opts.claims ?? CALLER),
       ...(opts.orchestrator !== undefined ? { erasureOrchestrator: opts.orchestrator } : {}),
     }),
   );
@@ -244,6 +254,61 @@ describe("DELETE /v1/me/data — honest per-store DSAR response (Req 2.10)", () 
     const res = await app.request("/v1/me/data", deleteReq);
     expect(res.status).toBe(401);
   });
+
+  it("401 without iss or sub — an email alone never identifies the caller", async () => {
+    for (const claims of [
+      { sub: "u-1", email: "u@x.de", email_verified: true, tenant_id: "acme" },
+      { iss: ISSUER, email: "u@x.de", email_verified: true, tenant_id: "acme" },
+    ]) {
+      const target = new FakeTarget("snapshots");
+      const { app } = buildDsarApp({ targets: [target], claims });
+      const res = await app.request("/v1/me/data", deleteReq);
+      expect(res.status).toBe(401);
+      expect(target.subjects).toEqual([]);
+    }
+  });
+
+  it("ignores an unverified email: only sub identifies the caller", async () => {
+    for (const email_verified of [undefined, false, "true"]) {
+      const target = new FakeTarget("snapshots");
+      const { app } = buildDsarApp({
+        targets: [target],
+        claims: { ...CALLER, email: "victim@x.de", email_verified },
+      });
+      const res = await app.request("/v1/me/data", deleteReq);
+      expect(res.status).toBe(200);
+      expect(target.subjects).toEqual([{ userId: "u-1", tenantId: "acme" }]);
+    }
+  });
+
+  it("uses a verified email as an additional identifier", async () => {
+    const target = new FakeTarget("snapshots");
+    const { app } = buildDsarApp({ targets: [target] });
+    await app.request("/v1/me/data", deleteReq);
+    expect(target.subjects).toEqual([
+      { userId: "u-1", userAliases: ["u@x.de"], tenantId: "acme" },
+    ]);
+  });
+
+  it("403 TENANT_REQUIRED without a tenant claim — never erases across tenants", async () => {
+    const target = new FakeTarget("snapshots");
+    const { tenant_id: _omit, ...noTenant } = CALLER;
+    void _omit;
+    const { app, auditLog } = buildDsarApp({ targets: [target], claims: noTenant });
+    const res = await app.request("/v1/me/data", deleteReq);
+    expect(res.status).toBe(403);
+    const body = (await res.json()) as { error: { code: string } };
+    expect(body.error.code).toBe("TENANT_REQUIRED");
+    expect(target.subjects).toEqual([]);
+    expect(await auditLog.list()).toEqual([]);
+  });
+
+  it("records the issuer in the audit entry", async () => {
+    const { app, auditLog } = buildDsarApp({ targets: [new FakeTarget("snapshots")] });
+    await app.request("/v1/me/data", deleteReq);
+    const [entry] = await auditLog.list();
+    expect(entry?.details).toMatchObject({ issuer: ISSUER });
+  });
 });
 
 describe("GET /v1/me/data/erasures/{id} — signed Erasure_Receipt (Req 2.11)", () => {
@@ -302,7 +367,7 @@ describe("GET /v1/me/data/erasures/{id} — signed Erasure_Receipt (Req 2.11)", 
     const other = buildDsarApp({
       targets: [],
       orchestrator: orch,
-      claims: { sub: "u-1", email: "u@x.de", tenant_id: "evil" },
+      claims: { ...CALLER, tenant_id: "evil" },
     });
     const res = await other.app.request(`/v1/me/data/erasures/${receiptId}`, {
       headers: { Authorization: "Bearer dsar-token" },
@@ -315,7 +380,7 @@ describe("GET /v1/me/data/erasures/{id} — signed Erasure_Receipt (Req 2.11)", 
     const other = buildDsarApp({
       targets: [],
       orchestrator: orch,
-      claims: { sub: "u-2", email: "other@x.de", tenant_id: "acme" },
+      claims: { ...CALLER, sub: "u-2", email: "other@x.de" },
     });
     const res = await other.app.request(`/v1/me/data/erasures/${receiptId}`, {
       headers: { Authorization: "Bearer dsar-token" },

@@ -30,6 +30,13 @@ the `POST /v1/erasure` endpoints listed in `ERASURE_TARGETS`
 (`[{service, url, tokenEnv}]`), with a per-call timeout and up to three
 attempts with exponential backoff.
 
+The self-service subject comes from the verified token only: `iss` and
+`sub` are required and `sub` is the key; `email` counts as an identifier
+only with `email_verified: true`, because several issuers can be trusted at
+once and many IdPs let users choose their email. A token without a tenant
+claim is refused (403 `TENANT_REQUIRED`) — self-service never erases across
+tenants; that remains an operator action.
+
 Each service implements `POST /v1/erasure` for its own stores only and
 requires a dedicated scope — erasure is not implied by general admin
 access: Search `vectorsearch.erasure`, Extract `extract.erasure`, Gate

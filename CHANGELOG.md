@@ -139,6 +139,14 @@ releases:
   runs, so agentic RAG flows scored systematically worse there. A tool missing
   from `SEARCH_TOOL_ANNOTATIONS` now fails Search at startup.
 
+- **DSAR self-service identity hardened** (`DELETE /v1/me/data`): the
+  erasure subject is the verified token's `sub` and requires `iss`; `email`
+  is used only with `email_verified: true` (an unverified `email` claim from
+  any trusted issuer could otherwise name — and erase — another user). A
+  token without a tenant claim is refused with 403 `TENANT_REQUIRED` instead
+  of erasing the caller's identifiers in every tenant. The issuer is recorded
+  in the audit entry. Callers whose tokens lack `iss` now get 401.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

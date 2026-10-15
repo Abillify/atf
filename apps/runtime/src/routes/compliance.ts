@@ -569,8 +569,20 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
 
   const dsarRouter = new Hono<AuthContext>();
 
-  /** Extracts the calling user's identity from their JWT. */
-  const resolveCallerSubject = (ctx: Context<AuthContext>): ErasureSubject | null => {
+  /**
+   * The calling user's erasure identity, from a VERIFIED JWT only.
+   *
+   * The key is the token's `sub` under its `iss`: both must be present. Several
+   * issuers can be trusted at once (JWT_ADDITIONAL_ISSUERS, token_or_oidc) and
+   * many IdPs let users set their own email, so `email` is an identifier only
+   * when the token also says `email_verified: true` — otherwise a token whose
+   * `email` names someone else would erase that person's data. Stores record
+   * the bare `sub` (not the issuer), so `iss` is required and audited but
+   * cannot narrow the store match itself.
+   */
+  const resolveCallerSubject = (
+    ctx: Context<AuthContext>,
+  ): { subject: ErasureSubject; issuer: string } | null => {
     const token = ctx.get(TOKEN_KEY as keyof AuthContext["Variables"]) as
       | string
       | undefined;
@@ -579,57 +591,54 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
     // Req 7.4: DSAR subjects act on erasure data, so they must come from a
     // verified credential only. `decodePayload` is an unverified base64 read;
     // with a disabled (Noop) verifier the payload is attacker-chosen and the
-    // request resolves to no subject instead of a forged one.
+    // request resolves to no subject instead of a forged one. (The /v1/* auth
+    // middleware has already verified this token's signature.)
     const claims =
       jwtVerifier?.enabled === true ? jwtVerifier.decodePayload(token) : null;
+    const nonEmpty = (value: unknown): string | undefined =>
+      typeof value === "string" && value.trim() !== "" ? value.trim() : undefined;
+    const issuer = nonEmpty(claims?.iss);
+    const sub = nonEmpty(claims?.sub);
+    if (issuer === undefined || sub === undefined) return null;
     const email =
-      typeof claims?.email === "string" ? (claims.email as string) : undefined;
-    const sub =
-      typeof claims?.sub === "string" ? (claims.sub as string) : undefined;
-    const clientId =
-      typeof claims?.client_id === "string"
-        ? (claims.client_id as string)
-        : undefined;
-
-    const userId = email ?? sub;
-    if (userId === undefined) return null;
-    // Stores attribute rows under whichever identifier the request carried
-    // (the usage log keeps the JWT `sub`), so both name the same person.
-    const userAliases =
-      email !== undefined && sub !== undefined && sub !== email ? [sub] : [];
+      claims?.email_verified === true ? nonEmpty(claims?.email) : undefined;
+    const clientId = nonEmpty(claims?.client_id);
 
     // Same tenant-claim precedence as the auth middleware (tenant_id →
     // client_id → tid) so the DSAR subject matches the authenticated tenant.
     const tenantId = resolveTenantClaim(claims) ?? clientId;
 
     return {
-      userId,
-      ...(userAliases.length > 0 ? { userAliases } : {}),
-      ...(tenantId !== undefined ? { tenantId } : {}),
+      issuer,
+      subject: {
+        userId: sub,
+        ...(email !== undefined && email !== sub ? { userAliases: [email] } : {}),
+        ...(tenantId !== undefined ? { tenantId } : {}),
+      },
     };
   };
+
+  const noIdentity = (ctx: Context) =>
+    ctx.json(
+      {
+        error: {
+          message:
+            "Cannot determine your identity from the provided token. " +
+            "A verified token with 'iss' and 'sub' claims is required.",
+          type: "authentication_error",
+        },
+      },
+      401,
+    );
 
   // GET /v1/me/data — summary of data held for the calling identity.
   // Returns capability metadata per retention target (what is stored and for
   // how long). Does NOT return the actual data rows — that requires a bespoke
   // export per store, which operators can implement via custom RetentionTargets.
   dsarRouter.get("/v1/me/data", async (ctx) => {
-    const subject = resolveCallerSubject(
-      ctx as unknown as Context<AuthContext>,
-    );
-    if (subject === null) {
-      return ctx.json(
-        {
-          error: {
-            message:
-              "Cannot determine your identity from the provided token. " +
-              "Ensure your token contains an 'email' or 'sub' claim.",
-            type: "authentication_error",
-          },
-        },
-        401,
-      );
-    }
+    const caller = resolveCallerSubject(ctx as unknown as Context<AuthContext>);
+    if (caller === null) return noIdentity(ctx);
+    const { subject } = caller;
 
     const targets = retention.describeTargets();
     return ctx.json({
@@ -658,39 +667,42 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
 
   // DELETE /v1/me/data — GDPR Art.17 right-to-erasure for the calling identity.
   dsarRouter.delete("/v1/me/data", async (ctx) => {
-    const subject = resolveCallerSubject(
-      ctx as unknown as Context<AuthContext>,
-    );
-    if (subject === null) {
+    const caller = resolveCallerSubject(ctx as unknown as Context<AuthContext>);
+    if (caller === null) return noIdentity(ctx);
+    const { subject, issuer } = caller;
+    // Without a tenant claim the erasure would match the caller's identifiers
+    // in every tenant. Self-service never erases across tenants.
+    if (subject.tenantId === undefined) {
       return ctx.json(
         {
           error: {
-            message: "Cannot determine your identity from the provided token.",
-            type: "authentication_error",
+            code: "TENANT_REQUIRED",
+            message:
+              "Self-service erasure requires a tenant claim in your token; " +
+              "ask the platform operator to erase across tenants.",
+            type: "permission_error",
           },
         },
-        401,
+        403,
       );
     }
 
     // Fan out through the orchestrator when configured (Req 2.9): remote
     // ERASURE_TARGETS services participate and the operation is persisted
-    // for idempotent replay. Without a tenant claim the contract request
-    // cannot be built — degrade to the local-only sweep, still honest.
+    // for idempotent replay.
     let requestId: string | undefined;
     let results: ErasureStoreResult[];
     let status: ErasureOperationStatus;
-    if (
-      deps.erasureOrchestrator !== undefined &&
-      subject.tenantId !== undefined
-    ) {
+    const verifiedEmail = subject.userAliases?.[0];
+    if (deps.erasureOrchestrator !== undefined) {
       const request: ErasureRequest = {
         requestId: randomUUID(),
         tenantId: subject.tenantId,
         scope: "subject",
         subject: {
           userId: subject.userId ?? "",
-          externalIds: [...(subject.userAliases ?? [])],
+          ...(verifiedEmail !== undefined ? { email: verifiedEmail } : {}),
+          externalIds: [],
         },
         dryRun: false,
       };
@@ -716,6 +728,7 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
           outcome: status === "complete" ? "success" : "error",
           details: {
             subject,
+            issuer,
             erased,
             status,
             ...(requestId !== undefined ? { requestId } : {}),
@@ -757,20 +770,9 @@ export function createComplianceRouter(deps: ComplianceRouterDeps): Hono {
   // subject hash derived from the caller's own identifiers match are
   // returned; the receipt itself never contains cleartext personal data.
   dsarRouter.get("/v1/me/data/erasures/:id", async (ctx) => {
-    const subject = resolveCallerSubject(
-      ctx as unknown as Context<AuthContext>,
-    );
-    if (subject === null) {
-      return ctx.json(
-        {
-          error: {
-            message: "Cannot determine your identity from the provided token.",
-            type: "authentication_error",
-          },
-        },
-        401,
-      );
-    }
+    const caller = resolveCallerSubject(ctx as unknown as Context<AuthContext>);
+    if (caller === null) return noIdentity(ctx);
+    const { subject } = caller;
     if (
       deps.erasureOrchestrator === undefined ||
       subject.tenantId === undefined
