@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { afterEach, describe, expect, it } from "bun:test";
-import { logger, setLogLevel, isDebugEnabled } from "../../src/logger.ts";
+import { logger, setLogLevel, isDebugEnabled, digestForLog } from "../../src/logger.ts";
 
 /** Capture everything written to process.stderr during `fn`. */
 function captureStderr(fn: () => void): string {
@@ -55,5 +55,36 @@ describe("logger", () => {
     const out = captureStderr(() => logger.info("msg", { tool: "x", n: 3 }));
     expect(out).toContain('"tool":"x"');
     expect(out).toContain('"n":3');
+  });
+});
+
+describe("logger redaction", () => {
+  const JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1LTEiLCJyb2xlIjoiYWRtaW4ifQ.c2lnbmF0dXJlX2J5dGVz";
+
+  it("scrubs credential-shaped values from the msg text", () => {
+    setLogLevel("info");
+    const out = captureStderr(() =>
+      logger.info(`router user=u status=ok Authorization: Bearer abcdefghijklmnop jwt=${JWT}`),
+    );
+    expect(out).not.toContain("abcdefghijklmnop");
+    expect(out).not.toContain(JWT);
+    expect(out).toContain("[redacted]");
+  });
+
+  it("scrubs credential-shaped values nested in the context", () => {
+    setLogLevel("info");
+    const out = captureStderr(() =>
+      logger.info("ctx", { note: `Bearer abcdefghijklmnop`, count: 12, password: "hunter2" }),
+    );
+    expect(out).not.toContain("abcdefghijklmnop");
+    expect(out).not.toContain("hunter2");
+    expect(out).toContain('"count":12');
+  });
+
+  it("digestForLog is a short stable handle that hides the value", () => {
+    const d = digestForLog("SELECT secret-ish binding");
+    expect(d).toMatch(/^[0-9a-f]{12}$/);
+    expect(d).toBe(digestForLog("SELECT secret-ish binding"));
+    expect(d).not.toContain("SELECT");
   });
 });

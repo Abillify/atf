@@ -6,7 +6,7 @@ import { loadConfigAsync } from "./config/loader.ts";
 import { checkProductionReadiness } from "./config/prod-gate.ts";
 import { buildApp } from "./app.ts";
 import { initTracing, shutdownTracing } from "./observability/tracing.ts";
-import { logger, isJsonEnabled } from "./logger.ts";
+import { logger, isJsonEnabled, digestForLog } from "./logger.ts";
 
 // Colorize each sessionId consistently so related lines from one session are
 // visually grouped when scanning a TTY, without merging or reordering lines.
@@ -174,7 +174,10 @@ async function main() {
         );
         // Log the full system prompt only when it changes, and only at debug.
         if (typeof event.meta?.prompt === "string") {
-          logger.debug("system_prompt_updated", { length: event.meta.prompt.length, prompt: event.meta.prompt });
+          logger.debug("system_prompt_updated", {
+            length: event.meta.prompt.length,
+            digest: digestForLog(event.meta.prompt),
+          });
         }
         break;
       case "error":

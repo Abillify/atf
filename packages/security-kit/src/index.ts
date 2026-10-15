@@ -172,6 +172,7 @@ export {
 } from "./auth/token-exchange.ts";
 export {
   LOG_REDACTED,
+  hashIdentifier,
   isSensitiveLogKey,
   pinoLogRedaction,
   redactLogFields,

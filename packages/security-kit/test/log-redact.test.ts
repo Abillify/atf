@@ -4,6 +4,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   LOG_REDACTED,
+  hashIdentifier,
   isSensitiveLogKey,
   redactLogFields,
   redactLogString,
@@ -64,5 +65,23 @@ describe("redactLogFields", () => {
 
   test("redactLogString leaves ordinary text alone", () => {
     expect(redactLogString("Flow helpdesk finished in 120 ms")).toBe("Flow helpdesk finished in 120 ms");
+  });
+});
+describe("hashIdentifier", () => {
+  test("12 hex chars, stable across case and whitespace, differs per identifier", () => {
+    const h = hashIdentifier("Alice@Example.test");
+    expect(h).toMatch(/^[0-9a-f]{12}$/);
+    expect(hashIdentifier("  alice@example.test ")).toBe(h);
+    expect(hashIdentifier("bob@example.test")).not.toBe(h);
+    expect(h).not.toContain("alice");
+  });
+  test("missing or blank input yields undefined", () => {
+    expect(hashIdentifier(undefined)).toBeUndefined();
+    expect(hashIdentifier(null)).toBeUndefined();
+    expect(hashIdentifier("   ")).toBeUndefined();
+  });
+  test("email stays a plain log key (hashing happens at the call site)", () => {
+    expect(isSensitiveLogKey("email")).toBe(false);
+    expect(redactLogFields({ email: "a@b.test" })).toEqual({ email: "a@b.test" });
   });
 });

@@ -36,6 +36,7 @@ import { SignJWT, createRemoteJWKSet, jwtVerify, type JWTPayload } from "jose";
 import {
   base64UrlEncode,
   createDiscoveryClient,
+  hashIdentifier,
   safeEqual,
 } from "@atf/security-kit";
 import type { Logger } from "pino";
@@ -269,7 +270,10 @@ export function createOidcProvider(
         return;
       }
       if (!isEmailAllowed(email, config)) {
-        log.warn({ email }, "OIDC login rejected: email not allowed");
+        log.warn(
+          { emailHash: hashIdentifier(email) },
+          "OIDC login rejected: email not allowed",
+        );
         sendAuthError(res, "Dieses Konto ist nicht zur Anmeldung berechtigt");
         return;
       }
@@ -305,7 +309,10 @@ export function createOidcProvider(
         typeof rt === "string" && rt.startsWith("/") && !rt.startsWith("//")
           ? rt
           : "/";
-      log.info({ sub: subject, email }, "OIDC login successful");
+      log.info(
+        { sub: subject, emailHash: hashIdentifier(email) },
+        "OIDC login successful",
+      );
       res.redirect(returnTo);
     } catch (err) {
       log.error({ err }, "OIDC callback failed");

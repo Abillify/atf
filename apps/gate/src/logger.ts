@@ -12,6 +12,7 @@
  * All output goes to stderr so stdout stays clean for any pipe consumers.
  */
 
+import { hashIdentifier, redactLogFields, redactLogString } from "@atf/security-kit";
 import { DEFAULT_REDACT_OPTIONS, redact } from "./observability/redact.ts";
 
 export type LogLevel = "error" | "warn" | "info" | "debug";
@@ -39,6 +40,14 @@ export function isJsonEnabled(): boolean {
   return useJson;
 }
 
+/**
+ * Short digest for logging that a value (query bindings, a system prompt)
+ * changed or repeated without writing the value itself.
+ */
+export function digestForLog(value: string): string {
+  return hashIdentifier(value) ?? "-";
+}
+
 function ts(): string {
   return new Date().toISOString();
 }
@@ -50,16 +59,27 @@ function ts(): string {
  * added constantly and by many hands, so relying on each author to remember
  * which field is sensitive is the failure mode this closes. Set
  * MCPGATE_LOG_REDACT=0 to disable (for local debugging only).
+ *
+ * Two layers: the gate's own key denylist (tool-argument style names such as
+ * `iban` or `tax_id`), then the shared security-kit redaction, which also
+ * scrubs JWT, Bearer and API-key shaped values inside any string. The `msg`
+ * text goes through the shared string scrub too, because several call sites
+ * interpolate event messages into it.
  */
 const redactEnabled = process.env.MCPGATE_LOG_REDACT !== "0";
 
 function safeContext(context?: Record<string, unknown>): Record<string, unknown> | undefined {
   if (context === undefined) return undefined;
   if (!redactEnabled) return context;
-  return redact(context, DEFAULT_REDACT_OPTIONS) as Record<string, unknown>;
+  return redactLogFields(redact(context, DEFAULT_REDACT_OPTIONS) as Record<string, unknown>);
 }
 
-function emit(level: string, msg: string, context?: Record<string, unknown>): void {
+function safeMessage(msg: string): string {
+  return redactEnabled ? redactLogString(msg) : msg;
+}
+
+function emit(level: string, rawMsg: string, context?: Record<string, unknown>): void {
+  const msg = safeMessage(rawMsg);
   const safe = safeContext(context);
   if (useJson) {
     const line = JSON.stringify({ ts: ts(), level, msg, ...safe });

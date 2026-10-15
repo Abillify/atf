@@ -23,6 +23,8 @@
  * call site (see docs/operations-and-retrieval.md, "Data minimisation").
  */
 
+import { createHash } from "node:crypto";
+
 export const LOG_REDACTED = "[redacted]";
 
 /** Canonical substrings that mark a field as a credential. */
@@ -69,6 +71,25 @@ function canonical(key: string): string {
 export function isSensitiveLogKey(key: string): boolean {
   const k = canonical(key);
   return SENSITIVE_EXACT.has(k) || SENSITIVE_FRAGMENTS.some((f) => k.includes(f));
+}
+
+/**
+ * Stable, non-reversible log handle for a personal identifier (an email, a
+ * user name): the first 12 hex characters of its SHA-256, computed over the
+ * trimmed, lower-cased value so the same address always yields the same handle.
+ * Lets operators correlate log lines without the clear value. Returns
+ * `undefined` for a missing or blank input so it can be spread into a log
+ * entry as-is. The handle is a pseudonym, not anonymous data: keep the clear
+ * value out of the log entry as well.
+ *
+ * `email` is deliberately not a sensitive log key (it would blank audit-relevant
+ * operator logs everywhere); call sites that log one hash it with this helper.
+ */
+export function hashIdentifier(value: string | undefined | null): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "") return undefined;
+  return createHash("sha256").update(normalized).digest("hex").slice(0, 12);
 }
 
 /** Replaces credential-shaped substrings and bounds the length. */

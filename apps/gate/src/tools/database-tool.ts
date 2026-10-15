@@ -15,7 +15,7 @@ import {
   TOP_LEVEL_AUTO_LIMIT_KEYWORDS,
 } from "../db/sql-tokens.ts";
 import { renderSqlTemplate } from "../db/template.ts";
-import { logger } from "../logger.ts";
+import { digestForLog, logger } from "../logger.ts";
 import { withSpan } from "../observability/tracing.ts";
 import {
   argsFingerprint,
@@ -165,8 +165,10 @@ export class DatabaseToolExecutor implements ToolExecutor {
       tool,
       database: this.cfg.database,
       placeholders: (sql.match(/\?/g) ?? []).length,
-      // Bindings are logged at debug only — they may contain identity/PII data.
-      bindings: compiledBindings,
+      // Binding values may contain identity/PII data: log only their count and
+      // a digest so two log lines for the same query can still be correlated.
+      bindingCount: compiledBindings.length,
+      bindingsDigest: digestForLog(JSON.stringify(compiledBindings)),
     });
 
     const tDb = Date.now();

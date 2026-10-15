@@ -65,6 +65,15 @@ releases:
   `iss` equals the caller's issuer or is `NULL`, so rows written before the
   migration still match by `sub`. The orchestrator keeps the issuer for retries.
   `JWT_ADDITIONAL_ISSUERS` is documented as a platform-wide list.
+- **OIDC logs no longer contain the user's email in clear** (Search, Extract):
+  the login callback logs `emailHash`, a 12-character SHA-256 handle from the
+  new `hashIdentifier()` in `@atf/security-kit`, instead of the address.
+  `email` stays a normal log key everywhere else.
+- **Gate logger uses the shared redaction** (Gate): log context and the `msg`
+  text pass through `@atf/security-kit`, so JWT, Bearer and API-key shaped
+  values are scrubbed from interpolated messages too. `MCPGATE_LOG_REDACT=0`
+  still disables it. Debug logs of query bindings and the system prompt carry
+  only a count or length and a digest.
 - **An invalid compliance policy no longer switches enforcement off**
   (`compliance-policy.yaml`): a hot-reload of an unreadable or schema-invalid
   file keeps the last valid policy in force instead of dropping to "no

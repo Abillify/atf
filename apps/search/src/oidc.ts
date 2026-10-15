@@ -40,6 +40,7 @@ import {
 import {
   base64UrlEncode,
   createDiscoveryClient,
+  hashIdentifier,
   safeEqual,
 } from "@atf/security-kit";
 import type { OidcConfig } from "./config.js";
@@ -271,7 +272,10 @@ export function createOidcProvider(
       }
 
       if (!isEmailAllowed(email, config)) {
-        log.warn({ email }, "OIDC login rejected: email not allowed");
+        log.warn(
+          { emailHash: hashIdentifier(email) },
+          "OIDC login rejected: email not allowed",
+        );
         sendAuthError(res, "This account is not authorized to sign in");
         return;
       }
@@ -309,7 +313,10 @@ export function createOidcProvider(
         !tx["rt"].startsWith("//")
           ? tx["rt"]
           : "/";
-      log.info({ sub: subject, email }, "OIDC login successful");
+      log.info(
+        { sub: subject, emailHash: hashIdentifier(email) },
+        "OIDC login successful",
+      );
       res.redirect(rt);
     } catch (err) {
       log.error({ err }, "OIDC callback failed");
