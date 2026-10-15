@@ -19,18 +19,23 @@ export interface UseApprovalsOptions {
   token?: string;
 }
 
+/** Outcome of a decision POST; `status` is the HTTP status when one arrived. */
+export interface ApprovalDecisionResult {
+  ok: boolean;
+  status?: number;
+}
 export interface UseApprovalsResult {
   pending: PendingApproval[];
   /** Recently-resolved decisions (newest first) for the current backend. */
   resolved: ResolvedApproval[];
   isLoading: boolean;
   error: string | null;
-  /** Approve or deny a pending request. Resolves true on success. */
+  /** Approve or deny a pending request. `ok` is true on success; a 403 carries `status: 403`. */
   resolve: (
     id: string,
     approved: boolean,
     opts?: { reason?: string; by?: string },
-  ) => Promise<boolean>;
+  ) => Promise<ApprovalDecisionResult>;
   refresh: () => void;
 }
 
@@ -114,7 +119,7 @@ export function useApprovals(
       id: string,
       approved: boolean,
       opts?: { reason?: string; by?: string },
-    ): Promise<boolean> => {
+    ): Promise<ApprovalDecisionResult> => {
       const t = tokenRef.current;
       const url = `${base}/${encodeURIComponent(id)}`;
       try {
@@ -124,9 +129,9 @@ export function useApprovals(
           body: JSON.stringify({ approved, ...opts }),
         });
         setNonce((n) => n + 1); // refresh immediately
-        return res.ok;
+        return { ok: res.ok, status: res.status };
       } catch {
-        return false;
+        return { ok: false };
       }
     },
     [base],

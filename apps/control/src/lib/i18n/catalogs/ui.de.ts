@@ -1803,4 +1803,7 @@ export const uiDe: Record<keyof typeof uiEn, string> = {
   "useCanWrite.requiresRole": "Erfordert die Rolle {role}",
   "optimizePanel.runtimeCannotCheckCanvas": "Diese Runtime kann die Arbeitsfläche noch nicht prüfen. Aktualisieren Sie die Runtime oder prüfen Sie stattdessen die Live-Flows.",
   "monitoringEvents.ticketUnavailable": "Monitoring-Ticket nicht verfügbar — Token in der URL über HTTPS wird abgelehnt",
+  "approvalsPanel.decisionFailed": "Die Entscheidung konnte nicht gespeichert werden. Bitte erneut versuchen.",
+  "approvalsPanel.decisionForbidden": "Ihre Rolle darf keine Freigaben entscheiden.",
+  "controlApi.forbidden": "Ihre Rolle erlaubt diese Aktion nicht.",
 };

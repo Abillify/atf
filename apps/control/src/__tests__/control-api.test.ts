@@ -61,6 +61,15 @@ describe("control-api", () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe("/api/session");
   });
 
+  test("an empty 403 answers with the localized forbidden message", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response("", { status: 403 })));
+    await expect(json("/x")).rejects.toMatchObject({
+      name: "ControlApiError",
+      status: 403,
+      message: "Your role does not permit this action.",
+    });
+  });
+
   test("json serializes bodies, handles 204, and extracts safe API errors", async () => {
     const fetchMock = vi
       .fn()

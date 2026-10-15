@@ -1802,4 +1802,7 @@ export const uiEn = {
   "useCanWrite.requiresRole": "Requires the {role} role",
   "optimizePanel.runtimeCannotCheckCanvas": "This runtime can't check the canvas yet — update/restart the runtime, or check the Live flows instead.",
   "monitoringEvents.ticketUnavailable": "Monitoring ticket unavailable — refusing token-in-URL over HTTPS",
+  "approvalsPanel.decisionFailed": "The decision could not be saved. Please try again.",
+  "approvalsPanel.decisionForbidden": "Your role is not allowed to decide approvals.",
+  "controlApi.forbidden": "Your role does not permit this action.",
 } as const;

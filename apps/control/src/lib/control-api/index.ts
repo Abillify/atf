@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { backendUrl } from "../backend-url";
+import { translate } from "../i18n";
 
 export type ControlApiTarget = "backend" | "same-origin";
 
@@ -45,7 +46,8 @@ export function request(
 }
 
 async function errorMessage(response: Response): Promise<string> {
-  const fallback = `HTTP ${response.status}`;
+  const fallback =
+    response.status === 403 ? translate("controlApi.forbidden") : `HTTP ${response.status}`;
   let body: string;
   try {
     body = await response.text();

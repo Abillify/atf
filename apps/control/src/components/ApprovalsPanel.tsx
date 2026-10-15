@@ -14,15 +14,17 @@ export interface ApprovalsPanelProps {
   pending: PendingApproval[];
   isLoading?: boolean;
   error?: string | null;
-  // The panel awaits the call but never inspects the result, so the return
-  // type stays `void`: both `() => Promise<boolean>` (the hook) and plain
-  // void callbacks (tests) are assignable.
+  // The panel awaits the call and reads the outcome: `false` or
+  // `{ ok: false, status }` (the hook) mean the decision was not applied;
+  // plain void callbacks (tests) count as success.
   onResolve: (
     id: string,
     approved: boolean,
     opts?: { reason?: string; by?: string },
-  ) => void;
+  ) => void | boolean | DecisionOutcome | Promise<void | boolean | DecisionOutcome>;
 }
+
+type DecisionOutcome = { ok: boolean; status?: number };
 
 function age(iso: string): string {
   const ms = Date.now() - new Date(iso).getTime();
@@ -40,11 +42,23 @@ function ApprovalCard({
   onResolve: ApprovalsPanelProps["onResolve"];
 }): React.JSX.Element {
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const act = async (approved: boolean): Promise<void> => {
     setBusy(true);
+    setFailure(null);
     try {
-      await onResolve(item.id, approved, { by: "dashboard" });
+      const result = await onResolve(item.id, approved, { by: "dashboard" });
+      const outcome = typeof result === "object" && result !== null ? result : undefined;
+      if (result === false || (outcome !== undefined && !outcome.ok)) {
+        setFailure(
+          translate(
+            outcome?.status === 403 ? "approvalsPanel.decisionForbidden" : "approvalsPanel.decisionFailed",
+          ),
+        );
+      }
+    } catch {
+      setFailure(translate("approvalsPanel.decisionFailed"));
     } finally {
       setBusy(false);
     }
@@ -101,6 +115,11 @@ function ApprovalCard({
           </div>
         </RequireRole>
       </div>
+      {failure !== null && (
+        <p role="alert" className="mt-3 text-xs text-danger">
+          {failure}
+        </p>
+      )}
       {Object.keys(item.args).length > 0 && (
         <pre className="mt-3 max-h-40 overflow-auto rounded bg-card/70 p-2 text-xs text-foreground">
           {JSON.stringify(item.args, null, 2)}

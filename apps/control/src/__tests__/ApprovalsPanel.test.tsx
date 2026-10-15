@@ -77,6 +77,39 @@ describe("ApprovalsPanel", () => {
     expect(onResolve).toHaveBeenCalledWith("ap-1", false, expect.anything());
   });
 
+  test("shows a role-specific message when the decision is answered with 403", async () => {
+    const onResolve = vi.fn().mockResolvedValue({ ok: false, status: 403 });
+    render(<ApprovalsPanel pending={[approval()]} onResolve={onResolve} />);
+    fireEvent.click(screen.getByText("Approve"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Your role is not allowed to decide approvals.",
+    );
+  });
+
+  test("shows a generic message when the decision fails", async () => {
+    const onResolve = vi.fn().mockResolvedValue({ ok: false, status: 500 });
+    render(<ApprovalsPanel pending={[approval()]} onResolve={onResolve} />);
+    fireEvent.click(screen.getByText("Deny"));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "The decision could not be saved. Please try again.",
+    );
+  });
+
+  test("a failed request (false or a thrown error) is reported, success clears it", async () => {
+    const onResolve = vi
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockRejectedValueOnce(new Error("boom"))
+      .mockResolvedValueOnce({ ok: true, status: 200 });
+    render(<ApprovalsPanel pending={[approval()]} onResolve={onResolve} />);
+    fireEvent.click(screen.getByText("Approve"));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Approve"));
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    fireEvent.click(screen.getByText("Approve"));
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
   test("shows the pending count", () => {
     render(
       <ApprovalsPanel

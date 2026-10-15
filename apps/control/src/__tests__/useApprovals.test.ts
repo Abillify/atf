@@ -52,7 +52,7 @@ describe("useApprovals", () => {
     await waitFor(() => expect(fetchMock).toHaveBeenCalled());
 
     const ok = await result.current.resolve("ap-1", true, { by: "alice" });
-    expect(ok).toBe(true);
+    expect(ok.ok).toBe(true);
 
     const postCall = fetchMock.mock.calls.find(
       (c) => (c[1] as RequestInit | undefined)?.method === "POST",

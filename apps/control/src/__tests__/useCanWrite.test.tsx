@@ -3,6 +3,7 @@
 
 import { renderHook } from "@testing-library/react";
 import { describe, expect, test, vi } from "vitest";
+import { translate } from "../lib/i18n";
 import { useCanWrite } from "../lib/auth/useCanWrite";
 
 const auth = vi.hoisted(() => ({ current: { role: undefined as string | undefined } }));
@@ -20,6 +21,6 @@ describe("useCanWrite", () => {
     auth.current = { role };
     const { result } = renderHook(() => useCanWrite(minRole));
     expect(result.current.allowed).toBe(allowed);
-    expect(result.current.title).toBe(allowed ? undefined : `Requires the ${minRole} role`);
+    expect(result.current.title).toBe(allowed ? undefined : translate("useCanWrite.requiresRole", { role: minRole }));
   });
 });
