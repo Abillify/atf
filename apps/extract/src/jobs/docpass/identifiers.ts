@@ -92,27 +92,45 @@ export const DEFAULT_IDENTIFIER_CLASSES: readonly IdentifierClass[] = [
     pattern: /\b(?:Task|Activity|Gateway|Event|Flow)_[0-9a-zA-Z]+\b/g,
   },
   {
+    // Composite (specification/module) codes: a two-to-six uppercase-letter
+    // prefix, at least one further dashed uppercase-alphanumeric group, and a
+    // trailing digit group ("QAP-MDE-03", "QAB-MDE-03", "QAV-MDE-03").
+    // Placed BEFORE drawing numbers on purpose: without it the drawing-number
+    // class claims only the tail ("MDE-03" out of "QAP-MDE-03"), so every
+    // section's "…-MDE-03" collapses to the same normalized value and the
+    // distinguishing prefix is lost. Requiring at least two dashed groups and a
+    // trailing digit group keeps prose ("AM-PM") and single-dash codes
+    // ("ZG-100", "AB-100-2") with their existing classes. An optional "/A"
+    // style revision suffix is part of the code, mirroring Search's class.
+    kind: "composite_code",
+    pattern: /\b[A-Z]{2,6}(?:-[A-Z0-9]{2,})+-\d{2,}(?:\/[A-Za-z0-9]+)?\b/g,
+  },
+  {
     // Drawing numbers: a two-to-four uppercase-letter prefix, a dash, then a
-    // digit run, optionally with further dashed groups ("ZG-100", "ZN-4471",
-    // "AB-100-2"). Placed BEFORE mask codes so a dashed designation is claimed
-    // as a drawing number, not a mask code — the dash is the drawing-number
-    // signal, and mask/transaction codes are written without one.
+    // digit run, optionally with further dashed groups and an optional "/A"
+    // style revision suffix ("ZG-100", "ZN-4471", "AB-100-2", "WE-01/A").
+    // Placed BEFORE mask codes so a dashed designation is claimed as a drawing
+    // number, not a mask code — the dash is the drawing-number signal, and
+    // mask/transaction codes are written without one. The suffix is part of the
+    // code so the value_norm matches the Search-side recognizer exactly.
     kind: "drawing_number",
-    pattern: /\b[A-Z]{2,4}-\d{2,}(?:-\d+)*\b/g,
+    pattern: /\b[A-Z]{2,4}-\d{2,}(?:-\d+)*(?:\/[A-Za-z0-9]+)?\b/g,
   },
   {
     // Mask / transaction codes: two-to-six uppercase letters directly followed
-    // by two or more digits, no dash ("WE01", "VA01", "MIGO2"). The un-dashed
-    // letters+digits shape is what a screen/transaction code looks like; the
-    // dashed form is a drawing number (claimed by the class above).
+    // by two or more digits, no dash ("WE01", "VA01", "MIGO2"), with an
+    // optional "/A" style suffix. The un-dashed letters+digits shape is what a
+    // screen/transaction code looks like; the dashed form is a drawing number
+    // (claimed by the class above).
     kind: "mask_code",
-    pattern: /\b[A-Z]{2,6}\d{2,}\b/g,
+    pattern: /\b[A-Z]{2,6}\d{2,}(?:\/[A-Za-z0-9]+)?\b/g,
   },
   {
     // Article numbers: "Art.-Nr. 12345", "Artikelnummer 4711", "Art. 815-2".
     // The captured group is the number so the value is the code, not the label.
     kind: "article_number",
-    pattern: /\b(?:Art(?:ikel)?\.?[-\s]?Nr\.?|Artikelnummer)\s*:?\s*(\d[\d-]*)\b/gi,
+    pattern:
+      /\b(?:Art(?:ikel)?\.?[-\s]?Nr\.?|Artikelnummer)\s*:?\s*(\d[\d-]*)\b/gi,
   },
 ];
 

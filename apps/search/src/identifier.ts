@@ -61,6 +61,19 @@ export const DEFAULT_IDENTIFIER_CLASSES: readonly IdentifierClass[] = [
     pattern: /\b(?:Task|Activity|Gateway|Event|Flow)_[0-9a-zA-Z]+\b/g,
   },
   {
+    // Composite (specification/module) codes: two-to-six uppercase letters plus
+    // at least one further dashed uppercase-alphanumeric group, ending in a
+    // digit group, optional "/A" style suffix ("QAP-MDE-03", "QAB-MDE-03").
+    // Placed BEFORE drawing_number on purpose: without it the drawing-number
+    // class claims only the tail ("MDE-03" out of "QAP-MDE-03"), so every
+    // section's "…-MDE-03" collapses to the same value_norm and the prefix that
+    // distinguishes them (QAP vs QAB vs QAV) is lost. Requiring ≥2 dashes
+    // and a trailing digit group keeps prose ("AM-PM") and single-dash codes
+    // ("ZG-100", "WE-01/A", "AB-100-2") with their existing classes.
+    kind: "composite_code",
+    pattern: /\b[A-Z]{2,6}(?:-[A-Z0-9]{2,})+-\d{2,}(?:\/[A-Za-z0-9]+)?\b/g,
+  },
+  {
     // Drawing numbers: 2–4 uppercase letters, a dash, a digit run, optional
     // further dashed groups AND an optional trailing "/A" style suffix so a
     // code like "WE-01/A" is recognised whole ("ZG-100", "AB-100-2", "WE-01/A").
@@ -75,7 +88,8 @@ export const DEFAULT_IDENTIFIER_CLASSES: readonly IdentifierClass[] = [
   },
   {
     kind: "article_number",
-    pattern: /\b(?:Art(?:ikel)?\.?[-\s]?Nr\.?|Artikelnummer)\s*:?\s*(\d[\d-]*)\b/gi,
+    pattern:
+      /\b(?:Art(?:ikel)?\.?[-\s]?Nr\.?|Artikelnummer)\s*:?\s*(\d[\d-]*)\b/gi,
   },
 ];
 

@@ -271,6 +271,79 @@ describe("buildUnitsFromRecords — table units", () => {
     expect(sorted[0]?.nextUnitId).toBe(sorted[1]?.unitId);
     expect(sorted[sorted.length - 1]?.nextUnitId).toBeUndefined();
   });
+
+  it("binds the section's identifier codes into every table unit (QAP fix)", async () => {
+    // The regression shape: a section whose heading + "ID:" paragraph carry the
+    // identifier while its table rows are generic text repeated verbatim in
+    // sibling sections. Without the ID line the table units of 9.8/9.13/9.18
+    // are indistinguishable and crowd the section's chunk out of the top-k.
+    const units = await buildUnitsFromRecords(
+      input([
+        page(368, [
+          {
+            type: "heading",
+            id: "h1",
+            page: 368,
+            level: 2,
+            numbering: "9.13",
+            text: "Station auswählen",
+            sectionPath: [
+              "9 Prozess Fehlerbehebung, Sonderfall Bearbeitung",
+              "9.13 Station auswählen",
+            ],
+          },
+          {
+            type: "paragraph",
+            id: "p1",
+            page: 368,
+            text: "ID: QAP-MDE-03; Stand: 01.01.2025",
+            sectionPath: [
+              "9 Prozess Fehlerbehebung, Sonderfall Bearbeitung",
+              "9.13 Station auswählen",
+            ],
+          },
+          {
+            type: "table",
+            id: "tb1",
+            page: 368,
+            tableId: "tbl-913",
+            sectionPath: [
+              "9 Prozess Fehlerbehebung, Sonderfall Bearbeitung",
+              "9.13 Station auswählen",
+            ],
+            headerRows: [["Eingabe-Möglichkeit", "Hinweis"]],
+            rows: [["immer", "Pflichtfeld"]],
+          },
+        ]),
+      ]),
+    );
+    const tables = byType(units, "table");
+    expect(tables).toHaveLength(1);
+    const [t] = tables;
+    // The identifier is embedded (embedInput) and full-text searchable
+    // (content) — the reranker sees it, the vector sees it, FTS finds it.
+    expect(t?.embedInput).toContain("IDs: QAP-MDE-03");
+    expect(t?.content).toContain("QAP-MDE-03");
+    // …but it is context, not the table's own document text: a document read
+    // (which keeps the first displayLen chars) returns only the grid.
+    const grid = "Eingabe-Möglichkeit | Hinweis\nimmer | Pflichtfeld";
+    expect(t?.displayLen).toBe(grid.length);
+    expect(t?.content.startsWith(grid)).toBe(true);
+    expect(t?.content.slice(0, t?.displayLen)).toBe(grid);
+  });
+
+  it("leaves table units unchanged when the section carries no identifier codes", async () => {
+    const units = await buildUnitsFromRecords(
+      input([page(2, [smallTable])], {
+        tokenCounter: fixedCounter(50),
+        maxChunkTokens: 500,
+      }),
+    );
+    const [t] = byType(units, "table");
+    expect(t?.embedInput).not.toContain("IDs:");
+    // Without an identity prefix, displayLen covers the whole embed input.
+    expect(t?.displayLen).toBe(t?.embedInput.length);
+  });
 });
 
 // ─── figure units ──────────────────────────────────────────────────────────────

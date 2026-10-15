@@ -467,6 +467,7 @@ describe("identifier extraction", () => {
       ["Öffne Maske WE01 im System.", "mask_code"],
       ["Zeichnung ZG-100 beachten.", "drawing_number"],
       ["Art.-Nr. 4711 bestellen.", "article_number"],
+      ["ID: QAP-MDE-03; Stand: 01.01.2025", "composite_code"],
     ];
     for (const [text, kind] of cases) {
       const found = extractIdentifiers(text, 1, "b1");
@@ -493,6 +494,15 @@ describe("identifier extraction", () => {
     // Only the standard, not also a mask/drawing code inside it.
     expect(found).toHaveLength(1);
     expect(found[0]?.kind).toBe("standard");
+  });
+
+  it("a composite code is claimed whole, not as its drawing-number tail", () => {
+    const found = extractIdentifiers("ID: QAP-MDE-03", 1, undefined);
+    // The whole "QAP-MDE-03", not just "MDE-03" — the prefix distinguishes
+    // it from the sibling codes of the other sections (QAB-, QAV-).
+    expect(found).toHaveLength(1);
+    expect(found[0]?.kind).toBe("composite_code");
+    expect(found[0]?.value).toBe("QAP-MDE-03");
   });
 
   it("the document pass indexes identifiers from figure labels", () => {

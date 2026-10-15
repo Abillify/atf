@@ -120,10 +120,11 @@ export interface IndexUnit {
   ordinal: number;
   /**
    * The length of the part of `content` that is this unit's own document
-   * text. For a `table` the rest is the row-wise "Spalte: Wert" text; for a
-   * `chunk` ending in a paragraph that runs over the page break it is the
-   * carried continuation from the next page (contract 2.3). Either is there
-   * for full-text search and embedding and is not read back as document text.
+   * text. For a `table` the rest is the section identifier line ("IDs: …")
+   * and the row-wise "Spalte: Wert" text; for a `chunk` ending in a
+   * paragraph that runs over the page break it is the carried continuation
+   * from the next page (contract 2.3). Either is there for full-text search
+   * and embedding and is not read back as document text.
    */
   displayLen?: number;
 }
@@ -388,6 +389,53 @@ function samePath(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((v, i) => v === b[i]);
 }
 
+// ─── Section identity for table units ──────────────────────────────────────
+
+/**
+ * Identifier-shaped code: two or more uppercase groups joined by dashes,
+ * e.g. "QAP-MDE-03" or "ISO-9001". These are the codes a reader quotes when
+ * asking for a section ("Welche ID hat die Station? → QAP-MDE-03");
+ * they sit in the section's heading/ID paragraph, not in the section's tables.
+ */
+const SECTION_IDENTIFIER_RE = /\b[A-Z]{2,}(?:-[A-Z0-9]{2,})+\b/g;
+
+/** Cap how many identifier codes one section identity line carries. */
+const MAX_SECTION_IDENTIFIERS = 8;
+
+/**
+ * The identifier codes of a section as found on ONE page: every
+ * identifier-shaped token in the page's text blocks that share the section
+ * path. A `table` unit's own rows are often near-identical across sibling
+ * sections (the same form table repeated per variant); without the section's
+ * ID codes the reranker cannot tell them apart and the section's `chunk`
+ * unit — which carries the "ID: …" line — gets crowded out of the top-k
+ * (Bench regression: QAP-MDE-03 fell to rank 15 behind three identical
+ * "Eingabe-Möglichkeit" table fragments). Prepending the codes keeps each
+ * table unit searchable and rankable under its own section identity.
+ *
+ * Same-page only on purpose: the builder stays independent of batch
+ * boundaries, and the section heading/ID paragraph sits on the page its
+ * tables start on in practice. Returns undefined when the page carries no
+ * codes for the section, leaving the table units unchanged.
+ */
+function sectionIdentifierLine(
+  blocks: Block[],
+  sectionPath: string[],
+): string | undefined {
+  const ids: string[] = [];
+  for (const block of blocks) {
+    if (!isTextBlock(block)) continue;
+    if (!samePath(block.sectionPath ?? [], sectionPath)) continue;
+    for (const match of renderTextBlock(block).matchAll(SECTION_IDENTIFIER_RE)) {
+      const code = match[0];
+      if (code.length <= 40 && !ids.includes(code)) ids.push(code);
+      if (ids.length >= MAX_SECTION_IDENTIFIERS) break;
+    }
+    if (ids.length >= MAX_SECTION_IDENTIFIERS) break;
+  }
+  return ids.length > 0 ? `IDs: ${ids.join(", ")}` : undefined;
+}
+
 // ─── Token-aware chunk assembly ──────────────────────────────────────────────
 
 /**
@@ -514,10 +562,20 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
     // Track per-section chunk ordinals so a section spanning several groups on a
     // page keeps a monotonically increasing, order-stable chunk ordinal.
     const chunkOrdinalBySection = new Map<string, number>();
+    // Per-section identifier codes ("IDs: …") for this page's table units,
+    // cached per section path (see sectionIdentifierLine).
+    const identityBySection = new Map<string, string | undefined>();
 
     for (const block of page.blocks) {
       // ── table units (Requirement 11.3) ────────────────────────────────────
       if (block.type === "table") {
+        const tableSectionKey = (block.sectionPath ?? []).join("/");
+        if (!identityBySection.has(tableSectionKey)) {
+          identityBySection.set(
+            tableSectionKey,
+            sectionIdentifierLine(page.blocks, block.sectionPath ?? []),
+          );
+        }
         units.push(
           ...(await buildTableUnits(
             block,
@@ -526,6 +584,7 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
             documentId,
             maxTokens,
             tokenCounter,
+            identityBySection.get(tableSectionKey),
           )),
         );
         continue;
@@ -533,7 +592,12 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
 
       // ── figure units ──────────────────────────────────────────────────────
       if (block.type === "figure") {
-        const unit = buildFigureUnit(block, revisionId, documentId, page.summary);
+        const unit = buildFigureUnit(
+          block,
+          revisionId,
+          documentId,
+          page.summary,
+        );
         if (unit) units.push(unit);
         continue;
       }
@@ -552,18 +616,28 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
       const sectionKey = group.sectionPath.join("/");
       const sectionId = sectionIdFromPath(group.sectionPath);
 
-      const pieces = await chunkSectionText(text, minTokens, maxTokens, tokenCounter);
+      const pieces = await chunkSectionText(
+        text,
+        minTokens,
+        maxTokens,
+        tokenCounter,
+      );
       // A paragraph running over the page break (contract 2.3): the group's
       // last chunk also carries the leading fragment of its continuation, so
       // the sentence is searchable and embedded whole. The fragment is not
       // this page's text: `displayLen` keeps it out of document reads.
       const lastBlock = group.blocks[group.blocks.length - 1];
       const carried = carriedContinuation(lastBlock);
-      const lastPieceIndex = pieces.map((p) => p.trim() !== "").lastIndexOf(true);
+      const lastPieceIndex = pieces
+        .map((p) => p.trim() !== "")
+        .lastIndexOf(true);
       for (const [pieceIndex, rawPiece] of pieces.entries()) {
         if (rawPiece.trim() === "") continue;
-        const withCarry = pieceIndex === lastPieceIndex && carried !== undefined;
-        const piece = withCarry ? joinContinuation(rawPiece, carried) : rawPiece;
+        const withCarry =
+          pieceIndex === lastPieceIndex && carried !== undefined;
+        const piece = withCarry
+          ? joinContinuation(rawPiece, carried)
+          : rawPiece;
         const ordinal = chunkOrdinalBySection.get(sectionKey) ?? 0;
         chunkOrdinalBySection.set(sectionKey, ordinal + 1);
         const unitId = computeUnitId({
@@ -607,6 +681,12 @@ async function buildContentUnits(input: BuildUnitsInput): Promise<IndexUnit[]> {
  * the same `tableId` and is linked prev/next. Every row-group's `content` holds
  * the header+rows AND the row-wise "Spalte: Wert" text so both the grid and the
  * column/value form are full-text searchable.
+ *
+ * `sectionIdentity` (when present) is the section's identifier line ("IDs: …",
+ * see {@link sectionIdentifierLine}); it is prepended to every row-group's
+ * embed input so near-identical tables across sibling sections stay
+ * distinguishable for embedding and reranking. It is context, not the table's
+ * own text, so `displayLen` (the document-read portion) excludes it.
  */
 async function buildTableUnits(
   table: TableBlock,
@@ -615,6 +695,7 @@ async function buildTableUnits(
   documentId: string,
   maxTokens: number,
   tokenCounter: UnitTokenCounter,
+  sectionIdentity?: string,
 ): Promise<IndexUnit[]> {
   if (table.rows.length === 0 && table.headerRows.length === 0) return [];
 
@@ -622,17 +703,21 @@ async function buildTableUnits(
   const sectionId = sectionIdFromPath(sectionPath);
   const headerLabels = tableHeaderLabels(table);
   const caption = table.caption ? `${table.caption}\n` : "";
+  // The identity rides along with every row-group and counts against the
+  // token budget like the caption does.
+  const identity = sectionIdentity ? `${sectionIdentity}\n` : "";
 
   // Decide how many rows fit per group by measuring the whole table first.
-  const wholeRendered = `${caption}${renderTableRows(table.headerRows, table.rows)}`;
+  const wholeRendered = `${identity}${caption}${renderTableRows(table.headerRows, table.rows)}`;
   const [wholeTokens] = await tokenCounter.countBatch([wholeRendered]);
-  const fitsWhole = (wholeTokens ?? Math.ceil(wholeRendered.length / 4)) <= maxTokens;
+  const fitsWhole =
+    (wholeTokens ?? Math.ceil(wholeRendered.length / 4)) <= maxTokens;
 
   const rowGroups: Cell[][][] = fitsWhole
     ? [table.rows]
     : await splitRowsToBudget(
         table,
-        caption,
+        `${identity}${caption}`,
         headerLabels,
         maxTokens,
         tokenCounter,
@@ -642,9 +727,17 @@ async function buildTableUnits(
   rowGroups.forEach((groupRows, ordinal) => {
     const rowsText = renderTableRows(table.headerRows, groupRows);
     const columnValue = renderTableColumnValue(headerLabels, groupRows);
-    const embedInput = `${caption}${rowsText}`.trim();
-    // FTS content = rendered grid + the "Spalte: Wert" per-row lines.
-    const content = [embedInput, columnValue].filter((p) => p.trim() !== "").join("\n\n");
+    // The table's own document text (caption + grid) — what a document read
+    // returns. The section identity is search/embed context only: it goes
+    // AFTER the grid (so a document read, which keeps the first `displayLen`
+    // characters, never sees it) but BEFORE the row-wise lines (so the rerank
+    // truncation at 1024 tokens, which trims the tail of `content`, keeps it).
+    const ownText = `${caption}${rowsText}`.trim();
+    const embedInput = `${identity}${ownText}`.trim();
+    // FTS content = rendered grid + identity + "Spalte: Wert" per-row lines.
+    const content = [ownText, sectionIdentity, columnValue]
+      .filter((p) => p !== undefined && p.trim() !== "")
+      .join("\n\n");
     if (content.trim() === "") return;
     const unitId = computeUnitId({
       revisionId,
@@ -669,7 +762,7 @@ async function buildTableUnits(
       tableId: table.tableId,
       blockIds: [table.id],
       ordinal,
-      displayLen: embedInput.length,
+      displayLen: ownText.length,
     });
   });
 

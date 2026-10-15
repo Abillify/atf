@@ -72,6 +72,27 @@ describe("recognizeIdentifiers", () => {
     expect(byKind.get("mask_code")).toBe("VA01");
   });
 
+  it("recognises a composite module code whole, keeping its prefix", () => {
+    // "QAP-MDE-03" must NOT collapse to the drawing-number tail "MDE-03" —
+    // every WMS section has an "…-MDE-03", and only the prefix (QAP vs QAB
+    // vs QAV) tells them apart.
+    const hits = recognizeIdentifiers("Wie in QAP-MDE-03 beschrieben");
+    expect(hits).toHaveLength(1);
+    expect(hits[0]?.kind).toBe("composite_code");
+    expect(hits[0]?.valueNorm).toBe("QAPMDE03");
+  });
+
+  it("keeps sibling composite codes distinct and leaves single-dash codes alone", () => {
+    const hits = recognizeIdentifiers(
+      "QAB-MDE-03, QAP-MDE-03, QAV-MDE-03 sowie Zeichnung ZG-100",
+    );
+    const norms = hits.map((h) => h.valueNorm).sort();
+    expect(norms).toEqual(["QABMDE03", "QAPMDE03", "QAVMDE03", "ZG100"]);
+    expect(hits.find((h) => h.valueNorm === "ZG100")?.kind).toBe(
+      "drawing_number",
+    );
+  });
+
   it("returns nothing for ordinary prose without codes", () => {
     expect(recognizeIdentifiers("Der Vertrag wird in drei Schritten geschlossen.")).toEqual([]);
     expect(recognizeIdentifiers("")).toEqual([]);
