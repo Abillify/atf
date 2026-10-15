@@ -209,6 +209,7 @@ export function loadConfig(): AppConfig {
     oidcAudience: env.OIDC_AUDIENCE,
     flowScopeClaims: env.FLOW_SCOPE_CLAIMS,
     inferenceExtraOidcIssuers: env.JWT_ADDITIONAL_ISSUERS,
+    jwtIssuerTenants: env.JWT_ISSUER_TENANTS,
     oidcClientId: env.OIDC_CLIENT_ID,
     oidcClientSecret: env.OIDC_CLIENT_SECRET,
     oidcSessionSecret: env.OIDC_SESSION_SECRET,

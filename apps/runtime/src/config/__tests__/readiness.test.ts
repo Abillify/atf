@@ -45,6 +45,26 @@ function productionConfig(overrides: Partial<AppConfig> = {}): AppConfig {
 }
 
 describe("checkProductionReadiness", () => {
+  test("several trusted issuers with tenant isolation need JWT_ISSUER_TENANTS", () => {
+    const extra = {
+      inferenceExtraOidcIssuers: [
+        { issuer: "https://idp.example.com/application/o/taiga/", audience: "taiga" },
+      ],
+    };
+    const unbound = checkProductionReadiness(productionConfig(extra));
+    expect(unbound.fatal.some((f) => f.includes("JWT_ISSUER_TENANTS"))).toBe(true);
+    const bound = checkProductionReadiness(
+      productionConfig({
+        ...extra,
+        jwtIssuerTenants: {
+          "https://idp.example.com/application/o/aiperator/": ["*"],
+          "https://idp.example.com/application/o/taiga/": ["taiga"],
+        },
+      }),
+    );
+    expect(bound.fatal.some((f) => f.includes("JWT_ISSUER_TENANTS"))).toBe(false);
+  });
+
   test("a hardened production config has no fatal issues", () => {
     const { fatal } = checkProductionReadiness(productionConfig());
     expect(fatal).toEqual([]);

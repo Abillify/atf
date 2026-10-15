@@ -138,6 +138,23 @@ export function checkProductionReadiness(
     );
   }
 
+  // Several trusted issuers + tenant isolation: without an issuer→tenant
+  // binding, any of them can assert any tenant.
+  const trustedIssuerCount =
+    (config.inferenceExtraOidcIssuers?.length ?? 0) +
+    (config.oidcIssuer !== undefined ? 1 : 0) +
+    (config.jwtIssuer !== undefined || config.jwtSecret !== undefined ? 1 : 0);
+  if (
+    config.tenantIsolationEnabled === true &&
+    trustedIssuerCount > 1 &&
+    config.jwtIssuerTenants === undefined
+  ) {
+    const msg =
+      "Tenant isolation with more than one trusted token issuer requires JWT_ISSUER_TENANTS; otherwise every issuer may claim every tenant.";
+    if (isProd) fatal.push(msg);
+    else warnings.push(msg);
+  }
+
   if (config.corsOrigins.includes("*")) {
     const msg =
       "CORS_ORIGINS is set to '*' (any origin). Set an explicit allow-list of origins.";

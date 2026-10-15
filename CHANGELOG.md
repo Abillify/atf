@@ -161,6 +161,14 @@ releases:
 - **Control BFF proxy refuses cross-site requests** (`/api/backend/*`):
   `Sec-Fetch-Site`/`Origin` are checked before the session cookie is used.
 
+- **Issuer → tenant binding** (`JWT_ISSUER_TENANTS`): with several trusted
+  token issuers (`JWT_ADDITIONAL_ISSUERS`, `token_or_oidc`), each could assert
+  any tenant. The new JSON map binds every issuer to the tenants it may claim
+  (`"*"` for all); a verified token whose issuer is unlisted or whose tenant
+  is not bound to it is rejected with 401 on `/v1/*` and the operator plane.
+  Production readiness fails when tenant isolation is on, more than one
+  issuer is trusted and no binding is configured.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

@@ -596,6 +596,34 @@ describe("authMiddleware — tenant identity requires verification (Req 7.4)", (
     expect(principal.claims).toEqual(tenantPayload);
   });
 
+  test("an issuer may only claim the tenants bound to it (JWT_ISSUER_TENANTS)", async () => {
+    const binding = {
+      "https://idp.example/app-a/": ["acme"],
+      "https://idp.example/app-b/": ["*"],
+    };
+    const verifierFor = (claims: Record<string, unknown>): JwtVerifier => ({
+      enabled: true,
+      verify: async () => true,
+      decodePayload: () => claims,
+    });
+    const cases: Array<[Record<string, unknown>, number]> = [
+      [{ iss: "https://idp.example/app-a/", tenant_id: "acme" }, 200],
+      [{ iss: "https://idp.example/app-a/", tenant_id: "globex" }, 401],
+      [{ iss: "https://idp.example/app-b/", tenant_id: "globex" }, 200],
+      [{ iss: "https://idp.example/other/", tenant_id: "acme" }, 401],
+      [{ tenant_id: "acme" }, 401],
+    ];
+    for (const [claims, status] of cases) {
+      const res = await ping(
+        makePrincipalApp(verifierFor(claims), {
+          tenantIsolationEnabled: true,
+          issuerTenants: binding,
+        }),
+      );
+      expect({ claims, status: res.status }).toEqual({ claims, status });
+    }
+  });
+
   test("unverified claims with tenant isolation enabled → 401", async () => {
     const verifier: JwtVerifier = {
       enabled: false,

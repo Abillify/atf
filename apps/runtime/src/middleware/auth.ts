@@ -84,6 +84,23 @@ export interface AuthMiddlewareOptions {
   mode?: "disabled" | "token" | "oidc" | "token_or_oidc";
   tenantIsolationEnabled?: boolean;
   defaultTenantId?: string;
+  /** Issuer → allowed tenants (`JWT_ISSUER_TENANTS`); see {@link issuerMayClaimTenant}. */
+  issuerTenants?: Record<string, readonly string[]>;
+}
+
+/**
+ * Whether a verified token from `issuer` may assert `tenantId`. Several
+ * issuers can be trusted at once; without a binding each of them could claim
+ * any tenant, so a user of one IdP application would act inside another
+ * application's tenant. A token without `iss` is looked up under `""`.
+ */
+export function issuerMayClaimTenant(
+  binding: Record<string, readonly string[]>,
+  issuer: string | undefined,
+  tenantId: string,
+): boolean {
+  const allowed = binding[issuer ?? ""];
+  return allowed !== undefined && (allowed.includes("*") || allowed.includes(tenantId));
 }
 
 /**
@@ -391,6 +408,26 @@ export function authMiddleware(
           error: {
             message:
               "Authentication failed: verified credential has no tenant claim.",
+            type: "authentication_error",
+          },
+        },
+        401,
+      );
+    }
+    if (
+      options.issuerTenants !== undefined &&
+      claimedTenant !== undefined &&
+      !issuerMayClaimTenant(
+        options.issuerTenants,
+        typeof claims?.iss === "string" ? claims.iss : undefined,
+        claimedTenant,
+      )
+    ) {
+      return ctx.json(
+        {
+          error: {
+            message:
+              "Authentication failed: the token's issuer is not bound to the claimed tenant.",
             type: "authentication_error",
           },
         },

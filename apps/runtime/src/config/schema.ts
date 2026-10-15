@@ -301,6 +301,13 @@ export interface AppConfig {
   /** JWT claim names containing flow authorization scopes. Default: scope, scp. */
   flowScopeClaims?: string[];
   inferenceExtraOidcIssuers?: { issuer: string; audience?: string }[];
+  /**
+   * Issuer → tenant binding (`JWT_ISSUER_TENANTS`): which tenants a token from
+   * each issuer may claim. When set, a verified token whose `iss` is not listed,
+   * or whose tenant claim is not in its issuer's list, is rejected. `"*"`
+   * allows every tenant for that issuer; tokens without `iss` use the key `""`.
+   */
+  jwtIssuerTenants?: Record<string, string[]>;
   oidcClientId?: string;
   oidcClientSecret?: string;
   oidcSessionSecret?: string;
@@ -1143,6 +1150,41 @@ export const EnvSchema = z.object({
         return result.data;
       },
     ),
+  /**
+   * SECURITY. Binds each trusted token issuer to the tenants it may assert,
+   * e.g. {"https://idp.example/app-a/":["acme"],"https://idp.example/app-b/":["*"]}.
+   * Without it, any trusted issuer (JWT_ADDITIONAL_ISSUERS, token_or_oidc) can
+   * claim any tenant. Required in production when tenant isolation is on and
+   * more than one issuer is trusted.
+   */
+  JWT_ISSUER_TENANTS: z
+    .string()
+    .optional()
+    .transform((raw, ctx): Record<string, string[]> | undefined => {
+      if (raw === undefined || raw.trim() === "") return undefined;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(raw);
+      } catch {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "JWT_ISSUER_TENANTS must be valid JSON",
+        });
+        return z.NEVER;
+      }
+      const result = z
+        .record(z.string(), z.array(z.string().min(1)).min(1))
+        .safeParse(parsed);
+      if (!result.success) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message:
+            "JWT_ISSUER_TENANTS must be a JSON object mapping issuer to a non-empty array of tenant ids (or [\"*\"])",
+        });
+        return z.NEVER;
+      }
+      return result.data;
+    }),
   /** OIDC client id for the operator dashboard SSO login (authorization-code flow). */
   OIDC_CLIENT_ID: z.string().min(1).optional(),
   /** SECRET. OIDC client secret for the operator dashboard SSO login. */

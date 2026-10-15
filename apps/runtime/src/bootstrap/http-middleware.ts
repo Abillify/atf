@@ -242,6 +242,9 @@ export function createHttpMiddleware(
       authMiddleware(jwtVerifier, apiKeyResolver, {
         mode: config.authnMode,
         tenantIsolationEnabled: config.tenantIsolationEnabled,
+        ...(config.jwtIssuerTenants !== undefined
+          ? { issuerTenants: config.jwtIssuerTenants }
+          : {}),
         defaultTenantId: config.defaultTenantId ?? "default",
       }),
     ),
