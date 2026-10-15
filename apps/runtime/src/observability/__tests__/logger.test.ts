@@ -111,3 +111,23 @@ describe("createLogger", () => {
     }
   });
 });
+
+describe("createLogger — redaction", () => {
+  test("never writes credential fields or credential-shaped values", () => {
+    const out = captureStdout();
+    restoreFns.push(out.restore);
+    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1LTEifQ.c2lnbmF0dXJlX2J5dGVz";
+    createLogger("info")
+      .child({ access_token: jwt })
+      .info(`calling upstream with Bearer ${jwt}`, {
+        headers: { authorization: `Bearer ${jwt}` },
+        prompt_tokens: 42,
+      });
+    out.restore();
+    const line = at(out.lines, 0);
+    expect(line).not.toContain(jwt);
+    const parsed = JSON.parse(line) as Record<string, unknown>;
+    expect(parsed.access_token).toBe("[redacted]");
+    expect(parsed.prompt_tokens).toBe(42);
+  });
+});

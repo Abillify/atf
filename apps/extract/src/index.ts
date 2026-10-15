@@ -34,7 +34,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import type { Server as HttpsServer } from "node:https";
-import { createServerWithOptionalTls } from "@atf/security-kit";
+import { pinoLogRedaction, withMaskedChildBindings, createServerWithOptionalTls } from "@atf/security-kit";
 import {
   createTracer,
   formatTraceparent,
@@ -239,7 +239,7 @@ export function createApp(
   const app = express();
   const logger =
     overrides.logger ??
-    pino({ level: config.logLevel, base: { pid: process.pid } });
+    withMaskedChildBindings(pino({ level: config.logLevel, base: { pid: process.pid }, ...pinoLogRedaction() }));
   const metrics = overrides.metrics ?? new HttpMetrics();
 
   // ── Request logging ───────────────────────────────────────────────────────
@@ -1315,7 +1315,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const logger = pino({ level: config.logLevel, base: { pid: process.pid } });
+  const logger = withMaskedChildBindings(pino({ level: config.logLevel, base: { pid: process.pid }, ...pinoLogRedaction() }));
 
   // ── Production-readiness gate ────────────────────────────────────────────
   // Refuse to start in production with permissive settings, rather than warning

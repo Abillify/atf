@@ -169,6 +169,15 @@ releases:
   Production readiness fails when tenant isolation is on, more than one
   issuer is trusted and no binding is configured.
 
+- **Log redaction in Runtime, Search and Extract**: only Gate redacted its
+  logs. A shared redactor (`@atf/security-kit` `log-redact`) now runs on every
+  entry of the Runtime logger and of Search's and Extract's pino loggers
+  (entries, root and child bindings, messages): credential-named fields
+  (`authorization`, `cookie`, `*_secret`, `access_token`, `token`, …) are
+  replaced, JWT-, `Bearer …`- and `aip-…`-shaped values are scrubbed from any
+  string including error messages and stacks, and strings are bounded. Token
+  counters such as `prompt_tokens` stay readable.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

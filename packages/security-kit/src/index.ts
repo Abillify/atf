@@ -170,3 +170,11 @@ export {
   type TokenEndpointResolver,
   type TokenExchangeConfig,
 } from "./auth/token-exchange.ts";
+export {
+  LOG_REDACTED,
+  isSensitiveLogKey,
+  pinoLogRedaction,
+  redactLogFields,
+  redactLogString,
+  withMaskedChildBindings,
+} from "./log-redact.ts";

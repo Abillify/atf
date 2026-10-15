@@ -9,7 +9,7 @@ import express, {
   type RequestHandler,
 } from "express";
 import { pino } from "pino";
-import { createServerWithOptionalTls } from "@atf/security-kit";
+import { pinoLogRedaction, withMaskedChildBindings, createServerWithOptionalTls } from "@atf/security-kit";
 import {
   createTracer,
   formatTraceparent,
@@ -170,7 +170,7 @@ export function createApp(
 ): { app: Express; cleanup: () => void; tracer: Tracer } {
   const app = express();
 
-  const logger = pino({ level: config.logLevel, base: { pid: process.pid } });
+  const logger = withMaskedChildBindings(pino({ level: config.logLevel, base: { pid: process.pid }, ...pinoLogRedaction() }));
   const httpMetrics = new HttpMetrics();
 
   // Strip control characters (including \r, \n) from HTTP header values to
@@ -1551,7 +1551,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const logger = pino({ level: config.logLevel, base: { pid: process.pid } });
+  const logger = withMaskedChildBindings(pino({ level: config.logLevel, base: { pid: process.pid }, ...pinoLogRedaction() }));
 
   // ── Production-readiness gate ────────────────────────────────────────────
   // Refuse to start in production with permissive settings rather than warning

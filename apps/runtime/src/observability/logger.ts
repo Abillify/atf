@@ -12,6 +12,8 @@
  * No `any` at module boundaries.
  */
 
+import { redactLogFields, redactLogString } from "@atf/security-kit";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 const LEVEL_ORDER: Record<LogLevel, number> = {
@@ -43,12 +45,13 @@ class JsonLogger implements Logger {
   private write(level: LogLevel, message: string, fields?: LogFields): void {
     if (LEVEL_ORDER[level] < LEVEL_ORDER[this.minLevel]) return;
 
+    // Structural redaction on every entry (credential-named fields, JWT /
+    // Bearer / API-key values in any string) — see @atf/security-kit log-redact.
     const entry: Record<string, unknown> = {
       timestamp: new Date().toISOString(),
       level,
-      message,
-      ...this.baseFields,
-      ...(fields ?? {}),
+      message: redactLogString(message),
+      ...redactLogFields({ ...this.baseFields, ...(fields ?? {}) }),
     };
 
     const line = `${JSON.stringify(entry)}\n`;
