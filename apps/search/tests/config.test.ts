@@ -449,3 +449,44 @@ describe("Config", () => {
     );
   });
 });
+
+describe("loadConfig — full-text search language", () => {
+  const keys = ["POSTGRES_URL", "EMBED_URL", "EMBED_MODEL", "FTS_LANGUAGE", "FTS_EXTRA_LANGUAGES"];
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    for (const k of keys) saved[k] = process.env[k];
+    process.env["POSTGRES_URL"] = "postgres://u:p@localhost:5432/db";
+    process.env["EMBED_URL"] = "http://embed:8080";
+    process.env["EMBED_MODEL"] = "text-embedding-3-small";
+    delete process.env["FTS_LANGUAGE"];
+    delete process.env["FTS_EXTRA_LANGUAGES"];
+  });
+  afterEach(() => {
+    for (const k of keys) {
+      if (saved[k] === undefined) delete process.env[k];
+      else process.env[k] = saved[k];
+    }
+  });
+
+  it("defaults new collections to German stemming", () => {
+    expect(loadConfig().defaultFtsLanguage).toBe("german");
+  });
+
+  it("rejects an unknown FTS_LANGUAGE at startup instead of at the first ingest", () => {
+    process.env["FTS_LANGUAGE"] = "klingon";
+    expect(() => loadConfig()).toThrow("FTS_LANGUAGE");
+  });
+
+  it("accepts an operator configuration listed in FTS_EXTRA_LANGUAGES as the default", () => {
+    process.env["FTS_EXTRA_LANGUAGES"] = "german_compound";
+    process.env["FTS_LANGUAGE"] = "german_compound";
+    const config = loadConfig();
+    expect(config.ftsExtraLanguages).toEqual(["german_compound"]);
+    expect(config.defaultFtsLanguage).toBe("german_compound");
+  });
+
+  it("rejects an FTS_EXTRA_LANGUAGES entry that is not a configuration name", () => {
+    process.env["FTS_EXTRA_LANGUAGES"] = "german; DROP TABLE x";
+    expect(() => loadConfig()).toThrow("FTS_EXTRA_LANGUAGES");
+  });
+});

@@ -54,6 +54,7 @@ import {
   waitForDatabase,
 } from "./postgres-client.js";
 import { runMigrations } from "./migrations.js";
+import { registerFtsLanguages } from "./collection-ddl.js";
 import { createCircuitBreaker } from "./retry.js";
 import { createIngestHandler } from "./handlers/ingest.js";
 import { createIngestBatchHandler } from "./handlers/ingest-batch.js";
@@ -1694,6 +1695,36 @@ async function main(): Promise<void> {
       "MIGRATE_ON_START is disabled — schema migrations are not applied at boot; " +
         "run `bun run migrate` (or the migration Job) first",
     );
+  }
+
+  // Operator-installed text search configurations (FTS_EXTRA_LANGUAGES, e.g. a
+  // Hunspell `german_compound`): refuse to start when one is missing, rather
+  // than failing every ingest and search of a collection that names it.
+  if (config.ftsExtraLanguages.length > 0) {
+    const { Pool } = await import("pg");
+    const pool = new Pool({ connectionString: config.postgresUrl, max: 1 });
+    try {
+      const { rows } = await pool.query<{ cfgname: string }>(
+        "SELECT cfgname FROM pg_ts_config WHERE cfgname = ANY($1::text[])",
+        [config.ftsExtraLanguages],
+      );
+      const present = new Set(rows.map((r) => r.cfgname));
+      const missing = config.ftsExtraLanguages.filter((n) => !present.has(n));
+      if (missing.length > 0) {
+        logger.error(
+          { missing },
+          "FTS_EXTRA_LANGUAGES names text search configurations that do not exist in PostgreSQL; aborting startup",
+        );
+        process.exit(1);
+      }
+      registerFtsLanguages(config.ftsExtraLanguages);
+      logger.info({ languages: config.ftsExtraLanguages }, "Extra FTS languages enabled");
+    } catch (err) {
+      logger.error({ err }, "FTS_EXTRA_LANGUAGES check failed; aborting startup");
+      process.exit(1);
+    } finally {
+      await pool.end();
+    }
   }
 
   // Check the installed pgvector version once at startup (Requirement 4.2):

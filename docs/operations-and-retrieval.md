@@ -89,6 +89,41 @@ at a time and measure the effect with the retrieval harness in
 | Per-section cap | `DEFAULT_SECTION_CAP` (`rerank-context.ts`) | 3 | Maximum hits per section path; lower spreads results across sections. `≤ 0` disables the cap, table and figure collapse still run |
 | Expansion budget | `budget_chars` (request) | 4000 | Character budget of small-to-big expansion; higher adds surrounding context and longer answers, `truncated` reports dropped units |
 
+## German full-text search
+
+The lexical (FTS) side of hybrid search uses a PostgreSQL text search configuration per
+collection. `FTS_LANGUAGE` sets it for new collections and defaults to `german`: Snowball
+stemming, so "Vertrag" finds "Verträge" and "Mieter" finds "Mietern". The old default
+`simple` did no stemming at all. Identifier matching (article numbers, codes such as
+`WE01A`) is unaffected: it has its own `simple` index.
+
+`FTS_LANGUAGE` only applies to collections created after it was set. Switch an existing
+collection, which recomputes its stored vectors in one set-based UPDATE:
+
+```sh
+bun run --filter @atf/search fts:language <collection> german
+```
+
+**Compound words.** No built-in configuration splits compounds, so "Vertrag" does not find
+"Mietvertrag". That needs a Hunspell dictionary with compound rules in PostgreSQL's
+`tsearch_data` directory, which the stock image does not ship. With the `.dict`/`.affix`
+files of a German Hunspell dictionary installed as `de_de` (for example via a derived
+PostgreSQL image), create a configuration once:
+
+```sql
+CREATE TEXT SEARCH DICTIONARY german_hunspell (
+  TEMPLATE = ispell, DictFile = de_de, AffFile = de_de, StopWords = german
+);
+CREATE TEXT SEARCH CONFIGURATION german_compound (COPY = german);
+ALTER TEXT SEARCH CONFIGURATION german_compound
+  ALTER MAPPING FOR asciiword, word, hword, hword_part, hword_asciipart
+  WITH german_hunspell, german_stem;
+```
+
+Then start Search with `FTS_EXTRA_LANGUAGES=german_compound` (and `FTS_LANGUAGE=german_compound`
+to make it the default) and switch existing collections with `fts:language`. Startup refuses a
+name in `FTS_EXTRA_LANGUAGES` that `pg_ts_config` does not contain.
+
 ## Schema, provenance, and reindex or cutover
 
 Global schema version 2 adds `allowed_groups` and nullable provenance columns additively.

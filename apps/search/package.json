@@ -9,6 +9,7 @@
         "start": "bun run src/index.ts",
         "dev": "bun --watch run src/index.ts",
         "migrate": "bun run scripts/migrate.ts",
+        "fts:language": "bun run scripts/set-fts-language.ts",
         "test": "node node_modules/vitest/vitest.mjs run",
         "typecheck": "tsc --noEmit",
         "coverage:check": "node scripts/check-coverage.mjs",

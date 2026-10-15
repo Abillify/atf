@@ -514,3 +514,15 @@ describe("schema DDL advisory lock", () => {
     expect(sqls.at(-1)).toBe("COMMIT");
   });
 });
+
+describe("registerFtsLanguages", () => {
+  it("allows a registered operator configuration and still rejects unknown names", async () => {
+    const { registerFtsLanguages, validateFtsLanguage } = await import("../src/collection-ddl.js");
+    expect(() => validateFtsLanguage("german_hunspell_test")).toThrow();
+    registerFtsLanguages(["german_hunspell_test"]);
+    expect(validateFtsLanguage("German_Hunspell_Test")).toBe("german_hunspell_test");
+    expect(() => registerFtsLanguages(["bad name"])).toThrow();
+    expect(() => validateFtsLanguage("klingon")).toThrow();
+  });
+});
+

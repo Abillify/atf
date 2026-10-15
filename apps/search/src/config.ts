@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import type { ServerTlsConfig } from "@atf/security-kit";
+import { FTS_CONFIG_NAME_RE, isAllowedFtsLanguage } from "./collection-ddl.js";
 
 /**
  * config.ts
@@ -143,9 +144,19 @@ export interface Config {
   /**
    * Server-wide default FTS language for new collections.
    * Can be overridden per collection via X-FTS-Language header at ingest time.
-   * Default: "simple" (language-agnostic, no stemming).
+   * Default: "german" (Snowball stemming: "Verträge" matches "Vertrag").
+   * Existing collections keep the language they were created with; switch one
+   * with the FTS-language migration. Identifier matching is unaffected: it
+   * uses its own `simple` index.
    */
-  defaultFtsLanguage: string; // FTS_LANGUAGE (default: "simple")
+  defaultFtsLanguage: string; // FTS_LANGUAGE (default: "german")
+
+  /**
+   * Operator-installed text search configurations (FTS_EXTRA_LANGUAGES,
+   * comma-separated), e.g. a Hunspell `german_compound` for compound
+   * splitting. Startup verifies each exists in `pg_ts_config`.
+   */
+  ftsExtraLanguages: string[];
 
   /**
    * Abort embedding/reranking HTTP calls after this many milliseconds.
@@ -977,9 +988,27 @@ export function loadConfig(): Config {
       "ASSET_STORE_DIR is required when ASSET_STORE_BACKEND=filesystem",
     );
   }
-  const defaultFtsLanguage = (process.env["FTS_LANGUAGE"] ?? "simple")
+  const ftsExtraLanguages = parseCsvEnv("FTS_EXTRA_LANGUAGES").map((name) =>
+    name.toLowerCase(),
+  );
+  for (const name of ftsExtraLanguages) {
+    if (!FTS_CONFIG_NAME_RE.test(name)) {
+      throw new Error(
+        `FTS_EXTRA_LANGUAGES: "${name}" is not a valid text search configuration name`,
+      );
+    }
+  }
+  const defaultFtsLanguage = (process.env["FTS_LANGUAGE"] ?? "german")
     .trim()
     .toLowerCase();
+  if (
+    !isAllowedFtsLanguage(defaultFtsLanguage) &&
+    !ftsExtraLanguages.includes(defaultFtsLanguage)
+  ) {
+    throw new Error(
+      `FTS_LANGUAGE "${defaultFtsLanguage}" is neither a built-in text search configuration nor listed in FTS_EXTRA_LANGUAGES`,
+    );
+  }
 
   // ── Document converter (opt-in — enabled when CONVERTER_URL is set) ─────────
   // Without it, POST /ingest-file is not mounted, so a caller gets 404 rather
@@ -1482,6 +1511,7 @@ export function loadConfig(): Config {
     halfPrecision,
     contextPrefixSize,
     defaultFtsLanguage,
+    ftsExtraLanguages,
     fetchTimeoutMs,
     statsRetentionDays,
     statsStoreRawQuery,

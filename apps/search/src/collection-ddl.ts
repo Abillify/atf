@@ -142,12 +142,42 @@ const ALLOWED_FTS_LANGUAGES = new Set([
   "romanian",
 ]);
 
+/** Shape of an operator-provided text search configuration name. */
+export const FTS_CONFIG_NAME_RE = /^[a-z][a-z0-9_]{0,62}$/;
+
+/**
+ * Text search configurations the operator installed in PostgreSQL in addition
+ * to the built-in ones — typically a Hunspell-based `german_compound` that
+ * splits compounds ("Mietvertrag" → "miet", "vertrag"), which no built-in
+ * Snowball configuration does. Registered from FTS_EXTRA_LANGUAGES at startup
+ * only after `pg_ts_config` confirmed they exist (see index.ts).
+ */
+const extraFtsLanguages = new Set<string>();
+
+export function registerFtsLanguages(names: readonly string[]): void {
+  for (const name of names) {
+    if (!FTS_CONFIG_NAME_RE.test(name)) {
+      throw new AppError(
+        "UNSUPPORTED_FTS_LANGUAGE",
+        `Invalid text search configuration name "${name}"`,
+      );
+    }
+    extraFtsLanguages.add(name);
+  }
+}
+
+/** True when `lang` is a built-in or registered configuration (no throw). */
+export function isAllowedFtsLanguage(lang: string): boolean {
+  const lower = lang.trim().toLowerCase();
+  return ALLOWED_FTS_LANGUAGES.has(lower) || extraFtsLanguages.has(lower);
+}
+
 export function validateFtsLanguage(lang: string): string {
   const lower = lang.trim().toLowerCase();
-  if (!ALLOWED_FTS_LANGUAGES.has(lower)) {
+  if (!ALLOWED_FTS_LANGUAGES.has(lower) && !extraFtsLanguages.has(lower)) {
     throw new AppError(
       "UNSUPPORTED_FTS_LANGUAGE",
-      `Unsupported FTS language "${lang}". Allowed: ${[...ALLOWED_FTS_LANGUAGES].join(", ")}`,
+      `Unsupported FTS language "${lang}". Allowed: ${[...ALLOWED_FTS_LANGUAGES, ...extraFtsLanguages].join(", ")}`,
     );
   }
   return lower;
