@@ -196,6 +196,13 @@ releases:
   directories are arguments, so deployment repositories can run the same
   check.
 
+- **German morphology eval set** (`scripts/eval/golden-set/de-morphology.v1.json`,
+  `bun run eval:retrieval:de`): 36 golden-set questions re-asked with other
+  inflections, split compounds and derivations, answered by their base
+  question. The v1 questions occur verbatim in the corpus and cannot show
+  whether German stemming or compound splitting work; this set can. A test
+  guards that every variant really departs from the corpus wording.
+
 ### Added
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the

@@ -381,7 +381,80 @@ export async function loadGoldenSet(path: string): Promise<GoldenSet> {
 			`Golden set ${path} is not valid JSON: ${(error as Error).message}`,
 		);
 	}
+	if (isVariantSet(raw)) {
+		const basePath = `${path.slice(0, path.lastIndexOf("/") + 1)}${raw.baseFixture}`;
+		return expandVariantSet(raw, await loadGoldenSet(basePath));
+	}
 	return parseGoldenSet(raw);
+}
+
+// ─── German morphology variants ─────────────────────────────────────────────────
+
+/** Morphological phenomenon a variant exercises. */
+export type MorphologyPhenomenon = "inflection" | "compound" | "derivation";
+
+export interface MorphologyVariant {
+	id: string;
+	/** Id of the base question in the base fixture whose answer applies. */
+	base: string;
+	phenomena: MorphologyPhenomenon[];
+	question: string;
+}
+
+/**
+ * A variant fixture (`de-morphology.v1.json`): questions re-asked with other
+ * word forms, answered by their base question. Expanded by
+ * {@link expandVariantSet} into an ordinary {@link GoldenSet}.
+ */
+export interface VariantSet {
+	version: string;
+	description?: string;
+	/** Base fixture file name, resolved next to the variant file. */
+	baseFixture: string;
+	variants: MorphologyVariant[];
+}
+
+const PHENOMENA = new Set<MorphologyPhenomenon>(["inflection", "compound", "derivation"]);
+
+export function isVariantSet(value: unknown): value is VariantSet {
+	return isRecord(value) && Array.isArray(value.variants) && typeof value.baseFixture === "string";
+}
+
+/** Expands variants into a golden set using the base set's answers and documents. */
+export function expandVariantSet(variants: VariantSet, base: GoldenSet): GoldenSet {
+	const byId = new Map(base.questions.map((q) => [q.id, q]));
+	const seen = new Set<string>();
+	const questions = variants.variants.map((v, index) => {
+		const where = `variants[${index}]`;
+		if (typeof v.id !== "string" || v.id === "" || seen.has(v.id)) {
+			throw new GoldenSetError(`${where}: missing or duplicate id`);
+		}
+		seen.add(v.id);
+		const source = byId.get(v.base);
+		if (source === undefined) {
+			throw new GoldenSetError(`${where}: unknown base question "${v.base}"`);
+		}
+		if (!Array.isArray(v.phenomena) || v.phenomena.length === 0 || !v.phenomena.every((p) => PHENOMENA.has(p))) {
+			throw new GoldenSetError(`${where}: phenomena must be a non-empty subset of inflection, compound, derivation`);
+		}
+		if (typeof v.question !== "string" || v.question.trim() === "" || v.question === source.question) {
+			throw new GoldenSetError(`${where}: question must be a re-phrasing of "${v.base}", not empty or identical`);
+		}
+		return {
+			id: v.id,
+			document: source.document,
+			question: v.question,
+			expectedPages: source.expectedPages,
+			expectedFigures: source.expectedFigures,
+			expectedCells: source.expectedCells,
+		};
+	});
+	return {
+		version: `${base.version}+de-morphology.${variants.version}`,
+		...(variants.description !== undefined ? { description: variants.description } : {}),
+		documents: base.documents,
+		questions,
+	};
 }
 
 // ─── Reference derivation ──────────────────────────────────────────────────────

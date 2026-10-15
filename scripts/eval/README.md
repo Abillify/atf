@@ -51,6 +51,30 @@ JSON map of question id → `{ table?, text?, process? }`. Without it the metric
 report as pending (0, with the expected-item counts still shown), the same way
 the retrieval baseline ships as a pending skeleton.
 
+## German morphology set
+
+`golden-set/de-morphology.v1.json` re-asks 36 golden-set questions with other
+German word forms and keeps their expected answers:
+
+| Phenomenon | Example (base → variant) |
+| --- | --- |
+| inflection | „Wo werden die Berechtigungen beschrieben?" → „Wo wird die Berechtigung beschrieben?" |
+| compound | „Welche Pflichtfelder hat die Wareneingangsmaske?" → „Welches Pflichtfeld hat die Maske für den Wareneingang?" |
+| derivation | „Wie wird die Chargenverwaltung gefordert?" → „Wie werden Chargen verwaltet?" |
+
+The v1 questions appear verbatim in the corpus, so they score well even without
+stemming; the variants only score well when the full-text configuration
+handles German morphology. Run the same corpus under `FTS_LANGUAGE=simple`,
+`german` and a compound-splitting configuration (`FTS_EXTRA_LANGUAGES`, see
+docs/operations-and-retrieval.md) and compare:
+
+```sh
+bun run eval:retrieval:de -- --search-mode fts --collection golden
+```
+
+`de-morphology.test.ts` guards the set: every variant must drop at least one
+content word of its base and must not occur verbatim in the corpus.
+
 ## The golden set
 
 `golden-set/golden-set.v1.json` is the **versioned** fixture: four representative

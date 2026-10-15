@@ -1,0 +1,315 @@
+{
+	"version": "1.0.0",
+	"description": "German morphology variants of golden-set v1 questions: each re-asks a base question with a different inflection, a split compound (\"Wareneingangsmaske\" → \"Maske für den Wareneingang\") or a derivation (\"Chargenverwaltung\" → \"Chargen verwaltet\"). Expected answers are the base question's. The v1 questions appear verbatim in the corpus, so they cannot show whether stemming or compound splitting work; this set can (compare FTS_LANGUAGE=simple, german and a compound configuration).",
+	"baseFixture": "golden-set.v1.json",
+	"variants": [
+		{
+			"id": "de-001",
+			"base": "q-001",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Was wird zur teilweisen Freigabe von Wareneingängen gefordert?"
+		},
+		{
+			"id": "de-002",
+			"base": "q-003",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welches Pflichtfeld hat die Maske für den Wareneingang?"
+		},
+		{
+			"id": "de-003",
+			"base": "q-004",
+			"phenomena": [
+				"derivation"
+			],
+			"question": "Wie werden Chargen verwaltet?"
+		},
+		{
+			"id": "de-004",
+			"base": "q-005",
+			"phenomena": [
+				"derivation"
+			],
+			"question": "Welche Anforderung regelt, ob Waren rückverfolgbar sind?"
+		},
+		{
+			"id": "de-005",
+			"base": "q-007",
+			"phenomena": [
+				"inflection"
+			],
+			"question": "Welche Schnittstellen zum ERP werden verlangt?"
+		},
+		{
+			"id": "de-006",
+			"base": "q-008",
+			"phenomena": [
+				"inflection"
+			],
+			"question": "Welche Anforderungen betreffen Inventuren?"
+		},
+		{
+			"id": "de-007",
+			"base": "q-009",
+			"phenomena": [
+				"inflection"
+			],
+			"question": "Wo wird die Berechtigung beschrieben?"
+		},
+		{
+			"id": "de-008",
+			"base": "q-011",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Wie wird die Logik des Sperrlagers gefordert?"
+		},
+		{
+			"id": "de-009",
+			"base": "q-012",
+			"phenomena": [
+				"derivation"
+			],
+			"question": "Welche Anforderung beschreibt das Umlagern?"
+		},
+		{
+			"id": "de-010",
+			"base": "q-013",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Wo ist der Prozess der Freigabe dokumentiert?"
+		},
+		{
+			"id": "de-011",
+			"base": "q-014",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welches Feld hat die Maske zur Freigabe?"
+		},
+		{
+			"id": "de-012",
+			"base": "q-015",
+			"phenomena": [
+				"derivation"
+			],
+			"question": "Welche Anforderung regelt, wie etikettiert wird?"
+		},
+		{
+			"id": "de-013",
+			"base": "q-016",
+			"phenomena": [
+				"compound",
+				"derivation",
+				"inflection"
+			],
+			"question": "Wo steht, wie Fehler bei der Buchung behandelt werden?"
+		},
+		{
+			"id": "de-014",
+			"base": "q-017",
+			"phenomena": [
+				"derivation",
+				"inflection"
+			],
+			"question": "Welche Anforderungen betreffen das Kommissionieren?"
+		},
+		{
+			"id": "de-015",
+			"base": "q-018",
+			"phenomena": [
+				"compound",
+				"derivation"
+			],
+			"question": "Wie wird der Nachschub gesteuert?"
+		},
+		{
+			"id": "de-016",
+			"base": "q-019",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welche Anforderung nennt die Führung des Bestands?"
+		},
+		{
+			"id": "de-017",
+			"base": "q-020",
+			"phenomena": [
+				"inflection",
+				"derivation"
+			],
+			"question": "Wo sind Teilmengen definiert?"
+		},
+		{
+			"id": "de-018",
+			"base": "q-041",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welche Aufgabe folgt im Prozess auf die Prüfung des Wareneingangs?"
+		},
+		{
+			"id": "de-019",
+			"base": "q-043",
+			"phenomena": [
+				"inflection"
+			],
+			"question": "Welche Lane bearbeitet Rücksendungen?"
+		},
+		{
+			"id": "de-020",
+			"base": "q-044",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Wo beginnt der Prozess des Wareneingangs?"
+		},
+		{
+			"id": "de-021",
+			"base": "q-045",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welche Aufgabe schließt den Prozess der Retouren ab?"
+		},
+		{
+			"id": "de-022",
+			"base": "q-049",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Aufgabe erzeugt das Etikett für den Wareneingang?"
+		},
+		{
+			"id": "de-023",
+			"base": "q-050",
+			"phenomena": [
+				"inflection"
+			],
+			"question": "Welches Ereignis startet Reklamationen?"
+		},
+		{
+			"id": "de-024",
+			"base": "q-071",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Felder hat die Maske zur Anmeldung?"
+		},
+		{
+			"id": "de-025",
+			"base": "q-073",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welche Schaltfläche zeigt die Maske für den Wareneingang?"
+		},
+		{
+			"id": "de-026",
+			"base": "q-074",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welches Pflichtfeld markiert die Maske für Freigaben?"
+		},
+		{
+			"id": "de-027",
+			"base": "q-075",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Maske zeigt die Auswahl der Charge?"
+		},
+		{
+			"id": "de-028",
+			"base": "q-076",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Wo ist die Maske für die Suche nach Artikeln abgebildet?"
+		},
+		{
+			"id": "de-029",
+			"base": "q-077",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welche Felder hat die Maske für Inventuren?"
+		},
+		{
+			"id": "de-030",
+			"base": "q-079",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welches Eingabefeld hat die Maske für Reklamationen?"
+		},
+		{
+			"id": "de-031",
+			"base": "q-101",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Legende erklärt die Symbole im Plan der Halle?"
+		},
+		{
+			"id": "de-032",
+			"base": "q-104",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Welches Planblatt zeigt die Zonen der Regale?"
+		},
+		{
+			"id": "de-033",
+			"base": "q-105",
+			"phenomena": [
+				"compound",
+				"inflection"
+			],
+			"question": "Wo ist die Kennzeichnung der Fluchtwege dargestellt?"
+		},
+		{
+			"id": "de-034",
+			"base": "q-107",
+			"phenomena": [
+				"derivation"
+			],
+			"question": "Welches Blatt zeigt die elektrische Installation?"
+		},
+		{
+			"id": "de-035",
+			"base": "q-109",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Nummer der Zeichnung trägt der Plan zur Übersicht?"
+		},
+		{
+			"id": "de-036",
+			"base": "q-110",
+			"phenomena": [
+				"compound"
+			],
+			"question": "Welche Zonen zeigt der Plan zur Nutzung?"
+		}
+	]
+}
