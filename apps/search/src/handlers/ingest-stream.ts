@@ -18,6 +18,7 @@ import type pino from "pino";
 import type { EmbeddingClient } from "../embedding-client.js";
 import type { SparseEmbeddingClient } from "../sparse-embedding-client.js";
 import type { PostgresClient } from "../postgres-client.js";
+import { readHeader } from "../header-utils.js";
 import { normalizeMetadata, type Metadata } from "../metadata.js";
 import {
   buildJobsForBatch,

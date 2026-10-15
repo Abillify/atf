@@ -90,14 +90,14 @@ export function createIngestHandler(
             .filter(Boolean)
         : [];
       const allowedUsersRaw = readHeader(req, "x-allowed-users");
-      const _allowedUsers = allowedUsersRaw
+      const allowedUsers = allowedUsersRaw
         ? allowedUsersRaw
             .split(",")
             .map((u) => u.trim())
             .filter(Boolean)
         : [];
       const allowedGroupsRaw = readHeader(req, "x-allowed-groups");
-      const _allowedGroups = allowedGroupsRaw
+      const allowedGroups = allowedGroupsRaw
         ? allowedGroupsRaw
             .split(",")
             .map((g) => g.trim())

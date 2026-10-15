@@ -14,7 +14,7 @@
  */
 
 import { z } from "zod";
-import { accessScopeForMcp, aclForMutation } from "../access-scope.js";
+import { AccessDeniedError, accessScopeForMcp, aclForMutation } from "../access-scope.js";
 import { emitActivity } from "../activity-emitter.js";
 import { assemblePoints, buildJobsForDocument, embedJobsWithLateChunking, type ChunkingOptions, type EmbedJob, type IngestDocument } from "../ingest-jobs.js";
 import { normalizeMetadata, type Metadata } from "../metadata.js";
@@ -107,8 +107,25 @@ export function registerIngestTools(opts: McpToolContext): void {
         return r.result.vectors;
       };
 
-      const secured = await authorize(col);
-      const writeAcl = aclForMutation(secured.scope, secured.acl, requesting_user);
+      // First ingest into a brand-new collection must not be blocked by the
+      // ACL lookup: the collection does not exist yet and is created by
+      // ensureCollection below. A typed COLLECTION_NOT_FOUND is therefore
+      // tolerated (acl=undefined); every other denial still fails closed.
+      let securedScope: import("../access-scope.js").AccessScope;
+      let securedAcl: import("../collection-access.js").CollectionAcl | undefined;
+      try {
+        const result = await authorize(col);
+        securedScope = result.scope;
+        securedAcl = result.acl;
+      } catch (error) {
+        if (error instanceof AccessDeniedError && error.code === "COLLECTION_NOT_FOUND") {
+          securedScope = accessScopeForMcp();
+          securedAcl = undefined;
+        } else {
+          throw error;
+        }
+      }
+      const writeAcl = aclForMutation(securedScope, securedAcl, requesting_user);
 
       let normalizedMetadata: Metadata;
       try {
@@ -239,7 +256,7 @@ export function registerIngestTools(opts: McpToolContext): void {
 
       const points = assemblePoints(jobs, vectors, sparseVectors);
       for (const point of points) {
-        point.tenantId = secured.scope.tenantId;
+        point.tenantId = securedScope.tenantId;
         point.preserveExistingAclOnConflict = writeAcl.preserveExistingOnConflict === true;
       }
 
