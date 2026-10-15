@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 import { hasJsonContentType, isSameOriginRequest } from "./same-origin";
 
 function req(headers: Record<string, string>, url = "https://control.local/x"): Request {
@@ -33,6 +33,40 @@ describe("isSameOriginRequest", () => {
         ),
       ),
     ).toBe(true);
+  });
+});
+
+describe("isSameOriginRequest with CONTROL_PUBLIC_ORIGIN", () => {
+  afterEach(() => vi.unstubAllEnvs());
+  test("accepts only the pinned host", () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "https://ops.example");
+    expect(isSameOriginRequest(req({ Origin: "https://ops.example" }, "http://control:3000/x"))).toBe(true);
+    expect(isSameOriginRequest(req({ Origin: "https://attacker.example" }, "http://control:3000/x"))).toBe(false);
+  });
+  test("ignores a client-supplied X-Forwarded-Host and Host", () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "https://ops.example");
+    expect(
+      isSameOriginRequest(
+        req(
+          { Origin: "https://attacker.example", "X-Forwarded-Host": "attacker.example", Host: "attacker.example" },
+          "https://attacker.example/x",
+        ),
+      ),
+    ).toBe(false);
+  });
+  test("still rejects cross-site fetch metadata", () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "https://ops.example");
+    expect(isSameOriginRequest(req({ "Sec-Fetch-Site": "cross-site", Origin: "https://ops.example" }))).toBe(false);
+  });
+  test("an invalid value fails closed for requests with an Origin", () => {
+    for (const bad of ["not a url", "ftp://ops.example", "javascript:alert(1)"]) {
+      vi.stubEnv("CONTROL_PUBLIC_ORIGIN", bad);
+      expect(isSameOriginRequest(req({ Origin: "https://control.local" }))).toBe(false);
+    }
+  });
+  test("unset or blank keeps the legacy behaviour", () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "  ");
+    expect(isSameOriginRequest(req({ Origin: "https://control.local" }))).toBe(true);
   });
 });
 

@@ -10,12 +10,42 @@
  * carry a victim's cookies through a cross-site form post anyway, because the
  * session cookie is `SameSite=Strict`. This blocks login CSRF and cross-site
  * log injection without changing same-origin behaviour.
+ *
+ * Set `CONTROL_PUBLIC_ORIGIN` (for example `https://control.example.com`) to
+ * pin the accepted host instead of trusting request headers.
  */
 
 const ALLOWED_FETCH_SITES = new Set(["same-origin", "none"]);
 
-/** Hosts under which this request may legitimately have been addressed. */
+/**
+ * Host of `CONTROL_PUBLIC_ORIGIN` when it is set: `undefined` when unset,
+ * `null` when it is set but not a valid http(s) origin (fail closed).
+ */
+function pinnedHost(): string | null | undefined {
+  const raw = process.env["CONTROL_PUBLIC_ORIGIN"]?.trim();
+  if (!raw) return undefined;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+    return url.host.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Hosts under which this request may legitimately have been addressed.
+ *
+ * With `CONTROL_PUBLIC_ORIGIN` set, only that host counts and
+ * `X-Forwarded-Host` is ignored, so a client-supplied header cannot widen the
+ * allow-list. Without it the legacy behaviour applies (forwarded host, `Host`,
+ * request URL), which is only safe when the reverse proxy overwrites
+ * `X-Forwarded-Host`. An invalid value yields an empty set: every request that
+ * carries an `Origin` header is rejected.
+ */
 function requestHosts(request: Request): Set<string> {
+  const pinned = pinnedHost();
+  if (pinned !== undefined) return new Set(pinned === null ? [] : [pinned]);
   const hosts = new Set<string>();
   const forwarded = request.headers
     .get("x-forwarded-host")

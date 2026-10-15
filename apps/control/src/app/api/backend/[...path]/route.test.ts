@@ -262,6 +262,27 @@ describe("backend proxy — cross-site guard", () => {
     expect(fetchFn).not.toHaveBeenCalled();
   });
 
+  test("with CONTROL_PUBLIC_ORIGIN a same-origin POST reaches the backend and a spoofed forwarded host does not", async () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "https://ops.example");
+    const fetchFn = vi.fn(async () => Response.json({ ok: true }));
+    vi.stubGlobal("fetch", fetchFn);
+    const post = async (headers: Record<string, string>) =>
+      POST(
+        new Request("http://control:3000/api/backend/admin/tenants", {
+          method: "POST",
+          headers: { cookie: await cookieHeader(), "content-type": "application/json", ...headers },
+          body: "{}",
+        }),
+        paramsFor("admin", "tenants"),
+      );
+    const spoofed = await post({ origin: "https://evil.example", "x-forwarded-host": "evil.example" });
+    expect(spoofed.status).toBe(403);
+    expect((await spoofed.json()).error).toBe("cross_site_request");
+    expect(fetchFn).not.toHaveBeenCalled();
+    const ok = await post({ origin: "https://ops.example", "sec-fetch-site": "same-origin" });
+    expect(ok.status).toBe(200);
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+  });
   test("a same-origin request passes the guard", async () => {
     vi.stubGlobal(
       "fetch",

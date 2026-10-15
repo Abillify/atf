@@ -46,7 +46,7 @@ bun run --filter @atf/control build
 
 ## Configuration
 
-Three optional variables are documented in [`.env.example`](.env.example):
+Four optional variables are documented in [`.env.example`](.env.example):
 
 - `NEXT_PUBLIC_BACKEND_URL` — explicit development or cross-origin Runtime base URL as reached
   from the browser. Next.js freezes `NEXT_PUBLIC_*` into the browser bundle at build time. Omit
@@ -63,11 +63,23 @@ Three optional variables are documented in [`.env.example`](.env.example):
   Baseline security headers (`X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`,
   `X-Frame-Options`, and `Strict-Transport-Security` over HTTPS) are emitted in every mode.
 
+- `CONTROL_PUBLIC_ORIGIN` — the public origin of Control (for example `https://control.example.com`),
+  used by the same-origin guard of the BFF routes (`/api/session`, `/api/backend`, `/api/telemetry`).
+  When set, only that origin's host is accepted for the `Origin` header and `X-Forwarded-Host` is
+  ignored; an invalid value rejects every request that carries an `Origin`. When unset, the guard
+  also trusts `X-Forwarded-Host` and `Host`, so the reverse proxy MUST overwrite `X-Forwarded-Host`
+  (never pass a client-supplied value through). Set it in every BFF deployment behind a proxy.
+- **BFF mode and session renewal** (`CONTROL_SESSION_MODE=bff`): there is no silent token renewal,
+  because the Runtime refresh session is a cookie on the Runtime origin that Control cannot reach
+  and the access token stays server-side. When the sealed session expires, the user signs in again
+  through interactive SSO.
 ## Testing
 
 - **Unit and component**: Vitest with Testing Library, in `src/__tests__/`.
 - **End-to-end**: Playwright in `e2e/`, covering dashboard navigation, the SSE monitoring
   stream, the trace viewer, and DSAR compliance flows.
+- **BFF origin**: `e2e/bff-origin.spec.ts` runs only with `E2E_BFF=1` against a BFF-mode server with
+  `CONTROL_PUBLIC_ORIGIN` set; the route tests in `src/app/api/` cover the same cases offline.
 - **Accessibility**: `e2e/a11y-sweep.spec.ts` and `e2e/a11y-responsive.spec.ts` run axe-core
   across the dashboard at several viewports. Automated checks catch a subset of issues; they do
   not substitute for testing with assistive technology.

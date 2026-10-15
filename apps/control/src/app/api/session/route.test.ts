@@ -193,6 +193,38 @@ describe("POST /api/session cross-site guard", () => {
     expect(res.status).toBe(415);
   });
 });
+describe("BFF session with CONTROL_PUBLIC_ORIGIN", () => {
+  const post = (headers: Record<string, string>) =>
+    POST(
+      new Request("http://control:3000/api/session", {
+        method: "POST",
+        headers: { ...JSON_HEADERS, ...headers },
+        body: JSON.stringify({ token: makeJwt({ role: "operator", exp: 4_000_000_000 }) }),
+      }),
+    );
+  test("hands the session off for the pinned origin and clears it on logout", async () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "https://ops.example");
+    const ok = await post({ Origin: "https://ops.example", "Sec-Fetch-Site": "same-origin" });
+    expect(ok.status).toBe(200);
+    expect(ok.headers.get("set-cookie")).toContain(`${BFF_SESSION_COOKIE}=`);
+    const out = await DELETE(
+      new Request("http://control:3000/api/session", {
+        method: "DELETE",
+        headers: { Origin: "https://ops.example", "Sec-Fetch-Site": "same-origin" },
+      }),
+    );
+    expect(out.status).toBe(200);
+    expect(out.headers.get("set-cookie")).toMatch(/Max-Age=0|Expires=Thu, 01 Jan 1970/i);
+  });
+  test("a spoofed X-Forwarded-Host does not make a foreign origin pass", async () => {
+    vi.stubEnv("CONTROL_PUBLIC_ORIGIN", "https://ops.example");
+    const res = await post({ Origin: "https://attacker.example", "X-Forwarded-Host": "attacker.example" });
+    expect(res.status).toBe(403);
+    expect((await res.json()).error).toBe("cross_site_request");
+    expect(res.headers.get("set-cookie")).toBeNull();
+  });
+});
+
 describe("DELETE /api/session", () => {
   test("rejects a cross-site request", async () => {
     const res = await DELETE(

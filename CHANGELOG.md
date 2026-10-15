@@ -213,6 +213,14 @@ releases:
   `aiperator_indirect_injection_total`.
 
 ### Added
+- **Control** (`@atf/control`): the dashboard is localized in German and English
+  (cookie `NEXT_LOCALE`). Texts live in `src/lib/i18n/catalogs/ui.en.ts` and `ui.de.ts`;
+  `i18n-coverage.test.ts` fails on hard-coded UI text, thrown errors, `setError()` and
+  toasts. `@babel/parser` 7.29.9 is a pinned devDependency for that test.
+- **Control** (`@atf/control`): new `CONTROL_PUBLIC_ORIGIN` pins the host accepted by the
+  BFF same-origin guard; `X-Forwarded-Host` is then ignored. An invalid value rejects every
+  request that carries an `Origin`. Without it the legacy behaviour stays, and the reverse
+  proxy must overwrite `X-Forwarded-Host`.
 
 - Runtime, coverage harness: optional `coverageQueue.summaryTriage` for the
   staged queue. In `mode: hybrid`, a cross-encoder scores every open summary
@@ -269,6 +277,11 @@ releases:
   model to search or use `list_documents` instead.
 
 ### Fixed
+- **Control** (`@atf/control`): approval decisions that fail or are answered with 403 now show
+  a localized message in the card instead of failing silently; an empty 403 from the API
+  client reads "Your role does not permit this action." `useApprovals().resolve` returns
+  `{ ok, status }` instead of a boolean. BFF mode has no silent renewal; the README now
+  documents the interactive SSO sign-in after expiry.
 
 - Runtime, coverage harness: `triageSource: rerank` no longer survives when
   global discovery (path B) reopens a rerank exclusion or when the staged
