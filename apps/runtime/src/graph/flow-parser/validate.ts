@@ -1201,13 +1201,26 @@ export function validateFlowDefinition(raw: unknown): ValidationResult {
  * Validates a raw flow object that may contain `{{vars.<name>}}` references.
  *
  * Correctness is checked against the flow's *default* variable values. The
- * returned FlowDefinition keeps the placeholders intact when structurally valid.
+ * returned FlowDefinition keeps the placeholders intact when structurally
+ * valid, so per-request `variables` overrides keep working.
+ *
+ * Model shortcuts must be expanded in BOTH forms: the placeholder-preserving
+ * template would otherwise still carry `{ shortcut: ... }` without
+ * provider/model, fail the LlmConfig schema, and silently fall back to the
+ * fully baked defaults — killing every `{{vars.*}}` override (the sm-tutor
+ * bug, fixed in 0.16.1). `expandShortcutsOnly` is the loader's shortcut-only
+ * expansion (no variable resolution); without it — no shortcuts file, or the
+ * facade's no-arg wrapper — the plain template form is used as before.
  */
 export function validateFlowSource(
 	raw: unknown,
 	resolveRawFlowVariables: (
 		raw: Record<string, unknown>,
 		overrides: Record<string, unknown> | undefined,
+		fileName: string,
+	) => void,
+	expandShortcutsOnly?: (
+		raw: Record<string, unknown>,
 		fileName: string,
 	) => void,
 ): ValidationResult {
@@ -1222,7 +1235,10 @@ export function validateFlowSource(
 	if (!checked.success) return checked;
 
 	// Prefer registering the placeholder-preserving form so variables stay
-	// overridable at execution time.
-	const template = validateFlowDefinition(raw);
+	// overridable at execution time. Shortcuts are load-time-only
+	// indirections and are expanded here too; variables stay placeholders.
+	const templateClone = structuredClone(raw) as Record<string, unknown>;
+	expandShortcutsOnly?.(templateClone, "<validation>");
+	const template = validateFlowDefinition(templateClone);
 	return template.success ? template : checked;
 }

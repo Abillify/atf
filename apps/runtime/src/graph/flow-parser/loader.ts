@@ -73,6 +73,24 @@ function makeFlowValueResolver(
   };
 }
 
+/**
+ * Builds the shortcut-only expansion passed to `validateFlowSource` as its
+ * template-phase callback: expands `llm.shortcut` references WITHOUT resolving
+ * `{{vars.*}}`, so the placeholder-preserving template form becomes
+ * schema-valid (a raw `{ shortcut: ... }` lacks provider/model) while variables
+ * stay overridable per request. A no-op when there is no shortcuts file.
+ */
+function makeShortcutExpander(
+  flowsDir: string,
+): (raw: Record<string, unknown>, fileName: string) => void {
+  return (raw, fileName) => {
+    const shortcuts = loadModelShortcuts(flowsDir);
+    if (shortcuts !== null) {
+      resolveModelShortcuts(raw, shortcuts, fileName);
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // FlowRegistry
 // ---------------------------------------------------------------------------
@@ -129,12 +147,20 @@ export function materializeFlowSource(
   fileName = "<source>",
 ): ValidationResult {
   if (typeof source !== "object" || source === null) {
-    return validateFlowSource(source, makeFlowValueResolver(flowsDir));
+    return validateFlowSource(
+      source,
+      makeFlowValueResolver(flowsDir),
+      makeShortcutExpander(flowsDir),
+    );
   }
   const clone = structuredClone(source) as Record<string, unknown>;
   stripSourceBookkeeping(clone);
   resolveFlowIncludes(clone, flowsDir, fileName);
-  return validateFlowSource(clone, makeFlowValueResolver(flowsDir));
+  return validateFlowSource(
+    clone,
+    makeFlowValueResolver(flowsDir),
+    makeShortcutExpander(flowsDir),
+  );
 }
 
 /**
@@ -339,6 +365,7 @@ function registerParsedFlow(
   const result = validateFlowSource(
     raw,
     makeFlowValueResolver(path.dirname(filePath)),
+    makeShortcutExpander(path.dirname(filePath)),
   );
   if (!result.success) {
     logValidationError(fileName, result.error.reason, result.error.details);
