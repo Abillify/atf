@@ -446,13 +446,6 @@
     {
       "rule": "lint/style/noNonNullAssertion",
       "severity": "warning",
-      "file": "apps/control/src/app/(dashboard)/compliance/page.tsx",
-      "hash": "e73c2e7c0fd9dceb",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
       "file": "apps/control/src/app/(dashboard)/traces/page.tsx",
       "hash": "576c8167b347fb2f",
       "count": 1
@@ -1113,13 +1106,6 @@
       "severity": "warning",
       "file": "apps/runtime/src/observability/retention.ts",
       "hash": "4a06ed9afab3cd51",
-      "count": 1
-    },
-    {
-      "rule": "lint/style/noNonNullAssertion",
-      "severity": "warning",
-      "file": "apps/runtime/src/observability/retention.ts",
-      "hash": "6ff89948e7769574",
       "count": 1
     },
     {

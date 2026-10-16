@@ -18,6 +18,24 @@ releases:
 
 ## [Unreleased]
 
+## [0.16.1] — 2026-10-16
+
+### Fixed
+
+- **Runtime** (`@atf/runtime`): `validateFlowSource` validated the raw flow
+  template without model-shortcut expansion. A flow whose LLM node used
+  `{shortcut: ...}` failed the `LlmConfig` schema at template-validation time
+  (provider/model not yet expanded), so the parser silently fell back to the
+  fully-defaulted clone — which had every `{{vars.*}}` placeholder baked to its
+  default value. Per-request `variables` overrides (e.g. a caller supplying its
+  own `collection`) were therefore ignored for any flow combining shortcuts with
+  flow variables (sm-tutor bug). The template clone is now expanded with
+  shortcuts only (no variable resolution), so placeholder forms validate and
+  win; flows with an unresolvable shortcut placeholder keep the defaulted
+  fallback as before. New regression test
+  `validate-source-placeholder.test.ts` covers placeholder survival, override
+  delivery via `applyFlowVariables`, and the unknown-shortcut fallback.
+
 ## [0.16.0] — 2026-10-15
 
 ### Security

@@ -375,11 +375,11 @@ describe("MCP integration · native stateless 2026-07-28 HTTP", () => {
     const body = (await response.json()) as { result: Record<string, unknown> };
     expect(body.result).toMatchObject({
       resultType: "complete",
-      serverInfo: { name: "mcpgate", version: "0.16.0" },
+      serverInfo: { name: "mcpgate", version: "0.16.1" },
       protocolVersion: "2026-07-28",
       service: {
         name: "mcpgate",
-        version: "0.16.0",
+        version: "0.16.1",
         endpoint: "/mcp/v2026",
         transport: "stateless-http",
       },
@@ -390,7 +390,7 @@ describe("MCP integration · native stateless 2026-07-28 HTTP", () => {
         requestMetadata: ["transaction", "trace", "deadline"],
       },
       capabilities: { tools: { list: true, call: true } },
-      _meta: { serverInfo: { name: "mcpgate", version: "0.16.0" } },
+      _meta: { serverInfo: { name: "mcpgate", version: "0.16.1" } },
     });
     expect(JSON.stringify(body)).not.toContain("subscriptions");
     expect((await fetch(`http://127.0.0.1:${port}/mcp/v2026`)).status).toBe(405);
