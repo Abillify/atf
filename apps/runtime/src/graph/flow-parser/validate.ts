@@ -1207,8 +1207,8 @@ export function validateFlowDefinition(raw: unknown): ValidationResult {
  * Model shortcuts must be expanded in BOTH forms: the placeholder-preserving
  * template would otherwise still carry `{ shortcut: ... }` without
  * provider/model, fail the LlmConfig schema, and silently fall back to the
- * fully baked defaults — killing every `{{vars.*}}` override (the sm-tutor
- * bug, fixed in 0.16.1). `expandShortcutsOnly` is the loader's shortcut-only
+ * fully baked defaults — killing every `{{vars.*}}` override
+ * (fixed in 0.16.1). `expandShortcutsOnly` is the loader's shortcut-only
  * expansion (no variable resolution); without it — no shortcuts file, or the
  * facade's no-arg wrapper — the plain template form is used as before.
  */

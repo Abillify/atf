@@ -9,7 +9,7 @@
  * expanding shortcuts; a raw `{ shortcut: ... }` lacks provider/model and
  * fails the LlmConfig schema, so the loader silently fell back to the fully
  * baked defaults clone — every per-request `variables` override was dead
- * (sm-tutor's `collection` always resolved to its default).
+ * (a flow's `collection` variable always resolved to its default).
  */
 
 import { describe, test, expect, afterEach } from "bun:test";
@@ -46,7 +46,7 @@ function writeShortcuts(dir: string): void {
 	);
 }
 
-/** Mirrors the sm-tutor shape: shortcut on the answer node, vars elsewhere. */
+/** Mirrors a typical flow shape: shortcut on the answer node, vars elsewhere. */
 function writeTutorFlow(dir: string): void {
 	fs.writeFileSync(
 		path.join(dir, "tutor-flow.json"),
@@ -126,7 +126,7 @@ describe("validateFlowSource keeps variables overridable", () => {
 	test("falls back to baked defaults when the shortcut name is a placeholder", async () => {
 		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "flowparser-placeholder-"));
 		writeShortcuts(tmpDir);
-		// sm-answer-grade shape: the shortcut name itself comes from a variable.
+		// Variable-driven shortcut shape: the shortcut name itself comes from a variable.
 		// The template form cannot expand that (shortcuts resolve before request
 		// variables), so the baked form is registered instead — still valid,
 		// just not overridable for THAT field.

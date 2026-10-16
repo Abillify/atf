@@ -29,7 +29,7 @@ releases:
   fully-defaulted clone — which had every `{{vars.*}}` placeholder baked to its
   default value. Per-request `variables` overrides (e.g. a caller supplying its
   own `collection`) were therefore ignored for any flow combining shortcuts with
-  flow variables (sm-tutor bug). The template clone is now expanded with
+  flow variables. The template clone is now expanded with
   shortcuts only (no variable resolution), so placeholder forms validate and
   win; flows with an unresolvable shortcut placeholder keep the defaulted
   fallback as before. New regression test
