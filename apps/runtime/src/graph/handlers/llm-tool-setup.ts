@@ -11,6 +11,7 @@
  */
 import type { ToolSet } from "ai";
 import type {
+  FigureEmbeddingConfig,
   FlowNode,
   ImageInspectionConfig,
 } from "../../types/flow.js";
@@ -29,6 +30,7 @@ import {
   uniqueMediaToolKey,
 } from "../agent-tools.js";
 import { IMAGE_INSPECTION_TOOL_NAME } from "../image-reference.js";
+import { buildShowFigureTools } from "../figure-embedding.js";
 import {
   parseToolSelection,
   expandPatterns,
@@ -80,10 +82,7 @@ export async function setupLlmTools(params: {
 }) {
   const { runtime, node, state, resolved } = params;
   let aiTools: ToolSet | undefined;
-  const effectiveToolArgsByCallId = new Map<
-    string,
-    Record<string, unknown>
-  >();
+  const effectiveToolArgsByCallId = new Map<string, Record<string, unknown>>();
   const assistantSessionBinding = (() => {
     if (runtime.assistants === undefined) return undefined;
     const resolution = resolveAssistantScope({
@@ -98,9 +97,7 @@ export async function setupLlmTools(params: {
     return {
       scope: resolution.scope,
       conversationId:
-        runtime.ctx.chatId ??
-        runtime.ctx.sessionId ??
-        runtime.ctx.executionId,
+        runtime.ctx.chatId ?? runtime.ctx.sessionId ?? runtime.ctx.executionId,
     };
   })();
   const assistantToolJournal = (() => {
@@ -132,9 +129,7 @@ export async function setupLlmTools(params: {
   if (resolved.tools.length > 0 && runtime.mcpWrapper) {
     const nodeWithResolvedTools = { ...node, tools: resolved.tools };
     const toolEgressGuardrail = runtime.toolEgressGuardrail;
-    const classificationNamespaces = buildClassificationNamespaces(
-      state.turns,
-    );
+    const classificationNamespaces = buildClassificationNamespaces(state.turns);
     const toolTemplateContext: Record<string, unknown> = {
       query: lastUserQuery(state),
       classLabel: state.classLabel,
@@ -248,7 +243,10 @@ export async function setupLlmTools(params: {
                 },
                 onRefStrictCheckDisabled: () => {
                   const registry = runtime.refHandles;
-                  if (registry === undefined || strictDisabledReported.has(registry))
+                  if (
+                    registry === undefined ||
+                    strictDisabledReported.has(registry)
+                  )
                     return;
                   strictDisabledReported.add(registry);
                   runtime.onNodeDiagnostic?.(node.id, {
@@ -270,9 +268,14 @@ export async function setupLlmTools(params: {
       // Surface WHY tools are unavailable in the trace: one diagnostic per
       // server and cause, so e.g. a rejected token exchange is not visible
       // only as the model saying "temporarily unavailable".
-      const byCause = new Map<string, { server: string; reason: string; tools: string[] }>();
+      const byCause = new Map<
+        string,
+        { server: string; reason: string; tools: string[] }
+      >();
       for (const toolRef of built.unavailable) {
-        const server = toolRef.includes("/") ? (toolRef.split("/")[0] ?? toolRef) : toolRef;
+        const server = toolRef.includes("/")
+          ? (toolRef.split("/")[0] ?? toolRef)
+          : toolRef;
         const reason = built.unavailableReasons[toolRef] ?? "unknown error";
         const causeKey = `${server}\u001f${reason}`;
         const entry = byCause.get(causeKey) ?? { server, reason, tools: [] };
@@ -576,6 +579,58 @@ export async function setupLlmTools(params: {
       aiTools = { ...(aiTools ?? {}), ...inspectionTools };
       if (activeToolKeys !== undefined) {
         for (const k of Object.keys(inspectionTools)) activeToolKeys.add(k);
+      }
+    }
+  }
+
+  // Figure embedding (`show_figure`, see `figure-embedding.ts`): the node may
+  // put a document figure into its answer as a short-lived media link. Double
+  // gate — the deployment must enable it (`EMBED_SEARCH_FIGURES=true`) and be
+  // able to hand out browser-reachable media URLs (`MEDIA_BASE_URL`), and the
+  // node must declare `config.figureEmbedding` with its own `assetSource`
+  // (synthesizer nodes typically have no `imageInspection` to inherit from).
+  // The `get_asset` fetch runs with the caller's request context, so figure
+  // access inherits the same ACL + fail-closed behaviour as `inspect_image`.
+  const figureEmbedding = (
+    node.config as { figureEmbedding?: FigureEmbeddingConfig } | undefined
+  )?.figureEmbedding;
+  if (figureEmbedding !== undefined) {
+    const figureMcp = runtime.mcpWrapper;
+    const figurePublish = runtime.publishMedia;
+    const figureGateOpen =
+      runtime.appConfig.embedSearchFigures === true &&
+      runtime.appConfig.mediaBaseUrl !== undefined &&
+      figureMcp !== undefined &&
+      figurePublish !== undefined;
+    if (!figureGateOpen) {
+      runtime.onNodeDiagnostic?.(node.id, {
+        level: "warn",
+        code: "figure_embedding_unavailable",
+        message:
+          `Node ${node.id} declares config.figureEmbedding but the feature ` +
+          "gate is off: it needs EMBED_SEARCH_FIGURES=true, MEDIA_BASE_URL, " +
+          "a configured MCP server and the media store. The show_figure tool " +
+          "is not exposed for this node.",
+      });
+    } else {
+      const figureTools = buildShowFigureTools({
+        existingTools: aiTools,
+        config: figureEmbedding,
+        fetchAsset: buildAssetFetch(
+          figureMcp,
+          runtime.ctx,
+          figureEmbedding.assetSource,
+          runtime.signal,
+        ),
+        publishMedia: figurePublish,
+        onEffectiveArgs: (toolCallId, toolName, argsJson) =>
+          runtime.onToolEffectiveArgs?.(toolCallId, toolName, argsJson),
+      });
+      if (Object.keys(figureTools).length > 0) {
+        aiTools = { ...(aiTools ?? {}), ...figureTools };
+        if (activeToolKeys !== undefined) {
+          for (const k of Object.keys(figureTools)) activeToolKeys.add(k);
+        }
       }
     }
   }

@@ -492,6 +492,12 @@ export interface AppConfig {
   /** Explicit browser origins permitted to embed in-chat approval widgets. */
   approvalFrameAncestors?: string[];
   mediaBaseUrl?: string;
+  /**
+   * Deployment gate for the `show_figure` tool: answers may embed document
+   * figures served as short-lived media links (`/v1/media/<id>`). Requires
+   * `mediaBaseUrl` and a node-level `config.figureEmbedding` to take effect.
+   */
+  embedSearchFigures?: boolean;
   groundednessEnabled?: boolean;
   groundednessMode?: "annotate" | "block";
   groundednessPassThreshold?: number;
@@ -1183,7 +1189,7 @@ export const EnvSchema = z.object({
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "JWT_ISSUER_TENANTS must be a JSON object mapping issuer to a non-empty array of tenant ids (or [\"*\"])",
+            'JWT_ISSUER_TENANTS must be a JSON object mapping issuer to a non-empty array of tenant ids (or ["*"])',
         });
         return z.NEVER;
       }
@@ -1871,6 +1877,10 @@ export const EnvSchema = z.object({
       return [...new Set(origins)];
     }),
   MEDIA_BASE_URL: z.string().url().optional(),
+  EMBED_SEARCH_FIGURES: z
+    .string()
+    .optional()
+    .transform((raw): boolean => raw === "true" || raw === "1"),
   GROUNDEDNESS_ENABLED: z
     .string()
     .optional()

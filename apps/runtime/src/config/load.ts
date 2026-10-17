@@ -343,6 +343,7 @@ export function loadConfig(): AppConfig {
     approvalBaseUrl: env.APPROVAL_BASE_URL,
     approvalFrameAncestors: env.APPROVAL_FRAME_ANCESTORS,
     mediaBaseUrl: env.MEDIA_BASE_URL ?? env.APPROVAL_BASE_URL,
+    embedSearchFigures: env.EMBED_SEARCH_FIGURES,
     groundednessEnabled: env.GROUNDEDNESS_ENABLED,
     groundednessMode: env.GROUNDEDNESS_MODE,
     groundednessPassThreshold: env.GROUNDEDNESS_PASS_THRESHOLD,

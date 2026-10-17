@@ -866,6 +866,38 @@ const LLM: NodeTypeDoc = {
       ],
     },
     {
+      key: "figureEmbedding",
+      kind: "object",
+      label: "Figure embedding (show_figure)",
+      advanced: true,
+      description:
+        "Gives the node a `show_figure` tool so its answer can embed a document figure directly: the model passes an `asset:<id>[#bbox]` reference from a search hit, the bytes are fetched via the MCP `get_asset` tool (caller ACL, fail-closed) and served as a short-lived media link the model pastes into its answer. Needs the deployment gate `EMBED_SEARCH_FIGURES=true` plus `MEDIA_BASE_URL`; the link is a capability URL (knowledge = access) bounded by the media store TTL.",
+      fields: [
+        {
+          key: "description",
+          kind: "text",
+          label: "Tool description",
+          description:
+            "Overrides the tool description shown to the hosting model (max 2000 chars).",
+        },
+        {
+          key: "assetSource",
+          kind: "json",
+          label: "Asset source",
+          required: true,
+          description:
+            "Where figures come from: object with `server` (required, the MCP server exposing get_asset), optional `collection`, and optional `variant` (thumb|preview|full — prefer thumb/preview over full for answer-embedded figures).",
+        },
+      ],
+      example: {
+        assetSource: {
+          server: "vectorsearch",
+          collection: "docs",
+          variant: "preview",
+        },
+      },
+    },
+    {
       key: "mediaTools",
       kind: "json",
       label: "Media generation tools",

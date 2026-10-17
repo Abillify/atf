@@ -229,6 +229,35 @@ export interface ImageInspectionConfig {
 }
 
 /**
+ * Figure-embedding settings for an `llm` node whose answer may show document
+ * figures directly to the end user.
+ *
+ * Configured under an `llm` node's `config.figureEmbedding`. When present — and
+ * only when the deployment gate `EMBED_SEARCH_FIGURES=true` plus a configured
+ * `MEDIA_BASE_URL` are on as well — the node gets a `show_figure` tool: the
+ * hosting model passes an `asset:<id>[#bbox]` reference (or a bare asset id)
+ * from its own search results, the engine fetches the bytes through the MCP
+ * `get_asset` tool (caller ACL, fail-closed), parks them in the run's media
+ * store, and the tool returns a markdown image with a short-lived media URL
+ * (`<MEDIA_BASE_URL>/v1/media/<id>.<ext>`) that the model pastes into its
+ * answer. The bytes never enter the model context.
+ *
+ * The link is capability-style: anyone who knows it can fetch the figure until
+ * the media store's TTL expires. Enable it only where that is acceptable, and
+ * prefer a small `variant` (thumb/preview) over `full`.
+ */
+export interface FigureEmbeddingConfig {
+  /** Overrides the generated tool description. */
+  description?: string;
+  /**
+   * Where the figure bytes come from — same shape as
+   * {@link ImageInspectionConfig.assetSource}. Required: without an MCP
+   * `get_asset` source there is nothing to embed.
+   */
+  assetSource: NonNullable<ImageInspectionConfig["assetSource"]>;
+}
+
+/**
  * Schema definition for structured output from a `classifier` node.
  * Uses a JSON Schema subset that the AI SDK's generateObject supports.
  */

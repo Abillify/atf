@@ -303,6 +303,22 @@ const ImageInspectionConfigSchema = z
 	});
 
 /**
+ * Figure-embedding settings (`config.figureEmbedding`) of an `llm` node whose
+ * answer may show document figures via short-lived media links. The asset
+ * source is mandatory — without an MCP `get_asset` server there is nothing to
+ * embed — and the tool only appears when the deployment gate
+ * (`EMBED_SEARCH_FIGURES` + `MEDIA_BASE_URL`) is on as well.
+ */
+const FigureEmbeddingConfigSchema = z.object({
+	description: z.string().min(1).max(2_000).optional(),
+	assetSource: z.object({
+		server: z.string().min(1),
+		collection: z.string().min(1).optional(),
+		variant: z.enum(["thumb", "preview", "full"]).optional(),
+	}),
+});
+
+/**
  * LLM node config remains extensible, but security-sensitive output framing is
  * validated explicitly. By default the runtime buffers all ordinary content;
  * the opt-in live mode starts emitting only after the start marker while
@@ -313,6 +329,7 @@ export const LlmNodeConfigSchema = z
 		finalAnswerContract: FinalAnswerContractSchema.optional(),
 		maxOutputChars: z.number().int().min(1_000).max(1_000_000).optional(),
 		imageInspection: ImageInspectionConfigSchema.optional(),
+		figureEmbedding: FigureEmbeddingConfigSchema.optional(),
 		toolResultBudget: z
 			.object({
 				perResultChars: z.number().int().min(1_000).max(1_000_000).optional(),

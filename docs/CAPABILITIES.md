@@ -104,6 +104,16 @@ need adaptation.
   cost, metrics and synthetic tool-node trace data; provider failures are returned as bounded
   tool results and recorded as errors. Same-loop tool-result images are offloaded before each
   subsequent provider step, so their bytes are not repeatedly sent to the hosting provider.
+  The reverse direction is `config.figureEmbedding`: the node receives a `show_figure` tool
+  that takes an `asset:<id>[#bbox]` reference (or a bare asset id) from its own search results,
+  fetches the bytes through the MCP `get_asset` tool with the caller's ACL (fail-closed),
+  publishes them in the transient media store and returns a markdown image link the model
+  pastes into its answer. The bytes never enter the model context, and there is no inline
+  data-URI fallback. The tool is exposed only when the deployment sets
+  `EMBED_SEARCH_FIGURES=true` and `MEDIA_BASE_URL`, and the node declares an `assetSource`;
+  otherwise the node logs a `figure_embedding_unavailable` diagnostic. The media link is a
+  capability URL: anyone who knows it can fetch the figure until the media store TTL expires,
+  so enable it only where that is acceptable and prefer the `thumb` or `preview` variant.
   Reasoning output from thinking models is surfaced separately from the answer.
 - **Agentic tool use.** A flow step can let the model select and call tools over MCP, then
   incorporate the results. `MAX_TOOL_STEPS` bounds the loop.
