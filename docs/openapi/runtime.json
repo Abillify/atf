@@ -2,7 +2,7 @@
   "openapi": "3.1.0",
   "info": {
     "title": "Aiperator Trust Fabric Runtime",
-    "version": "0.16.2",
+    "version": "0.17.0",
     "description": "The ATF Runtime is the OpenAI-compatible inference and orchestration plane: chat/responses, assistants, flows, jobs, RAG, memory, optimizer, monitoring, admin and security APIs. The path inventory in this document is generated from the real router tree at request time; conditional groups carry an `x-enabled-when` extension. Endpoints are only mounted when their configuration condition holds."
   },
   "servers": [

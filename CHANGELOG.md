@@ -18,6 +18,19 @@ releases:
 
 ## [Unreleased]
 
+## [0.17.0] — 2026-10-18
+
+### Added
+
+- **Runtime** (`@atf/runtime`): an `llm` node can declare `config.figureEmbedding` to get a
+  `show_figure` tool that embeds a document figure directly in its answer. The model passes
+  an `asset:<id>[#bbox]` reference from a search hit, the bytes are fetched via the MCP
+  `get_asset` tool with the caller's ACL (fail-closed) and served as a short-lived media link;
+  they never enter the model context. The tool is exposed only with the new deployment gate
+  `EMBED_SEARCH_FIGURES=true` plus `MEDIA_BASE_URL`; otherwise the node emits a
+  `figure_embedding_unavailable` diagnostic. The link is a capability URL bounded by the
+  media store TTL. Existing flows are unaffected.
+
 ## [0.16.2] — 2026-10-17
 
 ### Fixed
@@ -3340,7 +3353,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.16.2...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/abillify/atf/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/abillify/atf/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/abillify/atf/compare/v0.16.0...v0.16.1
 [0.16.0]: https://github.com/abillify/atf/compare/v0.15.0...v0.16.0
