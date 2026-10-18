@@ -353,6 +353,35 @@ describe("MCP navigation tools (task 3.9)", () => {
     expect(textOf(res)).toContain("No authorized image asset");
   });
 
+  it("(e) get_asset tolerates a #unit: suffix on expected_document_reference (hit refs are suffixed)", async () => {
+    // v2 units store `${reference}#unit:${unitId}` and hits expose that form;
+    // a model copying a hit's reference must not be denied the asset.
+    const res = (await client.callTool({
+      name: "get_asset",
+      arguments: {
+        asset_id: "asset-1",
+        expected_document_reference:
+          "docs/manual.pdf#unit:e8091f11a5c24b0e9d1f0a2b3c4d5e6f",
+      },
+    })) as ToolResult;
+    expect(res.isError).toBeFalsy();
+    expect(res.content.some((c) => c.type === "image")).toBe(true);
+  });
+
+  it("(e) get_asset still FAILS CLOSED for a different reference carrying a #unit: suffix", async () => {
+    const res = (await client.callTool({
+      name: "get_asset",
+      arguments: {
+        asset_id: "asset-1",
+        expected_document_reference:
+          "docs/OTHER.pdf#unit:e8091f11a5c24b0e9d1f0a2b3c4d5e6f",
+      },
+    })) as ToolResult;
+    expect(res.isError).toBe(true);
+    expect(res.content.some((c) => c.type === "image")).toBe(false);
+    expect(textOf(res)).toContain("No authorized image asset");
+  });
+
   it("(e) get_asset FAILS CLOSED on an expected-figure mismatch — no image", async () => {
     const res = (await client.callTool({ name: "get_asset", arguments: { asset_id: "asset-1", expected_figure_id: "fig-999" } })) as ToolResult;
     expect(res.isError).toBe(true);

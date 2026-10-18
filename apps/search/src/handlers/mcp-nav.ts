@@ -49,6 +49,7 @@ import type { AssetVariant } from "../asset-variants.js";
 import { ASSET_VARIANTS } from "../asset-variants.js";
 import type { RenderCache, RegionBox } from "../render-cache.js";
 import { normalizeIdentifier } from "../identifier.js";
+import { expectedReferenceMatches } from "../expected-reference.js";
 
 /** MIME types an image tool is allowed to stream back as MCP image content. */
 const IMAGE_MIME_TYPES = new Set([
@@ -566,12 +567,24 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
       expected_document_reference: z.string().min(1).optional().describe("Fail closed unless the asset belongs to this document reference"),
       expected_figure_id: z.string().min(1).optional().describe("Fail closed unless the asset is this figure id"),
     },
-    async ({ asset_id, collection, variant, region, source_sha256, target_pixels, expected_document_reference, expected_figure_id }) => {
+    async ({
+      asset_id,
+      collection,
+      variant,
+      region,
+      source_sha256,
+      target_pixels,
+      expected_document_reference,
+      expected_figure_id,
+    }) => {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
       const scope = accessScopeForMcp();
-      const assetScope: AssetScope = { tenantId: scope.tenantId ?? "", collection: col };
+      const assetScope: AssetScope = {
+        tenantId: scope.tenantId ?? "",
+        collection: col,
+      };
 
       const fail = (
         reason:
@@ -584,8 +597,22 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
           | "source_unresolved"
           | "source_mismatch",
       ) => {
-        emitQueryActivity({ tool: "get_asset", summary: `${asset_id}${col !== "documents" ? ` in ${col}` : ""} — unavailable`, status: "error", startTime, detail: { collection: col, assetId: asset_id, reason } });
-        return { content: [{ type: "text" as const, text: `No authorized image asset found for "${asset_id}" in collection "${col}".` }], isError: true };
+        emitQueryActivity({
+          tool: "get_asset",
+          summary: `${asset_id}${col !== "documents" ? ` in ${col}` : ""} — unavailable`,
+          status: "error",
+          startTime,
+          detail: { collection: col, assetId: asset_id, reason },
+        });
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `No authorized image asset found for "${asset_id}" in collection "${col}".`,
+            },
+          ],
+          isError: true,
+        };
       };
 
       if (assetStore === null) return fail("unavailable");
@@ -596,9 +623,18 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
       if (!metaResult.ok) return fail("unavailable");
       const meta: AssetMeta | null = metaResult.result;
       if (meta === null) return fail("not_found");
+      // The expected reference may carry a `#unit:<sha>` fragment copied from
+      // a search hit (v2 units store suffixed references); compare on the
+      // document-reference base so faithful hit copies are not denied while a
+      // genuinely different document still fails closed.
       if (
-        (expected_document_reference !== undefined && meta.documentReference !== expected_document_reference) ||
-        (expected_figure_id !== undefined && meta.figureId !== expected_figure_id)
+        (expected_document_reference !== undefined &&
+          !expectedReferenceMatches(
+            meta.documentReference,
+            expected_document_reference,
+          )) ||
+        (expected_figure_id !== undefined &&
+          meta.figureId !== expected_figure_id)
       ) {
         return fail("metadata_mismatch");
       }
@@ -608,8 +644,20 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         if (renderCache === null) return fail("region_unavailable");
         if (meta.page == null) return fail("region_unavailable");
         const box = region as unknown as RegionBox;
-        if (!box.every((n) => Number.isFinite(n) && n >= 0 && n <= 1) || box[0] >= box[2] || box[1] >= box[3]) {
-          return { content: [{ type: "text", text: "region must be a normalized [x0,y0,x1,y1] with x0<x2 and y0<y2 in 0..1." }], isError: true };
+        if (
+          !box.every((n) => Number.isFinite(n) && n >= 0 && n <= 1) ||
+          box[0] >= box[2] ||
+          box[1] >= box[3]
+        ) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: "region must be a normalized [x0,y0,x1,y1] with x0<x2 and y0<y2 in 0..1.",
+              },
+            ],
+            isError: true,
+          };
         }
         // Bind the render source to the ACL-checked asset (Req 14.4/14.5): the
         // sha256 comes from the asset's OWN revision (its staged
@@ -618,15 +666,26 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
         // knows and have Extract render a document it cannot access. A legacy
         // asset (no revision) or a revision without a staged source fails
         // closed; a caller-supplied value is only an expectation to compare.
-        if (meta.revisionId === null || meta.revisionId === "") return fail("source_unresolved");
-        const sourceResult = await postgresClient.lookupRevisionSourceSha256(col, assetScope.tenantId, meta.revisionId);
+        if (meta.revisionId === null || meta.revisionId === "")
+          return fail("source_unresolved");
+        const sourceResult = await postgresClient.lookupRevisionSourceSha256(
+          col,
+          assetScope.tenantId,
+          meta.revisionId,
+        );
         if (!sourceResult.ok) {
-          logger.warn({ error: sourceResult.error, asset_id }, "[MCP] get_asset source lookup failed");
+          logger.warn(
+            { error: sourceResult.error, asset_id },
+            "[MCP] get_asset source lookup failed",
+          );
           return fail("source_unresolved");
         }
         const serverSha = sourceResult.result;
         if (serverSha === null) return fail("source_unresolved");
-        if (source_sha256 !== undefined && source_sha256.toLowerCase() !== serverSha) {
+        if (
+          source_sha256 !== undefined &&
+          source_sha256.toLowerCase() !== serverSha
+        ) {
           return fail("source_mismatch");
         }
         const rendered = await renderCache.getOrRender(
@@ -640,36 +699,106 @@ export function registerNavigationTools(ctx: NavigationToolContext): void {
             sourceSha256: serverSha,
             page: meta.page,
             bbox: box,
-            ...(target_pixels !== undefined ? { targetPixels: target_pixels } : {}),
+            ...(target_pixels !== undefined
+              ? { targetPixels: target_pixels }
+              : {}),
           },
           scope,
         );
         if (!rendered.ok) {
-          logger.warn({ error: rendered.error, asset_id }, "[MCP] get_asset region zoom failed");
-          return fail(rendered.error.status === 404 ? "not_found" : "render_failed");
+          logger.warn(
+            { error: rendered.error, asset_id },
+            "[MCP] get_asset region zoom failed",
+          );
+          return fail(
+            rendered.error.status === 404 ? "not_found" : "render_failed",
+          );
         }
-        if (!IMAGE_MIME_TYPES.has(rendered.result.mimeType)) return fail("unsupported_mime");
-        emitQueryActivity({ tool: "get_asset", summary: `${asset_id} region zoom${col !== "documents" ? ` in ${col}` : ""}`, status: "ok", startTime, detail: { collection: col, assetId: rendered.result.assetId, region: box, page: meta.page, rendered: rendered.result.rendered, bytes: rendered.result.data.length } });
+        if (!IMAGE_MIME_TYPES.has(rendered.result.mimeType))
+          return fail("unsupported_mime");
+        emitQueryActivity({
+          tool: "get_asset",
+          summary: `${asset_id} region zoom${col !== "documents" ? ` in ${col}` : ""}`,
+          status: "ok",
+          startTime,
+          detail: {
+            collection: col,
+            assetId: rendered.result.assetId,
+            region: box,
+            page: meta.page,
+            rendered: rendered.result.rendered,
+            bytes: rendered.result.data.length,
+          },
+        });
         return {
           content: [
-            { type: "text" as const, text: JSON.stringify({ asset_id: rendered.result.assetId, base_asset_id: asset_id, document_reference: meta.documentReference, region: box, page: meta.page, mime_type: rendered.result.mimeType, rendered: rendered.result.rendered }) },
-            { type: "image" as const, data: rendered.result.data.toString("base64"), mimeType: rendered.result.mimeType },
+            {
+              type: "text" as const,
+              text: JSON.stringify({
+                asset_id: rendered.result.assetId,
+                base_asset_id: asset_id,
+                document_reference: meta.documentReference,
+                region: box,
+                page: meta.page,
+                mime_type: rendered.result.mimeType,
+                rendered: rendered.result.rendered,
+              }),
+            },
+            {
+              type: "image" as const,
+              data: rendered.result.data.toString("base64"),
+              mimeType: rendered.result.mimeType,
+            },
           ],
         };
       }
 
       // ── Variant path: read the requested size from the AssetStore (ACL-enforced).
-      const wanted: AssetVariant = (variant as AssetVariant | undefined) ?? "preview";
+      const wanted: AssetVariant =
+        (variant as AssetVariant | undefined) ?? "preview";
       if (!ASSET_VARIANTS.includes(wanted)) return fail("not_found");
       const bytes = await assetStore.get(assetScope, asset_id, wanted, scope);
       if (!bytes.ok) return fail("unavailable");
       if (bytes.result === null) return fail("not_found");
-      if (!IMAGE_MIME_TYPES.has(bytes.result.mimeType)) return fail("unsupported_mime");
-      emitQueryActivity({ tool: "get_asset", summary: `${asset_id} (${wanted})${col !== "documents" ? ` in ${col}` : ""}`, status: "ok", startTime, detail: { collection: col, assetId: bytes.result.assetId, variant: wanted, documentReference: meta.documentReference, figureId: meta.figureId, mimeType: bytes.result.mimeType, bytes: bytes.result.data.length } });
+      if (!IMAGE_MIME_TYPES.has(bytes.result.mimeType))
+        return fail("unsupported_mime");
+      emitQueryActivity({
+        tool: "get_asset",
+        summary: `${asset_id} (${wanted})${col !== "documents" ? ` in ${col}` : ""}`,
+        status: "ok",
+        startTime,
+        detail: {
+          collection: col,
+          assetId: bytes.result.assetId,
+          variant: wanted,
+          documentReference: meta.documentReference,
+          figureId: meta.figureId,
+          mimeType: bytes.result.mimeType,
+          bytes: bytes.result.data.length,
+        },
+      });
       return {
         content: [
-          { type: "text" as const, text: JSON.stringify({ asset_id: bytes.result.assetId, variant: bytes.result.variant, document_reference: meta.documentReference, figure_id: meta.figureId, kind: meta.kind, page: meta.page, mime_type: bytes.result.mimeType, ...(bytes.result.checksum ? { checksum: bytes.result.checksum } : {}) }) },
-          { type: "image" as const, data: bytes.result.data.toString("base64"), mimeType: bytes.result.mimeType },
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              asset_id: bytes.result.assetId,
+              variant: bytes.result.variant,
+              document_reference: meta.documentReference,
+              figure_id: meta.figureId,
+              kind: meta.kind,
+              page: meta.page,
+              mime_type: bytes.result.mimeType,
+              ...(bytes.result.checksum
+                ? { checksum: bytes.result.checksum }
+                : {}),
+            }),
+          },
+          {
+            type: "image" as const,
+            data: bytes.result.data.toString("base64"),
+            mimeType: bytes.result.mimeType,
+          },
         ],
       };
     },
