@@ -18,6 +18,8 @@ releases:
 
 ## [Unreleased]
 
+## [0.18.1] — 2026-10-18
+
 ### Security
 
 - **Runtime** (`@atf/runtime`): `hono` 4.13.5 → 4.13.7 (GHSA-hxh3-vqpv-xpqv, unescaped
@@ -25,6 +27,10 @@ releases:
 - **Extract** (`@atf/extract`): `multer` 2.3.0 → 2.4.0 (CVE-2026-88932,
   GHSA-3pph-fpjx-jg34); multer now validates upload limits when the parser is built.
   Third-party notices and the SBOM are regenerated.
+- **Security kit** (`@atf/security-kit`): CBOR decoding stores a `__proto__` map key as an
+  own property instead of assigning it through the inherited setter, which dropped the key and
+  let the payload choose the decoded map's prototype. Canonical round-trips hold again;
+  `Object.prototype` was never affected.
 
 ### Changed
 
@@ -3399,7 +3405,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.18.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.18.1...HEAD
+[0.18.1]: https://github.com/abillify/atf/compare/v0.18.0...v0.18.1
 [0.18.0]: https://github.com/abillify/atf/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/abillify/atf/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/abillify/atf/compare/v0.16.1...v0.16.2
