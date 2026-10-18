@@ -603,8 +603,14 @@ export function buildOpenApiSpec(
                     contract: { type: "string" },
                     page_count: { type: "integer" },
                     figure_count: { type: "integer" },
-                    assets_stored: { type: "integer" },
-                    assets_failed: { type: "integer" },
+                    assets_stored: {
+                      type: "integer",
+                      description: "Present on the v2 job path (acked figure assets).",
+                    },
+                    assets_failed: {
+                      type: "integer",
+                      description: "Present on the v2 job path (figure assets not yet stored).",
+                    },
                     job_id: {
                       type: "string",
                       description: "Present on the v2 job path.",

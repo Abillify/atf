@@ -716,40 +716,7 @@ export interface SearchExecutionPlan {
   sparseApplied: boolean;
 }
 
-export interface DocumentAsset {
-  assetId: string;
-  documentReference: string;
-  figureId: string;
-  mimeType: string;
-  data: Buffer;
-  checksum?: string;
-  created: Date;
-  modified: Date;
-}
-
-export interface DocumentAssetUpsert {
-  tenantId: string;
-  collection: string;
-  assetId: string;
-  documentReference: string;
-  figureId: string;
-  mimeType: string;
-  data: Buffer;
-  checksum?: string;
-}
-
 export interface PostgresClient {
-  upsertDocumentAsset(
-    asset: DocumentAssetUpsert,
-    scope: AccessScope,
-  ): Promise<PostgresResponse<{ created: boolean } | null>>;
-
-  getDocumentAsset(
-    collection: string,
-    assetId: string,
-    scope: AccessScope,
-  ): Promise<PostgresResponse<DocumentAsset | null>>;
-
   upsert(
     point: DocumentPoint,
     collection: string,

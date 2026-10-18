@@ -332,8 +332,6 @@ export interface SearchTargetConfig {
   collection: string;
   /** SEARCH_TIMEOUT_MS — per-request timeout. */
   timeoutMs: number;
-  /** SEARCH_UPLOAD_ASSETS — push figure crops to /document-assets. */
-  uploadAssets: boolean;
 }
 
 export interface Config {
@@ -1146,7 +1144,6 @@ export function loadConfig(): Config {
       caCertFile: optionalString("SEARCH_CA_CERT_FILE"),
       collection: optionalString("SEARCH_COLLECTION") ?? "documents",
       timeoutMs: parseNonNegIntEnv("SEARCH_TIMEOUT_MS", 120_000),
-      uploadAssets: parseBoolEnv("SEARCH_UPLOAD_ASSETS", true),
     };
   }
 

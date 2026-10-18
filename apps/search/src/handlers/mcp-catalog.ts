@@ -17,8 +17,10 @@
 
 import { z } from "zod";
 import { accessScopeForMcp } from "../access-scope.js";
+import type { AssetScope } from "../asset-store.js";
 import { normalizePathPrefix, normalizeReference } from "../postgres-client.js";
-import { DOCUMENT_ASSET_MIME_TYPES } from "./document-assets.js";
+import { expectedReferenceMatches } from "../expected-reference.js";
+import { V2_ASSET_MIME_TYPES } from "./v2-assets.js";
 import type { McpToolContext } from "./mcp-tool-ctx.js";
 
 export function registerCatalogTools(opts: McpToolContext): void {
@@ -30,6 +32,10 @@ export function registerCatalogTools(opts: McpToolContext): void {
     documentGroupOf,
     emitQueryActivity,
   } = opts;
+  // The AssetStore (vs_assets) — the single source of truth for figure images.
+  // The extract/v2 pipeline writes it and `get_document_asset` reads it; the
+  // legacy vs_document_assets endpoint and lookup were removed.
+  const assetStore = opts.assetStore ?? null;
 
   // ── Tool: list_collections ────────────────────────────────────────────────
   server.tool(
@@ -693,11 +699,6 @@ export function registerCatalogTools(opts: McpToolContext): void {
       const startTime = Date.now();
       const col = collection ?? defaultCollection;
       await authorize(col);
-      const result = await postgresClient.getDocumentAsset(
-        col,
-        asset_id,
-        accessScopeForMcp(),
-      );
       const fail = (reason: "lookup_failed" | "not_found" | "metadata_mismatch" | "unsupported_mime") => {
         emitQueryActivity({
           tool: "get_document_asset",
@@ -711,17 +712,48 @@ export function registerCatalogTools(opts: McpToolContext): void {
           isError: true,
         };
       };
-      if (!result.ok) return fail("lookup_failed");
-      const asset = result.result;
-      if (asset === null) return fail("not_found");
+      // The AssetStore (vs_assets) is the only asset source: metadata first
+      // (for the fail-closed document/figure check), then the `full` variant's
+      // bytes. The MIME allowlist below applies unchanged.
+      if (assetStore === null) return fail("not_found");
+      const scope = accessScopeForMcp();
+      const assetScope: AssetScope = {
+        tenantId: scope.tenantId ?? "",
+        collection: col,
+      };
+      const metaResult = await assetStore.getMeta(assetScope, asset_id, scope);
+      if (!metaResult.ok) return fail("lookup_failed");
+      const meta = metaResult.result;
+      if (meta === null) return fail("not_found");
+      const bytesResult = await assetStore.get(
+        assetScope,
+        asset_id,
+        "full",
+        scope,
+      );
+      if (!bytesResult.ok) return fail("lookup_failed");
+      const bytes = bytesResult.result;
+      if (bytes === null) return fail("not_found");
+      const asset = {
+        assetId: bytes.assetId,
+        documentReference: meta.documentReference,
+        figureId: meta.figureId ?? "",
+        mimeType: bytes.mimeType,
+        data: bytes.data,
+        ...(bytes.checksum ? { checksum: bytes.checksum } : {}),
+      };
       if (
         (expected_document_reference !== undefined &&
-          asset.documentReference !== expected_document_reference) ||
-        (expected_figure_id !== undefined && asset.figureId !== expected_figure_id)
+          !expectedReferenceMatches(
+            asset.documentReference,
+            expected_document_reference,
+          )) ||
+        (expected_figure_id !== undefined &&
+          asset.figureId !== expected_figure_id)
       ) {
         return fail("metadata_mismatch");
       }
-      if (!DOCUMENT_ASSET_MIME_TYPES.has(asset.mimeType)) {
+      if (!V2_ASSET_MIME_TYPES.has(asset.mimeType)) {
         return fail("unsupported_mime");
       }
       emitQueryActivity({

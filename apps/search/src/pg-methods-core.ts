@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * postgres-client methods: Core PostgresClient methods: pgvector version gate, document assets, invocation ledger, stats counters, collection bootstrap, upsert, delete and close.
+ * postgres-client methods: Core PostgresClient methods: pgvector version gate, invocation ledger, stats counters, collection bootstrap, upsert, delete and close.
  *
  * Extracted verbatim from postgres-client.ts (Requirement 13.6).
  * Shared factory state arrives via PgFactoryCtx; bodies are
@@ -15,7 +15,7 @@ import { deleteDocumentCascade } from "./revision-store.js";
 import { createHash, createHmac } from "node:crypto";
 import { v4 as uuidv4 } from "uuid";
 import { buildFtsText, normalizeReference, sanitizePointText } from "./pg-helpers.js";
-import type { CircuitBreakerStatus, DocumentAsset, DocumentAssetUpsert, DocumentPoint, PostgresResponse, SearchFilter } from "./pg-types.js";
+import type { CircuitBreakerStatus, DocumentPoint, PostgresResponse, SearchFilter } from "./pg-types.js";
 
 import type { PgFactoryCtx } from "./pg-factory-ctx.js";
 
@@ -49,118 +49,6 @@ export function createCoreMethods(ctx: PgFactoryCtx) {
   return {
     async ensurePgvectorVersion(): Promise<boolean | null> {
       return checkPgvectorVersion();
-    },
-
-    async upsertDocumentAsset(
-      asset: DocumentAssetUpsert,
-      scope: AccessScope,
-    ): Promise<PostgresResponse<{ created: boolean } | null>> {
-      if (!asset.tenantId.trim() || asset.tenantId !== scope.tenantId) {
-        return {
-          ok: false,
-          error: {
-            code: "POSTGRES_INVALID_RESPONSE",
-            message: "TENANT_REQUIRED",
-          },
-        };
-      }
-      const table = collectionTableName(asset.collection);
-      return withClient(async (client) => {
-        const params: unknown[] = [
-          asset.tenantId,
-          asset.collection,
-          asset.assetId,
-          normalizeReference(asset.documentReference),
-          asset.figureId,
-          asset.mimeType,
-          asset.data,
-          asset.checksum ?? null,
-        ];
-        const access = scopedWhere(scope, params, "d");
-        const result = await client.query<{ inserted: boolean }>(
-          `INSERT INTO vs_document_assets
-             (tenant_id, collection, asset_id, document_reference, figure_id, mime_type, data, checksum)
-           SELECT $1, $2, $3, $4, $5, $6, $7, $8
-           WHERE EXISTS (
-             SELECT 1 FROM "${table}" d
-              WHERE d.tenant_id = $1 AND d.is_latest = TRUE
-                AND d.chunk->>'asset_id' = $3
-                AND d.chunk->>'parent_ref' = $4
-                ${access.sql}
-           )
-           ON CONFLICT (tenant_id, collection, asset_id) DO UPDATE SET
-             document_reference = EXCLUDED.document_reference,
-             figure_id = EXCLUDED.figure_id,
-             mime_type = EXCLUDED.mime_type,
-             data = EXCLUDED.data,
-             checksum = EXCLUDED.checksum,
-             modified = NOW()
-           RETURNING (xmax = 0) AS inserted`,
-          access.params,
-        );
-        const row = result.rows[0];
-        return row ? { created: row.inserted === true } : null;
-      });
-    },
-
-    async getDocumentAsset(
-      collection: string,
-      assetId: string,
-      scope: AccessScope,
-    ): Promise<PostgresResponse<DocumentAsset | null>> {
-      const table = collectionTableName(collection);
-      if (!scope.tenantId?.trim()) {
-        return {
-          ok: false,
-          error: {
-            code: "POSTGRES_INVALID_RESPONSE",
-            message: "TENANT_REQUIRED",
-          },
-        };
-      }
-      return withClient(async (client) => {
-        const access = scopedWhere(
-          scope,
-          [assetId, collection, scope.tenantId],
-          "d",
-        );
-        const result = await client.query<{
-          asset_id: string;
-          document_reference: string;
-          figure_id: string;
-          mime_type: string;
-          data: Buffer;
-          checksum: string | null;
-          created: Date;
-          modified: Date;
-        }>(
-          `SELECT a.asset_id, a.document_reference, a.figure_id, a.mime_type,
-                  a.data, a.checksum, a.created, a.modified
-             FROM vs_document_assets a
-            WHERE a.asset_id = $1 AND a.collection = $2 AND a.tenant_id = $3
-              AND EXISTS (
-                SELECT 1 FROM "${table}" d
-                 WHERE d.is_latest = TRUE
-                   AND d.chunk->>'asset_id' = a.asset_id
-                   AND d.chunk->>'parent_ref' = a.document_reference
-                   ${access.sql}
-              )`,
-          access.params,
-        );
-        const row = result.rows[0];
-        return row
-          ? {
-              assetId: row.asset_id,
-              documentReference: row.document_reference,
-              figureId: row.figure_id,
-              mimeType: row.mime_type,
-              data: row.data,
-              ...(row.checksum ? { checksum: row.checksum } : {}),
-              created: row.created,
-              modified: row.modified,
-            }
-          : null;
-      });
     },
 
     async queryInvocationLedger(

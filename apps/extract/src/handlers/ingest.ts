@@ -300,7 +300,6 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
             const ingested = await searchClient.ingestDocument({
               document: result.document,
               markdown: result.markdown,
-              crops: result.crops,
               options,
               signal: controller.signal,
             });
@@ -324,12 +323,12 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
           collection: outcome.ingested.collection,
           pageCount: outcome.result.document.pageCount,
           figures: figures.length,
-          assetsStored: outcome.ingested.assetsStored,
-          assetsFailed: outcome.ingested.assetsFailed,
         },
         "Document converted and ingested",
       );
 
+      // Figure images are not part of this v1 text path: they flow through the
+      // v2 pipeline (jobs/emitter.ts → PUT /v2/assets/:assetId).
       res.status(200).json({
         status: "ok",
         reference,
@@ -337,13 +336,6 @@ export function createIngestHandler(deps: IngestHandlerDeps): RequestHandler {
         contract: outcome.result.document.contract,
         page_count: outcome.result.document.pageCount,
         figure_count: figures.length,
-        assets_stored: outcome.ingested.assetsStored,
-        assets_failed: outcome.ingested.assetsFailed,
-        // Per-asset detail only when something went wrong; a 200-figure document
-        // otherwise buries the useful fields.
-        ...(outcome.ingested.assetsFailed > 0
-          ? { assets: outcome.ingested.assets.filter((asset) => !asset.stored) }
-          : {}),
         warnings: outcome.result.document.warnings,
         search: outcome.ingested.ingest,
       });

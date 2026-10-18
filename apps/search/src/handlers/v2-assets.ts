@@ -5,8 +5,8 @@
  * handlers/v2-assets.ts
  *
  * The v2 asset API (design §6.5, task 1.11). Routes are mounted behind the same
- * auth / scope / tenant / collection-ACL chain as the v1 /document-assets and
- * /ingest routes, so by the time a handler runs the request already carries a
+ * auth / scope / tenant / collection-ACL chain as the /ingest routes, so by the
+ * time a handler runs the request already carries a
  * verified AccessScope (with a tenant) and a checked collection ACL. Each
  * handler defers storage semantics and the revision row-ACL read check to the
  * AssetStore.

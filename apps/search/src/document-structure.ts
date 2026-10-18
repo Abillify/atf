@@ -27,14 +27,12 @@
  *     (Requirement 2.5);
  *   - HTML tables normalised to Markdown.
  *
- * The page markers and asset-id derivation are imported from the contract, so a
- * change to the grammar on the producer side is picked up here without a second
- * edit.
+ * The page markers are imported from the contract, so a change to the grammar
+ * on the producer side is picked up here without a second edit.
  */
 
 import {
 	PAGE_MARKER_PATTERN as CONTRACT_PAGE_MARKER_PATTERN,
-	buildDocumentAssetId as contractBuildDocumentAssetId,
 	globalize,
 	parseDocument,
 	type ParsedFigure,
@@ -140,20 +138,6 @@ export function buildPageContextPrefix(
 	const capped =
 		joined.length > limit ? joined.slice(0, limit).trimEnd() : joined;
 	return capped === "" ? undefined : capped;
-}
-
-/**
- * Stable, tenant-independent identifier shared by ingest, assets and search.
- *
- * Delegates to the contract's implementation so Search's recomputation of an
- * uploaded crop's id (in `handlers/document-assets.ts`) and the producer's
- * upload path derive it from the same code (Requirement 3.2, Requirement 3.4).
- */
-export function buildDocumentAssetId(
-	documentReference: string,
-	figureId: string,
-): string {
-	return contractBuildDocumentAssetId(documentReference, figureId);
 }
 
 function decodeEntities(value: string): string {

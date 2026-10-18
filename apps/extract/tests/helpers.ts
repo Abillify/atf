@@ -225,7 +225,6 @@ export interface RecordingSearchClient extends SearchClient {
     reference: string;
     collection: string;
     markdown: string;
-    cropIds: string[];
     allowedUsers: readonly string[] | undefined;
     allowedGroups: readonly string[] | undefined;
     options: import("@atf/extract-contract/v1").IngestHeaderOptions | undefined;
@@ -246,7 +245,6 @@ export interface RecordingSearchClient extends SearchClient {
 export function stubSearchClient(
   options: {
     error?: Error;
-    assetsFailed?: number;
     /** Thrown by `deleteByReference` instead of `error` (E2 tests). */
     deleteError?: Error;
     /** The `deleted` count `deleteByReference` reports (default 1). */
@@ -271,19 +269,14 @@ export function stubSearchClient(
         reference: args.document.reference,
         collection,
         markdown: args.markdown,
-        cropIds: [...args.crops.keys()],
         allowedUsers: args.options?.allowedUsers,
         allowedGroups: args.options?.allowedGroups,
         options: args.options,
       });
-      const assetsFailed = options.assetsFailed ?? 0;
       return {
         ingest: { status: "ok" },
         collection,
         reference: args.document.reference,
-        assets: [],
-        assetsStored: args.crops.size - assetsFailed,
-        assetsFailed,
       };
     },
     async deleteByReference(args) {

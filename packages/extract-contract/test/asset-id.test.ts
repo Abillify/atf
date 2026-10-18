@@ -2,20 +2,18 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 /**
- * Asset identity is the one value in this contract that is computed
- * independently on both sides of a service boundary: the producer sends a crop
- * to `PUT /document-assets/:assetId`, and Search recomputes the id from
- * `X-Document-Reference` + `X-Figure-Id` to decide whether to accept it. A
- * divergence produces a 400 at upload time and no crop in the index, long after
- * extraction reported success.
+ * Asset identity is derived from document reference + figure id and is written
+ * into the figure chunk (`chunk.asset_id`) as well as used as the v2 asset id
+ * (`PUT /v2/assets/:assetId`). A drift in the derivation would orphan every
+ * stored crop of an existing corpus.
  *
- * So this file pins the derivation twice: against literal digests, and against
- * Search's own implementation.
+ * So this file pins the derivation against literal digests. (Search no longer
+ * recomputes the id itself: the legacy `/document-assets` endpoint that did was
+ * removed, so the former cross-check against Search's implementation is gone.)
  */
 
 import { describe, expect, test } from "bun:test";
 import { buildDocumentAssetId, isAssetId } from "../src/index.js";
-import { buildDocumentAssetId as searchBuildDocumentAssetId } from "../../../apps/search/src/document-structure.js";
 
 describe("buildDocumentAssetId", () => {
   test("matches pinned digests", () => {
@@ -39,21 +37,6 @@ describe("buildDocumentAssetId", () => {
   test("separates reference from figure id", () => {
     // Without the \n separator these two would collide.
     expect(buildDocumentAssetId("ab", "c")).not.toBe(buildDocumentAssetId("a", "bc"));
-  });
-
-  test("agrees with the implementation in apps/search", () => {
-    const cases: Array<[string, string]> = [
-      ["doc-1", "p1-f1"],
-      ["docs/handbuch.pdf", "p12-f3"],
-      ["Gru\u0308n.pdf", "p1-f1"],
-      ["", ""],
-      ["a\nb", "c\nd"],
-    ];
-    for (const [reference, figureId] of cases) {
-      expect(buildDocumentAssetId(reference, figureId)).toBe(
-        searchBuildDocumentAssetId(reference, figureId),
-      );
-    }
   });
 
   test("isAssetId accepts only lower-case hex sha256", () => {

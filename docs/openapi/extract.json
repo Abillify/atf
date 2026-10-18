@@ -1287,10 +1287,12 @@
                       "type": "integer"
                     },
                     "assets_stored": {
-                      "type": "integer"
+                      "type": "integer",
+                      "description": "Present on the v2 job path (acked figure assets)."
                     },
                     "assets_failed": {
-                      "type": "integer"
+                      "type": "integer",
+                      "description": "Present on the v2 job path (figure assets not yet stored)."
                     },
                     "job_id": {
                       "type": "string",

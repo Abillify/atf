@@ -1565,9 +1565,9 @@ const JS = `
           api.setBar(it, 1, true);
           api.setStatus(it, "ok", "indexiert");
           api.setMsg(it,
-            data.page_count + " Seite(n) in Collection " + data.collection + " indexiert, " +
-            data.assets_stored + " Abbildung(en) gespeichert" +
-            (data.assets_failed ? ", " + data.assets_failed + " fehlgeschlagen" : "") + ".");
+            data.page_count + " Seite(n) in Collection " + data.collection + " indexiert" +
+            (data.assets_stored != null ? ", " + data.assets_stored + " Abbildung(en) gespeichert" +
+            (data.assets_failed ? ", " + data.assets_failed + " fehlgeschlagen" : "") : "") + ".");
           if (data.page_count != null) stats.push(data.page_count + " Seiten");
           if (data.figure_count != null) stats.push(data.figure_count + " Abbildungen");
           if (data.assets_stored != null) stats.push(data.assets_stored + " gespeichert");

@@ -94,12 +94,6 @@ import {
 } from "./handlers/v2-assets.js";
 import { createAssetStore } from "./asset-store.js";
 import { createRenderCache } from "./render-cache.js";
-import {
-  createGetDocumentAssetHandler,
-  createPutDocumentAssetHandler,
-  DOCUMENT_ASSET_MIME_TYPES,
-  MAX_DOCUMENT_ASSET_BYTES,
-} from "./handlers/document-assets.js";
 import { createRenameCollectionHandler } from "./handlers/admin.js";
 import { createBackfillSummariesHandler } from "./handlers/admin.js";
 import {
@@ -690,14 +684,6 @@ export function createApp(
   const queryHandlers = createQueryHandlers(postgresClient, logger, {
     defaultCollection: config.defaultCollection,
   });
-  const putDocumentAssetHandler = createPutDocumentAssetHandler(
-    postgresClient,
-    logger,
-  );
-  const getDocumentAssetHandler = createGetDocumentAssetHandler(
-    postgresClient,
-    logger,
-  );
 
   // ── v2 revision API (design §6.1, task 1.9) ───────────────────────────────
   // A dedicated pool for the revision staging tables keeps the revision store
@@ -1138,27 +1124,6 @@ export function createApp(
     createSetCollectionPermissionsHandler(postgresClient, logger),
   );
   app.use("/ui", ui);
-
-  app.put(
-    "/document-assets/:assetId",
-    rateLimiter.middleware,
-    authMiddleware,
-    authorizeWrite,
-    collectionAccessAsset,
-    express.raw({
-      type: [...DOCUMENT_ASSET_MIME_TYPES],
-      limit: MAX_DOCUMENT_ASSET_BYTES,
-    }),
-    putDocumentAssetHandler,
-  );
-  app.get(
-    "/document-assets/:assetId",
-    rateLimiter.middleware,
-    authMiddleware,
-    authorizeRead,
-    collectionAccessAsset,
-    getDocumentAssetHandler,
-  );
 
   // ── v2 revision routes ────────────────────────────────────────────────────
   // Mounted behind the SAME auth / scope / tenant / collection-ACL chain as

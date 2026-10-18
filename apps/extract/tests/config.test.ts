@@ -296,7 +296,6 @@ describe("loadConfig", () => {
         token: "t",
         collection: "specs",
         timeoutMs: 120_000,
-        uploadAssets: true,
         caCertFile: null,
       });
     });

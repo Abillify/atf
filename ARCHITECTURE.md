@@ -54,7 +54,7 @@ flowchart TB
     search --> models
     search -.->|POST /ingest-file → v2 job| extract
 
-    extract -->|v1: POST /ingest + PUT /document-assets| search
+    extract -->|v1: POST /ingest, text only| search
     extract -->|v2: revisions + assets emitter| search
     extract -->|vision model| models
     extract --> pg
@@ -239,9 +239,10 @@ mounted only when `EXTRACT_DATABASE_URL` is set, `/ui/*` (browser backend-for-fr
 
 With the v2 path active, `/v1/ingest` becomes a thin wrapper: the upload is stored, a v2 job is
 created, and its emitter streams the revision **and figure assets** into Search — so figure
-images are now stored, not only their descriptions. Without a database Extract keeps the
-original behaviour, where `/v1/ingest` stores figure crops via `PUT /document-assets/:assetId`
-and Search's `/ingest-file` proxy forwards Markdown only (images not stored).
+images are now stored, not only their descriptions. Without a database `/v1/ingest` is text
+only: it posts the Markdown to Search's `/ingest`, figure descriptions are indexed, but crops are
+not stored (the legacy `PUT /document-assets/:assetId` upload was removed). Figure images live
+exclusively in `vs_assets` and are written via `PUT /v2/assets/:assetId`.
 
 Like Search, it has a Node build target (`build:node`) in addition to the Bun target.
 

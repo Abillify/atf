@@ -807,28 +807,6 @@ describe("POST /v1/ingest", () => {
     expect(response.body.error).toMatch(/X-Metadata must be a JSON object/);
   });
 
-  it("reports partially stored crops without failing the ingest", async () => {
-    // The document is already indexed and its figure descriptions are retrievable;
-    // only the image is missing.
-    const document = testDocument({ pages: [testPage(1, { figures: [testFigure(1, 1)] })] });
-    const response = await request(
-      await app(searchEnv, {
-        searchClient: stubSearchClient({ assetsFailed: 1 }),
-        extractor: stubExtractor({
-          document,
-          crops: new Map([["p1-f1", testCrop()]]),
-        }),
-      }),
-    )
-      .post("/v1/ingest")
-      .set("Content-Type", "application/pdf")
-      .set("X-Reference", "tests/handbuch.pdf")
-      .send(PDF_BYTES);
-
-    expect(response.status).toBe(200);
-    expect(response.body.assets_failed).toBe(1);
-  });
-
   it("maps a Search rejection to 502", async () => {
     const { ingestFailed } = await import("../src/errors.js");
     const response = await request(

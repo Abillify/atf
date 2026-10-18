@@ -48,6 +48,11 @@ export interface McpToolContext {
   invocationLedger?: InvocationLedger;
   embeddingModel?: string;
   embeddingModelRevision?: string;
+  /**
+   * The AssetStore (task 1.11) over `vs_assets` — the single source of truth
+   * for the catalog `get_document_asset` tool. Null when not configured.
+   */
+  assetStore?: import("../asset-store.js").AssetStore | null;
   /** Resolve + authorize a collection for the acting principal (mcp.ts). */
   authorize: (
     collection: string,

@@ -20,7 +20,6 @@ import {
   tileLocalId,
 } from "../../src/index.js";
 import { buildDocumentAssetId as v1BuildDocumentAssetId } from "../../src/v1/index.js";
-import { buildDocumentAssetId as searchBuildDocumentAssetId } from "../../../../apps/search/src/document-structure.js";
 
 describe("asset-id v2 continuity", () => {
   test("figure ids are byte-identical to v1", () => {
@@ -35,17 +34,6 @@ describe("asset-id v2 continuity", () => {
     expect(buildDocumentAssetId("spec.pdf", "p12-f3")).toBe(
       "85bca7ac9edc122ac8c7ffd5e005f5747889c9b91852c06b0d4469c6ccf93058",
     );
-  });
-
-  test("figure ids still match Search's own derivation", () => {
-    for (const [reference, figureId] of [
-      ["doc-1", "p1-f1"],
-      ["docs/handbuch.pdf", "p12-f3"],
-    ] as const) {
-      expect(buildAssetId(reference, figureLocalId(figureId))).toBe(
-        searchBuildDocumentAssetId(reference, figureId),
-      );
-    }
   });
 
   test("page / tile / native local ids carry their prefix", () => {

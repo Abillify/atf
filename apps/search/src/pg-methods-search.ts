@@ -374,11 +374,12 @@ export function createSearchMethods(ctx: PgFactoryCtx) {
             link: row.link as string | undefined,
             title: row.title as string | undefined,
             tags: row.tags as string[] | undefined,
-            ...((row.chunk as ChunkInfo | null)?.asset_id
-              ? {
-                  asset_url: `/document-assets/${encodeURIComponent((row.chunk as ChunkInfo).asset_id!)}?collection=${encodeURIComponent(collection)}`,
-                }
-              : {}),
+            ...((assetId) =>
+              assetId
+                ? {
+                    asset_url: `/v2/assets/${encodeURIComponent(assetId)}?collection=${encodeURIComponent(collection)}`,
+                  }
+                : {})((row.chunk as ChunkInfo | null)?.asset_id),
             created: row.created as Date,
             modified: row.modified as Date,
             valid_from: (row.valid_from as Date | null) ?? null,

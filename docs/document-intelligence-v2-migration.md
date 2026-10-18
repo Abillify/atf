@@ -14,7 +14,7 @@ flag day.
 
 | Area | v1 (before) | v2 (after) |
 | --- | --- | --- |
-| Extract → Search handover | one `POST /ingest` of Markdown, figure crops via `PUT /document-assets` | resumable `PUT` of contract batches into a **revision**, assets via `PUT /v2/assets`, atomic commit |
+| Extract → Search handover | one `POST /ingest` of Markdown, figure crops via `PUT /document-assets` (removed in 0.18.0) | resumable `PUT` of contract batches into a **revision**, assets via `PUT /v2/assets`, atomic commit |
 | Contract | v1 marker grammar (`## Seite N`, `<figure>`) | `@atf/extract-contract` v2 NDJSON record stream; v1 grammar remains under the `/v1` subpath |
 | Extract processing | in-process, lost on crash | persistent **jobs** in the `extract` schema, resumable from the last checkpoint |
 | Source intake | single upload | resumable chunked upload + SSRF-guarded `source_url` pull |
@@ -113,8 +113,24 @@ Relevant emitter/handover tunables (all documented in
 
 The v2 path is additive. To back out, unset `EXTRACT_DATABASE_URL` (Extract returns to
 synchronous conversion) and `BATCH_WORKER` (Search stops draining the staging tables). The
-`vs_assets` table and its backfilled rows are harmless to leave in place; `vs_document_assets`
-was never removed. No v1 route or stored v1 data is altered by enabling or disabling v2.
+`vs_assets` table and its backfilled rows are harmless to leave in place; the
+`vs_document_assets` table is not dropped. Since 0.18.0 a rollback to the synchronous v1 path
+is **text only**: figure descriptions are still indexed, but crops are no longer stored (see
+below).
+
+## Removal of the v1 asset endpoint (0.18.0)
+
+Search's `PUT` / `GET /document-assets/:assetId` routes and Extract's v1 crop upload
+(`SEARCH_UPLOAD_ASSETS`) were removed. `vs_assets` is the only asset store:
+
+- The MCP `get_document_asset` tool reads from `vs_assets`. Assets uploaded through the old
+  endpoint stay retrievable because the Step 1 backfill copied them there; confirm it completed
+  before upgrading.
+- The `asset_url` on `/search` (v1) hits now points to `GET /v2/assets/{id}?collection=…`.
+- The synchronous `/v1/ingest` response no longer reports `assets_stored` / `assets_failed`
+  without a job store; the v2 job path still does.
+- Clients that called `/document-assets` directly must switch to `GET /v2/assets/{id}`, and
+  `SEARCH_UPLOAD_ASSETS` can be removed from Extract's environment (it is ignored).
 
 ## Reprocessing existing corpora
 

@@ -124,7 +124,7 @@ Extract converts; Search chunks, embeds, versions and serves. Extract owns none
 of Search's indexing logic and Search owns no document converter — Search would
 otherwise need poppler and LibreOffice on its query path, a document-parser
 attack surface and minutes-long CPU work competing with query latency. So on the
-ingest path Extract orchestrates and calls Search over two thin HTTP requests.
+ingest path Extract orchestrates and calls Search over a thin HTTP request.
 
 ### What one `POST /v1/ingest` does
 
@@ -155,27 +155,19 @@ runs. In order:
    Crucially, each `<figure>`
    in the Markdown becomes its own *figure chunk* whose `chunk.asset_id` and
    `chunk.parent_ref` are written into the row — the hook the image will hang on.
-3. **`PUT /document-assets/:assetId` to Search, once per figure.** Only now are
-   the crops storable. The `assetId` is `sha256(reference + figureId)`, which
-   Search re-derives and verifies, and the bytes land in a separate
-   `vs_document_assets` table.
 
-The response reports `page_count`, `figure_count`, `assets_stored`,
-`assets_failed` and per-page `warnings`.
+The response reports `page_count`, `figure_count` and per-page `warnings`.
 
-### Why the order is fixed, not a preference
+### Figure images live on the v2 path only
 
-The asset upload is a *conditional* insert: Search stores the crop only if a
-visible chunk row already exists whose `chunk.asset_id` and `chunk.parent_ref`
-match the request. That figure row is created by the `/ingest` run. Upload the
-crops first and the condition matches nothing, so Search answers
-`404 Associated document is not visible`. There is no foreign key — the link
-*is* that JSONB match — so ingest must complete before any asset upload.
-
-A crop that fails to store does not fail the ingest: the document is already
-indexed and the figure descriptions are already retrievable, so only the
-thumbnail is missing. The per-figure outcome is counted into `assets_failed`
-rather than rolled back — a complete index minus one thumbnail beats no index.
+The synchronous v1 path is **text only**: the legacy crop upload to
+`PUT /document-assets/:assetId` (and that endpoint itself) was removed. Figure
+images flow exclusively through the v2 pipeline — the job's emitter stores each
+crop with `PUT /v2/assets/:assetId`, bound to the document's revision, with its
+`thumb` / `preview` / `full` variants served from `vs_assets` by Search. A
+v1-only deployment (no `EXTRACT_DATABASE_URL`) therefore indexes text and
+figure *descriptions*; to serve the images, run with the v2 job store or use
+Search's `POST /ingest-file`, which always takes the v2 path.
 
 ### Chapter splitting does not orphan assets
 
@@ -188,14 +180,12 @@ document into a flat set of figure chunks, and every one keeps
 `parent_ref = <original reference>` and its `asset_id = sha256(<original
 reference> + figureId)` — independent of how many chapters the prose became.
 
-That is exactly what makes the crop upload keep working. Extract stores every
-figure against the one reference it converted, and sends that reference as
-`X-Document-Reference` on each `PUT /document-assets/:assetId`. The asset's
-visibility condition (`chunk.parent_ref = X-Document-Reference AND
-chunk.asset_id = assetId`) resolves against those unchanged figure rows, whether
-or not Search chaptered the prose. So a 400-page manual split into 30 chapters
-still stores and serves every figure: splitting changes where the *text* is
-addressable, never where the *images* are attached.
+That is exactly what makes the v2 asset path keep working. The emitter stores
+every figure against the one revision of the reference it converted, and the
+figure rows keep their unchanged `asset_id`, whether or not Search chaptered
+the prose. So a 400-page manual split into 30 chapters still stores and serves
+every figure: splitting changes where the *text* is addressable, never where
+the *images* are attached.
 
 ### The alternative: `POST /ingest-file` in Search
 
