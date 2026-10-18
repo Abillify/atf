@@ -46,7 +46,7 @@
       },
       {
         "name": "atf:bun-lock:sha256",
-        "value": "65c7034b4710bf44d820ed690c782cd0e7d5418385c95f40e2d56abb3e9997d0"
+        "value": "4b7a1c4f1f887cd93bf1462e10bf6f4b9b7217b2061a7f5693dd421b59977f27"
       },
       {
         "name": "atf:cargo-lock:sha256",
@@ -9664,15 +9664,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/hono@4.13.5",
+      "bom-ref": "pkg:npm/hono@4.13.7",
       "name": "hono",
-      "version": "4.13.5",
+      "version": "4.13.7",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/hono@4.13.5",
+      "purl": "pkg:npm/hono@4.13.7",
       "properties": [
         {
           "name": "atf:compliance:classification",
@@ -12040,15 +12040,15 @@
     },
     {
       "type": "library",
-      "bom-ref": "pkg:npm/multer@2.3.0",
+      "bom-ref": "pkg:npm/multer@2.4.0",
       "name": "multer",
-      "version": "2.3.0",
+      "version": "2.4.0",
       "licenses": [
         {
           "expression": "MIT"
         }
       ],
-      "purl": "pkg:npm/multer@2.3.0",
+      "purl": "pkg:npm/multer@2.4.0",
       "properties": [
         {
           "name": "atf:compliance:classification",

@@ -18,6 +18,23 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **Runtime** (`@atf/runtime`): `hono` 4.13.5 → 4.13.7 (GHSA-hxh3-vqpv-xpqv, unescaped
+  strings in `hono/jsx` boundary components; Runtime does not render `hono/jsx`).
+- **Extract** (`@atf/extract`): `multer` 2.3.0 → 2.4.0 (CVE-2026-88932,
+  GHSA-3pph-fpjx-jg34); multer now validates upload limits when the parser is built.
+  Third-party notices and the SBOM are regenerated.
+
+### Changed
+
+- **Quickstart image** (`deploy/examples/Dockerfile`): base `oven/bun` 1.4.2 → 1.4.3. The
+  toolchain pin (1.4.0) and the digest-pinned production images (1.4.2) are unchanged.
+- **CI** (SHA-pinned actions): `actions/setup-node` 7.0.0 → 7.1.0,
+  `actions/upload-artifact` 7.0.1 → 7.0.2, `docker/setup-buildx-action` 3.12.0 → 4.4.1,
+  `docker/login-action` 3.7.0 → 4.6.0, `softprops/action-gh-release` 2.6.2 → 3.0.3. The
+  new majors only move the action runtime to Node 24; inputs used here are unchanged.
+
 ## [0.18.0] — 2026-10-18
 
 ### Removed
