@@ -100,7 +100,7 @@ jobs:
           --platform "${{ matrix.platform }}" --assert-host-platform
           --artifact-kind workspace --artifact-name "workspace-${{ matrix.platform }}-${GITHUB_SHA}"
           --git-sha "$GITHUB_SHA"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-workspace-${{ matrix.platform }}-${{ github.sha }}
           path: release/workspace-${{ matrix.platform }}-${{ github.sha }}
@@ -125,7 +125,7 @@ jobs:
         run: >-
           bun run supply-chain:images --output-dir "$GITHUB_WORKSPACE/release/quickstart-images-linux-x64-${GITHUB_SHA}"
           --platform linux-x64 --git-sha "$GITHUB_SHA"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-quickstart-images-linux-x64-${{ github.sha }}
           path: release/quickstart-images-linux-x64-${{ github.sha }}
@@ -160,8 +160,8 @@ jobs:
           persist-credentials: false
       - name: Assert exact checkout
         run: test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
