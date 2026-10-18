@@ -446,14 +446,34 @@ export function createAssetStore(pool: Pool, config: AssetStoreConfig): AssetSto
 
     const priorChecksum = prior?.checksum ?? null;
     if (prior && priorChecksum === checksum) {
-      if (!bindingLive) {
-        await client.query(
-          `UPDATE ${ASSETS} SET revision_id = $4, modified = NOW()
-            WHERE tenant_id = $1 AND collection = $2 AND asset_id = $3`,
-          [tenantId, collection, input.assetId, revisionId],
-        );
-      }
-      // Same bytes already stored — no rewrite, no re-generation (5.8).
+      // Same bytes already stored — no rewrite, no re-generation (5.8). The
+      // metadata the PUT carries is still backfilled: a re-emit after a
+      // metadata fix (figure id / page / bbox were once dropped on ingest) has
+      // identical bytes but must not leave the stale NULL metadata in place.
+      // COALESCE keeps existing values when the PUT omits them.
+      const bboxJson = input.bbox === null || input.bbox === undefined ? null : JSON.stringify(input.bbox);
+      await client.query(
+        `UPDATE ${ASSETS} SET
+           revision_id = CASE WHEN $4::text IS NOT NULL THEN $4::text ELSE revision_id END,
+           figure_id = COALESCE($5::text, figure_id),
+           page = COALESCE($6::int, page),
+           bbox = COALESCE($7::jsonb, bbox),
+           modified = NOW()
+         WHERE tenant_id = $1 AND collection = $2 AND asset_id = $3
+           AND (($4::text IS NOT NULL AND revision_id IS DISTINCT FROM $4::text)
+             OR ($5::text IS NOT NULL AND figure_id IS DISTINCT FROM $5::text)
+             OR ($6::int IS NOT NULL AND page IS DISTINCT FROM $6::int)
+             OR ($7::jsonb IS NOT NULL AND bbox IS DISTINCT FROM $7::jsonb))`,
+        [
+          tenantId,
+          collection,
+          input.assetId,
+          bindingLive ? null : revisionId,
+          input.figureId ?? null,
+          input.page ?? null,
+          bboxJson,
+        ],
+      );
       return {
         assetId: input.assetId,
         checksum,

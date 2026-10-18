@@ -7,10 +7,10 @@
  * The v2 revision client: the HTTP binding the emitter (task 1.12) uses to
  * stream a job's staged outbox to Search's revision API (design §6.1, §9b.3).
  *
- * The v1 {@link SearchClient} in `search-client.ts` speaks the legacy
- * markdown-and-figures contract (`POST /ingest`, `PUT /document-assets/:id`),
- * which stays the transport for the synchronous `/v1/ingest` path. The v2 job
- * emitter needs the *revision* routes instead:
+ * The v1 {@link SearchClient} in `search-client.ts` speaks the plain Markdown
+ * contract (`POST /ingest`), which stays the transport for the synchronous
+ * `/v1/ingest` path — text only, since figure crops live on the v2 path. The v2
+ * job emitter needs the *revision* routes instead:
  *
  *   POST   /v2/documents/{ref}/revisions                     open a revision
  *   PUT    …/revisions/{rev}/batches/{seq}                    stage an NDJSON batch
@@ -77,6 +77,16 @@ export interface AssetBody {
   mimeType: string;
   checksum: string;
   kind: "figure" | "page" | "tile" | "native";
+  /**
+   * The local id the asset id was derived from (e.g. `p368-f1`, `page:p37`),
+   * sent as `x-figure-id` so Search indexes the figure identity — the
+   * `expected_figure_id` fail-closed check and `list_figures` depend on it.
+   */
+  localId?: string | undefined;
+  /** 1-based page the asset belongs to, sent as `x-page` (region zooms need it). */
+  page?: number | undefined;
+  /** Normalized [x0,y0,x1,y1] crop box, sent as `x-bbox`. */
+  bbox?: readonly number[] | undefined;
 }
 
 /**
@@ -349,18 +359,40 @@ export function createRevisionClient(
     async putAsset(args) {
       const collection = args.collection ?? config.collection;
       const { asset } = args;
+      const headers: Record<string, string> = {
+        ...baseHeaders(collection),
+        "content-type": asset.mimeType,
+        "x-document-reference": args.reference,
+        "x-revision-id": args.revisionId,
+        "x-asset-kind": asset.kind,
+        "x-checksum": asset.checksum,
+      };
+      // Figure identity + placement metadata (Search v2 asset handler reads
+      // x-figure-id / x-page / x-bbox). Without these the stored asset carries
+      // no figure_id/page, so expected_figure_id fails closed and region zooms
+      // are unavailable. encodeHeaderValue keeps non-ASCII local ids safe.
+      if (asset.localId !== undefined && asset.localId !== "") {
+        headers["x-figure-id"] = encodeHeaderValue(asset.localId);
+      }
+      if (
+        asset.page !== undefined &&
+        Number.isSafeInteger(asset.page) &&
+        asset.page >= 1
+      ) {
+        headers["x-page"] = String(asset.page);
+      }
+      if (
+        asset.bbox !== undefined &&
+        asset.bbox.length === 4 &&
+        asset.bbox.every((n) => Number.isFinite(n))
+      ) {
+        headers["x-bbox"] = asset.bbox.join(",");
+      }
       const response = await request(
         `/v2/assets/${encodeURIComponent(asset.assetId)}?revision=${encodeURIComponent(args.revisionId)}`,
         {
           method: "PUT",
-          headers: {
-            ...baseHeaders(collection),
-            "content-type": asset.mimeType,
-            "x-document-reference": args.reference,
-            "x-revision-id": args.revisionId,
-            "x-asset-kind": asset.kind,
-            "x-checksum": asset.checksum,
-          },
+          headers,
           body: asset.buffer as unknown as BodyInit,
         },
         args.signal,

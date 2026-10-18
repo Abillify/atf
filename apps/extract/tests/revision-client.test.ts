@@ -123,6 +123,64 @@ describe("revision-client · request framing", () => {
     const headers = init.headers as Record<string, string>;
     expect(headers["content-digest"]).toBe("sha-256=:abc:");
   });
+
+  it("PUTs an asset with figure identity + placement headers", async () => {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response(null, { status: 201 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createRevisionClient(CONFIG, testLogger);
+
+    await client.putAsset({
+      asset: {
+        assetId: "a".repeat(64),
+        buffer: new Uint8Array([1, 2, 3]),
+        mimeType: "image/png",
+        checksum: "b".repeat(64),
+        kind: "figure",
+        localId: "p368-f1",
+        page: 368,
+        bbox: [0.1, 0.2, 0.3, 0.4],
+      },
+      reference: "doc/a.pdf",
+      revisionId: "rev-1",
+    });
+
+    const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1]
+      .headers as Record<string, string>;
+    expect(headers["x-asset-kind"]).toBe("figure");
+    // Search indexes figure_id / page / bbox from these — expected_figure_id
+    // and region zooms depend on them being present.
+    expect(headers["x-figure-id"]).toBe("p368-f1");
+    expect(headers["x-page"]).toBe("368");
+    expect(headers["x-bbox"]).toBe("0.1,0.2,0.3,0.4");
+  });
+
+  it("omits the placement headers when an asset carries no metadata", async () => {
+    const fetchMock = vi.fn((_url: string | URL, _init?: RequestInit) =>
+      Promise.resolve(new Response(null, { status: 201 })),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    const client = createRevisionClient(CONFIG, testLogger);
+
+    await client.putAsset({
+      asset: {
+        assetId: "c".repeat(64),
+        buffer: new Uint8Array([9]),
+        mimeType: "image/png",
+        checksum: "d".repeat(64),
+        kind: "page",
+      },
+      reference: "doc/a.pdf",
+      revisionId: "rev-1",
+    });
+
+    const headers = (fetchMock.mock.calls[0] as [string, RequestInit])[1]
+      .headers as Record<string, string>;
+    expect(headers["x-figure-id"]).toBeUndefined();
+    expect(headers["x-page"]).toBeUndefined();
+    expect(headers["x-bbox"]).toBeUndefined();
+  });
 });
 
 describe("revision-client · error classification", () => {

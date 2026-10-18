@@ -1483,7 +1483,15 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    * missing crop.
    */
   function createNativeAssetLoader(
-    bytes: Map<string, { assetId: string; buffer: Uint8Array; mimeType: string }>,
+    bytes: Map<
+      string,
+      {
+        assetId: string;
+        localId?: string;
+        buffer: Uint8Array;
+        mimeType: string;
+      }
+    >,
   ): AssetLoader {
     return {
       async load(row: AssetOutboxRow): Promise<AssetBody | null> {
@@ -1495,6 +1503,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
           mimeType: entry.mimeType,
           checksum: sha256Hex(entry.buffer),
           kind: "native",
+          ...(entry.localId !== undefined ? { localId: entry.localId } : {}),
         };
       },
     };
@@ -1514,6 +1523,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       page: number;
       bbox: BBox | undefined;
       kind: string;
+      localId: string;
     }
     const PAGE_CACHE = 16;
     const byPage = new Map<number, Map<string, CropEntry>>();
@@ -1522,7 +1532,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     function entriesOf(record: PageRecord): Map<string, CropEntry> {
       const map = new Map<string, CropEntry>();
       for (const asset of record.assets) {
-        map.set(asset.assetId, { page: asset.page ?? record.page, bbox: asset.bbox, kind: asset.kind });
+        map.set(asset.assetId, {
+          page: asset.page ?? record.page,
+          bbox: asset.bbox,
+          kind: asset.kind,
+          localId: asset.localId,
+        });
       }
       return map;
     }
@@ -1587,6 +1602,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
               mimeType: crop.mimeType,
               checksum: sha256Hex(crop.buffer),
               kind: entry.kind,
+              localId: entry.localId,
+              page: entry.page,
+              bbox: entry.bbox,
             };
           }
           // A page image (or a figure without a usable bbox): the full page.
@@ -1597,6 +1615,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             mimeType: rendered.image.mimeType,
             checksum: sha256Hex(rendered.image.buffer),
             kind: "page",
+            localId: entry.localId,
+            page: entry.page,
           };
         } catch (err) {
           logger.warn({ jobId: job.id, assetId: row.asset_id, err }, "Crop re-render failed");
