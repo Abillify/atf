@@ -351,6 +351,16 @@ function imagePayloadOf(
   else if (raw instanceof Uint8Array) {
     return { bytes: raw, mediaType: mediaType || "image" };
   }
+  // The AI SDK v6 file-part envelope that `mcpToolResultToModelOutput` builds
+  // from MCP image content: {type:"file", data:{type:"data", data:"<base64>"},
+  // mediaType}. Unwrap the nested string so it takes the bare-base64 path
+  // below (image MIME + strict alphabet still required).
+  else if (raw !== null && typeof raw === "object") {
+    const envelope = raw as Record<string, unknown>;
+    if (envelope.type === "data" && typeof envelope.data === "string") {
+      encoded = envelope.data;
+    }
+  }
   if (encoded === undefined) return undefined;
   if (!encoded.startsWith("data:")) {
     // Bare base64 (the MCP image-content shape): only the `data` field can be

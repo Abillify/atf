@@ -395,6 +395,48 @@ describe("offloadInlineImages", () => {
     expect(registry.resolve("img-1")).toBeDefined();
   });
 
+  test("offloads an AI SDK v6 file part with a nested {type:'data'} envelope", () => {
+    const { registry } = registryWith();
+    const bytes = pngBytes(11);
+    const base64 = Buffer.from(bytes).toString("base64");
+    // The exact provider-neutral output `mcpToolResultToModelOutput` produces
+    // from MCP image content: a tool-result whose output.value carries a file
+    // part with data wrapped in {type:"data", data:"<base64>"}.
+    const messages = [
+      {
+        role: "tool",
+        content: [
+          {
+            type: "tool-result",
+            toolCallId: "call-asset",
+            toolName: "vectorsearch__get_asset",
+            output: {
+              type: "content",
+              value: [
+                { type: "text", text: '{"asset_id":"a1"}' },
+                {
+                  type: "file",
+                  data: { type: "data", data: base64 },
+                  mediaType: "image/png",
+                },
+              ],
+            },
+          },
+        ],
+      } as unknown as ModelMessage,
+    ];
+    const result = offloadInlineImages(messages, registry);
+    expect(result.offloaded).toBe(1);
+    expect(result.unresolved).toBe(0);
+    expect(result.refs).toEqual(["img-1"]);
+    expect(result.bytesRemoved).toBe(bytes.byteLength);
+    const serialized = JSON.stringify(result.messages);
+    expect(serialized).not.toContain(base64);
+    expect(serialized).toContain("img-1");
+    const parked = registry.resolve("img-1");
+    expect(Buffer.from(parked?.data ?? []).toString("base64")).toBe(base64);
+  });
+
   test("does not mistake a non-base64 string on data for image bytes", () => {
     const { registry } = registryWith();
     // A url/image string without data: prefix stays remote (vision guard), and
