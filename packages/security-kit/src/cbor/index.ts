@@ -21,7 +21,8 @@
  * their encoded keys (RFC 8949 §4.2.1 core deterministic). Shortest-form
  * integer heads are mandatory on encode; the decoder rejects non-shortest
  * forms and duplicate map keys, so `encode(decode(x)) === x` holds for
- * every canonical input and a signature cannot be silently rewritten.
+ * every canonical input and a signature cannot be silently rewritten. A
+ * `__proto__` text key decodes as an own property, never as the prototype.
  */
 
 /** A tagged value: `tag(value)` in CBOR notation. */
@@ -424,7 +425,17 @@ function decodeItem(r: Reader, depth: number): CborValue {
       }
       if (allStrings) {
         const obj: Record<string, CborValue> = {};
-        for (const [k, v] of pairs) obj[String(k)] = v;
+        // defineProperty, not assignment: `obj["__proto__"] = v` would hit the
+        // inherited setter, dropping the key and letting the payload choose the
+        // prototype (visible to `in` shape checks).
+        for (const [k, v] of pairs) {
+          Object.defineProperty(obj, String(k), {
+            value: v,
+            enumerable: true,
+            writable: true,
+            configurable: true,
+          });
+        }
         return obj;
       }
       return { entries: pairs };

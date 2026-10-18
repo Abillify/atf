@@ -133,27 +133,134 @@ describe("cborDecode — canonical-form enforcement", () => {
   });
 });
 
+describe("cborDecode — prototype-sensitive map keys", () => {
+  // Built with JSON.parse so `__proto__` is a real own property; an object
+  // literal `{ __proto__: … }` would set the prototype instead.
+  const own = (json: string): CborValue => JSON.parse(json) as CborValue;
+  const asRecord = (v: CborValue): Record<string, unknown> =>
+    v as unknown as Record<string, unknown>;
+
+  test("an own __proto__ key round-trips as an own property", () => {
+    const enc = cborEncode(own('{"__proto__":{}}'));
+    expect(hex(enc)).toBe("a1695f5f70726f746f5f5fa0");
+    const d = cborDecode(enc);
+    expect(Object.hasOwn(d as object, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(d)).toBe(Object.prototype);
+    expect(d instanceof Object).toBe(true);
+    expect(Object.keys(d as object)).toEqual(["__proto__"]);
+    expect(cborEncode(d)).toEqual(enc);
+  });
+
+  test("a primitive __proto__ value is kept", () => {
+    const enc = cborEncode(own('{"__proto__":1,"a":2}'));
+    const d = cborDecode(enc);
+    expect(Object.getOwnPropertyDescriptor(d, "__proto__")?.value).toBe(1);
+    expect(cborEncode(d)).toEqual(enc);
+  });
+
+  test("a decoded payload cannot choose the prototype or pollute Object.prototype", () => {
+    const enc = cborEncode(own('{"__proto__":{"polluted":1}}'));
+    const d = cborDecode(enc);
+    expect(Object.getPrototypeOf(d)).toBe(Object.prototype);
+    expect("polluted" in (d as object)).toBe(false);
+    expect(asRecord(d)["polluted"]).toBeUndefined();
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    expect(Object.hasOwn(Object.prototype, "polluted")).toBe(false);
+    expect(cborEncode(d)).toEqual(enc);
+  });
+
+  test("a payload-chosen prototype cannot fake tag/entries shape checks", () => {
+    const d = cborDecode(
+      cborEncode(cborMap([["__proto__", cborMap([["tag", 1], ["value", 2]])]])),
+    );
+    expect(Object.getPrototypeOf(d)).toBe(Object.prototype);
+    expect("tag" in (d as object)).toBe(false);
+    expect("value" in (d as object)).toBe(false);
+    expect("entries" in (d as object)).toBe(false);
+    expect(({} as Record<string, unknown>)["tag"]).toBeUndefined();
+  });
+
+  test("nested __proto__ / constructor / prototype keys round-trip", () => {
+    const value = own(
+      '{"constructor":{"prototype":{"polluted":1}},"x":{"__proto__":{"constructor":{"__proto__":{}}}},"prototype":[{"__proto__":null}]}',
+    );
+    const enc = cborEncode(value);
+    const d = cborDecode(enc);
+    const r = asRecord(d);
+    expect(Object.getPrototypeOf(d)).toBe(Object.prototype);
+    expect(Object.keys(r).sort()).toEqual(["constructor", "prototype", "x"]);
+    const ctor = r["constructor"] as Record<string, unknown>;
+    expect(Object.hasOwn(ctor, "prototype")).toBe(true);
+    const x = r["x"] as Record<string, unknown>;
+    expect(Object.hasOwn(x, "__proto__")).toBe(true);
+    expect(Object.getPrototypeOf(x)).toBe(Object.prototype);
+    const inner = Object.getOwnPropertyDescriptor(x, "__proto__")?.value as Record<string, unknown>;
+    expect(Object.hasOwn(inner, "constructor")).toBe(true);
+    const arr = r["prototype"] as Record<string, unknown>[];
+    expect(Object.hasOwn(arr[0] ?? {}, "__proto__")).toBe(true);
+    expect(({} as Record<string, unknown>)["polluted"]).toBeUndefined();
+    expect(cborEncode(d)).toEqual(enc);
+  });
+
+  test("keys shadowing other Object.prototype members round-trip", () => {
+    const enc = cborEncode({ constructor: 1, toString: 2, hasOwnProperty: 3 });
+    const d = cborDecode(enc);
+    for (const k of ["constructor", "toString", "hasOwnProperty"]) {
+      expect(Object.hasOwn(d as object, k)).toBe(true);
+    }
+    expect(cborEncode(d)).toEqual(enc);
+  });
+});
+
 describe("Property 14: CBOR round-trip (Req 15.3)", () => {
   // Arbitrary for the supported value subset.
-  const cborArb: fc.Arbitrary<CborValue> = fc.letrec((tie) => ({
-    value: fc.oneof(
-      { depthSize: "small" },
-      fc.integer({ min: -1000000000, max: 1000000000 }),
-      fc.bigInt({ min: -(2n ** 64n), max: 2n ** 64n - 1n }),
-      fc.boolean(),
-      fc.constant(null),
-      fc.string({ maxLength: 40 }),
-      fc.uint8Array({ maxLength: 40 }),
-      fc.array(tie("value"), { maxLength: 5 }),
-      fc.dictionary(
-        fc.string({ minLength: 1, maxLength: 10 }),
-        tie("value"),
-        { maxKeys: 5 },
+  const makeCborArb = (key: fc.Arbitrary<string>): fc.Arbitrary<CborValue> =>
+    fc.letrec((tie) => ({
+      value: fc.oneof(
+        { depthSize: "small" },
+        fc.integer({ min: -1000000000, max: 1000000000 }),
+        fc.bigInt({ min: -(2n ** 64n), max: 2n ** 64n - 1n }),
+        fc.boolean(),
+        fc.constant(null),
+        fc.string({ maxLength: 40 }),
+        fc.uint8Array({ maxLength: 40 }),
+        fc.array(tie("value"), { maxLength: 5 }),
+        // fc.dictionary creates `__proto__` as an own property.
+        fc.dictionary(key, tie("value"), { maxKeys: 5 }),
       ),
+    })).value as fc.Arbitrary<CborValue>;
+  const cborArb = makeCborArb(fc.string({ minLength: 1, maxLength: 10 }));
+  // Same subset, but prototype-sensitive keys are generated deterministically.
+  const cborArbProtoKeys = makeCborArb(
+    fc.oneof(
+      fc.string({ minLength: 1, maxLength: 10 }),
+      fc.constantFrom("__proto__", "constructor", "prototype", "toString", "hasOwnProperty"),
     ),
-  })).value as fc.Arbitrary<CborValue>;
+  );
+
+  const roundTrips = (value: CborValue): void => {
+    const encoded = cborEncode(value);
+    const decoded = cborDecode(encoded);
+    expect(cborEncode(decoded)).toEqual(encoded);
+  };
+
+  test("replays recorded counterexample (seed -1886272370, path 357:2:81:81:81)", () => {
+    // Originally found by the round-trip property: [{["__proto__"]:{}}].
+    // Best-effort: seed/path replay depends on fast-check's generation order
+    // and may stop hitting `__proto__` after an upgrade. The explicit tests in
+    // "prototype-sensitive map keys" are the authoritative regression.
+    fc.assert(fc.property(cborArb, roundTrips), {
+      seed: -1886272370,
+      path: "357:2:81:81:81",
+      endOnFailure: true,
+    });
+  });
 
   test("decode(encode(x)) re-encodes to identical bytes", () => {
+    fc.assert(fc.property(cborArbProtoKeys, roundTrips), { numRuns: 500 });
+  });
+
+  test("decode(encode(x)) re-encodes to identical bytes (plain string keys)", () => {
     fc.assert(
       fc.property(cborArb, (value) => {
         const encoded = cborEncode(value);
