@@ -18,6 +18,35 @@ releases:
 
 ## [Unreleased]
 
+## [0.18.0] — 2026-10-18
+
+### Removed
+
+- **Search** (`@atf/search`): the legacy v1 asset routes `PUT` / `GET /document-assets/:assetId`
+  are gone (breaking HTTP API change). `vs_assets` is now the single asset store: the MCP
+  `get_document_asset` tool reads from it, and the `asset_url` of `/search` (v1) hits points to
+  `GET /v2/assets/{id}?collection=…`. Assets uploaded through the old route remain retrievable
+  through the existing `vs_document_assets` → `vs_assets` backfill. Clients calling
+  `/document-assets` directly must switch to `/v2/assets`. See
+  [docs/document-intelligence-v2-migration.md](docs/document-intelligence-v2-migration.md).
+- **Extract** (`@atf/extract`): the synchronous `/v1/ingest` path no longer uploads figure crops,
+  and `SEARCH_UPLOAD_ASSETS` is no longer read. Without a job store the response drops
+  `assets_stored` / `assets_failed`; figure images flow only through the v2 job pipeline.
+
+### Fixed
+
+- **Extract** (`@atf/extract`): the v2 emitter now sends `x-figure-id`, `x-page` and `x-bbox` with
+  each asset `PUT`, so stored figures carry their identity and placement. Previously
+  `expected_figure_id` checks failed closed and region zooms were unavailable for these assets.
+- **Search** (`@atf/search`): re-emitting an asset with identical bytes now backfills missing
+  `figure_id` / `page` / `bbox` metadata instead of keeping stale `NULL` values.
+- **Search** (`@atf/search`): `expected_document_reference` on `get_asset` and
+  `get_document_asset` tolerates a `#unit:…` fragment copied from a search hit; a different
+  document reference still fails closed.
+- **Runtime** (`@atf/runtime`): image tool results delivered as an AI SDK v6 file part with a
+  nested `{ type: "data" }` envelope are now recognised and offloaded like bare base64 MCP image
+  content.
+
 ## [0.17.0] — 2026-10-18
 
 ### Added
@@ -3353,7 +3382,8 @@ ATF is pre-1.0, and this release does not promise a stable public surface. Concr
 
 See [SECURITY.md](SECURITY.md) for which versions receive security fixes.
 
-[Unreleased]: https://github.com/abillify/atf/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/abillify/atf/compare/v0.18.0...HEAD
+[0.18.0]: https://github.com/abillify/atf/compare/v0.17.0...v0.18.0
 [0.17.0]: https://github.com/abillify/atf/compare/v0.16.2...v0.17.0
 [0.16.2]: https://github.com/abillify/atf/compare/v0.16.1...v0.16.2
 [0.16.1]: https://github.com/abillify/atf/compare/v0.16.0...v0.16.1

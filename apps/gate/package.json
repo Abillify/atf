@@ -1,6 +1,6 @@
 {
     "name": "@atf/gate",
-    "version": "0.17.0",
+    "version": "0.18.0",
     "private": true,
     "author": "Abillify Technology GmbH <info@abillify.me>",
     "license": "Elastic-2.0",
