@@ -5,7 +5,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import type { Server } from "node:http";
 import type { Express } from "express";
 import { AppConfigSchema, McpServerImportSchema } from "../../src/config/schema.ts";
-import { expandMcpServerImports } from "../../src/config/mcp-import.ts";
+import { defaultAccess, expandMcpServerImports } from "../../src/config/mcp-import.ts";
 import { buildApp, type AppHandle } from "../../src/app.ts";
 import { FakeDb } from "../helpers/fake-db.ts";
 import { connectMcpStreamable } from "../helpers/mcp-client.ts";
@@ -130,6 +130,48 @@ describe("mcpServers import · connects a remote MCP server as a backend", () =>
     expect(inputSchema.required).toEqual([]);
   });
 
+  describe("access level of imported tools (P1-G7)", () => {
+    const plain = (extra: Record<string, unknown> = {}) =>
+      McpServerImportSchema.parse({
+        server: { url: `http://127.0.0.1:${downstreamPort}/mcp`, token: DOWNSTREAM_TOKEN },
+        prefix: "ds_",
+        include: ["list_items", "delete_item", "noop"],
+        ...extra,
+      });
+    const accessOf = (tools: unknown[], name: string): unknown =>
+      (tools as Array<Record<string, unknown>>).find((t) => t.name === name)?.access;
+
+    it("takes the level from the downstream server's own annotations", async () => {
+      const tools = await expandMcpServerImports([plain()], [], globalThis.fetch);
+      // list_items is annotated readOnlyHint:true, delete_item destructive.
+      expect(accessOf(tools, "ds_list_items")).toBe("read");
+      expect(accessOf(tools, "ds_delete_item")).toBe("write");
+    });
+
+    it("an explicit access on the import wins over the annotations", async () => {
+      const tools = await expandMcpServerImports([plain({ access: "write" })], [], globalThis.fetch);
+      expect(accessOf(tools, "ds_list_items")).toBe("write");
+    });
+
+    it("a per-tool override wins over both", async () => {
+      const tools = await expandMcpServerImports(
+        [plain({ overrides: [{ name: "delete_item", access: "read" }] })],
+        [],
+        globalThis.fetch,
+      );
+      expect(accessOf(tools, "ds_delete_item")).toBe("read");
+    });
+
+    it("defaultAccess: only an explicit readOnlyHint:true is read; everything else is write", () => {
+      expect(defaultAccess({ annotations: { readOnlyHint: true } })).toBe("read");
+      expect(defaultAccess({ annotations: { readOnlyHint: true, destructiveHint: true } })).toBe("write");
+      expect(defaultAccess({ annotations: { readOnlyHint: false } })).toBe("write");
+      expect(defaultAccess({ annotations: { destructiveHint: true } })).toBe("write");
+      expect(defaultAccess({ annotations: {} })).toBe("write");
+      expect(defaultAccess({})).toBe("write");
+      expect(defaultAccess({ annotations: { readOnlyHint: "true" } })).toBe("write");
+    });
+  });
   describe("end-to-end through an upstream mcpgate instance", () => {
     let upstream: AppHandle;
     let upstreamServer: Server;

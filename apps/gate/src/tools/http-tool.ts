@@ -10,6 +10,14 @@ import { withSpan } from "../observability/tracing.ts";
 import type { ToolDefinition, ToolExecutor, ToolResult, ToolRuntime } from "./types.ts";
 
 /**
+ * Header names whose values are credentials. Matched case-insensitively and as
+ * a substring, so `X-Api-Key`, `X-Auth-Token`, `Proxy-Authorization` and
+ * custom `X-Service-Secret` style names are all covered.
+ */
+const SENSITIVE_HEADER_NAME =
+  /authori[sz]ation|cookie|token|secret|password|passwd|api[-_]?key|credential|signature/i;
+
+/**
  * Backend HTTP tool.
  *
  * Issues an HTTP request defined in config, substituting `:param.*` / `:ctx.*`
@@ -149,7 +157,12 @@ export class HttpToolExecutor implements ToolExecutor {
 
     const headers: Record<string, string> = {};
     for (const [k, v] of Object.entries(req.headers ?? {})) {
-      headers[k] = interpolateRaw(v, params, ctx);
+      // A dry-run shows the SHAPE of the request. Credential-bearing headers
+      // (static API keys, env-substituted tokens) are never echoed back to
+      // whoever is allowed to dry-run the tool.
+      headers[k] = SENSITIVE_HEADER_NAME.test(k)
+        ? "[redacted]"
+        : interpolateRaw(v, params, ctx);
     }
 
     let body: unknown;

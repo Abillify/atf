@@ -11,6 +11,8 @@ interface RemoteTool {
   name: string;
   description?: string;
   inputSchema?: unknown;
+  /** MCP tool annotations as the downstream server declared them. */
+  annotations?: { readOnlyHint?: unknown; destructiveHint?: unknown };
 }
 
 /**
@@ -131,13 +133,28 @@ async function listRemoteTools(
   }
 }
 
+/**
+ * Access level of an imported tool the operator did not classify. A tool counts
+ * as `read` ONLY when the downstream server explicitly declares
+ * `annotations.readOnlyHint: true`; everything else — no annotation, a
+ * destructive hint, a read-only hint of false — is `write`, so write gating
+ * (allowWrite, approval rules keyed on access) applies. The old default made
+ * every unclassified downstream tool `read`, i.e. exempt from them. An explicit
+ * `access` on the import or on a tool override always wins.
+ */
+export function defaultAccess(remote: Pick<RemoteTool, "annotations">): "read" | "write" {
+  return remote.annotations?.readOnlyHint === true &&
+    remote.annotations?.destructiveHint !== true
+    ? "read"
+    : "write";
+}
 function buildTool(imp: McpServerImport, remote: RemoteTool, override: McpToolOverride | undefined): unknown {
   const expose = override?.expose !== undefined ? override.expose : imp.expose;
   return {
     name: imp.prefix + remote.name,
     description: override?.description ?? remote.description ?? "",
     type: "mcp",
-    access: override?.access ?? imp.access ?? "read",
+    access: override?.access ?? imp.access ?? defaultAccess(remote),
     ...(expose !== undefined ? { expose } : {}),
     server: imp.server,
     targetTool: remote.name,

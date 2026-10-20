@@ -50,9 +50,7 @@ interface RedisLike {
   sendCommand(args: string[]): Promise<unknown>;
   eval(
     script: string,
-    numKeys: number,
-    keys: string[],
-    args: (string | number)[],
+    options: { keys: string[]; arguments: (string | number)[] },
   ): Promise<unknown>;
   on?(event: string, listener: (err: Error) => void): void;
   quit?(): Promise<unknown>;

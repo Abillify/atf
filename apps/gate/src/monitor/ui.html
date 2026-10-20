@@ -230,7 +230,7 @@
       <input id="token" type="password" placeholder="monitor token (if required)" size="24" />
       <button type="button" id="connect">connect</button>
       <button type="button" id="clear">clear</button>
-      <a id="logout" href="/monitor/logout" style="display:none">logout</a>
+      <form method="post" action="/monitor/logout" style="display:none;margin:0" id="logout"><button type="submit" style="all:unset;cursor:pointer;text-decoration:underline">logout</button></form>
       <div class="status"><span id="dot" class="dot"></span><span id="state">disconnected</span></div>
     </header>
 

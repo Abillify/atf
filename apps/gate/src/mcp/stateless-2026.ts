@@ -3,6 +3,17 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import express, { Router, type Request, type Response } from "express";
+import {
+  deadlineSignal,
+  DEFAULT_PAGE_SIZE,
+  jsonRpcErrorBody,
+  MCP_2026_PROTOCOL_VERSION,
+  MAX_PAGE_SIZE,
+  paginate,
+  requestMetadata,
+  statelessEnvelope,
+  validateStatelessRequest,
+} from "@atf/mcp-2026";
 import { AuthError, type Authenticator, extractBearer } from "../auth/authenticator.ts";
 import type { AuthContext } from "../auth/context.ts";
 import { bearerChallenge } from "../auth/well-known.ts";
@@ -25,7 +36,25 @@ import {
 import { evidenceActionContractHash } from "./evidence-contract.ts";
 import { MemoryTaskStore, TaskCapacityError } from "./tasks.ts";
 
-export const MCP_2026_PROTOCOL_VERSION = "2026-07-28";
+export { MCP_2026_PROTOCOL_VERSION };
+
+/**
+ * Keyed methods of the Gate catalog: the `Mcp-Name` header must echo
+ * `params.name` (or `params.uri` for `resources/read`), and
+ * `approvals/resolve` must echo `params.requestState` in
+ * `Mcp-Request-State`.
+ */
+const GATE_VALIDATION = {
+  namedMethods: [
+    "tools/call",
+    "prompts/get",
+    "io.modelcontextprotocol/skills/get",
+    "io.modelcontextprotocol/apps/get",
+  ],
+  resourcesReadKeyed: true,
+  approvalsResolveKeyed: true,
+} as const;
+
 type Scoped = { requiredScopes: string[] };
 type Primitive = Record<string, unknown> & Scoped;
 interface StatelessDeps {
@@ -61,8 +90,13 @@ const requestedTool = (body: Body): string | undefined => {
   return typeof name === "string" && /^[\w.:-]{1,128}$/.test(name) ? name : undefined;
 };
 const header = (req: Request, name: string) => req.get(name)?.trim() || undefined;
-const error = (res: Response, status: number, id: unknown, code: number, message: string) =>
-  res.status(status).json({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
+const error = (
+  res: Response,
+  status: number,
+  id: unknown,
+  code: number,
+  message: string,
+) => res.status(status).json(jsonRpcErrorBody(id, code, message));
 const visible = <T extends Scoped>(items: T[], scopes: string[], authorizationEnabled = true) =>
   authorizationEnabled
     ? items.filter((item) => item.requiredScopes.every((scope) => scopes.includes(scope)))
@@ -71,73 +105,7 @@ const publicItem = (item: Record<string, unknown>) => {
   const { requiredScopes: _, text: __, message: ___, ...rest } = item;
   return rest;
 };
-const DEFAULT_PAGE_SIZE = 100;
-const MAX_PAGE_SIZE = 1000;
-function paginate<T>(
-  items: T[],
-  params: Record<string, unknown>,
-): { items: T[]; nextCursor?: string } {
-  const rawPageSize = params.pageSize;
-  const pageSize = rawPageSize === undefined ? DEFAULT_PAGE_SIZE : rawPageSize;
-  if (
-    typeof pageSize !== "number" ||
-    !Number.isSafeInteger(pageSize) ||
-    pageSize < 1 ||
-    pageSize > MAX_PAGE_SIZE
-  ) {
-    throw new Error(`pageSize must be an integer between 1 and ${MAX_PAGE_SIZE}`);
-  }
-  const rawCursor = params.cursor;
-  if (rawCursor !== undefined && (typeof rawCursor !== "string" || !/^\d+$/.test(rawCursor))) {
-    throw new Error("Invalid pagination cursor");
-  }
-  const offset = rawCursor === undefined ? 0 : Number(rawCursor);
-  if (!Number.isSafeInteger(offset)) throw new Error("Invalid pagination cursor");
-  const pageItems = items.slice(offset, offset + pageSize);
-  const nextOffset = offset + pageItems.length;
-  return {
-    items: pageItems,
-    ...(nextOffset < items.length ? { nextCursor: String(nextOffset) } : {}),
-  };
-}
-const envelope = (serverInfo: object, fields: object, responseMeta: object = {}) => ({
-  resultType: "complete",
-  ...fields,
-  ttlMs: 0,
-  cacheScope: "request",
-  _meta: { serverInfo, ...responseMeta },
-});
-const requestMetadata = (req: Request, body: Body, params: Record<string, unknown>) => {
-  const meta = {
-    ...(body._meta ?? {}),
-    ...((params._meta as Record<string, unknown> | undefined) ?? {}),
-  };
-  for (const [headerName, metaName] of [
-    ["traceparent", "traceparent"],
-    ["tracestate", "tracestate"],
-    ["Mcp-Transaction-Id", "transaction/id"],
-    ["Mcp-Deadline", "deadlineAt"],
-  ] as const) {
-    const value = header(req, headerName);
-    if (value !== undefined && meta[metaName] === undefined) meta[metaName] = value;
-  }
-  return meta;
-};
-const deadlineSignal = (meta: Record<string, unknown>): AbortSignal | undefined => {
-  const raw =
-    meta.deadlineAt ??
-    meta["transaction/deadlineAt"] ??
-    meta["io.modelcontextprotocol/deadline"];
-  if (raw === undefined) return undefined;
-  const deadline =
-    typeof raw === "number"
-      ? raw
-      : /^\d+$/.test(String(raw))
-        ? Number(raw)
-        : Date.parse(String(raw));
-  if (!Number.isFinite(deadline)) throw new Error("Invalid deadline metadata");
-  return AbortSignal.timeout(Math.max(0, deadline - Date.now()));
-};
+const envelope = statelessEnvelope;
 const valueAt = (values: Record<string, unknown>, path: string): unknown => {
   let current: unknown = values;
   for (const part of path.split(".")) {
@@ -166,6 +134,7 @@ const renderValue = (value: unknown, values: Record<string, unknown>): unknown =
 interface PendingApproval {
   requestState: string;
   owner: string;
+  tenantId: string;
   tool: string;
   args: Record<string, unknown>;
   fingerprint: string;
@@ -180,6 +149,7 @@ class PendingApprovalStore {
   }
   create(
     owner: string,
+    tenantId: string,
     tool: string,
     args: Record<string, unknown>,
     evidenceContractHash?: string,
@@ -187,7 +157,7 @@ class PendingApprovalStore {
     this.sweep();
     if (this.entries.size >= this.maxEntries) throw new TaskCapacityError();
     const entry = {
-      requestState: randomUUID(), owner, tool,
+      requestState: randomUUID(), owner, tenantId, tool,
       args: structuredClone(args),
       fingerprint: approvalArgsFingerprint(args),
       ...(evidenceContractHash !== undefined ? { evidenceContractHash } : {}),
@@ -200,6 +170,19 @@ class PendingApprovalStore {
     this.sweep();
     const entry = this.entries.get(requestState);
     if (!entry || entry.owner !== owner) return undefined;
+    this.entries.delete(requestState);
+    return entry;
+  }
+  /** Look at a pending request without consuming it (separation-of-duties checks). */
+  peek(requestState: string): PendingApproval | undefined {
+    this.sweep();
+    return this.entries.get(requestState);
+  }
+  /** Consume a pending request on behalf of a resolver other than its owner. */
+  takeForeign(requestState: string): PendingApproval | undefined {
+    this.sweep();
+    const entry = this.entries.get(requestState);
+    if (!entry) return undefined;
     this.entries.delete(requestState);
     return entry;
   }
@@ -259,7 +242,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         throw new Error("Approval lookup returned no matching result");
       lookup = (rows?.[0] as Record<string, unknown> | undefined) ?? lookupResult.structuredContent ?? {};
     }
-    const pending = approvalStore.create(approvalOwner(ctx), tool, args, evidenceContractHash);
+    const pending = approvalStore.create(approvalOwner(ctx), ctx.tenantId, tool, args, evidenceContractHash);
     bus.publish({
       type: "approval_requested",
       username: ctx.username,
@@ -299,31 +282,21 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
         status: "ok",
         meta: { scopes: ctx.scopes, claims: ctx.claims, transport: "stateless-http" },
       });
-      const protocol = header(req, "MCP-Protocol-Version");
-      if (body._meta?.["io.modelcontextprotocol/protocolVersion"] !== protocol)
-        return error(res, 400, body.id, -32020, "HeaderMismatch");
-      if (protocol !== MCP_2026_PROTOCOL_VERSION)
-        return error(res, 400, body.id, -32022, "UnsupportedProtocolVersion");
-      const method = typeof body.method === "string" ? body.method : undefined;
-      if (!method || header(req, "Mcp-Method") !== method)
-        return error(res, 400, body.id, -32020, "HeaderMismatch");
-      const params = body.params ?? {};
-      const keyed =
-        method === "tools/call" ||
-        method === "prompts/get" ||
-        method === "io.modelcontextprotocol/skills/get" ||
-        method === "io.modelcontextprotocol/apps/get";
-      const uriMethod = method === "resources/read";
-      const key = uriMethod ? params.uri : params.name;
-      if ((keyed || uriMethod) && (typeof key !== "string" || header(req, "Mcp-Name") !== key))
-        return error(res, 400, body.id, -32020, "HeaderMismatch");
-      if (
-        method === "io.modelcontextprotocol/approvals/resolve" &&
-        (typeof params.requestState !== "string" || header(req, "Mcp-Request-State") !== params.requestState)
-      )
-        return error(res, 400, body.id, -32020, "HeaderMismatch");
+      const validation = validateStatelessRequest(
+        (name) => header(req, name),
+        body,
+        GATE_VALIDATION,
+      );
+      if (!validation.ok)
+        return error(res, 400, body.id, validation.code, validation.message);
+      const { method } = validation;
+      const params = validation.params;
       const serverInfo = { name: serverConfig.name, version: serverConfig.version };
-      const metadata = requestMetadata(req, body, params);
+      const metadata = requestMetadata(
+        (name) => header(req, name),
+        body,
+        params,
+      );
       const responseMeta = {
         serverInfo,
         ...(metadata.traceparent !== undefined ? { traceparent: metadata.traceparent } : {}),
@@ -500,7 +473,31 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
             : undefined;
         if (decision === "approved" && !secret)
           return error(res, 503, body.id, -32003, "Approval service is not configured");
-        const pending = approvalStore.take(String(params.requestState), approvalOwner(ctx));
+        // WHO resolves is the verified identity, never a client-supplied string:
+        // `params.approver` is kept only as a display label next to it.
+        const resolver = ctx.subject;
+        const declaredApprover = typeof params.approver === "string" ? params.approver.trim() : undefined;
+        const requestState = String(params.requestState);
+        let pending: PendingApproval | undefined;
+        if (deps.policies?.approval.requireDifferentApprover === true) {
+          const candidate = approvalStore.peek(requestState);
+          if (!candidate || candidate.tenantId !== ctx.tenantId)
+            return error(res, 404, body.id, -32004, "Approval request not found or expired");
+          if (candidate.owner === approvalOwner(ctx))
+            return error(
+              res,
+              403,
+              body.id,
+              -32003,
+              "This approval must be resolved by a different principal than the one that requested it",
+            );
+          const approverScope = deps.policies.approval.approverScope;
+          if (!ctx.scopes.includes(approverScope))
+            return error(res, 403, body.id, -32003, `Resolving approvals requires the scope ${approverScope}`);
+          pending = approvalStore.takeForeign(requestState);
+        } else {
+          pending = approvalStore.take(requestState, approvalOwner(ctx));
+        }
         if (!pending) return error(res, 404, body.id, -32004, "Approval request not found or expired");
         bus.publish({
           type: "approval_resolved",
@@ -512,7 +509,9 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
           meta: {
             requestState: pending.requestState,
             decision,
-            approver: typeof params.approver === "string" ? params.approver : ctx.subject,
+            approver: resolver,
+            ...(declaredApprover !== undefined && declaredApprover !== resolver ? { declaredApprover } : {}),
+            selfResolved: pending.owner === approvalOwner(ctx),
           },
         });
         if (decision === "denied") {
@@ -527,7 +526,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
             ...(pending.evidenceContractHash !== undefined
               ? { evidenceContractHash: pending.evidenceContractHash }
               : {}),
-            approver: typeof params.approver === "string" ? params.approver : ctx.subject,
+            approver: resolver,
             secret,
             ttlMs: deps.policies?.approval.ttlMs ?? 300_000,
           });
@@ -621,7 +620,7 @@ export function createStateless2026Router(deps: StatelessDeps): Router {
             : {
                 resultType: "complete",
                 ...protocolToolResult(call),
-                _meta: { serverInfo },
+                _meta: { ...call._meta, serverInfo },
               };
         }
       } else return error(res, 404, body.id, -32601, "Method not found");

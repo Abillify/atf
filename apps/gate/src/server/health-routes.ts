@@ -21,9 +21,15 @@ export function installHealthRoutes(
     transactionLedger: HealthDependency;
     webhookReplayStore?: HealthDependency;
     approvalStore?: HealthDependency;
+    /**
+     * `auth.mode: disabled`: both probes then carry `auth: "disabled"`, so an
+     * instance that answers every request anonymously says so.
+     */
+    authDisabled?: boolean;
   },
 ): void {
-  app.get("/healthz", (_req, res) => res.json({ status: "ok" }));
+  const authField = dependencies.authDisabled === true ? { auth: "disabled" } : {};
+  app.get("/healthz", (_req, res) => res.json({ status: "ok", ...authField }));
   app.get("/readyz", async (_req, res) => {
     const databases = dependencies.db.names();
     const timeoutMs = 2_000;
@@ -76,6 +82,7 @@ export function installHealthRoutes(
       ]);
       res.json({
         status: "ok",
+        ...authField,
         tools: dependencies.toolCount(),
         databases,
         dependencies: {

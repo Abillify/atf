@@ -474,6 +474,8 @@ describe("MCP integration · transaction abort propagation", () => {
       getReal: (name: string) => (name === "slow_write" ? executor : undefined),
       requiredScopesOf: () => [],
       accessOf: () => "write" as const,
+      // The dispatcher labels a result with the type of the tool that produced it.
+      typeOf: () => "database",
     };
     const dispatcher = new McpToolDispatcher(
       {

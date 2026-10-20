@@ -51,6 +51,30 @@ export interface ToolResult {
   structuredContent?: Record<string, unknown>;
   /** Structured detail forwarded to the monitor (e.g. row count). */
   meta?: Record<string, unknown>;
+  /**
+   * MCP result-level `_meta`, sent to the client as is. The Gate adds the
+   * content-trust label (`io.atf/content-trust`) to what a tool returned.
+   */
+  _meta?: Record<string, unknown>;
+}
+
+/**
+ * `_meta` key of the content-trust label every executed tool result carries.
+ * Additive: clients that do not know the key ignore it, exactly like any other
+ * `_meta` entry.
+ */
+export const CONTENT_TRUST_META_KEY = "io.atf/content-trust";
+
+/**
+ * What the label says: the result is DATA from a downstream system (a database,
+ * a web service, a message broker, another MCP server) and never an
+ * instruction to the model that reads it. A consumer that tracks prompt
+ * injection can use it to treat the rest of the run as having seen untrusted
+ * input (Runtime: `TAINT_MODE=on-untrusted-source`). `source` names the kind of
+ * backend that produced it.
+ */
+export function contentTrustLabel(source: string): Record<string, unknown> {
+  return { [CONTENT_TRUST_META_KEY]: { content_trust: "untrusted", source } };
 }
 
 /** Shared services available to every tool executor. */

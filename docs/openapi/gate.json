@@ -489,6 +489,43 @@
         "x-enabled-when": "monitoring.enabled"
       }
     },
+    "/monitor/session": {
+      "post": {
+        "tags": [
+          "Monitor"
+        ],
+        "summary": "Exchange the static monitoring token (Authorization: Bearer) for an HttpOnly, SameSite=Strict session cookie (204)",
+        "operationId": "post__monitor_session",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          },
+          "default": {
+            "description": "Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Error"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "x-enabled-when": "monitoring.enabled"
+      }
+    },
     "/monitor/login": {
       "get": {
         "tags": [
@@ -554,12 +591,12 @@
       }
     },
     "/monitor/logout": {
-      "get": {
+      "post": {
         "tags": [
           "Monitor"
         ],
-        "summary": "End the monitor session",
-        "operationId": "get__monitor_logout",
+        "summary": "End the monitor session (POST only: a GET answers 405, so a third-party page cannot log the user out)",
+        "operationId": "post__monitor_logout",
         "responses": {
           "200": {
             "description": "Success",
@@ -706,7 +743,7 @@
         "tags": [
           "Monitor"
         ],
-        "summary": "Tool playground: execute a registered tool",
+        "summary": "Tool playground: run or dry-run a registered tool through the governance pipeline (policy, scopes, approval, rate limit, audit); 403 when disabled, 503 without governance wiring",
         "operationId": "post__monitor_tools_name_run",
         "parameters": [
           {
@@ -776,7 +813,7 @@
       "sessionCookie": {
         "type": "apiKey",
         "in": "cookie",
-        "name": "atf_monitor_session",
+        "name": "mcpgate_monitor_session",
         "description": "Operator browser session established via /monitor/login (OIDC BFF)."
       },
       "webhookSignature": {

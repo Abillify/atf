@@ -12,6 +12,7 @@
  */
 
 import { describe, expect, test } from "bun:test";
+import { UnknownOperationalProfileError } from "@atf/security-kit";
 import {
   checkProductionReadiness,
   resolveEnvironment,
@@ -83,6 +84,44 @@ describe("resolveEnvironment", () => {
 
   test("normalises case and whitespace", () => {
     expect(resolveEnvironment({ MCPGATE_ENV: "  PRODUCTION " })).toBe("production");
+  });
+
+  test("ATF_PROFILE overrides MCPGATE_ENV and NODE_ENV", () => {
+    expect(
+      resolveEnvironment({
+        ATF_PROFILE: "production",
+        MCPGATE_ENV: "development",
+        NODE_ENV: "development",
+      }),
+    ).toBe("production");
+    expect(
+      resolveEnvironment({ ATF_PROFILE: "staging", NODE_ENV: "production" }),
+    ).toBe("staging");
+  });
+
+  test("an unknown value fails fast instead of disabling the gate", () => {
+    // The bug class this closes: `MCPGATE_ENV=prod` used to fall back to
+    // development silently, switching every production gate off.
+    expect(() => resolveEnvironment({ MCPGATE_ENV: "prod" })).toThrow(
+      UnknownOperationalProfileError,
+    );
+    expect(() => resolveEnvironment({ ATF_PROFILE: "PRODUCTIVE" })).toThrow(
+      UnknownOperationalProfileError,
+    );
+    try {
+      resolveEnvironment({ MCPGATE_ENV: "prod" });
+      expect.unreachable();
+    } catch (err) {
+      const e = err as UnknownOperationalProfileError;
+      expect(e.message).toContain("MCPGATE_ENV");
+      expect(e.message).toContain("prod");
+    }
+  });
+
+  test("a blank ATF_PROFILE falls through to the service variables", () => {
+    expect(
+      resolveEnvironment({ ATF_PROFILE: "", NODE_ENV: "production" }),
+    ).toBe("production");
   });
 });
 
@@ -310,6 +349,69 @@ describe("monitoring findings", () => {
     });
     expect(fatalsIn(cfg).some((m) => m.includes("redact.enabled is false"))).toBe(true);
   });
+
+  test("an enabled playground is fatal in production", () => {
+    const cfg = goodConfig({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://id.example.com/",
+          clientId: "mcpgate-monitor",
+          clientSecret: "c".repeat(40),
+          redirectUri: "https://mcpgate.internal/monitor/callback",
+          sessionSecret: "s".repeat(40),
+        },
+        playground: { enabled: true },
+      },
+    });
+    expect(fatalsIn(cfg).some((m) => m.includes("monitoring.playground"))).toBe(
+      true,
+    );
+    // Outside production the operator may keep it on for debugging.
+    expect(
+      checkProductionReadiness(cfg, "development").fatal.some((m) =>
+        m.includes("monitoring.playground"),
+      ),
+    ).toBe(false);
+  });
+
+  test("a plaintext-HTTP server.publicUrl is fatal in production", () => {
+    const cfg = goodConfig({
+      server: {
+        allowedHosts: ["mcpgate.internal"],
+        metrics: { enabled: true, token: "a".repeat(40) },
+        outbound: { allowedHosts: ["api.example.com"] },
+        publicUrl: "http://mcpgate.internal:7500",
+      },
+    });
+    expect(
+      fatalsIn(cfg).some(
+        (m) => m.includes("server.publicUrl") && m.includes("plaintext HTTP"),
+      ),
+    ).toBe(true);
+  });
+
+  test("a plaintext-HTTP monitor OIDC redirectUri is fatal in production", () => {
+    const cfg = goodConfig({
+      monitoring: {
+        enabled: true,
+        oidc: {
+          issuer: "https://id.example.com/",
+          clientId: "mcpgate-monitor",
+          clientSecret: "c".repeat(40),
+          redirectUri: "http://mcpgate.internal:7500/monitor/callback",
+          sessionSecret: "s".repeat(40),
+        },
+      },
+    });
+    expect(
+      fatalsIn(cfg).some(
+        (m) =>
+          m.includes("monitoring.oidc.redirectUri") &&
+          m.includes("plaintext HTTP"),
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("database findings", () => {
@@ -521,6 +623,54 @@ describe("tenant SQL diagnostics", () => {
   });
 });
 
+describe("pagination cursors across replicas (P1-R1)", () => {
+  const saved = process.env.MCPGATE_REPLICAS;
+  const paged = (secret?: string) =>
+    goodConfig({
+      server: {
+        allowedHosts: ["mcpgate.internal"],
+        metrics: { enabled: true, token: "a".repeat(40) },
+        cors: { enabled: false, origins: [] },
+        outbound: { allowedHosts: ["api.example.com"] },
+        ...(secret !== undefined ? { pagination: { secret } } : {}),
+      },
+      tools: [
+        {
+          name: "orders",
+          type: "database",
+          database: "main",
+          query: "SELECT 1",
+          requiredScopes: ["orders:read"],
+          pagination: { enabled: true, orderBy: ["id"] },
+        },
+      ],
+    });
+  const restore = (): void => {
+    if (saved === undefined) delete process.env.MCPGATE_REPLICAS;
+    else process.env.MCPGATE_REPLICAS = saved;
+  };
+  test("warns when several replicas page with a per-process cursor key", () => {
+    process.env.MCPGATE_REPLICAS = "2";
+    try {
+      const report = checkProductionReadiness(paged(), "staging");
+      expect(report.warnings.some((m) => m.includes("server.pagination.secret is unset"))).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+  test("is silent with a stable secret or a single replica", () => {
+    try {
+      process.env.MCPGATE_REPLICAS = "2";
+      const withSecret = checkProductionReadiness(paged("p".repeat(40)), "staging");
+      expect(withSecret.warnings.some((m) => m.includes("server.pagination.secret"))).toBe(false);
+      process.env.MCPGATE_REPLICAS = "1";
+      const single = checkProductionReadiness(paged(), "staging");
+      expect(single.warnings.some((m) => m.includes("server.pagination.secret"))).toBe(false);
+    } finally {
+      restore();
+    }
+  });
+});
 describe("approval-store replica gate (Req 6.1)", () => {
   const savedReplicas = process.env.MCPGATE_REPLICAS;
   const savedTransactionRedis = process.env.MCPGATE_TRANSACTION_REDIS_URL;
@@ -681,5 +831,191 @@ describe("deprecated mcp forwardBearerToken (Req 6.13)", () => {
     expect(report.fatal.some((m) => m.includes("forwardBearerToken"))).toBe(
       false,
     );
+  });
+});
+
+describe("tenant authority, default-allow governance and rate limiting (P1-G3, G1, G6)", () => {
+  const warn = (config: AppConfig, env = "production") =>
+    checkProductionReadiness(config, env).warnings.join("\n");
+  const fatal = (config: AppConfig, env = "production") =>
+    checkProductionReadiness(config, env).fatal.join("\n");
+
+  const twoIssuers = {
+    auth: {
+      mode: "oauth",
+      oauth: {
+        jwksUri: "https://id.example.com/jwks",
+        issuer: "https://id.example.com/",
+        audience: "mcpgate",
+        additionalIssuers: [
+          {
+            jwksUri: "https://other.example.com/jwks",
+            issuer: "https://other.example.com/",
+            audience: "mcpgate",
+          },
+        ],
+      },
+    },
+  };
+
+  test("client_id as a tenant claim is flagged (an OAuth client is not a tenant)", () => {
+    expect(warn(goodConfig())).toContain("'client_id'");
+    expect(
+      warn(
+        goodConfig({
+          tenantIsolation: { enabled: true, claimNames: ["tenant_id", "tid"] },
+        }),
+      ),
+    ).not.toContain("'client_id'");
+  });
+
+  test("several trusted issuers without issuerTenants are fatal in production", () => {
+    expect(fatal(goodConfig(twoIssuers))).toContain("issuerTenants");
+  });
+
+  test("a binding for the trusted issuers clears it", () => {
+    const bound = goodConfig({
+      ...twoIssuers,
+      tenantIsolation: {
+        enabled: true,
+        claimNames: ["tenant_id"],
+        issuerTenants: {
+          "https://id.example.com/": ["acme"],
+          "https://other.example.com/": ["*"],
+        },
+      },
+    });
+    expect(fatal(bound)).not.toContain("issuerTenants");
+  });
+
+  test("a single issuer needs no binding; staging only warns", () => {
+    expect(fatal(goodConfig())).not.toContain("issuerTenants");
+    expect(fatal(goodConfig(twoIssuers), "staging")).not.toContain("issuerTenants");
+    expect(warn(goodConfig(twoIssuers), "staging")).toContain("issuerTenants");
+  });
+
+  test("defaultEffect allow with tools that declare no requiredScopes is called out", () => {
+    const config = goodConfig({
+      tools: [
+        {
+          name: "open_tool",
+          type: "database",
+          access: "read",
+          database: "main",
+          query: "SELECT 1",
+          inputSchema: { type: "object", properties: {}, required: [] },
+        },
+        {
+          name: "scoped_tool",
+          type: "database",
+          access: "read",
+          database: "main",
+          query: "SELECT 2",
+          requiredScopes: ["orders:read"],
+          inputSchema: { type: "object", properties: {}, required: [] },
+        },
+      ],
+    });
+    const w = warn(config);
+    expect(w).toContain("governance.defaultEffect is 'allow'");
+    expect(w).toContain("open_tool");
+    expect(w).not.toContain("scoped_tool");
+    // Not fatal: this is an operator decision, not an error.
+    expect(fatal(config)).not.toContain("defaultEffect");
+  });
+
+  test("defaultEffect deny, or every tool scoped, silences it", () => {
+    expect(
+      warn(goodConfig({ policies: { defaultEffect: "deny" } })),
+    ).not.toContain("governance.defaultEffect");
+    expect(warn(goodConfig())).not.toContain("governance.defaultEffect");
+  });
+
+  test("trustProxy above 0 with the per-IP limit on warns about X-Forwarded-For", () => {
+    expect(warn(goodConfig())).toContain("server.trustProxy is 1");
+    expect(
+      warn(goodConfig({ server: { trustProxy: false } as never })),
+    ).not.toContain("server.trustProxy");
+  });
+
+  test("a disabled per-identity limiter is called out", () => {
+    expect(warn(goodConfig())).toContain("perIdentity.enabled is false");
+  });
+});
+
+describe("transaction signing and audience (ADR-0035)", () => {
+  const keys = [
+    "MCPGATE_TRANSACTION_ENFORCEMENT",
+    "MCPGATE_TRANSACTION_HS256_SECRET",
+    "MCPGATE_TRANSACTION_ALGORITHMS",
+    "MCPGATE_TRANSACTION_JWKS_URI",
+    "MCPGATE_TRANSACTION_AUDIENCE",
+    "MCPGATE_TRANSACTION_REDIS_URL",
+  ] as const;
+  const saved = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const withEnv = (env: Partial<Record<(typeof keys)[number], string>>): string[] => {
+    for (const key of keys) delete process.env[key];
+    process.env.MCPGATE_TRANSACTION_REDIS_URL = "redis://redis.internal:6379";
+    Object.assign(process.env, env);
+    try {
+      return checkProductionReadiness(goodConfig(), "production").warnings;
+    } finally {
+      for (const key of keys) {
+        if (saved[key] === undefined) delete process.env[key];
+        else process.env[key] = saved[key];
+      }
+    }
+  };
+  const hs256 = (warnings: string[]): boolean => warnings.some((w) => w.includes("MCPGATE_TRANSACTION_HS256_SECRET"));
+  const sharedAudience = (warnings: string[]): boolean => warnings.some((w) => w.includes("MCPGATE_TRANSACTION_AUDIENCE"));
+
+  test("warns that a shared HS256 secret lets every holder mint tokens", () => {
+    expect(hs256(withEnv({ MCPGATE_TRANSACTION_ENFORCEMENT: "required", MCPGATE_TRANSACTION_HS256_SECRET: "s".repeat(40) }))).toBe(true);
+  });
+
+  test("keeps warning during a rolling migration (HS256 and JWKS both accepted)", () => {
+    expect(
+      hs256(
+        withEnv({
+          MCPGATE_TRANSACTION_ENFORCEMENT: "required",
+          MCPGATE_TRANSACTION_HS256_SECRET: "s".repeat(40),
+          MCPGATE_TRANSACTION_JWKS_URI: "https://runtime.internal/.well-known/atf-transaction-jwks.json",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  test("is quiet once only the asymmetric algorithms are accepted", () => {
+    const warnings = withEnv({
+      MCPGATE_TRANSACTION_ENFORCEMENT: "required",
+      MCPGATE_TRANSACTION_JWKS_URI: "https://runtime.internal/.well-known/atf-transaction-jwks.json",
+      MCPGATE_TRANSACTION_ALGORITHMS: "EdDSA",
+      MCPGATE_TRANSACTION_AUDIENCE: "mcpgate-taiga",
+    });
+    expect(hs256(warnings)).toBe(false);
+    expect(sharedAudience(warnings)).toBe(false);
+  });
+
+  test("an explicit algorithm list wins over the presence of the secret", () => {
+    expect(
+      hs256(
+        withEnv({
+          MCPGATE_TRANSACTION_ENFORCEMENT: "required",
+          MCPGATE_TRANSACTION_HS256_SECRET: "s".repeat(40),
+          MCPGATE_TRANSACTION_JWKS_URI: "https://runtime.internal/jwks",
+          MCPGATE_TRANSACTION_ALGORITHMS: "EdDSA,ES256",
+        }),
+      ),
+    ).toBe(false);
+  });
+
+  test("warns about the example audience that every Gate would share", () => {
+    expect(sharedAudience(withEnv({ MCPGATE_TRANSACTION_ENFORCEMENT: "required", MCPGATE_TRANSACTION_AUDIENCE: "mcpgate" }))).toBe(true);
+  });
+
+  test("says nothing while transaction enforcement is off", () => {
+    const warnings = withEnv({ MCPGATE_TRANSACTION_HS256_SECRET: "s".repeat(40), MCPGATE_TRANSACTION_AUDIENCE: "mcpgate" });
+    expect(hs256(warnings)).toBe(false);
+    expect(sharedAudience(warnings)).toBe(false);
   });
 });

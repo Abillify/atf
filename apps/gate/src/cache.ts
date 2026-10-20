@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
 import { createHash } from "node:crypto";
+import { canonicalJson } from "@atf/canonical-json";
 import type { AuthContext } from "./auth/context.ts";
 
 /**
@@ -69,19 +70,12 @@ export function cacheKeyDigest(value: unknown): string {
   return createHash("sha256").update(stableStringify(value)).digest("hex");
 }
 
-/** Deterministic JSON with sorted object keys, so argument order never matters. */
-export function stableStringify(value: unknown): string {
-  return JSON.stringify(sortKeys(value));
-}
-
-function sortKeys(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const key of Object.keys(value as Record<string, unknown>).sort()) {
-      out[key] = sortKeys((value as Record<string, unknown>)[key]);
-    }
-    return out;
-  }
-  return value;
-}
+/**
+ * Deterministic JSON with sorted object keys, so argument order never matters.
+ * `@atf/canonical-json`'s default mode (stringify family, code-unit order,
+ * `undefined` dropped) — byte-identical to the former local `sortKeys`
+ * (proven by `packages/canonical-json/test/differential.test.ts`); these
+ * bytes feed cache-key digests, so a change would silently invalidate every
+ * warm cache entry across a deploy.
+ */
+export const stableStringify = canonicalJson;

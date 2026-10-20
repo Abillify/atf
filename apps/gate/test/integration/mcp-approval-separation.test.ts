@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: Elastic-2.0
+// SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
+/**
+ * `approvals/resolve` (P1-G4).
+ *
+ *  - WHO resolved an approval is the verified identity. A client-supplied
+ *    `approver` string is only a display label next to it; it can no longer
+ *    stand in for the identity in the audit event or in the approval token.
+ *  - `policies.approval.requireDifferentApprover` (off by default) is the
+ *    separation of duties: the requester can not resolve its own request, and
+ *    a different principal of the same tenant needs `approverScope`.
+ */
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
+import type { Server } from "node:http";
+import type { Express } from "express";
+import { AppConfigSchema } from "../../src/config/schema.ts";
+import { buildApp, type AppHandle } from "../../src/app.ts";
+import { FakeDb } from "../helpers/fake-db.ts";
+
+function listen(app: Express): Promise<{ server: Server; port: number }> {
+  return new Promise((resolve) => {
+    const server = app.listen(0, "127.0.0.1", () => {
+      const addr = server.address();
+      resolve({ server, port: typeof addr === "object" && addr ? addr.port : 0 });
+    });
+  });
+}
+
+const REQUESTER = "sep-requester";
+const APPROVER = "sep-approver";
+const NO_SCOPE = "sep-approver-without-scope";
+const OTHER_TENANT = "sep-approver-other-tenant";
+
+const TOOL = {
+  name: "approved_orders",
+  type: "database",
+  database: "main",
+  query: "SELECT id FROM orders WHERE owner = :ctx.username",
+  access: "write",
+  inputSchema: { type: "object", properties: { id: { type: "integer" } }, required: [] },
+};
+
+function config(requireDifferentApprover: boolean) {
+  return AppConfigSchema.parse({
+    server: { port: 3000 },
+    tenantIsolation: { enabled: true, defaultTenantId: "default", claimNames: ["tenant"] },
+    auth: {
+      mode: "static",
+      static: {
+        tokens: [
+          {
+            token: REQUESTER,
+            subject: "requester",
+            username: "requester",
+            scopes: ["tools:read", "tools:write"],
+            claims: { tenant: "acme" },
+          },
+          {
+            token: APPROVER,
+            subject: "approver",
+            username: "approver",
+            scopes: ["tools:read", "approvals:resolve"],
+            claims: { tenant: "acme" },
+          },
+          { token: NO_SCOPE, subject: "other", username: "other", scopes: ["tools:read"], claims: { tenant: "acme" } },
+          {
+            token: OTHER_TENANT,
+            subject: "approver",
+            username: "approver",
+            scopes: ["tools:read", "approvals:resolve"],
+            claims: { tenant: "other" },
+          },
+        ],
+      },
+    },
+    monitoring: { enabled: true, token: "m" },
+    tools: [TOOL],
+    policies: {
+      defaultEffect: "allow",
+      approval: { secret: "separation-approval-secret", ttlMs: 300_000, maxPending: 10, requireDifferentApprover },
+      rules: [{ effect: "approval", match: { tool: "approved_orders" } }],
+    },
+  });
+}
+
+describe.each([
+  { requireDifferentApprover: false },
+  { requireDifferentApprover: true },
+])("approvals/resolve · requireDifferentApprover=$requireDifferentApprover", ({ requireDifferentApprover }) => {
+  let handle: AppHandle;
+  let server: Server;
+  let port: number;
+
+  const rpc = (token: string, method: string, params: Record<string, unknown> = {}) =>
+    fetch(`http://127.0.0.1:${port}/mcp/v2026`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": method,
+        ...(method === "tools/call" && typeof params.name === "string" ? { "Mcp-Name": params.name } : {}),
+        ...(method === "io.modelcontextprotocol/approvals/resolve" && typeof params.requestState === "string"
+          ? { "Mcp-Request-State": params.requestState }
+          : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+        _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+      }),
+    });
+
+  /** The requester asks for the approval and gets the request state back. */
+  async function requestApproval(): Promise<string> {
+    const response = await rpc(REQUESTER, "tools/call", { name: "approved_orders", arguments: { id: 7 } });
+    const body = (await response.json()) as { result: { inputRequests: Array<{ requestState: string }> } };
+    return String(body.result.inputRequests[0]?.requestState);
+  }
+
+  beforeAll(async () => {
+    handle = await buildApp(config(requireDifferentApprover), { db: new FakeDb({ main: [{ id: 7 }] }) });
+    ({ server, port } = await listen(handle.app));
+  });
+  afterAll(async () => {
+    server.close();
+    await handle.shutdown();
+  });
+
+  it("records the verified identity as the approver; a declared approver is only a label", async () => {
+    const requestState = await requestApproval();
+    const resolver = requireDifferentApprover ? APPROVER : REQUESTER;
+    const before = handle.bus.recent().length;
+    const resolved = await rpc(resolver, "io.modelcontextprotocol/approvals/resolve", {
+      requestState,
+      decision: "approved",
+      approver: "ceo@example.test",
+    });
+    expect(resolved.status).toBe(200);
+    const event = handle.bus.recent().slice(before).find((e) => e.type === "approval_resolved");
+    const verified = requireDifferentApprover ? "approver" : "requester";
+    expect(event?.meta).toMatchObject({
+      approver: verified,
+      declaredApprover: "ceo@example.test",
+      selfResolved: !requireDifferentApprover,
+    });
+  });
+
+  it("a declared approver that matches the identity adds no label", async () => {
+    const requestState = await requestApproval();
+    const resolver = requireDifferentApprover ? APPROVER : REQUESTER;
+    const verified = requireDifferentApprover ? "approver" : "requester";
+    const before = handle.bus.recent().length;
+    await rpc(resolver, "io.modelcontextprotocol/approvals/resolve", {
+      requestState,
+      decision: "denied",
+      approver: verified,
+    });
+    const event = handle.bus.recent().slice(before).find((e) => e.type === "approval_resolved");
+    expect(event?.meta).not.toHaveProperty("declaredApprover");
+  });
+});
+
+describe("approvals/resolve · separation of duties (requireDifferentApprover=true)", () => {
+  let handle: AppHandle;
+  let server: Server;
+  let port: number;
+
+  const rpc = (token: string, method: string, params: Record<string, unknown> = {}) =>
+    fetch(`http://127.0.0.1:${port}/mcp/v2026`, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${token}`,
+        "content-type": "application/json",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": method,
+        ...(method === "tools/call" && typeof params.name === "string" ? { "Mcp-Name": params.name } : {}),
+        ...(method === "io.modelcontextprotocol/approvals/resolve" && typeof params.requestState === "string"
+          ? { "Mcp-Request-State": params.requestState }
+          : {}),
+      },
+      body: JSON.stringify({
+        jsonrpc: "2.0",
+        id: 1,
+        method,
+        params,
+        _meta: { "io.modelcontextprotocol/protocolVersion": "2026-07-28" },
+      }),
+    });
+  const resolve = (token: string, requestState: string) =>
+    rpc(token, "io.modelcontextprotocol/approvals/resolve", { requestState, decision: "approved" });
+  async function requestApproval(): Promise<string> {
+    const response = await rpc(REQUESTER, "tools/call", { name: "approved_orders", arguments: { id: 7 } });
+    const body = (await response.json()) as { result: { inputRequests: Array<{ requestState: string }> } };
+    return String(body.result.inputRequests[0]?.requestState);
+  }
+
+  beforeAll(async () => {
+    handle = await buildApp(config(true), { db: new FakeDb({ main: [{ id: 7 }] }) });
+    ({ server, port } = await listen(handle.app));
+  });
+  afterAll(async () => {
+    server.close();
+    await handle.shutdown();
+  });
+
+  it("the requester can not resolve its own request, and the request survives the attempt", async () => {
+    const requestState = await requestApproval();
+    const own = await resolve(REQUESTER, requestState);
+    expect(own.status).toBe(403);
+    expect(JSON.stringify(await own.json())).toContain("different principal");
+    // Not consumed: the right approver can still resolve it.
+    expect((await resolve(APPROVER, requestState)).status).toBe(200);
+  });
+
+  it("a different principal without the approver scope is refused and does not consume the request", async () => {
+    const requestState = await requestApproval();
+    const refused = await resolve(NO_SCOPE, requestState);
+    expect(refused.status).toBe(403);
+    expect(JSON.stringify(await refused.json())).toContain("approvals:resolve");
+    expect((await resolve(APPROVER, requestState)).status).toBe(200);
+  });
+
+  it("an approver of another tenant does not even see the request", async () => {
+    const requestState = await requestApproval();
+    expect((await resolve(OTHER_TENANT, requestState)).status).toBe(404);
+    expect((await resolve(APPROVER, requestState)).status).toBe(200);
+  });
+
+  it("the approval token the approver mints lets the REQUESTER run the tool exactly once", async () => {
+    const requestState = await requestApproval();
+    const resolved = await resolve(APPROVER, requestState);
+    const { result } = (await resolved.json()) as { result: { approvalToken: string } };
+    const run = () =>
+      rpc(REQUESTER, "tools/call", {
+        name: "approved_orders",
+        arguments: { id: 7 },
+        _meta: { "io.modelcontextprotocol/approvalToken": result.approvalToken },
+      });
+    const first = (await (await run()).json()) as { result: { isError?: boolean; resultType: string } };
+    expect(first.result.isError).not.toBe(true);
+    expect(first.result.resultType).toBe("complete");
+    const replay = (await (await run()).json()) as { result: { resultType: string } };
+    expect(replay.result.resultType).toBe("input_required");
+  });
+
+  it("the approver can not use the token for its own call: it is bound to the requester", async () => {
+    const requestState = await requestApproval();
+    const { result } = (await (await resolve(APPROVER, requestState)).json()) as { result: { approvalToken: string } };
+    const asApprover = (await (
+      await rpc(APPROVER, "tools/call", {
+        name: "approved_orders",
+        arguments: { id: 7 },
+        _meta: { "io.modelcontextprotocol/approvalToken": result.approvalToken },
+      })
+    ).json()) as { result: { resultType: string } };
+    expect(asApprover.result.resultType).toBe("input_required");
+  });
+});

@@ -423,6 +423,16 @@ export const TenantIsolationConfigSchema = z
       .array(z.string().trim().min(1))
       .min(1)
       .default(["tenant_id", "tenant", "tid", "client_id"]),
+    /**
+     * Issuer → tenants binding (the Gate's counterpart of the Runtime's
+     * `JWT_ISSUER_TENANTS`). Keys are token issuers (`iss`), values the tenants
+     * a token of that issuer may act for (`"*"` = any). Without it, ANY
+     * trusted issuer can assert ANY tenant through the tenant claim, so one
+     * compromised or over-broad issuer reaches every tenant. When non-empty,
+     * a token whose issuer is not listed, or whose tenant is not allowed for
+     * it, is refused. Only enforced with `enabled: true`.
+     */
+    issuerTenants: z.record(z.string(), z.array(z.string().trim().min(1))).default({}),
     /** Databases whose connection is physically dedicated to one tenant. */
     isolatedDatabases: z.array(z.string().trim().min(1)).default([]),
     /** Semantic SQL tenant-binding diagnostics: report findings or fail readiness. */
@@ -432,6 +442,7 @@ export const TenantIsolationConfigSchema = z
     enabled: false,
     defaultTenantId: "default",
     claimNames: ["tenant_id", "tenant", "tid", "client_id"],
+    issuerTenants: {},
     isolatedDatabases: [],
   });
 
@@ -1317,6 +1328,14 @@ export const MonitoringConfigSchema = z.object({
         sessionSecret: z.string().min(1),
         /** Session lifetime in seconds. */
         sessionMaxAge: z.coerce.number().int().positive().default(28_800),
+        /**
+         * Group names (from the id_token `groups` claim) that grant monitor
+         * access. Empty = every authenticated user of the provider may log in;
+         * non-empty = the callback rejects anyone who is not a member of at
+         * least one listed group, so a shared IdP cannot hand its whole user
+         * base a dashboard that shows tool arguments and results.
+         */
+        requiredGroups: z.array(z.string()).default([]),
       })
       .optional(),
   ),
@@ -1670,10 +1689,35 @@ export const GovernanceConfigSchema = z
         secret: z.string().min(16).optional(),
         ttlMs: z.coerce.number().int().positive().default(300_000),
         maxPending: z.coerce.number().int().positive().default(1000),
+        /**
+         * Separation of duties for `approvals/resolve`. Off (default): the caller
+         * that asked for an approval resolves it itself — the human decision is
+         * taken by the client in front of it (e.g. Runtime's approval queue),
+         * and the Gate records WHO resolved it from the verified identity.
+         * On: the requester can NOT resolve its own request; a different
+         * principal of the same tenant holding `approverScope` must.
+         */
+        requireDifferentApprover: z.boolean().default(false),
+        /** Scope a resolver needs when `requireDifferentApprover` is on. */
+        approverScope: z.string().min(1).default("approvals:resolve"),
       })
-      .default({ ttlMs: 300_000, maxPending: 1000 }),
+      .default({
+        ttlMs: 300_000,
+        maxPending: 1000,
+        requireDifferentApprover: false,
+        approverScope: "approvals:resolve",
+      }),
   })
-  .default({ defaultEffect: "allow", rules: [], approval: { ttlMs: 300_000, maxPending: 1000 } });
+  .default({
+    defaultEffect: "allow",
+    rules: [],
+    approval: {
+      ttlMs: 300_000,
+      maxPending: 1000,
+      requireDifferentApprover: false,
+      approverScope: "approvals:resolve",
+    },
+  });
 const ResourceSchema = z.object({
   uri: z.string().min(1),
   name: z.string().min(1),

@@ -152,6 +152,50 @@ describe("Agent Transaction Fabric v1", () => {
     }
   });
 
+  it("accepts HS256 and EdDSA side by side so issuers can switch one at a time", async () => {
+    const { privateKey, publicKey } = await generateKeyPair("EdDSA");
+    const jwk = await exportJWK(publicKey);
+    const server = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ keys: [{ ...jwk, kid: "runtime", alg: "EdDSA", use: "sig" }] }),
+    });
+    try {
+      const both = new TransactionFabric({
+        ...baseConfig,
+        jwksUri: `${server.url}jwks`,
+        algorithms: ["HS256", "EdDSA"],
+      });
+      const eddsa = () =>
+        new SignJWT(envelope() as unknown as Record<string, unknown>)
+          .setProtectedHeader({ alg: "EdDSA", kid: "runtime" })
+          .sign(privateKey);
+      expect((await execute(both, await token(envelope()), {})).isError).toBeFalsy();
+      expect((await execute(both, await eddsa(), {})).isError).toBeFalsy();
+      expect(both.capabilityDocument()).toMatchObject({ signingAlgorithms: ["HS256", "EdDSA"] });
+      // Step two of the migration: the secret is withdrawn, only the runtime's key counts.
+      const asymmetricOnly = new TransactionFabric({
+        ...baseConfig,
+        secret: undefined,
+        jwksUri: `${server.url}jwks`,
+        algorithms: ["EdDSA"],
+      });
+      expect((await execute(asymmetricOnly, await eddsa(), {})).isError).toBeFalsy();
+      expect((await execute(asymmetricOnly, await token(envelope()), {})).structuredContent).toMatchObject({
+        error: { code: "TRANSACTION_TOKEN_INVALID" },
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+  it("keeps a token minted for one Gate out of another (one audience per Gate)", async () => {
+    const taiga = new TransactionFabric({ ...baseConfig, audience: "mcpgate-taiga" });
+    const erp = new TransactionFabric({ ...baseConfig, audience: "mcpgate-erp" });
+    const forTaiga = await token(envelope({ aud: "mcpgate-taiga" }));
+    expect((await execute(taiga, forTaiga, {})).isError).toBeFalsy();
+    expect((await execute(erp, forTaiga, {})).structuredContent).toMatchObject({
+      error: { code: "TRANSACTION_TOKEN_INVALID" },
+    });
+  });
   it("accepts either verification source and validates configured algorithms", () => {
     expect(
       () =>

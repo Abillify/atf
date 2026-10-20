@@ -69,6 +69,45 @@ describe("HttpToolExecutor", () => {
     expect(JSON.parse(res.content[0].text)).toEqual({ ok: true, who: "x" });
   });
 
+  it("dry-run (explain) shows the request shape but never echoes credential headers", async () => {
+    mockFetch(() => new Response("{}"));
+    const exec = new HttpToolExecutor(
+      tool({
+        request: {
+          method: "GET",
+          url: "https://1.1.1.1/users/:param.id",
+          headers: {
+            Authorization: "Bearer super-secret-token",
+            "X-Api-Key": "key-123",
+            "Proxy-Authorization": "Basic abc",
+            Cookie: "sid=1",
+            "X-Service-Secret": "s3cr3t",
+            "X-User": ":ctx.username",
+            Accept: "application/json",
+          },
+        },
+      }),
+      runtime,
+    );
+    if (exec.explain === undefined) throw new Error("explain is not implemented");
+    const res = await exec.explain({ id: "42" }, ctx);
+    const text = res.content[0].text;
+    for (const secret of ["super-secret-token", "key-123", "Basic abc", "sid=1", "s3cr3t"]) {
+      expect(text).not.toContain(secret);
+    }
+    const planned = JSON.parse(text) as { headers: Record<string, string> };
+    expect(planned.headers["Authorization"]).toBe("[redacted]");
+    expect(planned.headers["X-Api-Key"]).toBe("[redacted]");
+    expect(planned.headers["Proxy-Authorization"]).toBe("[redacted]");
+    expect(planned.headers["Cookie"]).toBe("[redacted]");
+    expect(planned.headers["X-Service-Secret"]).toBe("[redacted]");
+    // Non-credential headers keep their interpolated values.
+    expect(planned.headers["X-User"]).toBe("alice");
+    expect(planned.headers["Accept"]).toBe("application/json");
+    // And the dry-run never sent anything.
+    expect(calls).toHaveLength(0);
+  });
+
   it("sends a JSON body with type-preserving token substitution", async () => {
     mockFetch(() => new Response("{}", { status: 200, headers: { "content-type": "application/json" } }));
     const exec = new HttpToolExecutor(

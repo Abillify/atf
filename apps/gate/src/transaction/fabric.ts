@@ -3,6 +3,7 @@
 
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash } from "node:crypto";
+import { canonicalJsonLocaleDrops } from "@atf/canonical-json";
 import {
   TransactionEnvelopeConsumerV1Schema,
   type TransactionBudget,
@@ -450,27 +451,20 @@ function fingerprint(
   config: TransactionFabricConfig,
   actionContractHash = effectiveActionContractHash(envelope),
 ): string {
-  const stable = (value: unknown): unknown =>
-    Array.isArray(value)
-      ? value.map(stable)
-      : value && typeof value === "object"
-        ? Object.fromEntries(
-            Object.entries(value as Record<string, unknown>)
-              .sort(([a], [b]) => a.localeCompare(b))
-              .map(([k, v]) => [k, stable(v)]),
-          )
-        : value;
+  // `@atf/canonical-json` locale/stringify mode (`localeCompare` key order,
+  // `undefined` members dropped) — byte-identical to the former local
+  // canonicalise + JSON.stringify (proven by
+  // `packages/canonical-json/test/differential.test.ts`). These bytes feed
+  // the transaction replay fingerprint, so the exact order is frozen.
   return createHash("sha256")
     .update(
-      JSON.stringify(
-        stable({
-          tool,
-          args,
-          executionId: envelope.executionId,
-          actionContractHash,
-          securityContext: securityContext(auth, config),
-        }),
-      ),
+      canonicalJsonLocaleDrops({
+        tool,
+        args,
+        executionId: envelope.executionId,
+        actionContractHash,
+        securityContext: securityContext(auth, config),
+      }),
     )
     .digest("hex");
 }

@@ -76,6 +76,7 @@ const DEFAULT_TENANT_ISOLATION: TenantIsolationConfig = {
   enabled: false,
   defaultTenantId: "default",
   claimNames: ["tenant_id", "tenant", "tid", "client_id"],
+  issuerTenants: {},
   isolatedDatabases: [],
   sqlValidationMode: "report",
 };
@@ -273,7 +274,7 @@ export class Authenticator {
     const username = String(
       payload[oauth.usernameClaim] ?? payload.sub ?? "anonymous",
     );
-    return this.context(
+    const ctx = this.context(
       "oauth",
       String(payload.sub ?? username),
       username,
@@ -283,5 +284,28 @@ export class Authenticator {
       token,
       actor,
     );
+    this.enforceIssuerTenant(payload.iss, ctx.tenantId);
+    return ctx;
+  }
+  /**
+   * Issuer → tenant binding (`tenantIsolation.issuerTenants`). A verified
+   * signature proves WHO issued the token, not that this issuer may speak for
+   * the tenant its claim names. With a binding configured, an issuer that is
+   * not listed, or a tenant it may not act for, is refused — the same contract
+   * as the Runtime's JWT_ISSUER_TENANTS. Without a binding (the default) the
+   * previous behaviour is unchanged.
+   */
+  private enforceIssuerTenant(issuer: unknown, tenantId: string): void {
+    const binding = this.tenantIsolation.issuerTenants;
+    if (!this.tenantIsolation.enabled || Object.keys(binding).length === 0) {
+      return;
+    }
+    const allowed = typeof issuer === "string" ? binding[issuer] : undefined;
+    if (allowed === undefined) {
+      throw new AuthError("Token issuer is not bound to a tenant", 401);
+    }
+    if (!allowed.includes("*") && !allowed.includes(tenantId)) {
+      throw new AuthError("Token issuer may not act for this tenant", 403);
+    }
   }
 }

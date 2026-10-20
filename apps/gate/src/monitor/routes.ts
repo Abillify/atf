@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Elastic-2.0
 // SPDX-FileCopyrightText: 2026 Abillify Technology GmbH
 
-import { timingSafeEqual, createHmac, randomBytes } from "node:crypto";
+import { timingSafeEqual, createHash, createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import type { AuthContext } from "../auth/context.ts";
 import { normalizeHeaders } from "../auth/context.ts";
 import { logger } from "../logger.ts";
 import { verifyIdToken } from "./oidc-verify.ts";
+import { McpToolDispatcher, type McpServerDeps } from "../mcp/server.ts";
 
 type OidcConfig = NonNullable<MonitoringConfig["oidc"]>;
 
@@ -23,6 +24,16 @@ export interface MonitorDeps {
   config: MonitoringConfig;
   registry?: ToolRegistry;
   instructions?: () => string | undefined;
+  /**
+   * Governance wiring for the Tool Playground (everything the MCP dispatch
+   * pipeline needs beyond registry/bus/instructions). When present, a
+   * playground run goes through `McpToolDispatcher` — the same policy,
+   * approval, scope, argument-validation, identity-rate-limit, transaction
+   * and audit pipeline a real MCP `tools/call` is subject to. When absent,
+   * the playground refuses to execute (fail closed) rather than running
+   * tools out-of-band.
+   */
+  dispatcherDeps?: Omit<McpServerDeps, "registry" | "bus" | "instructions">;
 }
 
 // ---------------------------------------------------------------------------
@@ -94,16 +105,32 @@ interface DiscoveryDoc {
   jwks_uri: string;
 }
 
-const discoveryCache = new Map<string, DiscoveryDoc>();
-
+/** A provider that does not answer must not hold a login request open. */
+const DISCOVERY_TIMEOUT_MS = 10_000;
+/** A discovery document is trusted for an hour, then fetched again (key/endpoint moves). */
+const DISCOVERY_TTL_MS = 60 * 60 * 1000;
+const discoveryCache = new Map<string, { doc: DiscoveryDoc; fetchedAt: number }>();
 async function discover(issuer: string): Promise<DiscoveryDoc> {
   const cached = discoveryCache.get(issuer);
-  if (cached) return cached;
+  if (cached && Date.now() - cached.fetchedAt < DISCOVERY_TTL_MS) return cached.doc;
   const url = `${issuer.replace(/\/$/, "")}/.well-known/openid-configuration`;
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`OIDC discovery request to ${url} failed: ${res.status}`);
-  const doc = (await res.json()) as DiscoveryDoc;
-  discoveryCache.set(issuer, doc);
+  const doc = (await res.json()) as DiscoveryDoc & { issuer?: unknown };
+  // OIDC Discovery 4.3: the document's `issuer` must equal the issuer it was
+  // fetched for, or a different provider could answer for this one.
+  if (
+    typeof doc.issuer === "string" &&
+    doc.issuer.replace(/\/$/, "") !== issuer.replace(/\/$/, "")
+  ) {
+    throw new Error(`OIDC discovery issuer mismatch: expected ${issuer}, got ${doc.issuer}`);
+  }
+  for (const field of ["authorization_endpoint", "token_endpoint", "jwks_uri"] as const) {
+    if (typeof doc[field] !== "string" || doc[field].length === 0) {
+      throw new Error(`OIDC discovery document has no ${field}`);
+    }
+  }
+  discoveryCache.set(issuer, { doc, fetchedAt: Date.now() });
   return doc;
 }
 
@@ -270,18 +297,34 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
 
   // ── OIDC login / callback / logout ────────────────────────────────────────
 
-  router.get("/monitor/login", async (_req: Request, res: Response) => {
-    if (!config.enabled) { res.status(404).send("Monitoring is disabled"); return; }
-    if (!config.oidc) { res.status(404).send("OIDC is not configured"); return; }
+  router.get("/monitor/login", async (req: Request, res: Response) => {
+    if (!config.enabled) {
+      res.status(404).send("Monitoring is disabled");
+      return;
+    }
+    if (!config.oidc) {
+      res.status(404).send("OIDC is not configured");
+      return;
+    }
     const oidc = config.oidc;
 
     try {
       const state = randomBytes(16).toString("hex");
+      // PKCE (RFC 7636, S256): the verifier never leaves this service except in
+      // the token request, so an authorization code intercepted on the redirect
+      // is useless. `nonce` binds the ID token to this login attempt. Both ride
+      // in the signed, HttpOnly state cookie.
+      const codeVerifier = randomBytes(32).toString("base64url");
+      const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+      const nonce = randomBytes(16).toString("hex");
       const stateExp = Math.floor(Date.now() / 1000) + 300;
-      const stateCookie = signCookie({ state, exp: stateExp }, oidc.sessionSecret);
+      const stateCookie = signCookie(
+        { state, nonce, cv: codeVerifier, exp: stateExp },
+        oidc.sessionSecret,
+      );
       res.setHeader(
         "Set-Cookie",
-        `${STATE_COOKIE}=${stateCookie}; Path=/; HttpOnly; SameSite=Lax; Max-Age=300`,
+        `${STATE_COOKIE}=${stateCookie}; Path=/;${secureAttr(req)} HttpOnly; SameSite=Lax; Max-Age=300`,
       );
 
       const doc = await discover(oidc.issuer);
@@ -291,11 +334,18 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
         redirect_uri: oidc.redirectUri,
         scope: oidc.scopes.join(" "),
         state,
+        nonce,
+        code_challenge: codeChallenge,
+        code_challenge_method: "S256",
       });
       res.redirect(`${doc.authorization_endpoint}?${params}`);
     } catch (err) {
-      logger.error("monitor OIDC login failed", { message: err instanceof Error ? err.message : String(err) });
-      res.status(502).send("Failed to start OIDC login (provider unreachable?)");
+      logger.error("monitor OIDC login failed", {
+        message: err instanceof Error ? err.message : String(err),
+      });
+      res
+        .status(502)
+        .send("Failed to start OIDC login (provider unreachable?)");
     }
   });
 
@@ -305,7 +355,10 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
     const oidc = config.oidc;
 
     const cookies = parseCookies(req);
-    const statePayload = verifyCookie<{ state: string; exp: number }>(cookies[STATE_COOKIE], oidc.sessionSecret);
+    const statePayload = verifyCookie<{ state: string; nonce?: string; cv?: string; exp: number }>(
+      cookies[STATE_COOKIE],
+      oidc.sessionSecret,
+    );
     res.setHeader("Set-Cookie", `${STATE_COOKIE}=; Path=/; HttpOnly; Max-Age=0`);
 
     const queryState = typeof req.query.state === "string" ? req.query.state : undefined;
@@ -333,7 +386,9 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
           redirect_uri: oidc.redirectUri,
           client_id: oidc.clientId,
           client_secret: oidc.clientSecret,
+          ...(statePayload.cv ? { code_verifier: statePayload.cv } : {}),
         }),
+        signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
       });
       if (!tokenRes.ok) {
         logger.error("monitor OIDC token exchange failed", { status: tokenRes.status });
@@ -353,14 +408,45 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
           issuer: oidc.issuer,
           clientId: oidc.clientId,
           jwksUri: doc.jwks_uri,
+          ...(statePayload.nonce ? { nonce: statePayload.nonce } : {}),
         });
-        const usernameClaim = verified.claims.email ?? verified.claims.preferred_username;
+        const usernameClaim =
+          verified.claims.email ?? verified.claims.preferred_username;
+        // Group gate: when requiredGroups is configured, only members of at
+        // least one listed group get a session — authenticating at the IdP
+        // alone must not be enough for a dashboard that shows tool arguments.
+        if (oidc.requiredGroups.length > 0) {
+          const groups = new Set(claimStrings(verified.claims.groups));
+          if (!oidc.requiredGroups.some((group) => groups.has(group))) {
+            logger.warn(
+              "monitor OIDC login refused: no required group membership",
+              {
+                sub: verified.sub,
+                required: oidc.requiredGroups,
+              },
+            );
+            bus.publish({
+              type: "auth_failure",
+              sessionId: "monitor",
+              message: `OIDC subject lacks any required monitor group (${oidc.requiredGroups.join(", ")})`,
+              authMethod: "oidc",
+            });
+            res
+              .status(403)
+              .send(
+                "You are not a member of a group allowed to access the monitor.",
+              );
+            return;
+          }
+        }
         session = {
           sub: verified.sub,
-          username: typeof usernameClaim === "string" ? usernameClaim : verified.sub,
+          username:
+            typeof usernameClaim === "string" ? usernameClaim : verified.sub,
           scopes: [...new Set(claimStrings(verified.claims.tools))],
           tenantId:
-            typeof verified.claims.tenant_id === "string" && verified.claims.tenant_id.length > 0
+            typeof verified.claims.tenant_id === "string" &&
+            verified.claims.tenant_id.length > 0
               ? verified.claims.tenant_id
               : "default",
         };
@@ -393,12 +479,20 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
     }
   });
 
-  router.get("/monitor/logout", (_req: Request, res: Response) => {
+  // Ending a session changes state, so it is a POST: a GET can be triggered by
+  // any page that embeds an <img src="/monitor/logout"> (cross-site logout).
+  // The cookies are SameSite, which also keeps a cross-site POST from carrying
+  // the session — the form in the dashboard is same-origin.
+  router.post("/monitor/logout", (_req: Request, res: Response) => {
     res.setHeader("Set-Cookie", [
       `${SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`,
       `${TOKEN_SESSION_COOKIE}=; Path=/; HttpOnly; Max-Age=0`,
     ]);
-    res.redirect("/");
+    res.redirect(303, "/");
+  });
+  router.get("/monitor/logout", (_req: Request, res: Response) => {
+    res.setHeader("Allow", "POST");
+    res.status(405).send("Use POST /monitor/logout");
   });
 
   // ── SSE event stream ──────────────────────────────────────────────────────
@@ -454,18 +548,37 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
     "/monitor/tools/:name/run",
     express.json({ limit: "1mb" }),
     async (req: Request, res: Response) => {
-      if (!config.enabled) { res.status(404).json({ error: "Monitoring is disabled" }); return; }
-      if (!authorize(req, config)) { res.status(401).json({ error: "Unauthorized" }); return; }
-      if (!deps.registry) { res.status(503).json({ error: "Registry not available" }); return; }
+      if (!config.enabled) {
+        res.status(404).json({ error: "Monitoring is disabled" });
+        return;
+      }
+      if (!authorize(req, config)) {
+        res.status(401).json({ error: "Unauthorized" });
+        return;
+      }
+      if (!deps.registry) {
+        res.status(503).json({ error: "Registry not available" });
+        return;
+      }
 
       // The playground executes tools out-of-band from a normal MCP session, so
       // it is opt-in and must be protected by a token or OIDC login (fail closed).
       if (!config.playground.enabled) {
-        res.status(403).json({ error: "Tool Playground is disabled (set monitoring.playground.enabled)" });
+        res
+          .status(403)
+          .json({
+            error:
+              "Tool Playground is disabled (set monitoring.playground.enabled)",
+          });
         return;
       }
       if (!config.token && !config.oidc) {
-        res.status(403).json({ error: "Tool Playground requires monitoring.token or monitoring.oidc to be set" });
+        res
+          .status(403)
+          .json({
+            error:
+              "Tool Playground requires monitoring.token or monitoring.oidc to be set",
+          });
         return;
       }
 
@@ -473,28 +586,39 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
       const args = (req.body?.args ?? {}) as Record<string, unknown>;
       const dryRun = req.body?.dryRun === true;
       const executor = deps.registry.getReal(name);
-      if (!executor) { res.status(404).json({ error: `Tool not found: ${name}` }); return; }
+      if (!executor) {
+        res.status(404).json({ error: `Tool not found: ${name}` });
+        return;
+      }
 
       // Write-access tools mutate data; require an explicit opt-in to run them
       // from the dashboard. A dry-run never executes, so it is always allowed.
-      if (!dryRun && deps.registry.accessOf(name) === "write" && !config.playground.allowWrite) {
+      if (
+        !dryRun &&
+        deps.registry.accessOf(name) === "write" &&
+        !config.playground.allowWrite
+      ) {
         res.status(403).json({
           error: `Tool '${name}' has access: write; enable monitoring.playground.allowWrite to run it`,
         });
         return;
       }
 
-      // Optional caller identity so identity-aware tools (conditions, :ctx.*)
-      // can be exercised realistically instead of always running with an empty
-      // context. Provided in the request body under `identity`.
-      const identity = (req.body?.identity ?? {}) as {
+      // A verified OIDC session is the ONLY identity source in that case: the
+      // request body must never add scopes, claims or a subject on top of a
+      // login, or every authenticated user could self-grant any scope. The
+      // body `identity` object is a convenience for the static-token case
+      // only, where the token itself is the root operator credential.
+      const oidcSession = config.oidc
+        ? readSessionCookie(req, config.oidc)
+        : undefined;
+      const identity = (oidcSession ? {} : (req.body?.identity ?? {})) as {
         username?: unknown;
         subject?: unknown;
         scopes?: unknown;
         claims?: unknown;
         headers?: unknown;
       };
-      const oidcSession = config.oidc ? readSessionCookie(req, config.oidc) : undefined;
       const sessionClaims: Record<string, unknown> | undefined = oidcSession
         ? { tools: oidcSession.scopes, tenant_id: oidcSession.tenantId }
         : undefined;
@@ -502,17 +626,28 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
         method: oidcSession ? "oauth" : "static",
         subject:
           oidcSession?.sub ??
-          (typeof identity.subject === "string" ? identity.subject : "playground"),
+          (typeof identity.subject === "string"
+            ? identity.subject
+            : "playground"),
         username:
           oidcSession?.username ??
-          (typeof identity.username === "string" ? identity.username : "playground"),
-        scopes: [
-          ...new Set([
-            `tools:${deps.registry.accessOf(name) ?? "read"}`,
-            ...(oidcSession?.scopes ?? []),
-            ...(Array.isArray(identity.scopes) ? identity.scopes.map(String) : []),
-          ]),
-        ],
+          (typeof identity.username === "string"
+            ? identity.username
+            : "playground"),
+        // The `tools:<access>` convenience scope is synthesized for the
+        // static-token operator only. A verified OIDC session carries exactly
+        // the scopes the IdP issued; granting `tools:write` on top would let
+        // every logged-in user satisfy a tool that requires it.
+        scopes: oidcSession
+          ? [...new Set(oidcSession.scopes)]
+          : [
+              ...new Set([
+                `tools:${deps.registry.accessOf(name) ?? "read"}`,
+                ...(Array.isArray(identity.scopes)
+                  ? identity.scopes.map(String)
+                  : []),
+              ]),
+            ],
         claims:
           sessionClaims ??
           (identity.claims && typeof identity.claims === "object"
@@ -526,45 +661,114 @@ export function createMonitorRouter(deps: MonitorDeps): Router {
         rawToken: "",
       };
 
-      const started = Date.now();
-      bus.publish({
-        type: "tool_call",
-        sessionId: "playground",
-        username: "playground",
-        subject: "playground",
-        authMethod: "static",
-        tool: name,
-        meta: { arguments: args },
+      // Everything below runs through the governance pipeline. Without the
+      // wiring the playground refuses (fail closed) rather than bypassing
+      // policy, scopes and audit, for dry-runs as well as real runs.
+      if (!deps.dispatcherDeps) {
+        res
+          .status(503)
+          .json({ error: "Tool Playground governance wiring is unavailable" });
+        return;
+      }
+      const playgroundSessionId = `playground-${randomBytes(8).toString("hex")}`;
+      const dispatcher = new McpToolDispatcher(ctx, playgroundSessionId, {
+        ...deps.dispatcherDeps,
+        registry: deps.registry,
+        bus,
+        ...(deps.instructions !== undefined
+          ? { instructions: deps.instructions }
+          : {}),
       });
 
-      try {
-        const result = dryRun
-          ? (await executor.explain?.(args, ctx)) ?? {
-              content: [
-                { type: "text" as const, text: `Dry-run is not supported for tool type '${deps.registry.typeOf(name)}'.` },
-              ],
-              isError: true,
-            }
-          : await executor.execute(args, ctx);
+      // A dry-run never executes (planner/explain only) and is therefore not
+      // dispatched, but it renders the tool's internals (SQL, bindings, URL,
+      // body), so it is subject to the same required scopes and policy deny.
+      if (dryRun) {
+        const refusal = dispatcher.authorizeExplain(name, args);
+        if (refusal) {
+          bus.publish({
+            type: "error",
+            sessionId: playgroundSessionId,
+            username: ctx.username,
+            tool: name,
+            status: "error",
+            message:
+              refusal.content[0]?.type === "text"
+                ? refusal.content[0].text
+                : "Dry-run refused",
+          });
+          res.json({
+            ok: false,
+            durationMs: 0,
+            content: refusal.content,
+            ...(refusal.structuredContent !== undefined
+              ? { structuredContent: refusal.structuredContent }
+              : {}),
+          });
+          return;
+        }
+        const started = Date.now();
+        bus.publish({
+          type: "tool_call",
+          sessionId: playgroundSessionId,
+          username: ctx.username,
+          subject: ctx.subject,
+          authMethod: ctx.method,
+          tool: name,
+          meta: { arguments: args, dryRun: true },
+        });
+        const result = (await executor.explain?.(args, ctx)) ?? {
+          content: [
+            {
+              type: "text" as const,
+              text: `Dry-run is not supported for tool type '${deps.registry.typeOf(name)}'.`,
+            },
+          ],
+          isError: true,
+        };
         const durationMs = Date.now() - started;
         bus.publish({
           type: "tool_result",
-          sessionId: "playground",
-          username: "playground",
+          sessionId: playgroundSessionId,
+          username: ctx.username,
           tool: name,
           status: result.isError ? "error" : "ok",
           durationMs,
           meta: result.meta,
         });
-        res.json({ ok: !result.isError, durationMs, content: result.content, meta: result.meta });
+        res.json({
+          ok: !result.isError,
+          durationMs,
+          content: result.content,
+          meta: result.meta,
+        });
+        return;
+      }
+
+      // Real execution goes through the SAME dispatch pipeline as an MCP
+      // tools/call — policy evaluation, approval tokens, required scopes,
+      // argument validation, per-identity rate limiting, transaction fabric
+      // and audit events with the real caller identity.
+      const started = Date.now();
+      try {
+        const result = await dispatcher.callTool({ name, arguments: args });
+        const durationMs = Date.now() - started;
+        res.json({
+          ok: !result.isError,
+          durationMs,
+          content: result.content,
+          ...(result.structuredContent !== undefined
+            ? { structuredContent: result.structuredContent }
+            : {}),
+        });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         const durationMs = Date.now() - started;
         logger.error("playground tool error", { tool: name, message });
         bus.publish({
           type: "error",
-          sessionId: "playground",
-          username: "playground",
+          sessionId: playgroundSessionId,
+          username: ctx.username,
           tool: name,
           status: "error",
           durationMs,

@@ -74,7 +74,7 @@ const SECURITY_SCHEMES = {
   sessionCookie: {
     type: "apiKey",
     in: "cookie",
-    name: "atf_monitor_session",
+    name: "mcpgate_monitor_session",
     description: "Operator browser session established via /monitor/login (OIDC BFF).",
   },
   webhookSignature: {
@@ -197,6 +197,15 @@ const SURFACE: Record<string, Record<string, Op>> = {
       produces: "text/html",
     },
   },
+  "/monitor/session": {
+    post: {
+      tag: "Monitor",
+      summary:
+        "Exchange the static monitoring token (Authorization: Bearer) for an HttpOnly, SameSite=Strict session cookie (204)",
+      auth: "bearer",
+      enabledWhen: "monitoring.enabled",
+    },
+  },
   "/monitor/login": {
     get: {
       tag: "Monitor",
@@ -214,9 +223,9 @@ const SURFACE: Record<string, Record<string, Op>> = {
     },
   },
   "/monitor/logout": {
-    get: {
+    post: {
       tag: "Monitor",
-      summary: "End the monitor session",
+      summary: "End the monitor session (POST only: a GET answers 405, so a third-party page cannot log the user out)",
       auth: "session",
       enabledWhen: "monitoring.enabled",
     },
@@ -249,7 +258,7 @@ const SURFACE: Record<string, Record<string, Op>> = {
   "/monitor/tools/{name}/run": {
     post: {
       tag: "Monitor",
-      summary: "Tool playground: execute a registered tool",
+      summary: "Tool playground: run or dry-run a registered tool through the governance pipeline (policy, scopes, approval, rate limit, audit); 403 when disabled, 503 without governance wiring",
       auth: "session",
       enabledWhen: "monitoring.enabled",
       requestBody: true,

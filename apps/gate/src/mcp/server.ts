@@ -20,7 +20,7 @@ import { logger } from "../logger.ts";
 import type { MonitorBus } from "../monitor/events.ts";
 import { withSpan } from "../observability/tracing.ts";
 import type { IdentityRateLimiter } from "../server/identity-rate-limit.ts";
-import type { ToolDefinition, ToolResult } from "../tools/types.ts";
+import { contentTrustLabel, type ToolDefinition, type ToolResult } from "../tools/types.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import { validateArgs } from "../tools/validate.ts";
 import { runWithNestedInvoker } from "./invocation-context.ts";
@@ -202,6 +202,40 @@ export class McpToolDispatcher {
     return withStore
       ? new GovernancePolicy(this.deps.policies, this.deps.approvalStore)
       : new GovernancePolicy(this.deps.policies);
+  }
+
+  /**
+   * Governance gate for a dry-run (`explain`). A dry-run never executes, so it
+   * needs no approval token and consumes no rate-limit budget, but it renders
+   * the tool's internals (SQL, bindings, URL, body), which is exactly what a
+   * caller without the tool's scopes, or one the policy denies, must not see.
+   * Returns the refusal result, or `undefined` when the dry-run may proceed.
+   */
+  authorizeExplain(
+    name: string,
+    args: Record<string, unknown>,
+  ): ToolResult | undefined {
+    const registry = this.deps.registry;
+    const scopeError = missingScopesResult(
+      registry.requiredScopesOf(name),
+      this.context,
+    );
+    if (scopeError) return scopeError;
+    const access = registry.accessOf(name) ?? "read";
+    const decision = this.policy(false)?.evaluate(
+      this.context,
+      name,
+      access,
+      args,
+    );
+    if (decision?.effect === "deny") {
+      return {
+        content: [{ type: "text", text: `Policy denied tool '${name}'.` }],
+        isError: true,
+        structuredContent: { code: "POLICY_DENIED" },
+      };
+    }
+    return undefined;
   }
 
   /**
@@ -671,6 +705,7 @@ export class McpToolDispatcher {
             : gatedRun(),
       );
       const durationMs = Date.now() - started;
+      const entryType = registry.typeOf(name) ?? "tool";
       const failure = errorSummary(result);
       const code = errorCode(result);
       bus.publish({
@@ -708,6 +743,8 @@ export class McpToolDispatcher {
         ...(result.structuredContent !== undefined
           ? { structuredContent: result.structuredContent }
           : {}),
+        // Everything a tool returned is data from a downstream system: say so.
+        _meta: { ...result._meta, ...contentTrustLabel(entryType) },
       };
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

@@ -29,7 +29,12 @@ function defaultAnnotations(access: "read" | "write"): Annotations {
     : { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: false };
 }
 
-/** Automatic access scope and additive explicit scopes unless scope checking is disabled. */
+/**
+ * The scopes a tool requires: exactly the configured `requiredScopes`, de-duplicated.
+ * No scope is derived from the access level — a tool without `requiredScopes`
+ * is callable by every authenticated caller unless a policy rule says otherwise
+ * (the production gate warns about that under `governance.defaultEffect: allow`).
+ */
 function effectiveRequiredScopes(requiredScopes: readonly string[] = []): string[] {
   return [...new Set(requiredScopes)];
 }

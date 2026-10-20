@@ -94,7 +94,7 @@ async function main() {
     logger.error(
       `refusing to start in '${readiness.environment}': ${readiness.fatal.length} ` +
         "production-readiness check(s) failed. Fix the settings above, or run with " +
-        "MCPGATE_ENV=development to accept them explicitly.",
+        "ATF_PROFILE=development (or MCPGATE_ENV=development) to accept them explicitly.",
     );
     process.exit(1);
   }

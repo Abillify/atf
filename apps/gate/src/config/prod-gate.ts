@@ -15,12 +15,19 @@
  * the wrong ones for a shared deployment. Rather than making local development
  * inconvenient, the gate refuses the *combination* of production and permissive.
  *
- * Environment is taken from `MCPGATE_ENV`, falling back to `NODE_ENV`. Both
- * are checked because the Dockerfile already sets `NODE_ENV=production`, so a
- * containerised deployment is gated without any extra configuration — which is
- * precisely the deployment that needs it.
+ * The operational profile is resolved through the shared
+ * `@atf/security-kit` resolver: the explicit platform-wide `ATF_PROFILE` wins
+ * over `MCPGATE_ENV`, which falls back to `NODE_ENV` — the Dockerfile already
+ * sets `NODE_ENV=production`, so a containerised deployment is gated without
+ * any extra configuration. Values are normalized (trim + lowercase) and an
+ * unknown value fails fast: a typo like `prod` must not silently disable the
+ * gate.
  */
 
+import {
+  resolveOperationalProfile,
+  type OperationalProfile,
+} from "@atf/security-kit";
 import type { AppConfig } from "./schema.ts";
 import {
   diagnoseSqlTenantBinding,
@@ -46,12 +53,18 @@ export interface ProductionReadinessReport {
   environment: string;
 }
 
-/** Resolve the deployment environment. */
+/**
+ * Resolve the deployment operational profile.
+ *
+ * `ATF_PROFILE` (explicit, platform-wide) beats `MCPGATE_ENV`, which beats
+ * `NODE_ENV`; unset/blank falls through to `development`. A non-blank unknown
+ * value throws {@link UnknownOperationalProfileError} rather than silently
+ * downgrading to warn-mode.
+ */
 export function resolveEnvironment(
   env: NodeJS.ProcessEnv = process.env,
-): string {
-  const raw = (env.MCPGATE_ENV ?? env.NODE_ENV ?? "development").trim().toLowerCase();
-  return raw.length > 0 ? raw : "development";
+): OperationalProfile {
+  return resolveOperationalProfile(env, ["MCPGATE_ENV", "NODE_ENV"]).profile;
 }
 
 /**
@@ -63,7 +76,7 @@ export function resolveEnvironment(
  */
 export function checkProductionReadiness(
   config: AppConfig,
-  environment: string = resolveEnvironment(),
+  environment: OperationalProfile = resolveEnvironment(),
 ): ProductionReadinessReport {
   const fatal: string[] = [];
   const warnings: string[] = [];
@@ -261,10 +274,49 @@ export function checkProductionReadiness(
     );
   }
 
+  // The playground executes tools out-of-band from any application session.
+  // Even though runs now go through the full MCP dispatch pipeline, a
+  // dashboard-driven tool call is not what a production attack surface should
+  // offer: disable it in production.
+  if (
+    isProd &&
+    config.monitoring.enabled &&
+    config.monitoring.playground.enabled
+  ) {
+    fatal.push(
+      "Production must not enable monitoring.playground — tool execution from the " +
+        "dashboard is forbidden in production. Set monitoring.playground.enabled: false.",
+    );
+  }
+
   if (config.monitoring.enabled && config.monitoring.playground.allowWrite) {
     flag(
       "monitoring.playground.allowWrite is enabled — write-access tools can be executed straight " +
         "from the dashboard, bypassing the calling application entirely.",
+    );
+  }
+
+  // ── TLS / transport security ──────────────────────────────────────────────
+  //
+  // Every security-relevant URL and cookie this server issues hangs off the
+  // public URL: OAuth metadata, the OIDC monitor redirect URI, and the
+  // monitor session cookies (which carry `Secure` only when the request is
+  // recognised as https). An http:// public URL in production means bearer
+  // tokens, authorization codes and session cookies travel in cleartext.
+
+  if (isProd && config.server.publicUrl?.startsWith("http://")) {
+    fatal.push(
+      `server.publicUrl is plaintext HTTP (${config.server.publicUrl}) — production must terminate ` +
+        "TLS and publish an https:// URL, or bearer tokens, OAuth metadata and monitor session " +
+        "cookies (Secure flag) are exposed on the wire.",
+    );
+  }
+
+  if (isProd && config.monitoring.oidc?.redirectUri.startsWith("http://")) {
+    fatal.push(
+      `monitoring.oidc.redirectUri is plaintext HTTP (${config.monitoring.oidc.redirectUri}) — the ` +
+        "OIDC authorization code and the resulting monitor session cookie would cross an " +
+        "unencrypted connection. Terminate TLS and use an https:// redirect URI.",
     );
   }
 
@@ -369,6 +421,65 @@ export function checkProductionReadiness(
     }
   }
 
+  // ── Tenant authority (P1-G3) ──────────────────────────────────────────────
+  if (config.tenantIsolation.enabled) {
+    if (config.tenantIsolation.claimNames.includes("client_id")) {
+      warnings.push(
+        "tenantIsolation.claimNames includes 'client_id' — an OAuth client id names an " +
+          "application, not a tenant, and several tenants may share one client. Use a " +
+          "dedicated tenant claim ('tenant_id', 'tenant', 'tid') issued by your IdP.",
+      );
+    }
+    const trustedIssuers =
+      config.auth.mode === "oauth" || config.auth.mode === "both"
+        ? 1 + (config.auth.oauth?.additionalIssuers.length ?? 0)
+        : 0;
+    if (
+      trustedIssuers > 1 &&
+      Object.keys(config.tenantIsolation.issuerTenants).length === 0
+    ) {
+      flag(
+        `${trustedIssuers} OAuth issuers are trusted and tenantIsolation.issuerTenants is empty — ` +
+          "any trusted issuer can assert any tenant through the tenant claim. Bind each issuer " +
+          'to the tenants it may act for (issuer → [tenant…], "*" for all).',
+      );
+    }
+  }
+  // ── Default-allow governance (P1-G1) ──────────────────────────────────────
+  if (config.authorization.enabled && config.policies.defaultEffect === "allow") {
+    const unscoped = config.tools
+      .filter((tool) => (tool.requiredScopes ?? []).length === 0)
+      .map((tool) => tool.name);
+    if (unscoped.length > 0) {
+      warnings.push(
+        `governance.defaultEffect is 'allow' and ${unscoped.length} tool(s) declare no ` +
+          `requiredScopes (${unscoped.slice(0, 8).join(", ")}${unscoped.length > 8 ? ", …" : ""}) — ` +
+          "every authenticated caller may call them. The access level adds no scope " +
+          "automatically; declare requiredScopes per tool or set governance.defaultEffect: deny.",
+      );
+    }
+  }
+  // ── Rate limiting (P1-G6) ─────────────────────────────────────────────────
+  if (
+    config.server.rateLimit.enabled &&
+    config.server.trustProxy !== false &&
+    config.server.trustProxy !== 0
+  ) {
+    warnings.push(
+      `server.trustProxy is ${String(config.server.trustProxy)} — the per-IP limit keys on the ` +
+        "X-Forwarded-For address. Without exactly that many trusted proxy hops in front of the " +
+        "Gate, a client can send its own X-Forwarded-For and get a fresh budget for every " +
+        "request. Set server.trustProxy to the real hop count, or false when the Gate is " +
+        "reachable directly.",
+    );
+  }
+  if (!config.server.rateLimit.perIdentity.enabled) {
+    warnings.push(
+      "server.rateLimit.perIdentity.enabled is false — only the per-IP limit protects the tools; " +
+        "one authenticated identity can use the whole budget of every address it controls. " +
+        "Enable the per-identity limiter (it is keyed on the verified subject).",
+    );
+  }
   // ── Cluster / HA ──────────────────────────────────────────────────────────
 
   if (
@@ -422,6 +533,23 @@ export function checkProductionReadiness(
     if (isProd) fatal.push(message);
     else warnings.push(message);
   }
+  // Pagination cursors are HMAC-signed with a per-process random key unless
+  // server.pagination.secret is set: behind a load balancer a cursor minted by
+  // one replica is rejected by the next ("Invalid pagination cursor").
+  if (
+    !Number.isNaN(replicas) &&
+    replicas > 1 &&
+    config.server.pagination.secret === undefined &&
+    config.tools.some(
+      (tool) => tool.type === "database" && tool.enabled && tool.pagination?.enabled === true,
+    )
+  ) {
+    warnings.push(
+      `MCPGATE_REPLICAS=${replicas} and a database tool has pagination enabled, but ` +
+        "server.pagination.secret is unset: every replica signs cursors with its own random key, " +
+        "so a page request that lands on another replica fails. Set a stable secret.",
+    );
+  }
   if (
     isProd &&
     config.tools.some((tool) => tool.type === "webhook" && tool.enabled) &&
@@ -431,6 +559,34 @@ export function checkProductionReadiness(
       "Production webhooks require Redis-backed atomic replay protection; configure " +
         "MCPGATE_TRANSACTION_REDIS_URL or an existing Redis-backed server store.",
     );
+  }
+  if (transactionEnforcement !== "off") {
+    // Signing: HS256 puts the same secret in the hands of every party that
+    // issues OR verifies tokens, so any Gate holding it could mint a token for
+    // any other Gate. A JWKS (EdDSA/ES256) lets the Gate verify with public
+    // keys only; the audience then keeps a token minted for one Gate from being
+    // accepted by another (ADR-0035).
+    const secretSet = (process.env.MCPGATE_TRANSACTION_HS256_SECRET ?? "") !== "";
+    const algorithmsRaw = (process.env.MCPGATE_TRANSACTION_ALGORITHMS ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean);
+    const acceptsHs256 = algorithmsRaw.length > 0 ? algorithmsRaw.includes("HS256") : secretSet;
+    if (acceptsHs256) {
+      warnings.push(
+        "Transaction tokens are verified with the shared MCPGATE_TRANSACTION_HS256_SECRET: every party holding it can " +
+          "mint tokens this Gate accepts. Verify with the issuer's public key instead " +
+          "(MCPGATE_TRANSACTION_JWKS_URI, EdDSA/ES256; the runtime publishes /.well-known/atf-transaction-jwks.json) " +
+          "and drop HS256 once every issuer has switched (docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md).",
+      );
+    }
+    if (process.env.MCPGATE_TRANSACTION_AUDIENCE === "mcpgate") {
+      warnings.push(
+        'MCPGATE_TRANSACTION_AUDIENCE is "mcpgate", the audience the examples use for every Gate: a token minted for one ' +
+          "Gate is then valid at all of them. Give each Gate its own audience and map it on the runtime with " +
+          "AGENT_TRANSACTION_AUDIENCES (server name → audience).",
+      );
+    }
   }
   if (transactionEnforcement !== "off" && !transactionRedis) {
     const message =

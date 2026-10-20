@@ -7,6 +7,16 @@ import { createHmac, timingSafeEqual } from "node:crypto";
  * Canonical JSON used for fingerprints. Keys are sorted by UTF-16 code unit
  * (`<`/`>`), never by `localeCompare`, so the digest is locale-independent
  * (Req 6.4).
+ *
+ * Deliberately NOT consolidated into `@atf/canonical-json`: unlike every
+ * mode of that package, this variant emits the literal text `undefined` for
+ * object members whose value is `undefined` (producing invalid JSON), and
+ * `approvalOwner()` hashes `ctx.tenantId` / `ctx.claims.iss`, which can be
+ * `undefined` for real tokens. Signed pagination cursors and approval-owner
+ * digests must verify across restarts, so the exact bytes — quirk included —
+ * are frozen here. For JSON.parse-derived input (no `undefined` members) the
+ * output equals `canonicalJsonNull` of `@atf/canonical-json`; see
+ * `packages/canonical-json/test/differential.test.ts` for the family table.
  */
 export function stable(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;

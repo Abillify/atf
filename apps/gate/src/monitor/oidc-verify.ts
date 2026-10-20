@@ -23,18 +23,23 @@ const HASH_BY_ALG: Record<string, string> = {
   ES512: "sha512",
 };
 
-const jwksCache = new Map<string, Jwks>();
-
+/** A provider that does not answer must not hold a login request open. */
+const FETCH_TIMEOUT_MS = 10_000;
+/** How long a fetched JWKS is trusted before it is fetched again. */
+const JWKS_TTL_MS = 60 * 60 * 1000;
+/** Allowed clock skew for `nbf`/`iat`, in seconds (`exp` is checked strictly). */
+const CLOCK_TOLERANCE_SEC = 60;
+const jwksCache = new Map<string, { doc: Jwks; fetchedAt: number }>();
 async function fetchJwks(jwksUri: string, forceRefresh = false): Promise<Jwks> {
   if (!forceRefresh) {
     const cached = jwksCache.get(jwksUri);
-    if (cached) return cached;
+    if (cached && Date.now() - cached.fetchedAt < JWKS_TTL_MS) return cached.doc;
   }
-  const res = await fetch(jwksUri);
+  const res = await fetch(jwksUri, { signal: AbortSignal.timeout(FETCH_TIMEOUT_MS) });
   if (!res.ok) throw new Error(`JWKS fetch from ${jwksUri} failed: HTTP ${res.status}`);
   const doc = (await res.json()) as Jwks;
   if (!Array.isArray(doc.keys)) throw new Error(`JWKS response from ${jwksUri} has no 'keys' array`);
-  jwksCache.set(jwksUri, doc);
+  jwksCache.set(jwksUri, { doc, fetchedAt: Date.now() });
   return doc;
 }
 
@@ -74,7 +79,17 @@ export interface VerifiedIdToken {
  */
 export async function verifyIdToken(
   idToken: string,
-  opts: { issuer: string; clientId: string; jwksUri: string },
+  opts: {
+    issuer: string;
+    clientId: string;
+    jwksUri: string;
+    /**
+     * The `nonce` sent in the authorization request. When given, the token must
+     * carry exactly that value: it ties the ID token to THIS login attempt, so
+     * a token captured or replayed from another login is refused.
+     */
+    nonce?: string;
+  },
 ): Promise<VerifiedIdToken> {
   const parts = idToken.split(".");
   if (parts.length !== 3) throw new Error("malformed ID token (expected header.payload.signature)");
@@ -114,6 +129,16 @@ export async function verifyIdToken(
   const now = Math.floor(Date.now() / 1000);
   const exp = payload.exp;
   if (typeof exp !== "number" || exp <= now) throw new Error("ID token is expired");
+  // `nbf` and `iat` in the future (beyond clock skew) mean the token is not
+  // valid yet or was minted by a clock we do not agree with.
+  const nbf = payload.nbf;
+  if (typeof nbf === "number" && nbf > now + CLOCK_TOLERANCE_SEC) {
+    throw new Error("ID token is not valid yet (nbf)");
+  }
+  const iat = payload.iat;
+  if (typeof iat === "number" && iat > now + CLOCK_TOLERANCE_SEC) {
+    throw new Error("ID token was issued in the future (iat)");
+  }
 
   const iss = payload.iss;
   if (typeof iss !== "string" || normalizeIssuer(iss) !== normalizeIssuer(opts.issuer)) {
@@ -126,6 +151,13 @@ export async function verifyIdToken(
     throw new Error(`ID token 'aud' does not include configured clientId`);
   }
 
+  // OIDC Core 3.1.3.7: with several audiences the authorized party must be us.
+  if (audList.length > 1 && payload.azp !== opts.clientId) {
+    throw new Error("ID token has several audiences and 'azp' is not the configured clientId");
+  }
+  if (opts.nonce !== undefined && payload.nonce !== opts.nonce) {
+    throw new Error("ID token 'nonce' does not match the login attempt");
+  }
   const sub = payload.sub;
   if (typeof sub !== "string" || sub.length === 0) throw new Error("ID token missing 'sub' claim");
 
