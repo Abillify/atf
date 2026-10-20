@@ -25,7 +25,9 @@ Runtime anchor file signs snapshots of that chain. Preserve both early.
 ## First 15 minutes (S1)
 
 1. **Snapshot evidence before changing anything**:
-   - `pg_dump` the Gate database (audit log) — see `backup-restore.md`.
+   - `pg_dump` the Runtime database (the audit chain lives there) — see
+     `backup-restore.md`. If the Gate monitor audit sink is enabled, copy its
+     JSONL file (`monitoring.audit.file`) too; the Gate itself has no database.
    - Copy `AUDIT_ANCHOR_FILE` off-host.
    - `kubectl logs`/`docker logs` for all five services, current + previous pod.
 2. **Verify the audit chain**: Runtime monitoring status → anchor

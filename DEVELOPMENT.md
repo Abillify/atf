@@ -24,19 +24,33 @@ bun install --frozen-lockfile
 These are what CI runs. Run them before opening a pull request:
 
 ```bash
-bun run verify:public           # no secrets or forbidden paths in the tree
-bun run verify:spdx             # tracked TypeScript source carries the project SPDX header
-bun run supply-chain:check      # notices, SBOM, and license policy are current
-bun run config-reference:check  # docs/CONFIGURATION.md matches the sources
-bun run lint:baseline           # Biome findings have not grown past the baseline
+bun run verify:public            # no secrets or forbidden paths in the tree
+bun run verify:spdx              # tracked TypeScript source carries the project SPDX header
+bun run verify:version           # the product version is the same everywhere it is stated
+bun run supply-chain:check       # notices, SBOM, and license policy are current
+bun run config-reference:check   # docs/CONFIGURATION.md matches the sources
+bun run flow-reference:check     # docs/FLOWS.md matches the flow schema
+bun run route-reference:check    # the Runtime route table in ARCHITECTURE.md matches the router tree
+bun run openapi:check            # docs/openapi/*.json match the servers (breaking changes fail)
+bun run check:links              # relative links in Markdown resolve
+bun run check:workspace-counts   # package and app counts stated in the docs are true
+bun run check:raw-fetch          # outbound HTTP goes through the guarded clients
+bun run check:flow-versions      # a changed flow (or a file it depends on) raised metadata.version
+bun run coverage:security        # every security-relevant path has a test that names it
+bun run knip                     # no unused files, exports or dependencies
+bun run lint:baseline            # Biome findings have not grown past the baseline
 bun run typecheck
 bun run test
 bun run test:contracts
 bun run build
+bun run check:budgets:ci         # bundle-size budgets
 ```
-
-CI also validates the example flows and boots the quickstart Compose stack against the
-documented health endpoints. Two gates behave differently from how they read:
+CI also validates the example flows (`cli.ts validate … --require-version`), the Helm chart
+(`helm lint`, `kubeconform -strict`, rendered replica/profile/converter assertions), the
+Outpost and its Rust crates (`cargo test`, `cargo audit`, `cargo deny`), the Control end-to-end and
+accessibility tests, and boots the quickstart Compose stack against the documented health
+endpoints. Secret scanning (gitleaks), image scanning (Trivy), CodeQL and the retrieval eval
+against real models run as separate jobs. Two gates behave differently from how they read:
 
 - `lint:baseline` is a regression gate. `.biome-baseline.json` records the pre-existing findings
   and the gate fails only when they grow, so `bunx biome ci .` will report findings that CI

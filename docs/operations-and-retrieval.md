@@ -5,7 +5,9 @@
 With `NODE_ENV=production`, `loadConfig()` and `checkProductionReadiness()` run before the
 database connection and the HTTP listener start. The gate requires
 `AUTHZ_ENFORCEMENT=required`, `TRANSACTION_ENFORCEMENT=required`, a transaction HMAC key of at
-least 32 characters, a non-empty issuer and audience, a TTL of at most 900 seconds, and — when
+least 32 characters (when HS256 is accepted) or an https `TRANSACTION_JWKS_URI` (for ES256/EdDSA;
+preferred, see [ADR-0035](adr/0035-asymmetric-transaction-tokens-audience-per-service.md)), a
+non-empty issuer and audience, a TTL of at most 900 seconds, and — when
 static credentials are used — a fixed service tenant plus the operational scopes
 `vectorsearch.read`, `vectorsearch.write`, `vectorsearch.delete`, `vectorsearch.admin`,
 `vectorsearch.acl.manage`, and `vectorsearch.metrics`. In production every OIDC issuer must
@@ -51,9 +53,19 @@ Document revisions may carry a nullable `valid_from` business timestamp. It is s
 
 Collection schema 11 adds this column and the tenant/base-reference temporal index. Query timestamps remain bind parameters in dense, binary, FTS, sparse, and hybrid branches, and tenant/ACL predicates continue to apply to the final rows. Evaluation reports its normalized `valid_at`; verified evidence binds the selected temporal mode and instant into its provenance hash.
 
-The lexical branch is PostgreSQL full-text search using `ts_rank` and `websearch_to_tsquery`,
-fused via RRF with the dense branch and an optional SPLADE `sparsevec` branch. Okapi BM25 is not
-implemented. "Late chunking" here means an alpha blend of chunk and whole-document embeddings,
+The lexical branch is PostgreSQL full-text search using `ts_rank_cd` (with length normalisation)
+and an OR-combined `to_tsquery`: each distinct term of the query becomes a quoted operand joined
+by `|`, so a natural-language question like "Wie hoch ist die Miete im Mietvertrag" produces
+lexical hits on any of its terms instead of requiring all of them (which left the branch empty
+and degraded hybrid search to pure vector search). The branch is fused via RRF with the dense
+branch and an optional SPLADE `sparsevec` branch. Where a ParadeDB/VectorChord BM25 extension is
+detected, the lexical branch uses `content ||| ?` (already OR semantics) with the extension's
+score function instead. Because the tsquery is built from plain tokens (letters and digits), the
+`websearch_to_tsquery` operators are **not** available any more: `"quoted phrases"`, `-exclusion` and
+`OR` in the query text are ordinary terms, and `E-Mail` is searched as `E | Mail`. Exact matches belong
+in `filter`/identifier lookups, not in the query string. A very long query ORs every distinct term, which
+widens the candidate set the ranker scores; keep prompts that are pasted into the query reasonably
+short, and `EXPLAIN` the lexical branch on a real collection if latency matters. "Late chunking" here means an alpha blend of chunk and whole-document embeddings,
 not token-level late chunking.
 
 `POST /evaluations/retrieval` authorises exactly `body.collection`; a differing `X-Collection`
@@ -86,7 +98,7 @@ at a time and measure the effect with the retrieval harness in
 | Candidate multiplier | `RERANK_CANDIDATE_MULTIPLIER` | 4 | Candidate pool is `limit × multiplier` before rerank, diversification and collapse fill the window; higher buys recall headroom for more compute |
 | Header share | `CONTEXT_HEADER_MAX_FRACTION` | 0.15 | Share of the chunk budget the contextual header may use; higher embeds more placement, leaves less room for content |
 | Contextual LLM sentence | `CONTEXTUAL_CHUNK_LLM` | `false` | Adds a model-written placement sentence per chunk; richer headers, but vectors are no longer byte-reproducible and each chunk costs a text-LLM call |
-| Per-section cap | `DEFAULT_SECTION_CAP` (`rerank-context.ts`) | 3 | Maximum hits per section path; lower spreads results across sections. `≤ 0` disables the cap, table and figure collapse still run |
+| Per-section cap | `DEFAULT_SECTION_CAP` (`rerank-context.ts`) | 3 | Maximum hits per section path *within one document* — the same `section_path` in different documents has its own budget, so identically named chapters across documents are no longer dropped. `≤ 0` disables the cap; the table/figure collapse (also per document: the same `table_id`/`figure_id` in two documents are two objects) still runs |
 | Expansion budget | `budget_chars` (request) | 4000 | Character budget of small-to-big expansion; higher adds surrounding context and longer answers, `truncated` reports dropped units |
 
 ## German full-text search

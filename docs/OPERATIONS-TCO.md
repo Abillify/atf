@@ -63,10 +63,10 @@ Runtime and Gate, 8 for Search and Extract, 4 for Control; CPU 70 %) and
 
 | Component | Replicas | Notes |
 | --- | --- | --- |
-| runtime | 2–6 (HPA) | stateless; SSE sessions pin to a pod — use sticky routing or accept reconnects |
-| gate | 2 (HPA) | stateless |
-| search | 2–8 (HPA) | stateless; DB pool sized per replica — total connections must fit Postgres `max_connections` |
-| extract | 2–4 | job worker uses Postgres row locks, so replicas are safe; more replicas = more parallel jobs, each with its own `PAGE_CONCURRENCY` against the VLM |
+| runtime | 2–6 (HPA) | rate limits and approvals shared through `REDIS_URL` (incl. the GitOps webhook limiter); not fully stateless: SSE sessions pin to a pod and the metrics ring, replay buffer and red-team schedule are per process (`runbooks/scaling.md`) — use sticky routing or accept reconnects |
+| gate | 2 (HPA) | identity rate limits and redeemed approval tokens shared with `store.type=redis`; SSE sessions are per process (sticky routing for `/sse` and `/monitor/stream`) |
+| search | 2–8 (HPA) | no per-process user state; set `RATE_LIMIT_REDIS_URL` **and** `REPLICAS` above one replica (the production gate refuses `REPLICAS > 1` without it) so throttling is per-client fleet-wide; DB pool sized per replica — total connections must fit Postgres `max_connections` |
+| extract | 2–4 | job worker uses Postgres row locks, so replicas are safe; set `RATE_LIMIT_REDIS_URL` and `REPLICAS` above one replica; more replicas = more parallel jobs: peak vision calls ≈ `JOB_CONCURRENCY × PAGE_CONCURRENCY × replicas` against the VLM. `TEMP_DIR` (conversions, derived-PDF cache) is per pod |
 | control | 2 | stateless UI |
 | **Platform total** | | **~5–15 vCPU / ~10–25 GiB** across ≥ 3 worker nodes |
 
@@ -95,9 +95,19 @@ Extract sends **every page** of every ingested document to the vision model
 - `RENDER_DPI` (default 200) — the raster resolution the model sees. Token
   counts of vision encoders grow roughly with pixel area: halving the DPI
   roughly quarters the image tokens. Only lower it if your recall tests still
-  pass.
-- Page count — bounded by `MAX_PAGES` (default 500, 0 = unlimited). An
-  accidental 10 000-page scan is 20× a typical contract; keep the limit on.
+  pass. Measure instead of guessing: `bun run eval:extract-quality` scores
+  CER, Heading-F1 and table TEDS of what a setting produced against your own
+  annotated set ([scripts/eval/README.md](../scripts/eval/README.md)), so a lower
+  DPI, a cheaper model or a prompt change is a number, not an impression.
+- Page count — bounded by `MAX_PAGES` (default 500, 0 = unlimited), enforced
+  in the v1 extractor and the v2 job runner: a job that would process more
+  pages (the window selected with `pages`, at most the document) fails before its
+  first vision call. An accidental 10 000-page scan is 20× a typical contract;
+  keep the limit on. `pages` (`"5-"`, `"3-10"`) also caps what one job spends
+  when only part of a large document is needed.
+  `MAX_PAGES` bounds one document; the aggregate over many documents is bounded
+  per tenant by `VISION_BUDGET_PAGES_PER_DAY` (default 0 = off) — and jobs
+  without a tenant by neither that nor anything but the per-job token budget.
 - Output tokens — the structured extraction schema plus the finalize pass.
   `PAGE_CONCURRENCY` (default 4) does **not** change total tokens; it only
   changes how fast they are spent (and how well a self-hosted vLLM batch is
@@ -183,7 +193,8 @@ self-serve usage.
 
 ## 6. Cost controls that already exist in the product
 
-- `MAX_PAGES` — hard cap per document (Extract).
+- `MAX_PAGES` — hard cap on the pages one document/job may process (Extract, v1 and v2).
+- `VISION_BUDGET_PAGES_PER_DAY` — per-tenant daily VLM page budget (Extract; off by default, and not applied to jobs without a tenant).
 - `PAGE_CONCURRENCY` + vLLM `--max-num-seqs` — throttle how fast VLM capacity
   (and budget) is consumed; also protects the KV cache.
 - Content-addressed revisions — unchanged content is never re-embedded.

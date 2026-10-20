@@ -18,6 +18,683 @@ releases:
 
 ## [Unreleased]
 
+### Security
+
+- **Search / Runtime / Gate** (`@atf/search`, `@atf/runtime`, `@atf/gate`):
+  the prompt-injection taint signal no longer breaks between the services.
+  Search's content-trust scan (German/English override phrases,
+  chat-template tokens) deliberately flags payloads the Runtime's own
+  tool-output regex does not, but its verdict never reached the Runtime: the
+  document-read tools (`get_document`, `get_documents`, `get_thread`,
+  `get_summary`, `get_summaries`) and navigation reads (`get_section`,
+  `get_pages`, `get_context`, `get_table`, `follow_ref`) returned stored text
+  with no `injection_risk` / `content_trust` label, and
+  `parseVectorSearchResults` dropped the labels even a `search` response did
+  carry. Now every document-read response is labelled (per item and on the
+  envelope, worst hit wins), the Runtime parses the labels into `RagChunk`,
+  and a new bridge `markTaintFromSearchLabels` taints the execution — the
+  same consequence as a local validator finding, so write tools then require
+  approval — when a Search `suspected` label appears anywhere in a tool
+  payload (envelope, per-item, or nested in the MCP text-wrapper JSON). The
+  Gate's byte-for-byte MCP passthrough is pinned by a regression test so a
+  future proxy transformation cannot silently sever the chain. See
+  [ADR 0032](docs/adr/0032-search-content-trust-labels-execution-taint.md).
+- **Runtime** (`@atf/runtime`): the audit log no longer receives credential
+  material as the `actor`. The three red-team routes that wrote audit entries
+  (`POST /security/red-team/:flowId/run`,
+  `POST /security/red-team/attacks/register`, `PUT /security/tool-authz`)
+  stored the raw `Authorization` header, and the optimizer routes
+  (`POST /optimizer/:flowId/run`, `POST /optimizer/analyze/:executionId`,
+  `POST /optimizer/runs/:runId/promote`) stored the first 12 characters of the
+  bearer token (`token:<12 chars>…`) — a real credential prefix for static
+  tokens, written into a hash-chained row that cannot be removed without
+  breaking the chain. The audit log is readable via `GET /monitoring/audit`
+  and exported to log shippers. The `actor` is now the authorizer's resolved
+  identity (token label / JWT subject, `anonymous` when the plane is open,
+  `unknown` if an authorized request carried no identity); the promoter handed
+  to the optimizer is the same label. Regression tests pin that no token
+  material reaches the audit entry. **Operator action: see Migration.**
+- **Runtime** (`@atf/runtime`): the audit chain hash over a record's `details`
+  is canonicalised recursively (object keys sorted at every depth). The
+  durable backend stores `details` in a Postgres `jsonb` column, which does not
+  preserve key order (it stores keys by length, then bytes), so the write-time
+  hash no longer matched the same record re-serialised after a jsonb
+  round-trip and `verifyChain()` reported false `hash_mismatch` failures
+  against Postgres. `verifyChain()` also still accepts the pre-fix hash form
+  (`details` hashed in as-stored key order) and reports how many rows needed
+  it as `legacyForm`, so chains written before this change that verified then
+  keep verifying now; a changed value, a changed `prev_hash` or any other
+  field still breaks verification. Rows whose key order had been changed by
+  jsonb after they were hashed in insertion order were false positives before
+  the fix and cannot be told apart from tampering — they stay unverifiable.
+  A new integration test (`TEST_POSTGRES_URL`) runs the round-trip against a
+  real Postgres, including the number normalisation `jsonb` performs.
+
+- **Gate** (`@atf/gate`): the Monitor Tool Playground no longer bypasses
+  governance. Real tool runs are dispatched through the same
+  `McpToolDispatcher` pipeline as an MCP `tools/call` — policy evaluation,
+  approval tokens, required scopes, argument validation, per-identity rate
+  limiting, transaction fabric and audit events with the real caller identity
+  — instead of calling the executor directly under a hardcoded `"playground"`
+  audit identity; without the governance wiring the playground fails closed
+  with 503 rather than executing ungoverned. A request body `identity`
+  (subject/scopes/claims) is ignored entirely whenever a verified OIDC session
+  cookie is present, so an authenticated dashboard user can no longer
+  self-grant arbitrary scopes or impersonate another subject, and the
+  convenience scope `tools:<access>` is synthesised for the static-token
+  operator only — an OIDC session carries exactly the scopes its IdP issued,
+  so a tool that requires `tools:write` is no longer satisfied by every
+  logged-in user. A dry-run (`dryRun: true`) still never executes, but it
+  renders the tool's internals (SQL, bindings, URL, body), so it now has to
+  pass the same required-scope check and policy deny as a real run, and an
+  HTTP tool's dry-run replaces credential-bearing headers
+  (`Authorization`, `Cookie`, `X-Api-Key`, …`token`/`secret`/`password`
+  names) with `[redacted]`; dry-run events use the same `playground-<hex>`
+  session id as real runs. `monitoring.oidc.requiredGroups`
+  (new) restricts dashboard logins to id_token `groups` claim members and
+  answers a refusal with 403 plus an `auth_failure` audit event. The OIDC
+  state cookie now carries the `Secure` attribute behind TLS. The production
+  gate gained three fatal checks: `monitoring.playground.enabled` must be
+  `false` in production, and a plaintext-HTTP `server.publicUrl` or
+  `monitoring.oidc.redirectUri` is rejected — bearer tokens, OAuth metadata
+  and monitor session cookies would otherwise cross the wire unencrypted.
+
+- **Extract** (`@atf/extract`): the HTML reference neutraliser that runs before
+  LibreOffice lays out an HTML source is rewritten as a tag/attribute tokenizer
+  instead of a set of tag regexes. The regexes ended a tag at the first `>`, so
+  a `>` inside a quoted attribute value (`<img alt=">" src="http://…">`), a `/`
+  used as an attribute separator (`<img/src="http://…">`, `<link/href=…>`,
+  `<base/href=…>`), and an unquoted value each left the URL outside the match —
+  a server-side request forgery and a local file read (`file:///…`) through the
+  converter. CSS `url(…)`/`@import` are now neutralised only after CSS comments,
+  CSS escape sequences (`u\72l(`) and HTML character references (`url&#40;…&#41;`)
+  are resolved, and a `<style>` body is escaped so a `\3c` cannot re-materialise
+  an end tag. Kept markup is re-serialised from the parsed parts, so what
+  LibreOffice sees is exactly what the sanitizer decided. A second pass closes
+  what the tokenizer still let through: tag and attribute names must be plain
+  names (`<img"src=http://…>` and `<img a"src="…">` are dropped, not
+  re-emitted), tokens also split at C0 controls, NEL and NBSP so the renderer's
+  own parser cannot glue two of our tokens together, the doctype is re-emitted
+  as the bare `<!DOCTYPE html>` (an internal subset such as
+  `<!ENTITY e SYSTEM "file:///etc/passwd">` or an external identifier no longer
+  survives), only raster `data:` images are kept (an SVG data URI is a nested
+  document that can reference files itself), `image-set()`, `src()`,
+  `image()`, `cross-fade()` and `element()` are removed together with `url()`
+  (including vendor-prefixed and escaped spellings), and `<` / `>` inside kept
+  attribute values are escaped. The derived-PDF cache key for HTML sources now
+  includes a sanitizer revision, so a hardening change is never masked by a PDF
+  rendered from the previous rewrite. The neutraliser remains a deny-list: it
+  narrows the attack surface, it is not a substitute for
+  `CONVERTER_MODE=isolated` — which the production gate now enforces: a `local`
+  converter is fatal in `production` unless acknowledged with
+  `CONVERTER_ALLOW_LOCAL_HTML=true` (see below).
+- **Extract** (`@atf/extract`): document text is data in every model prompt
+  (OWASP LLM01). The text layer, the heading hints, a figure's region text and
+  caption, and the text and title handed to the summariser now sit inside
+  `<rohtext>` / `<hinweise>` / `<beschriftung>` / `<dokumenttext>` / `<titel>`
+  elements, every system prompt states that whatever stands there is content to
+  transcribe or summarise and never an instruction, a literal closing tag in the
+  document is broken so the document cannot end the element itself, and the
+  Unicode tag block (U+E0000–E007F, the carrier of "ASCII smuggling") is removed.
+  The prompt versions moved (`PAGE_PROMPT_VERSION` 2.1.0, `PASS2_PROMPT_VERSION`
+  2.1.0, `SUMMARY_PROMPT_VERSION` 2.2.0), so the prompt hash changes — see
+  Migration. Gate tool output and the Runtime taint rule are unchanged.
+- **Extract** (`@atf/extract`): `CONVERTER_MODE=local` is now fatal in
+  `production` (a warning in staging and development) unless the operator
+  acknowledges the in-process converter with `CONVERTER_ALLOW_LOCAL_HTML=true`,
+  which keeps it a warning. The HTML neutraliser is a deny-list and the page's
+  own markup decides what LibreOffice loads, so `CONVERTER_MODE=isolated` is the
+  boundary.
+- **Extract** (`@atf/extract`): what Extract kept of a document no longer
+  outlives it. `DELETE /v2/documents/{reference}` removes the reference's jobs —
+  with the persisted model response of every page and both outboxes, which
+  cascade — its upload sessions and `.part` files and the source bytes no other
+  job uses, after Search answered (also when Search never held the reference; not
+  when the Search call failed, so the retry still finds everything), plus the
+  cached PDF conversions of its sources. `POST /v1/erasure` removes the same
+  derived PDFs. New retention rules bound the rest: `JOB_RETENTION_DAYS` (default
+  `0` = keep) sweeps finished jobs, `UPLOAD_SESSION_MAX_AGE_HOURS` (default 72)
+  sweeps abandoned resumable uploads, and the derived-PDF cache is bounded by
+  `DERIVED_PDF_CACHE_MAX_MB` (2048) and `DERIVED_PDF_CACHE_MAX_AGE_HOURS` (168),
+  evicting by last use and never a PDF a running job holds. Sources are not swept
+  by age on purpose: `/v2/render` renders zoom and tiles from them for as long as
+  Search serves the document. The production gate warns while
+  `JOB_RETENTION_DAYS` is `0`.
+- **Runtime** (`@atf/runtime`): the erasure orchestrator no longer keeps the
+  data subject in clear text forever, no longer leaves a crashed operation
+  looking finished, and no longer calls an erasure that addressed nothing
+  `complete`. The cleartext identifiers are removed from the stored operation as
+  soon as it is `complete` (the signed receipt carries only salted hashes);
+  an operation is stored as `in_progress` with a lease (`updated_at`, 15 min) and
+  a replay or retry after the lease takes the zombie over atomically; a request
+  that reached no store at all is `failed` with a synthetic
+  `runtime.no_stores` result instead of vacuously `complete`; a retry no longer
+  sends the runtime-only issuer to remote targets. HTTP: `in_progress` answers
+  202.
+- **Runtime** (`@atf/runtime`): `COMPLIANCE_POLICY_REQUIRED=true` makes
+  production refuse to start without a loaded `compliance-policy.yaml` (a
+  warning elsewhere), so residency and data-class rules cannot be silently
+  absent; the production gate warns while `EGRESS_ALLOWED_HOSTS` is empty
+  (every public host reachable).
+- **Gate** (`@atf/gate`): the monitor's OIDC login is hardened. Authorization
+  requests use PKCE (S256) and a `nonce` bound to the signed state cookie; the
+  ID-token verifier checks `nonce`, `nbf`, `iat` (60 s skew) and, with several
+  audiences, `azp`; discovery and JWKS fetches time out after 10 s and are
+  cached for one hour; the discovery `issuer` must equal the configured one.
+  Logout is `POST /monitor/logout` (303); `GET /monitor/logout` answers 405 with
+  `Allow: POST` so a cross-site link or image cannot end a session.
+- **Gate** (`@atf/gate`): `tenantIsolation.issuerTenants` maps each trusted
+  OAuth issuer to the tenants it may assert (`"*"` = any). With tenant
+  isolation on and a non-empty map, a token from an unlisted issuer is 401 and
+  one claiming another tenant is 403; the production gate makes an empty map
+  fatal when more than one OAuth issuer is trusted. New readiness warnings:
+  tools without `requiredScopes` under `defaultEffect: allow`, `trustProxy` with
+  a per-IP limit, a disabled per-identity limiter, and `client_id` among the
+  claim names.
+- **Gate** (`@atf/gate`): imported MCP tools are `read` only when the
+  downstream server declares `annotations.readOnlyHint: true` (and not
+  destructive); everything else imports as `write`. An explicit `access` on the
+  import or the override still wins. Before, an import without annotations
+  defaulted to `read`.
+- **Gate: the resolver of an approval comes from the verified identity.** The
+  `approver` a client sent was recorded as given; it is now only a display label
+  (`declaredApprover`), and the event records who actually resolved the request
+  (`ctx.subject`) and whether that was the requester (`selfResolved`).
+  `policies.approval.requireDifferentApprover` (default `false`) makes self-resolution
+  impossible: the attempt is a 403 and the request is **not** consumed, and the
+  resolver must be a different principal of the same tenant holding
+  `policies.approval.approverScope` (default `approvals:resolve`). Off by default
+  because a Runtime that requests and resolves its own approvals would block itself.
+- **Transaction tokens no longer have to be a shared secret.** Search verifies
+  ES256/EdDSA transaction tokens against the issuer's JWKS (`TRANSACTION_JWKS_URI`,
+  `TRANSACTION_ALGORITHMS`), as the Gate and the Runtime's issuer already could; the
+  algorithm in a token is checked against an allow-list before any key is used, HS256
+  only against the secret and the asymmetric algorithms only against the JWKS. A
+  verifier that holds only public keys cannot mint tokens. The Gate and Search
+  production gates warn while HS256 is accepted, and the Gate warns when its audience
+  is the shared example value `mcpgate`, so a token minted for one Gate is valid at
+  all of them. Rolling migration without a flag day: verifiers accept both, then the
+  Runtime switches, then HS256 is dropped (UPGRADE item 20,
+  [ADR-0035](docs/adr/0035-asymmetric-transaction-tokens-audience-per-service.md)).
+  `@atf/transaction-contract` is unchanged.
+- **Gate marks tool results as untrusted content.** Results of executed tools carry
+  `_meta["io.atf/content-trust"] = { content_trust: "untrusted", source }`, and the
+  Runtime can treat reading one as taint (`TAINT_MODE=on-untrusted-source`, below).
+- **Fewer documents lost to the single-process defaults.** Production gates warn when
+  `REPLICAS > 1` meets a per-process store: the Runtime media store behind `show_figure`
+  links and the receipts transparency log, and the Gate's `server.pagination.secret`
+  for paginated database tools. Documented under "Not yet shared between replicas" in
+  the upgrade guide, with the two new THREAT-MODEL rows (the `show_figure` capability
+  link and the trusted-writer ACL override), each backed by file and line.
+### Added
+
+- **Packages** (`@atf/canonical-json`, `@atf/mcp-2026`): two shared
+  implementation packages replace copy-pasted platform primitives.
+  `@atf/canonical-json` is the single canonical serialiser — every
+  hash-bound payload on the platform (signed erasure receipts, the audit
+  chain, evidence and action-contract hashes, flow bundle hashes, policy
+  hashes, cache keys, fingerprints) previously had its own variant of
+  "sort keys, stringify deterministically", in five slightly different
+  flavours whose outputs silently disagreed on edge cases (integer-like
+  object keys, `Set` ordering, locale digits). It exposes the byte families
+  the call sites actually depend on — a `JSON.stringify`-compatible family
+  (which re-enumerates integer-like keys numerically first, matching V8) and
+  a purely lexicographic concat family — plus canonical `Set` serialisation.
+  Differential tests pin every migrated call site to its previous bytes.
+  `@atf/mcp-2026` is the shared MCP `2026-07-28` stateless-protocol core:
+  protocol/header constants, JSON-RPC error bodies and codes, request
+  validation (protocol-meta negotiation, method/params shape), pagination,
+  the stateless response envelope, and the client-side request metadata —
+  previously implemented three times independently (Gate server, Search
+  server, Runtime client) with drifting error codes and validation order.
+- **Runtime** (`@atf/runtime`): the evidence chain becomes independently
+  verifiable by third parties (ADR-0030). A new `EVIDENCE_SIGNING_KEY`
+  (Ed25519, PEM PKCS#8 or a base64-encoded 32-byte seed) makes the platform
+  sign audit chain anchors, evidence bundles, and — as a fallback — erasure
+  receipts with one asymmetric identity instead of the operator's shared
+  HMAC secret. The public key is published at
+  `GET /.well-known/atf-evidence-jwks.json` (OKP/Ed25519, `kid` =
+  `base64url(sha256(publicKey))`, never the private part), so an auditor or
+  customer verifies an artefact offline with no shared secret and no
+  dependency on the platform being reachable. `atf verify-bundle
+  <bundle.json> --jwks <url|file> [--kid <kid>]` verifies Ed25519 bundles
+  against the JWKS — the bundle's own `kid` auto-selects the key — while
+  `--secret <secret>` keeps verifying legacy HMAC artefacts. Signed
+  envelopes carry an `alg`/`algorithm` field (`ed25519` / `hmac-sha256`;
+  absent = legacy HMAC) and verification branches on it strictly: key
+  material that cannot check the envelope's algorithm, or a mismatched
+  `kid`, is a `signature_mismatch`, never a silent fallback.
+- **Control** (`@atf/control`): the evidence-bundle download tooltip now
+  names the offline verify command matching the bundle's algorithm
+  (`--jwks …` for Ed25519, `--secret …` for legacy HMAC), in German and
+  English.
+- **Packages** (`@atf/security-kit`): the rate-limit middleware accepts a
+  shared `backend` (any `RateLimitBackend`) plus an `onBackendError` hook,
+  and the package ships `createLazyRedisRateLimitBackend` — a Redis GCRA
+  backend that connects lazily on first request (cached, retried on failure,
+  `redis` imported dynamically so it stays an optional dependency) and is
+  closed via the limiter's `close()`. A backend with a synchronous
+  `takeSync` keeps the middleware sync; promise backends are awaited.
+- **Search / Extract** (`@atf/search`, `@atf/extract`): `RATE_LIMIT_REDIS_URL`
+  moves the HTTP rate limiters (Search `vectorsearch:rl`; Extract
+  `extract:rl` and the distinct `extract:render-rl` render bucket) onto a
+  shared Redis budget, so a multi-replica deployment throttles each client
+  once fleet-wide instead of once per pod. These backends fail open on Redis
+  errors — availability parity with the in-memory limiter they replace.
+  Both services also gain `REPLICAS` (default 1, declared topology for the
+  production gate).
+- **Runtime** (`@atf/runtime`): the GitOps webhook router now shares the
+  middleware's `REDIS_URL`-backed rate-limit store instead of creating a
+  private in-memory one, so the per-IP webhook budget is fleet-wide;
+  `REPLICAS` (default 1) declares the replica count to the production gate.
+- **Search** (`@atf/search`): `RERANK_BATCH_SIZE` (16) and
+  `RERANK_BATCH_CONCURRENCY` (2) split a rerank over many candidates into
+  bounded parallel batches; `HYDE_CACHE_TTL_SECONDS` (600, `0` = off) caches
+  hypothetical-document generations (LRU 256, concurrent identical queries share
+  one call); `BATCH_WORKER_EMBED_CONCURRENCY` (4) embeds a batch's chunks in
+  parallel and the worker drains up to 25 batches per wake-up (honouring
+  `stop()`); `EXPAND_CONCURRENCY` (8) bounds the per-hit context expansion
+  (`src/concurrency.ts`, stops starting work after the first failure).
+  `/v2/search` reads `X-Valid-At` like the other search routes, and
+  `collection_stats` reports `capabilities { unitRows, unitGraph, outline,
+  pages }` so a client can tell which retrieval features a collection supports.
+- **Extract** (`@atf/extract`): `/v2/render` renders a page or a region once, at
+  the DPI it chose and reports — see Changed. `CONVERTER_ALLOW_LOCAL_HTML`,
+  `DERIVED_PDF_CACHE_MAX_MB`, `DERIVED_PDF_CACHE_MAX_AGE_HOURS`,
+  `JOB_RETENTION_DAYS`, `UPLOAD_SESSION_MAX_AGE_HOURS` and
+  `RETENTION_SWEEP_INTERVAL_MINUTES` (60) are new settings; the retention sweep
+  runs at start and then hourly and never touches a running or paused job.
+- **Runtime** (`@atf/runtime`): a flow file that fails to load is visible.
+  `/health/ready` gains an informational `flow_load` check (`degraded` with the
+  file, reason and first-seen time; never a 503) and the gauge
+  `aiperator_flow_load_failures` follows the same ledger. A flow file deleted
+  while the Runtime runs stops being served (the watcher ignored `unlink`).
+- **Helm** (`deploy/helm/atf`): `global.profile` (opt-in; `""`, `development`,
+  `staging`, `production`, `test`, validated by `values.schema.json`) is
+  exported as `ATF_PROFILE` to Runtime, Gate, Search and Extract, and every
+  service now receives `REPLICAS` (Gate: `MCPGATE_REPLICAS`) — the HPA's
+  `maxReplicas` when autoscaling is on, else `replicaCount` — so the production
+  gates judge the real topology. CI renders and asserts both.
+- **Docs**: `docs/EU-AI-ACT.md` maps roles, the Annex III check and Art. 9, 10,
+  12–15, 26 and 50 to the controls ATF provides, the evidence they produce and
+  what stays with the operator; Art. 50 marking is not provided by the product.
+- **Extract: `pages` selects a window of the source** (`@atf/extract-contract` 2.4.0,
+  wire `atf-extract/2.4.0`). `"5"`, `"3-10"`, `"5-"` and `"-8"` are accepted, lists and
+  reversed windows are a 400, a `from` past the end of the source fails the job before
+  any model call, and `MAX_PAGES` counts the window. Pages keep the source's numbers;
+  `document.begin` and `document.end` carry the optional `firstPage`, `pageCount` is the
+  last page. The emitter keeps batch seqs absolute and puts `document.begin` into the
+  first batch actually sent; Search checks completeness over `[firstPage, pageCount]`
+  and spans the document unit over the window. A native source (BPMN, a chart-free
+  XLSX) ignores `pages`.
+- **Extract: render window.** `PreparedSource.prefetch` renders a run of pages with one
+  `pdfinfo` and one `pdftoppm` call (the output files are read, not guessed, so the
+  zero-padding of poppler cannot break it), looking up to eight pages ahead of the pages
+  in flight; the figure-resolution render of a page is shared by all of its crops and
+  by the crop re-cut at upload time. `scripts/bench-render-window.ts` measures it: with
+  600 pages at 50 DPI 47.1 → 13.0 ms/page (window of 8, 3.6×) and 10.7 ms/page
+  (window of 16); at the production 200 DPI rasterising dominates and the saving is
+  6–11 %.
+- **Extract: `scripts/bench-time-to-searchable.ts`.** Runs the real emitter against a
+  simulated Search and reports when the first pages become searchable and when all are.
+- **Evaluation: `bun run eval:extract-quality`.** Character error rate, Heading-F1 (text
+  and strict with level) and table TEDS (and TEDS-S) of what Extract produced against a
+  golden set, with a gating mode (`--max-cer`, `--min-heading-f1`, `--min-teds`) and a
+  documented format for your own sets. The shipped set is synthetic; customer sets stay
+  outside the repository.
+- **Runtime: `TAINT_MODE=on-untrusted-source`** (default `on-finding`) taints an execution
+  as soon as a result labelled untrusted by the Gate (or a retrieval) is read, so
+  `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL` also covers reads without a detected injection.
+- **Runtime: `AI_DISCLOSURE=header|field`** (default `off`) marks successful completions
+  as AI-generated: `X-AI-Generated: true` on `/v1/chat/completions` and `/v1/responses`,
+  or `metadata.ai_generated: true` in a JSON body (a stream carries the header).
+- **Health reports an open door.** `"auth": "disabled"` in Runtime `/health` and
+  `/health/ready`, Search and Extract `/health`, Gate `/healthz` and `/readyz` when
+  `AUTHN_MODE=disabled`; the Runtime also warns at start.
+- **Flow evaluation: structured assertions.** Eval cases and matrix tasks accept `contains`,
+  `regex`, `jsonPath` (restricted `$.a.b[0]` syntax), `toolCalled` (min/max, `server/tool`
+  or bare name) and `maxTokens` next to the reference answer; a cell passes when its
+  reference score and every assertion do. Existing cases are unchanged.
+- **Search: `TRANSACTION_JWKS_URI` and `TRANSACTION_ALGORITHMS`**, see Security.
+### Changed
+
+- **Runtime** (`@atf/runtime`): online (DB) flows still override same-id file
+  flows, but the override is no longer silent (ADR 0034). Startup logs a
+  warning naming every flow whose file version is shadowed by a published
+  online flow; `GET /flows/:id` reports `shadowsFile: true` plus the current
+  file baseline as `fileDefinition`; publish and rollback record
+  `shadowsFile` in the audit entry and response, and deleting an online flow
+  that reveals a file flow reports `revealsFile`. The GitOps webhook now
+  intersects reloaded flows with the shadowed set: a trigger-branch push that
+  has no runtime effect returns `shadowedFlows: [...]`, logs a warning, and
+  says so in its message — instead of reporting a reload that never went live.
+- **Extract** (`@atf/extract`): three throughput ceilings in the v2 pipeline
+  are removed (ADR 0033). The page scheduler no longer advances in
+  lockstep batches — `drivePages` refills a freed `PAGE_CONCURRENCY` slot
+  as soon as a page settles instead of waiting for the whole batch, so one
+  slow OCR page no longer idles the other slots, while an ordered publish
+  buffer keeps page events and cumulative usage totals arriving in ascending
+  page order (a page that failed transiently does not hold back its
+  successors and, if it succeeds on a retry, follows them) (early pause/failure/lease-loss outcomes flush the
+  ordered prefix first, then drain in-flight pages; peak in-flight stays
+  ≤ `PAGE_CONCURRENCY`). A worker can now run several jobs in parallel via
+  the new `JOB_CONCURRENCY` (default 1 — sequential as before, range 1–32):
+  `loop()` keeps that many job lanes, claims only while below the limit
+  (the fleet-wide large-job lane cap in the claim SQL is untouched), and
+  `stop()` drains every lane before resolving; `tick()` still processes
+  exactly one job. And derived PDFs are reused across runs under
+  `TEMP_DIR/derived-pdf` (`DERIVED_PDF_CACHE`, default true): a PDF source
+  stored under the scratch root is rendered in place with no per-run copy,
+  and a LibreOffice conversion is published once under a key of the source
+  sha256 plus the converter identity (`soffice --version`, probed once,
+  so an upgrade invalidates old conversions) and hard-linked in atomically
+  on later runs — retries and re-ingestion of an unchanged document skip
+  the conversion entirely. Disabling the cache or `JOB_CONCURRENCY=1`
+  reproduces the previous behaviour through configuration alone. See
+  [ADR 0033](docs/adr/0033-extract-throughput-continuous-refill-job-lanes-derived-pdf-cache.md).
+- **Consolidation** (no behaviour change): the three MCP 2026
+  implementations (Gate `mcp/stateless-2026.ts`, Search `handlers/mcp.ts`,
+  Runtime `mcp/wrapper/stateless-2026-client.ts`) now delegate to
+  `@atf/mcp-2026`; per-endpoint differences (which methods are named,
+  whether JSON-RPC 2.0 is required, keyed vs. bare `resources/read`) are
+  configuration on the shared validator, not divergent code. The eleven
+  canonical-JSON call sites across Runtime, Gate, Search and Extract
+  likewise import `@atf/canonical-json`; the Gate's legacy `crypto/canonical.ts`
+  stays verbatim on purpose — its quirky output is bound into signed cursors
+  and approval digests that must verify across restarts.
+- **Search** (`@atf/search`): `/v2/search` and the MCP `search` tool now run
+  on one shared retrieval pipeline (`handlers/retrieval-pipeline.ts`) —
+  embed → sparse → candidates → rerank → document groups → diversify/group →
+  relevance threshold → slice → expansion → figure lookup. The two
+  orchestrations had copy-pasted this sequence and drifted: different rerank
+  input fitting, different threshold position relative to the limit slice,
+  different over-fetch and sparse-failure handling. The deliberate
+  per-endpoint differences (v2: token-fitted rerank with a two-candidate
+  floor and the threshold AFTER the slice; MCP: unfitted rerank and the
+  threshold BEFORE it) are explicit pipeline configuration. The v1 `/search`
+  handler keeps its own header-driven orchestration (Requirement 13.7); it
+  already shares the stage primitives.
+- **All services** (Runtime, Gate, Search, Extract): the production-readiness
+  gates now key off an explicit operational profile resolved identically
+  everywhere through `@atf/security-kit`
+  (`packages/security-kit/src/prod-gate/profile.ts`). The platform-wide
+  `ATF_PROFILE` (new) wins over the service variable (`APP_ENV`,
+  `MCPGATE_ENV`, `NODE_ENV`), which previously had to spell `production`
+  exactly and inconsistently per service. The value set is closed —
+  `development`, `staging`, `production`, `test` — with unified trim +
+  lowercase normalisation, and a non-blank unknown value now aborts startup
+  with a named error instead of silently falling back to `development`, where
+  every gate stays off: a typo like `prod` can no longer disable the
+  production gates unnoticed. `staging` runs the checks in warn mode — the
+  full fatal list is reported, startup continues — so a pre-production system
+  surfaces exactly what a promotion to `production` would refuse. Existing
+  `APP_ENV`/`MCPGATE_ENV`/`NODE_ENV` deployments keep working unchanged;
+  Runtime's unrelated `PROFILE` preset variable (dev/secure/regulated config
+  bundles) is untouched.
+- **Runtime** (`@atf/runtime`): the evidence chain prefers Ed25519 wherever
+  `EVIDENCE_SIGNING_KEY` is configured — audit anchors
+  (`EVIDENCE_SIGNING_KEY` > `AUDIT_ANCHOR_SECRET` > inactive), evidence
+  bundles (`EVIDENCE_SIGNING_KEY` > `EVIDENCE_BUNDLE_SECRET` >
+  `AUDIT_ANCHOR_SECRET` > endpoint `404`), and erasure receipts
+  (`ERASURE_RECEIPT_SIGNING_KEY` > `EVIDENCE_SIGNING_KEY` >
+  `AUDIT_ANCHOR_SECRET` HMAC > unsigned). HMAC is demoted to a verify-only
+  legacy path: pre-existing HMAC anchors and bundles verify byte-identically
+  to before, and HMAC signing output is unchanged, so no historical artefact
+  becomes unverifiable. The production gate warns (non-fatal) when a
+  deployment still signs evidence with HMAC only, recommending
+  `EVIDENCE_SIGNING_KEY` so third parties can verify independently; the
+  compliance dossier and audit-anchor hints report which algorithm signed
+  each artefact and how to check it.
+- **Production gates** (Search, Extract, Runtime): the
+  production-readiness checks now know the declared replica count
+  (`REPLICAS`, default 1, see ADR 0031). `REPLICAS > 1` without a shared
+  rate-limit store is fatal for Search and Extract (no
+  `RATE_LIMIT_REDIS_URL`) and a warning for Runtime (no `REDIS_URL`),
+  because every replica would otherwise hand out the full budget
+  independently; Runtime additionally warns when `REPLICAS > 1` combined
+  with `RED_TEAM_SCHEDULE_FLOWS`, which would run each scheduled test once
+  per replica. Single-container defaults are unchanged and stay silent.
+- **Packages** (independent SemVer): `@atf/security-kit` 1.0.0 → 1.1.0 (new
+  exports `createLazyRedisRateLimitBackend` and the operational-profile
+  resolver; `RedisEvalClient.eval` now has the `redis` v4/v5 options-object
+  signature — the previous positional form never worked against any `redis`
+  version the services install, see Fixed, and the package is workspace-private,
+  so every in-repo consumer moved in the same change);
+  `@atf/evidence-contract` 1.1.0 → 1.1.1 and `@atf/erasure-contract` 1.0.0 →
+  1.0.1 (their canonicalisers are now thin re-exports of `@atf/canonical-json`;
+  public API, wire constants and output bytes are unchanged, pinned by
+  differential tests). New packages `@atf/canonical-json` and `@atf/mcp-2026`
+  start at 1.0.0 and run in the CI contract job. All `workspace:` references are
+  exact. `@atf/schema-compatibility` keeps its own stable-value helper on
+  purpose: it is not part of a signed or hashed payload.
+- **Search** (`@atf/search`): the BM25 lexical path needs a `USING bm25` index
+  on the table; the index is detected per table at start, and a table without
+  one falls back to the full-text path with a one-time warning (before, a
+  missing index failed the query); a table that gets the index later is picked
+  up within a minute, without a restart. The activity summary no longer carries the
+  query text (`query[N chars]`). `group_by_document` inserts `[…]`
+  (`CHUNK_GAP_MARKER`) between chunks that are not adjacent in the document, so
+  the model does not read two distant passages as one. The MCP search tool
+  embeds the same normalised query as the REST routes and counts tokens with the
+  configured counter.
+- **Extract** (`@atf/extract`): `/v2/render` no longer converts and rasterises
+  twice per request. It reads the page size (`pdfinfo`, with `/Rotate` applied)
+  without rendering, picks the DPI, and rasterises only the requested region in
+  one `pdftoppm -x -y -W -H` call; `X-Render-Dpi` is the resolution of the
+  delivered pixels, a target above what the source can deliver returns the
+  pixels it has instead of an enlarged image, and the tile named in
+  `X-Render-Tile` comes from the page's real size. A whole page without a target
+  keeps the pipeline's adaptive DPI. Office/HTML sources reuse the derived-PDF
+  cache instead of converting per zoom.
+- **Extract** (`@atf/extract`): the LibreOffice version is part of the pipeline
+  hash (probed three times at start; an unknown identity leaves the hash as it
+  was and bypasses the cache), so a converter upgrade is a resume decision and
+  not a silent mix of two renderings.
+- **Tooling**: `check:flow-versions` also treats `compliance-policy`, `access`,
+  `canary` and `experiments` as shared files every flow depends on, and
+  `constants` for flows that reference `const.<name>`. `cli.ts validate` names
+  the offending fields of a schema failure and reports an unresolvable include,
+  variable or shortcut for the file instead of aborting.
+- **Release pipeline**: the release SBOM includes the desktop outpost's Rust
+  crates (`--include-cargo`), the supply-chain bundle gets a GitHub provenance
+  attestation, Dependabot now covers `deploy/images`, `apps/outpost` and the
+  `outpost-desktop` crates, and the quickstart image is pinned by digest.
+- **Extract: segments are committed while the hand-over is still running.** The emitter
+  used to commit them after the last batch, so "progressive visibility" only began when
+  everything was already in Search. A segment is now committed as soon as its batches and
+  its assets are acknowledged. `SEGMENT_PAGES` defaults to 100 (was 250). Simulated
+  hand-over of 600 pages, 20-page batches: the first pages are searchable after
+  5.6 s → 1.0 s (100 pages instead of all 600), everything after 6.0 s → 6.5 s (+8 %).
+  `EMIT_BATCH_PAGES` stays 20 — the benchmark shows a smaller batch buys no earlier
+  visibility and costs a PUT per batch (10-page batches: +19 % hand-over, first pages after 1.2 s instead of 1.0 s). The processing
+  phase that precedes the hand-over is unchanged. The batch size is frozen per job when its
+  first batch is sent, so a changed setting never re-maps an open revision; the threshold
+  above which `POST /v1/ingest` answers `202` is decoupled from `SEGMENT_PAGES` and stays
+  at 250 pages.
+- **Gate: approver semantics** (see Security); an approval event now has `declaredApprover`
+  and `selfResolved`.
+### Fixed
+
+- **Security kit / Gate** (`@atf/security-kit`, `@atf/gate`): the Redis
+  rate-limit backend called `client.eval(script, numKeys, …)` — the redis
+  v3 positional signature. The installed `redis` v4+/v5 client reads the
+  second argument as an options object (`{ keys, arguments }`), so the call
+  reached the server as `EVAL script 0`: the GCRA Lua script ran with no
+  keys, threw on `KEYS[1]`, and — under the backend's fail-closed default —
+  the Gate's per-identity Redis limiter denied **every** request against a
+  real Redis v5. The call now uses the options-object form, with a
+  regression test pinning the wire shape. Unit tests had missed this
+  because the test fake mirrored the legacy call.
+- **Extract** (`@atf/extract`): `MAX_PAGES` is now enforced on the v2 job
+  runner, not only the v1 extractor. A v2 job that would process more pages
+  than the limit — vision or native (BPMN/XLSX) — fails terminally before the
+  first page is sent to the vision model and before emit-outbox staging, so an
+  over-long upload with no token budget, or no attributable tenant, can no
+  longer drive vision over every page unbounded. The check counts the pages the
+  job covers (`min(document pages, pages.to)`), not the raw document size, and
+  runs after the document was prepared (a LibreOffice conversion, and where
+  version resolution needs it one summary call, can precede the refusal).
+  `MAX_PAGES=0` still disables the check; tenant-less jobs remain bounded only
+  by `MAX_PAGES` and the per-job token budget (the daily page budget needs a
+  tenant). The production gate also warns when `CONVERTER_MODE=local` runs the
+  converter inside the service's own container (requirement 5.7).
+- **Extract** (`@atf/extract`): the derived-PDF cache no longer pins an
+  `unknown` converter identity. The `soffice --version` probe used to be
+  memoised even when it failed (sidecar not up yet, timeout), so every later
+  conversion in that process shared one key regardless of the build that
+  produced it. Only a successful probe is remembered now; while it fails the
+  conversion runs uncached (and logs a warning).
+- **Search** (`@atf/search`): the lexical branch of FTS and hybrid search now
+  matches query terms with OR (`to_tsquery` over quoted, deduplicated terms)
+  instead of AND (`websearch_to_tsquery`). Natural-language questions no longer
+  leave the lexical branch empty, which had silently degraded hybrid search to
+  pure vector search. Scoring stays `ts_rank_cd` with length normalisation; the
+  ParadeDB/VectorChord BM25 path is unchanged. **Behaviour change:** the
+  lexical branch no longer understands `websearch_to_tsquery` syntax — quoted
+  phrases (`"exact phrase"`), `-exclusion` and `OR` in a query are now ordinary
+  terms, and a token such as `E-Mail` is searched as `E | Mail`. An integration
+  test against a real Postgres shows the legacy AND query matching nothing for a
+  question whose chunk shares only some of its words, and the OR list finding
+  it. Rankings of existing collections change; re-run your retrieval eval after
+  upgrading (see Migration).
+- **Search** (`@atf/search`): diversification is scoped per document. Equal
+  `section_path` values in different documents (e.g. a chapter named
+  `1 Einleitung` in several files) each get their own cap, and the
+  same-`table_id` / same-`figure_id` collapse keys on the document as well —
+  Extract numbers tables and figures per document, so two data sheets that both
+  carry "table 1" no longer lose the lower-scoring one in `/v2/search`.
+- **Search** (`@atf/search`): `/v2/search` now records the real search duration
+  in the per-tenant search statistics instead of a constant `0`.
+- **Search** (`@atf/search`): startup now fails when `EMBED_FALLBACK_MODEL` is
+  set to a value different from `EMBED_MODEL` — the fallback could mix two
+  vector spaces into one index. Operators who know both names serve the same
+  underlying model (e.g. an Ollama tag and a TEI repo id for the same base
+  model) opt in explicitly with `EMBED_FALLBACK_SAME_SPACE=true`.
+- **Control** (`@atf/control`): graph edges are visible again. The design
+  tokens are HSL triplets (`215 20% 65%`), and a bare `var(--edge-*)` as an SVG
+  `stroke` computes to `none`; every edge, marker and canvas-dot colour is now
+  wrapped in `hsl(…)`. The server-safe `translate` / `interpolate` helpers moved
+  to `lib/i18n/translate.ts` (outside the `"use client"` provider module) so
+  server components and loading boundaries no longer import a client reference.
+- **Documentation** (no behaviour change): `docs/runbooks/backup-restore.md`
+  named stores that do not exist — a Gate Postgres database (the Gate is
+  stateless; its only persistent state is the optional monitor audit JSONL
+  file) and an "Extract outstore" (the v2 source documents live in Extract's
+  `SOURCE_STORE_DIR`, and since 0.18.0 the asset bytes live in Search's
+  `vs_assets`). Following the old runbook skipped the Search database dump
+  entirely, which with the default `ASSET_STORE_BACKEND=postgres` is the only
+  copy of every stored figure. The dump/restore commands, the anchor-file
+  pairing (Runtime, not Gate), the PITR section, and the evidence step of
+  `docs/runbooks/incident.md` now match the actual stores.
+  `docs/UPGRADE.md` covers 0.17 and 0.18 (v1 asset-route removal, `vs_assets`
+  as the single asset store, the text-only rollback caveat).
+- **Runtime** (`@atf/runtime`): the chokidar watcher handled `add` and `change`
+  but not `unlink`, so a deleted flow stayed registered and executable until the
+  next restart; a late read of a just-deleted file can no longer resurrect its
+  load-failure entry.
+- **Extract** (`@atf/extract`): `readPageSize` ignored `Page rot:`, so the size
+  of a page with `/Rotate 90|270` was transposed for every consumer (adaptive
+  DPI, tile planning, region renders).
+- **Extract: `pages` was accepted and silently ignored.** The API stored the string as sent
+  while the runner only read an object (`{to}`), so a request for a page range processed
+  and billed the whole document. It is validated, normalised and applied now (see Added).
+### Migration
+
+Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
+out. The changes below can stop an existing deployment from starting or change
+what it returns, without any code change on your side:
+
+- **Unknown profile values abort the start.** `ATF_PROFILE`, `APP_ENV`,
+  `MCPGATE_ENV` and `NODE_ENV` must be one of `development`, `staging`,
+  `production`, `test` (case-insensitive, trimmed). `NODE_ENV=prod`, `local` or
+  `ci` used to fall through to "no production gate" and now fail loudly. Fix the
+  value, or set `ATF_PROFILE` explicitly.
+- **`EMBED_FALLBACK_MODEL` ≠ `EMBED_MODEL` aborts the Search start.** If both
+  names serve the same underlying model (different tag, same weights), set
+  `EMBED_FALLBACK_SAME_SPACE=true`; otherwise point the fallback at the same
+  model. A deployment that configured two different model identifiers must make
+  this choice before upgrading.
+- **Gate production gate.** `monitoring.playground.enabled: true` and a
+  plaintext-`http://` `server.publicUrl` / `monitoring.oidc.redirectUri` are now
+  fatal in `production`. Disable the playground (or run `staging`) and use
+  `https://` URLs.
+- **`REPLICAS > 1` needs a shared rate-limit store** (`RATE_LIMIT_REDIS_URL`) in
+  Search and Extract in `production`; Runtime warns.
+- **Audit log: rotate tokens that may have been written.** Before this change the
+  red-team routes stored the raw `Authorization` header and the optimizer routes
+  stored the first 12 characters of the bearer token as the audit `actor`. Treat
+  those operator tokens as exposed and rotate them; restrict
+  `GET /monitoring/audit` and your log shipper's audit stream until you have.
+  Existing rows are part of the hash chain and are not rewritten. Verify the
+  chain afterwards: `legacyForm` in the result counts rows that verify under the
+  pre-fix hash form.
+- **Search ranking and query syntax.** The lexical branch ORs query terms and no
+  longer parses `websearch` syntax (`"phrase"`, `-term`, `OR`). Re-run your
+  retrieval evaluation; clients that relied on quoted phrases or exclusions need
+  to filter on their side.
+- **Playground behaviour (Gate).** Dry-runs now require the tool's scopes and
+  honour policy deny; an OIDC session no longer receives the synthesised
+  `tools:<access>` scope. A tool that declares `requiredScopes: [tools:write]`
+  needs that scope in the IdP's `tools` claim for dashboard users.
+- **Extract.** v2 jobs that would process more than `MAX_PAGES` pages (default
+  500; `0` disables) now fail terminally instead of running. `JOB_CONCURRENCY`
+  and `RATE_LIMIT_REDIS_URL` are opt-in and change nothing until set;
+  `DERIVED_PDF_CACHE` defaults to on and only reuses conversions under
+  `TEMP_DIR/derived-pdf` (see UPGRADE for the retention caveat).
+- **Signing.** Nothing breaks if you do nothing: HMAC anchors, bundles and
+  receipts keep signing and verifying. Set `EVIDENCE_SIGNING_KEY` to move to
+  Ed25519; back the key up with your other signing secrets (see the backup and
+  key-rotation runbooks) and keep the public key of every key that ever signed
+  an artefact you still need to verify.
+- **Extract: local converter.** `CONVERTER_MODE=local` aborts the start in
+  `production` unless `CONVERTER_ALLOW_LOCAL_HTML=true` (or the converter runs
+  `isolated`). Decide before upgrading; the flag keeps the previous behaviour and
+  leaves a readiness warning. The Helm chart runs LibreOffice inside the Extract
+  pod and therefore exports the acknowledgement by default
+  (`extract.config.converterAllowLocalHtml: true`); set it to `false` once an
+  isolated converter is wired in.
+- **Extract: one-time loss of pinned resumes.** The LibreOffice identity and the
+  prompt versions (2.1.0 / 2.1.0 / 2.2.0) are part of the snapshot hashes, so a
+  job paused or in flight under the `pin` resume policy at upgrade time no
+  longer matches and must be restarted instead of resumed. Drain or finish
+  running jobs first.
+- **Helm: Search and Extract need Redis by default.** The chart now declares its
+  replica count (`replicaCount` defaults to 2), so a production pod without
+  `RATE_LIMIT_REDIS_URL` fails the production gate and does not start. Provide
+  the shared store, or set `replicaCount: 1`. `global.profile` is opt-in; unset,
+  no `ATF_PROFILE` is exported.
+- **Gate.** Imported MCP tools default to `write` unless the downstream declares
+  `annotations.readOnlyHint: true` — re-check which tools your clients can reach
+  with a read-only scope. The dashboard logout is a `POST` (the shipped page is
+  updated; a custom page or a link that used `GET /monitor/logout` now gets
+  405). The IdP must accept PKCE and return the `nonce`.
+- **Search.** Create a `USING bm25` index on tables that should use the BM25
+  path; without one the full-text path is used and a warning is logged once.
+- **Runtime erasure.** An erasure that reached no store now returns `failed`
+  (HTTP 502) instead of `complete`; an operation another run still holds returns
+  202. Operations stuck in `partial` from a crash before this change have no
+  `in_progress` marker: retry them with `POST /admin/compliance/erasures/{id}/retry`.
+- **Flow version gate.** A change to `compliance-policy`, `access`, `canary` or
+  `experiments` (or `constants` for flows that use it) now requires a version
+  bump of the affected flows in CI.
+- **`DELETE /v2/documents/{reference}`** now also deletes the reference's jobs,
+  upload sessions and unused source bytes in Extract. A job you wanted to keep
+  for inspection must be exported before the delete.
+- **`pages` on `POST /v2/jobs` now takes effect and is validated.** A client that sent a
+  value that was ignored before (a list such as `1-10,15`, or text) gets a 400; a client
+  that sent a range gets only that range. **Upgrade Search before sending windowed jobs**:
+  an older Search expects a stream to start at page 1 and rejects a window at the final
+  commit.
+- **`SEGMENT_PAGES` defaults to 100** (was 250) and segments commit during the hand-over.
+  Set `SEGMENT_PAGES=250` to restore the old granularity; the commit order cannot be
+  switched back.
+- **Gate approvals:** nothing changes until `policies.approval.requireDifferentApprover`
+  is set; the `approver` field is a label only (UPGRADE item 14).
+- **Clients and probes:** the optional `"auth": "disabled"` health field, the `_meta`
+  content-trust key on Gate tool results and the 202/400 behaviour above are additive, but
+  anything that compares a whole body to a fixed shape must allow them.
+- **Transaction tokens:** optional move to Ed25519 with an audience per service, in the
+  order of UPGRADE item 20.
 ## [0.18.1] — 2026-10-18
 
 ### Security

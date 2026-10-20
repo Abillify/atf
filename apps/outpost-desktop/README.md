@@ -14,22 +14,31 @@ browser extension.
 
 ```
 ┌───────────────────────── Tauri window (WebView) ─────────────────────────┐
-│  src/main.tsx — sources, sync status, logs (talks only to the host)      │
-└──────────────────────────────┬───────────────────────────────────────────┘
-                               │ Tauri IPC (src/api-client.ts)
-┌──────────────────────────────▼───────────────────────────────────────────┐
-│  src-tauri/ — Rust host: spawns and supervises the sidecar, keychain     │
-│  bridge, bundled binary at binaries/atf-outpost (bundle.externalBin)     │
-└──────────────────────────────┬───────────────────────────────────────────┘
-                               │ stdio, token handshake (see below)
-┌──────────────────────────────▼───────────────────────────────────────────┐
+│  src/main.tsx — sources, sync status, logs                               │
+│  src/api-client.ts — fetch + Bearer to the sidecar's loopback control API│
+└───────────────┬───────────────────────────────────────┬──────────────────┘
+                │ Tauri IPC: `control_info`             │ HTTP, 127.0.0.1,
+                │ (control URL + per-launch token)      │ Bearer control token
+┌───────────────▼───────────────────────┐               │
+│  src-tauri/ — Rust host: spawns and   │               │
+│  supervises the sidecar, keychain     │               │
+│  bridge, bundled binary at            │               │
+│  binaries/atf-outpost (externalBin)   │               │
+└───────────────┬───────────────────────┘               │
+                │ stdio, token handshake (see below)    │
+┌───────────────▼───────────────────────────────────────▼──────────────────┐
 │  atf-outpost sidecar — @atf/outpost + @atf/outpost-core sync engine      │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
-
-- The WebView never sees the sync agent's credentials and never talks to
-  the network on its own; all I/O goes through the Rust host and the
-  sidecar.
+- The WebView asks the host for the sidecar's loopback URL and control
+  token (`control_info`) and then calls the sidecar's control API itself
+  with `fetch` and `Authorization: Bearer` (`src/api-client.ts`): status,
+  sync, pause/resume, login and configuration. It never sees the Extract or
+  cloud-source credentials, and the sidecar's API is not reachable from
+  the network. The control token, however, is readable by any script that
+  runs in the WebView, so a script injected into the UI could drive the
+  control API (start or pause syncs, change the configuration) — keep the
+  UI free of third-party content, and see the CSP in `tauri.conf.json`.
 - The host spawns the sidecar with a fresh 32-byte IPC token on its first
   stdin line and verifies the sidecar's `{"event":"ready","port":…}`
   stdout line before using it. The sidecar's control API binds to

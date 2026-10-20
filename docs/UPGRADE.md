@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: Elastic-2.0 -->
 <!-- SPDX-FileCopyrightText: 2026 Abillify Technology GmbH -->
 
-# Upgrade guide 0.3 → current (0.16)
+# Upgrade guide 0.3 → current (0.18, next release in progress)
 
 Database migrations are additive and run under a PostgreSQL advisory lock,
 so a migration job and booting replicas serialize safely. Who runs them is
@@ -17,8 +17,10 @@ and contracts. Before every upgrade, take a backup as described in
 
 1. Read the release notes of every skipped version (especially the
    **Migration** sections in the [CHANGELOG](../CHANGELOG.md)).
-2. Back up the Runtime, Search and Extract databases, the outstore and the
-   audit anchor file.
+2. Back up the Runtime, Search and Extract databases, the Extract source store
+   (`SOURCE_STORE_DIR`), the Search asset store (inside the Search database with
+   the default `ASSET_STORE_BACKEND=postgres`, or `ASSET_STORE_DIR` with the
+   filesystem backend) and the audit anchor file.
 3. Pin the images by digest in your deployment system and review the SBOM
    and scan results.
 4. Run the migrations (`bun run migrate` per service, or the Helm hooks:
@@ -187,6 +189,330 @@ The eval compose stack embeds with `BAAI/bge-m3` (1024 dimensions) instead of
 are committed yet and the CI floors in `scripts/eval/baseline/thresholds.json`
 are not recalibrated; production embedding settings are not affected.
 
+### 0.16 → 0.17
+
+Review the `[0.16.2]` and `[0.17.0]` sections of the [CHANGELOG](../CHANGELOG.md).
+One behaviour change arrives with 0.16.2: an **unknown collection** on a Search
+read or search route is now a typed `404` with `COLLECTION_NOT_FOUND` instead of
+`403`. Clients and alerting rules that treated `403` on a read as "the collection
+exists but I may not see it" must also accept `404`; a caller with a valid scope
+now sees an empty index rather than a permission failure.
+
+No schema change in any service. 0.17 is opt-in feature work: an `llm` node can
+declare `config.figureEmbedding` to get a `show_figure` tool that embeds a
+document figure from an `asset:<id>[#bbox]` search reference. The feature stays
+off until the deployment sets `EMBED_SEARCH_FIGURES=true` **and**
+`MEDIA_BASE_URL` (a reachable base URL for the Runtime's short-lived media
+links); without either, a node that requests the tool emits a
+`figure_embedding_unavailable` diagnostic instead. Existing flows are unaffected.
+
+### 0.17 → 0.18
+
+Review the `[0.18.0]` section of the [CHANGELOG](../CHANGELOG.md). Search global
+schema version stays **9**, Runtime **47**, Extract **5** — no migration step,
+but the HTTP surface changes:
+
+1. Back up first — the Search database is now mandatory in the backup set: with
+   the default `ASSET_STORE_BACKEND=postgres` the `vs_assets` table holds every
+   stored figure's bytes (`runbooks/backup-restore.md`).
+2. Confirm the `vs_document_assets` → `vs_assets` backfill completed (Step 1 of
+   [document-intelligence-v2-migration.md](document-intelligence-v2-migration.md))
+   — legacy assets are only retrievable through it from this version on.
+3. Clients that call `PUT` / `GET /document-assets/:assetId` directly must
+   switch to `GET /v2/assets/{id}?collection=…` **before** the rollout: the v1
+   routes are removed and answer 404/405 after it.
+4. Remove `SEARCH_UPLOAD_ASSETS` from Extract's environment (it is no longer
+   read). The synchronous `/v1/ingest` path no longer uploads figure crops;
+   figure images flow only through the v2 job pipeline, so a deployment that
+   needs stored figures must run the v2 path (`EXTRACT_DATABASE_URL` +
+   `SOURCE_STORE_DIR` on Extract, `BATCH_WORKER` on Search).
+5. Roll out Search first, then Extract, then the rest. `/search` (v1) hits now
+   report `asset_url` as `GET /v2/assets/{id}?collection=…` — clients that parse
+   the URL shape must accept it.
+
+0.18.1 is a security-patch release (dependency bumps, CBOR `__proto__` fix in
+`@atf/security-kit`); no configuration or schema change.
+
+#### Breaking or behaviour-changing, act before rolling out
+
+- **Search v1 asset routes removed**: `PUT` / `GET /document-assets/:assetId`
+  are gone. Anything writing assets through that route (custom ingest tooling)
+  must use the v2 job pipeline; anything reading must use `GET /v2/assets/{id}`.
+- **Extract v1 crop upload removed**: without a job store, the `/v1/ingest`
+  response drops `assets_stored` / `assets_failed`, and no figure crops are
+  stored at all. Text-only ingestion keeps working unchanged.
+- **Rollback after 0.18 is text-only**: figures indexed from 0.18 on live in
+  `vs_assets` only; backing Extract out to the synchronous v1 path stops crop
+  storage entirely (see the migration guide's Rollback section).
+
+### 0.18 → next (unreleased)
+
+Review `[Unreleased]` in the [CHANGELOG](../CHANGELOG.md), in particular its
+**Migration** subsection. No schema migration is part of this change; the work is
+configuration and clients. Do these **before** rolling out:
+
+1. **Check the profile values.** `ATF_PROFILE` (new), `APP_ENV`, `MCPGATE_ENV` and
+   `NODE_ENV` must be `development`, `staging`, `production` or `test`
+   (case-insensitive). Any other non-blank value — `prod`, `local`, `ci`,
+   `Production ` with a typo — now aborts the start of Runtime, Gate, Search and
+   Extract, where it used to behave like `development` (all production gates
+   off). `ATF_PROFILE` wins over the service variable; use `staging` to see the
+   full fatal list as warnings before promoting a system to `production`.
+2. **Search embedding fallback.** `EMBED_FALLBACK_MODEL` that differs from
+   `EMBED_MODEL` aborts the Search start. If both identifiers name the same
+   underlying model (an Ollama tag and a TEI repo id of the same weights), add
+   `EMBED_FALLBACK_SAME_SPACE=true`; if they are different models, point the
+   fallback at the same model — mixed vector spaces destroy relevance silently.
+3. **Gate production gate.** Fatal in `production`: `monitoring.playground.enabled:
+   true`, and a plaintext `http://` `server.publicUrl` or
+   `monitoring.oidc.redirectUri`. Turn the playground off (or run `staging`) and
+   use `https://`. Where the playground stays on outside production: dry-runs now
+   need the tool's `requiredScopes` and obey policy deny, an OIDC session carries
+   only the scopes in its IdP `tools` claim (no synthesised `tools:<access>`), and
+   HTTP-tool dry-runs show `[redacted]` for credential headers.
+4. **Replicas.** With `REPLICAS > 1`, Search and Extract require
+   `RATE_LIMIT_REDIS_URL` in production (otherwise every replica hands out the
+   full rate-limit budget); Runtime warns without `REDIS_URL`. The Helm chart now
+   exports `REPLICAS` (Gate: `MCPGATE_REPLICAS`) from `replicaCount` — or the
+   HPA's `maxReplicas` when autoscaling is on — and, only when you set
+   `global.profile`, `ATF_PROFILE`. `replicaCount` defaults to 2, so **a
+   production Search or Extract pod without `RATE_LIMIT_REDIS_URL` no longer
+   starts**: provide the shared store (`extraEnv` or a secret), or set
+   `replicaCount: 1`. `extraEnv` renders last and overrides the exported values.
+   `RATE_LIMIT_REDIS_URL` itself is not exported by the chart. The shared limiters
+   fail **open** when Redis is unreachable (they log and allow), the same
+   availability posture as the in-memory limiter they replace; for Extract that
+   means a Redis outage removes the request throttle, so alert on the error log.
+   The `redis` package must be installed in the image of any service that sets the
+   URL (it loads on the first request).
+5. **Rotate audit-exposed operator tokens.** Until this change the red-team routes
+   wrote the raw `Authorization` header, and the optimizer routes the first 12
+   characters of the bearer token, into the audit `actor`. Rotate those tokens,
+   and restrict `GET /monitoring/audit` plus the log shipper's audit stream until
+   you have. The rows stay in the hash chain (they cannot be removed without
+   breaking it); a purge needs the documented `audit_log_purge` procedure with its
+   pre-purge anchor.
+6. **Verify the audit chain after the rollout.** The `details` hash is now
+   key-sorted at every depth. Chains written before verify as before; the result
+   reports `legacyForm` — the number of rows that verified only under the old hash
+   form. Rows whose `details` Postgres had already reordered after they were
+   hashed were false positives before and stay unverifiable.
+7. **Search ranking.** The lexical branch ORs the query terms and no longer parses
+   `websearch` syntax (`"phrase"`, `-term`, `OR`). Hybrid and FTS rankings change
+   for natural-language questions (the lexical list is no longer empty). Re-run
+   `bun run eval:retrieval`; tune `MIN_RERANK_SCORE`/`RETRIEVAL_*` only after that.
+   Clients that depended on quoted phrases or exclusions must filter themselves.
+8. **Extract.** A v2 job that would process more than `MAX_PAGES` pages (default
+   500, `0` = unlimited) now fails terminally; the limit counts the pages the job
+   covers (`pages.to`), not the raw file. `DERIVED_PDF_CACHE` (default on) keeps
+   converted PDFs under `TEMP_DIR/derived-pdf` — see below for its retention.
+   `JOB_CONCURRENCY` (default 1) multiplies the model load: peak vision calls ≈
+   `JOB_CONCURRENCY × PAGE_CONCURRENCY × replicas`.
+   - **Local converter.** `CONVERTER_MODE=local` aborts the start in production
+     unless you run `CONVERTER_MODE=isolated` or acknowledge the risk with
+     `CONVERTER_ALLOW_LOCAL_HTML=true` (then it stays a readiness warning). In
+     staging and development it is a warning, so check with `ATF_PROFILE=staging`.
+     The Helm chart converts inside the Extract pod, so it exports the
+     acknowledgement by default (`extract.config.converterAllowLocalHtml`).
+   - **Pinned jobs restart once.** The LibreOffice version and the prompt
+     versions (page 2.1.0, figure 2.1.0, summary 2.2.0) are part of the snapshot
+     hashes. A job that is paused or running under `resume_policy: pin` when you
+     upgrade no longer matches and has to be restarted. Let running jobs finish
+     (or pause none) before the rollout; completed documents are unaffected.
+   - **Retention.** `DELETE /v2/documents/{reference}` now removes the
+     reference's jobs, upload sessions and unused source bytes in Extract; export
+     a job first if you want to keep it. For everything else set a rule:
+     `JOB_RETENTION_DAYS` (default 0 = keep; the production gate warns) drops
+     finished jobs and their stored model responses after that many days,
+     `UPLOAD_SESSION_MAX_AGE_HOURS` (default 72) drops abandoned resumable
+     uploads, `RETENTION_SWEEP_INTERVAL_MINUTES` (default 60) sets the cadence.
+     Source bytes are not swept by age because `/v2/render` needs them while
+     Search serves the document; they go with the document or an erasure.
+   - **`/v2/render`** renders only the requested region, once. Images can differ
+     slightly from before (rendered at the reported DPI, not enlarged); a client
+     that cached by pixel size is unaffected, one that assumed an upscaled size
+     gets the pixels the source can deliver.
+9. **Evidence signing (optional, recommended).** Set `EVIDENCE_SIGNING_KEY`
+   (Ed25519) so anchors, evidence bundles and erasure receipts are verifiable by
+   third parties against `GET /.well-known/atf-evidence-jwks.json`. Back the key
+   up with the other signing secrets ([runbooks/backup-restore.md](runbooks/backup-restore.md))
+   and keep the **public key of every key that ever signed an artefact you still
+   have to verify**: the endpoint publishes only the current key, so after a
+   rotation old artefacts need the archived JWKS
+   ([runbooks/key-rotation.md](runbooks/key-rotation.md)). HMAC artefacts keep
+   verifying with the old secrets; nothing breaks if you do nothing.
+
+10. **Gate.** Imported MCP tools are `read` only when the downstream declares
+    `annotations.readOnlyHint: true`; all others import as `write`, so write
+    gating and approval rules apply — review which tools your read-only clients
+    can still reach, or set `access` on the import/override. The monitor's logout
+    is `POST /monitor/logout`; `GET` answers 405. OIDC login uses PKCE and a
+    `nonce`; the IdP must support S256 and return the `nonce` claim. With several
+    trusted OAuth issuers and tenant isolation, list each issuer's tenants in
+    `tenantIsolation.issuerTenants` (fatal in production when empty).
+11. **Search.** The BM25 lexical path needs a `USING bm25` index on the
+    collection table (this service does not create it). Tables without one use the
+    full-text path and log a warning once; create the index and it is used within
+    a minute. New tuning settings (`RERANK_BATCH_SIZE`, `RERANK_BATCH_CONCURRENCY`,
+    `HYDE_CACHE_TTL_SECONDS`, `BATCH_WORKER_EMBED_CONCURRENCY`, `EXPAND_CONCURRENCY`)
+    have defaults that change nothing you must act on; `/v2/search` now honours
+    `X-Valid-At`, and grouped results mark gaps between non-adjacent chunks with
+    `[…]`.
+12. **Runtime.** An erasure that reached no store returns `failed` (502), not
+    `complete`; `POST /admin/compliance/erasures/{id}/retry` also resumes an
+    operation whose run died (202 while another run holds it). Cleartext subject
+    identifiers disappear from an operation once it is `complete`. A deleted flow
+    file now stops being served, and a flow file that does not load shows up in
+    `/health/ready` as `flow_load: degraded` (never 503) and in the gauge
+    `aiperator_flow_load_failures` — alert on it. Optional: `COMPLIANCE_POLICY_REQUIRED=true`
+    refuses a production start without a compliance policy; the production gate
+    warns while `EGRESS_ALLOWED_HOSTS` is empty. See also
+    [EU-AI-ACT.md](EU-AI-ACT.md).
+13. **Flow CI.** `check:flow-versions` now also counts `compliance-policy`,
+    `access`, `canary`, `experiments` (and `constants` for flows that use it) as
+    inputs of every flow: changing one needs a version bump of the affected flows.
+    `cli.ts validate` prints the failing fields.
+14. **Gate: who resolves an approval.** The resolver of a pending approval is now
+    recorded from the verified identity of the caller (`ctx.subject`); the
+    `approver` a client sends stays only as a display label (`declaredApprover`)
+    in the event. Nothing is enforced until you opt in:
+    `policies.approval.requireDifferentApprover: true` makes the requester unable
+    to resolve its own request (403, the request is **not** consumed) and requires
+    a different principal of the same tenant holding `policies.approval.approverScope`
+    (default `approvals:resolve`). Turn it on only when approvals are resolved by
+    people or a service that is not the requester; with the Runtime acting as the
+    resolver for its own calls the same identity requests and resolves, and the
+    option would block every approval.
+15. **Tool results carry a content-trust label; taint mode (optional).** Gate adds
+    `_meta["io.atf/content-trust"] = { content_trust: "untrusted", source }` to the
+    results of executed tools (not to its own denials). Clients that validate
+    `_meta` strictly must allow the key; the Runtime reads it. `TAINT_MODE`
+    (Runtime, default `on-finding`) decides what taints an execution: the default
+    is unchanged (an injection finding by the scanner). `on-untrusted-source` also
+    taints it as soon as a result labelled untrusted is read, so
+    `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL` then fires for every write after any
+    such read, not only after a detected injection: expect more approval prompts
+    in flows that read documents and then write.
+16. **AI disclosure (optional).** `AI_DISCLOSURE=header` adds `X-AI-Generated: true`
+    to successful `/v1/chat/completions` and `/v1/responses` responses;
+    `field` adds `metadata.ai_generated: true` to a non-streaming JSON body (a
+    stream carries the header). Default `off`; see [EU-AI-ACT.md](EU-AI-ACT.md).
+17. **Health shows an open door.** With `AUTHN_MODE=disabled` Runtime
+    (`/health`, `/health/ready`), Search and Extract (`/health`) and Gate
+    (`/healthz`, `/readyz`) now include `"auth": "disabled"`, and the Runtime
+    warns at start. The field is absent otherwise; a probe that compares the
+    whole body to a fixed shape needs to allow it. The Runtime's production gate
+    still refuses to start unauthenticated.
+18. **Extract: page windows.** `pages` on `POST /v2/jobs` used to be accepted and
+    **ignored**. It is now a contiguous window of the source, in source page
+    numbers: `"5"`, `"3-10"`, `"5-"`, `"-8"`. A list such as `"1-10,15"` or a
+    reversed window is rejected with 400, and a `from` beyond the source fails the
+    job terminally, before any model call. `MAX_PAGES` counts the window. The
+    indexed pages keep the source's own numbers (a window `"5-7"` yields pages 5, 6,
+    7), and Search checks completeness over `[firstPage, pageCount]`. A native
+    source (BPMN, a chart-free XLSX) is always staged whole. `@atf/extract-contract`
+    is **2.4.0** (wire `atf-extract/2.4.0`): `document.begin` and `document.end`
+    gain the optional `firstPage`. A Search without this change expects a stream to
+    start at page 1 and rejects a window at the final commit, so **upgrade Search
+    before you send windowed jobs**; streams without `pages` are unchanged in both
+    directions.
+19. **Extract: earlier visibility, a different default.** The emitter now commits
+    each segment as soon as its batches and assets are acknowledged, instead of
+    after the last batch, and `SEGMENT_PAGES` defaults to **100** (was 250). With
+    `visibility: progressive` the first pages of a long document are searchable
+    while the rest is still being handed over; the processing phase before the
+    hand-over is unchanged, so a document is still searchable only after all its
+    pages are processed. Measured effect and the price (more commit round-trips,
+    a longer hand-over until everything is searchable) are in the Extract README.
+    `EMIT_BATCH_PAGES` stays 20; its value is now frozen per job when the first
+    batch is sent, so changing it never re-maps the batches of a revision that is
+    already open. The v1 ingest threshold for answering `202` instead of waiting is
+    decoupled from `SEGMENT_PAGES` and stays at 250 pages.
+20. **Transaction tokens: move off the shared secret (optional, recommended).**
+    HS256 still works everywhere; the production gates of Gate and Search now warn
+    while it is accepted ([ADR-0035](adr/0035-asymmetric-transaction-tokens-audience-per-service.md)).
+    The runtime, the Gate and now Search can run on Ed25519 with each service
+    keeping its own audience. In this order, so nothing is rejected at any step:
+    1. Runtime: generate an Ed25519 key (PKCS#8 PEM) and set `TRANSACTION_SIGNING_KEY`;
+       leave `TRANSACTION_SIGNING_ALG` as it is for now. While the algorithm is HS256,
+       `GET /.well-known/atf-transaction-jwks.json` answers `{"keys":[]}`; it
+       publishes the key once the algorithm is switched in step 4.
+    2. Every verifier **accepts both**: Gate — keep `MCPGATE_TRANSACTION_HS256_SECRET`
+       and add `MCPGATE_TRANSACTION_JWKS_URI` (default algorithms are then HS256 plus
+       RS256/ES256/EdDSA); Search — keep `TRANSACTION_HS256_SECRET` and add
+       `TRANSACTION_JWKS_URI` (new; default algorithms HS256, ES256, EdDSA). The JWKS
+       URL must be https in Search production.
+    3. Give each service its own audience: Gate `MCPGATE_TRANSACTION_AUDIENCE`
+       (for example `mcpgate-taiga`), Search `TRANSACTION_AUDIENCE`, and on the
+       runtime `AGENT_TRANSACTION_AUDIENCES='{"taiga":"mcpgate-taiga","search":"vectorsearch"}'`
+       (server name → audience). Roll the verifiers first, then the runtime.
+    4. Runtime: `TRANSACTION_SIGNING_ALG=EdDSA`. Tokens are now signed with the key.
+    5. Verifiers drop HS256: remove the secret and set
+       `MCPGATE_TRANSACTION_ALGORITHMS=EdDSA` / `TRANSACTION_ALGORITHMS=EdDSA`; the
+       warnings stop. Remove `AGENT_TRANSACTION_SECRET` from the runtime.
+    The JWKS publishes only the active key, so rotate in a quiet window: tokens
+    signed with the old key that are still in flight (TTL ≤ 300 s) are refused.
+21. **Flow evaluation (optional).** Matrix tasks and eval cases accept structured
+    `assert` / `expected` checks (`contains`, `regex`, `jsonPath`, `toolCalled`,
+    `maxTokens`) next to the reference answer; existing cases keep working
+    unchanged. `bun run eval:extract-quality` scores extraction (CER, Heading-F1,
+    TEDS) against a golden set — see [scripts/eval/README.md](../scripts/eval/README.md).
+22. **Config checks for several replicas.** The production gates now warn about
+    things that are per process today (see "Not yet shared between replicas"
+    below): Runtime — a media store serving `show_figure` links, and the receipts
+    transparency log, with `REPLICAS > 1`; Gate — `server.pagination.secret`
+    unset with a paginated database tool and `MCPGATE_REPLICAS > 1`.
+
+### Not yet shared between replicas (roadmap)
+
+These are known single-process behaviours, not defects of a correct single-replica
+deployment. With `REPLICAS > 1` they show up as warnings; plan around them.
+
+| Behaviour | What happens with several replicas | What to do now |
+| --- | --- | --- |
+| Runtime media store (`show_figure` links) | A link minted by one replica 404s on another | Pin figure traffic to one replica or route `/media` stickily |
+| Runtime receipts transparency log | Each replica keeps its own log | Run receipts on one replica, or accept per-replica logs |
+| Gate pagination cursors | Signed with a per-process key unless `server.pagination.secret` is set | Set `server.pagination.secret` |
+| Gate approval / invocation stores | In memory without Redis | `MCPGATE_TRANSACTION_REDIS_URL` (already fatal in production for `> 1` replica) |
+
+Also decided and documented, not changed here:
+
+- **Compliance policy.** `COMPLIANCE_POLICY_REQUIRED` stays opt-in; the production
+  gate warns while no policy is configured. Making it fatal is planned for the
+  next minor release, so set it now if you want the stricter behaviour early.
+- **Retention.** `JOB_RETENTION_DAYS` stays 0 (keep everything); the production
+  gate warns. A default above 0 is a candidate for a later release; set it now to
+  match your retention policy.
+- **Converter.** The Helm chart keeps `extract.config.converterAllowLocalHtml: true`
+  because it converts inside the Extract pod. Running the converter as a sidecar
+  (`CONVERTER_MODE=isolated`) is the follow-up that lets you turn it off.
+- **Not done:** the Search M3 token cap and AND-first matching, and a multi-key
+  JWKS for `EVIDENCE_SIGNING_KEY`, were considered and left as they are.
+
+**Derived-PDF cache retention.** The cache holds the full text of converted
+documents as PDF. `DELETE /v2/documents/{id}` and `POST /v1/erasure` remove the
+entries of the sources they delete, and the cache is bounded by
+`DERIVED_PDF_CACHE_MAX_MB` (default 2048, `0` = unlimited) and
+`DERIVED_PDF_CACHE_MAX_AGE_HOURS` (default 168, `0` = unlimited), counted from the
+last use; a PDF a running job holds is never evicted. Still put `TEMP_DIR` on an
+`emptyDir`/tmpfs where you can (it then disappears with the pod), or set
+`DERIVED_PDF_CACHE=false`. A persistent `TEMP_DIR` — which `CONVERTER_MODE=isolated`
+shares with the converter sidecar — is cleaned by these limits too, but keep it
+in the erasure procedure.
+
+**Contracts.** `@atf/extract-contract` 2.4.0 (additive: `pages` as a window,
+`firstPage` on `document.begin`/`document.end`), `@atf/security-kit` 1.1.0,
+`@atf/evidence-contract` 1.1.1, `@atf/erasure-contract` 1.0.1; wire constants and
+bytes of signed payloads are unchanged. `@atf/transaction-contract` is unchanged. New workspace packages `@atf/canonical-json` and `@atf/mcp-2026`.
+
+**Rollback.** Nothing here writes new tables or columns (the erasure table gains a
+new status value, `in_progress`, which the previous version reads as `partial`).
+Rolling back keeps
+Ed25519 anchors, bundles and receipts written in the meantime: an older binary
+does not understand `alg: "ed25519"` and reports them as unverifiable — keep the
+new binary around for audits, or verify them offline with `atf verify-bundle
+--jwks`.
+
 ## Known upgrade blockers
 
 | Symptom | Cause | Fix |
@@ -198,9 +524,23 @@ are not recalibrated; production embedding settings are not affected.
 | Production replica starts against an old schema | `MIGRATE_ON_START` unset in production and no migration job ran | Run `bun run migrate` (or the Helm hooks) first |
 | 401 on `/v1/*` after the upgrade, several issuers | `JWT_ISSUER_TENANTS` unset or does not list the issuer/tenant | Set the issuer → tenants map (`"*"` for all) |
 | Monitor scripts fail with 401 | They send `?token=` to the Gate monitor | Send `Authorization: Bearer <token>` |
+| Extract refuses to start in production: `CONVERTER_MODE is local` | The in-process converter is fatal in production since this release | `CONVERTER_MODE=isolated`, or acknowledge with `CONVERTER_ALLOW_LOCAL_HTML=true` |
+| Helm: Extract pod exits at start, `CONVERTER_MODE is local` (custom values or manifests) | The chart's acknowledgement (`extract.config.converterAllowLocalHtml`) was set to false or the variable was not carried over | Restore it, or provide an isolated converter |
+| Helm: Search/Extract pod exits at start in production, rate-limit store missing | The chart now declares `replicaCount` (default 2) as `REPLICAS` | Provide `RATE_LIMIT_REDIS_URL`, or `replicaCount: 1` |
+| Pinned Extract job reports a changed snapshot after the upgrade | LibreOffice identity and prompt versions are part of the pipeline/prompt hash | Restart the job; finish running jobs before upgrading |
+| 405 on `GET /monitor/logout` | Logout is `POST /monitor/logout` | Use the shipped page or a `POST` form |
+| 404/405 on `/document-assets/:assetId` after the upgrade | The v1 asset routes were removed in 0.18.0 | Read via `GET /v2/assets/{id}?collection=…`; write via the v2 job pipeline |
+| Figures missing after upgrading Extract | `SEARCH_UPLOAD_ASSETS` removed; v1 ingest no longer uploads crops | Run the v2 job path (`EXTRACT_DATABASE_URL`, `SOURCE_STORE_DIR`, `BATCH_WORKER`) |
 | Chat answers 503 | `compliance-policy.yaml` is unreadable or schema-invalid and no valid policy was loaded | Fix the file; `GET /admin/compliance-policy` shows the load error |
 | A write tool is refused or waits for approval after a document search | Taint rule after an injection finding (`TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`) | Approve it, declare `readOnlyHint` on read-only tools, or opt out explicitly (readiness warning) |
 | Everything is dropped after rerank (abstention) | `MIN_RERANK_SCORE` tuned against the old sigmoid-squashed scores | Re-tune it or set `RERANK_SCORE_TRANSFORM=sigmoid` |
+| Start aborts: `unknown operational profile` (Runtime, Gate, Search, Extract) | `ATF_PROFILE`/`APP_ENV`/`MCPGATE_ENV`/`NODE_ENV` is not `development`, `staging`, `production` or `test` (e.g. `prod`, `local`, `ci`) | Use one of the four values; `ATF_PROFILE` overrides the service variable |
+| Search start aborts: `EMBED_FALLBACK_MODEL … differs from EMBED_MODEL` | The fallback would put a second embedding space into the index | Same model for both, or `EMBED_FALLBACK_SAME_SPACE=true` when both names serve the same weights |
+| Gate refuses to start in production: playground / plaintext URL | `monitoring.playground.enabled` is on, or `server.publicUrl` / `monitoring.oidc.redirectUri` is `http://` | Disable the playground, use `https://` (or run `staging`) |
+| Search/Extract refuse to start: `REPLICAS` without shared rate limit | `REPLICAS > 1` in production and no `RATE_LIMIT_REDIS_URL` | Set `RATE_LIMIT_REDIS_URL` (and install `redis` in the image), or declare `REPLICAS=1` only if that is true |
+| Extract job `failed`, message `…the configured limit is N (MAX_PAGES)` | The job covers more pages than `MAX_PAGES` | Raise `MAX_PAGES`, request fewer pages (`pages.to`), or set `0` |
+| Quoted phrases / `-term` in Search queries no longer behave as before | The lexical branch ORs plain terms; `websearch` syntax is not parsed | Filter client-side; use `filter`/identifier lookups for exact matches |
+| `verifyChain` reports `legacyForm: N` | N rows verify only under the pre-fix hash form | Expected for chains older than the fix; not tampering |
 | Compound words are not found | `german_compound` needs Hunspell files in the PostgreSQL image | See `operations-and-retrieval.md` (German full-text search) |
 
 ## Rollback
@@ -209,5 +549,8 @@ Migrations are additive, so rolling back to the previous version is possible
 as long as no new columns or tables were written (for 0.13/0.14:
 `flow_drafts`, `vision_daily_usage`; for 0.16: the nullable `iss` columns of
 migration 47, which the older binary ignores). After a rollback from 0.16, collections whose
-FTS language you switched keep `german` vectors; switch them back with `bun run fts:language`. Otherwise restore from the pre-upgrade
-backup (`runbooks/backup-restore.md`) — the outstore is forward compatible.
+FTS language you switched keep `german` vectors; switch them back with `bun run fts:language`.
+A rollback from 0.18 keeps `vs_assets` and its rows in place (harmless to an older binary),
+but stops storing figure crops — see the 0.17 → 0.18 notes above. Otherwise restore from the
+pre-upgrade backup (`runbooks/backup-restore.md`) — the Extract source store and the Search
+asset store are forward compatible.

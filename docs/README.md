@@ -52,6 +52,7 @@ Contract packages: [identity](../packages/identity-contract/README.md),
 | [../licenses/README.md](../licenses/README.md) | Why some third-party license texts are vendored here |
 | [UPGRADE.md](UPGRADE.md) | Upgrading a deployment from 0.3 to the current version, milestone by milestone |
 | [THREAT-MODEL.md](THREAT-MODEL.md) | STRIDE threat model per service, including Outpost Desktop and the updater |
+| [EU-AI-ACT.md](EU-AI-ACT.md) | EU AI Act: roles, high-risk check, Art. 9–15/26/50 mapped to ATF controls, gaps |
 | [DSFA-VORLAGE.md](DSFA-VORLAGE.md) | DPIA (German "DSFA") template, Art. 35 GDPR, with ATF-specific pre-fills |
 | [VVT-VORLAGE.md](VVT-VORLAGE.md) | Record of processing activities (RoPA, German "VVT") template, Art. 30 GDPR |
 | [runbooks/backup-restore.md](runbooks/backup-restore.md) | Backing up and restoring every store, in dependency order |

@@ -130,9 +130,12 @@ Extract converts documents into the canonical Markdown defined by `packages/extr
 which is the form Search indexes. It is an optional service: retrieval works without it for
 callers that already hold Markdown.
 
-- **Formats.** PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP. Office documents are laid out by LibreOffice
-  first, so every format funnels through one PDF page loop and page numbers, page images and
-  text offsets agree across formats.
+- **Formats.** PDF, DOC, DOCX, XLS, XLSX, PPTX, VSDX, HTML, PNG, JPEG, GIF, TIFF, BMP and WebP,
+  plus BPMN 2.0 XML and e-mail (EML, MSG, mbox) on the v2 job path. Office documents and HTML are
+  laid out by LibreOffice first, so the rendered formats funnel through one PDF page loop and page
+  numbers, page images and text offsets agree across them; BPMN, e-mail and a chart-free XLSX are
+  parsed natively (no render, no model call). The v2 path delivers its result to Search as NDJSON
+  batches.
 - **Structure preserved.** `## Seite N` page markers, `<figure>` entries with normalised
   geometry, per-page `<summary>` blocks, and HTML tables that keep merged cells.
 - **Text layer plus vision.** Each page is rendered at `RENDER_DPI` and sent to a vision model

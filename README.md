@@ -119,9 +119,9 @@ flowchart LR
 | [`apps/outpost`](apps/outpost) | Extract Outpost runtime: a locally-operated sync agent (CLI daemon, Docker entrypoint, health endpoint) that mirrors folders, S3, Google Drive and Dropbox into Extract collections |
 | [`apps/outpost-desktop`](apps/outpost-desktop) | Desktop wrapper around the same sync core for users who run the Outpost on their own machine |
 
-The platform is organised as seven applications under [`apps/`](apps), ten shared packages under
-[`packages/`](packages) — versioned contract packages plus `security-kit`, `observability` and
-`outpost-core` — and one end-to-end suite in [`integration/`](integration). `integration/system`
+The platform is organised as seven applications under [`apps/`](apps), twelve shared packages under
+[`packages/`](packages) — versioned contract packages plus `security-kit`, `observability`,
+`outpost-core`, `canonical-json` and `mcp-2026` — and one end-to-end suite in [`integration/`](integration). `integration/system`
 exercises their combined lifecycle so a contract break fails in CI rather than at deployment. See
 [ARCHITECTURE.md](ARCHITECTURE.md) for the request path and the design rules.
 

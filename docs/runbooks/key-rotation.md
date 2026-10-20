@@ -75,6 +75,31 @@ verifiability of **historical** anchors:
 4. Verify: `verifyLatest()` (exposed via the Runtime monitoring status) must
    report the chain valid against the current anchor.
 
+## Evidence chain (`EVIDENCE_SIGNING_KEY`)
+`EVIDENCE_SIGNING_KEY` is the Ed25519 key (PEM PKCS#8, or a base64 32-byte seed)
+that signs audit anchors, evidence bundles and — unless
+`ERASURE_RECEIPT_SIGNING_KEY` is set — erasure receipts (ADR 0030). Its public
+half is published at `/.well-known/atf-evidence-jwks.json`, `kid` =
+`base64url(sha256(publicKey))`. Like the receipt JWKS, it contains **only the
+current key**, and verification checks the artefact's `kid` against the key it is
+given: after a rotation, anchors, bundles and receipts signed with the old key
+are `signature_mismatch` against the live endpoint. They stay valid against the
+old public key.
+1. Before rotating, save the current JWKS response (`curl` the endpoint) next to
+   the evidence and anchor archives and note the `kid`. Treat it as part of the
+   rotation log — it is the only way a third party can verify older artefacts.
+2. Export the anchor file (see "Audit anchor" above) and store it off-host.
+3. Generate a new key (`openssl genpkey -algorithm ed25519`) and set
+   `EVIDENCE_SIGNING_KEY` in the secret store; rolling-restart Runtime. A
+   malformed key stops startup.
+4. Verify: the JWKS shows the new `kid`; a fresh evidence bundle verifies with
+   `atf verify-bundle <bundle.json> --jwks <url>`; for an archived bundle pass
+   the archived JWKS file (`--jwks <file>`), which selects the key by the bundle's
+   own `kid`.
+5. Keep retired private keys only as long as policy requires; keep every retired
+   **public** key indefinitely. Legacy HMAC artefacts (no `alg`) verify with
+   `--secret` against the secret that signed them — rotating `AUDIT_ANCHOR_SECRET`
+   or `EVIDENCE_BUNDLE_SECRET` does not touch Ed25519 artefacts.
 ## Decision receipts (`RECEIPT_SIGNING_KEY`, `ERASURE_RECEIPT_SIGNING_KEY`)
 `RECEIPT_SIGNING_KEY` is the Ed25519 key (PEM, or a raw base64 32-byte seed) that
 signs Decision_Receipts. The public half is served at

@@ -63,6 +63,25 @@ Migrations run as `pre-install`/`pre-upgrade` Jobs (`<service>.migration.enabled
 by hook weight: Runtime 10, Search 20, Extract 30) that execute `bun run scripts/migrate.ts`
 from the service image; the replicas themselves boot with `MIGRATE_ON_START=false`.
 
+**What the chart does not model.** It deploys the five services only: PostgreSQL, Redis and
+the model endpoints are yours. Three consequences matter in production:
+- `replicaCount` defaults to 2 for every service and is exported as `REPLICAS`
+  (Gate: `MCPGATE_REPLICAS`; the HPA's `maxReplicas` when autoscaling is on), so the
+  production gates judge the real topology. Search and Extract therefore refuse to start
+  without `RATE_LIMIT_REDIS_URL`, and Runtime warns without `REDIS_URL`: put the URL in the
+  service's Secret or `extraEnv`, or run `replicaCount: 1`. The chart creates no Redis.
+- Extract runs LibreOffice inside its pod (`CONVERTER_MODE=local`). The production gate
+  refuses that without an acknowledgement, so the chart exports
+  `CONVERTER_ALLOW_LOCAL_HTML=true` unless `extract.config.converterAllowLocalHtml` is
+  `false`. The chart cannot run the isolated converter (a second container sharing the
+  scratch volume and a socket); if you need it, add that wiring yourself through
+  `extraEnv` and a patched pod spec, then turn the acknowledgement off.
+- `global.profile` (`development`, `staging`, `production`, `test`) is exported as
+  `ATF_PROFILE` to Runtime, Gate, Search and Extract only when set; it overrides the
+  per-service profile variable. Leave it empty to keep each service's own judgement, or set
+  `staging` to see the production findings as warnings first.
+`extraEnv` renders after the chart's own variables and wins. CI renders the chart, validates
+it with `kubeconform -strict` and asserts these exports.
 Images default to `ghcr.io/abillify/atf-<service>` tagged with the chart `appVersion`.
 `global.image.tag` renders a mutable `:tag` reference; in production pin the per-service
 `image.digest` (rendered as `@sha256:…`) to an immutable digest instead. Example:
@@ -109,10 +128,19 @@ The production-readiness gates are safeguards, not a substitute for deployment r
 
 ### What the production gate enforces
 
-With `APP_ENV=production`, Runtime refuses to start rather than warn when a setting is unsafe —
-open CORS, unverified JWTs, an unauthenticated monitoring or metrics endpoint, and similar. Gate
-has an equivalent gate of its own (ADR `gate/0001`). See `apps/runtime/src/config/prod-gate.ts`
-for the exact set.
+Every service (Runtime, Gate, Search, Extract) resolves one operational profile
+the same way through `@atf/security-kit`: the platform-wide `ATF_PROFILE` wins
+over the service variable (`APP_ENV`, `MCPGATE_ENV`, `NODE_ENV`), and unset
+means `development`. The value set is closed — `development`, `staging`,
+`production`, `test` — and an unknown value aborts startup, so a typo like
+`prod` can no longer silently disable the gates. `staging` runs the checks in
+warn mode: every finding a production start would refuse is reported, but the
+service starts.
+
+With the profile set to `production`, Runtime refuses to start rather than warn when a setting is unsafe —
+open CORS, unverified JWTs, an unauthenticated monitoring or metrics endpoint, and similar. Gate,
+Search, and Extract have equivalent gates of their own (ADR `gate/0001`). See
+`apps/runtime/src/config/prod-gate.ts` for the exact set.
 
 The gate covers settings a process can inspect about itself. It cannot verify TLS termination,
 network policy, backup restores, secret rotation, or least-privilege database grants. Those

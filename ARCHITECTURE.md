@@ -1,8 +1,8 @@
 # Architecture
 
 ATF is a Bun workspace monorepo containing seven independently deployable applications and
-ten shared packages — seven versioned contract packages plus `security-kit`, `observability`
-and `outpost-core`. The applications communicate over documented HTTP and MCP interfaces
+twelve shared packages — seven versioned contract packages plus `security-kit`, `observability`,
+`outpost-core`, `canonical-json` and `mcp-2026`. The applications communicate over documented HTTP and MCP interfaces
 only. None imports another's source, and none reads another's private configuration. Five
 applications form the server footprint (Runtime, Control, Search, Gate, Extract); the two
 Outpost applications run on the customer side and reach the platform through Extract's API.
@@ -124,6 +124,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createJobsRouter` | — (full paths) | `jobStore is set` | GET `/v1/jobs/:id` |
 | `createReceiptsRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/v1/receipts`<br/>GET `/v1/receipts/:id`<br/>GET `/v1/receipts/:id/proof` |
 | `createReceiptJwksRouter` | — (full paths) | `receiptsEnabled && receiptStore is set` | GET `/.well-known/atf-receipt-jwks.json` |
+| `createEvidenceJwksRouter` | — (full paths) | `evidenceKey is set` | GET `/.well-known/atf-evidence-jwks.json` |
 | `createFlowMcpRouter` | — (full paths) | always | ALL `/mcp` |
 | `createRedTeamRouter` | — (full paths) | always | POST `/security/red-team/:flowId/run`<br/>GET `/security/red-team/runs`<br/>GET `/security/red-team/runs/:runId`<br/>GET `/security/red-team/posture`<br/>GET `/security/red-team/attacks`<br/>POST `/security/red-team/attacks/refresh`<br/>POST `/security/red-team/attacks/register`<br/>GET `/security/tool-authz`<br/>PUT `/security/tool-authz`<br/>GET `/security/mcp` |
 | `createRagRouter` | — (full paths) | `vectorStore is set && ragEmbedder is set` | POST `/v1/rag/:collection/documents`<br/>DELETE `/v1/rag/:collection/documents`<br/>DELETE `/v1/rag/:collection`<br/>GET `/v1/rag/collections`<br/>GET `/v1/rag/:collection/count`<br/>GET `/v1/rag/:collection/documents` |
@@ -145,7 +146,7 @@ Conditional groups are mounted only when their bootstrap condition holds.
 | `createPolicyReplayRouter` | `/admin/policy-replay` | always | POST `/admin/policy-replay/`<br/>POST `/admin/policy-replay/stream` |
 | `createEvalRunsRouter` | — (full paths) | always | POST `/admin/eval/matrix-runs`<br/>GET `/admin/eval/matrix-runs`<br/>GET `/admin/eval/matrix-runs/:id`<br/>GET `/admin/eval/matrix-runs/:runId/cells/:cellId/trace`<br/>POST `/admin/eval/runs`<br/>GET `/admin/eval/runs` |
 | `createComplianceRouter` | — (full paths) | `retentionService is set` | GET `/admin/compliance/status`<br/>POST `/admin/compliance/sweep`<br/>POST `/admin/compliance/forget`<br/>POST `/admin/compliance/erasures/:id/retry`<br/>GET `/admin/compliance/dossier`<br/>GET `/admin/compliance/audit-anchor`<br/>POST `/admin/compliance/audit-anchor`<br/>GET `/admin/compliance/ropa`<br/>GET `/v1/me/data`<br/>DELETE `/v1/me/data`<br/>GET `/v1/me/data/erasures/:id` |
-| `createFlowsRouter` | — (full paths) | always | _no static routes (transport-only router)_ |
+| `createFlowsRouter` | — (full paths) | always | GET `/flows`<br/>GET `/flows/subflows`<br/>GET `/flows/subflows/content`<br/>POST `/flows/subflows/write`<br/>GET `/flows/prompts/content`<br/>POST `/flows/prompts/write`<br/>GET `/flows/node-types`<br/>POST `/flows/variables/evaluate`<br/>POST `/flows/expressions/evaluate`<br/>GET `/flows/experiments`<br/>POST `/flows/validate`<br/>POST `/flows/expressions/copilot`<br/>POST `/flows/:id/copilot`<br/>GET `/flows/:id`<br/>POST `/flows/:id/test-run`<br/>PUT `/flows/:id/draft`<br/>GET `/flows/:id/drafts`<br/>PUT `/flows/:id/drafts/:draftId`<br/>DELETE `/flows/:id/drafts/:draftId`<br/>POST `/flows/:id/publish`<br/>DELETE `/flows/:id`<br/>GET `/flows/:id/capabilities`<br/>GET `/flows/:id/compatibility`<br/>GET `/flows/:id/passport`<br/>GET `/flows/diff/compare`<br/>GET `/flows/:id/diff`<br/>POST `/flows/:id/simulate`<br/>GET `/flows/:id/versions`<br/>POST `/flows/:id/rollback` |
 | `createMonitoringRouter` | — (full paths) | always | POST `/monitoring/ticket`<br/>GET `/monitoring/events/buffer`<br/>GET `/monitoring/history`<br/>GET `/monitoring/history/facets`<br/>GET `/monitoring/flow-stats`<br/>GET `/monitoring/usage`<br/>GET `/monitoring/history/:id`<br/>DELETE `/monitoring/history`<br/>GET `/monitoring/audit`<br/>GET `/monitoring/audit/export`<br/>GET `/monitoring/audit/verify`<br/>GET `/monitoring/events` |
 | `createDebugRouter` | — (full paths) | always | GET `/monitoring/debug`<br/>GET `/monitoring/debug/:executionId/sample`<br/>GET `/monitoring/debug/:executionId` |
 | `createExplainRouter` | — (full paths) | always | GET `/monitoring/explain/:executionId`<br/>GET `/monitoring/explain/:executionId/bundle` |
@@ -204,11 +205,14 @@ pair `/sse` and `/messages` — plus `/healthz`, `/readyz`, and a monitoring sur
 
 Document-to-Markdown extraction against the `atf-extract` contract. Bun or Node, Express.
 
-Converts PDF, DOC, DOCX, XLS, XLSX, PNG, JPEG, GIF, TIFF, BMP and WebP into the canonical Markdown defined by
+Converts PDF, DOC, DOCX, XLS, XLSX, PPTX, VSDX, HTML, BPMN, e-mail (EML, MSG, mbox) and the image
+formats PNG, JPEG, GIF, TIFF, BMP and WebP into the canonical Markdown defined by
 `packages/extract-contract`: `## Seite N` page markers, `<figure>` entries with normalised
-geometry, per-page `<summary>` blocks, and HTML tables that preserve merged cells. Every format
-funnels through one PDF page loop — office documents via LibreOffice — so page numbers, page
-images and text offsets agree across formats.
+geometry, per-page `<summary>` blocks, and HTML tables that preserve merged cells. Rendered
+formats funnel through one PDF page loop — office documents and HTML via LibreOffice — so page
+numbers, page images and text offsets agree across them; BPMN, e-mail and a chart-free XLSX are
+parsed natively on the v2 job path without a render or a model call. The v2 path streams its
+result to Search as NDJSON batches (`document.begin` … `document.end`) instead of one Markdown body.
 
 Each page is rendered and sent to a vision model together with its text layer. The text layer is
 authoritative for wording; the rendered page is authoritative for structure. Figure crops are
@@ -267,8 +271,8 @@ process topology.
 ## Shared packages
 
 `packages/` holds the messages that cross service boundaries, each as a versioned package
-with Zod validation and its own tests, plus three shared implementation packages
-(`security-kit`, `observability`, `outpost-core`).
+with Zod validation and its own tests, plus five shared implementation packages
+(`security-kit`, `observability`, `outpost-core`, `canonical-json`, `mcp-2026`).
 
 | Package | Package version | Wire constant | Contract |
 | --- | --- | --- | --- |
@@ -287,8 +291,14 @@ the packages that declare one.
 The remaining packages are shared implementations rather than wire contracts:
 `@atf/security-kit` (constant-time compare, base64url, SSRF egress guard, TLS helpers),
 `@atf/observability` (OpenTelemetry tracing bootstrap, W3C Trace Context, OTLP/HTTP JSON),
-and `@atf/outpost-core` (0.1.0, the sync-agent core shared by the Outpost runtime and the
-desktop sidecar).
+`@atf/outpost-core` (0.1.0, the sync-agent core shared by the Outpost runtime and the
+desktop sidecar), `@atf/canonical-json` (1.0.0, the canonical-JSON serializers the
+platform's hashes are computed over — every mode is byte-identical to the call-site variant
+it replaced, because these bytes back signed receipts, audit chains, and cache keys), and
+`@atf/mcp-2026` (1.0.0, the shared MCP 2026-07-28 stateless-HTTP core — header validation,
+offset pagination, result envelopes, request-metadata merge, and deadline signals — used by
+the Gate server, the Search server, and the Runtime client so the three endpoints speak
+exactly one dialect).
 
 `integration/system` exercises their combined lifecycle without external infrastructure, which
 is what makes a contract break visible in CI rather than at deployment time.
@@ -482,9 +492,13 @@ scoping with optional database row-level security. Enforced RLS requires the gui
 connection, and a separate `DATABASE_OPERATOR_URL` for privileged cross-tenant work.
 
 **Redis** is optional and used only for coordination that must span replicas: pending
-approvals, distributed rate limits, cluster-wide budgets, and Gate's transport session state.
+approvals, distributed rate limits (Runtime `/v1/*` and its GitOps webhook limiter via
+`REDIS_URL`; Search and Extract HTTP/render limiters via `RATE_LIMIT_REDIS_URL`, fail-open),
+cluster-wide budgets, and Gate's transport session state.
 Absent Redis, each feature degrades to per-replica scope with a documented trade-off rather
-than blocking. Multi-replica deployments that rely on any of those behaviors need it.
+than blocking. Multi-replica deployments that rely on any of those behaviors need it, and
+should declare their size with `REPLICAS` so the production gate can flag a missing shared
+store (ADR 0031).
 
 ## Toolchain
 

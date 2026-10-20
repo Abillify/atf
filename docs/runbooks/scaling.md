@@ -19,10 +19,17 @@ deployment system supplies them (see `DEPLOYMENT.md`, repository boundary).
 
 ## Horizontal scaling
 
-1. All services are stateless **except**: Gate SSE sessions and in-memory rate
-   limiters are per-process. Behind a load balancer use least-connection
-   balancing; sticky sessions are required only for `/sse` and `/monitor/stream`
-   (per-process connection state).
+1. Rate limits are per-client across the fleet **only with a shared store**:
+   set `RATE_LIMIT_REDIS_URL` on Search and Extract (see ADR 0031) and
+   `REDIS_URL` on the Runtime — the latter also backs the GitOps webhook
+   limiter. Declare the replica count with `REPLICAS` (default 1) so the
+   production gate can flag `REPLICAS > 1` without a shared store. Beyond
+   that, all services are stateless **except**: Gate SSE sessions, the
+   Runtime metrics ring / stream-replay buffer, budget-alert dedup and the
+   red-team schedule are per-process. Behind a load balancer use
+   least-connection balancing; sticky sessions are required only for `/sse`
+   and `/monitor/stream` (per-process connection state). Run
+   `RED_TEAM_SCHEDULE_FLOWS` on a single replica (the gate warns otherwise).
 2. Scale Runtime on queue depth, not CPU: `GET /monitoring/queue` exposes
    pending executions; a good HPA target is "pending > 2× replicas sustained 2
    min". CPU is misleading because executions wait on LLM I/O.

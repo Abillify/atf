@@ -96,6 +96,9 @@ all metadata and a pointer.
 Relevant emitter/handover tunables (all documented in
 [CONFIGURATION.md](CONFIGURATION.md)): `EMIT_BATCH_PAGES`, `SEGMENT_PAGES`,
 `ASSET_UPLOAD_CONCURRENCY`, `REVISION_TTL`, `REVISION_TTL_SWEEP_MS`, `REVISION_BATCH_BODY_LIMIT`.
+`SEGMENT_PAGES` (default 100) controls how early a long document becomes searchable during the
+hand-over; a job with a `pages` window (contract 2.4) needs a Search that reads `firstPage`, so
+upgrade Search first.
 
 ## Step 4 — Deploy and verify
 

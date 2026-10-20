@@ -33,23 +33,35 @@ See [DEVELOPMENT.md](DEVELOPMENT.md) for the day-to-day workflow and per-workspa
 
 ## Before you open a pull request
 
-Run the same gates CI runs:
-
+Run the same gates CI runs (the full list with what each one checks is in
+[DEVELOPMENT.md](DEVELOPMENT.md#the-gates)):
 ```bash
 bun run verify:public           # no secrets or forbidden paths in the tree
 bun run verify:spdx             # tracked TypeScript source carries the project SPDX header
+bun run verify:version          # the product version is the same everywhere
 bun run supply-chain:check      # third-party notices and SBOM are current
 bun run config-reference:check  # docs/CONFIGURATION.md is regenerated
+bun run flow-reference:check    # docs/FLOWS.md is regenerated
+bun run route-reference:check   # the route table in ARCHITECTURE.md is regenerated
+bun run openapi:check           # docs/openapi/*.json match the servers
+bun run check:links
+bun run check:workspace-counts
+bun run check:raw-fetch
+bun run check:flow-versions     # changed flows raised metadata.version
+bun run coverage:security
+bun run knip
 bun run lint:baseline           # Biome findings have not grown past the baseline
 bun run typecheck
 bun run test
 bun run test:contracts
 bun run build
+bun run check:budgets:ci
 ```
-
 CI additionally validates the example flows
-(`cd apps/runtime && bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version`) and starts
-the quickstart Compose stack to check the documented health endpoints.
+(`cd apps/runtime && bun run scripts/cli.ts validate ../../deploy/examples/flows/ --require-version`), the Helm
+chart, the Outpost and its Rust crates, the Control end-to-end and accessibility tests, secret
+scanning, image scanning and CodeQL, and starts the quickstart Compose stack to check the
+documented health endpoints.
 
 The lint gate is a **regression** gate, not a zero-findings gate. The tree carries pre-existing
 Biome findings recorded in `.biome-baseline.json`; the gate fails only when they grow. Reduce
