@@ -22,7 +22,7 @@
 
 import { randomUUID } from "node:crypto";
 import sharp from "sharp";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	buildAssetId,
 	figureLocalId,
@@ -100,6 +100,12 @@ function fakePrepared(options: {
   sizePt?: { widthPt: number; heightPt: number };
   /** Report the page as OCR-rendered (a scan: no text layer). */
   usedOcr?: boolean;
+  /**
+   * Optional per-page wait INSIDE the render, between render start and render
+   * finish — a test-held gate keeps the page in flight so the scheduler's
+   * refill behaviour around a slow page is observable (Phase 11).
+   */
+  hold?: (page: number) => Promise<void>;
 }): PreparedSource {
   const failPages = options.failPages ?? new Set<number>();
   return {
@@ -124,6 +130,7 @@ function fakePrepared(options: {
       }
       // Let a microtask settle so concurrent renders overlap observably.
       await Promise.resolve();
+      await options.hold?.(page);
       options.onRelease?.(page);
       const image =
         options.identicalImage ?? (await distinctPageImageAsync(page));
@@ -135,6 +142,12 @@ function fakePrepared(options: {
         usedOcr: options.usedOcr ?? false,
         ...(options.sizePt !== undefined ? { sizePt: options.sizePt } : {}),
       };
+    },
+    async pageSizePt() {
+      return { widthPt: 612, heightPt: 792 };
+    },
+    async renderRegion() {
+      throw new Error("renderRegion is not used by the job runner");
     },
     async renderFigureCrop() {
       return { buffer: TINY_PNG, mimeType: "image/png", width: 10, height: 10 };
@@ -214,31 +227,33 @@ function runnerCtx(store: FakeJobStore, job: JobRow) {
 }
 
 function makeRunner(
-	store: FakeJobStore,
-	prepared: PreparedSource,
-	vision: VisionClient,
-	events = createJobEventBus(),
-	pageConcurrency = 2,
-	emitter: import("../src/jobs/emitter.js").Emitter | null = null,
+  store: FakeJobStore,
+  prepared: PreparedSource,
+  vision: VisionClient,
+  events = createJobEventBus(),
+  pageConcurrency = 2,
+  emitter: import("../src/jobs/emitter.js").Emitter | null = null,
+  maxPages?: number,
 ) {
-	return createJobRunner({
-		store,
-		vision,
-		renderer: fakeRenderer(prepared),
-		events,
-		config: {
-			pageConcurrency,
-			visionTokenEstimate: 1000,
-			visionModel: "test-vlm",
-			renderDpi: 200,
-			figureDpi: 300,
-			figurePass2Kinds: [],
-			figurePass2MinArea: 0.02,
-			labelCoverageMin: 60,
-		},
-		emitter,
-		logger: testLogger,
-	});
+  return createJobRunner({
+    store,
+    vision,
+    renderer: fakeRenderer(prepared),
+    events,
+    config: {
+      pageConcurrency,
+      visionTokenEstimate: 1000,
+      visionModel: "test-vlm",
+      renderDpi: 200,
+      figureDpi: 300,
+      figurePass2Kinds: [],
+      figurePass2MinArea: 0.02,
+      labelCoverageMin: 60,
+      ...(maxPages !== undefined ? { maxPages } : {}),
+    },
+    emitter,
+    logger: testLogger,
+  });
 }
 
 describe("job-runner · ordered staged processing", () => {
@@ -1427,7 +1442,7 @@ describe("job-runner · streaming document pass (S7, task 2.6)", () => {
 });
 
 describe("job-runner · native source path (task 2.8)", () => {
-	const BPMN = `<?xml version="1.0"?>
+  const BPMN = `<?xml version="1.0"?>
 <bpmn:definitions xmlns:bpmn="http://www.omg.org/spec/BPMN/20100524/MODEL">
   <bpmn:process id="P">
     <bpmn:startEvent id="S" name="Start"/>
@@ -1438,85 +1453,349 @@ describe("job-runner · native source path (task 2.8)", () => {
   </bpmn:process>
 </bpmn:definitions>`;
 
-	/** A prepared source whose `native` field is a built BPMN record set. */
-	function nativeBpmnPrepared(reference: string): PreparedSource {
-		const built = buildBpmnRecords(reference, new TextEncoder().encode(BPMN));
-		return {
-			pageCount: built.records.length,
-			native: {
-				records: built.records,
-				nativeAssets: built.nativeAssets,
-				warnings: built.warnings,
-			},
-			docxHeadingHints: null,
-			vsdxStructure: null,
-			pdfPath: null,
-			home: "",
-			format: {
-				mimeType: "application/bpmn+xml",
-				extensions: [".bpmn"],
-				kind: "bpmn",
-				family: "xml",
-				label: "BPMN 2.0 (XML)",
-			},
-			async render() {
-				throw new Error("render must not be called for a native BPMN source");
-			},
-			async renderFigureCrop() {
-				throw new Error(
-					"renderFigureCrop must not be called for a native BPMN source",
-				);
-			},
-			async close() {},
-		};
-	}
+  /** A prepared source whose `native` field is a built BPMN record set. */
+  function nativeBpmnPrepared(reference: string): PreparedSource {
+    const built = buildBpmnRecords(reference, new TextEncoder().encode(BPMN));
+    return {
+      pageCount: built.records.length,
+      native: {
+        records: built.records,
+        nativeAssets: built.nativeAssets,
+        warnings: built.warnings,
+      },
+      docxHeadingHints: null,
+      vsdxStructure: null,
+      pdfPath: null,
+      home: "",
+      format: {
+        mimeType: "application/bpmn+xml",
+        extensions: [".bpmn"],
+        kind: "bpmn",
+        family: "xml",
+        label: "BPMN 2.0 (XML)",
+      },
+      async render() {
+        throw new Error("render must not be called for a native BPMN source");
+      },
+      async pageSizePt() {
+        return { widthPt: 612, heightPt: 792 };
+      },
+      async renderRegion() {
+        throw new Error("renderRegion is not used by the job runner");
+      },
+      async renderFigureCrop() {
+        throw new Error(
+          "renderFigureCrop must not be called for a native BPMN source",
+        );
+      },
+      async close() {},
+    };
+  }
 
-	it("emits a BPMN process page with no vision call and stages the native: asset", async () => {
+  it("emits a BPMN process page with no vision call and stages the native: asset", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = fakeVision();
+    const runner = makeRunner(store, nativeBpmnPrepared(REFERENCE), vision);
+
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome).toEqual({ status: "completed" });
+
+    // The whole point: no model was ever called.
+    expect(vision.calls).toEqual([]);
+
+    // One emit-outbox row (one page), carrying the process figure.
+    const batches = store.peekEmitBatches(job.id);
+    expect(batches.map((b) => b.seq)).toEqual([1]);
+    const [batch] = batches;
+    if (batch === undefined) throw new Error("expected an emit batch");
+    const payload = batch.payload as {
+      record?: {
+        blocks: Array<{
+          type: string;
+          kind?: string;
+          transcription?: { format?: string };
+        }>;
+      };
+    };
+    const figure = payload.record?.blocks.find((b) => b.type === "figure");
+    expect(figure?.kind).toBe("bpmn");
+    expect(figure?.transcription?.format).toBe("process");
+
+    // The native: asset for the original .bpmn XML was staged.
+    const assets = store.peekAssets(job.id);
+    const nativeAsset = assets.find((a) => a.variant === "native");
+    expect(nativeAsset).toBeDefined();
+
+    // Page count recorded; job left in emitting for the worker.
+    expect(store.peek(job.id)?.page_count).toBe(1);
+    expect(store.peek(job.id)?.status).toBe("emitting");
+  });
+
+  it("refuses a native source over MAX_PAGES before staging anything", async () => {
+    // One BPMN page record, duplicated to two — the refusal fires before
+    // anything is staged, so the repeated page number never matters.
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = fakeVision();
+    const built = buildBpmnRecords(REFERENCE, new TextEncoder().encode(BPMN));
+    const records = [...built.records, ...built.records];
+    const prepared: PreparedSource = {
+      ...nativeBpmnPrepared(REFERENCE),
+      pageCount: records.length,
+      native: {
+        records,
+        nativeAssets: built.nativeAssets,
+        warnings: built.warnings,
+      },
+    };
+    const runner = makeRunner(store, prepared, vision, undefined, 2, null, 1);
+
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("unreachable");
+    expect(outcome.error).toMatch(
+      /2 pages; the configured limit is 1 \(MAX_PAGES\)/,
+    );
+    // Nothing was staged and no page count was recorded.
+    expect(store.peekEmitBatches(job.id)).toEqual([]);
+    expect(store.peek(job.id)?.page_count).toBeNull();
+  });
+});
+
+// ── MAX_PAGES (requirement 5.8, v2 path) ────────────────────────────────────
+
+describe("job-runner · MAX_PAGES refusal (v2)", () => {
+  it("fails a vision job over the limit before any model call", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const vision = fakeVision();
+    const runner = makeRunner(
+      store,
+      fakePrepared({ pageCount: 5 }),
+      vision,
+      undefined,
+      2,
+      null,
+      3,
+    );
+
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("unreachable");
+    expect(outcome.error).toMatch(
+      /5 pages; the configured limit is 3 \(MAX_PAGES\)/,
+    );
+    // The refusal happens before any token is spent or page count recorded.
+    expect(vision.calls).toEqual([]);
+    expect(store.peek(job.id)?.page_count).toBeNull();
+    expect(store.peekEmitBatches(job.id)).toEqual([]);
+  });
+
+  it("runs a job at exactly the limit", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const runner = makeRunner(
+      store,
+      fakePrepared({ pageCount: 3 }),
+      fakeVision(),
+      undefined,
+      2,
+      null,
+      3,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome).toEqual({ status: "completed" });
+  });
+
+  /**
+   * The ceiling bounds the pages a job will PROCESS, i.e. min(document pages,
+   * pages.to) — the quantity that drives model spend. A 5-page document with a
+   * limit of 3 is therefore fine when only the first 2 pages are requested.
+   */
+  it("measures the pages to process (pages.to), not the document's page count", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store, { config: { pages: { to: 2 } } });
+    await store.setJobStatus(job.id, "preparing");
+    const vision = fakeVision();
+    const runner = makeRunner(
+      store,
+      fakePrepared({ pageCount: 5 }),
+      vision,
+      undefined,
+      2,
+      null,
+      3,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome).toEqual({ status: "completed" });
+    expect(store.peek(job.id)?.page_count).toBe(2);
+    expect(vision.calls).toHaveLength(2);
+  });
+
+  it("still refuses when pages.to itself exceeds the limit", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store, { config: { pages: { to: 4 } } });
+    await store.setJobStatus(job.id, "preparing");
+    const vision = fakeVision();
+    const runner = makeRunner(
+      store,
+      fakePrepared({ pageCount: 5 }),
+      vision,
+      undefined,
+      2,
+      null,
+      3,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome.status).toBe("failed");
+    if (outcome.status !== "failed") throw new Error("unreachable");
+    // The message names the pages being processed (4), not the source's 5.
+    expect(outcome.error).toMatch(/4 pages; the configured limit is 3 \(MAX_PAGES\)/);
+    expect(vision.calls).toEqual([]);
+  });
+
+  it("0 disables the check (v1 semantics)", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const runner = makeRunner(
+      store,
+      fakePrepared({ pageCount: 4 }),
+      fakeVision(),
+      undefined,
+      2,
+      null,
+      0,
+    );
+    const outcome = await runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+    expect(outcome).toEqual({ status: "completed" });
+  });
+});
+
+// ── render window (P1-7) ─────────────────────────────────────────────────────
+describe("job-runner · render window", () => {
+	it("warms the pages about to start and the next ones, in source page numbers, and still processes every page once", async () => {
+		const store = createFakeJobStore();
+		const job = await seedClaimedJob(store, { config: { pages: { from: 3, to: 14 } } });
+		await store.setJobStatus(job.id, "preparing");
+		const warmed: number[][] = [];
+		const vision = fakeVision();
+		const prepared: PreparedSource = {
+			...fakePrepared({ pageCount: 20 }),
+			async prefetch(pages) {
+				warmed.push([...pages]);
+			},
+		};
+		const runner = makeRunner(store, prepared, vision, undefined, 2);
+		const outcome = await runner.run(runnerCtx(store, { ...job, status: "preparing" }));
+		expect(outcome).toEqual({ status: "completed" });
+		// Never a page outside the window, always ascending, and the first call looks ahead.
+		const all = warmed.flat();
+		expect(all.every((page) => page >= 3 && page <= 14)).toBe(true);
+		expect(warmed[0]?.[0]).toBe(3);
+		expect(warmed[0]?.length).toBeGreaterThan(2);
+		for (const call of warmed) expect([...call].sort((a, b) => a - b)).toEqual(call);
+		expect([...vision.calls].sort((a, b) => a - b)).toEqual([3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
+	});
+	it("a source without prefetch is driven exactly as before", async () => {
 		const store = createFakeJobStore();
 		const job = await seedClaimedJob(store);
 		await store.setJobStatus(job.id, "preparing");
 		const vision = fakeVision();
-		const runner = makeRunner(store, nativeBpmnPrepared(REFERENCE), vision);
-
+		const runner = makeRunner(store, fakePrepared({ pageCount: 5 }), vision);
+		const outcome = await runner.run(runnerCtx(store, { ...job, status: "preparing" }));
+		expect(outcome).toEqual({ status: "completed" });
+		expect(vision.calls).toHaveLength(5);
+	});
+});
+// ── pages window (contract 2.4) ──────────────────────────────────────────────
+describe("job-runner · pages window (contract 2.4)", () => {
+	async function runWindow(
+		pages: unknown,
+		sourcePages: number,
+		maxPages?: number,
+	) {
+		const store = createFakeJobStore();
+		const job = await seedClaimedJob(store, { config: { pages } });
+		await store.setJobStatus(job.id, "preparing");
+		const vision = fakeVision();
+		const runner = makeRunner(
+			store,
+			fakePrepared({ pageCount: sourcePages }),
+			vision,
+			undefined,
+			2,
+			null,
+			maxPages,
+		);
 		const outcome = await runner.run(
 			runnerCtx(store, { ...job, status: "preparing" }),
 		);
+		return { store, job, vision, outcome };
+	}
+	it("processes only [from, to] and keeps the source page numbers", async () => {
+		const { store, job, vision, outcome } = await runWindow({ from: 3, to: 4 }, 6);
 		expect(outcome).toEqual({ status: "completed" });
-
-		// The whole point: no model was ever called.
+		expect([...vision.calls].sort((a, b) => a - b)).toEqual([3, 4]);
+		expect(store.peekEmitBatches(job.id).map((r) => r.page_from)).toEqual([3, 4]);
+		// page_count is how many pages were processed; the window is persisted for the emitter.
+		expect(store.peek(job.id)?.page_count).toBe(2);
+		expect((store.peek(job.id)?.config as { pageWindow?: unknown } | undefined)?.pageWindow).toEqual({
+			first: 3,
+			last: 4,
+		});
+	});
+	it("an open `to` runs to the last page of the source", async () => {
+		const { store, job, vision } = await runWindow({ from: 4 }, 6);
+		expect([...vision.calls].sort((a, b) => a - b)).toEqual([4, 5, 6]);
+		expect(store.peek(job.id)?.page_count).toBe(3);
+	});
+	it("still understands the raw string a pre-2.4 job stored", async () => {
+		const { vision } = await runWindow("5-", 6);
+		expect([...vision.calls].sort((a, b) => a - b)).toEqual([5, 6]);
+	});
+	it("a window from page 1 persists no window", async () => {
+		const { store, job } = await runWindow({ to: 2 }, 5);
+		expect(store.peek(job.id)?.page_count).toBe(2);
+		expect((store.peek(job.id)?.config as { pageWindow?: unknown } | undefined)?.pageWindow).toBeUndefined();
+	});
+	it("fails terminally, before any model call, when `from` is beyond the source", async () => {
+		const { store, job, vision, outcome } = await runWindow({ from: 9 }, 5);
+		expect(outcome.status).toBe("failed");
+		if (outcome.status !== "failed") throw new Error("unreachable");
+		expect(outcome.error).toMatch(/starts at page 9, but the source has only 5 page/);
 		expect(vision.calls).toEqual([]);
-
-		// One emit-outbox row (one page), carrying the process figure.
-		const batches = store.peekEmitBatches(job.id);
-		expect(batches.map((b) => b.seq)).toEqual([1]);
-		const [batch] = batches;
-		if (batch === undefined) throw new Error("expected an emit batch");
-		const payload = batch.payload as {
-			record?: {
-				blocks: Array<{
-					type: string;
-					kind?: string;
-					transcription?: { format?: string };
-				}>;
-			};
-		};
-		const figure = payload.record?.blocks.find((b) => b.type === "figure");
-		expect(figure?.kind).toBe("bpmn");
-		expect(figure?.transcription?.format).toBe("process");
-
-		// The native: asset for the original .bpmn XML was staged.
-		const assets = store.peekAssets(job.id);
-		const nativeAsset = assets.find((a) => a.variant === "native");
-		expect(nativeAsset).toBeDefined();
-
-		// Page count recorded; job left in emitting for the worker.
-		expect(store.peek(job.id)?.page_count).toBe(1);
-		expect(store.peek(job.id)?.status).toBe("emitting");
+		expect(store.peek(job.id)?.page_count).toBeNull();
+	});
+	it("MAX_PAGES counts the window, not the source", async () => {
+		const ok = await runWindow({ from: 9, to: 11 }, 100, 3);
+		expect(ok.outcome).toEqual({ status: "completed" });
+		const refused = await runWindow({ from: 9, to: 12 }, 100, 3);
+		expect(refused.outcome.status).toBe("failed");
+		if (refused.outcome.status !== "failed") throw new Error("unreachable");
+		expect(refused.outcome.error).toMatch(/4 pages; the configured limit is 3 \(MAX_PAGES\)/);
 	});
 });
-
 // ── text fast-path (S3/S9, task 2.9, requirements 7.5, 18.1) ────────────────
-
 describe("job-runner · text fast-path (task 2.9)", () => {
 	/**
 	 * An analyzer returning a clean `text`-page geometry: one numbered heading
@@ -2229,5 +2508,119 @@ describe("job-runner · Tesseract OCR fallback (task 7.10, requirement 5.11)", (
     expect(ocr.calls.length).toBe(1);
     expect(outcome.status).toBe("paused");
     if (outcome.status === "paused") expect(outcome.reason).toBe("dependency");
+  });
+});
+
+// Phase 11: the scheduler refills a freed slot immediately instead of waiting
+// for a whole batch, and the ordered publish buffer keeps page events in
+// strict page order even when pages complete out of order.
+describe("job-runner · continuous refill (Phase 11)", () => {
+  it("refills a slot while a slow page is still in flight and publishes in page order", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const events = createJobEventBus();
+    const seen: JobEvent[] = [];
+    events.subscribe(job.id, (e) => seen.push(e));
+
+    // Page 1 is held open by a gate the test controls; every other page is
+    // fast. With pageConcurrency 2 the scheduler must start pages 2, 3 and 4
+    // as slots free up — WITHOUT waiting for page 1 to finish.
+    let releasePage1!: () => void;
+    const page1Gate = new Promise<void>((resolve) => {
+      releasePage1 = resolve;
+    });
+    const started: number[] = [];
+    let peakInFlight = 0;
+    let inFlight = 0;
+    const prepared = fakePrepared({
+      pageCount: 5,
+      onRender: (page) => {
+        started.push(page);
+        inFlight += 1;
+        peakInFlight = Math.max(peakInFlight, inFlight);
+      },
+      hold: (page) => (page === 1 ? page1Gate : Promise.resolve()),
+      onRelease: () => {
+        inFlight -= 1;
+      },
+    });
+    const runner = makeRunner(store, prepared, fakeVision(), events, 2);
+    const runPromise = runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+
+    // While page 1 is still held, EVERY other page must have started: page 1
+    // keeps one slot busy, so at most one more may be in flight — and that
+    // slot must be reused continuously, not batch-wise (a batch scheduler
+    // would idle here with only page 1 running).
+    await vi.waitFor(() => {
+      expect(started).toContain(5);
+    });
+    expect([...started].sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5]);
+    expect(peakInFlight).toBeLessThanOrEqual(2);
+    // Nothing is published while page 1 is missing: the ordered buffer holds
+    // pages 2–5 back until page 1 lands, wherever it finishes in the order.
+    expect(
+      seen
+        .filter((e) => e.type === "page")
+        .map((e) => (e as { page: number }).page),
+    ).toEqual([]);
+
+    releasePage1();
+    const outcome = await runPromise;
+    expect(outcome).toEqual({ status: "completed" });
+    expect(peakInFlight).toBeLessThanOrEqual(2);
+
+    // Strict page order in the published events despite out-of-order completion
+    // (page 1 finished LAST but must be published FIRST).
+    expect(
+      seen
+        .filter((e) => e.type === "page")
+        .map((e) => (e as { page: number }).page),
+    ).toEqual([1, 2, 3, 4, 5]);
+    expect(seen.at(-1)).toMatchObject({ type: "done", status: "completed" });
+  });
+
+  it("publishes cumulative usage in page order even when a later page finishes first", async () => {
+    const store = createFakeJobStore();
+    const job = await seedClaimedJob(store);
+    await store.setJobStatus(job.id, "preparing");
+    const events = createJobEventBus();
+    const seen: JobEvent[] = [];
+    events.subscribe(job.id, (e) => seen.push(e));
+
+    // Page 1 held; page 2 (which finishes first) and page 3 complete early.
+    let releasePage1!: () => void;
+    const page1Gate = new Promise<void>((resolve) => {
+      releasePage1 = resolve;
+    });
+    const prepared = fakePrepared({
+      pageCount: 3,
+      hold: (page) => (page === 1 ? page1Gate : Promise.resolve()),
+    });
+    const runner = makeRunner(store, prepared, fakeVision(), events, 2);
+    const runPromise = runner.run(
+      runnerCtx(store, { ...job, status: "preparing" }),
+    );
+
+    // Let pages 2 and 3 run to completion while page 1 stays held.
+    await vi.waitFor(() => {
+      const done = store.peekEmitBatches(job.id);
+      expect(done.map((b) => b.seq).sort((a, b) => a - b)).toEqual([2, 3]);
+    });
+
+    releasePage1();
+    expect(await runPromise).toEqual({ status: "completed" });
+
+    const pageEvents = seen.filter(
+      (e) => e.type === "page",
+    ) as Array<{ page: number; usage?: { totalTokens: number } }>;
+    expect(pageEvents.map((e) => e.page)).toEqual([1, 2, 3]);
+    // Each event's usage is the CUMULATIVE total at publish time, so the
+    // running sum must be monotonically increasing across the ordered stream
+    // (fakeVision charges 30 tokens per page).
+    const totals = pageEvents.map((e) => e.usage?.totalTokens ?? 0);
+    expect(totals).toEqual([30, 60, 90]);
   });
 });

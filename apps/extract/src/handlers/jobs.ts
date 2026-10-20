@@ -39,7 +39,7 @@ import { randomUUID } from "node:crypto";
 import type { Request, RequestHandler, Response, Router } from "express";
 import express from "express";
 import type { Logger } from "pino";
-import { jobRequestSchema, resumePolicySchema } from "@atf/extract-contract/v2";
+import { jobRequestSchema, parsePageSelection, resumePolicySchema } from "@atf/extract-contract/v2";
 import { conflict, notFound, validationError } from "../errors.js";
 import { canReadJob } from "../authorize.js";
 import type { ExtractStore } from "../persistence/index.js";
@@ -148,7 +148,9 @@ export function createJobsRouter(deps: JobsHandlerDeps): Router {
       // Freeze the snapshot: the config that governs this job plus the stand it
       // was created under, so a resume can compare (requirement 4.12).
       config: {
-        pages: body.pages ?? null,
+        // Normalised window `{from?, to?}` in source page numbers (contract
+        // 2.4); the schema already rejected anything that does not parse.
+        pages: body.pages !== undefined ? parsePageSelection(body.pages) : null,
         collection: body.collection ?? deps.defaultCollection,
         snapshot,
         // The filename types the source (the runner falls back to the

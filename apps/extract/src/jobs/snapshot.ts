@@ -28,6 +28,7 @@
  */
 
 import { createHash } from "node:crypto";
+import { canonicalJsonConcat } from "@atf/canonical-json";
 import type { ResumePolicy } from "@atf/extract-contract/v2";
 
 /** The pipeline/prompt fingerprint frozen onto a job at creation. */
@@ -52,16 +53,16 @@ export interface PipelineDescriptor {
   extra?: Record<string, unknown>;
 }
 
-/** Stable JSON: object keys sorted recursively so key order never perturbs a hash. */
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value) ?? "null";
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .filter(([, v]) => v !== undefined)
-    .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-    .map(([k, v]) => `${JSON.stringify(k)}:${stableStringify(v)}`);
-  return `{${entries.join(",")}}`;
-}
+/**
+ * Stable JSON: object keys sorted recursively so key order never perturbs a
+ * hash. `@atf/canonical-json`'s concat mode (code-unit order, `undefined`
+ * dropped) — byte-identical to the former local helper (proven by
+ * `packages/canonical-json/test/differential.test.ts`). These bytes feed the
+ * persisted `pipelineHash` / `promptHash` resume keys, so the concat family's
+ * purely lexicographic key order (integer-like keys sort `"01" < "10" < "9"`)
+ * is frozen: snapshots already in flight must keep matching their hash.
+ */
+const stableStringify = canonicalJsonConcat;
 
 /** sha256 of the stable serialisation of `value`. */
 export function hashObject(value: unknown): string {

@@ -321,6 +321,12 @@ describe("query builders", () => {
     }
     expect(query.text).toContain("b.next_attempt_at > $5");
   });
+  it("the page scheduler generates from firstPage, defaulting to 1", () => {
+    const whole = q.nextRunnablePagesQuery("j", 10, "emitted", 4, new Date(0));
+    expect(whole.text).toContain("generate_series($6::int, $2)");
+    expect(whole.values[5]).toBe(1);
+    expect(q.nextRunnablePagesQuery("j", 10, "emitted", 4, new Date(0), 7).values[5]).toBe(7);
+  });
 
   it("re-staging an emit row replaces a changed, unacknowledged payload only", () => {
     const query = q.insertEmitOutboxQuery({ job_id: "j", seq: 1, digest: "d", page_from: 1, page_to: 1 });
@@ -645,6 +651,16 @@ describeIfPg("extract-store · resume hardening on real PostgreSQL", () => {
     expect(await store.nextRunnablePages(id, 4, "emitted", 10, now)).toEqual([3, 4]);
     expect((await store.earliestRetryAt(id, now))?.getTime()).toBe(retryAt.getTime());
     expect(await store.nextRunnablePages(id, 4, "emitted", 10, new Date(retryAt.getTime() + 1))).toEqual([1, 2, 3, 4]);
+  });
+  it("the scheduler starts at firstPage for a pages window (contract 2.4)", async () => {
+    const { id } = await claimFresh();
+    const now = new Date();
+    expect(await store.nextRunnablePages(id, 6, "emitted", 10, now, 4)).toEqual([4, 5, 6]);
+    expect(await store.nextRunnablePages(id, 6, "emitted", 2, now, 4)).toEqual([4, 5]);
+    // A window past the end is empty rather than an error.
+    expect(await store.nextRunnablePages(id, 3, "emitted", 10, now, 4)).toEqual([]);
+    // Default firstPage is 1.
+    expect(await store.nextRunnablePages(id, 3, "emitted", 10, now)).toEqual([1, 2, 3]);
   });
 
   it("auto-resumes a due dependency pause but not a manual one", async () => {

@@ -125,6 +125,29 @@ export interface ExtractStore {
     includeNullCollection?: boolean,
   ): Promise<JobRow[]>;
   /**
+   * The distinct source digests of EVERY job (any status) of one reference in
+   * one collection. `DELETE /v2/documents/{reference}` uses them to drop the
+   * derived-PDF cache entries of the sources the document was built from.
+   */
+  sourceDigestsByReference(
+    reference: string,
+    collection: string,
+    includeNullCollection?: boolean,
+  ): Promise<string[]>;
+  /**
+   * Delete every job (any status) of one reference in one collection;
+   * checkpoints and outboxes cascade. Returns the removed rows.
+   */
+  eraseJobsByReference(
+    reference: string,
+    collection: string,
+    includeNullCollection?: boolean,
+  ): Promise<ErasureJobTargetRow[]>;
+  /** Retention: delete up to `limit` terminal jobs idle for `days` days. */
+  deleteExpiredJobs(days: number, limit: number): Promise<ErasureJobTargetRow[]>;
+  /** Retention: delete up to `limit` unfinished upload sessions idle for `hours` hours. */
+  deleteExpiredUploads(hours: number, limit: number): Promise<string[]>;
+  /**
    * Which of `messageIds` a (non-failed) job of the collection has recorded as
    * its e-mail's Message-ID — i.e. which messages the corpus already holds.
    * Decides whether a reply's quoted history may be dropped.
@@ -295,8 +318,9 @@ export interface ExtractStore {
     toPage: number,
   ): Promise<PageStageRow[]>;
   /**
-   * The next `limit` unfinished, due page numbers of `[1..pageCount]`, in strict
-   * ascending order, keyed off the `cursorStage` checkpoint. A page with any
+   * The next `limit` unfinished, due page numbers of `[firstPage..pageCount]`
+   * (`firstPage` defaults to 1; a job with a `pages` window starts later), in
+   * strict ascending order, keyed off the `cursorStage` checkpoint. A page with any
    * unit in a transient-failure backoff is not due. The LIMIT bounds the result
    * so the scheduler never materialises a full-document array (requirement 6.1).
    */
@@ -306,6 +330,7 @@ export interface ExtractStore {
     cursorStage: string,
     limit: number,
     now?: Date,
+    firstPage?: number,
   ): Promise<number[]>;
   /** The earliest future retry instant of any transiently-failed unit, or null. */
   earliestRetryAt(jobId: string, now?: Date): Promise<Date | null>;
@@ -715,6 +740,34 @@ export function createExtractStore(
     },
     getJob: (id) => one<JobRow>(q.getJobQuery(id)),
     listJobs: (limit, offset) => run<JobRow>(q.listJobsQuery(limit, offset)),
+    sourceDigestsByReference: async (
+      reference,
+      collection,
+      includeNullCollection = false,
+    ) =>
+      (
+        await run<{ source_sha256: string }>(
+          q.sourceDigestsByReferenceQuery(
+            reference,
+            collection,
+            includeNullCollection,
+          ),
+        )
+      )
+        .map((row) => row.source_sha256)
+        .filter((digest) => digest !== ""),
+    eraseJobsByReference: (reference, collection, includeNullCollection = false) =>
+      run<ErasureJobTargetRow>(
+        q.eraseJobsByReferenceQuery(reference, collection, includeNullCollection),
+      ),
+    deleteExpiredJobs: (days, limit) =>
+      run<ErasureJobTargetRow>(q.deleteExpiredJobsQuery(days, limit)),
+    async deleteExpiredUploads(hours, limit) {
+      const rows = await run<{ upload_id: string }>(
+        q.deleteExpiredUploadsQuery(hours, limit),
+      );
+      return rows.map((r) => r.upload_id);
+    },
     listActiveJobsByReference: (
       reference,
       collection,
@@ -896,10 +949,18 @@ export function createExtractStore(
       cursorStage,
       limit,
       now = new Date(),
+      firstPage = 1,
     ) {
-      if (pageCount <= 0 || limit <= 0) return [];
+      if (pageCount < firstPage || limit <= 0) return [];
       const rows = await run<{ page: number }>(
-        q.nextRunnablePagesQuery(jobId, pageCount, cursorStage, limit, now),
+        q.nextRunnablePagesQuery(
+          jobId,
+          pageCount,
+          cursorStage,
+          limit,
+          now,
+          firstPage,
+        ),
       );
       return rows.map((r) => Number(r.page));
     },

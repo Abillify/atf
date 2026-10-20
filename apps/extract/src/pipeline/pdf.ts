@@ -30,7 +30,7 @@
  * extraction.
  */
 
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { conversionFailed } from "../errors.js";
 import { run, type RunOptions } from "./exec.js";
@@ -117,6 +117,11 @@ export async function readPdfInfo(
  * DPI has to be chosen per page from the page's own size, not from a
  * document-level hint. Returns null when the size cannot be parsed, so the
  * caller falls back to its preferred DPI rather than failing the page.
+ *
+ * The size is the page AS RENDERED: `pdfinfo` prints the unrotated box next to
+ * a separate `rot:` line, so a page with `/Rotate 90|270` has its width and
+ * height swapped here. Without that, pixel coordinates derived from this size
+ * (a region render, a tile grid) would address a transposed page.
  */
 export async function readPageSize(
   pdfPath: string,
@@ -142,10 +147,113 @@ export async function readPageSize(
     const widthPt = Number.parseFloat(widthRaw);
     const heightPt = Number.parseFloat(heightRaw);
     if (!(widthPt > 0) || !(heightPt > 0)) return null;
-    return { widthPt, heightPt };
+    const rotation =
+      /^Page\s+\d+\s+rot:\s+(\d+)/m.exec(stdout) ?? /^Page rot:\s+(\d+)/m.exec(stdout);
+    const quarterTurns = Math.round((Number.parseInt(rotation?.[1] ?? "0", 10) % 360) / 90);
+    return quarterTurns % 2 === 1
+      ? { widthPt: heightPt, heightPt: widthPt }
+      : { widthPt, heightPt };
   } catch {
     return null;
   }
+}
+
+/**
+ * Read the sizes of pages `first..last` in ONE `pdfinfo` call (the per-page
+ * {@link readPageSize} spawns a process, and re-reads the cross-reference table,
+ * for every page). Same semantics per page: the size AS RENDERED, with
+ * `/Rotate 90|270` swapping width and height. A page whose size cannot be
+ * parsed is absent from the map, so the caller falls back to its preferred DPI.
+ * The whole call failing yields an empty map.
+ */
+export async function readPageSizes(
+  pdfPath: string,
+  first: number,
+  last: number,
+  tools: PopplerTools,
+  options: RunOptions = {},
+): Promise<Map<number, PdfPageSize>> {
+  const sizes = new Map<number, PdfPageSize>();
+  try {
+    const { stdout } = await run(
+      binary(tools, "pdfinfo"),
+      ["-f", String(first), "-l", String(last), pdfPath],
+      tools.home,
+      options,
+    );
+    const rotations = new Map<number, number>();
+    for (const match of stdout.matchAll(/^Page\s+(\d+)\s+rot:\s+(\d+)/gm)) {
+      rotations.set(Number.parseInt(match[1] ?? "0", 10), Number.parseInt(match[2] ?? "0", 10));
+    }
+    const record = (page: number, widthRaw: string | undefined, heightRaw: string | undefined, rot: number): void => {
+      if (widthRaw === undefined || heightRaw === undefined) return;
+      const widthPt = Number.parseFloat(widthRaw);
+      const heightPt = Number.parseFloat(heightRaw);
+      if (!(widthPt > 0) || !(heightPt > 0)) return;
+      const quarterTurns = Math.round((rot % 360) / 90);
+      sizes.set(page, quarterTurns % 2 === 1 ? { widthPt: heightPt, heightPt: widthPt } : { widthPt, heightPt });
+    };
+    for (const match of stdout.matchAll(/^Page\s+(\d+)\s+size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts/gm)) {
+      const page = Number.parseInt(match[1] ?? "0", 10);
+      record(page, match[2], match[3], rotations.get(page) ?? 0);
+    }
+    if (sizes.size === 0 && first === last) {
+      // A single-page document keeps the document-level lines.
+      const size = /^Page size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts/m.exec(stdout);
+      const rot = /^Page rot:\s+(\d+)/m.exec(stdout);
+      record(first, size?.[1], size?.[2], Number.parseInt(rot?.[1] ?? "0", 10));
+    }
+  } catch {
+    sizes.clear();
+  }
+  return sizes;
+}
+
+/**
+ * Rasterise pages `first..last` at one DPI in ONE `pdftoppm` call.
+ *
+ * {@link renderPage} avoids guessing poppler's output names with
+ * `-singlefile`; that flag cannot be used for a range, where pdftoppm writes
+ * `<prefix>-<page>.png` with the page number zero-padded to the width of the
+ * document's page count. The names are therefore not predicted but READ: every
+ * file the call left under its own unique prefix is matched by the trailing
+ * number. Each file is removed after it is read, so a window never leaves more
+ * than the call's output on disk. A page the call produced no image for is
+ * simply absent from the result.
+ */
+export async function renderPages(
+  pdfPath: string,
+  first: number,
+  last: number,
+  dpi: number,
+  workDir: string,
+  tools: PopplerTools,
+  options: RunOptions = {},
+): Promise<RenderedPage[]> {
+  await mkdir(workDir, { recursive: true });
+  const tag = `win-${first}-${last}-${dpi}`;
+  const prefix = join(workDir, tag);
+  await run(
+    binary(tools, "pdftoppm"),
+    ["-png", "-r", String(dpi), "-f", String(first), "-l", String(last), pdfPath, prefix],
+    tools.home,
+    options,
+  );
+  const pattern = new RegExp(`^${tag}-(\\d+)\\.png$`);
+  const rendered: RenderedPage[] = [];
+  for (const name of await readdir(workDir)) {
+    const match = pattern.exec(name);
+    if (match === null) continue;
+    const page = Number.parseInt(match[1] ?? "0", 10);
+    const path = join(workDir, name);
+    try {
+      const buffer = await readFile(path);
+      if (buffer.length > 0 && page >= first && page <= last) rendered.push({ buffer, page, dpi });
+    } finally {
+      await rm(path, { force: true });
+    }
+  }
+  return rendered.sort((a, b) => a.page - b.page);
 }
 
 /**
@@ -356,6 +464,13 @@ export async function extractPageBboxLayout(
   return stdout.replace(/\u0000/g, "");
 }
 
+/** A pixel rectangle of the page at the render DPI (`pdftoppm -x -y -W -H`). */
+export interface RenderRegion {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
 export interface RenderedPage {
   /** PNG bytes of the rendered page. */
   buffer: Buffer;
@@ -384,9 +499,13 @@ export async function renderPage(
   workDir: string,
   tools: PopplerTools,
   options: RunOptions = {},
+  region?: RenderRegion,
 ): Promise<RenderedPage> {
   await mkdir(workDir, { recursive: true });
-  const prefix = join(workDir, `page-${page}-${dpi}`);
+  // The region is part of the name, so two crops of one page never share a file.
+  const regionTag =
+    region === undefined ? "" : `-${region.left}x${region.top}-${region.width}x${region.height}`;
+  const prefix = join(workDir, `page-${page}-${dpi}${regionTag}`);
   await run(
     binary(tools, "pdftoppm"),
     [
@@ -397,6 +516,20 @@ export async function renderPage(
       String(page),
       "-l",
       String(page),
+      // Only the region is rasterised: a small crop at a high DPI never
+      // allocates the whole page at that DPI.
+      ...(region === undefined
+        ? []
+        : [
+            "-x",
+            String(region.left),
+            "-y",
+            String(region.top),
+            "-W",
+            String(region.width),
+            "-H",
+            String(region.height),
+          ]),
       "-singlefile",
       pdfPath,
       prefix,

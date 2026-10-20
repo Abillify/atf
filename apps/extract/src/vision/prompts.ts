@@ -59,6 +59,7 @@
  */
 
 import { BBOX_PRECISION } from "@atf/extract-contract/v1";
+import { fenceUntrusted, untrustedContentRule } from "./untrusted.js";
 
 /**
  * Version tag for the Pass-1 prompt set.
@@ -69,7 +70,7 @@ import { BBOX_PRECISION } from "@atf/extract-contract/v1";
  * a changed prompt trips a pinned job's resume policy rather than silently
  * mixing two prompt versions into one document.
  */
-export const PAGE_PROMPT_VERSION = "2.0.0";
+export const PAGE_PROMPT_VERSION = "2.1.0";
 
 /**
  * The system prompt.
@@ -81,9 +82,9 @@ export const PAGE_SYSTEM_PROMPT = `Du bist ein Agent zur Aufbereitung von Dokume
 
 Du erhältst zu DERSELBEN Seite:
 1. Ein BILD der gerenderten Seite.
-2. ROHTEXT aus der Textschicht des Dokuments. Dieser kann leer sein, wenn die Seite ein Scan ohne Textschicht ist.
-3. Optional HINWEISE aus einer deterministischen Vorverarbeitung: Überschriftenkandidaten dieser Seite und den Kontext der Vorseite.
-
+2. ROHTEXT aus der Textschicht des Dokuments, in <rohtext>…</rohtext>. Dieser kann leer sein, wenn die Seite ein Scan ohne Textschicht ist.
+3. Optional HINWEISE aus einer deterministischen Vorverarbeitung, in <hinweise>…</hinweise>: Überschriftenkandidaten dieser Seite und den Kontext der Vorseite.
+${untrustedContentRule(["rohtext", "hinweise"])}
 ## Aufgabenteilung zwischen den Eingaben
 
 - Der ROHTEXT ist die maßgebliche Quelle für den Wortlaut: Rechtschreibung, Zahlen, Bezeichner, Zeichensetzung. Leite Text nicht neu aus dem BILD ab und "korrigiere" ihn nicht anhand dessen, was du visuell liest. Die Textschicht ist zeichengenau; eine Neuableitung erzeugt vermeidbare Fehler in Artikelnummern, Datumsangaben und Maßeinheiten.
@@ -253,7 +254,10 @@ function renderPrevPage(prev: PrevPageContext): string {
  * confuse the model.
  */
 export function buildPageUserPrompt(input: PageUserPromptInput): string {
-  const rawText = input.rawText.trim() === "" ? NO_TEXT_LAYER_MARKER : input.rawText;
+  const rawText = fenceUntrusted(
+    "rohtext",
+    input.rawText.trim() === "" ? NO_TEXT_LAYER_MARKER : input.rawText,
+  );
 
   const hints: string[] = [];
   if (input.headingCandidates !== undefined && input.headingCandidates.length > 0) {
@@ -265,10 +269,9 @@ export function buildPageUserPrompt(input: PageUserPromptInput): string {
     if (prev !== "") hints.push(prev);
   }
 
-  const hintsSection = hints.length > 0 ? `\nHINWEISE:\n${hints.join("\n\n")}\n` : "";
-
+  const hintsSection =
+    hints.length > 0 ? `\nHINWEISE:\n${fenceUntrusted("hinweise", hints.join("\n\n"))}\n` : "";
   return `Seite ${input.page} von ${input.pageCount}.
-
 ROHTEXT:
 ${rawText}
 ${hintsSection}
@@ -332,15 +335,15 @@ export function pass1PromptSet(): Record<string, string> {
  * hash (see {@link pass2PromptSet}) rather than silently mixing two prompt
  * versions into one document.
  */
-export const PASS2_PROMPT_VERSION = "2.0.0";
+export const PASS2_PROMPT_VERSION = "2.1.0";
 
 /** The shared preamble every per-kind Pass-2 system prompt opens with. */
 const PASS2_PREAMBLE = `Du transkribierst eine EINZELNE Abbildung aus einem Dokument in ein strukturiertes Format für ein Retrieval-System.
 
 Du erhältst:
 1. Ein BILD: den hochaufgelösten Ausschnitt genau dieser Abbildung.
-2. ROHTEXT: die Wörter der Textschicht innerhalb der Abbildung, sofern vorhanden. Er kann leer sein.
-
+2. ROHTEXT, in <rohtext>…</rohtext>: die Wörter der Textschicht innerhalb der Abbildung, sofern vorhanden. Er kann leer sein.
+${untrustedContentRule(["rohtext", "beschriftung"])}
 Aufgabenteilung:
 - Der ROHTEXT ist maßgeblich für den WORTLAUT: Beschriftungen, Feldnamen, Bezeichner, Zahlen. Übernimm sie zeichengenau und leite sie nicht neu aus dem BILD ab.
 - Das BILD ist maßgeblich für die STRUKTUR: welche Elemente es gibt, wie sie angeordnet und verbunden sind.
@@ -453,13 +456,12 @@ export function buildFigureUserPrompt(input: FigureUserPromptInput): string {
   const regionText = input.regionText.trim() === "" ? NO_TEXT_LAYER_MARKER : input.regionText.trim();
   const captionLine =
     input.caption !== undefined && input.caption.trim() !== ""
-      ? `\nBESCHRIFTUNG: ${input.caption.replace(/\s+/g, " ").trim()}\n`
+      ? `\nBESCHRIFTUNG: ${fenceUntrusted("beschriftung", input.caption.replace(/\s+/g, " ").trim())}\n`
       : "";
   return `Transkribiere die angehängte Abbildung (Typ: ${input.kind}) in das im System-Prompt beschriebene JSON-Format.
 ${captionLine}
 ROHTEXT der Abbildung:
-${regionText}
-
+${fenceUntrusted("rohtext", regionText)}
 Analysiere das angehängte BILD und gib genau ein JSON-Objekt nach den Anweisungen im System-Prompt aus.`;
 }
 

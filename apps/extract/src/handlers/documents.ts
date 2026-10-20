@@ -48,6 +48,9 @@ import type { HttpMetrics } from "../http-metrics.js";
 import { getPrincipal, hasIdentity } from "../request-principal.js";
 import { readHeader } from "../header-utils.js";
 import { isTerminal } from "../jobs/state-machine.js";
+import { removeDerivedPdfsFor } from "../jobs/derived-pdf-cache.js";
+import { orphanedSourceDigests, removeSessionFiles } from "../jobs/job-retention.js";
+import type { SourceStore } from "../source-store.js";
 
 /** Same naming rule as `ingest-v2.ts` / Search. */
 const COLLECTION_NAME = /^[a-zA-Z][a-zA-Z0-9_]*$/;
@@ -62,8 +65,21 @@ export interface DocumentsHandlerDeps {
   metrics: HttpMetrics;
   /** Collection used when the request omits `X-Collection`. */
   defaultCollection: string;
+  /**
+   * Directory of the derived-PDF cache. When set, the cached conversions of
+   * every source this reference's jobs held are removed with the document
+   * (they contain its full content). Omit when the cache is disabled.
+   */
+  derivedPdfCacheDir?: string;
+  /**
+   * Content-addressed source blobs. With it, a deleted document also loses the
+   * source bytes no other job still uses. Omit to keep sources (job rows and
+   * upload sessions are removed either way).
+   */
+  sourceStore?: SourceStore;
+  /** Directory of resumable-upload session files (`<uploadId>.part`). */
+  tmpDir?: string;
 }
-
 /**
  * Cancel one job through the operator transition (lease revoked). Returns the
  * outcome for the response log. A job that reached a terminal state between the
@@ -91,7 +107,16 @@ async function cancelJob(store: ExtractStore, id: string): Promise<"cancelled" |
 }
 
 export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
-  const { store, searchClient, logger, metrics, defaultCollection } = deps;
+  const {
+    store,
+    searchClient,
+    logger,
+    metrics,
+    defaultCollection,
+    derivedPdfCacheDir,
+    sourceStore,
+    tmpDir,
+  } = deps;
   const router = express.Router();
 
   const deleteHandler: RequestHandler = (req, res, next) => {
@@ -130,6 +155,29 @@ export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
       if (outcome === "cancelled") cancelled.push(job.id);
     }
 
+    // 1b. Drop the cached PDF conversions of this document's sources: the
+    //     cache holds its full content and has no other path to deletion.
+    //     Best effort and independent of what Search says below — a reference
+    //     Search never held can still have left a conversion behind.
+    let derivedPdfsRemoved = 0;
+    if (derivedPdfCacheDir !== undefined) {
+      try {
+        const digests = await store.sourceDigestsByReference(
+          reference,
+          collection,
+          collection === defaultCollection,
+        );
+        derivedPdfsRemoved = await removeDerivedPdfsFor(
+          derivedPdfCacheDir,
+          digests,
+        );
+      } catch (err) {
+        logger.warn(
+          { err, reference, collection },
+          "Could not remove the derived-PDF cache entries of a deleted document",
+        );
+      }
+    }
     // 2. Delete in Search under the caller's access scope (requirement 9.7).
     const principal = getPrincipal(req);
     const identity = hasIdentity(principal)
@@ -144,6 +192,36 @@ export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
       ...(identity !== undefined ? { identity } : {}),
     });
 
+    // 2b. Drop what Extract itself kept of the document: its jobs (the stage
+    //     checkpoints hold the persisted model response of every page, the
+    //     outboxes the emitted content), its upload sessions and the source
+    //     bytes nothing else uses. It runs once Search answered — also when
+    //     Search never held the reference (404 below), which can still have
+    //     left all of this behind — but NOT when the Search call failed: the
+    //     caller retries, and until then the cancelled jobs stay as they are.
+    //     Best effort, like 1b.
+    let jobsRemoved = 0;
+    let sourcesRemoved = 0;
+    try {
+      const erased = await store.eraseJobsByReference(
+        reference,
+        collection,
+        collection === defaultCollection,
+      );
+      jobsRemoved = erased.length;
+      const uploadIds = await store.eraseUploadsByReferences([reference]);
+      await removeSessionFiles(tmpDir, uploadIds, logger);
+      if (sourceStore?.remove !== undefined) {
+        for (const digest of await orphanedSourceDigests(store, erased)) {
+          if ((await sourceStore.remove(digest)) === true) sourcesRemoved += 1;
+        }
+      }
+    } catch (err) {
+      logger.warn(
+        { err, reference, collection },
+        "Could not remove the Extract data of a deleted document",
+      );
+    }
     // 3. `deleted = 0` means Search never held this reference → 404 (9.9).
     if (outcome.deleted === 0) {
       throw notFound(
@@ -153,7 +231,15 @@ export function createDocumentsRouter(deps: DocumentsHandlerDeps): Router {
 
     metrics.recordDocumentsDeleted(outcome.deleted);
     logger.info(
-      { reference, collection, deleted: outcome.deleted, cancelledJobs: cancelled },
+      {
+        reference,
+        collection,
+        deleted: outcome.deleted,
+        cancelledJobs: cancelled,
+        derivedPdfsRemoved,
+        jobsRemoved,
+        sourcesRemoved,
+      },
       "Document deleted via E2",
     );
 

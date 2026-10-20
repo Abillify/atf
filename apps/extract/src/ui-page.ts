@@ -439,7 +439,7 @@ const NEWJOB_PANEL_HTML = `
           <input type="text" id="newjob-reference" placeholder="pro Quelle aus dem Namen" />
         </div>
         <div class="field field-narrow">
-          <label for="newjob-pages">Seiten <span class="hint">(pages, z. B. 1-10,15)</span></label>
+          <label for="newjob-pages">Seiten <span class="hint">(pages, z. B. 3-10, 5- oder -8)</span></label>
           <input type="text" id="newjob-pages" placeholder="alle" />
         </div>
         <div class="field field-narrow">
@@ -2231,7 +2231,7 @@ const JS = `
         img.src = objectUrl;
         var info = res.headers.get("x-render-width") + "×" + res.headers.get("x-render-height") + " px @ " + res.headers.get("x-render-dpi") + " dpi";
         if (res.headers.get("x-render-clamped") === "1") info += " · auf die Pixel-Obergrenze begrenzt";
-        if (res.headers.get("x-render-tile")) info += " · aus Kachel " + res.headers.get("x-render-tile");
+        if (res.headers.get("x-render-tile")) info += " · in Kachel " + res.headers.get("x-render-tile");
         meta.textContent = "Seite " + page + ": " + info;
       } catch (e) {
         meta.textContent = "Netzwerkfehler: " + (e && e.message ? e.message : e);

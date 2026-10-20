@@ -16,7 +16,11 @@
 
 import { PAGE_LABELS, type PageLabel } from "@atf/extract-contract/v1";
 import { figureKindSchema, type FigureKind } from "@atf/extract-contract/v2";
-import type { ServerTlsConfig } from "@atf/security-kit";
+import {
+  resolveOperationalProfile,
+  type OperationalProfile,
+  type ServerTlsConfig,
+} from "@atf/security-kit";
 
 export interface UiBffConfig {
   /** Server-selected tenant for every verified browser session. */
@@ -136,6 +140,15 @@ export interface JobWorkerConfig {
    */
   pollIntervalMs: number;
   /**
+   * JOB_CONCURRENCY — how many jobs ONE worker process claims and runs in
+   * parallel (Phase 11). Default 1 keeps the historical one-job-per-process
+   * loop; each lane holds its own lease/heartbeat, and the large-job lane cap
+   * is enforced fleet-wide by the claim query, so raising this cannot
+   * over-subscribe it. The per-job page window (PAGE_CONCURRENCY) is
+   * independent: peak model calls ≈ JOB_CONCURRENCY × PAGE_CONCURRENCY.
+   */
+  jobConcurrency: number;
+  /**
    * JOB_MAX_TRANSIENT_WAIT_MS — how long a dependency (vision, text LLM, Search)
    * may stay unreachable with backoff before the job is parked in
    * `paused(reason=dependency)` and auto-resumed on recovery. Default 900 000
@@ -208,15 +221,21 @@ export interface QueueLaneConfig {
 export interface EmitterConfig {
   /**
    * EMIT_BATCH_PAGES — pages grouped into one NDJSON batch sent to Search.
-   * Default 20 (design §5 S8). Bounds the emitter's memory: it only ever holds
-   * one batch of page records at a time, never the whole document.
+   * Default 20 (design §5 S8). Bounds the emitter's memory: it only ever
+   * holds one batch of page records at a time, never the whole document. The
+   * value is frozen per job when its first batch is sent, so changing it never
+   * re-maps the batches an open revision already holds. A smaller batch does
+   * not make pages searchable sooner (the segment does) and costs a PUT per
+   * batch: `scripts/bench-time-to-searchable.ts`.
    */
   emitBatchPages: number;
   /**
-   * SEGMENT_PAGES — pages between segment commits. Default 250 (design §9a.3).
-   * A committed segment is what `progressive` visibility makes searchable ahead
-   * of the final commit; a larger segment trades earlier visibility for fewer
-   * commit round-trips.
+   * SEGMENT_PAGES — pages between segment commits. Default 100 (250 before
+   * this release; at least EMIT_BATCH_PAGES). A committed segment is what
+   * `progressive` visibility makes searchable ahead of the final commit, and
+   * the emitter commits each one as soon as its batches are acknowledged, so a
+   * smaller segment means the first pages are searchable sooner at the price of
+   * more commit round-trips.
    */
   segmentPages: number;
   /**
@@ -337,7 +356,13 @@ export interface SearchTargetConfig {
 export interface Config {
   // ── Server ────────────────────────────────────────────────────────────────
   port: number; // PORT (default: 3004)
-  nodeEnv: string; // NODE_ENV (default: "development")
+  /**
+   * Effective operational profile: `ATF_PROFILE` (explicit, platform-wide)
+   * wins over `NODE_ENV`; unset means `development`. An unknown value fails
+   * config loading — a typo must not silently disable the production gates.
+   * Unlike before, the value is also normalized (trim + lowercase).
+   */
+  nodeEnv: OperationalProfile; // ATF_PROFILE / NODE_ENV (default: "development")
   logLevel: string; // LOG_LEVEL (default: "info")
   /** TRACING_ENABLED — export OTel spans via the shared @atf/observability tracer. */
   tracingEnabled: boolean; // TRACING_ENABLED (default: false)
@@ -560,6 +585,16 @@ export interface Config {
    */
   converterMode: "local" | "isolated"; // CONVERTER_MODE (default: local)
   /**
+   * CONVERTER_ALLOW_LOCAL_HTML — explicit acknowledgement that, with
+   * `CONVERTER_MODE=local`, HTML sources are laid out by LibreOffice inside
+   * this container in production. HTML is the one input whose own markup tells
+   * the converter what to load (images, frames, stylesheets, `file://` as well
+   * as `http://`); the reference neutraliser is a deny-list, not a boundary.
+   * Without the flag the production gate refuses to start a `local` converter
+   * (fatal); with `CONVERTER_MODE=isolated` it is irrelevant. Default false.
+   */
+  converterAllowLocalHtml: boolean; // CONVERTER_ALLOW_LOCAL_HTML (default: false)
+  /**
    * CONVERTER_SOCKET — filesystem path of the converter RPC socket when
    * CONVERTER_MODE=isolated. The extract container mounts the directory
    * containing it (connecting to a Unix socket needs write access to the
@@ -653,9 +688,51 @@ export interface Config {
   convertConcurrency: number; // CONVERT_CONCURRENCY (default: 2)
   /** PAGE_CONCURRENCY — pages of one document in flight against the model. */
   pageConcurrency: number; // PAGE_CONCURRENCY (default: 4)
+  /**
+   * DERIVED_PDF_CACHE — reuse the derived PDF (a PDF source's working copy, or
+   * a LibreOffice conversion's output) across runs under
+   * `TEMP_DIR/derived-pdf`, keyed by the source sha256 and the converter
+   * identity (Phase 11). The cache inherits the scratch volume's lifecycle, so
+   * clearing TEMP_DIR clears it; false re-derives on every prepare.
+   */
+  derivedPdfCache: boolean; // DERIVED_PDF_CACHE (default: true)
+  /**
+   * DERIVED_PDF_CACHE_MAX_MB — size ceiling of the derived-PDF cache; the least
+   * recently used conversions are removed first. 0 = unlimited. The cache holds
+   * the full content of converted documents, so it is bounded by default.
+   */
+  derivedPdfCacheMaxMb: number; // DERIVED_PDF_CACHE_MAX_MB (default: 2048, 0=unlimited)
+  /**
+   * DERIVED_PDF_CACHE_MAX_AGE_HOURS — hours since last use after which a cached
+   * conversion is removed. 0 = unlimited.
+   */
+  derivedPdfCacheMaxAgeHours: number; // DERIVED_PDF_CACHE_MAX_AGE_HOURS (default: 168, 0=unlimited)
+  /**
+   * JOB_RETENTION_DAYS — days a finished job (completed/failed/cancelled) is
+   * kept after its last change. The job rows hold the persisted model response
+   * of every page and the outboxes; they cascade away with the row. 0 (default)
+   * keeps them forever. Source bytes are NOT subject to it (see
+   * jobs/job-retention.ts); they leave with DELETE /v2/documents or an erasure.
+   */
+  jobRetentionDays: number;
+  /**
+   * UPLOAD_SESSION_MAX_AGE_HOURS — hours an unfinished resumable upload session
+   * (and its `.part` file) is kept after its last chunk. Default 72, 0 = forever.
+   */
+  uploadSessionMaxAgeHours: number;
+  /** RETENTION_SWEEP_INTERVAL_MINUTES — how often the retention sweep runs (default 60). */
+  retentionSweepIntervalMinutes: number;
   /** QUEUE_MAX_DEPTH — queued documents before new uploads get 503. */
   queueMaxDepth: number; // QUEUE_MAX_DEPTH (default: 32)
   rateLimit: number; // RATE_LIMIT req/min/IP (default: 120, 0=disabled)
+  /**
+   * RATE_LIMIT_REDIS_URL — shared Redis for the rate limiters (also backs
+   * RENDER_RATE_LIMIT). Without it, every replica keeps its own budget; the
+   * production gate flags REPLICAS > 1 without this URL.
+   */
+  rateLimitRedisUrl: string | null; // RATE_LIMIT_REDIS_URL
+  /** REPLICAS — declared replica count for the production readiness gate. */
+  replicas: number; // REPLICAS (default: 1)
   /** CALLBACK_MAX_RETRIES — delivery attempts for an async conversion result. */
   callbackMaxRetries: number; // CALLBACK_MAX_RETRIES (default: 3)
   /** CALLBACK_TIMEOUT_MS — per-attempt timeout for callback delivery. */
@@ -1048,6 +1125,7 @@ export function loadConfig(): Config {
       leaseSeconds,
       heartbeatIntervalMs,
       pollIntervalMs: parseIntEnv("JOB_POLL_INTERVAL_MS", 2000, { min: 100 }),
+      jobConcurrency: parseIntEnv("JOB_CONCURRENCY", 1, { min: 1, max: 32 }),
       maxTransientWaitMs: parseNonNegIntEnv(
         "JOB_MAX_TRANSIENT_WAIT_MS",
         900_000,
@@ -1088,10 +1166,13 @@ export function loadConfig(): Config {
       min: 1,
       max: 10_000,
     });
-    const segmentPages = parseIntEnv("SEGMENT_PAGES", 250, {
-      min: 1,
-      max: 100_000,
-    });
+    // A larger explicit batch keeps the segment at least as large (the default
+    // segment must never make a previously valid EMIT_BATCH_PAGES fail startup).
+    const segmentPages = parseIntEnv(
+      "SEGMENT_PAGES",
+      Math.max(100, emitBatchPages),
+      { min: 1, max: 100_000 },
+    );
     if (segmentPages < emitBatchPages) {
       throw new Error(
         `SEGMENT_PAGES (${segmentPages}) must be >= EMIT_BATCH_PAGES (${emitBatchPages}) so a segment always contains whole batches`,
@@ -1186,7 +1267,10 @@ export function loadConfig(): Config {
 
   // ── Server ──────────────────────────────────────────────────────────────────
   const port = parseIntEnv("PORT", 3004, { min: 1, max: 65_535 });
-  const nodeEnv = process.env["NODE_ENV"] || "development";
+  // Explicit operational profile (ATF_PROFILE) first, then NODE_ENV. Unknown
+  // values throw — previously `NODE_ENV=prod` silently kept the production
+  // gates off, which is the exact failure this resolution exists to prevent.
+  const nodeEnv = resolveOperationalProfile(process.env, ["NODE_ENV"]).profile;
   // Requirement 12.4: dev keeps the convenient migrate-on-boot, production
   // defaults to dedicated migration Jobs (`bun run migrate`) instead.
   const migrateOnStart = parseBoolEnv(
@@ -1306,6 +1390,10 @@ export function loadConfig(): Config {
     ["local", "isolated"] as const,
     "local",
   );
+  const converterAllowLocalHtml = parseBoolEnv(
+    "CONVERTER_ALLOW_LOCAL_HTML",
+    false,
+  );
   const converterSocket =
     optionalString("CONVERTER_SOCKET") ?? "/run/atf-converter/converter.sock";
 
@@ -1364,8 +1452,21 @@ export function loadConfig(): Config {
     min: 1,
     max: 64,
   });
+  const derivedPdfCache = parseBoolEnv("DERIVED_PDF_CACHE", true);
+  const derivedPdfCacheMaxMb = parseNonNegIntEnv("DERIVED_PDF_CACHE_MAX_MB", 2048);
+  const derivedPdfCacheMaxAgeHours = parseNonNegIntEnv(
+    "DERIVED_PDF_CACHE_MAX_AGE_HOURS",
+    168,
+  );
+  const jobRetentionDays = parseNonNegIntEnv("JOB_RETENTION_DAYS", 0);
+  const uploadSessionMaxAgeHours = parseNonNegIntEnv("UPLOAD_SESSION_MAX_AGE_HOURS", 72);
+  const retentionSweepIntervalMinutes = parseIntEnv("RETENTION_SWEEP_INTERVAL_MINUTES", 60, {
+    min: 1,
+  });
   const queueMaxDepth = parseIntEnv("QUEUE_MAX_DEPTH", 32, { min: 1 });
   const rateLimit = parseNonNegIntEnv("RATE_LIMIT", 120);
+  const rateLimitRedisUrl = optionalString("RATE_LIMIT_REDIS_URL");
+  const replicas = parseIntEnv("REPLICAS", 1, { min: 1 });
   const callbackMaxRetries = parseNonNegIntEnv("CALLBACK_MAX_RETRIES", 3);
   const callbackTimeoutMs = parseIntEnv("CALLBACK_TIMEOUT_MS", 30_000, {
     min: 1,
@@ -1541,6 +1642,7 @@ export function loadConfig(): Config {
     subprocessMemoryLimitMb,
     subprocessCpuLimitSeconds,
     converterMode,
+    converterAllowLocalHtml,
     converterSocket,
     ocrFallback,
     tesseractBin,
@@ -1557,8 +1659,16 @@ export function loadConfig(): Config {
     bodyLimit,
     convertConcurrency,
     pageConcurrency,
+    derivedPdfCache,
+    derivedPdfCacheMaxMb,
+    derivedPdfCacheMaxAgeHours,
+    jobRetentionDays,
+    uploadSessionMaxAgeHours,
+    retentionSweepIntervalMinutes,
     queueMaxDepth,
     rateLimit,
+    rateLimitRedisUrl,
+    replicas,
     callbackMaxRetries,
     callbackTimeoutMs,
     callbackAllowedHosts,

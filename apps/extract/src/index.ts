@@ -65,6 +65,9 @@ import { type Config, loadConfig } from "./config.js";
 import { toErrorBody } from "./errors.js";
 import { createConvertHandler } from "./handlers/convert.js";
 import { createDocumentsRouter } from "./handlers/documents.js";
+import { derivedPdfCacheDir } from "./jobs/derived-pdf-cache.js";
+import { startRetentionSweeper } from "./jobs/job-retention.js";
+import { probeLibreOfficeIdentity } from "./pipeline/office.js";
 import { createErasureHandler } from "./handlers/erasure.js";
 import {
   createHealthHandler,
@@ -189,6 +192,14 @@ export interface AppOverrides {
    */
   startWorker?: boolean;
   /**
+   * The LibreOffice build identity (`soffice --version`), probed once at start
+   * by `main`. When set it is part of the pipeline hash, so a LibreOffice
+   * upgrade is a changed stand: a resumed job does not silently mix pages
+   * paginated by two converter builds. Omitted (tests, a failed probe) it
+   * leaves the hash exactly as it was before this field existed.
+   */
+  converterIdentity?: string;
+  /**
    * DNS resolver for the SSRF-guarded `source_url` pull. Injected in tests so
    * no real DNS lookup happens; defaults to node:dns with `all: true`.
    */
@@ -232,6 +243,8 @@ export interface CreatedApp {
   worker: JobWorker | null;
 }
 
+/** Documents above this many pages are answered `202` by POST /v1/ingest (polled, not held). */
+const SYNC_INGEST_PAGE_LIMIT = 250;
 export function createApp(
   config: Config,
   overrides: AppOverrides = {},
@@ -532,6 +545,9 @@ export function createApp(
     max: config.rateLimit,
     windowMs: 60_000,
     trustProxy: config.trustProxy,
+    redisUrl: config.rateLimitRedisUrl,
+    keyPrefix: "extract:rl",
+    logger,
   });
 
   // `POST /v2/render` gets its own limiter: each render spawns a poppler
@@ -542,6 +558,11 @@ export function createApp(
     max: config.renderRateLimit,
     windowMs: 60_000,
     trustProxy: config.trustProxy,
+    redisUrl: config.rateLimitRedisUrl,
+    // Distinct prefix: the render limiter has its own budget, and sharing a
+    // GCRA key with the write limiter would mix two different emission rates.
+    keyPrefix: "extract:render-rl",
+    logger,
   });
 
   const upload = createUploadMiddleware({
@@ -621,6 +642,9 @@ export function createApp(
         maxRatio: config.zipMaxRatio,
       },
       maxEmbedDepth: config.maxEmbedDepth,
+      derivedPdfCache: config.derivedPdfCache,
+      derivedPdfCacheMaxBytes: config.derivedPdfCacheMaxMb * 1024 * 1024,
+      derivedPdfCacheMaxAgeMs: config.derivedPdfCacheMaxAgeHours * 3_600_000,
     },
     sourceStore,
     logger,
@@ -658,6 +682,9 @@ export function createApp(
         pageLabel: config.pageLabel,
         pipelineRevision: PIPELINE_REVISION,
         blockModel: MARKDOWN_BLOCKS_VERSION,
+        ...(overrides.converterIdentity !== undefined
+          ? { converter: overrides.converterIdentity }
+          : {}),
       },
     },
     // Prompt set is versioned by tasks 2.3/2.5: the Pass-1 system prompt and
@@ -688,6 +715,8 @@ export function createApp(
     vision,
     searchClient,
     logger,
+    // P0-1: an instance without authentication says so on /health.
+    authDisabled: config.authnMode === "disabled",
     ...(overrides.probeBinary !== undefined
       ? { probeBinary: overrides.probeBinary }
       : {}),
@@ -865,6 +894,11 @@ export function createApp(
         logger,
         metrics,
         defaultCollection: config.search?.collection ?? "documents",
+        sourceStore,
+        tmpDir: config.sourceStore.tmpDir,
+        ...(config.derivedPdfCache
+          ? { derivedPdfCacheDir: derivedPdfCacheDir(config.tempDir) }
+          : {}),
       });
       app.use(
         "/v2/documents",
@@ -892,6 +926,9 @@ export function createApp(
         searchClient,
         logger,
         tmpDir: config.sourceStore.tmpDir,
+        ...(config.derivedPdfCache
+          ? { derivedPdfCacheDir: derivedPdfCacheDir(config.tempDir) }
+          : {}),
       }),
     );
 
@@ -959,6 +996,9 @@ export function createApp(
           maxRatio: config.zipMaxRatio,
         },
         maxEmbedDepth: config.maxEmbedDepth,
+        derivedPdfCache: config.derivedPdfCache,
+      derivedPdfCacheMaxBytes: config.derivedPdfCacheMaxMb * 1024 * 1024,
+      derivedPdfCacheMaxAgeMs: config.derivedPdfCacheMaxAgeHours * 3_600_000,
       },
       sourceStore,
       logger,
@@ -1083,6 +1123,9 @@ export function createApp(
         // VISION_BUDGET_PAGES_PER_DAY (task 7.7, requirement 5.8): the tenant
         // daily VLM-page cap; 0 disables it (the prod gate warns about that).
         visionBudgetPagesPerDay: config.visionBudgetPagesPerDay,
+        // MAX_PAGES (requirement 5.8): the same per-document ceiling the v1
+        // extractor applies, enforced in the v2 runner before any model call.
+        maxPages: config.maxPages,
       },
       emitter,
       identifier: sourceIdentifier,
@@ -1106,6 +1149,7 @@ export function createApp(
         leaseSeconds: config.jobWorker.leaseSeconds,
         heartbeatIntervalMs: config.jobWorker.heartbeatIntervalMs,
         pollIntervalMs: config.jobWorker.pollIntervalMs,
+        jobConcurrency: config.jobWorker.jobConcurrency,
         currentSnapshot: snapshot,
         largeJobPageThreshold: config.queueLane.largeJobPageThreshold,
         largeJobMaxConcurrency: config.queueLane.largeJobMaxConcurrency,
@@ -1140,7 +1184,10 @@ export function createApp(
         metrics,
         snapshot,
         defaultCollection: config.search?.collection ?? "documents",
-        syncPageLimit: config.emitter.segmentPages,
+        // Pages above which POST /v1/ingest answers 202 instead of waiting. It
+        // used to be SEGMENT_PAGES (250); the segment default is now smaller
+        // for earlier visibility, which must not move this threshold.
+        syncPageLimit: Math.max(SYNC_INGEST_PAGE_LIMIT, config.emitter.segmentPages),
         syncTimeoutMs: config.search?.timeoutMs ?? 120_000,
       });
     } else {
@@ -1287,7 +1334,21 @@ export function createApp(
     res.status(status === 499 ? 499 : status).json(body);
   });
 
+  // Retention (P1-E8): only the app that opened the store sweeps it; an injected
+  // test store is the test's own.
+  const retentionSweeper =
+    ownsStore && store !== null
+      ? startRetentionSweeper({
+          store,
+          logger,
+          jobRetentionDays: config.jobRetentionDays,
+          uploadMaxAgeHours: config.uploadSessionMaxAgeHours,
+          intervalMs: config.retentionSweepIntervalMinutes * 60_000,
+          tmpDir: config.sourceStore.tmpDir,
+        })
+      : null;
   function cleanup(): void {
+    retentionSweeper?.stop();
     rateLimiter.close();
     renderRateLimiter.close();
     // Best-effort: flush buffered spans before the pool closes under us.
@@ -1333,7 +1394,7 @@ async function main(): Promise<void> {
     logger.fatal(
       `Refusing to start in '${readiness.environment}': ${readiness.fatal.length} ` +
         "production-readiness check(s) failed. Fix the settings above, or run with " +
-        "NODE_ENV=development to accept them explicitly.",
+        "ATF_PROFILE=development (or NODE_ENV=development) to accept them explicitly.",
     );
     process.exit(1);
   }
@@ -1420,9 +1481,32 @@ async function main(): Promise<void> {
     }
   }
 
+  // The converter build is part of the pipeline stand (see AppOverrides). A
+  // sidecar that is still starting gets a few seconds before the identity is
+  // given up on; a failed probe only logs, it never blocks the start (the
+  // stand then simply carries no converter field, as before).
+  let converterIdentity: string | null = null;
+  for (let attempt = 1; attempt <= 3 && converterIdentity === null; attempt++) {
+    converterIdentity = await probeLibreOfficeIdentity(
+      config.libreofficeBin,
+      config.tempDir,
+      { timeoutMs: Math.min(config.subprocessTimeoutMs || 15_000, 15_000) },
+    );
+    if (converterIdentity === null && attempt < 3) {
+      await new Promise((resolve) => setTimeout(resolve, 1_000 * attempt));
+    }
+  }
+  if (converterIdentity !== null) {
+    logger.info({ converter: converterIdentity }, "LibreOffice build identity recorded in the pipeline stand");
+  } else {
+    logger.warn(
+      "LibreOffice version could not be read; the pipeline stand carries no converter identity",
+    );
+  }
   const { app, cleanup, tracer } = createApp(config, {
     logger,
     startWorker: true,
+    ...(converterIdentity !== null ? { converterIdentity } : {}),
   });
 
   // Optional TLS/mTLS listener (Req 11.8): plain HTTP when config.tls is null.

@@ -166,6 +166,32 @@ describe("POST /v2/jobs · create", () => {
     });
   });
 
+  it("stores the pages window normalised, ready for the runner (contract 2.4)", async () => {
+    const baseUrl = await buildApp();
+    const cases: [string, unknown][] = [
+      ["3-10", { from: 3, to: 10 }],
+      ["5-", { from: 5 }],
+      ["-8", { to: 8 }],
+      ["7", { from: 7, to: 7 }],
+    ];
+    for (const [pages, expected] of cases) {
+      const res = await createJob(baseUrl, { pages });
+      expect(res.status).toBe(201);
+      expect(fakeStore.peek(res.body.jobId)?.config.pages).toEqual(expected);
+    }
+    // No selection → null, as before.
+    const all = await createJob(baseUrl);
+    expect(fakeStore.peek(all.body.jobId)?.config.pages).toBeNull();
+  });
+  it("rejects a pages list or reversed window up front instead of silently ignoring it", async () => {
+    const baseUrl = await buildApp();
+    for (const pages of ["1-10,15", "10-3", "0", "alle"]) {
+      const res = await createJob(baseUrl, { pages });
+      expect(res.status).toBe(400);
+      expect(res.body.code).toBe("VALIDATION_FAILED");
+      expect(JSON.stringify(res.body)).toContain("contiguous window");
+    }
+  });
   it("rejects a job whose source is not stored", async () => {
     const baseUrl = await buildApp();
     const res = await request(baseUrl)

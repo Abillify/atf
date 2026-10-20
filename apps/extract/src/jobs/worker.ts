@@ -47,6 +47,13 @@ export interface WorkerConfig {
   heartbeatIntervalMs: number;
   /** How long to wait between empty polls of the queue (ms). */
   pollIntervalMs: number;
+  /**
+   * How many jobs this process claims and processes in parallel (Phase 11).
+   * Default 1 — the historical one-job-per-process loop. Each lane holds its
+   * own lease/heartbeat; the large-job lane cap is fleet-wide in the claim
+   * query, so parallel lanes cannot over-subscribe it.
+   */
+  jobConcurrency?: number;
   /** The current pipeline/prompt stand, compared against each job's snapshot. */
   currentSnapshot: PipelineSnapshot;
   /**
@@ -198,7 +205,9 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
   };
 
   const dependencyAttemptsOf = (job: JobRow): number => {
-    const raw = (job.config as Record<string, unknown>)[DEPENDENCY_ATTEMPTS_KEY];
+    const raw = (job.config as Record<string, unknown>)[
+      DEPENDENCY_ATTEMPTS_KEY
+    ];
     return typeof raw === "number" && Number.isFinite(raw) ? raw : 0;
   };
 
@@ -213,13 +222,27 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
     assertTransition(current.status, "paused");
     if (reason === "dependency" && autoResume) {
       const attempts = dependencyAttemptsOf(current) + 1;
-      const at = retryAt ?? new Date(now().getTime() + backoffMs(attempts, dependencyBackoff));
-      await store.pauseJob(current.id, "dependency", at, { [DEPENDENCY_ATTEMPTS_KEY]: attempts }, lease.fence);
-      logger.info({ jobId: current.id, attempts, resumeAt: at }, "Job paused on dependency; auto-resume armed");
+      const at =
+        retryAt ??
+        new Date(now().getTime() + backoffMs(attempts, dependencyBackoff));
+      await store.pauseJob(
+        current.id,
+        "dependency",
+        at,
+        { [DEPENDENCY_ATTEMPTS_KEY]: attempts },
+        lease.fence,
+      );
+      logger.info(
+        { jobId: current.id, attempts, resumeAt: at },
+        "Job paused on dependency; auto-resume armed",
+      );
       return;
     }
     await store.pauseJob(current.id, reason, null, {}, lease.fence);
-    logger.info({ jobId: current.id, reason }, "Job paused; waiting for an operator");
+    logger.info(
+      { jobId: current.id, reason },
+      "Job paused; waiting for an operator",
+    );
   }
 
   async function processJob(job: JobRow): Promise<void> {
@@ -249,7 +272,10 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
         await pause(lease, job, resume.reason, undefined, false);
       } catch (err) {
         if (!(err instanceof LeaseLostError)) throw err;
-        logger.warn({ jobId: job.id }, "Lease lost before the pin pause could be recorded");
+        logger.warn(
+          { jobId: job.id },
+          "Lease lost before the pin pause could be recorded",
+        );
       }
       return;
     }
@@ -259,7 +285,10 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
     const heartbeat = setInterval(() => {
       void lease.ensureHeld().catch((err: unknown) => {
         if (err instanceof LeaseLostError) {
-          logger.warn({ jobId: job.id }, "Lease lost during heartbeat; aborting the run");
+          logger.warn(
+            { jobId: job.id },
+            "Lease lost during heartbeat; aborting the run",
+          );
           abort.abort(err);
         } else {
           logger.error({ jobId: job.id, err }, "Heartbeat failed");
@@ -298,12 +327,23 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
           // The runner may have parked the job in any working state; walk it to
           // committing then completed if it is not already there.
           let cursor = current.status;
-          if (cursor === "preparing") cursor = (await transition(store, lease, cursor, "processing")).status;
-          if (cursor === "processing") cursor = (await transition(store, lease, cursor, "emitting")).status;
-          if (cursor === "emitting") cursor = (await transition(store, lease, cursor, "committing")).status;
-          if (cursor === "committing") await transition(store, lease, cursor, "completed");
+          if (cursor === "preparing")
+            cursor = (await transition(store, lease, cursor, "processing"))
+              .status;
+          if (cursor === "processing")
+            cursor = (await transition(store, lease, cursor, "emitting"))
+              .status;
+          if (cursor === "emitting")
+            cursor = (await transition(store, lease, cursor, "committing"))
+              .status;
+          if (cursor === "committing")
+            await transition(store, lease, cursor, "completed");
           if (dependencyAttemptsOf(current) > 0) {
-            await store.patchJobConfig(job.id, { [DEPENDENCY_ATTEMPTS_KEY]: 0 }, lease.fence);
+            await store.patchJobConfig(
+              job.id,
+              { [DEPENDENCY_ATTEMPTS_KEY]: 0 },
+              lease.fence,
+            );
           }
           logger.info({ jobId: job.id }, "Job completed");
           break;
@@ -314,7 +354,11 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
         case "failed":
           // Record the cause on the job: the status read (and the console)
           // otherwise only shows "failed", with the reason in a log line.
-          await store.appendJobWarning(job.id, failureWarning(outcome.error), lease.fence);
+          await store.appendJobWarning(
+            job.id,
+            failureWarning(outcome.error),
+            lease.fence,
+          );
           await transition(store, lease, current.status, "failed");
           logger.warn({ jobId: job.id, error: outcome.error }, "Job failed");
           break;
@@ -341,7 +385,10 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
           await store.setJobStatus(job.id, "failed", null, lease.fence);
         }
       } catch (markErr) {
-        logger.error({ jobId: job.id, err: markErr }, "Could not mark job failed");
+        logger.error(
+          { jobId: job.id, err: markErr },
+          "Could not mark job failed",
+        );
       }
     } finally {
       clearInterval(heartbeat);
@@ -356,27 +403,78 @@ export function createJobWorker(deps: JobWorkerDeps): JobWorker {
       config.largeJobMaxConcurrency,
     );
     if (job === null) return false;
-    logger.debug({ jobId: job.id, status: job.status, epoch: job.lease_epoch }, "Claimed job");
+    logger.debug(
+      { jobId: job.id, status: job.status, epoch: job.lease_epoch },
+      "Claimed job",
+    );
     await processJob(job);
     return true;
   }
 
+  /**
+   * Parallel job lanes (Phase 11). With `jobConcurrency` 1 — the default —
+   * this behaves exactly like the historical sequential loop: claim, process,
+   * repeat. Above 1 the loop claims into every free lane so one long job no
+   * longer idles the process; each lane holds its own lease/heartbeat and the
+   * large-job lane cap is enforced fleet-wide by the claim query, so parallel
+   * lanes cannot over-subscribe it.
+   */
+  const jobConcurrency = Math.max(1, config.jobConcurrency ?? 1);
+  const lanes = new Set<Promise<void>>();
+
+  const sleep = (ms: number): Promise<void> =>
+    new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      if (typeof timer.unref === "function") timer.unref();
+    });
+
   async function loop(): Promise<void> {
     while (running) {
-      let processed = false;
-      try {
-        processed = await tick();
-      } catch (err) {
-        logger.error({ err }, "Worker tick failed");
+      let claimed = false;
+      if (lanes.size < jobConcurrency) {
+        try {
+          const job = await store.claimNextJob(
+            workerId,
+            config.leaseSeconds,
+            config.largeJobPageThreshold,
+            config.largeJobMaxConcurrency,
+          );
+          if (job !== null) {
+            claimed = true;
+            logger.debug(
+              { jobId: job.id, status: job.status, epoch: job.lease_epoch },
+              "Claimed job",
+            );
+            const lane: Promise<void> = processJob(job)
+              .catch((err: unknown) => {
+                logger.error({ jobId: job.id, err }, "Worker tick failed");
+              })
+              .finally(() => {
+                lanes.delete(lane);
+              });
+            lanes.add(lane);
+          }
+        } catch (err) {
+          logger.error({ err }, "Worker tick failed");
+        }
       }
       if (!running) break;
-      if (!processed) {
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(resolve, config.pollIntervalMs);
-          if (typeof timer.unref === "function") timer.unref();
-        });
+      if (!claimed) {
+        if (lanes.size === 0) {
+          await sleep(config.pollIntervalMs);
+        } else {
+          // Lanes are busy: wake on the next lane finishing OR the poll
+          // interval, so an empty queue is re-polled while work runs.
+          await Promise.race([
+            Promise.race([...lanes]),
+            sleep(config.pollIntervalMs),
+          ]);
+        }
       }
     }
+    // Drain: a claimed job finishes its lease transitions before the worker
+    // reports stopped (the historical stop-after-current-job contract, per lane).
+    await Promise.allSettled([...lanes]);
     stopResolve?.();
   }
 

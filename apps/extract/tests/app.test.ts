@@ -147,6 +147,14 @@ async function app(
 }
 
 describe("GET /health", () => {
+  it("says so while authentication is disabled, and only then (P0-1)", async () => {
+    const open = await request(await app({ AUTHN_MODE: "disabled" })).get("/health");
+    expect(open.body.auth).toBe("disabled");
+    const closed = await request(
+      await app({ AUTHN_MODE: "token", API_TOKEN: "t".repeat(40) }),
+    ).get("/health");
+    expect(closed.body).not.toHaveProperty("auth");
+  });
   it("is reachable without a credential", async () => {
     const response = await request(
       await app({ AUTHN_MODE: "token", API_TOKEN: "t".repeat(40) }),

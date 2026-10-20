@@ -10,7 +10,7 @@
  */
 
 import { randomUUID } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createFakeJobStore } from "./job-store-fake.js";
 import { testLogger } from "./helpers.js";
 import { createLeaseGuard, LeaseLostError } from "../src/jobs/lease.js";
@@ -326,6 +326,131 @@ describe("queue lanes and fairness (requirement 6.6)", () => {
     const second = await store.claimNextJob("w2", 60, 1000, 1);
     // The 1000-page job is normal (not > 1000), so it is claimable past the cap.
     expect(second?.id).toBe(exactly1000.id);
+  });
+});
+
+// Phase 11 (Fix B): JOB_CONCURRENCY > 1 lets one process work several jobs at
+// once — a single long job no longer idles the worker. Each lane holds its own
+// claim; stop() drains every lane before reporting stopped.
+describe("worker · parallel job lanes (Phase 11)", () => {
+  it("runs two jobs concurrently when jobConcurrency is 2", async () => {
+    const store = createFakeJobStore();
+    const jobA = await seedJob(store);
+    const jobB = await seedJob(store);
+
+    // A runner that blocks until the test releases it, so both lanes are
+    // observably in flight at the same time.
+    let started = 0;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const blocking: JobRunner = {
+      async run() {
+        started += 1;
+        await gate;
+        return { status: "completed" };
+      },
+    };
+    const worker = createJobWorker({
+      store,
+      runner: blocking,
+      config: workerConfig({ jobConcurrency: 2 }),
+      logger: testLogger,
+      workerId: "worker-1",
+    });
+
+    worker.start();
+    await vi.waitFor(() => {
+      expect(started).toBe(2);
+    });
+    // Both jobs are claimed and in a working state simultaneously — with the
+    // historical sequential loop, job B would still be queued here.
+    expect(store.peek(jobA.id)?.status).toBe("preparing");
+    expect(store.peek(jobB.id)?.status).toBe("preparing");
+
+    release();
+    await worker.stop();
+    expect(store.peek(jobA.id)?.status).toBe("completed");
+    expect(store.peek(jobB.id)?.status).toBe("completed");
+  });
+
+  it("keeps one job in flight and claims the next while it runs", async () => {
+    const store = createFakeJobStore();
+    await seedJob(store);
+    await seedJob(store);
+
+    const releases: Array<() => void> = [];
+    const startedIds: string[] = [];
+    const blocking: JobRunner = {
+      async run(ctx) {
+        startedIds.push(ctx.job.id);
+        await new Promise<void>((resolve) => {
+          releases.push(resolve);
+        });
+        return { status: "completed" };
+      },
+    };
+    const worker = createJobWorker({
+      store,
+      runner: blocking,
+      config: workerConfig({ jobConcurrency: 2 }),
+      logger: testLogger,
+      workerId: "worker-1",
+    });
+
+    worker.start();
+    await vi.waitFor(() => {
+      expect(startedIds.length).toBe(2);
+    });
+    // Release only the first-started job: the worker must finish it and keep
+    // the second lane running (stop() drains it). Which of the two jobs the
+    // loop claims first is not deterministic, so read it from the runner.
+    const firstStarted = startedIds[0];
+    const stillRunning = startedIds.find((id) => id !== firstStarted);
+    if (firstStarted === undefined || stillRunning === undefined)
+      throw new Error("expected both jobs to have started");
+    releases[0]?.();
+    await vi.waitFor(() => {
+      expect(store.peek(firstStarted)?.status).toBe("completed");
+    });
+    expect(store.peek(stillRunning)?.status).toBe("preparing");
+    releases[1]?.();
+    await worker.stop();
+    expect(store.peek(stillRunning)?.status).toBe("completed");
+  });
+
+  it("jobConcurrency 1 (default) stays strictly sequential", async () => {
+    const store = createFakeJobStore();
+    const jobA = await seedJob(store);
+    const jobB = await seedJob(store);
+
+    let inFlight = 0;
+    let peak = 0;
+    const blocking: JobRunner = {
+      async run() {
+        inFlight += 1;
+        peak = Math.max(peak, inFlight);
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        inFlight -= 1;
+        return { status: "completed" };
+      },
+    };
+    const worker = createJobWorker({
+      store,
+      runner: blocking,
+      config: workerConfig(), // no jobConcurrency → 1
+      logger: testLogger,
+      workerId: "worker-1",
+    });
+
+    worker.start();
+    await vi.waitFor(() => {
+      expect(store.peek(jobA.id)?.status).toBe("completed");
+      expect(store.peek(jobB.id)?.status).toBe("completed");
+    });
+    await worker.stop();
+    expect(peak).toBe(1);
   });
 });
 

@@ -44,8 +44,6 @@
  */
 
 import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
-import { join } from "node:path";
 import {
 	canonicalizeJson,
 	type ErasureRequest,
@@ -61,6 +59,11 @@ import type { ErasureJobTargetRow } from "../persistence/types.js";
 import { getPrincipal, type RequestPrincipal } from "../request-principal.js";
 import type { SearchClient } from "../search-client.js";
 import type { SourceStore } from "../source-store.js";
+import { removeDerivedPdfsFor } from "../jobs/derived-pdf-cache.js";
+import {
+	orphanedSourceDigests,
+	removeSessionFiles as removeUploadSessionFiles,
+} from "../jobs/job-retention.js";
 
 /** The fingerprint of an erasure invocation — same shape as Search's. */
 export function erasureFingerprint(request: ErasureRequest): string {
@@ -84,11 +87,18 @@ export interface ErasureHandlerOptions {
 	logger: Logger;
 	/** Directory of resumable-upload session files (`<uploadId>.part`). */
 	tmpDir?: string;
+	/**
+	 * Directory of the derived-PDF cache (`TEMP_DIR/derived-pdf`). Converted
+	 * documents cached there are removed for every source digest the erasure
+	 * deletes jobs for. Omit when the cache is disabled.
+	 */
+	derivedPdfCacheDir?: string;
 }
 
 const STORE_JOBS = "extract.jobs";
 const STORE_UPLOADS = "extract.uploads";
 const STORE_SOURCES = "extract.sources";
+const STORE_DERIVED_PDFS = "extract.derived_pdf_cache";
 const STORE_SEARCH = "search.documents";
 
 function errorMessage(err: unknown): string {
@@ -131,24 +141,12 @@ function jobFilterFor(
 export function createErasureHandler(
 	options: ErasureHandlerOptions,
 ): RequestHandler {
-	const { store, sourceStore, searchClient, logger, tmpDir } = options;
+	const { store, sourceStore, searchClient, logger, tmpDir, derivedPdfCacheDir } =
+		options;
 
 	/** Remove the `<uploadId>.part` scratch files of erased upload sessions. */
-	async function removeSessionFiles(uploadIds: string[]): Promise<void> {
-		if (tmpDir === undefined || uploadIds.length === 0) return;
-		for (const uploadId of uploadIds) {
-			// Upload ids are server-generated UUIDs; still refuse path separators.
-			if (!/^[0-9a-fA-F-]+$/.test(uploadId)) continue;
-			await rm(join(tmpDir, `${uploadId}.part`), { force: true }).catch(
-				(err: unknown) => {
-					logger.warn(
-						{ err, uploadId },
-						"erasure could not remove an upload session file",
-					);
-				},
-			);
-		}
-	}
+	const removeSessionFiles = (uploadIds: string[]): Promise<void> =>
+		removeUploadSessionFiles(tmpDir, uploadIds, logger);
 
 	/**
 	 * Delete source blobs orphaned by the job deletion: digests the erased jobs
@@ -157,27 +155,41 @@ export function createErasureHandler(
 	async function eraseOrphanedSources(
 		erasedJobs: ErasureJobTargetRow[],
 	): Promise<ErasureStoreResult> {
-		const digests = [
-			...new Set(
-				erasedJobs.map((job) => job.source_sha256).filter((d) => d !== ""),
-			),
-		];
-		if (digests.length === 0)
-			return { store: STORE_SOURCES, status: "ok", erased: 0 };
 		try {
-			const remaining = await store.remainingSourceRefs(digests);
-			const stillReferenced = new Set(
-				remaining.filter((r) => r.n > 0).map((r) => r.source_sha256),
-			);
+			const orphans = await orphanedSourceDigests(store, erasedJobs);
 			let removed = 0;
-			for (const digest of digests) {
-				if (stillReferenced.has(digest)) continue;
+			for (const digest of orphans) {
 				if ((await sourceStore.remove?.(digest)) === true) removed += 1;
 			}
 			return { store: STORE_SOURCES, status: "ok", erased: removed };
 		} catch (err) {
 			return {
 				store: STORE_SOURCES,
+				status: "failed",
+				erased: 0,
+				error: errorMessage(err),
+			};
+		}
+	}
+
+	/**
+	 * Remove the cached PDF conversions of every source the erased jobs held.
+	 * Unlike the source blob this does not wait for the digest to be orphaned:
+	 * a conversion is only a cache, and another job on the same bytes simply
+	 * re-converts.
+	 */
+	async function eraseDerivedPdfs(
+		erasedJobs: ErasureJobTargetRow[],
+	): Promise<ErasureStoreResult> {
+		try {
+			const removed = await removeDerivedPdfsFor(
+				derivedPdfCacheDir ?? "",
+				erasedJobs.map((job) => job.source_sha256),
+			);
+			return { store: STORE_DERIVED_PDFS, status: "ok", erased: removed };
+		} catch (err) {
+			return {
+				store: STORE_DERIVED_PDFS,
 				status: "failed",
 				erased: 0,
 				error: errorMessage(err),
@@ -296,6 +308,22 @@ export function createErasureHandler(
 			results.push(await eraseOrphanedSources(erasedJobs));
 		} else {
 			results.push({ store: STORE_SOURCES, status: "ok", erased: 0 });
+		}
+
+		// ── derived-PDF cache ───────────────────────────────────────────────────
+		if (derivedPdfCacheDir !== undefined) {
+			if (request.dryRun) {
+				results.push({ store: STORE_DERIVED_PDFS, status: "ok", erased: 0 });
+			} else if (jobsFailed) {
+				results.push({
+					store: STORE_DERIVED_PDFS,
+					status: "failed",
+					erased: 0,
+					error: "Derived-PDF erasure skipped: job erasure failed",
+				});
+			} else {
+				results.push(await eraseDerivedPdfs(erasedJobs));
+			}
 		}
 
 		return results;

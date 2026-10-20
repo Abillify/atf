@@ -160,6 +160,12 @@ function syntheticSource(pageCount: number): SyntheticSource {
       queueMicrotask(() => pageImageGauge.leave());
       return { image, rawText: `Seite text`, usedOcr: false };
     },
+    async pageSizePt() {
+      return { widthPt: 612, heightPt: 792 };
+    },
+    async renderRegion() {
+      throw new Error("renderRegion is not used by the job runner");
+    },
     async renderFigureCrop() {
       return { buffer: TINY_PNG, mimeType: "image/png", width: 10, height: 10 };
     },

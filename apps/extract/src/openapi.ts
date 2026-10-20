@@ -892,6 +892,11 @@ export function buildOpenApiSpec(
           "`filename` (optional) types the source by its extension; omitted, the reference stands " +
           "in for it. `collection` must follow Search's naming rule (a letter, then letters, digits " +
           "or underscores), otherwise the request is a 400.\n\n" +
+          "`pages` (optional) selects one contiguous window of the source in source page numbers: " +
+          "`N`, `A-B`, `A-` (to the end) or `-B` (from page 1). A list such as `1-10,15` or a " +
+          "reversed window is a 400; a start beyond the last page fails the job before any model " +
+          "call; `MAX_PAGES` counts the window. The pages keep their source numbers (contract 2.4: " +
+          "`document.begin.firstPage`). A native source (BPMN, a chart-free XLSX) ignores it.\n\n" +
           "Optional identity fields: `version` (explicit document version), `sourceModifiedAt` " +
           "(RFC 3339 file time, the version fallback) and `dedup` (`auto` | `exact` | `off`). A job " +
           "whose source is already indexed completes without extracting anything; its status " +

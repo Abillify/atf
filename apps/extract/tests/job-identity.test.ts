@@ -70,6 +70,12 @@ function pdfPrepared(options: { pageCount?: number; text?: string[] | null } = {
         usedOcr: true,
       };
     },
+    async pageSizePt() {
+      return { widthPt: 612, heightPt: 792 };
+    },
+    async renderRegion() {
+      throw new Error("renderRegion is not used by the job runner");
+    },
     async renderFigureCrop() {
       return { buffer: TINY_PNG, mimeType: "image/png", width: 10, height: 10 };
     },
@@ -405,6 +411,12 @@ describe("job identity · e-mail", () => {
       },
       async render() {
         throw new Error("no render for e-mail");
+      },
+      async pageSizePt() {
+        return { widthPt: 612, heightPt: 792 };
+      },
+      async renderRegion() {
+        throw new Error("renderRegion is not used by the job runner");
       },
       async renderFigureCrop() {
         throw new Error("no crops for e-mail");

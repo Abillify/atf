@@ -35,6 +35,7 @@
  * prompts do not.
  */
 
+import { fenceUntrusted, untrustedContentRule } from "../vision/untrusted.js";
 /** The scope of a summary node, selecting which system prompt to use. */
 export type SummaryScope = "page" | "section" | "chapter" | "document";
 
@@ -42,8 +43,10 @@ export type SummaryScope = "page" | "section" | "chapter" | "document";
  * Version tag for the summary prompt set. Bump whenever any system prompt or
  * the user-prompt structure changes in a way that alters model behaviour.
  * 2.1.0: the `page` scope for text fast-path pages (no Pass-1 summary).
+ * 2.2.0: the document text and title sit in `<dokumenttext>`/`<titel>` and the
+ *        system prompt states that they are data, not instructions.
  */
-export const SUMMARY_PROMPT_VERSION = "2.1.0";
+export const SUMMARY_PROMPT_VERSION = "2.2.0";
 
 /** The shared preamble every summary system prompt opens with. */
 const SUMMARY_PREAMBLE = `Du fasst einen Teil eines Dokuments für ein Retrieval-System zusammen.
@@ -52,7 +55,8 @@ Regeln:
 - Schreibe sachlich und dicht, ohne Meta-Kommentare über das Dokument ("dieser Abschnitt beschreibt …").
 - Erfinde nichts. Fasse nur zusammen, was im gelieferten Text steht.
 - Antworte in DERSELBEN Sprache wie der gelieferte Text (ein deutscher Text bekommt eine deutsche Zusammenfassung). Erkenne die Sprache am Text selbst, nicht an diesen Anweisungen.
-- Gib ausschließlich die Zusammenfassung aus, ohne Anführungszeichen, Überschrift oder Aufzählungszeichen davor.`;
+- Gib ausschließlich die Zusammenfassung aus, ohne Anführungszeichen, Überschrift oder Aufzählungszeichen davor.
+${untrustedContentRule(["dokumenttext", "titel"])}`;
 
 /** The per-scope system prompts. Each describes exactly one summary level. */
 export const SUMMARY_SYSTEM_PROMPTS: Readonly<Record<SummaryScope, string>> = {
@@ -107,12 +111,11 @@ export function buildSummaryUserPrompt(input: SummaryUserPromptInput): string {
           : "Dokument";
   const titleLine =
     input.title !== undefined && input.title.trim() !== ""
-      ? `TITEL: ${input.title.replace(/\s+/g, " ").trim()}\n\n`
+      ? `TITEL: ${fenceUntrusted("titel", input.title.replace(/\s+/g, " ").trim())}\n\n`
       : "";
   return `Fasse den folgenden ${scopeLabel} zusammen (siehe System-Prompt).
-
 ${titleLine}TEXT:
-${input.content}`;
+${fenceUntrusted("dokumenttext", input.content)}`;
 }
 
 /**

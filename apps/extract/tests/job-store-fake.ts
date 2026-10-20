@@ -39,7 +39,7 @@ import {
 
 export interface FakeJobStore extends ExtractStore {
   /** Seed an upload session row (the erasure surface; uploads have no real store here). */
-  seedUpload(uploadId: string, reference: string): void;
+  seedUpload(uploadId: string, reference: string, status?: string): void;
   /** The remaining upload sessions, for assertions after an erasure. */
   peekUploads(): Array<{ upload_id: string; reference: string }>;
   /** Directly read a ledger record for assertions. */
@@ -89,7 +89,10 @@ export function createFakeJobStore(): FakeJobStore {
   const faults = new Map<string, { error: Error; skip: number }>();
   // Upload sessions and the erasure ledger (task 4.6): minimal models of the
   // real tables, faithful to the claim/transition protocol including expiry.
-  const uploads = new Map<string, { upload_id: string; reference: string }>();
+  const uploads = new Map<
+    string,
+    { upload_id: string; reference: string; status?: string; updatedAtMs?: number }
+  >();
   const erasureLedger = new Map<
     string,
     {
@@ -164,6 +167,27 @@ export function createFakeJobStore(): FakeJobStore {
     };
   }
 
+  /** Delete job rows with the FK `ON DELETE CASCADE` of the stage/outbox tables. */
+  function dropJobs(targets: JobRow[]): ErasureJobTargetRow[] {
+    for (const job of targets) {
+      jobs.delete(job.id);
+      for (const unit of Object.keys(stages) as StageUnit[]) {
+        for (const key of [...stages[unit].keys()]) {
+          if (key.startsWith(`${job.id}|`)) stages[unit].delete(key);
+        }
+      }
+      for (const key of [...emitOutbox.keys()]) {
+        if (emitOutbox.get(key)?.job_id === job.id) emitOutbox.delete(key);
+      }
+      for (const key of [...assetOutbox.keys()]) {
+        if (assetOutbox.get(key)?.job_id === job.id) assetOutbox.delete(key);
+      }
+      for (const key of [...docpass.keys()]) {
+        if (key.startsWith(`${job.id}|`)) docpass.delete(key);
+      }
+    }
+    return targets.map(targetRow);
+  }
   function stageKey(
     unit: StageUnit,
     r: {
@@ -369,6 +393,25 @@ export function createFakeJobStore(): FakeJobStore {
         .map(copy);
     },
 
+    async sourceDigestsByReference(
+      reference,
+      collection,
+      includeNullCollection = false,
+    ) {
+      return [
+        ...new Set(
+          [...jobs.values()]
+            .filter(
+              (row) =>
+                row.reference === reference &&
+                (row.collection === collection ||
+                  (includeNullCollection && row.collection === null)),
+            )
+            .map((row) => row.source_sha256)
+            .filter((digest) => digest !== ""),
+        ),
+      ];
+    },
     async listActiveJobsByReference(
       reference,
       collection,
@@ -673,8 +716,9 @@ export function createFakeJobStore(): FakeJobStore {
       cursorStage,
       limit,
       when = now(),
+      firstPage = 1,
     ) {
-      if (pageCount <= 0 || limit <= 0) return [];
+      if (pageCount < firstPage || limit <= 0) return [];
       const t = when.getTime();
       // Pages with any unit inside a transient-failure backoff are not due.
       const backingOff = new Set<number>();
@@ -688,7 +732,7 @@ export function createFakeJobStore(): FakeJobStore {
         }
       }
       const out: number[] = [];
-      for (let page = 1; page <= pageCount && out.length < limit; page++) {
+      for (let page = firstPage; page <= pageCount && out.length < limit; page++) {
         if (backingOff.has(page)) continue;
         const row = stages.page.get(
           stageKey("page", { job_id: jobId, page, stage: cursorStage }),
@@ -951,26 +995,44 @@ export function createFakeJobStore(): FakeJobStore {
     },
     async eraseJobs(filter) {
       trip("eraseJobs");
-      const targets = targetedJobs(filter);
-      for (const job of targets) {
-        jobs.delete(job.id);
-        // FK ON DELETE CASCADE for the stage/outbox tables.
-        for (const unit of Object.keys(stages) as StageUnit[]) {
-          for (const key of [...stages[unit].keys()]) {
-            if (key.startsWith(`${job.id}|`)) stages[unit].delete(key);
-          }
-        }
-        for (const key of [...emitOutbox.keys()]) {
-          if (emitOutbox.get(key)?.job_id === job.id) emitOutbox.delete(key);
-        }
-        for (const key of [...assetOutbox.keys()]) {
-          if (assetOutbox.get(key)?.job_id === job.id) assetOutbox.delete(key);
-        }
-        for (const key of [...docpass.keys()]) {
-          if (key.startsWith(`${job.id}|`)) docpass.delete(key);
+      return dropJobs(targetedJobs(filter));
+    },
+    async eraseJobsByReference(reference, collection, includeNullCollection = false) {
+      trip("eraseJobsByReference");
+      return dropJobs(
+        [...jobs.values()].filter(
+          (row) =>
+            row.reference === reference &&
+            (row.collection === collection ||
+              (includeNullCollection && row.collection === null)),
+        ),
+      );
+    },
+    async deleteExpiredJobs(days, limit) {
+      trip("deleteExpiredJobs");
+      const cutoff = clock - days * 86_400_000;
+      return dropJobs(
+        [...jobs.values()]
+          .filter(
+            (row) =>
+              ["completed", "failed", "cancelled"].includes(row.status) &&
+              new Date(row.updated_at).getTime() < cutoff,
+          )
+          .sort((a, b) => new Date(a.updated_at).getTime() - new Date(b.updated_at).getTime())
+          .slice(0, limit),
+      );
+    },
+    async deleteExpiredUploads(hours, limit) {
+      const cutoff = clock - hours * 3_600_000;
+      const removed: string[] = [];
+      for (const [id, row] of [...uploads.entries()]) {
+        if (removed.length >= limit) break;
+        if (row.status === "open" && (row.updatedAtMs ?? clock) < cutoff) {
+          uploads.delete(id);
+          removed.push(id);
         }
       }
-      return targets.map(targetRow);
+      return removed;
     },
     async eraseUploadsByReferences(references) {
       if (references.length === 0) return [];
@@ -1059,11 +1121,19 @@ export function createFakeJobStore(): FakeJobStore {
       existing.expiresAtMs = clock + ERASURE_TTL_MS;
     },
 
-    seedUpload(uploadId, reference) {
-      uploads.set(uploadId, { upload_id: uploadId, reference });
+    seedUpload(uploadId, reference, status) {
+      uploads.set(uploadId, {
+        upload_id: uploadId,
+        reference,
+        ...(status !== undefined ? { status } : {}),
+        updatedAtMs: clock,
+      });
     },
     peekUploads() {
-      return [...uploads.values()].map((u) => ({ ...u }));
+      return [...uploads.values()].map((u) => ({
+        upload_id: u.upload_id,
+        reference: u.reference,
+      }));
     },
     peekErasureLedger(key) {
       const row = erasureLedger.get(key);

@@ -130,8 +130,8 @@ ingest path Extract orchestrates and calls Search over a thin HTTP request.
 
 `SEARCH_URL` must be set. When `EXTRACT_DATABASE_URL` is set as well, `/v1/ingest` is a
 thin wrapper around a v2 job: the upload is stored in the source store, a job is created
-and, for a small document, driven inline so the synchronous response is preserved; the
-job's emitter writes the revision and figure assets through Search's v2 revision API (see
+and, for a small document (up to 250 pages; larger ones are answered `202` and polled), driven
+inline so the synchronous response is preserved; the job's emitter writes the revision and figure assets through Search's v2 revision API (see
 [v2 jobs](#v2-persistent-jobs)). Without a database the original synchronous path below
 runs. In order:
 
@@ -238,7 +238,7 @@ empty `SOURCE_URL_ALLOWED_HOSTS`.
 
 | Route | Purpose |
 | --- | --- |
-| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `filename` (types the source; defaults to the reference), `collection`, `pages`, `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`, `version`, `sourceModifiedAt`, `dedup`, `allowedUsers`, `allowedGroups`, `title`, `tags`, `metadata`, `link`, `sourceLabel`. 201 with the queued job |
+| `POST /v2/jobs` | Create a job for a stored source: `reference`, `sourceSha256` (required), optional `filename` (types the source; defaults to the reference), `collection`, `pages` (a window of the source, see below), `tokenBudget`, `priority`, `visibility`, `resumePolicy`, `callbackUrl`, `version`, `sourceModifiedAt`, `dedup`, `allowedUsers`, `allowedGroups`, `title`, `tags`, `metadata`, `link`, `sourceLabel`. 201 with the queued job |
 | `GET /v2/jobs` | List jobs newest first (`limit` 1–100, default 25; `offset`) |
 | `GET /v2/jobs/{id}` | Status, per-stage progress, warnings (a failed job carries its cause), tokens, cost and ETA. A non-UUID id is a 404 |
 | `GET /v2/jobs/{id}/figures` | The figure blocks of the staged page records (`figureId`, `page`, `bbox`, `kind`, `caption`, `description`, `assetId`) and the `sourceSha256`; crops render on demand via `POST /v2/render` |
@@ -274,6 +274,22 @@ same reference and collection, then removes the document from Search. `200
 {status: "deleted", reference, collection, deleted}` when Search removed chunks, `404
 NOT_FOUND` otherwise (also for never-existing references), `400` for an invalid collection
 and `502` when Search fails. Deletions are counted in `extract_documents_deleted_total`.
+Once Search has answered (a 404 included, a 502 not — the retry must still find the jobs),
+Extract also removes what it kept of the document: every job of that reference and
+collection with its page checkpoints (the persisted model responses) and outboxes, the
+reference's upload sessions and `.part` files, and the source bytes no other job uses; the
+cached PDF conversions of its sources go before the Search call. The same applies to
+`POST /v1/erasure`.
+
+**Retention.** `JOB_RETENTION_DAYS` (default `0` = keep forever; the production gate warns)
+deletes finished jobs (`completed`, `failed`, `cancelled`) that long after their last change,
+with their checkpoints and outboxes; running, paused and queued jobs are never swept.
+`UPLOAD_SESSION_MAX_AGE_HOURS` (default 72, `0` = keep) deletes unfinished resumable
+uploads and their files. The sweep runs at start and every `RETENTION_SWEEP_INTERVAL_MINUTES`
+(default 60). Source bytes are not swept by age: `/v2/render` needs them for as long as Search
+serves the document. The derived-PDF cache has its own limits (`DERIVED_PDF_CACHE_MAX_MB`,
+`DERIVED_PDF_CACHE_MAX_AGE_HOURS`, counted from the last use; a PDF a running job holds is
+never evicted).
 
 A job moves through `queued → preparing → processing → emitting → committing → completed`,
 or ends `failed` / `cancelled`. `paused` carries a reason: `budget` (the `tokenBudget`
@@ -298,10 +314,58 @@ and sent with the revision, so Search writes it onto every unit; assets are read
 through those units. E-mail attachments inherit their e-mail's ACL.
 
 The emitter streams staged pages to Search's revision API in batches of
-`EMIT_BATCH_PAGES`, commits a segment every `SEGMENT_PAGES` pages, uploads assets with
-`ASSET_UPLOAD_CONCURRENCY` and reconciles against the revision state on resume, so nothing
-is sent twice or lost. It needs `SEARCH_URL`; without it a job is processed but nothing is
-emitted.
+`EMIT_BATCH_PAGES`, uploads assets with `ASSET_UPLOAD_CONCURRENCY` and reconciles against
+the revision state on resume, so nothing is sent twice or lost. It needs `SEARCH_URL`;
+without it a job is processed but nothing is emitted.
+
+**Progressive visibility.** With `visibility: progressive`, a segment of `SEGMENT_PAGES`
+pages is committed as soon as its batches and its assets are acknowledged, while the
+later batches are still being sent, so the first pages are searchable long before the
+document is complete. This covers the hand-over to Search only: the pages are still
+processed (render, vision, document pass) before the hand-over starts, so a document
+becomes searchable once all its pages are processed. Overlapping the two phases is not
+done. The batch size is frozen on the job when its first batch is sent, so changing
+`EMIT_BATCH_PAGES` never re-maps the batches of an open revision. Measured with
+`bun run scripts/bench-time-to-searchable.ts --pages 600` (a simulated Search: 40 ms +
+3 ms/page per batch, 120 ms per segment commit, 300 ms for the final commit):
+
+| Setting (batch/segment) | First pages searchable | All searchable |
+| --- | ---: | ---: |
+| 20/250, emitter before this change | 5.6 s (600 pages) | 6.0 s |
+| 20/250, segments committed during the hand-over | 2.4 s (260 pages) | 6.0 s |
+| **20/100 (default)** | **1.0 s (100 pages)** | 6.5 s (+8 %) |
+| 10/100 | 1.2 s (100 pages) | 7.7 s (+19 %) |
+
+The segment size is what buys early visibility; a smaller batch only adds a PUT per
+batch, which is why `EMIT_BATCH_PAGES` stays 20. Very small segments are not free
+either: each commit makes everything accepted so far visible, so the cost grows with the
+number of segments. The absolute numbers depend on the latencies you pass
+(`--batch-ms`, `--page-ms`, `--segment-ms`, `--commit-ms`, `--asset-ms`); compare
+settings under the same ones.
+
+**Page windows.** `pages` selects one contiguous window of the source, in source page
+numbers: `"5"`, `"3-10"`, `"5-"` (to the end) or `"-8"` (from page 1). Lists such as
+`"1-10,15"` and reversed windows are a 400; a start beyond the last page fails the job
+before any model call; `MAX_PAGES` counts the pages of the window. The window's pages keep
+their own numbers (`"5-7"` produces pages 5, 6 and 7) and `document.begin`/`document.end`
+carry `firstPage` (contract 2.4), so Search checks completeness over `[firstPage,
+pageCount]`. Native sources (BPMN, a chart-free XLSX) are staged whole and ignore `pages`.
+
+**Render window.** For a PDF the runner warms the render of the pages about to start and
+of up to eight after them with one `pdfinfo` and one `pdftoppm` call per run of pages that
+share a DPI, instead of two subprocesses per page; an oversized sheet with an adaptive DPI
+renders on its own, and the figure-resolution render of a page is made once for all its
+crops. Measured with `bun run scripts/bench-render-window.ts` (a generated PDF, the same
+poppler wrappers):
+
+| Pages, DPI | Per page (before) | Window of 8 | Window of 16 |
+| --- | ---: | ---: | ---: |
+| 600, 50 | 47.1 ms/page | 13.0 ms/page (3.6×) | 10.7 ms/page (4.4×) |
+| 120, 200 | 404.8 ms/page | 364.8 ms/page (1.11×) | — |
+
+At the DPI used for vision the rasteriser dominates and the saving is about 10 %; it
+matters most for low-DPI renders and for large PDFs, where every process otherwise reads
+the cross-reference table again.
 
 ### Duplicates, versions and e-mail threads
 
@@ -360,6 +424,14 @@ or a normalised `[x0,y0,x1,y1]` region of it, from the stored source and returns
 Full-resolution images are never pre-stored; Search calls this route for zoom and caches
 the result as an asset variant. Output is clamped to `RENDER_MAX_PIXELS`, the route has
 its own `RENDER_RATE_LIMIT` and needs `extract.admin`. It does not require the database.
+A request costs one `pdfinfo` call (page size as rendered, `/Rotate` applied) and one
+`pdftoppm` call that rasterises only the region at the DPI the route picked from the
+target and the pixel ceiling; `X-Render-Dpi` is the resolution of the delivered pixels.
+It never enlarges: a target above what the source can deliver returns the pixels it has
+(a single-image source is returned at its own size). Office and HTML sources are converted
+once and served from the derived-PDF cache. A whole page without `targetPixels` uses the
+pipeline's adaptive DPI, so its bytes match what a job rendered; `X-Render-Tile` names the
+large-format tile the region lies in.
 
 ## Response modes
 
@@ -424,6 +496,17 @@ The v2 `source_url` pull reuses these controls with a stricter rule (see
 
 Other properties worth knowing:
 
+- **Document text is data in every model prompt.** The text layer, heading hints, a figure's
+  region text and caption, and the text and title given to the summariser sit inside
+  `<rohtext>`/`<hinweise>`/`<beschriftung>`/`<dokumenttext>`/`<titel>` elements
+  (`src/vision/untrusted.ts`); the system prompts say that whatever stands there is content,
+  never an instruction; a literal closing tag in a document is broken so it cannot end the
+  element; the Unicode tag block is removed. This narrows prompt injection, it does not make
+  a model immune — keep tools that act on results behind approval.
+- **Local conversion is a decision.** `CONVERTER_MODE=local` runs LibreOffice in this
+  container; for HTML the page's own markup decides what it loads. In production it aborts
+  the start unless `CONVERTER_MODE=isolated` or `CONVERTER_ALLOW_LOCAL_HTML=true`
+  acknowledges it (then it is a readiness warning).
 - **Converters get a minimal environment.** `VISION_API_KEY`, `SEARCH_TOKEN`,
   `API_TOKEN` and `OIDC_CLIENT_SECRET` are not in it. A document parser that can
   be made to read its environment should find nothing there.
@@ -478,10 +561,20 @@ worth deciding deliberately:
 | `RENDER_DPI` | 200 | Below it small table text stops being legible; above it image cost grows without better transcription |
 | `FIGURE_DPI` | 300 | Must be ≥ `RENDER_DPI`; a crop coarser than the model's input is never wanted |
 | `VISION_MAX_TOKEN_VARIANTS` | 8192,16384,32768 | The truncation escalation ladder |
-| `MAX_PAGES` | 500 | Tokens are spent per page; the ceiling ships on (0 = unlimited) |
+| `MAX_PAGES` | 500 | Tokens are spent per page; the ceiling ships on (0 = unlimited). Enforced in the v1 extractor and in the v2 job runner: a vision or native job that would process more pages (`min(document pages, pages.to)`) fails terminally before its first page goes to the vision model. Conversion (and, if version resolution needs it, one summary call) can precede the refusal. Jobs without a tenant are bounded only by this ceiling and the per-job token budget |
 | `VISION_BUDGET_PAGES_PER_DAY` | 0 (unlimited) | Caps a tenant's VLM pages per UTC day across all its jobs; over the cap the job fails with `BUDGET_EXCEEDED` |
 | `CONVERT_CONCURRENCY` | 2 | Each conversion holds a LibreOffice process and page buffers |
-| `PAGE_CONCURRENCY` | 4 | Pages of one document in flight against the model |
+| `PAGE_CONCURRENCY` | 4 | Pages of one document in flight against the model; a freed slot is refilled as soon as a page settles (ADR 0033) |
+| `JOB_CONCURRENCY` | 1 (1–32) | Jobs ONE worker process claims and runs in parallel. Peak vision calls ≈ `JOB_CONCURRENCY × PAGE_CONCURRENCY × replicas` — size the provider quota before raising it |
+| `DERIVED_PDF_CACHE` | true | Reuses converted PDFs under `TEMP_DIR/derived-pdf`, keyed by source sha256 and the LibreOffice version (an HTML source also by the sanitizer revision). Holds document content: removed by `DELETE /v2/documents` and `POST /v1/erasure` for the sources they delete, and bounded by the two limits below. While the `soffice --version` probe fails, conversions run uncached |
+| `DERIVED_PDF_CACHE_MAX_MB` | 2048 | Size limit of the derived-PDF cache; least recently used entries go first, a PDF a running job holds never (0 = unlimited) |
+| `DERIVED_PDF_CACHE_MAX_AGE_HOURS` | 168 | Entries unused for this long are removed (0 = unlimited) |
+| `CONVERTER_ALLOW_LOCAL_HTML` | false | Acknowledges `CONVERTER_MODE=local` in production (otherwise fatal; stays a readiness warning) |
+| `JOB_RETENTION_DAYS` | 0 | Days a finished job (with its stored model responses and outboxes) is kept; 0 = forever, and the production gate warns |
+| `UPLOAD_SESSION_MAX_AGE_HOURS` | 72 | Hours an unfinished resumable upload and its file are kept (0 = forever) |
+| `RETENTION_SWEEP_INTERVAL_MINUTES` | 60 | How often the retention sweep runs |
+| `RATE_LIMIT_REDIS_URL` | (unset) | Shared Redis for the rate limiters (`extract:rl`, `extract:render-rl`); without it the budget is per replica. Fails open on Redis errors. Needs the `redis` package in the image |
+| `REPLICAS` | 1 | Declared replica count for the production gate: `REPLICAS > 1` without `RATE_LIMIT_REDIS_URL` is fatal in production. The Helm chart does not set it |
 | `QUEUE_MAX_DEPTH` | 32 | Beyond it uploads get 503 with `Retry-After`, which a caller can act on |
 | `CALLBACK_ALLOWED_HOSTS` | (empty) | Empty allows public hosts only; list internal receivers explicitly |
 | `SUBPROCESS_TIMEOUT_MS` | 120000 | Turns a hung poppler/LibreOffice call into a warning or retryable failure; 0 disables, which the production gate refuses |
@@ -532,8 +625,8 @@ without a database, so a bad value fails early:
 | `LARGE_JOB_PAGE_THRESHOLD` | 1000 | Jobs with more pages run in the large lane |
 | `LARGE_JOB_MAX_CONCURRENCY` | 1 | Large jobs leased fleet-wide at once |
 | **Emitter** | | |
-| `EMIT_BATCH_PAGES` | 20 | Pages per NDJSON batch to Search; bounds emitter memory |
-| `SEGMENT_PAGES` | 250 | Pages between segment commits (what `progressive` visibility exposes early); also the inline limit of the v2 `/v1/ingest` wrapper |
+| `EMIT_BATCH_PAGES` | 20 | Pages per NDJSON batch to Search; bounds emitter memory. Frozen per job at its first batch |
+| `SEGMENT_PAGES` | 100 | Pages between segment commits (what `progressive` visibility exposes early); was 250. At least `EMIT_BATCH_PAGES` |
 | `ASSET_UPLOAD_CONCURRENCY` | 4 | Parallel crop/page uploads to Search (1–64) |
 | `FINALIZE_PASS` | true | Model-free outline correction at document end; Search re-embeds only units whose section path changed |
 | **Figure Pass 2** | | |

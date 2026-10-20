@@ -23,6 +23,7 @@
  * decides whether to exit, which keeps this fully testable.
  */
 
+import type { OperationalProfile } from "@atf/security-kit";
 import type { Config } from "./config.js";
 
 export interface ProductionReadinessReport {
@@ -30,8 +31,8 @@ export interface ProductionReadinessReport {
   fatal: string[];
   /** Issues that are surfaced but do not abort. */
   warnings: string[];
-  /** The environment the gate judged against. */
-  environment: string;
+  /** The operational profile the gate judged against. */
+  environment: OperationalProfile;
 }
 
 /** True when no credential is configured and every endpoint is public. */
@@ -41,7 +42,7 @@ export function isAuthDisabled(config: Config): boolean {
 
 export function checkProductionReadiness(
   config: Config,
-  environment: string = config.nodeEnv,
+  environment: OperationalProfile = config.nodeEnv,
 ): ProductionReadinessReport {
   const fatal: string[] = [];
   const warnings: string[] = [];
@@ -73,7 +74,8 @@ export function checkProductionReadiness(
     );
   }
 
-  const tokenEnabled = config.authnMode === "token" || config.authnMode === "token_or_oidc";
+  const tokenEnabled =
+    config.authnMode === "token" || config.authnMode === "token_or_oidc";
   if (tokenEnabled && config.apiToken !== null && config.apiToken.length < 32) {
     flag(
       "API_TOKEN is shorter than 32 characters — it is a single shared secret granting " +
@@ -102,7 +104,9 @@ export function checkProductionReadiness(
     );
   }
   if (config.monitorToken !== null && config.monitorToken.length < 32) {
-    flag("MONITOR_TOKEN is shorter than 32 characters — use a high-entropy value.");
+    flag(
+      "MONITOR_TOKEN is shorter than 32 characters — use a high-entropy value.",
+    );
   }
   if (
     config.apiToken !== null &&
@@ -125,9 +129,13 @@ export function checkProductionReadiness(
   }
   if (tokenEnabled) {
     const required = ["extract.convert", "extract.ingest"];
-    const missing = required.filter((scope) => !config.apiServiceScopes.includes(scope));
+    const missing = required.filter(
+      (scope) => !config.apiServiceScopes.includes(scope),
+    );
     if (missing.length > 0) {
-      flag(`API_SERVICE_SCOPES is missing required static-service scopes: ${missing.join(", ")}.`);
+      flag(
+        `API_SERVICE_SCOPES is missing required static-service scopes: ${missing.join(", ")}.`,
+      );
     }
   }
 
@@ -149,7 +157,9 @@ export function checkProductionReadiness(
       );
     }
     if (config.authzEnabled && !issuer.scopesClaim) {
-      flag(`API_OIDC_ISSUERS[${i}] must configure scopesClaim when AUTHZ_ENABLED=true.`);
+      flag(
+        `API_OIDC_ISSUERS[${i}] must configure scopesClaim when AUTHZ_ENABLED=true.`,
+      );
     }
     if (config.tenantIsolationEnabled && !issuer.tenantClaim) {
       flag(
@@ -168,10 +178,16 @@ export function checkProductionReadiness(
       );
     }
     if (isProd && !config.search.url.startsWith("https://")) {
-      fatal.push("SEARCH_URL must be https in production; ingest carries document content.");
+      fatal.push(
+        "SEARCH_URL must be https in production; ingest carries document content.",
+      );
     }
   }
-  if (isProd && config.visionApiKey === null && !config.visionUrl.startsWith("http://")) {
+  if (
+    isProd &&
+    config.visionApiKey === null &&
+    !config.visionUrl.startsWith("http://")
+  ) {
     // A public HTTPS endpoint with no key is almost certainly a misconfiguration;
     // an in-cluster plain-HTTP vLLM legitimately has none.
     warnings.push(
@@ -195,6 +211,18 @@ export function checkProductionReadiness(
     flag(
       "RATE_LIMIT is 0 — request throttling is disabled entirely on an endpoint where each " +
         "request spawns a document converter and spends model tokens.",
+    );
+  }
+  // Declaring REPLICAS > 1 without a shared store means every replica keeps
+  // its own GCRA budget: the effective service-wide limit is REPLICAS ×
+  // RATE_LIMIT — and here a burst is a bill, not just load. REPLICAS defaults
+  // to 1, so existing single-replica deployments are unaffected.
+  if (config.replicas > 1 && !config.rateLimitRedisUrl) {
+    flag(
+      `REPLICAS is ${config.replicas} but RATE_LIMIT_REDIS_URL is unset — the rate ` +
+        `limit (including RENDER_RATE_LIMIT) is per replica, so clients get up to ` +
+        `${config.replicas}× the budget. Set RATE_LIMIT_REDIS_URL to share the ` +
+        "throttle across replicas.",
     );
   }
   if (!config.trustProxy) {
@@ -251,6 +279,34 @@ export function checkProductionReadiness(
     );
   }
 
+  // ── Converter isolation ───────────────────────────────────────────────────
+  // CONVERTER_MODE=local runs LibreOffice (and the HTML/office pipeline) as a
+  // subprocess of this service, inside its network namespace and file system.
+  // For HTML that is the dangerous case: the page's own markup decides what the
+  // converter loads (http:// as well as file://), and the reference
+  // neutraliser is a deny-list, not a boundary. So in production a local
+  // converter is refused unless the operator acknowledges it explicitly with
+  // CONVERTER_ALLOW_LOCAL_HTML=true (then it stays a warning, because the
+  // in-process mode is the documented single-container deployment shape).
+  // The isolated mode runs the converter in a separate container.
+  if (config.converterMode === "local") {
+    const message =
+      "CONVERTER_MODE is local — LibreOffice converts documents, HTML pages included, inside " +
+      "this service's container, so a converter escape or a missed reference in an HTML page " +
+      "is container access (SSRF, local file read). Run CONVERTER_MODE=isolated (requirement " +
+      "5.7), or acknowledge the risk explicitly with CONVERTER_ALLOW_LOCAL_HTML=true.";
+    if (config.converterAllowLocalHtml) {
+      if (isProd) {
+        warnings.push(
+          "CONVERTER_ALLOW_LOCAL_HTML=true acknowledges the in-process converter. " + message,
+        );
+      }
+    } else {
+      // Fatal in production; a warning in staging and development so the same
+      // configuration surfaces the finding before it is promoted.
+      flag(message);
+    }
+  }
   // ── Persistence ───────────────────────────────────────────────────────────
   // Without a database the service runs the v1 synchronous paths only: no
   // persistent, resumable v2 jobs, no resumable uploads and no source_url
@@ -262,5 +318,15 @@ export function checkProductionReadiness(
     );
   }
 
+  // ── Retention ─────────────────────────────────────────────────────────────
+  // A finished job keeps the persisted model response of every page and the
+  // outboxes. Without a retention rule they live as long as the database does.
+  if (isProd && config.database !== null && config.jobRetentionDays === 0) {
+    warnings.push(
+      "JOB_RETENTION_DAYS is 0 — finished jobs (page content in the persisted model responses) " +
+        "are kept forever. Set a retention period that matches your records of processing; " +
+        "DELETE /v2/documents and POST /v1/erasure remove a document's jobs on request.",
+    );
+  }
   return { fatal, warnings, environment };
 }

@@ -417,6 +417,14 @@ describe("DELETE /v2/documents/{reference} · error cases", () => {
     const otherRef = mk(5, "docs/b.pdf", "team_a", "queued");
     const otherColl = mk(6, "docs/a.pdf", "documents", "queued");
 
+    // The jobs are removed after the cancel, so the cancel is observed on the transition.
+    const cancelledIds: string[] = [];
+    const transition = store.operatorTransition.bind(store);
+    store.operatorTransition = async (id, change) => {
+      const row = await transition(id, change);
+      if (row !== null && change.status === "cancelled") cancelledIds.push(id);
+      return row;
+    };
     const base = await buildApp(tokenEnv, { store, searchClient: stubSearchClient() });
     const res = await request(base)
       .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
@@ -429,12 +437,10 @@ describe("DELETE /v2/documents/{reference} · error cases", () => {
       collection: "team_a",
       deleted: 1,
     });
-
-    expect(store.peek(queued)?.status).toBe("cancelled");
-    expect(store.peek(running)?.status).toBe("cancelled");
-    expect(store.peek(paused)?.status).toBe("cancelled");
-    // A terminal job stays as it is; other references/collections are untouched.
-    expect(store.peek(completed)?.status).toBe("completed");
+    expect(cancelledIds.sort()).toEqual([queued, running, paused].sort());
+    // Every job of the document is gone afterwards — the finished one too, since its
+    // checkpoints hold the page content — while other references/collections are untouched.
+    for (const id of [queued, running, paused, completed]) expect(store.peek(id)).toBeUndefined();
     expect(store.peek(otherRef)?.status).toBe("queued");
     expect(store.peek(otherColl)?.status).toBe("queued");
   });
@@ -471,6 +477,13 @@ describe("DELETE /v2/documents/{reference} · error cases", () => {
       source_sha256: "0".repeat(64),
       status: "queued",
     });
+    const cancelledIds: string[] = [];
+    const transition = store.operatorTransition.bind(store);
+    store.operatorTransition = async (jobId, change) => {
+      const row = await transition(jobId, change);
+      if (row !== null && change.status === "cancelled") cancelledIds.push(jobId);
+      return row;
+    };
     const base = await buildApp(tokenEnv, { store, searchClient: stubSearchClient() });
     // No X-Collection → the instance default ("documents") also covers rows
     // stored without a collection.
@@ -478,7 +491,8 @@ describe("DELETE /v2/documents/{reference} · error cases", () => {
       .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
       .set("Authorization", `Bearer ${token}`);
     expect(res.status).toBe(200);
-    expect(store.peek(id)?.status).toBe("cancelled");
+    expect(cancelledIds).toEqual([id]);
+    expect(store.peek(id)).toBeUndefined();
   });
 
   it("forwards the asserted identity to Search for the ACL check", async () => {
@@ -520,5 +534,108 @@ describe("DELETE /v2/documents/{reference} · error cases", () => {
     const rendered = metrics.render();
     // One successful delete counted; the 404 adds nothing.
     expect(rendered).toMatch(/^extract_documents_deleted_total 1$/m);
+  });
+});
+
+// ── What Extract keeps of a document leaves with it (P1-E8) ──────────────────
+describe("DELETE /v2/documents/{reference} · Extract's own data", () => {
+  const token = "f".repeat(40);
+  const tokenEnv = {
+    AUTHN_MODE: "token",
+    AUTHZ_ENABLED: "true",
+    API_TOKEN: token,
+    API_SERVICE_SCOPES: "extract.delete",
+  };
+  const sha = (n: number): string => n.toString(16).padStart(64, "0");
+  const jobId = (n: number): string => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+
+  async function withSources(
+    digests: string[],
+  ): Promise<{ sourceStore: import("../src/source-store.js").SourceStore; removed: string[] }> {
+    const removed: string[] = [];
+    const sourceStore = {
+      has: async () => true,
+      locate: async () => null,
+      putStream: async () => {
+        throw new Error("not used");
+      },
+      remove: async (digest: string) => {
+        removed.push(digest);
+        return digests.includes(digest);
+      },
+    } as unknown as import("../src/source-store.js").SourceStore;
+    return { sourceStore, removed };
+  }
+
+  it("removes the jobs, the upload sessions and the sources nothing else uses", async () => {
+    const store = createFakeJobStore();
+    await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "completed" });
+    // The same bytes under another reference keep sha(2) alive; sha(1) becomes an orphan.
+    await store.createJob({ id: jobId(2), reference: "docs/a.pdf", source_sha256: sha(2), collection: "documents", status: "completed" });
+    await store.createJob({ id: jobId(3), reference: "docs/b.pdf", source_sha256: sha(2), collection: "documents", status: "completed" });
+    store.seedUpload("11111111-1111-4111-8111-111111111111", "docs/a.pdf");
+    store.seedUpload("22222222-2222-4222-8222-222222222222", "docs/b.pdf");
+    const { sourceStore, removed } = await withSources([sha(1), sha(2)]);
+    const base = await buildApp(tokenEnv, { store, searchClient: stubSearchClient(), sourceStore });
+    const res = await request(base)
+      .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(200);
+    expect(store.peek(jobId(1))).toBeUndefined();
+    expect(store.peek(jobId(2))).toBeUndefined();
+    expect(store.peek(jobId(3))?.status).toBe("completed");
+    expect(store.peekUploads().map((u) => u.reference)).toEqual(["docs/b.pdf"]);
+    expect(removed).toEqual([sha(1)]);
+  });
+
+  it("also cleans up when Search never held the reference (404)", async () => {
+    const store = createFakeJobStore();
+    await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "failed" });
+    const { sourceStore, removed } = await withSources([sha(1)]);
+    const base = await buildApp(tokenEnv, {
+      store,
+      searchClient: indexBackedSearchClient({ current: new Set() }),
+      sourceStore,
+    });
+    const res = await request(base)
+      .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(404);
+    expect(store.peek(jobId(1))).toBeUndefined();
+    expect(removed).toEqual([sha(1)]);
+  });
+
+  it("keeps everything but the cancelled state when the Search delete fails, so the retry still finds it", async () => {
+    const store = createFakeJobStore();
+    await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "completed" });
+    const { sourceStore, removed } = await withSources([sha(1)]);
+    const base = await buildApp(tokenEnv, {
+      store,
+      searchClient: stubSearchClient({ deleteError: ingestFailed("Search down") }),
+      sourceStore,
+    });
+    const res = await request(base)
+      .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(res.status).toBe(502);
+    expect(store.peek(jobId(1))?.status).toBe("completed");
+    expect(removed).toEqual([]);
+  });
+
+  it("does not touch another collection's jobs of the same reference", async () => {
+    const store = createFakeJobStore();
+    await store.createJob({ id: jobId(1), reference: "docs/a.pdf", source_sha256: sha(1), collection: "team_a", status: "completed" });
+    await store.createJob({ id: jobId(2), reference: "docs/a.pdf", source_sha256: sha(1), collection: "documents", status: "completed" });
+    const { sourceStore, removed } = await withSources([sha(1)]);
+    const base = await buildApp(tokenEnv, { store, searchClient: stubSearchClient(), sourceStore });
+    await request(base)
+      .delete(`/v2/documents/${encodeURIComponent("docs/a.pdf")}`)
+      .set("Authorization", `Bearer ${token}`)
+      .set("X-Collection", "team_a")
+      .expect(200);
+    expect(store.peek(jobId(1))).toBeUndefined();
+    expect(store.peek(jobId(2))?.status).toBe("completed");
+    // The other collection's job still uses the bytes.
+    expect(removed).toEqual([]);
   });
 });

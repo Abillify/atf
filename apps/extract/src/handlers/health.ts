@@ -79,6 +79,8 @@ export interface HealthHandlerDeps {
   vision: VisionClient;
   searchClient: SearchClient | null;
   logger: Logger;
+  /** `AUTHN_MODE=disabled`: `/health` says so (`auth: "disabled"`). */
+  authDisabled?: boolean;
   config: {
     libreofficeBin: string;
     popplerBinDir: string | null;
@@ -233,6 +235,7 @@ export function createHealthHandler(deps: HealthHandlerDeps): RequestHandler {
 
       res.status(healthy ? 200 : 503).json({
         status: healthy ? "ok" : "unhealthy",
+        ...(deps.authDisabled === true ? { auth: "disabled" } : {}),
         contract: EXTRACT_CONTRACT_ID,
         uptime_seconds: Math.round(process.uptime()),
         queue: queue.state(),

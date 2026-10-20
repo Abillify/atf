@@ -58,6 +58,10 @@ interface FakeSearch extends RevisionClient {
   assetPuts: string[];
   /** Peak concurrent asset uploads observed. */
   peakAssetConcurrency: number;
+  /** Everything the server saw, in order: `put:<seq>`, `asset:<id>`, `segment:<n>`, `commit`. */
+  timeline: string[];
+  /** The NDJSON body of each accepted batch seq, decoded. */
+  bodies: Map<number, Record<string, unknown>[]>;
 }
 
 interface FakeSearchOptions {
@@ -78,6 +82,8 @@ function createFakeSearch(options: FakeSearchOptions = {}): FakeSearch {
   const storedAssets = new Set<string>(options.preStored ?? []);
   const knownAssets = new Set<string>(options.knownAssets ?? []);
   const committedSegments: number[] = [];
+  const timeline: string[] = [];
+  const bodies = new Map<number, Record<string, unknown>[]>();
   const batchPuts: number[] = [];
   const assetPuts: string[] = [];
   let inFlightAssets = 0;
@@ -93,7 +99,8 @@ function createFakeSearch(options: FakeSearchOptions = {}): FakeSearch {
     batchPuts,
     assetPuts,
     peakAssetConcurrency: 0,
-
+    timeline,
+    bodies,
     async createRevision(): Promise<Revision> {
       return {
         revisionId,
@@ -124,6 +131,15 @@ function createFakeSearch(options: FakeSearchOptions = {}): FakeSearch {
         throw new RevisionTransientError("simulated network error");
       }
       batchPuts.push(args.seq);
+      timeline.push(`put:${args.seq}`);
+      bodies.set(
+        args.seq,
+        new TextDecoder()
+          .decode(args.body)
+          .split("\n")
+          .filter((line) => line !== "")
+          .map((line) => JSON.parse(line) as Record<string, unknown>),
+      );
       const noop = accepted.has(args.seq);
       accepted.add(args.seq);
       return { seq: args.seq, digest: args.contentDigest, status: "received", noop };
@@ -139,12 +155,14 @@ function createFakeSearch(options: FakeSearchOptions = {}): FakeSearch {
       fake.peakAssetConcurrency = peakAssetConcurrency;
       if (options.assetDelayMs) await new Promise((r) => setTimeout(r, options.assetDelayMs));
       assetPuts.push(args.asset.assetId);
+      timeline.push(`asset:${args.asset.assetId}`);
       storedAssets.add(args.asset.assetId);
       inFlightAssets--;
     },
 
     async commitSegment(args): Promise<CommitResult> {
       committedSegments.push(args.segment);
+      timeline.push(`segment:${args.segment}`);
       return {
         reference: REFERENCE,
         revisionId,
@@ -156,6 +174,7 @@ function createFakeSearch(options: FakeSearchOptions = {}): FakeSearch {
 
     async commit(): Promise<CommitResult> {
       fake.finalCommitted = true;
+      timeline.push("commit");
       return { reference: REFERENCE, revisionId, committed: true, isLatest: true, missingRanges: [] };
     },
   };
@@ -182,17 +201,34 @@ function fakeAssetLoader(): AssetLoader {
 async function seedEmittingJob(
   store: FakeJobStore,
   pageCount: number,
-  options: { figuresOnPages?: number[] } = {},
+  options: {
+    figuresOnPages?: number[];
+    /** First staged page (a `pages` window); `pageCount` pages are staged from it. */
+    firstPage?: number;
+    config?: Record<string, unknown>;
+    revisionId?: string;
+  } = {},
 ): Promise<JobRow> {
   const id = randomUUID();
-  await store.createJob({ id, reference: REFERENCE, source_sha256: SOURCE_SHA, collection: "documents" });
+  const firstPage = options.firstPage ?? 1;
+  await store.createJob({
+    id,
+    reference: REFERENCE,
+    source_sha256: SOURCE_SHA,
+    collection: "documents",
+    config: {
+      ...(firstPage > 1 ? { pageWindow: { first: firstPage, last: firstPage + pageCount - 1 } } : {}),
+      ...(options.config ?? {}),
+    },
+  });
   const claimed = await store.claimNextJob("worker-1", 60);
   if (claimed === null) throw new Error("expected a claim");
   await store.setJobPageCount(id, pageCount);
   await store.setJobStatus(id, "emitting");
 
   const figures = new Set(options.figuresOnPages ?? []);
-  for (let page = 1; page <= pageCount; page++) {
+  if (options.revisionId !== undefined) await store.setJobRevision(id, options.revisionId, { jobId: id, holder: "worker-1", epoch: Number(claimed.lease_epoch) });
+  for (let page = firstPage; page < firstPage + pageCount; page++) {
     const record = buildPageRecord(page, figures.has(page));
     const payload = { type: "page", page, record };
     await store.stageEmitBatch({
@@ -210,6 +246,7 @@ async function seedEmittingJob(
       variant: "page",
       mime_type: "image/png",
       checksum: "0".repeat(64),
+      page,
     });
     if (figures.has(page)) {
       await store.stageAsset({
@@ -218,6 +255,7 @@ async function seedEmittingJob(
         variant: null,
         mime_type: "image/png",
         checksum: "1".repeat(64),
+        page,
       });
     }
   }
@@ -379,6 +417,131 @@ describe("emitter · segment commits", () => {
   });
 });
 
+describe("emitter · progressive visibility (segments commit while later batches are still being sent)", () => {
+  it("commits each full segment right after its batches and assets, before the next batch goes out", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 10);
+    const search = createFakeSearch();
+    // 2 pages per batch, 4 per segment: segment 0 = pages 1-4 = batches 0,1.
+    await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    const order = search.timeline.filter((e) => e.startsWith("put:") || e.startsWith("segment:") || e === "commit");
+    expect(order).toEqual([
+      "put:0", "put:1", "segment:0", "put:2", "put:3", "segment:1", "put:4",
+      "put:5", // the trailing document.end batch
+      "commit",
+    ]);
+  });
+  it("uploads a segment's assets before committing it, the later pages' assets after", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 8);
+    const search = createFakeSearch();
+    await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    const at = (entry: string): number => search.timeline.indexOf(entry);
+    const image = (page: number): string => `asset:${buildAssetId(REFERENCE, pageLocalId(page))}`;
+    for (const page of [1, 2, 3, 4]) expect(at(image(page))).toBeLessThan(at("segment:0"));
+    // Page 5's image is not part of segment 0: it goes out with segment 1's assets.
+    expect(at(image(5))).toBeGreaterThan(at("segment:0"));
+    expect(at(image(5))).toBeLessThan(at("segment:1"));
+  });
+  it("on a resume commits only the segments Search does not already hold", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 10);
+    const search = createFakeSearch();
+    search.committedSegments.push(0);
+    await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(search.committedSegments).toEqual([0, 1]);
+    expect(search.timeline.filter((e) => e.startsWith("segment:"))).toEqual(["segment:1"]);
+  });
+  it("retries a rejected segment commit once after the send phase, not once per batch", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 8);
+    const search = createFakeSearch();
+    let calls = 0;
+    search.commitSegment = async (args) => {
+      calls++;
+      search.timeline.push(`segment:${args.segment}`);
+      return { reference: REFERENCE, revisionId: "rev-fixed", committed: false, segment: args.segment, missingRanges: [{ from: 1, to: 1 }] };
+    };
+    const outcome = await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(outcome.status).toBe("committed");
+    // Segments 0 and 1: one attempt each while sending, one more each in the sweep.
+    expect(calls).toBe(4);
+  });
+});
+describe("emitter · a pages window (contract 2.4)", () => {
+  it("streams [5, 9]: absolute batch seqs, document.begin in the FIRST sent batch, firstPage on begin and end", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 5, { firstPage: 5 });
+    const search = createFakeSearch();
+    const outcome = await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(outcome.status).toBe("committed");
+    // pages 5,6 → seq 2; 7,8 → seq 3; 9 → seq 4; document.end at seq 5.
+    expect(search.batchPuts).toEqual([2, 3, 4, 5]);
+    const first = search.bodies.get(2) ?? [];
+    expect(first[0]).toMatchObject({ type: "document.begin", firstPage: 5, pageCount: 9 });
+    for (const seq of [3, 4]) {
+      expect((search.bodies.get(seq) ?? []).some((r) => r.type === "document.begin")).toBe(false);
+    }
+    expect((search.bodies.get(2) ?? []).filter((r) => r.type === "page").map((r) => r.page)).toEqual([5, 6]);
+    expect(search.bodies.get(5)?.[0]).toMatchObject({ type: "document.end", firstPage: 5, pageCount: 9 });
+    // Segments count from the first page: pages 5-8 are segment 0, so one full segment.
+    expect(search.committedSegments).toEqual([0]);
+  });
+  it("a window from page 1 carries no firstPage (a 2.3-shaped stream)", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 3);
+    const search = createFakeSearch();
+    await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(search.bodies.get(0)?.[0]).toMatchObject({ type: "document.begin", pageCount: 3 });
+    expect(search.bodies.get(0)?.[0]).not.toHaveProperty("firstPage");
+    expect(search.bodies.get(2)?.[0]).not.toHaveProperty("firstPage");
+  });
+  it("resumes a window: the accepted absolute seqs map back to their pages", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 5, { firstPage: 5 });
+    const search = createFakeSearch({ preAccepted: [2] });
+    await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    // seq 2 (pages 5-6, with document.begin) was already there: only 3, 4 and the end are sent.
+    expect(search.batchPuts).toEqual([3, 4, 5]);
+    expect(store.peekEmitBatches(job.id).every((r) => r.status === "acked")).toBe(true);
+  });
+});
+describe("emitter · the batch size is frozen per job", () => {
+  const batchPages = (store: FakeJobStore, id: string): unknown =>
+    (store.peek(id)?.config as { emitBatchPages?: unknown } | undefined)?.emitBatchPages;
+
+  it("freezes the current EMIT_BATCH_PAGES into the job config before the first batch", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 6);
+    const search = createFakeSearch();
+    await makeEmitter(store, search, 3, 6).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(batchPages(store, job.id)).toBe(3);
+    expect(search.batchPuts).toEqual([0, 1, 2]);
+  });
+  it("keeps the frozen size when the setting changes between runs (a resume never re-maps batches)", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 6, { config: { emitBatchPages: 3 } });
+    const search = createFakeSearch({ preAccepted: [0] });
+    // The deployment now says 2, the job says 3: pages 1-3 are batch 0 and already accepted.
+    await makeEmitter(store, search, 2, 4).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(search.batchPuts).toEqual([1, 2]);
+  });
+  it("a job that predates the freeze (revision already open) takes the current size and freezes it", async () => {
+    const store = createFakeJobStore();
+    const job = await seedEmittingJob(store, 6, { revisionId: "rev-fixed" });
+    // Batch 0 (pages 1-3 at 3 per batch) was accepted by the release before the freeze existed.
+    const search = createFakeSearch({ preAccepted: [0] });
+    await makeEmitter(store, search, 3, 6).emit(job, leaseFor(store, job), fakeAssetLoader());
+    expect(batchPages(store, job.id)).toBe(3);
+    expect(search.batchPuts).toEqual([1, 2]);
+    // A later run with a different setting keeps the frozen size.
+    const fresh = await store.getJob(job.id);
+    if (fresh === null) throw new Error("job vanished");
+    const again = createFakeSearch({ preAccepted: [0, 1, 2] });
+    await makeEmitter(store, again, 2, 6).emit(fresh, leaseFor(store, fresh), fakeAssetLoader());
+    expect(again.batchPuts).toEqual([2]);
+  });
+});
 describe("emitter · a mid-emit failure resumes without duplicates or loss", () => {
   it("a transient batch failure pauses, and a resume completes cleanly", async () => {
     const store = createFakeJobStore();

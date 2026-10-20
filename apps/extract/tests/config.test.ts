@@ -37,6 +37,24 @@ describe("loadConfig", () => {
     });
   });
 
+  describe("emitter geometry (progressive visibility)", () => {
+    it("commits a segment every 100 pages (250 before) with 20-page batches", () => {
+      const { emitter } = loadTestConfig();
+      expect(emitter.emitBatchPages).toBe(20);
+      expect(emitter.segmentPages).toBe(100);
+    });
+    it("honours explicit values", () => {
+      const { emitter } = loadTestConfig({ EMIT_BATCH_PAGES: "10", SEGMENT_PAGES: "50" });
+      expect([emitter.emitBatchPages, emitter.segmentPages]).toEqual([10, 50]);
+    });
+    it("a larger EMIT_BATCH_PAGES alone never trips the segment >= batch rule", () => {
+      const { emitter } = loadTestConfig({ EMIT_BATCH_PAGES: "400" });
+      expect(emitter.segmentPages).toBe(400);
+    });
+    it("still refuses an explicit segment smaller than the batch", () => {
+      expect(() => loadTestConfig({ EMIT_BATCH_PAGES: "40", SEGMENT_PAGES: "30" })).toThrow(/SEGMENT_PAGES/);
+    });
+  });
   it("leaves the vision API key unset for an unauthenticated local endpoint", () => {
     expect(loadTestConfig().visionApiKey).toBeNull();
   });

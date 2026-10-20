@@ -181,6 +181,25 @@ export function listJobsQuery(limit: number, offset: number): Query {
 }
 
 /**
+ * The distinct source digests of every job (any status) of one reference in
+ * one collection — the keys of the derived-PDF cache entries to drop when the
+ * document is deleted.
+ */
+export function sourceDigestsByReferenceQuery(
+	reference: string,
+	collection: string,
+	includeNullCollection: boolean,
+): Query {
+	return {
+		text: `
+      SELECT DISTINCT source_sha256 FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE reference = $1
+         AND (collection = $2 OR ($3 AND collection IS NULL))`,
+		values: [reference, collection, includeNullCollection],
+	};
+}
+
+/**
  * The non-terminal jobs of one reference in one collection (extract-outpost E2,
  * requirement 9.3). A delete must cancel these first: a job still emitting
  * would re-create the document in Search right after the delete removed it.
@@ -831,7 +850,8 @@ export function retryFailedStagesQuery(unit: StageUnit, jobId: string): Query {
 /**
  * The DB-backed ordered page scheduler (design §9b, requirement 6.1).
  *
- * Returns the next `limit` page numbers of `[1..pageCount]` that are NOT yet
+ * Returns the next `limit` page numbers of `[firstPage..pageCount]` (a job
+ * with a `pages` window starts at `firstPage`, else 1) that are NOT yet
  * finished and are DUE, in strict ascending order. A page is "finished" when its
  * cursor stage (`cursorStage`, the terminal per-page stage the runner marks
  * `done` last) has a `done` checkpoint, or a `failed` one with no retry
@@ -855,6 +875,7 @@ export function nextRunnablePagesQuery(
 	cursorStage: string,
 	limit: number,
 	now: Date,
+	firstPage = 1,
 ): Query {
 	const backingOff = (table: string) => `
          AND NOT EXISTS (
@@ -866,7 +887,7 @@ export function nextRunnablePagesQuery(
 	return {
 		text: `
       SELECT gs.page AS page
-        FROM generate_series(1, $2) AS gs(page)
+        FROM generate_series($6::int, $2) AS gs(page)
         LEFT JOIN ${EXTRACT_SCHEMA}.page_stages ps
           ON ps.job_id = $1 AND ps.page = gs.page AND ps.stage = $3
        WHERE (ps.status IS NULL
@@ -876,7 +897,7 @@ export function nextRunnablePagesQuery(
               OR (ps.status = 'failed' AND ps.next_attempt_at IS NOT NULL))${backingOff("page_stages")}${backingOff("figure_stages")}${backingOff("tile_stages")}
        ORDER BY gs.page
        LIMIT $4`,
-		values: [jobId, pageCount, cursorStage, limit, now],
+		values: [jobId, pageCount, cursorStage, limit, now, firstPage],
 	};
 }
 
@@ -1301,8 +1322,67 @@ export function advanceUploadOffsetQuery(
 	};
 }
 
+// ─── document deletion and retention (P1-E8) ─────────────────────────────
+/**
+ * Delete every job of one reference in one collection (any status). Stage
+ * checkpoints (the persisted model responses) and both outboxes go with the
+ * row via `ON DELETE CASCADE`. `DELETE /v2/documents/{reference}` uses it so a
+ * deleted document leaves no page content behind in Extract.
+ */
+export function eraseJobsByReferenceQuery(
+	reference: string,
+	collection: string,
+	includeNullCollection: boolean,
+): Query {
+	return {
+		text: `
+      DELETE FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE reference = $1
+         AND (collection = $2 OR ($3 AND collection IS NULL))
+      RETURNING id, reference, source_sha256`,
+		values: [reference, collection, includeNullCollection],
+	};
+}
+/**
+ * Retention: delete up to `limit` TERMINAL jobs (`completed`, `failed`,
+ * `cancelled` — states a job never leaves) not touched for `days` days. Their
+ * stage checkpoints and outboxes cascade. A running or paused job is never
+ * swept, however old.
+ */
+export function deleteExpiredJobsQuery(days: number, limit: number): Query {
+	return {
+		text: `
+      DELETE FROM ${EXTRACT_SCHEMA}.jobs
+       WHERE id IN (
+         SELECT id FROM ${EXTRACT_SCHEMA}.jobs
+          WHERE status IN ('completed', 'failed', 'cancelled')
+            AND updated_at < NOW() - ($1::int * INTERVAL '1 day')
+          ORDER BY updated_at
+          LIMIT $2)
+      RETURNING id, reference, source_sha256`,
+		values: [days, limit],
+	};
+}
+/**
+ * Retention: delete up to `limit` upload sessions that were never finished
+ * (`open`) and have not moved for `hours` hours. A completed session keeps its
+ * row (the job that consumed it refers to it by reference).
+ */
+export function deleteExpiredUploadsQuery(hours: number, limit: number): Query {
+	return {
+		text: `
+      DELETE FROM ${EXTRACT_SCHEMA}.uploads
+       WHERE upload_id IN (
+         SELECT upload_id FROM ${EXTRACT_SCHEMA}.uploads
+          WHERE status = 'open'
+            AND updated_at < NOW() - ($1::int * INTERVAL '1 hour')
+          ORDER BY updated_at
+          LIMIT $2)
+      RETURNING upload_id`,
+		values: [hours, limit],
+	};
+}
 // ─── erasure (task 4.6, requirements 2.7, 2.12) ──────────────────────────
-
 /**
  * Which jobs an erasure request targets.
  *

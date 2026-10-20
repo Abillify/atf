@@ -75,6 +75,12 @@ import type { OcrClient } from "../pipeline/ocr.js";
 import { quotedParentOf, withQuotedHistory } from "../pipeline/native/index.js";
 import { textFingerprint } from "./fingerprint.js";
 import {
+  PAGE_WINDOW_KEY,
+  firstPageOf,
+  hasPageSelection,
+  pageWindowOf,
+} from "./page-window.js";
+import {
   EMAIL_KEY,
   FINGERPRINT_MAX_PAGES,
   IDENTITY_KEY,
@@ -204,6 +210,12 @@ export const EMITTED_STAGE = "emitted";
  * document pass enriches each in page order.
  */
 export const CURSOR_STAGE = EMITTED_STAGE;
+/**
+ * Pages past the free page slots whose model-resolution render is warmed in the
+ * same window (`PreparedSource.prefetch`). Bounds the pre-rendered PNGs held in
+ * memory to about this many beyond the pages in flight.
+ */
+const RENDER_LOOKAHEAD_PAGES = 8;
 
 /** Tunables for a run. */
 export interface JobRunnerConfig {
@@ -295,6 +307,15 @@ export interface JobRunnerConfig {
    * tenant; over the cap the run fails with `BUDGET_EXCEEDED`.
    */
   visionBudgetPagesPerDay?: number;
+  /**
+   * MAX_PAGES (requirement 5.8): the ceiling on the pages a single job may
+   * process. The v1 extractor refuses an over-long document before any model
+   * call; the v2 runner must apply the same ceiling, or a job whose token
+   * budget is unset (and a job with no attributable tenant, which the daily
+   * budget leaves uncapped) drives vision over every page without bound. 0
+   * (default when omitted) disables the check, matching the v1 extractor.
+   */
+  maxPages?: number;
 }
 
 export interface JobRunnerDeps {
@@ -862,9 +883,56 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         : null;
 
     try {
-      const pageCount = pagesToProcess(job, prepared.pageCount);
-      await store.setJobPageCount(job.id, pageCount, fence);
-      events.publish({ type: "prepared", jobId: job.id, pageCount });
+      // The `pages` window (contract 2.4) in SOURCE page numbers. `pageCount`
+      // below is the LAST page of the window — the bound every page loop and
+      // query uses — `firstPage` its start, and `pageTotal` how many pages the
+      // job processes (what `job.page_count` and the progress events report).
+      const window = pageWindowOf(job, prepared.pageCount);
+      if (window.count === 0) {
+        logger.warn(
+          { jobId: job.id, sourcePages: prepared.pageCount, pages: job.config.pages },
+          "Job refused: the pages selection starts after the last page of the source",
+        );
+        return {
+          status: "failed",
+          error: `The pages selection starts at page ${window.first}, but the source has only ${prepared.pageCount} page(s)`,
+        };
+      }
+      const firstPage = window.first;
+      const pageCount = window.last;
+      const pageTotal = window.count;
+      // MAX_PAGES (requirement 5.8): the same ceiling the v1 extractor applies
+      // before any model call. Without it a v2 job whose token budget is unset
+      // — and a job with no attributable tenant, which the daily budget leaves
+      // uncapped — drives vision over every page of an over-long document with
+      // no bound. Refuse before `setJobPageCount`/`processing` so the job never
+      // spends a token; the worker records the cause as a warning and fails it
+      // terminally (a retry would read the same page count).
+      if (
+        config.maxPages !== undefined &&
+        config.maxPages > 0 &&
+        pageTotal > config.maxPages
+      ) {
+        logger.warn(
+          { jobId: job.id, pageCount: pageTotal, maxPages: config.maxPages },
+          "Job refused: the pages to process exceed MAX_PAGES",
+        );
+        return {
+          status: "failed",
+          error: `The job covers ${pageTotal} pages; the configured limit is ${config.maxPages} (MAX_PAGES)`,
+        };
+      }
+      await store.setJobPageCount(job.id, pageTotal, fence);
+      // The emitter reads the stream's first page from the config (it starts
+      // from a fresh read of the job, without the prepared source).
+      if (firstPage !== firstPageOf(cfg)) {
+        await store.patchJobConfig(
+          job.id,
+          { [PAGE_WINDOW_KEY]: { first: firstPage, last: pageCount } },
+          fence,
+        );
+      }
+      events.publish({ type: "prepared", jobId: job.id, pageCount: pageTotal });
 
       // ── processing: drive pages through stages in order ─────────────────
       await store.setJobStatus(job.id, "processing", null, fence);
@@ -874,6 +942,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       if (reparseRequested) {
         const reparsed = await reparseCheckpoints({
           job,
+          firstPage,
           pageCount,
           prepared,
           analyzer: preparedAnalyzer,
@@ -930,7 +999,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
 
       const outcome = await drivePages({
         job,
+        firstPage,
         pageCount,
+        pageTotal,
         prepared,
         analyzer: preparedAnalyzer,
         stageRunner,
@@ -991,6 +1062,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // ── document pass (S7): strictly ordered, after the concurrent window ─
       const docPassOutcome = await runDocumentPass({
         job,
+        firstPage,
         pageCount,
         analyzer: preparedAnalyzer,
         stageRunner,
@@ -1033,7 +1105,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    * identification — dedup is an optimisation, never a reason to fail an
    * ingest. `response: null` means "not identified".
    */
-  async function callIdentify(request: IdentifyRequest, job: JobRow): Promise<IdentifyCall> {
+  async function callIdentify(
+    request: IdentifyRequest,
+    job: JobRow,
+  ): Promise<IdentifyCall> {
     if (identifier === null) return { kind: "ok", response: null };
     const stall = { since: null as number | null };
     for (let attempt = 1; ; attempt++) {
@@ -1048,19 +1123,35 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       } catch (err) {
         assertLive();
         if (err instanceof RevisionTransientError) {
-          logger.warn({ jobId: job.id, phase: request.phase, err: err.message, attempt }, "Source identification failed; retrying");
-          const retryAt = new Date(clock().getTime() + backoffMs(attempt, DEFAULT_BACKOFF));
-          const paused = await waitOrPause(stall, retryAt, scope().signal, true);
+          logger.warn(
+            { jobId: job.id, phase: request.phase, err: err.message, attempt },
+            "Source identification failed; retrying",
+          );
+          const retryAt = new Date(
+            clock().getTime() + backoffMs(attempt, DEFAULT_BACKOFF),
+          );
+          const paused = await waitOrPause(
+            stall,
+            retryAt,
+            scope().signal,
+            true,
+          );
           if (paused !== null) return { kind: "paused", outcome: paused };
           continue;
         }
-        logger.warn({ jobId: job.id, phase: request.phase, err }, "Source identification rejected; ingesting without dedup");
+        logger.warn(
+          { jobId: job.id, phase: request.phase, err },
+          "Source identification rejected; ingesting without dedup",
+        );
         return { kind: "ok", response: null };
       }
     }
   }
 
-  async function identifySourcePhase(job: JobRow, dedup: ReturnType<typeof ingestOptionsOf>["dedup"]): Promise<IdentifyStep> {
+  async function identifySourcePhase(
+    job: JobRow,
+    dedup: ReturnType<typeof ingestOptionsOf>["dedup"],
+  ): Promise<IdentifyStep> {
     const base: JobIdentity = {
       requestedReference: job.reference,
       canonicalReference: job.reference,
@@ -1069,7 +1160,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       complete: false,
     };
     const call = await callIdentify(
-      identifyRequestFor(job, { phase: "source", requestedReference: job.reference, dedup }),
+      identifyRequestFor(job, {
+        phase: "source",
+        requestedReference: job.reference,
+        dedup,
+      }),
       job,
     );
     if (call.kind === "paused") return call;
@@ -1081,7 +1176,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         canonicalReference: call.response.canonicalReference,
         decision: call.response.decision,
         registered: true,
-        ...(call.response.duplicateOf !== undefined ? { duplicateOf: call.response.duplicateOf } : {}),
+        ...(call.response.duplicateOf !== undefined
+          ? { duplicateOf: call.response.duplicateOf }
+          : {}),
       },
     };
   }
@@ -1104,22 +1201,37 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         pages = await prepared.readText(FINGERPRINT_MAX_PAGES, scope().signal);
       } catch (err) {
         assertLive();
-        logger.warn({ jobId: job.id, err }, "Reading the text layer for the fingerprint failed; continuing without");
+        logger.warn(
+          { jobId: job.id, err },
+          "Reading the text layer for the fingerprint failed; continuing without",
+        );
       }
     }
     // A fingerprint of only the first pages of a huge document would call two
     // documents with the same beginning identical; skip it instead.
     const fingerprint =
-      pages !== null && prepared.pageCount <= FINGERPRINT_MAX_PAGES ? textFingerprint(pages) : null;
+      pages !== null && prepared.pageCount <= FINGERPRINT_MAX_PAGES
+        ? textFingerprint(pages)
+        : null;
     const email = prepared.native?.email;
     const version = await resolveVersion({
       // An e-mail has no document version; only an explicit one counts.
-      options: email !== undefined ? { dedup: options.dedup, ...(options.version ? { version: options.version } : {}) } : options,
+      options:
+        email !== undefined
+          ? {
+              dedup: options.dedup,
+              ...(options.version ? { version: options.version } : {}),
+            }
+          : options,
       firstPageText: email !== undefined ? undefined : pages?.[0],
       llm: deps.summaryClient ?? null,
       signal: scope().signal,
       onTokens: (tokens) => consumeTokens(job.id, tokens),
-      onLlmError: (err) => logger.warn({ jobId: job.id, err }, "Version detection by the text model failed"),
+      onLlmError: (err) =>
+        logger.warn(
+          { jobId: job.id, err },
+          "Version detection by the text model failed",
+        ),
     });
     if (email !== undefined) {
       const title = prepared.native?.title;
@@ -1127,13 +1239,19 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         job.id,
         {
           [EMAIL_KEY]: email,
-          ...(typeof cfg.title !== "string" && title !== undefined ? { title } : {}),
+          ...(typeof cfg.title !== "string" && title !== undefined
+            ? { title }
+            : {}),
         },
         scope().fence,
       );
     }
 
-    let next: JobIdentity = { ...identity, ...(version !== undefined ? { version } : {}), complete: true };
+    let next: JobIdentity = {
+      ...identity,
+      ...(version !== undefined ? { version } : {}),
+      complete: true,
+    };
     if (identity.registered) {
       const call = await callIdentify(
         identifyRequestFor(job, {
@@ -1152,7 +1270,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         next = {
           ...next,
           decision: call.response.decision,
-          ...(call.response.duplicateOf !== undefined ? { duplicateOf: call.response.duplicateOf } : {}),
+          ...(call.response.duplicateOf !== undefined
+            ? { duplicateOf: call.response.duplicateOf }
+            : {}),
         };
       }
     }
@@ -1169,8 +1289,15 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     return { kind: "ok", identity: next };
   }
 
-  async function saveIdentity(jobId: string, identity: JobIdentity): Promise<void> {
-    await store.patchJobConfig(jobId, { [IDENTITY_KEY]: identity }, scope().fence);
+  async function saveIdentity(
+    jobId: string,
+    identity: JobIdentity,
+  ): Promise<void> {
+    await store.patchJobConfig(
+      jobId,
+      { [IDENTITY_KEY]: identity },
+      scope().fence,
+    );
   }
 
   /** Book the tokens of a model call made outside a stage (version detection). */
@@ -1181,10 +1308,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   /** The text of page 1 as staged for emitting (the vision transcription). */
   async function firstPageText(jobId: string): Promise<string> {
     const row = await store.getEmitBatch(jobId, 1);
-    const record = (row?.payload as { record?: PageRecord } | null | undefined)?.record;
+    const record = (row?.payload as { record?: PageRecord } | null | undefined)
+      ?.record;
     if (record === undefined || !Array.isArray(record.blocks)) return "";
     return record.blocks
-      .map((b) => ("text" in b ? b.text : b.type === "list" ? b.items.join("\n") : ""))
+      .map((b) =>
+        "text" in b ? b.text : b.type === "list" ? b.items.join("\n") : "",
+      )
       .filter((t) => t !== "")
       .join("\n");
   }
@@ -1194,13 +1324,20 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    * The source stays registered in Search as an additional source of the
    * document it duplicates.
    */
-  async function finishDuplicate(job: JobRow, identity: JobIdentity): Promise<JobRunOutcome> {
+  async function finishDuplicate(
+    job: JobRow,
+    identity: JobIdentity,
+  ): Promise<JobRunOutcome> {
     const dup = identity.duplicateOf;
     const warning =
       `Skipped: duplicate of ${dup?.reference ?? "an indexed source"}` +
       `${dup?.filename !== undefined ? ` (${dup.filename})` : ""}, matched by ${dup?.match ?? "sha256"}`;
-    if (!job.warnings.includes(warning)) await store.appendJobWarning(job.id, warning, scope().fence);
-    logger.info({ jobId: job.id, reference: job.reference, duplicateOf: dup }, "Job skipped as a duplicate");
+    if (!job.warnings.includes(warning))
+      await store.appendJobWarning(job.id, warning, scope().fence);
+    logger.info(
+      { jobId: job.id, reference: job.reference, duplicateOf: dup },
+      "Job skipped as a duplicate",
+    );
     events.publish({ type: "done", jobId: job.id, status: "completed" });
     return { status: "completed" };
   }
@@ -1272,13 +1409,17 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     for (;;) {
       assertLive();
       const fresh = await store.getJob(jobId);
-      if (fresh === null) return { status: "failed", error: `job ${jobId} vanished` };
+      if (fresh === null)
+        return { status: "failed", error: `job ${jobId} vanished` };
       const outcome: EmitOutcome = await emitter.emit(fresh, lease, loader);
       if (outcome.status === "committed") return { status: "completed" };
       if (outcome.status === "conflict") {
         if (!regenerated) {
           regenerated = true;
-          logger.warn({ jobId, reason: outcome.reason }, "Emit conflict; starting a new emit generation");
+          logger.warn(
+            { jobId, reason: outcome.reason },
+            "Emit conflict; starting a new emit generation",
+          );
           await store.resetEmitGeneration(jobId, lease.fence);
           continue;
         }
@@ -1288,8 +1429,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         };
       }
       attempt += 1;
-      logger.warn({ jobId, status: outcome.status, reason: outcome.reason, attempt }, "Emit not committed");
-      const retryAt = new Date(clock().getTime() + backoffMs(attempt, DEFAULT_BACKOFF));
+      logger.warn(
+        { jobId, status: outcome.status, reason: outcome.reason, attempt },
+        "Emit not committed",
+      );
+      const retryAt = new Date(
+        clock().getTime() + backoffMs(attempt, DEFAULT_BACKOFF),
+      );
       const paused = await waitOrPause(stall, retryAt, signal, false);
       if (paused !== null) return paused;
     }
@@ -1313,6 +1459,31 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     const { job, native, stageRunner, lease, cfg } = args;
     const { fence } = scope();
     const pageCount = native.records.length;
+    // A native source (BPMN, a chart-free XLSX) is staged whole: a record is a
+    // sheet or a diagram, not a page of a page range. `pages` does not apply.
+    if (hasPageSelection(job)) {
+      logger.info(
+        { jobId: job.id, pages: job.config.pages },
+        "The pages selection is ignored for a native source; every record is staged",
+      );
+    }
+    // MAX_PAGES (requirement 5.8): the same ceiling as the vision path, so a
+    // native source (a many-sheet XLSX, a large BPMN set) cannot stage an
+    // unbounded emit outbox either. A native record is one page here.
+    if (
+      config.maxPages !== undefined &&
+      config.maxPages > 0 &&
+      pageCount > config.maxPages
+    ) {
+      logger.warn(
+        { jobId: job.id, pageCount, maxPages: config.maxPages },
+        "Job refused: the pages to process exceed MAX_PAGES",
+      );
+      return {
+        status: "failed",
+        error: `The job covers ${pageCount} pages; the configured limit is ${config.maxPages} (MAX_PAGES)`,
+      };
+    }
     await store.setJobPageCount(job.id, pageCount, fence);
     events.publish({ type: "prepared", jobId: job.id, pageCount });
     await store.setJobStatus(job.id, "processing", null, fence);
@@ -1323,7 +1494,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     for (const record of records) {
       assertLive();
       const page = record.page;
-      const emitted = await store.getStage("page", { job_id: job.id, page, stage: EMITTED_STAGE });
+      const emitted = await store.getStage("page", {
+        job_id: job.id,
+        page,
+        stage: EMITTED_STAGE,
+      });
       const emittedHash = stageHash(["native-emit", job.source_sha256, page]);
       if (emitted?.status === "done") continue; // staged on a previous run
       // Stage every asset the record references (page image, figure, native).
@@ -1333,8 +1508,15 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             job_id: job.id,
             asset_id: asset.assetId,
             page,
-            ...(asset.checksum !== undefined ? { checksum: asset.checksum } : {}),
-            variant: asset.kind === "native" ? "native" : asset.kind === "page" ? "page" : null,
+            ...(asset.checksum !== undefined
+              ? { checksum: asset.checksum }
+              : {}),
+            variant:
+              asset.kind === "native"
+                ? "native"
+                : asset.kind === "page"
+                  ? "page"
+                  : null,
             mime_type: asset.mimeType ?? "image/png",
           },
           fence,
@@ -1362,19 +1544,34 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         pageCount,
         record,
         assetIds: record.assets.map((a) => a.assetId),
-        usage: { requests: 0, promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        usage: {
+          requests: 0,
+          promptTokens: 0,
+          completionTokens: 0,
+          totalTokens: 0,
+        },
       });
     }
 
     // An e-mail's attachments become jobs of their own (before the e-mail is
     // emitted, so a crash in between re-creates none twice: ids are stable).
     if (native.attachments !== undefined && native.attachments.length > 0) {
-      await spawnAttachmentJobs(job, cfg, native.attachments, native.email?.date, native.childConfig);
+      await spawnAttachmentJobs(
+        job,
+        cfg,
+        native.attachments,
+        native.email?.date,
+        native.childConfig,
+      );
     }
 
     await store.setJobStatus(job.id, "emitting", null, fence);
     if (emitter !== null) {
-      const outcome = await emitWithRecovery(job.id, lease, createNativeAssetLoader(nativeBytes));
+      const outcome = await emitWithRecovery(
+        job.id,
+        lease,
+        createNativeAssetLoader(nativeBytes),
+      );
       if (outcome.status !== "completed") return outcome;
     }
     events.publish({ type: "done", jobId: job.id, status: "completed" });
@@ -1395,19 +1592,35 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     native: NonNullable<PreparedSource["native"]>,
   ): Promise<PageRecord[]> {
     const quoted = native.quotedHistory;
-    if (native.email === undefined || quoted === undefined || quoted.trim() === "") return native.records;
+    if (
+      native.email === undefined ||
+      quoted === undefined ||
+      quoted.trim() === ""
+    )
+      return native.records;
     const parent = quotedParentOf(native.email);
     // A message of an mbox export: its siblings are ingested with it, so a
     // parent in the same export counts as known whichever child runs first.
-    const siblings = (job.config as { mboxMessageIds?: unknown }).mboxMessageIds;
-    if (parent !== undefined && Array.isArray(siblings) && siblings.includes(parent)) return native.records;
-    const known = parent !== undefined ? await store.knownEmailMessageIds(job.collection, [parent]) : new Set<string>();
+    const siblings = (job.config as { mboxMessageIds?: unknown })
+      .mboxMessageIds;
+    if (
+      parent !== undefined &&
+      Array.isArray(siblings) &&
+      siblings.includes(parent)
+    )
+      return native.records;
+    const known =
+      parent !== undefined
+        ? await store.knownEmailMessageIds(job.collection, [parent])
+        : new Set<string>();
     if (parent !== undefined && known.has(parent)) return native.records;
     logger.info(
       { jobId: job.id, parent: parent ?? null },
       "Quoted history kept: the message it quotes is not in the corpus",
     );
-    return native.records.map((r, i) => (i === 0 ? withQuotedHistory(r, quoted) : r));
+    return native.records.map((r, i) =>
+      i === 0 ? withQuotedHistory(r, quoted) : r,
+    );
   }
 
   /**
@@ -1422,18 +1635,29 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   async function spawnAttachmentJobs(
     job: JobRow,
     cfg: Record<string, unknown>,
-    attachments: ReadonlyArray<{ filename: string; mimeType: string; content: Uint8Array }>,
+    attachments: ReadonlyArray<{
+      filename: string;
+      mimeType: string;
+      content: Uint8Array;
+    }>,
     emailDate: string | undefined,
     childConfig: Record<string, unknown> = {},
   ): Promise<void> {
     if (sourceStore === null) {
-      logger.info({ jobId: job.id, count: attachments.length }, "No source store; e-mail attachments are not ingested");
+      logger.info(
+        { jobId: job.id, count: attachments.length },
+        "No source store; e-mail attachments are not ingested",
+      );
       return;
     }
     const taken = new Set<string>();
     for (const [index, attachment] of attachments.entries()) {
       assertLive();
-      const reference = attachmentReference(job.reference, attachment.filename, taken);
+      const reference = attachmentReference(
+        job.reference,
+        attachment.filename,
+        taken,
+      );
       const childId = childJobId(job.id, index);
       if ((await store.getJob(childId)) !== null) continue;
       const resolved = resolveFormat({
@@ -1443,15 +1667,26 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       });
       if (!resolved.ok) {
         const warning = `Attachment "${attachment.filename}" not ingested: ${resolved.reason}`;
-        if (!job.warnings.includes(warning)) await store.appendJobWarning(job.id, warning, scope().fence);
+        if (!job.warnings.includes(warning))
+          await store.appendJobWarning(job.id, warning, scope().fence);
         continue;
       }
-      const stored = await sourceStore.putStream(Readable.from(Buffer.from(attachment.content)), {
-        maxBytes: attachment.content.length,
-      });
+      const stored = await sourceStore.putStream(
+        Readable.from(Buffer.from(attachment.content)),
+        {
+          maxBytes: attachment.content.length,
+        },
+      );
       // An attachment carries its e-mail's tags, metadata and source label, so
       // a tag filter finds the attachment where it finds the e-mail.
-      const inherited = ["collection", "snapshot", "acl", "dedup", "pages", ...INHERITED_ATTRIBUTE_KEYS] as const;
+      const inherited = [
+        "collection",
+        "snapshot",
+        "acl",
+        "dedup",
+        "pages",
+        ...INHERITED_ATTRIBUTE_KEYS,
+      ] as const;
       await store.createJob({
         id: childId,
         reference,
@@ -1459,8 +1694,16 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         status: "queued",
         collection: job.collection,
         config: {
-          ...Object.fromEntries(inherited.filter((k) => cfg[k] !== undefined).map((k) => [k, cfg[k]])),
-          source: { filename: attachment.filename, mimeType: resolved.format.mimeType, bytes: stored.size },
+          ...Object.fromEntries(
+            inherited
+              .filter((k) => cfg[k] !== undefined)
+              .map((k) => [k, cfg[k]]),
+          ),
+          source: {
+            filename: attachment.filename,
+            mimeType: resolved.format.mimeType,
+            bytes: stored.size,
+          },
           parent: { reference: job.reference, jobId: job.id },
           ...(emailDate !== undefined ? { sourceModifiedAt: emailDate } : {}),
           ...childConfig,
@@ -1469,10 +1712,17 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         prompt_hash: job.prompt_hash,
         visibility: job.visibility,
         priority: job.priority,
-        ...(job.token_budget !== null ? { token_budget: job.token_budget } : {}),
-        ...(job.callback_url !== null ? { callback_url: job.callback_url } : {}),
+        ...(job.token_budget !== null
+          ? { token_budget: job.token_budget }
+          : {}),
+        ...(job.callback_url !== null
+          ? { callback_url: job.callback_url }
+          : {}),
       });
-      logger.info({ jobId: job.id, childJobId: childId, reference }, "Attachment / embedded file queued as its own job");
+      logger.info(
+        { jobId: job.id, childJobId: childId, reference },
+        "Attachment / embedded file queued as its own job",
+      );
     }
   }
 
@@ -1517,7 +1767,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    * loads every page payload (requirement 6.1). Only a legacy row without a
    * page falls back to a one-time index over the staged records.
    */
-  function createCropLoader(deps: { job: JobRow; prepared: PreparedSource }): AssetLoader {
+  function createCropLoader(deps: {
+    job: JobRow;
+    prepared: PreparedSource;
+  }): AssetLoader {
     const { job, prepared } = deps;
     interface CropEntry {
       page: number;
@@ -1547,7 +1800,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       if (cached !== undefined) return cached;
       const row = await store.getEmitBatch(job.id, page);
       const record = (row?.payload as { record?: PageRecord } | null)?.record;
-      const entries = record !== undefined ? entriesOf(record) : new Map<string, CropEntry>();
+      const entries =
+        record !== undefined ? entriesOf(record) : new Map<string, CropEntry>();
       byPage.set(page, entries);
       if (byPage.size > PAGE_CACHE) {
         const oldest = byPage.keys().next().value;
@@ -1556,15 +1810,22 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       return entries;
     }
 
-    async function legacyEntry(assetId: string): Promise<CropEntry | undefined> {
+    async function legacyEntry(
+      assetId: string,
+    ): Promise<CropEntry | undefined> {
       if (legacyIndex === null) {
         const built = new Map<string, CropEntry>();
         const meta = await store.listEmitBatchMeta(job.id);
         const window = 50;
         const last = meta.reduce((m, r) => Math.max(m, r.page_to), 0);
         for (let from = 1; from <= last; from += window) {
-          for (const row of await store.emitBatchesInRange(job.id, from, from + window - 1)) {
-            const record = (row.payload as { record?: PageRecord } | null)?.record;
+          for (const row of await store.emitBatchesInRange(
+            job.id,
+            from,
+            from + window - 1,
+          )) {
+            const record = (row.payload as { record?: PageRecord } | null)
+              ?.record;
             if (record === undefined) continue;
             for (const [id, entry] of entriesOf(record)) built.set(id, entry);
           }
@@ -1619,7 +1880,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             page: entry.page,
           };
         } catch (err) {
-          logger.warn({ jobId: job.id, assetId: row.asset_id, err }, "Crop re-render failed");
+          logger.warn(
+            { jobId: job.id, assetId: row.asset_id, err },
+            "Crop re-render failed",
+          );
           return null;
         }
       },
@@ -1636,24 +1900,38 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    */
   async function reparseCheckpoints(args: {
     job: JobRow;
+    /** First page of the job's `pages` window (1 without one). */
+    firstPage: number;
     pageCount: number;
     prepared: PreparedSource;
     analyzer: PreparedAnalyzer | null;
     stageRunner: StageRunner;
   }): Promise<number> {
-    const { job, pageCount, prepared, stageRunner } = args;
+    const { job, firstPage, pageCount, prepared, stageRunner } = args;
     const WINDOW = 100;
     const threshold = config.labelCoverageMin / 100;
     let count = 0;
-    for (let from = 1; from <= pageCount; from += WINDOW) {
+    for (let from = firstPage; from <= pageCount; from += WINDOW) {
       assertLive();
       const to = Math.min(pageCount, from + WINDOW - 1);
       const figuresByPage = new Map<number, VisionStageParsed["figures"]>();
 
-      for (const row of await store.listStagesWindow("page", job.id, VISION1_STAGE, from, to)) {
-        let parsed = row.status === "done" ? parsedOfRow<VisionStageParsed>(row) : undefined;
+      for (const row of await store.listStagesWindow(
+        "page",
+        job.id,
+        VISION1_STAGE,
+        from,
+        to,
+      )) {
+        let parsed =
+          row.status === "done"
+            ? parsedOfRow<VisionStageParsed>(row)
+            : undefined;
         if (reparseable(row)) {
-          const result = await stageRunner.reparseRow<VisionStageParsed, string>("page", row, (raw, existing) =>
+          const result = await stageRunner.reparseRow<
+            VisionStageParsed,
+            string
+          >("page", row, (raw, existing) =>
             rebuildVisionFromRaw(existing, raw, prepared, args.analyzer),
           );
           if (result !== null) {
@@ -1664,34 +1942,63 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         if (parsed !== undefined) figuresByPage.set(row.page, parsed.figures);
       }
 
-      for (const row of await store.listStagesWindow("figure", job.id, FIGURE2_STAGE, from, to)) {
+      for (const row of await store.listStagesWindow(
+        "figure",
+        job.id,
+        FIGURE2_STAGE,
+        from,
+        to,
+      )) {
         if (!reparseable(row)) continue;
-        const figure = figuresByPage.get(row.page)?.find((f) => f.id === row.figure_id);
+        const figure = figuresByPage
+          .get(row.page)
+          ?.find((f) => f.id === row.figure_id);
         if (figure === undefined) continue; // the figure no longer exists after Pass-1 reparse
         const kind = figure.kind ?? "other";
         const labels = figure.labels ?? [];
-        const result = await stageRunner.reparseRow("figure", row, (raw: string) => {
-          const reparsed = parseTranscription(kind, raw);
-          if (reparsed === null) return undefined;
-          const coverage = labelCoverage(labels, reparsed.transcription);
-          const warnings = [...reparsed.warnings];
-          if (labels.length > 0 && coverage < threshold) {
-            warnings.push(
-              `Pass 2 für Abbildung ${figure.id}: Label-Coverage ${(coverage * 100).toFixed(0)} % unter ${config.labelCoverageMin} % (reparse).`,
-            );
-          }
-          return { transcription: reparsed.transcription, coverage, warnings };
-        });
+        const result = await stageRunner.reparseRow(
+          "figure",
+          row,
+          (raw: string) => {
+            const reparsed = parseTranscription(kind, raw);
+            if (reparsed === null) return undefined;
+            const coverage = labelCoverage(labels, reparsed.transcription);
+            const warnings = [...reparsed.warnings];
+            if (labels.length > 0 && coverage < threshold) {
+              warnings.push(
+                `Pass 2 für Abbildung ${figure.id}: Label-Coverage ${(coverage * 100).toFixed(0)} % unter ${config.labelCoverageMin} % (reparse).`,
+              );
+            }
+            return {
+              transcription: reparsed.transcription,
+              coverage,
+              warnings,
+            };
+          },
+        );
         if (result !== null) count += 1;
       }
 
-      for (const row of await store.listStagesWindow("tile", job.id, TILED_STAGE, from, to)) {
+      for (const row of await store.listStagesWindow(
+        "tile",
+        job.id,
+        TILED_STAGE,
+        from,
+        to,
+      )) {
         if (!reparseable(row)) continue;
-        const result = await stageRunner.reparseRow("tile", row, (raw: string) => {
-          const reparsed = parseTranscription("technical_drawing", raw);
-          if (reparsed === null) return undefined;
-          return { transcription: reparsed.transcription, warnings: reparsed.warnings };
-        });
+        const result = await stageRunner.reparseRow(
+          "tile",
+          row,
+          (raw: string) => {
+            const reparsed = parseTranscription("technical_drawing", raw);
+            if (reparsed === null) return undefined;
+            return {
+              transcription: reparsed.transcription,
+              warnings: reparsed.warnings,
+            };
+          },
+        );
         if (result !== null) count += 1;
       }
     }
@@ -1713,9 +2020,14 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     preparedAnalyzer: PreparedAnalyzer | null,
   ): Promise<VisionStageParsed | undefined> {
     const page = existing.page;
-    const prev = existing.status === "done" ? parsedOfRow<VisionStageParsed>(existing) : undefined;
+    const prev =
+      existing.status === "done"
+        ? parsedOfRow<VisionStageParsed>(existing)
+        : undefined;
     if (prev?.fastPath === true) return undefined;
-    const stored = isStageOutput(existing.output) ? (existing.output as StageOutput) : undefined;
+    const stored = isStageOutput(existing.output)
+      ? (existing.output as StageOutput)
+      : undefined;
     const response = stored?.response;
     const parsedPage = parseVisionPage(raw, page);
     const croppable = parsedPage.figures.some((f) => isCroppable(f.bbox));
@@ -1725,12 +2037,23 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       try {
         rendered = await prepared.render(page);
       } catch (err) {
-        logger.warn({ jobId: existing.job_id, page, err }, "Reparse: page could not be re-rendered");
+        logger.warn(
+          { jobId: existing.job_id, page, err },
+          "Reparse: page could not be re-rendered",
+        );
         return undefined;
       }
     }
-    const analysis = croppable || prev === undefined ? await runPageAnalysis(preparedAnalyzer, page) : null;
-    const image: PageImage = rendered?.image ?? { buffer: new Uint8Array(0), mimeType: "image/png", width: 1, height: 1 };
+    const analysis =
+      croppable || prev === undefined
+        ? await runPageAnalysis(preparedAnalyzer, page)
+        : null;
+    const image: PageImage = rendered?.image ?? {
+      buffer: new Uint8Array(0),
+      mimeType: "image/png",
+      width: 1,
+      height: 1,
+    };
     const figures = await refineFigures(parsedPage.figures, image, analysis);
     // Geometry and class are kept from the previous result (a reparse must not
     // change the tile grid, which would require new model calls); a unit that
@@ -1768,7 +2091,10 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         continues: t.continues,
         continuationOf: t.continuationOf,
       })),
-      warnings: [...parsedPage.warnings, ...(truncated ? [TRUNCATION_WARNING] : [])],
+      warnings: [
+        ...parsedPage.warnings,
+        ...(truncated ? [TRUNCATION_WARNING] : []),
+      ],
       usedOcr: prev?.usedOcr ?? rendered?.usedOcr ?? false,
       usage: prev?.usage ?? {
         requests: response?.requests ?? 0,
@@ -1783,8 +2109,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       pageClass,
       renderHash: hash,
       // Not derived from the response: carried over unchanged.
-      ...(prev?.prevPageContext !== undefined ? { prevPageContext: prev.prevPageContext } : {}),
-      ...(prev?.prevPageContextHash !== undefined ? { prevPageContextHash: prev.prevPageContextHash } : {}),
+      ...(prev?.prevPageContext !== undefined
+        ? { prevPageContext: prev.prevPageContext }
+        : {}),
+      ...(prev?.prevPageContextHash !== undefined
+        ? { prevPageContextHash: prev.prevPageContextHash }
+        : {}),
       ...(prev?.dedupOf !== undefined ? { dedupOf: prev.dedupOf } : {}),
     };
   }
@@ -1817,6 +2147,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    */
   async function runDocumentPass(args: {
     job: JobRow;
+    /** First page of the job's `pages` window (1 without one). */
+    firstPage: number;
     pageCount: number;
     analyzer: PreparedAnalyzer | null;
     stageRunner: StageRunner;
@@ -1825,7 +2157,14 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     /** DOCX authoritative heading levels (requirement 10.3), or null. */
     headingLevelHints: ReadonlyMap<string, number> | null;
   }): Promise<JobRunOutcome> {
-    const { job, pageCount, analyzer: preparedAnalyzer, stageRunner, summaryGenerator } = args;
+    const {
+      job,
+      firstPage,
+      pageCount,
+      analyzer: preparedAnalyzer,
+      stageRunner,
+      summaryGenerator,
+    } = args;
     const { fence, stand } = scope();
 
     // Rehydrate the running state from the last finished page (design §9a.2).
@@ -1833,9 +2172,13 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     const initial: DocpassState = parseDocpassState(persisted?.state ?? null);
     const pass = createDocumentPass(
       initial,
-      args.headingLevelHints !== null ? { headingLevelHints: args.headingLevelHints } : {},
+      args.headingLevelHints !== null
+        ? { headingLevelHints: args.headingLevelHints }
+        : {},
     );
-    const resumeFrom = Math.max(0, initial.lastPage) + 1;
+    // A `pages` window starts at `firstPage`; a resume continues after the last
+    // page the pass finished (never before the window).
+    const resumeFrom = Math.max(firstPage - 1, initial.lastPage) + 1;
 
     // Whether the summary pass still needs to run its document-end finalize. If
     // the whole per-page loop was already done on a prior run (resumeFrom >
@@ -1850,12 +2193,26 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       const pageStarted = Date.now();
       // The BASE record was staged by the emitted stage. A missing record means
       // the page failed permanently upstream; skip it but keep the state moving.
-      const baseRow = await store.getStage("page", { job_id: job.id, page, stage: EMITTED_STAGE });
+      const baseRow = await store.getStage("page", {
+        job_id: job.id,
+        page,
+        stage: EMITTED_STAGE,
+      });
       const emitRow = await store.getEmitBatch(job.id, page);
-      const payload = emitRow?.payload as { record?: PageRecord } | null | undefined;
+      const payload = emitRow?.payload as
+        | { record?: PageRecord }
+        | null
+        | undefined;
       const record = payload?.record;
-      if (baseRow === null || baseRow.status !== "done" || record === undefined) {
-        logger.debug({ jobId: job.id, page }, "Document pass: no base record for page; skipping");
+      if (
+        baseRow === null ||
+        baseRow.status !== "done" ||
+        record === undefined
+      ) {
+        logger.debug(
+          { jobId: job.id, page },
+          "Document pass: no base record for page; skipping",
+        );
         // Advance the checkpoint so a resume does not re-examine this page.
         await stageRunner.runStage<{ page: number }, null>({
           unit: "page",
@@ -1873,7 +2230,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       // only to see whether this page's last paragraph runs over the break.
       const nextRecord =
         page < pageCount
-          ? ((await store.getEmitBatch(job.id, page + 1))?.payload as { record?: PageRecord } | null | undefined)?.record ?? null
+          ? ((
+              (await store.getEmitBatch(job.id, page + 1))?.payload as
+                | { record?: PageRecord }
+                | null
+                | undefined
+            )?.record ?? null)
           : null;
       const applied = pass.applyPage(record, analysis, nextRecord);
 
@@ -1899,7 +2261,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         job.id,
         {
           page,
-          payload: { ...(payload ?? {}), type: "page", page, record: applied.record },
+          payload: {
+            ...(payload ?? {}),
+            type: "page",
+            page,
+            record: applied.record,
+          },
           state: pass.snapshot(),
           checkpoint: {
             job_id: job.id,
@@ -1916,7 +2283,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       );
       // The docpass checkpoint is written in the page's own transaction above,
       // not through the stage runner, so its metric is recorded here.
-      metrics?.recordStage?.({ stage: DOCPASS_STAGE, outcome: "done", durationMs: Date.now() - pageStarted });
+      metrics?.recordStage?.({
+        stage: DOCPASS_STAGE,
+        outcome: "done",
+        durationMs: Date.now() - pageStarted,
+      });
       // No `page` event is published here: the concurrent phase already emitted
       // one per page for the SSE/callback stream.
     }
@@ -1946,7 +2317,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
         if (paused !== null) {
           // Keep the summaries produced so far on the final state; the page
           // loop is complete, so this only adds summary nodes.
-          await store.saveDocpassState(job.id, last, finalPass.snapshot(), fence);
+          await store.saveDocpassState(
+            job.id,
+            last,
+            finalPass.snapshot(),
+            fence,
+          );
           return paused;
         }
         throw err;
@@ -1964,7 +2340,11 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    * `budget`; a transient text-LLM outage pauses on `dependency` with the
    * checkpoint's retry instant, so the auto-resume picks it up once it is due.
    */
-  function summaryPauseOutcome(err: unknown, jobId: string, page: number): JobRunOutcome | null {
+  function summaryPauseOutcome(
+    err: unknown,
+    jobId: string,
+    page: number,
+  ): JobRunOutcome | null {
     if (err instanceof BudgetExhaustedError) {
       logger.info({ jobId, page }, "Summary paused: token budget exhausted");
       return { status: "paused", reason: "budget" };
@@ -1973,16 +2353,27 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
       return { status: "paused", reason: "dependency", retryAt: err.retryAt };
     }
     if (err instanceof TransientStageError) {
-      logger.warn({ jobId, page, err: err.message }, "Summary paused: text-LLM unreachable");
+      logger.warn(
+        { jobId, page, err: err.message },
+        "Summary paused: text-LLM unreachable",
+      );
       return { status: "paused", reason: "dependency" };
     }
     return null;
   }
 
   /**
-   * The ordered scheduler loop. Pulls the next window of unfinished, DUE pages
-   * from the store (bounded by `pageConcurrency`), runs them concurrently, and
-   * repeats until every page is finished. Never materialises the full page list.
+   * The ordered scheduler loop with CONTINUOUS REFILL (Phase 11). Keeps up to
+   * `pageConcurrency` pages in flight at all times: as soon as a slot frees,
+   * the next due pages are claimed, so one slow page never idles the other
+   * slots — the previous window scheduler waited for the slowest page of each
+   * full window before claiming the next one. Never materialises the full page
+   * list.
+   *
+   * Page events are still published in STRICT page order: a settled page is
+   * buffered until every smaller page has settled and been published, so
+   * subscribers — and the cumulative usage carried on each event — see exactly
+   * the ordering guarantee the window scheduler gave.
    *
    * Backoff is honoured end to end: a page with any unit in its retry backoff is
    * not handed out, and when nothing is due while pages are still unfinished
@@ -1993,7 +2384,12 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
    */
   async function drivePages(args: {
     job: JobRow;
+    /** First page of the job's `pages` window (1 without one). */
+    firstPage: number;
+    /** Last page of the window. */
     pageCount: number;
+    /** How many pages the job processes (`pageCount - firstPage + 1`). */
+    pageTotal: number;
     prepared: PreparedSource;
     analyzer: PreparedAnalyzer | null;
     stageRunner: StageRunner;
@@ -2005,7 +2401,9 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
   }): Promise<JobRunOutcome> {
     const {
       job,
+      firstPage,
       pageCount,
+      pageTotal,
       prepared,
       stageRunner,
       budget,
@@ -2025,53 +2423,72 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
     const stall = { since: null as number | null };
     let blindRounds = 0;
 
-    for (;;) {
-      assertLive();
-      const now = clock();
-      const pages = await store.nextRunnablePages(
-        job.id,
+    // Continuous refill (Phase 11): instead of running a full window to
+    // completion — which made every window wait for its slowest page — keep
+    // `concurrency` slots busy and claim the next due page as soon as a slot
+    // frees. A settled page is buffered until every SMALLER page has settled,
+    // so page events keep their strict page order and the cumulative usage on
+    // each event accumulates in publish order. A page that failed WITHOUT a
+    // store-side backoff row gets a scheduler-side notBefore so the claim loop
+    // cannot hot-spin on it.
+    const inFlight = new Map<number, Promise<void>>();
+    const settled = new Map<number, PromiseSettledResult<PageResult>>();
+    const untrackedBackoff = new Map<number, number>();
+    const untrackedRounds = new Map<number, number>();
+    let leaseLost: unknown = null;
+
+    const startPage = (page: number): void => {
+      const done = runPage({
+        job,
+        page,
         pageCount,
-        CURSOR_STAGE,
-        concurrency,
-        now,
-      );
-      if (pages.length === 0) {
-        const finished = await store.finishedPageCount(job.id, CURSOR_STAGE);
-        if (finished >= pageCount) break;
-        // Pages are unfinished but none is due: wait for the earliest retry.
-        const retryAt =
-          (await store.earliestRetryAt(job.id, now)) ??
-          new Date(now.getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF));
-        const paused = await waitOrPause(stall, retryAt, abort.signal, true);
-        if (paused !== null) return paused;
-        continue;
-      }
+        prepared,
+        analyzer: args.analyzer,
+        stageRunner,
+        budget,
+        tenantBudget,
+        dedup,
+      })
+        .then(
+          (result) => {
+            settled.set(page, { status: "fulfilled", value: result });
+          },
+          (err: unknown) => {
+            // A lost lease aborts the run at once, so the other pages start no
+            // further model calls; the error is re-thrown in page order below.
+            if (err instanceof LeaseLostError) {
+              leaseLost ??= err;
+              abort.abort();
+            }
+            settled.set(page, { status: "rejected", reason: err });
+          },
+        )
+        .finally(() => {
+          inFlight.delete(page);
+        });
+      inFlight.set(page, done);
+    };
 
-      // Run this window concurrently. A lost lease in any page aborts the run at
-      // once, so the other pages start no further model calls.
-      const results = await Promise.allSettled(
-        pages.map((page) =>
-          runPage({
-            job,
-            page,
-            pageCount,
-            prepared,
-            analyzer: args.analyzer,
-            stageRunner,
-            budget,
-            tenantBudget,
-            dedup,
-          }).catch((err: unknown) => {
-            if (err instanceof LeaseLostError) abort.abort();
-            throw err;
-          }),
-        ),
-      );
-
-      let progressed = false;
-      let untracked = false;
-      for (const [index, result] of results.entries()) {
-        const page = pages[index] ?? 0;
+    /**
+     * Publish every settled page whose predecessors have all settled, in page
+     * order. Returns an early job outcome (tenant-budget failure, budget pause)
+     * as soon as one is reached in page order; pages settled after it are
+     * dropped — their checkpoints persist, so a resume replays them. A lease
+     * loss in page order is thrown.
+     */
+    const publishPrefix = (): JobRunOutcome | null => {
+      for (;;) {
+        let next: number | null = null;
+        for (const page of settled.keys()) {
+          if (next === null || page < next) next = page;
+        }
+        if (next === null) return null;
+        for (const running of inFlight.keys()) {
+          if (running < next) return null; // must publish `next`'s predecessor first
+        }
+        const page = next;
+        const result = settled.get(page) as PromiseSettledResult<PageResult>;
+        settled.delete(page);
         if (result.status === "fulfilled") {
           if (result.value.budgetExceeded === true) {
             // The tenant's daily vision-page budget is exhausted (requirement
@@ -2093,7 +2510,8 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
             return { status: "paused", reason: "budget" };
           }
           if (result.value.completed) {
-            progressed = true;
+            stall.since = null;
+            blindRounds = 0;
             cumulative.requests += result.value.usage.requests;
             cumulative.promptTokens += result.value.usage.promptTokens;
             cumulative.completionTokens += result.value.usage.completionTokens;
@@ -2102,7 +2520,7 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
               type: "page",
               jobId: job.id,
               page,
-              pageCount,
+              pageCount: pageTotal,
               record: result.value.record,
               assetIds: result.value.assetIds,
               usage: { ...cumulative },
@@ -2115,29 +2533,126 @@ export function createJobRunner(deps: JobRunnerDeps): JobRunner {
               ? reason
               : new LeaseLostError(scope().fence);
           }
-          if (reason instanceof BudgetExhaustedError)
+          if (reason instanceof BudgetExhaustedError) {
             return { status: "paused", reason: "budget" };
+          }
           // A transient stage failure left a retryable checkpoint with backoff;
-          // the scheduler skips the page until it is due. Anything else wrote
-          // no backoff, so the loop backs off itself before the next window.
-          if (!(reason instanceof TransientStageError)) untracked = true;
+          // the store skips the page until it is due. Anything else wrote no
+          // backoff, so the scheduler backs this page off itself.
+          if (!(reason instanceof TransientStageError)) {
+            const rounds = (untrackedRounds.get(page) ?? 0) + 1;
+            untrackedRounds.set(page, rounds);
+            untrackedBackoff.set(
+              page,
+              clock().getTime() + backoffMs(rounds, DEFAULT_BACKOFF),
+            );
+          }
           logger.warn(
             { jobId: job.id, page, err: reason },
             "Page stage failed transiently",
           );
         }
       }
+    };
 
-      if (progressed) {
-        stall.since = null;
-        blindRounds = 0;
-      } else if (untracked) {
-        const retryAt = new Date(
-          clock().getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF),
+    /** Await every in-flight page so no promise settles unobserved. */
+    const drainInFlight = async (): Promise<void> => {
+      if (inFlight.size > 0) await Promise.allSettled([...inFlight.values()]);
+    };
+
+    for (;;) {
+      try {
+        assertLive();
+      } catch (err) {
+        await drainInFlight();
+        throw err;
+      }
+      const early = publishPrefix();
+      if (early !== null) {
+        await drainInFlight();
+        return early;
+      }
+      if (leaseLost !== null) {
+        if (inFlight.size === 0) throw leaseLost;
+        // A smaller page is still in flight: let it settle so publishPrefix
+        // can publish it (or hit the lease loss itself) in page order. Claim
+        // no new work — the lease is gone.
+        await Promise.race([...inFlight.values()]);
+        continue;
+      }
+
+      // Claim into the free slots only. The store also hands out pages whose
+      // cursor stage is not done yet — including the ones already in flight —
+      // so filter those client side.
+      const free = concurrency - inFlight.size;
+      if (free > 0) {
+        const now = clock();
+        // Look a few pages past the free slots when the source can render a
+        // window in one call: the pages about to start, and the next ones, are
+        // warmed together (one pdfinfo + one pdftoppm for the window instead
+        // of two subprocesses per page).
+        const ahead = prepared.prefetch !== undefined ? RENDER_LOOKAHEAD_PAGES : 0;
+        const candidates = await store.nextRunnablePages(
+          job.id,
+          pageCount,
+          CURSOR_STAGE,
+          concurrency + ahead,
+          now,
+          firstPage,
         );
+        if (prepared.prefetch !== undefined) {
+          const toWarm = candidates
+            .filter(
+              (page) =>
+                !inFlight.has(page) &&
+                !settled.has(page) &&
+                (untrackedBackoff.get(page) ?? 0) <= now.getTime(),
+            )
+            .slice(0, free + ahead);
+          // Registered synchronously, before the pages start, so a page that
+          // renders at once waits for its window instead of racing it.
+          void prepared.prefetch(toWarm, abort.signal).catch(() => undefined);
+        }
+        for (const page of candidates) {
+          if (inFlight.size >= concurrency) break;
+          if (inFlight.has(page) || settled.has(page)) continue;
+          const notBefore = untrackedBackoff.get(page);
+          if (notBefore !== undefined) {
+            if (notBefore > now.getTime()) continue;
+            untrackedBackoff.delete(page);
+          }
+          startPage(page);
+        }
+      }
+
+      if (inFlight.size === 0) {
+        if (settled.size > 0) continue; // settled while the claim was in flight
+        const now = clock();
+        const finished = await store.finishedPageCount(job.id, CURSOR_STAGE);
+        if (finished >= pageTotal) break;
+        // Pages are unfinished but none is runnable: wait for the earliest
+        // retry — the store's (checkpoint backoff) or the scheduler's own
+        // (failures that wrote no backoff row).
+        const retryTimes: number[] = [];
+        const storeRetry = await store.earliestRetryAt(job.id, now);
+        if (storeRetry !== null) retryTimes.push(storeRetry.getTime());
+        for (const notBefore of untrackedBackoff.values()) {
+          retryTimes.push(notBefore);
+        }
+        const retryAt =
+          retryTimes.length > 0
+            ? new Date(Math.min(...retryTimes))
+            : new Date(
+                now.getTime() + backoffMs(++blindRounds, DEFAULT_BACKOFF),
+              );
         const paused = await waitOrPause(stall, retryAt, abort.signal, true);
         if (paused !== null) return paused;
+        continue;
       }
+
+      // Wait for the next page to settle, then refill its slot and publish
+      // whatever has become publishable in page order.
+      await Promise.race([...inFlight.values()]);
     }
 
     return { status: "completed" };
@@ -3758,18 +4273,6 @@ function emptyRecord(page: number): PageRecord {
     assets: [],
     warnings: [],
   };
-}
-
-/** The number of pages this job should process, honouring a page-range config. */
-function pagesToProcess(job: JobRow, sourcePageCount: number): number {
-  const pages = (job.config as { pages?: unknown }).pages;
-  if (pages !== null && typeof pages === "object" && pages !== undefined) {
-    const range = pages as { to?: unknown };
-    if (typeof range.to === "number" && range.to > 0) {
-      return Math.min(sourcePageCount, Math.trunc(range.to));
-    }
-  }
-  return sourcePageCount;
 }
 
 /** The source filename, from the config snapshot when present, else the reference. */

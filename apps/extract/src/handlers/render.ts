@@ -47,7 +47,7 @@ import { renderRequestSchema, type RenderResult } from "@atf/extract-contract";
 import { conversionFailed, notFound, validationError } from "../errors.js";
 import type { SourceStore } from "../source-store.js";
 import type { PageRenderer } from "../jobs/page-renderer.js";
-import { MAX_RENDER_PIXELS } from "../pipeline/raster.js";
+import { adaptiveRenderDpi, MAX_RENDER_PIXELS } from "../pipeline/raster.js";
 import { planTiles, tileForRegion } from "../pipeline/tiling.js";
 import type { BBox } from "@atf/extract-contract/v2";
 
@@ -252,28 +252,17 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
         );
       }
 
-      // The renderer resolves the source, converts office→PDF and handles a
-      // single-image source; `render` gives us the model-resolution page and
-      // `renderFigureCrop` a region cut from a page re-rendered at FIGURE_DPI
-      // when that is sharper. Both are the SAME deterministic helpers the
-      // pipeline uses, so the base image is byte-identical to what a job would
-      // have produced.
-      const modelPage = await prepared.render(body.page);
-
-      // Back-compute the page's point size from the model page's pixel size
-      // (px / RENDER_DPI * 72), which is all the DPI choice needs.
-      const widthPt = (modelPage.image.width / config.renderDpi) * POINTS_PER_INCH;
-      const heightPt = (modelPage.image.height / config.renderDpi) * POINTS_PER_INCH;
-
-      // ── Zoom prefers tiles (design §5 S6, requirement 14.4) ────────────
-      // For a bbox zoom on a large-format page, reconstruct the same tile grid
-      // the job pipeline produced and, when the requested region falls entirely
-      // within one tile, serve it from that tile's region: the crop is already
-      // cut from a FIGURE_DPI re-render, so a region inside a tile is rendered
-      // at the tile's higher effective resolution instead of the whole page's.
-      // Deterministic (the grid is a pure function of the page size), and it
-      // keeps the pixel ceiling / rate limit fully intact — this only chooses a
-      // sharper source region, it never widens the output.
+      // The page's size AS RENDERED, without rasterising it: one pdfinfo call
+      // (a single image: its pixels at the nominal DPI). The DPI choice and the
+      // tile grid both depend on this, and rendering the page first just to
+      // learn it was the first of two renders per request.
+      const sizePt = await prepared.pageSizePt(body.page);
+      const { widthPt, heightPt } = sizePt;
+      // ── Which tile the zoom region lies in (design §5 S6, requirement 14.4) ──
+      // Reconstructs the grid the job pipeline planned for this page (a pure
+      // function of the true page size) and names the tile that contains the
+      // whole region, for `X-Render-Tile`. The region itself is rendered
+      // directly at the DPI chosen below; the tile only reports where it lies.
       let servingTileId: string | null = null;
       if (bbox !== null) {
         const grid = planTiles(
@@ -288,9 +277,13 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
         const tile = tileForRegion([bbox[0], bbox[1], bbox[2], bbox[3]] as BBox, grid);
         if (tile !== null) servingTileId = tile.tileId;
       }
-
-      const preferredDpi = bbox === null ? config.renderDpi : config.figureDpi;
-      const dpi = chooseRenderDpi({
+      // A whole page without a target uses the SAME adaptive DPI as the job
+      // pipeline's model page, so its bytes are what a job would have produced;
+      // a region starts from FIGURE_DPI. A target (or the pixel ceiling) moves
+      // either one.
+      const preferredDpi =
+        bbox === null ? adaptiveRenderDpi(sizePt, config.renderDpi) : config.figureDpi;
+      const requestedDpi = chooseRenderDpi({
         widthPt,
         heightPt,
         bbox,
@@ -298,19 +291,22 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
         targetPixels,
         maxPixels: config.renderMaxPixels,
       });
-
-      // Base image: the whole model page, or the bbox crop (which itself may be
-      // cut from a FIGURE_DPI re-render for sharpness).
-      const base =
-        bbox === null
-          ? { buffer: modelPage.image.buffer, width: modelPage.image.width, height: modelPage.image.height }
-          : await prepared.renderFigureCrop(body.page, bbox, modelPage.image);
-
-      // Resize deterministically to the target long edge when one was asked for.
-      // sharp is the same encoder the pipeline uses; `fit: inside` preserves the
-      // aspect ratio and `withoutEnlargement` avoids upscaling past the source
-      // resolution when the target exceeds it. `targetPixels === null` keeps the
-      // base bytes untouched. A pixel-ceiling breach is scaled down, not thrown.
+      // ONE poppler call at the chosen DPI, rasterising only the region: the
+      // result has the resolution that was asked for (and reported) instead of
+      // a model-resolution page that is then cropped, re-rendered and scaled.
+      const rendered = await prepared.renderRegion(body.page, {
+        bbox,
+        dpi: requestedDpi,
+        sizePt,
+        maxPixels: config.renderMaxPixels,
+      });
+      const base = rendered.image;
+      // Scale DOWN to the target long edge when one was asked for. sharp is the
+      // same encoder the pipeline uses; `fit: inside` preserves the aspect ratio.
+      // A render never enlarges: a target above what the source can deliver
+      // (a single image, or a rounding step) returns the pixels it has, and the
+      // reported size and DPI say so. `targetPixels === null` keeps the base
+      // bytes untouched. A pixel-ceiling breach is scaled down, not thrown.
       const longEdge = Math.max(base.width, base.height);
       const desiredLongEdge = resolveLongEdge({
         baseLongEdge: longEdge,
@@ -323,13 +319,13 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
       let pngBytes: Uint8Array;
       let width: number;
       let height: number;
-      if (desiredLongEdge !== null && desiredLongEdge !== longEdge) {
+      if (desiredLongEdge !== null && desiredLongEdge < longEdge) {
         const resized = await sharp(base.buffer, { limitInputPixels: MAX_RENDER_PIXELS })
           .resize({
             width: base.width >= base.height ? desiredLongEdge : undefined,
             height: base.height > base.width ? desiredLongEdge : undefined,
             fit: "inside",
-            withoutEnlargement: false,
+            withoutEnlargement: true,
           })
           .png()
           .toBuffer({ resolveWithObject: true });
@@ -342,6 +338,9 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
         height = base.height;
       }
 
+      // The resolution the delivered pixels really have: what the renderer
+      // produced, scaled by any downsizing above.
+      const dpi = Math.max(1, Math.round((rendered.dpi * width) / Math.max(base.width, 1)));
       // Final byte guard behind the DPI/resize clamp: never emit above ceiling.
       if (width * height > config.renderMaxPixels) {
         throw conversionFailed(
@@ -372,7 +371,7 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
           ...(servingTileId !== null ? { tile: servingTileId } : {}),
         },
         servingTileId !== null
-          ? "Rendered zoom region from its containing tile"
+          ? "Rendered zoom region (lies within one tile)"
           : "Rendered page/region on demand",
       );
 
@@ -385,8 +384,8 @@ export function createRenderHandler(deps: RenderHandlerDeps): RequestHandler {
       res.setHeader("X-Render-Height", String(height));
       res.setHeader("X-Render-Dpi", String(dpi));
       res.setHeader("X-Render-Clamped", clamped ? "1" : "0");
-      // `X-Render-Tile` names the large-format tile a zoom region was served
-      // from, when the region fell within one (requirement 14.4). Absent for a
+      // `X-Render-Tile` names the large-format tile a zoom region lies in, when
+      // the region falls within one (requirement 14.4). Absent for a
       // whole-page render or a region that spans a seam / a non-tiled page.
       if (servingTileId !== null) res.setHeader("X-Render-Tile", servingTileId);
       res.setHeader("X-Render-Meta", JSON.stringify(meta));
