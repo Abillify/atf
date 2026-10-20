@@ -10,6 +10,10 @@
       "properties": {
         "nameOverride": { "type": "string" },
         "fullnameOverride": { "type": "string" },
+        "profile": {
+          "type": "string",
+          "enum": ["", "development", "staging", "production", "test"]
+        },
         "image": {
           "type": "object",
           "additionalProperties": false,
@@ -320,6 +324,10 @@
           "required": ["autoSearchUrl"],
           "properties": {
             "autoSearchUrl": { "type": "boolean" },
+            "converterAllowLocalHtml": {
+              "description": "Export CONVERTER_ALLOW_LOCAL_HTML=true: acknowledges the in-pod LibreOffice converter that the production gate otherwise refuses. Set false when the converter is isolated.",
+              "type": "boolean"
+            },
             "searchTls": {
               "description": "Use https for the in-cluster SEARCH_URL when the search service terminates TLS itself.",
               "type": "boolean"

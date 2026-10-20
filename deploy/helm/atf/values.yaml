@@ -25,6 +25,12 @@ global:
 
   # List of {name: <pull-secret>} for a private registry.
   imagePullSecrets: []
+  # Operating profile for Runtime, Gate, Search and Extract, exported as
+  # ATF_PROFILE (development | staging | production | test). Empty = not set:
+  # each service then judges by its own variable (runtime.config.appEnv,
+  # gate.config.env, the image's NODE_ENV). When set it WINS over those, and an
+  # unknown value stops the service from starting.
+  profile: ""
 
   # Existing Secrets per service (see above). The keys double as the
   # service names, so the schema keeps them closed:

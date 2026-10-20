@@ -120,6 +120,28 @@ config.yaml (MCPGATE_CONFIG_DIR), not on an environment variable.
 - name: PORT
   value: {{ .Values.containerPort | quote }}
 {{- end }}
+{{- /*
+Operating profile (ATF_PROFILE): exported to the four services that read it
+only when global.profile is set. It overrides the per-service variable
+(APP_ENV / MCPGATE_ENV / NODE_ENV), so it is deliberately opt-in: the chart
+never makes a profile decision the operator did not state.
+*/}}
+{{- if and (ne .Component "control") .Values.global.profile }}
+- name: ATF_PROFILE
+  value: {{ .Values.global.profile | quote }}
+{{- end }}
+{{- /*
+Declared replica count for the production-readiness gate: the worst case the
+workload can reach (the HPA ceiling when autoscaling is on, replicaCount
+otherwise), so a rollout with more than one replica and no shared rate-limit /
+approval store is refused by the service instead of silently handing every
+replica its own budget. The Gate reads MCPGATE_REPLICAS; Runtime, Search and
+Extract read REPLICAS. extraEnv is rendered after this block and wins.
+*/}}
+{{- if ne .Component "control" }}
+- name: {{ ternary "MCPGATE_REPLICAS" "REPLICAS" (eq .Component "gate") }}
+  value: {{ ternary .Values.autoscaling.maxReplicas .Values.replicaCount .Values.autoscaling.enabled | int | quote }}
+{{- end }}
 {{- if eq .Component "runtime" }}
 - name: APP_ENV
   value: {{ .Values.config.appEnv | quote }}
@@ -148,6 +170,17 @@ config.yaml (MCPGATE_CONFIG_DIR), not on an environment variable.
 {{- if .Values.config.autoSearchUrl }}
 - name: SEARCH_URL
   value: {{ include "atf.serviceURL" (dict "ctx" .ctx "name" "search" "scheme" (ternary "https" "http" .Values.config.searchTls)) | quote }}
+{{- end }}
+{{- /*
+The chart runs LibreOffice as a subprocess inside the Extract pod
+(CONVERTER_MODE=local); the production gate refuses that unless the operator
+acknowledges it. config.converterAllowLocalHtml (default true) is that
+acknowledgement, so a stock install starts; set it false once an isolated
+converter is wired in through extraEnv and the pod spec.
+*/}}
+{{- if .Values.config.converterAllowLocalHtml }}
+- name: CONVERTER_ALLOW_LOCAL_HTML
+  value: "true"
 {{- end }}
 {{- end }}
 {{- if eq .Component "gate" }}
