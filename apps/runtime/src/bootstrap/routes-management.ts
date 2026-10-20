@@ -39,6 +39,7 @@ import type { AbManager } from "../graph/flow-ab.js";
 import type { FlowAuthorizer } from "../graph/flow-authorizer.js";
 import type { createFlowParserService } from "../graph/flow-parser.js";
 import type { FlowRegistry } from "../graph/flow-parser/loader.js";
+import { findShadowedFlowIds } from "../graph/flow-registry-composite.js";
 import type { DbFlowSource } from "../graph/flow-registry-composite.js";
 import type { StudioTestRegistry } from "../graph/flow-registry-studio.js";
 import type { GuardrailPolicyService } from "../graph/guardrail-policy.js";
@@ -93,6 +94,7 @@ import type { GuardrailsResult } from "./guardrails.js";
 import type { McpResult } from "./mcp.js";
 import type { ObservabilityResult } from "./observability.js";
 import type { PersistenceResult } from "./persistence.js";
+import type { RateLimitStore } from "../middleware/rate-limit.js";
 
 type FlowParserService = ReturnType<typeof createFlowParserService>;
 
@@ -150,6 +152,8 @@ export interface ManagementRouteDeps {
   onCompliancePolicyLoader: (loader: CompliancePolicyLoader) => void;
   retentionService: ObservabilityResult["retentionService"];
   auditAnchor: ObservabilityResult["auditAnchor"];
+  /** Ed25519 evidence key (ADR 0030) — preferred for bundle/receipt signing. */
+  evidenceKey?: ObservabilityResult["evidenceKey"];
   budgetService: ObservabilityResult["budgetService"];
   metrics: Metrics;
   usageAnalytics: ObservabilityResult["usageAnalytics"];
@@ -160,6 +164,12 @@ export interface ManagementRouteDeps {
   abManager: AbManager | undefined;
   flowStore: PersistenceResult["flowStore"];
   dbFlowSource: DbFlowSource | undefined;
+  /**
+   * Shared rate limit store from `createHttpMiddleware` (Redis-backed when
+   * REDIS_URL is set). Forwarded to the GitOps webhook router so its per-IP
+   * budget is shared across replicas instead of one counter per process.
+   */
+  rateLimitStore?: RateLimitStore;
 }
 
 export interface ManagementRoutesResult {
@@ -228,6 +238,7 @@ export async function registerManagementRoutes(
     onCompliancePolicyLoader,
     retentionService,
     auditAnchor,
+    evidenceKey,
     budgetService,
     metrics,
     usageAnalytics,
@@ -370,6 +381,18 @@ export async function registerManagementRoutes(
           : {}),
         ...(config.gitopsBranch !== undefined
           ? { triggerBranches: config.gitopsBranch }
+          : {}),
+        // After a rescan, report which file flows are overridden by an online
+        // (DB) flow with the same id — the push has no runtime effect for them
+        // (composite registry precedence, ADR 0034).
+        ...(dbFlowSource !== undefined
+          ? {
+              shadowedFlowIds: () =>
+                findShadowedFlowIds(fileRegistry, dbFlowSource),
+            }
+          : {}),
+        ...(deps.rateLimitStore !== undefined
+          ? { rateLimitStore: deps.rateLimitStore }
           : {}),
       }),
     );
@@ -641,10 +664,15 @@ export async function registerManagementRoutes(
     // retention targets plus the remote ERASURE_TARGETS services and
     // persists every operation in erasure_requests (idempotent, retryable).
     // Erasure_Receipt signing (Req 2.11): Ed25519 via
-    // ERASURE_RECEIPT_SIGNING_KEY, documented fallback is the audit-anchor
-    // HMAC secret — the algorithm is recorded in the envelope's `alg`.
+    // ERASURE_RECEIPT_SIGNING_KEY, then the shared evidence key
+    // (EVIDENCE_SIGNING_KEY, ADR 0030 — one key for the whole chain), and
+    // only then the legacy audit-anchor HMAC fallback. The algorithm is
+    // recorded in the envelope's `alg` either way.
     const receiptKey =
       ed25519ReceiptKey(config.erasureReceiptSigningKey) ??
+      (evidenceKey !== undefined
+        ? ({ alg: "Ed25519", key: evidenceKey.privateKey } as const)
+        : undefined) ??
       hmacReceiptKey(config.auditAnchorSecret);
     const erasureOrchestrator = createErasureOrchestrator({
       retention: retentionService,
@@ -827,10 +855,11 @@ export async function registerManagementRoutes(
   );
   {
     const { createExplainRouter } = await import("../routes/explain.js");
-    // Evidence-bundle signing reuses the audit-anchor secret when no
-    // dedicated one is set — see routes/explain.ts's doc comment on why a
-    // deployment that already anchors its audit chain should not need a
-    // second secret just to sign evidence bundles.
+    // Evidence-bundle signing prefers the Ed25519 evidence key (ADR 0030,
+    // third-party verifiable via the published JWKS); otherwise it reuses the
+    // audit-anchor secret when no dedicated one is set — see routes/explain.ts's
+    // doc comment on why a deployment that already anchors its audit chain
+    // should not need a second secret just to sign evidence bundles.
     const evidenceBundleSecret =
       config.evidenceBundleSecret ?? config.auditAnchorSecret;
     app.route(
@@ -847,15 +876,19 @@ export async function registerManagementRoutes(
         authRequired: config.monitoringAuthRequired,
         operatorAuth,
         ...(auditAnchor !== undefined ? { auditAnchor } : {}),
+        ...(evidenceKey !== undefined
+          ? { evidenceBundleKey: evidenceKey }
+          : {}),
         ...(evidenceBundleSecret !== undefined ? { evidenceBundleSecret } : {}),
       }),
     );
     logger.info(
       "Decision-Provenance Explainability Card enabled at GET /monitoring/explain/:executionId",
     );
-    if (evidenceBundleSecret !== undefined) {
+    if (evidenceKey !== undefined || evidenceBundleSecret !== undefined) {
       logger.info(
         "Verifiable Evidence Bundle enabled at GET /monitoring/explain/:executionId/bundle",
+        { algorithm: evidenceKey !== undefined ? "ed25519" : "hmac-sha256" },
       );
     }
   }

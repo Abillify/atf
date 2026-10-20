@@ -19,6 +19,7 @@
  */
 
 import type { Hono as HonoApp } from "hono";
+import { getFlowLoadFailures } from "../graph/flow-parser/validate.js";
 import { AnalysisArtifactService } from "../artifacts/analysis-artifacts.js";
 import type { CompliancePolicy } from "../compliance/policy-schema.js";
 import type { AppConfig } from "../config/index.js";
@@ -43,8 +44,11 @@ import { createChatRouter } from "../routes/chat.js";
 import { createHealthRouter } from "../routes/health.js";
 import { createJobsRouter } from "../routes/jobs.js";
 import { createMediaRouter } from "../routes/media.js";
+import { aiDisclosureMiddleware } from "../middleware/ai-disclosure.js";
 import { createModelsRouter } from "../routes/models.js";
 import { createReceiptJwksRouter } from "../routes/receipt-jwks.js";
+import { createEvidenceJwksRouter } from "../routes/evidence-jwks.js";
+import type { Ed25519EvidenceKey } from "../observability/evidence-key.js";
 import { createReceiptsRouter } from "../routes/receipts.js";
 import { createResponsesRouter } from "../routes/responses.js";
 import { createTransactionJwksRouter } from "../routes/transaction-jwks.js";
@@ -102,6 +106,13 @@ export interface InferenceRouteDeps {
   receiptStore?: ReceiptStore;
   transparencyLog?: TransparencyLog;
   receiptSigningKey?: ReceiptSigningKey;
+  /**
+   * Ed25519 evidence key (ADR 0030) — when present, its public half is
+   * published at `/.well-known/atf-evidence-jwks.json` for offline
+   * third-party verification of audit anchors, Evidence Bundles, and
+   * Erasure Receipts.
+   */
+  evidenceKey?: Ed25519EvidenceKey;
 }
 
 /**
@@ -150,6 +161,7 @@ export async function registerInferenceRoutes(
     receiptStore,
     transparencyLog,
     receiptSigningKey,
+    evidenceKey,
   } = deps;
   // Decision_Receipts (Req 15.4): routes + public JWKS only exist when the
   // feature is fully wired (store, log, and signing key all present).
@@ -192,6 +204,11 @@ export async function registerInferenceRoutes(
       // Req 7.7: a failed tool-authz.json reload surfaces as a degraded
       // (never 503) policy_stale hint — the last-known-good policy still holds.
       toolAuthz: toolAuthzLoader,
+      // P1-R3: flow files that fail to load are an informational readiness
+      // hint, and the aiperator_flow_load_failures gauge reads the same ledger.
+      flowLoad: getFlowLoadFailures,
+      // P0-1: an instance without authentication says so on /health.
+      authDisabled: config.authnMode === "disabled",
     }),
   );
   // Req 7.11: public JWKS for asymmetrically signed transaction tokens
@@ -303,6 +320,12 @@ export async function registerInferenceRoutes(
     ...(receiptsEnabled ? { decisionReceiptsEnabled: true } : {}),
   };
 
+  // Art. 50 AI Act: opt-in machine-readable marker on successful completions.
+  if (config.aiDisclosure !== undefined && config.aiDisclosure !== "off") {
+    const disclosure = aiDisclosureMiddleware(config.aiDisclosure);
+    app.use("/v1/chat/completions", disclosure);
+    app.use("/v1/responses", disclosure);
+  }
   app.route(
     "/",
     createChatRouter(
@@ -347,6 +370,16 @@ export async function registerInferenceRoutes(
     );
     app.route("/", createReceiptJwksRouter(receiptSigningKey));
     logger.info("Decision receipts API enabled at /v1/receipts/:id");
+  }
+
+  // Evidence-chain JWKS (ADR 0030): the public half of EVIDENCE_SIGNING_KEY,
+  // so auditors can verify audit anchors / Evidence Bundles / Erasure Receipts
+  // offline without any shared secret.
+  if (evidenceKey !== undefined) {
+    app.route("/", createEvidenceJwksRouter(evidenceKey));
+    logger.info(
+      "Evidence-chain JWKS enabled at /.well-known/atf-evidence-jwks.json",
+    );
   }
 
   // Durable Agent Runtime — recovery sweeper (see job-store.ts /

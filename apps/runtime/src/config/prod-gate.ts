@@ -80,6 +80,13 @@ export function checkProductionReadiness(
       "AUTHN_MODE is not set; legacy JWT/OIDC precedence is active. Set disabled|token|oidc|token_or_oidc explicitly.",
     );
   }
+  if (!isProd && config.authnMode === "disabled") {
+    warnings.push(
+      "AUTHN_MODE=disabled: every endpoint answers without a credential. /health and " +
+        "/health/ready report auth: disabled. Fine for local development; production " +
+        "refuses it.",
+    );
+  }
   if (isProd && config.authnMode !== "oidc") {
     fatal.push(
       "Production requires AUTHN_MODE=oidc; local token/API-key primary credentials are not permitted.",
@@ -203,6 +210,38 @@ export function checkProductionReadiness(
   if (isProd && config.redisUrl === undefined) {
     warnings.push(
       "REDIS_URL is not set — rate limiting, concurrency limits, thread locks, idempotency and approvals use per-replica in-memory state. This is safe for a SINGLE replica only; set REDIS_URL before running more than one replica.",
+    );
+  }
+
+  // REPLICAS documents the intended replica count so the gate can flag state
+  // that would multiply or diverge per process even with REDIS_URL set.
+  if ((config.replicas ?? 1) > 1 && config.redisUrl === undefined) {
+    warnings.push(
+      `REPLICAS is ${config.replicas} but REDIS_URL is unset — the GitOps webhook rate limit (and any other store not backed by DATABASE_URL) is per replica, so clients get up to ${config.replicas}× the webhook budget and per-replica throttles diverge. Set REDIS_URL to share the throttle across replicas.`,
+    );
+  }
+  // Process-local state that REDIS_URL does not share (roadmap: docs/UPGRADE.md,
+  // "Not yet shared between replicas"). Warn, don't fail: single-replica and
+  // sticky-session deployments are legitimate.
+  if ((config.replicas ?? 1) > 1) {
+    if (config.embedSearchFigures === true && config.mediaBaseUrl !== undefined) {
+      warnings.push(
+        `REPLICAS is ${config.replicas} and show_figure is enabled (EMBED_SEARCH_FIGURES, MEDIA_BASE_URL) — figures are held in a per-process media store, so a link opened on another replica is a 404. Route /v1/media/* to the replica that served the answer (sticky routing) or keep one replica for figure-embedding flows.`,
+      );
+    }
+    if (config.decisionReceiptsEnabled === true) {
+      warnings.push(
+        `REPLICAS is ${config.replicas} and DECISION_RECEIPTS_ENABLED is set — the receipt transparency log numbers its leaves and builds its tree per process, so replicas produce diverging logs. Run receipt-issuing flows on one replica until the log is shared.`,
+      );
+    }
+  }
+  if (
+    (config.replicas ?? 1) > 1 &&
+    config.redTeamScheduleFlows !== undefined &&
+    config.redTeamScheduleFlows.length > 0
+  ) {
+    warnings.push(
+      `REPLICAS is ${config.replicas} and RED_TEAM_SCHEDULE_FLOWS is set — every replica runs its own red-team schedule, so each scheduled test executes ${config.replicas}× per interval. Run the schedule on a single replica (dedicated service without RED_TEAM_SCHEDULE_FLOWS elsewhere) or move it to an external scheduler.`,
     );
   }
 
@@ -506,6 +545,38 @@ export function checkProductionReadiness(
         "in memory only and lost on restart. Configure AUDIT_ANCHOR_FILE (with " +
         "AUDIT_ANCHOR_SECRET) so external anchors survive restarts and a " +
         "tampered chain rebuild stays detectable.",
+    );
+  }
+
+  // Egress_Guard: an empty EGRESS_ALLOWED_HOSTS means "any public host". The
+  // guard still blocks private and metadata ranges, but a flow, tool or MCP
+  // server can reach every public destination — which is not what a record of
+  // processing that names its recipients assumes.
+  if (isProd && (config.egressAllowedHosts ?? []).length === 0) {
+    warnings.push(
+      "EGRESS_ALLOWED_HOSTS is empty: every public host is a permitted destination for " +
+        "guarded outbound calls (tools, MCP, providers). Set the destinations you actually " +
+        "use (exact hosts or `.suffix` domains) so the recipients named in the record of " +
+        "processing are the only ones reachable.",
+    );
+  }
+  // ADR 0030: HMAC-signed anchors/bundles/receipts can only be verified by
+  // someone holding the shared secret — auditors, regulators, and customers
+  // cannot check them independently. Warn (non-fatal: legacy HMAC deployments
+  // keep working) when the evidence chain is active without the asymmetric
+  // EVIDENCE_SIGNING_KEY.
+  if (
+    isProd &&
+    config.evidenceSigningKey === undefined &&
+    (config.auditAnchorSecret !== undefined ||
+      config.evidenceBundleSecret !== undefined)
+  ) {
+    warnings.push(
+      "The evidence chain (audit anchors / Evidence Bundles) is signed with an " +
+        "HMAC shared secret, so third parties cannot verify it independently. " +
+        "Configure EVIDENCE_SIGNING_KEY (Ed25519, ADR 0030) — anchors, bundles, " +
+        "and Erasure Receipts then carry Ed25519 signatures verifiable offline " +
+        "via /.well-known/atf-evidence-jwks.json, without sharing any secret.",
     );
   }
 

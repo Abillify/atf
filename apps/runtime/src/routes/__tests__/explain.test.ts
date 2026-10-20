@@ -13,6 +13,11 @@ import { createOperatorAuthorizer } from "../../middleware/operator-rbac.js";
 import type { ExplainHistorySource } from "../../observability/explain.js";
 import type { NodeExecutionEvent } from "../../types/monitoring.js";
 import type { SignedEvidenceBundle } from "../../observability/evidence-bundle.js";
+import { parseEvidenceSigningKey } from "../../observability/evidence-key.js";
+
+const EVIDENCE_SEED_B64 = Buffer.from(
+  Array.from({ length: 32 }, (_, i) => i + 1),
+).toString("base64");
 
 const viewerAuth = createOperatorAuthorizer({
   authRequired: true,
@@ -201,6 +206,51 @@ describe("GET /monitoring/explain/:executionId/bundle", () => {
     expect(verifyEvidenceBundle(signed, "wrong-secret-value-here!!!").valid).toBe(
       false,
     );
+  });
+
+  it("signs with the Ed25519 evidence key when configured (third-party verifiable)", async () => {
+    const key = parseEvidenceSigningKey(EVIDENCE_SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const app = new Hono();
+    app.route(
+      "/",
+      createExplainRouter({
+        history: historyWith(sampleEvents),
+        operatorAuth: viewerAuth,
+        evidenceBundleKey: key,
+      }),
+    );
+    const res = await app.request("/monitoring/explain/exec-1/bundle", {
+      headers: { Authorization: "Bearer viewer-tok" },
+    });
+    expect(res.status).toBe(200);
+    const signed = (await res.json()) as SignedEvidenceBundle;
+    expect(signed.algorithm).toBe("ed25519");
+    expect(signed.kid).toBe(key.kid);
+    // An independent auditor holding ONLY the public key verifies it.
+    const { verifyEvidenceBundle } =
+      await import("../../observability/evidence-bundle.js");
+    expect(verifyEvidenceBundle(signed, key.publicKeyRaw).valid).toBe(true);
+  });
+
+  it("prefers the Ed25519 evidence key over a legacy HMAC secret", async () => {
+    const key = parseEvidenceSigningKey(EVIDENCE_SEED_B64);
+    if (key === undefined) throw new Error("expected a key");
+    const app = new Hono();
+    app.route(
+      "/",
+      createExplainRouter({
+        history: historyWith(sampleEvents),
+        operatorAuth: viewerAuth,
+        evidenceBundleKey: key,
+        evidenceBundleSecret: SECRET,
+      }),
+    );
+    const res = await app.request("/monitoring/explain/exec-1/bundle", {
+      headers: { Authorization: "Bearer viewer-tok" },
+    });
+    const signed = (await res.json()) as SignedEvidenceBundle;
+    expect(signed.algorithm).toBe("ed25519");
   });
 
   it("returns markdown with the verify-bundle instructions when ?format=markdown is set", async () => {

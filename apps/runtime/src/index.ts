@@ -22,6 +22,7 @@
  * Requirements: 10.5, 10.6, 11.5
  */
 
+import { getFlowLoadFailures } from "./graph/flow-parser/validate.js";
 import { loadConfig, checkProductionReadiness } from "./config/index.js";
 import { buildOperatorAuthentication } from "./bootstrap/operator-auth.js";
 import { createFlowParserService } from "./graph/flow-parser.js";
@@ -51,6 +52,7 @@ import {
   createDbFlowSource,
   createCompositeRegistry,
   createVersionedRegistry,
+  findShadowedFlowIds,
   materializeStoredFlow,
 } from "./graph/flow-registry-composite.js";
 import { createStudioTestRegistry } from "./graph/flow-registry-studio.js";
@@ -127,7 +129,7 @@ if (import.meta.main) {
     for (const f of readiness.fatal) logger.error(`Readiness failure: ${f}`);
     logger.error(
       "Refusing to start in production with insecure configuration. " +
-        "Fix the issues above or set APP_ENV=development.",
+        "Fix the issues above or set ATF_PROFILE=development (or APP_ENV=development).",
     );
     process.exit(1);
   }
@@ -167,7 +169,7 @@ if (import.meta.main) {
       logger.error(`Readiness failure: ${f}`);
     logger.error(
       "Refusing to start in production with insecure cluster/RLS configuration. " +
-        "Fix the issues above or set APP_ENV=development.",
+        "Fix the issues above or set ATF_PROFILE=development (or APP_ENV=development).",
     );
     process.exit(1);
   }
@@ -177,6 +179,8 @@ if (import.meta.main) {
   // extractor built there reports its fail-open degradations through them
   // (Req 7.8); buildObservability below receives this same instance.
   const metrics = createMetrics(config.metricsEnabled ?? true);
+  // P1-R3: flow files that fail to load are a gauge, not just a line on stderr.
+  metrics.setFlowLoadFailureProbe?.(() => getFlowLoadFailures().length);
   const cacheResult = await buildCache(
     config,
     logger,
@@ -214,6 +218,7 @@ if (import.meta.main) {
     auditLog,
     retentionService,
     auditAnchor,
+    evidenceKey,
   } = obs;
 
   // 7. Node-type handler plugins (before flow parsing so plugin types are known)
@@ -385,6 +390,16 @@ if (import.meta.main) {
     await dbFlowSource.refresh();
     dbFlowSource.startPolling(10_000);
     flowRegistry = createCompositeRegistry(fileRegistry, dbFlowSource);
+    // A DB-published flow overrides a same-id file flow — a git push to that
+    // file has no runtime effect. Name the shadowed flows at startup so the
+    // override is visible in the logs, not just in the Studio (ADR 0034).
+    const shadowedFlowIds = findShadowedFlowIds(fileRegistry, dbFlowSource);
+    if (shadowedFlowIds.length > 0) {
+      logger.warn(
+        "Online (DB) flows override same-id file flows — git changes to these files have no runtime effect until the online flow is deleted",
+        { flows: shadowedFlowIds, count: shadowedFlowIds.length },
+      );
+    }
 
     abManager = createAbManager(
       config.flowsDir,
@@ -926,7 +941,7 @@ if (import.meta.main) {
 
   // 13. Hono app + middleware stack (CORS, security headers, CSRF, request
   // logging/tracing, body limit, rate limits, auth) — see bootstrap/http-middleware.ts.
-  const { app, apiKeyResolver } = createHttpMiddleware({
+  const { app, apiKeyResolver, rateLimitStore } = createHttpMiddleware({
     config,
     logger,
     tracer,
@@ -1000,6 +1015,8 @@ if (import.meta.main) {
           receiptSigningKey,
         }
       : {}),
+    // Evidence-chain JWKS (ADR 0030).
+    ...(evidenceKey !== undefined ? { evidenceKey } : {}),
   });
   const { optimizerScheduler, triggerScheduler } =
     await registerManagementRoutes({
@@ -1015,6 +1032,7 @@ if (import.meta.main) {
       monitoringService,
       jwtVerifier,
       apiKeyResolver,
+      rateLimitStore,
       operatorAuth,
       metricsOperatorAuth,
       metricsAuthRequiredFlag,
@@ -1056,6 +1074,7 @@ if (import.meta.main) {
       },
       retentionService,
       auditAnchor,
+      ...(evidenceKey !== undefined ? { evidenceKey } : {}),
       budgetService,
       metrics,
       usageAnalytics,
@@ -1069,6 +1088,23 @@ if (import.meta.main) {
     });
   triggerSchedulerRef = triggerScheduler;
 
+  // COMPLIANCE_POLICY_REQUIRED: residency and data-class rules only exist when
+  // compliance-policy.yaml loaded. Production without one refuses to start;
+  // elsewhere it is a warning, so the same configuration surfaces the gap early.
+  if (
+    config.compliancePolicyRequired === true &&
+    compliancePolicyLoaderRef?.policy === undefined
+  ) {
+    const message =
+      "COMPLIANCE_POLICY_REQUIRED is set but no valid compliance-policy.yaml is loaded: " +
+      "data-class residency and provider rules are not enforced. Add the policy to the " +
+      "flows directory (see compliance-policy.example.yaml).";
+    if (config.appEnv === "production") {
+      logger.error(message);
+      process.exit(1);
+    }
+    logger.warn(message);
+  }
   // 14. HTTP Server
   const server = Bun.serve({
     port: config.port,

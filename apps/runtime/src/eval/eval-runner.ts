@@ -13,6 +13,22 @@ export type Assertion =
   | { type: "regex"; pattern: string; flags?: string }
   | { type: "maxLatencyMs"; value: number }
   | { type: "maxCost"; value: number }
+  /**
+   * Structured check of a JSON answer: `path` addresses a value in the
+   * response parsed as JSON (`$.a.b[0].c`, `$["key"]`; no filters or wildcards).
+   * With `equals` the value must deep-equal it, with `matches` its string form
+   * must match the regex; with neither it only has to exist.
+   */
+  | { type: "jsonPath"; path: string; equals?: unknown; matches?: string; flags?: string }
+  /**
+   * The flow called tool `name` (a full ref `server/tool` or the bare tool
+   * name) at least `min` (default 1) and at most `max` times. `max: 0` asserts
+   * the tool was NOT called. Needs the executor to report its tool calls;
+   * without them the assertion fails rather than passes by default.
+   */
+  | { type: "toolCalled"; name: string; min?: number; max?: number }
+  /** Total tokens (prompt + completion) of the run stay at or below `value`. */
+  | { type: "maxTokens"; value: number }
   | { type: "llmJudge"; criteria: string; threshold?: number };
 
 /** Caller-supplied evaluation case. Legacy `expected` cases remain supported. */
@@ -36,6 +52,8 @@ export interface FlowExecutionResult {
   usage?: TokenUsage;
   latencyMs?: number;
   cost?: number;
+  /** Tool refs in call order (`server/tool`), for `toolCalled` assertions. */
+  toolCalls?: string[];
 }
 
 export type FlowExecutor = (
@@ -89,9 +107,64 @@ export interface EvalReport {
   cases: CaseResult[];
 }
 
+/** What an assertion can look at. `toolCalls`/`totalTokens` are absent when the executor reports none. */
+export interface AssertionContext {
+  text: string;
+  latencyMs: number;
+  cost: number;
+  toolCalls?: readonly string[];
+  totalTokens?: number;
+}
+const MAX_JSON_SCAN_CHARS = 1_000_000;
+/** The answer parsed as JSON: the whole text, else the first fenced code block. */
+function parseJsonAnswer(text: string): { ok: true; value: unknown } | { ok: false } {
+  const bounded = text.length > MAX_JSON_SCAN_CHARS ? text.slice(0, MAX_JSON_SCAN_CHARS) : text;
+  const candidates = [bounded.trim()];
+  const fence = /```(?:json)?\s*\n([\s\S]*?)```/i.exec(bounded);
+  if (fence?.[1] !== undefined) candidates.push(fence[1].trim());
+  for (const candidate of candidates) {
+    if (candidate === "") continue;
+    try {
+      return { ok: true, value: JSON.parse(candidate) };
+    } catch {
+      /* try the next candidate */
+    }
+  }
+  return { ok: false };
+}
+/** `$.a.b[0].c` and `$["k"]`; anything else (filters, wildcards, `..`) is rejected. */
+export function parseJsonPath(path: string): Array<string | number> | undefined {
+  if (!path.startsWith("$")) return undefined;
+  const segments: Array<string | number> = [];
+  let rest = path.slice(1);
+  while (rest.length > 0) {
+    const key = /^\.([A-Za-z_][\w-]*)/.exec(rest);
+    const index = /^\[(\d+)\]/.exec(rest);
+    const quoted = /^\[(?:"([^"]*)"|'([^']*)')\]/.exec(rest);
+    if (key?.[1] !== undefined) {
+      segments.push(key[1]);
+      rest = rest.slice(key[0].length);
+    } else if (index?.[1] !== undefined) {
+      segments.push(Number(index[1]));
+      rest = rest.slice(index[0].length);
+    } else if (quoted !== null) {
+      segments.push(quoted[1] ?? quoted[2] ?? "");
+      rest = rest.slice(quoted[0].length);
+    } else {
+      return undefined;
+    }
+  }
+  return segments;
+}
+function jsonEqual(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+function toolMatches(called: string, wanted: string): boolean {
+  return called === wanted || called.endsWith(`/${wanted}`);
+}
 export function evaluateAssertion(
   assertion: Assertion,
-  ctx: { text: string; latencyMs: number; cost: number },
+  ctx: AssertionContext,
 ): AssertionResult {
   const fail = (detail: string): AssertionResult => ({ assertion, passed: false, detail });
   const pass = (): AssertionResult => ({ assertion, passed: true });
@@ -134,6 +207,56 @@ export function evaluateAssertion(
         : fail(
             `cost ${formatCostWithCurrency(ctx.cost)} exceeded ${formatCostWithCurrency(assertion.value)}`,
           );
+    case "jsonPath": {
+      const segments = parseJsonPath(assertion.path);
+      if (segments === undefined) return fail(`unsupported JSON path "${assertion.path}"`);
+      const parsed = parseJsonAnswer(ctx.text);
+      if (!parsed.ok) return fail("response is not JSON");
+      let current: unknown = parsed.value;
+      for (const segment of segments) {
+        if (current === null || typeof current !== "object") return fail(`no value at ${assertion.path}`);
+        const container = current as Record<string | number, unknown>;
+        if (!Object.hasOwn(container, segment)) {
+          return fail(`no value at ${assertion.path}`);
+        }
+        current = container[segment];
+      }
+      if ("equals" in assertion && assertion.equals !== undefined) {
+        return jsonEqual(current, assertion.equals)
+          ? pass()
+          : fail(`${assertion.path} was ${JSON.stringify(current)}, expected ${JSON.stringify(assertion.equals)}`);
+      }
+      if (assertion.matches !== undefined) {
+        try {
+          return new RegExp(assertion.matches, assertion.flags).test(String(current))
+            ? pass()
+            : fail(`${assertion.path} did not match /${assertion.matches}/`);
+        } catch {
+          return fail(`invalid regex /${assertion.matches}/${assertion.flags ?? ""}`);
+        }
+      }
+      return pass();
+    }
+    case "toolCalled": {
+      if (ctx.toolCalls === undefined) {
+        return fail("the executor did not report tool calls, so toolCalled cannot be checked");
+      }
+      const count = ctx.toolCalls.filter((called) => toolMatches(called, assertion.name)).length;
+      const min = assertion.min ?? (assertion.max === 0 ? 0 : 1);
+      if (count < min) return fail(`${assertion.name} was called ${count}x, expected at least ${min}`);
+      if (assertion.max !== undefined && count > assertion.max) {
+        return fail(`${assertion.name} was called ${count}x, expected at most ${assertion.max}`);
+      }
+      return pass();
+    }
+    case "maxTokens": {
+      if (ctx.totalTokens === undefined) {
+        return fail("the executor did not report token usage, so maxTokens cannot be checked");
+      }
+      return ctx.totalTokens <= assertion.value
+        ? pass()
+        : fail(`${ctx.totalTokens} tokens exceeded ${assertion.value}`);
+    }
     case "llmJudge":
       return fail("llmJudge assertion requires a judge (none configured)");
   }
@@ -145,6 +268,12 @@ export interface RunOptions {
   judgeThreshold?: number;
 }
 
+function totalTokensOf(usage: TokenUsage | undefined): number | undefined {
+  if (usage === undefined) return undefined;
+  if (typeof usage.total_tokens === "number") return usage.total_tokens;
+  const parts = [usage.prompt_tokens, usage.completion_tokens].filter((n): n is number => typeof n === "number");
+  return parts.length > 0 ? parts.reduce((a, b) => a + b, 0) : undefined;
+}
 function clampScore(score: number): number {
   return Math.max(0, Math.min(1, score));
 }
@@ -166,7 +295,17 @@ async function runCase(
 
     for (const assertion of evalCase.assert ?? []) {
       if (assertion.type !== "llmJudge") {
-        assertions.push(evaluateAssertion(assertion, { text: responseText, latencyMs, cost }));
+        assertions.push(
+          evaluateAssertion(assertion, {
+            text: responseText,
+            latencyMs,
+            cost,
+            ...(output.toolCalls !== undefined ? { toolCalls: output.toolCalls } : {}),
+            ...(totalTokensOf(output.usage) !== undefined
+              ? { totalTokens: totalTokensOf(output.usage) as number }
+              : {}),
+          }),
+        );
         continue;
       }
       if (options.judge === undefined) {

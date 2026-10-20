@@ -35,7 +35,10 @@ import type {
   RedTeamExecutor,
 } from "../security/red-team-engine.js";
 import { defaultAttackRegistry } from "../security/red-team-attack-registry.js";
-import type { OperatorAuthorizer } from "../middleware/operator-rbac.js";
+import type {
+  OperatorAuthorizer,
+  OperatorIdentity,
+} from "../middleware/operator-rbac.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import type { ToolAuthzLoader } from "../graph/tool-authz-loader.js";
 import type { FlowRegistry } from "../graph/flow-parser.js";
@@ -95,28 +98,58 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
   });
 
   /**
+   * Audit-safe actor label. The raw `Authorization` header (a bearer token /
+   * JWT) must NEVER be written into the audit log — the log is readable via
+   * `GET /monitoring/audit` and exported to log shippers, so persisting the
+   * credential there would leak live operator credentials to anyone with
+   * audit-read access. Instead the authorizer's resolved identity is used
+   * (token label / JWT subject — a display name, not a secret).
+   */
+  const auditActor = (actor?: OperatorIdentity): string =>
+    actor?.name ?? "unknown";
+
+  interface WriteGate {
+    /** 403 response when the caller lacks flows:write, else null. */
+    forbidden: Response | null;
+    /** Resolved operator identity from the authorizer (never a raw token). */
+    actor?: OperatorIdentity;
+  }
+
+  /**
    * Write gate on top of the read gate above. Running attacks executes the
    * flow (LLM cost, tool calls) and refreshing replaces the attack library, so
    * both are flow writes (admin) — a viewer may only read results.
    */
-  const forbidUnlessFlowWrite = async (ctx: Context): Promise<Response | null> => {
-    if (operatorAuth === undefined) return null;
+  const forbidUnlessFlowWrite = async (ctx: Context): Promise<WriteGate> => {
+    if (operatorAuth === undefined)
+      return {
+        forbidden: null,
+        actor: { name: "anonymous", role: "admin", via: "open" },
+      };
     const r = await operatorAuth.authorize(
       ctx.req.header("Authorization"),
       ctx.req.query("token"),
       "flows:write",
     );
-    return r.ok
-      ? null
-      : ctx.json(
-          { error: { message: "Forbidden: flows:write required", type: "auth_error" } },
-          403,
-        );
+    return {
+      forbidden: r.ok
+        ? null
+        : ctx.json(
+            {
+              error: {
+                message: "Forbidden: flows:write required",
+                type: "auth_error",
+              },
+            },
+            403,
+          ),
+      ...(r.actor !== undefined ? { actor: r.actor } : {}),
+    };
   };
 
   // ── POST /security/red-team/:flowId/run ─────────────────────────────────
   app.post("/security/red-team/:flowId/run", async (ctx) => {
-    const forbidden = await forbidUnlessFlowWrite(ctx);
+    const { forbidden, actor } = await forbidUnlessFlowWrite(ctx);
     if (forbidden !== null) return forbidden;
     if (engine === undefined || executor === undefined) {
       return ctx.json(
@@ -145,7 +178,7 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
       void auditLog?.record({
         action: "red_team.run",
         target: flowId,
-        actor: ctx.req.header("Authorization") ?? "unknown",
+        actor: auditActor(actor),
         details: { runId: run.id, trials: run.trials.length },
         outcome: "success",
       });
@@ -189,14 +222,12 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
   app.get("/security/red-team/attacks", (ctx) => {
     // Use the registry so custom + remote attacks are included.
     const all = defaultAttackRegistry.getAll();
-    const attacks = all.map(
-      ({ id, category, severity, description }) => ({
-        id,
-        category,
-        severity,
-        description,
-      }),
-    );
+    const attacks = all.map(({ id, category, severity, description }) => ({
+      id,
+      category,
+      severity,
+      description,
+    }));
     return ctx.json({
       attacks,
       count: attacks.length,
@@ -208,7 +239,7 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
   // Manually trigger a remote attack-library refresh (pulls from RED_TEAM_ATTACKS_URL).
   // Useful after pushing new attack templates without waiting for the next poll.
   app.post("/security/red-team/attacks/refresh", async (ctx) => {
-    const forbidden = await forbidUnlessFlowWrite(ctx);
+    const { forbidden } = await forbidUnlessFlowWrite(ctx);
     if (forbidden !== null) return forbidden;
     await defaultAttackRegistry.refreshRemote();
     return ctx.json({ refreshed: true, stats: defaultAttackRegistry.stats() });
@@ -217,25 +248,19 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
   // ── POST /security/red-team/attacks/register ─────────────────────────────
   // Register a custom attack template at runtime (admin only).
   app.post("/security/red-team/attacks/register", async (ctx) => {
-    if (operatorAuth !== undefined) {
-      const r = await operatorAuth.authorize(
-        ctx.req.header("Authorization"),
-        ctx.req.query("token"),
-        "flows:write",
-      );
-      if (!r.ok) {
-        return ctx.json(
-          { error: { message: "Forbidden: flows:write required", type: "auth_error" } },
-          403,
-        );
-      }
-    }
+    const { forbidden, actor } = await forbidUnlessFlowWrite(ctx);
+    if (forbidden !== null) return forbidden;
     let body: unknown;
     try {
       body = await ctx.req.json();
     } catch {
       return ctx.json(
-        { error: { message: "Invalid JSON body", type: "invalid_request_error" } },
+        {
+          error: {
+            message: "Invalid JSON body",
+            type: "invalid_request_error",
+          },
+        },
         400,
       );
     }
@@ -250,7 +275,8 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
       return ctx.json(
         {
           error: {
-            message: "Body must include: id (string), category (string), severity (number 0-1), description (string), payload (string)",
+            message:
+              "Body must include: id (string), category (string), severity (number 0-1), description (string), payload (string)",
             type: "invalid_request_error",
           },
         },
@@ -260,19 +286,24 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
     const payload = t.payload as string;
     defaultAttackRegistry.register({
       id: t.id as string,
-      category: t.category as import("../security/red-team-attacks.js").AttackCategory,
+      category:
+        t.category as import("../security/red-team-attacks.js").AttackCategory,
       severity: t.severity as number,
       description: t.description as string,
       render: () => payload,
     });
     auditLog?.record({
-      actor: ctx.req.header("Authorization") ?? "admin",
+      actor: auditActor(actor),
       action: "red_team.attack.register",
       target: t.id as string,
       outcome: "success",
       details: { category: t.category, severity: t.severity },
     });
-    return ctx.json({ registered: true, id: t.id, stats: defaultAttackRegistry.stats() });
+    return ctx.json({
+      registered: true,
+      id: t.id,
+      stats: defaultAttackRegistry.stats(),
+    });
   });
 
   // ── GET /security/tool-authz ─────────────────────────────────────────────
@@ -308,26 +339,8 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
       );
     }
     // Elevated permission check (write) beyond the read gate above.
-    if (operatorAuth !== undefined) {
-      const authHeader = ctx.req.header("Authorization");
-      const queryToken = ctx.req.query("token");
-      const w = await operatorAuth.authorize(
-        authHeader,
-        queryToken,
-        "flows:write",
-      );
-      if (!w.ok) {
-        return ctx.json(
-          {
-            error: {
-              message: "Forbidden: flows:write required",
-              type: "auth_error",
-            },
-          },
-          403,
-        );
-      }
-    }
+    const { forbidden, actor } = await forbidUnlessFlowWrite(ctx);
+    if (forbidden !== null) return forbidden;
     let body: unknown;
     try {
       body = await ctx.req.json();
@@ -356,7 +369,7 @@ export function createRedTeamRouter(deps: RedTeamRouterDeps): Hono {
     }
     void auditLog?.record({
       action: "tool_authz.update",
-      actor: ctx.req.header("Authorization") ?? "unknown",
+      actor: auditActor(actor),
       outcome: "success",
     });
     return ctx.json(toolAuthzLoader.engine.describe());

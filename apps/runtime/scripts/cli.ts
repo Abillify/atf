@@ -81,6 +81,10 @@ interface ParsedArgs {
   help: boolean;
   /** validate: fail when an entry flow has no semantic `metadata.version`. */
   requireVersion: boolean;
+  /** verify-bundle: JWKS (http(s) URL or local file) with the Ed25519 evidence key. */
+  jwks?: string;
+  /** verify-bundle: key id to select from the JWKS (default: the bundle's kid). */
+  kid?: string;
 }
 
 function parseArgs(argv: string[]): ParsedArgs {
@@ -103,6 +107,16 @@ function parseArgs(argv: string[]): ParsedArgs {
     if (a === "--require-version") { result.requireVersion = true; i++; continue; }
     if (a === "--server" && i + 1 < args.length) { result.server = args[++i] ?? ""; i++; continue; }
     if (a === "--token" && i + 1 < args.length) { result.token = args[++i] ?? ""; i++; continue; }
+    if (a === "--jwks" && i + 1 < args.length) {
+      result.jwks = args[++i] ?? "";
+      i++;
+      continue;
+    }
+    if (a === "--kid" && i + 1 < args.length) {
+      result.kid = args[++i] ?? "";
+      i++;
+      continue;
+    }
     if (!result.command && !a.startsWith("-")) { result.command = a; i++; continue; }
     if (!a.startsWith("-")) { result.positional.push(a); i++; continue; }
     i++;
@@ -191,6 +205,36 @@ function findFlowsDir(filePath: string): string {
   }
 }
 
+type FlowIssue = { path: string; message: string };
+/**
+ * The causes behind a failed load: schema failures name each offending field
+ * (zod `flatten()` shape), anything else keeps its serialized details. A bare
+ * "Schema validation failed" would force the author to start the runtime to
+ * learn what is wrong.
+ */
+export function flowIssues(reason: string, details: unknown): FlowIssue[] {
+  if (details !== null && typeof details === "object") {
+    const flat = details as { formErrors?: unknown; fieldErrors?: unknown };
+    const issues: FlowIssue[] = [];
+    if (Array.isArray(flat.formErrors)) {
+      for (const message of flat.formErrors) issues.push({ path: "$", message: String(message) });
+    }
+    if (flat.fieldErrors !== null && typeof flat.fieldErrors === "object") {
+      for (const [field, messages] of Object.entries(flat.fieldErrors as Record<string, unknown>)) {
+        for (const message of Array.isArray(messages) ? messages : [messages]) {
+          issues.push({ path: field, message: String(message) });
+        }
+      }
+    }
+    if (issues.length > 0) return [{ path: "$", message: reason }, ...issues];
+  }
+  if (details === undefined) return [{ path: "$", message: reason }];
+  const text = typeof details === "string" ? details : JSON.stringify(details);
+  return [{ path: "$", message: `${reason}: ${text.length > 600 ? `${text.slice(0, 600)}…` : text}` }];
+}
+function invalidReport(issues: FlowIssue[]): ReturnType<typeof validateFlow> {
+  return { valid: false, errors: issues, warnings: [], meta: { nodeCount: 0, edgeCount: 0 } };
+}
 /** Mirrors the production loader: includes, variables, model shortcuts, then schema validation. */
 function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
   const raw = loadFlowFile(filePath);
@@ -201,20 +245,21 @@ function validateFlowFile(filePath: string): ReturnType<typeof validateFlow> {
   const flowsDir = findFlowsDir(filePath);
   const fileName = path.relative(flowsDir, filePath);
   const source = raw as Record<string, unknown>;
-  resolveFlowIncludes(source, flowsDir, fileName);
-  const shortcuts = loadModelShortcuts(flowsDir);
-  const resolved = validateFlowSource(source, (flow, overrides, name) => {
-    resolveRawFlowVariables(flow, overrides, name);
-    if (shortcuts !== null) resolveModelShortcuts(flow, shortcuts, name);
-  });
-
+  let resolved: ReturnType<typeof validateFlowSource>;
+  try {
+    resolveFlowIncludes(source, flowsDir, fileName);
+    const shortcuts = loadModelShortcuts(flowsDir);
+    resolved = validateFlowSource(source, (flow, overrides, name) => {
+      resolveRawFlowVariables(flow, overrides, name);
+      if (shortcuts !== null) resolveModelShortcuts(flow, shortcuts, name);
+    });
+  } catch (err) {
+    // An unresolvable include, variable or shortcut throws; report it as the
+    // file's error instead of aborting the whole run with a stack trace.
+    return invalidReport([{ path: "$", message: err instanceof Error ? err.message : String(err) }]);
+  }
   if (!resolved.success) {
-    return {
-      valid: false,
-      errors: [{ path: "$", message: resolved.error.reason }],
-      warnings: [],
-      meta: { nodeCount: 0, edgeCount: 0 },
-    };
+    return invalidReport(flowIssues(resolved.error.reason, resolved.error.details));
   }
   return validateFlow(resolved.data);
 }
@@ -796,31 +841,94 @@ async function cmdTest(args: ParsedArgs): Promise<number> {
 }
 
 /**
+ * Load a JWKS from an http(s) URL or a local file and pick the Ed25519
+ * verification key: the one whose `kid` matches `kid`, or — when no `kid` is
+ * given — the bundle's `kid`, or (if the bundle carries none either) a
+ * single-key JWKS. Throws with a human-readable message on any input problem.
+ */
+async function loadJwksEd25519Key(
+  source: string,
+  kid: string | undefined,
+): Promise<{ publicKeyRaw: Uint8Array; kid: string | undefined }> {
+  let body: string;
+  if (/^https?:\/\//i.test(source)) {
+    let resp: Response;
+    try {
+      resp = await fetch(source, { headers: { Accept: "application/json" } });
+    } catch (err) {
+      throw new Error(`could not fetch JWKS from ${source}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    if (!resp.ok) {
+      throw new Error(`JWKS fetch failed: HTTP ${resp.status} from ${source}`);
+    }
+    body = await resp.text();
+  } else {
+    if (!fs.existsSync(source)) {
+      throw new Error(`JWKS file not found: ${source}`);
+    }
+    body = fs.readFileSync(source, "utf-8");
+  }
+
+  let keys: JsonWebKey[];
+  try {
+    const parsed = JSON.parse(body) as { keys?: unknown };
+    if (!parsed || !Array.isArray(parsed.keys)) {
+      throw new Error('expected a JSON object with a "keys" array');
+    }
+    keys = parsed.keys as JsonWebKey[];
+  } catch (err) {
+    throw new Error(`failed to parse JWKS ${source}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const okp = keys.filter((k) => k.kty === "OKP" && k.crv === "Ed25519");
+  if (okp.length === 0) {
+    throw new Error(`JWKS ${source} contains no OKP/Ed25519 keys`);
+  }
+  let selected: JsonWebKey | undefined;
+  if (kid !== undefined) {
+    selected = okp.find((k) => k.kid === kid);
+    if (!selected) {
+      throw new Error(`no key with kid "${kid}" in JWKS ${source} (has: ${okp.map((k) => k.kid ?? "?").join(", ")})`);
+    }
+  } else if (okp.length === 1) {
+    selected = okp[0];
+  } else {
+    throw new Error(
+      `JWKS ${source} has ${okp.length} Ed25519 keys — select one with --kid (${okp.map((k) => k.kid ?? "?").join(", ")})`,
+    );
+  }
+
+  const { jwkToEd25519RawKey } = await import("@atf/security-kit");
+  try {
+    return { publicKeyRaw: jwkToEd25519RawKey(selected), kid: selected.kid };
+  } catch (err) {
+    throw new Error(`invalid Ed25519 JWK in ${source}: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+/**
  * verify-bundle: offline signature/hash verification of a Verifiable
  * Evidence Bundle (see `src/observability/evidence-bundle.ts`).
  *
- * Deliberately makes NO network calls — a bundle recipient (auditor,
- * customer, regulator) should be able to verify authenticity without trusting
- * or even reaching the issuing server. Only the bundle JSON file and the
- * shared signing secret (`EVIDENCE_BUNDLE_SECRET`, falling back to
- * `AUDIT_ANCHOR_SECRET` on the server side) are required.
+ * Two verification modes (ADR 0030):
+ *
+ *  - `--jwks <url|file> [--kid <kid>]` — Ed25519 bundles: the public key comes
+ *    from the issuing server's `/.well-known/atf-evidence-jwks.json` (or a
+ *    saved copy of it). No shared secret is involved, so an auditor, customer
+ *    or regulator can verify independently.
+ *  - `--secret <s>` — legacy HMAC-SHA256 bundles: requires the shared signing
+ *    secret (`EVIDENCE_BUNDLE_SECRET`, falling back to `AUDIT_ANCHOR_SECRET`
+ *    on the server side). Kept so pre-existing bundles stay verifiable.
+ *
+ * The bundle's own `algorithm` field decides which key material applies;
+ * the wrong kind fails verification rather than being silently accepted.
  */
 async function cmdVerifyBundle(args: ParsedArgs): Promise<number> {
   const [file] = args.positional;
   if (!file) {
-    console.error(`${fail} Usage: aiperator verify-bundle <bundle.json> --secret <secret>`);
-    return 1;
-  }
-
-  const rawArgv = process.argv.slice(2);
-  const secretIdx = rawArgv.indexOf("--secret");
-  const secret =
-    (secretIdx !== -1 ? rawArgv[secretIdx + 1] : undefined) ??
-    process.env["EVIDENCE_BUNDLE_SECRET"] ??
-    process.env["AUDIT_ANCHOR_SECRET"];
-  if (!secret) {
     console.error(
-      `${fail} --secret is required (or set EVIDENCE_BUNDLE_SECRET / AUDIT_ANCHOR_SECRET)`,
+      `${fail} Usage: aiperator verify-bundle <bundle.json> --jwks <url|file> [--kid <kid>]  (Ed25519)\n` +
+        `       or: aiperator verify-bundle <bundle.json> --secret <secret>                (legacy HMAC)`,
     );
     return 1;
   }
@@ -833,37 +941,96 @@ async function cmdVerifyBundle(args: ParsedArgs): Promise<number> {
   let signed: import("../src/observability/evidence-bundle.js").SignedEvidenceBundle;
   try {
     const raw = fs.readFileSync(file, "utf-8");
-    signed = JSON.parse(raw) as import("../src/observability/evidence-bundle.js").SignedEvidenceBundle;
+    signed = JSON.parse(
+      raw,
+    ) as import("../src/observability/evidence-bundle.js").SignedEvidenceBundle;
   } catch (err) {
-    console.error(`${fail} Failed to parse ${file} as JSON: ${err instanceof Error ? err.message : String(err)}`);
+    console.error(
+      `${fail} Failed to parse ${file} as JSON: ${err instanceof Error ? err.message : String(err)}`,
+    );
     return 1;
   }
 
-  if (!signed || typeof signed !== "object" || !signed.bundle || !signed.contentHash || !signed.signature) {
-    console.error(`${fail} ${file} does not look like a signed evidence bundle (missing bundle/contentHash/signature)`);
+  if (
+    !signed ||
+    typeof signed !== "object" ||
+    !signed.bundle ||
+    !signed.contentHash ||
+    !signed.signature
+  ) {
+    console.error(
+      `${fail} ${file} does not look like a signed evidence bundle (missing bundle/contentHash/signature)`,
+    );
     return 1;
   }
 
-  const { verifyEvidenceBundle } = await import("../src/observability/evidence-bundle.js");
-  const result = verifyEvidenceBundle(signed, secret);
+  // Resolve the verifier: JWKS (asymmetric) wins when given; otherwise fall
+  // back to the legacy shared-secret path.
+  let verifier: string | Uint8Array;
+  let verifierLabel: string;
+  if (args.jwks !== undefined && args.jwks !== "") {
+    try {
+      const key = await loadJwksEd25519Key(args.jwks, args.kid ?? signed.kid);
+      verifier = key.publicKeyRaw;
+      verifierLabel = `Ed25519 key ${key.kid ?? "?"} from ${args.jwks}`;
+    } catch (err) {
+      console.error(
+        `${fail} ${err instanceof Error ? err.message : String(err)}`,
+      );
+      return 1;
+    }
+  } else {
+    const rawArgv = process.argv.slice(2);
+    const secretIdx = rawArgv.indexOf("--secret");
+    const secret =
+      (secretIdx !== -1 ? rawArgv[secretIdx + 1] : undefined) ??
+      process.env["EVIDENCE_BUNDLE_SECRET"] ??
+      process.env["AUDIT_ANCHOR_SECRET"];
+    if (!secret) {
+      console.error(
+        `${fail} --jwks <url|file> (Ed25519 bundles) or --secret is required (or set EVIDENCE_BUNDLE_SECRET / AUDIT_ANCHOR_SECRET)`,
+      );
+      return 1;
+    }
+    verifier = secret;
+    verifierLabel = "shared HMAC secret";
+  }
+
+  const { verifyEvidenceBundle } =
+    await import("../src/observability/evidence-bundle.js");
+  const result = verifyEvidenceBundle(signed, verifier);
 
   if (args.json) {
-    console.log(JSON.stringify({ file, executionId: signed.bundle.executionId, ...result }, null, 2));
+    console.log(
+      JSON.stringify(
+        { file, executionId: signed.bundle.executionId, ...result },
+        null,
+        2,
+      ),
+    );
     return result.valid ? 0 : 1;
   }
 
   console.log(`${bold("Evidence bundle verification")}  ${dim(file)}\n`);
   console.log(`  execution: ${signed.bundle.executionId}`);
   console.log(`  generated: ${signed.bundle.generatedAt}`);
-  console.log(`  algorithm: ${signed.algorithm}\n`);
+  console.log(
+    `  algorithm: ${signed.algorithm}${signed.kid !== undefined ? ` (kid ${signed.kid})` : ""}`,
+  );
+  console.log(`  verifier:  ${verifierLabel}\n`);
 
   if (result.valid) {
-    console.log(`${ok} Signature and content hash are valid — this bundle has not been altered since it was signed.`);
+    console.log(
+      `${ok} Signature and content hash are valid — this bundle has not been altered since it was signed.`,
+    );
     return 0;
   }
-  const reasonText = result.reason === "content_hash_mismatch"
-    ? "the bundle content does not match its recorded content hash (content was modified)"
-    : "the signature does not match the recorded content hash (wrong secret, or signature was forged/tampered)";
+  const reasonText =
+    result.reason === "content_hash_mismatch"
+      ? "the bundle content does not match its recorded content hash (content was modified)"
+      : signed.algorithm === "ed25519"
+        ? "the Ed25519 signature does not match the recorded content hash (wrong key, or signature was forged/tampered)"
+        : "the signature does not match the recorded content hash (wrong secret, or signature was forged/tampered)";
   console.error(`${fail} Verification FAILED: ${reasonText}`);
   return 1;
 }
@@ -887,7 +1054,7 @@ ${bold("Commands:")}
   ${bold("doctor")} [--server <url>]         Check local env/config for startup issues (optionally probe a live instance)
   ${bold("rls-status")}                      Report Row-Level Security enforcement per tenant table
   ${bold("rls-setup")} [--confirm]            Onboard Row-Level Security (dry-run unless --confirm)
-  ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (no network)
+  ${bold("verify-bundle")} <bundle.json>      Verify a signed Evidence Bundle offline (--jwks Ed25519 / --secret legacy HMAC)
 
 ${bold("Options:")}
   --server <url>                    Backend base URL (default: AIPERATOR_SERVER env or http://localhost:3000)
@@ -895,7 +1062,9 @@ ${bold("Options:")}
   --message <text>                  Message to send (test command, default: "Hello!")
   --database-url <url>              Postgres connection string (rls-* commands; default: DATABASE_URL env)
   --confirm                         Apply changes (rls-setup command; otherwise a dry-run)
-  --secret <value>                  Signing secret (verify-bundle command; default: EVIDENCE_BUNDLE_SECRET/AUDIT_ANCHOR_SECRET env)
+  --jwks <url|file>                 JWKS with the Ed25519 evidence key (verify-bundle; e.g. https://host/.well-known/atf-evidence-jwks.json)
+  --kid <kid>                       Key id to select from the JWKS (verify-bundle; default: the bundle's kid)
+  --secret <value>                  Legacy HMAC signing secret (verify-bundle; default: EVIDENCE_BUNDLE_SECRET/AUDIT_ANCHOR_SECRET env)
   --json                            Output raw JSON
   --help, -h                        Show this help
 
@@ -910,6 +1079,8 @@ ${bold("Examples:")}
   bun run scripts/cli.ts doctor --server https://aiperator.example.com
   DATABASE_URL=postgres://... bun run scripts/cli.ts rls-status
   DATABASE_URL=postgres://... bun run scripts/cli.ts rls-setup --confirm
+  bun run scripts/cli.ts verify-bundle bundle.json --jwks https://aiperator.example.com/.well-known/atf-evidence-jwks.json
+  bun run scripts/cli.ts verify-bundle bundle.json --jwks jwks.json --kid abc123
   bun run scripts/cli.ts verify-bundle bundle.json --secret my-signing-secret
 `);
 }

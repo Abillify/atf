@@ -114,6 +114,79 @@ describe("checkProductionReadiness", () => {
     ).toBe(false);
   });
 
+  test("warns about process-local media and receipt state when several replicas run (P1-R1)", () => {
+    const single = checkProductionReadiness(
+      productionConfig({ replicas: 1, embedSearchFigures: true, mediaBaseUrl: "https://atf.example.com", decisionReceiptsEnabled: true }),
+    );
+    expect(single.warnings.some((w) => w.includes("per-process media store"))).toBe(false);
+    const many = checkProductionReadiness(
+      productionConfig({ replicas: 3, embedSearchFigures: true, mediaBaseUrl: "https://atf.example.com", decisionReceiptsEnabled: true }),
+    );
+    expect(many.warnings.some((w) => w.includes("per-process media store"))).toBe(true);
+    expect(many.warnings.some((w) => w.includes("transparency log numbers its leaves and builds its tree per process"))).toBe(true);
+    const unrelated = checkProductionReadiness(productionConfig({ replicas: 3 }));
+    expect(unrelated.warnings.some((w) => w.includes("per-process media store"))).toBe(false);
+    expect(unrelated.warnings.some((w) => w.includes("transparency log"))).toBe(false);
+  });
+
+  test("warns outside production when AUTHN_MODE=disabled (P0-1)", () => {
+    const dev = checkProductionReadiness(baseConfig({ appEnv: "development", authnMode: "disabled" }));
+    expect(dev.warnings.some((w) => w.includes("AUTHN_MODE=disabled: every endpoint"))).toBe(true);
+    const secured = checkProductionReadiness(baseConfig({ appEnv: "development", authnMode: "oidc" }));
+    expect(secured.warnings.some((w) => w.includes("AUTHN_MODE=disabled: every endpoint"))).toBe(false);
+    // Production keeps refusing it (fatal), not just warning.
+    const prod = checkProductionReadiness(productionConfig({ authnMode: "disabled" }));
+    expect(prod.fatal.length).toBeGreaterThan(0);
+  });
+
+  test("warns in production when EGRESS_ALLOWED_HOSTS is empty (P1-Q2)", () => {
+    const open = checkProductionReadiness(productionConfig());
+    expect(open.warnings.some((w) => w.includes("EGRESS_ALLOWED_HOSTS is empty"))).toBe(true);
+    expect(open.fatal.some((w) => w.includes("EGRESS_ALLOWED_HOSTS"))).toBe(false);
+    const pinned = checkProductionReadiness(
+      productionConfig({ egressAllowedHosts: ["api.openai.com", ".svc.cluster.local"] }),
+    );
+    expect(pinned.warnings.some((w) => w.includes("EGRESS_ALLOWED_HOSTS"))).toBe(false);
+    const dev = checkProductionReadiness(baseConfig({ appEnv: "development" }));
+    expect(dev.warnings.some((w) => w.includes("EGRESS_ALLOWED_HOSTS"))).toBe(false);
+  });
+
+  test("warns in production when the evidence chain is HMAC-only (ADR 0030)", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        auditAnchorFile: "/var/lib/aiperator/audit-anchors.jsonl",
+        auditAnchorSecret: "anchor-secret-at-least-16-chars",
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("cannot verify it independently")),
+    ).toBe(true);
+  });
+
+  test("no HMAC warning when EVIDENCE_SIGNING_KEY is configured", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        auditAnchorFile: "/var/lib/aiperator/audit-anchors.jsonl",
+        auditAnchorSecret: "anchor-secret-at-least-16-chars",
+        evidenceSigningKey: "a-base64-or-pem-ed25519-key-value",
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("cannot verify it independently")),
+    ).toBe(false);
+  });
+
+  test("no HMAC warning when the evidence chain is inactive entirely", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        auditAnchorFile: "/var/lib/aiperator/audit-anchors.jsonl",
+      }),
+    );
+    expect(
+      warnings.some((w) => w.includes("cannot verify it independently")),
+    ).toBe(false);
+  });
+
   test("warns in production when API_KEY_PEPPER is unset (Req 7.9)", () => {
     const { warnings } = checkProductionReadiness(productionConfig());
     expect(warnings.some((w) => w.includes("API_KEY_PEPPER is not set"))).toBe(
@@ -1210,6 +1283,60 @@ describe("checkProductionReadiness — OIDC-only mode invariants", () => {
     );
     expect(dev.warnings.some((w) => w.includes("PLUGINS_DIR is set"))).toBe(
       true,
+    );
+  });
+});
+
+describe("checkProductionReadiness — REPLICAS / shared state (Phase 9)", () => {
+  test("flags replicas > 1 without REDIS_URL", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({ replicas: 3, redisUrl: undefined }),
+    );
+    expect(
+      warnings.some(
+        (w) => w.includes("REPLICAS is 3") && w.includes("REDIS_URL is unset"),
+      ),
+    ).toBe(true);
+  });
+
+  test("stays quiet about REPLICAS when REDIS_URL is set", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({ replicas: 3, redisUrl: "redis://redis:6379" }),
+    );
+    expect(warnings.some((w) => w.includes("REPLICAS is 3"))).toBe(false);
+  });
+
+  test("stays quiet at the default replica count", () => {
+    const { warnings } = checkProductionReadiness(productionConfig());
+    expect(warnings.some((w) => w.includes("REPLICAS"))).toBe(false);
+  });
+
+  test("flags a red-team schedule on more than one replica", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        replicas: 2,
+        redisUrl: "redis://redis:6379",
+        redTeamScheduleFlows: ["fds.yaml"],
+      }),
+    );
+    expect(
+      warnings.some(
+        (w) =>
+          w.includes("REPLICAS is 2") && w.includes("RED_TEAM_SCHEDULE_FLOWS"),
+      ),
+    ).toBe(true);
+  });
+
+  test("does not flag an empty red-team schedule list", () => {
+    const { warnings } = checkProductionReadiness(
+      productionConfig({
+        replicas: 2,
+        redisUrl: "redis://redis:6379",
+        redTeamScheduleFlows: [],
+      }),
+    );
+    expect(warnings.some((w) => w.includes("RED_TEAM_SCHEDULE_FLOWS"))).toBe(
+      false,
     );
   });
 });

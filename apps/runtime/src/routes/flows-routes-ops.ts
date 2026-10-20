@@ -169,6 +169,9 @@ export function registerFlowOpsRoutes(router: Hono, fc: FlowsContext): void {
     try {
       const record = await fc.store.rollback(id, body.version, actor.name);
       await fc.dbSource?.refresh();
+      // A rollback re-publishes online, keeping a same-id file flow shadowed —
+      // record that like a publish does (ADR 0034).
+      const shadowsFile = fc.fileRegistry.get(id) !== undefined;
       // Regulierte Aktion (Req 1.4): durable audit before reporting success.
       if (fc.auditLog !== undefined) {
         try {
@@ -177,13 +180,20 @@ export function registerFlowOpsRoutes(router: Hono, fc: FlowsContext): void {
             role: actor.role,
             action: "flows.rollback",
             target: id,
-            details: { toVersion: body.version, newVersion: record.version },
+            details: {
+              toVersion: body.version,
+              newVersion: record.version,
+              ...(shadowsFile ? { shadowsFile: true } : {}),
+            },
           });
         } catch {
           return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
         }
       }
-      return ctx.json({ record });
+      return ctx.json({
+        record,
+        ...(shadowsFile ? { shadowsFile: true } : {}),
+      });
     } catch (err) {
       if (err instanceof FlowStoreError) {
         return ctx.json(

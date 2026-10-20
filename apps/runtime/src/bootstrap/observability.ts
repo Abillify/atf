@@ -41,6 +41,10 @@ import {
 import { createCostAnomalyDetector } from "../observability/cost-anomaly.js";
 import { createAuditLog, type AuditLog } from "../observability/audit-log.js";
 import { createAuditAnchorService } from "../observability/audit-anchor.js";
+import {
+  parseEvidenceSigningKey,
+  type Ed25519EvidenceKey,
+} from "../observability/evidence-key.js";
 import { RetentionService } from "../observability/retention.js";
 import {
   replayRetentionTarget,
@@ -73,7 +77,16 @@ export interface ObservabilityResult {
   usageAnalytics: UsageAnalytics;
   auditLog: AuditLog;
   retentionService: RetentionService | undefined;
-  auditAnchor: import("../observability/audit-anchor.js").AuditAnchorService | undefined;
+  auditAnchor:
+    | import("../observability/audit-anchor.js").AuditAnchorService
+    | undefined;
+  /**
+   * Parsed Ed25519 evidence key (`EVIDENCE_SIGNING_KEY`, ADR 0030) when
+   * configured. Signs audit anchors, Evidence Bundles, and Erasure Receipts
+   * asymmetrically; its public half is published at
+   * `/.well-known/atf-evidence-jwks.json`.
+   */
+  evidenceKey: Ed25519EvidenceKey | undefined;
 }
 
 export function buildObservability(
@@ -193,11 +206,16 @@ export function buildObservability(
     metrics.recordCounter("aiperator_audit_write_failures_total", {});
   });
 
-  // ── Audit chain external anchoring (secret-gated) ──────────────────────────
-  // Signs the chain tip periodically with an operator-held secret and stores it
-  // OUTSIDE the audit DB, so a wholesale internally-consistent chain rebuild is
-  // detectable — the strong guarantee the dossier's `tamperEvident` relies on.
+  // ── Audit chain external anchoring (key- or secret-gated) ─────────────────
+  // Signs the chain tip periodically and stores the anchor OUTSIDE the audit
+  // DB, so a wholesale internally-consistent chain rebuild is detectable — the
+  // strong guarantee the dossier's `tamperEvident` relies on. With
+  // EVIDENCE_SIGNING_KEY (ADR 0030) the anchors are Ed25519-signed and
+  // third-party verifiable via the published JWKS; AUDIT_ANCHOR_SECRET remains
+  // the legacy HMAC path.
+  const evidenceKey = parseEvidenceSigningKey(config.evidenceSigningKey);
   const auditAnchor = createAuditAnchorService(auditLog, {
+    ...(evidenceKey !== undefined ? { key: evidenceKey } : {}),
     ...(config.auditAnchorSecret !== undefined
       ? { secret: config.auditAnchorSecret }
       : {}),
@@ -214,6 +232,7 @@ export function buildObservability(
     logger.info("Audit chain anchoring enabled (signed external checkpoints)", {
       intervalMs: config.auditAnchorIntervalMs ?? 6 * 60 * 60_000,
       file: config.auditAnchorFile ?? "(memory only)",
+      algorithm: evidenceKey !== undefined ? "ed25519" : "hmac-sha256",
     });
   }
 
@@ -319,5 +338,6 @@ export function buildObservability(
     auditLog,
     retentionService,
     auditAnchor,
+    evidenceKey,
   };
 }

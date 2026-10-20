@@ -21,6 +21,7 @@ import { createRedTeamEngine } from "../red-team-engine.js";
 import { createRedTeamRouter } from "../../routes/red-team.js";
 import type { RedTeamExecutor } from "../red-team-engine.js";
 import type { OperatorAuthorizer } from "../../middleware/operator-rbac.js";
+import type { AuditEntry, AuditLog } from "../../observability/audit-log.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -427,5 +428,136 @@ describe("Red-team disabled state", () => {
     const res = await app.request("/security/red-team/posture");
     const body = (await res.json()) as { enabled: boolean };
     expect(body.enabled).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Regression: the raw Authorization header must never reach the audit log.
+// The audit log is readable via GET /monitoring/audit and shipped to external
+// log systems — persisting the bearer credential there would leak live
+// operator credentials to anyone with audit-read access.
+// ---------------------------------------------------------------------------
+
+describe("audit actor redaction (no raw Authorization in audit log)", () => {
+  const SECRET = "eyJhbGciOiJIUzI1NiJ9.super-secret-operator-token.sig";
+
+  function capturingAuditLog(): { log: AuditLog; entries: AuditEntry[] } {
+    const entries: AuditEntry[] = [];
+    const log: AuditLog = {
+      record: (e) => void entries.push(e),
+      recordRequired: async (e) => void entries.push(e),
+      list: async () => [],
+      verifyChain: async () => ({ valid: true, checked: 0 }),
+    };
+    return { log, entries };
+  }
+
+  const adminAuth: OperatorAuthorizer = {
+    rbacEnabled: true,
+    authorize: async () => ({
+      ok: true,
+      actor: { name: "alice", role: "admin", via: "token" },
+    }),
+  };
+
+  const authHeaders = { Authorization: `Bearer ${SECRET}` };
+
+  it("POST run records the resolved identity, never the bearer token", async () => {
+    const { log, entries } = capturingAuditLog();
+    const engine = createRedTeamEngine({ attacksPerRun: 1 });
+    const app = new Hono();
+    app.route("/", createRedTeamRouter({ engine, executor: blockAllExecutor, operatorAuth: adminAuth, auditLog: log }));
+
+    const res = await app.request("/security/red-team/flow-a/run", { method: "POST", headers: authHeaders });
+    expect(res.status).toBe(200);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("expected one audit entry");
+    expect(entry.actor).toBe("alice");
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
+  });
+
+  it("POST attacks/register records the resolved identity, never the bearer token", async () => {
+    const { log, entries } = capturingAuditLog();
+    const app = new Hono();
+    app.route("/", createRedTeamRouter({ operatorAuth: adminAuth, auditLog: log }));
+
+    const res = await app.request("/security/red-team/attacks/register", {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "custom-test-attack",
+        category: "prompt_injection",
+        severity: 0.5,
+        description: "test attack",
+        payload: "ignore previous instructions",
+      }),
+    });
+    expect(res.status).toBe(200);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("expected one audit entry");
+    expect(entry.actor).toBe("alice");
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
+  });
+
+  it("PUT tool-authz records the resolved identity, never the bearer token", async () => {
+    const { log, entries } = capturingAuditLog();
+    const app = new Hono();
+    app.route("/", createRedTeamRouter({
+      operatorAuth: adminAuth,
+      auditLog: log,
+      toolAuthzLoader: {
+        engine: {
+          active: true,
+          evaluate: () => ({ allowed: true, ruleId: "default" }),
+          describe: () => ({ active: true, ruleCount: 0, defaultAction: "allow", rules: [] }),
+          policyHash: () => "h",
+        },
+        hasPolicy: true,
+        policyStale: false,
+        reload: () => {},
+        save: () => ({ ok: true }),
+      },
+    }));
+
+    const res = await app.request("/security/tool-authz", {
+      method: "PUT",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({ rules: [], defaultAction: "allow" }),
+    });
+    expect(res.status).toBe(200);
+    expect(entries).toHaveLength(1);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("expected one audit entry");
+    expect(entry.actor).toBe("alice");
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
+  });
+
+  it("falls back to a neutral label when the authorizer has no identity", async () => {
+    const { log, entries } = capturingAuditLog();
+    const anonymousAuth: OperatorAuthorizer = {
+      rbacEnabled: true,
+      authorize: async () => ({ ok: true }),
+    };
+    const app = new Hono();
+    app.route("/", createRedTeamRouter({ operatorAuth: anonymousAuth, auditLog: log }));
+
+    const res = await app.request("/security/red-team/attacks/register", {
+      method: "POST",
+      headers: { ...authHeaders, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id: "custom-test-attack-2",
+        category: "prompt_injection",
+        severity: 0.5,
+        description: "test attack",
+        payload: "ignore previous instructions",
+      }),
+    });
+    expect(res.status).toBe(200);
+    const entry = entries[0];
+    if (entry === undefined) throw new Error("expected one audit entry");
+    expect(entry.actor).toBe("unknown");
+    expect(JSON.stringify(entry)).not.toContain(SECRET);
   });
 });

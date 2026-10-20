@@ -40,6 +40,12 @@ const METHOD_RE = new RegExp(
   "g",
 );
 const NEW_HONO_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Hono\b/;
+/**
+ * A router handed in as a parameter: `function registerXRoutes(router: Hono, …)`.
+ * Without it the routes of every `register*Routes` module (the whole `/flows/*`
+ * surface) were invisible, because those files never construct a Hono instance.
+ */
+const HONO_PARAM_RE = /[(,]\s*([A-Za-z_$][\w$]*)\s*:\s*Hono\b/g;
 const SUB_MOUNT_RE = /\b([A-Za-z_$][\w$]*)\.route\(\s*"([^"]*)",\s*([A-Za-z_$][\w$]*)\s*[(,]/g;
 const REGISTER_CALL_RE = /\b(register[A-Za-z_$][\w$]*)\(\s*([A-Za-z_$][\w$]*)\s*,/g;
 const FACTORY_DEF_RE = /^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*Router)\b/gm;
@@ -101,6 +107,7 @@ function collectRoutes(file: string, visited: Set<string> = new Set()): RouteEnt
   for (const line of text.split("\n")) {
     const m = NEW_HONO_RE.exec(line);
     if (m) routerVars.add(m[1] as string);
+    for (const p of line.matchAll(HONO_PARAM_RE)) routerVars.add(p[1] as string);
   }
   if (routerVars.size === 0) return [];
 

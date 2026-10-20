@@ -139,6 +139,8 @@ export interface Metrics {
   ): void;
   setActiveExecutions(n: number): void;
   setQueueDepth(n: number): void;
+  /** Source of `aiperator_flow_load_failures` (P1-R3), read on every render. */
+  setFlowLoadFailureProbe?(probe: () => number): void;
   /** Prometheus text exposition format. */
   render(): string;
   /** Compact JSON summary for the dashboard. */
@@ -292,10 +294,22 @@ class MetricsRegistry implements Metrics {
   setQueueDepth(n: number): void {
     this.setGauge("aiperator_queue_depth", n);
   }
+  /**
+   * Source of `aiperator_flow_load_failures` (P1-R3): the number of flow files
+   * that currently fail to load. Read when `/metrics` is rendered, so the
+   * gauge is always current without every loader event having to push it.
+   */
+  setFlowLoadFailureProbe(probe: () => number): void {
+    this.flowLoadFailureProbe = probe;
+  }
+  private flowLoadFailureProbe: (() => number) | undefined;
 
   // ----- rendering -------------------------------------------------------
 
   render(): string {
+    if (this.flowLoadFailureProbe !== undefined) {
+      this.setGauge("aiperator_flow_load_failures", this.flowLoadFailureProbe());
+    }
     const lines: string[] = [];
     const counterNames = new Set<string>();
     for (const key of this.counters.keys()) counterNames.add(baseName(key));
@@ -512,6 +526,7 @@ class NoopMetrics implements Metrics {
   recordCounter(): void {}
   setActiveExecutions(): void {}
   setQueueDepth(): void {}
+  setFlowLoadFailureProbe(): void {}
   render(): string {
     return "";
   }

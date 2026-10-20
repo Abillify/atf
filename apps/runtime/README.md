@@ -37,21 +37,29 @@ bun run --filter @atf/runtime build
 | --- | --- |
 | `/v1/chat/completions` | OpenAI-compatible chat, streaming over SSE. Flows appear as models |
 | `/v1/responses` | Responses API surface |
-| `/v1/models`, `/v1/embeddings` | Model listing and embeddings |
+| `/v1/models` | Model listing (flows appear as models; `metadata.hidden` omits one) |
+| `/v1/jobs/:id` | Result of an asynchronous execution |
+| `/v1/media/:id` | Generated media |
+| `/v1/rag/*`, `/v1/memory/*` | Retrieval and memory stores, when a vector or memory store is configured |
+| `/v1/assistants/*`, `/v1/org-skills/*` | Per-user assistants, when the assistants subsystem is enabled |
+| `/v1/receipts/*`, `/.well-known/atf-receipt-jwks.json` | Signed Decision Receipts and their public keys, when receipts are enabled |
+| `/v1/analysis-artifacts/*` | Stored analysis artifacts |
+| `/v1/me/*` | Self-service data access and erasure (DSAR) for the calling identity |
 | `/flows/*` | Flow listing, validation, versions, and Studio operations: source-form read and write-back, named drafts (`/flows/:id/drafts`), sub-flow files, test runs, node type catalog, variable and expression evaluation, Copilots |
-| `/runs/*`, `/:flowId/run` | Direct flow execution and run inspection |
-| `/triggers/*`, `/webhooks/*` | HMAC-signed webhook and scheduled starts |
+| `/triggers/*`, `/webhooks/git` | Scheduled and event-based starts; GitOps webhook (off unless GitOps is enabled) |
 | `/integrations/rocketchat/events` | Rocket.Chat outgoing-integration receiver (off by default) |
 | `/connect/rocketchat/*` | End-user OIDC linking for Rocket.Chat, separate from the operator session |
-| `/mcp` | Exposes flows as MCP tools |
-| `/admin/*` | Tenants, keys, budgets, limits, policy, retention, GitOps |
-| `/security/*` | Guardrails, red team, PII vault |
-| `/eval/*` | Evaluation runs and cases, shadow comparisons, canary state |
-| `/monitoring/*` | Execution event stream, debug traces, provider and pool health, provider testing |
+| `/mcp`, `/mcp/servers`, `/mcp/:server` | Exposes flows as MCP tools; management of the MCP servers Runtime talks to |
+| `/admin/*` | Tenants, provider keys, guardrails, PII vault, finops and budgets, compliance (retention, DSAR, dossier, RoPA, audit anchors, compliance policy), policy replay, memory, assistants administration, evaluation runs |
+| `/security/*` | Red team, tool authorization, MCP server posture |
+| `/eval/*` | Evaluation cases (run history and datasets live under `/admin/eval/*`) |
+| `/monitoring/*` | Execution event stream, history, debug traces, explain cards, audit log, approvals, canary and shadow state, replay, limits, SLOs, provider and pool health, provider testing, usage |
 | `/optimizer/*` | Routing advice (cheaper candidate models) for loaded flows and for a posted definition, trace analysis, and the self-optimizing loop when `OPTIMIZER_ENABLED` |
-| `/health/live`, `/health/ready` | Liveness and readiness |
+| `/autopilot/*` | Autopilot configuration and runs |
+| `/health`, `/health/live`, `/health/ready` | Health, liveness and readiness (`/health/ready` also reports `flow_load`: flow files that failed to load, and `"auth": "disabled"` when `AUTHN_MODE=disabled`) |
 | `/metrics` | Prometheus metrics |
-
+The complete, generated list of routes with their mount conditions is the router table in
+[`ARCHITECTURE.md`](../../ARCHITECTURE.md); the OpenAPI document is served at `/openapi.json`.
 A quick check against a running instance:
 
 ```bash
@@ -78,6 +86,25 @@ startup error.
   `regulated-multitenant`, `performance`); explicit variables always win
 - With `APP_ENV=production` a readiness gate refuses to start under unsafe settings such as
   open CORS or unverified JWTs (`src/config/prod-gate.ts`)
+
+Three settings shape what the platform does with untrusted content and what it tells clients:
+
+- `TAINT_MODE` (`on-finding`, the default, or `on-untrusted-source`) decides what taints an
+  execution for `TAINT_WRITE_TOOLS_REQUIRE_APPROVAL`: an injection finding by the scanner, or
+  additionally any result the Gate labels untrusted (`_meta["io.atf/content-trust"]`) and any
+  retrieval result. The stricter mode asks for approval on every write after a read of outside
+  content, not only after a detected attack.
+- `AI_DISCLOSURE` (`off`, `header`, `field`) marks successful completions as AI-generated for
+  downstream systems: `X-AI-Generated: true` on `/v1/chat/completions` and `/v1/responses`, or
+  `metadata.ai_generated: true` in a non-streaming JSON body (a stream gets the header). See
+  [`docs/EU-AI-ACT.md`](../../docs/EU-AI-ACT.md).
+- `AUTHN_MODE=disabled` is a development setting: the Runtime warns at start, `/health` and
+  `/health/ready` report `"auth": "disabled"`, and the production gate refuses it.
+
+Evaluation cases and matrix tasks accept structured checks next to the reference answer
+(`expected` with `contains`, `regex`, `jsonPath`, `toolCalled`, `maxTokens`; matrix tasks use
+`assert`). A case passes when its reference score and all checks do; `jsonPath` is the restricted
+`$.a.b[0]` syntax, and a `toolCalled` check fails closed when the executor reports no tool calls.
 
 Models are configured through **named provider instances** in `PROVIDERS`. Every model setting
 references an instance by `name`, never by protocol, which is what allows two vLLM servers or

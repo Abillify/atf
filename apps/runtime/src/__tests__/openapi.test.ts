@@ -46,6 +46,16 @@ describe("buildOpenApiSpec (runtime)", () => {
     expect(Object.keys(spec.paths).length).toBeGreaterThan(100);
   });
 
+  test("routes registered through register*Routes(router: Hono, …) are listed (the /flows surface)", () => {
+    // Those modules receive their router as a parameter and never construct
+    // one; the parser used to see no router there and dropped every route.
+    const paths = Object.keys(spec.paths);
+    for (const expected of ["/flows", "/flows/{id}", "/flows/{id}/test-run", "/flows/subflows"]) {
+      expect(paths).toContain(expected);
+    }
+    expect(paths.filter((p) => p.startsWith("/flows")).length).toBeGreaterThanOrEqual(20);
+  });
+
   test("no route falls back to the generic Other tag", () => {
     const other = Object.entries(spec.paths).filter(([, item]) =>
       Object.values(item).some((op) => op.tags?.includes("Other")),

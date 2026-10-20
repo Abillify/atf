@@ -10,6 +10,7 @@ import type { Logger } from "../observability/logger.js";
 import type { DebugTrace } from "../types/debug-trace.js";
 import type { ChatCompletionChunk, TokenUsage } from "../types/openai.js";
 import type { RequestContext } from "../types/monitoring.js";
+import { evaluateAssertion, type Assertion, type AssertionResult } from "./eval-runner.js";
 
 export type EvalMatrixStatus = "queued" | "running" | "completed" | "failed";
 export type EvalMatrixCellStatus = EvalMatrixStatus;
@@ -17,7 +18,17 @@ export type EvalMatrixCellStatus = EvalMatrixStatus;
 export interface EvalMatrixTask {
   id: string;
   prompt: string;
-  expected: string;
+  /**
+   * Free-text reference answer, scored by token overlap (passes at 0.7). Optional
+   * when `assert` is given; a task needs at least one of the two.
+   */
+  expected?: string;
+  /**
+   * Structured, deterministic checks (contains, regex, jsonPath, toolCalled,
+   * maxTokens, …). All must pass. With `expected` as well, the cell passes only
+   * when both do. Additive: tasks with only `expected` behave as before.
+   */
+  assert?: Assertion[];
 }
 
 export interface EvalMatrixCell {
@@ -30,6 +41,8 @@ export interface EvalMatrixCell {
   responseText?: string;
   score?: number;
   passed?: boolean;
+  /** Result of each structured assertion of the task, in order. */
+  assertions?: AssertionResult[];
   latencyMs?: number;
   cost?: number;
   error?: string;
@@ -471,11 +484,33 @@ export class EvalMatrixService {
       );
       const trace = this.deps.debugTraceStore.getTrace(cell.executionId);
       const responseText = finalResponse || chunks.join("");
-      const score = scoreAgainstReference(responseText, task.expected);
+      const toolCalls = trace?.nodes.flatMap((node) => node.tool_calls.map((call) => call.name));
+      const totalTokens = usage?.total_tokens;
+      const cost = traceCost(trace);
+      const latencyMs = Date.now() - started;
+      const assertions = (task.assert ?? []).map((assertion) =>
+        evaluateAssertion(assertion, {
+          text: responseText,
+          latencyMs,
+          cost,
+          ...(toolCalls !== undefined ? { toolCalls } : {}),
+          ...(typeof totalTokens === "number" ? { totalTokens } : {}),
+        }),
+      );
+      const reference =
+        task.expected !== undefined ? scoreAgainstReference(responseText, task.expected) : undefined;
+      const assertionRate =
+        assertions.length > 0 ? assertions.filter((a) => a.passed).length / assertions.length : undefined;
+      const score =
+        reference !== undefined && assertionRate !== undefined
+          ? Math.min(reference, assertionRate)
+          : (reference ?? assertionRate ?? 0);
       cell.status = "completed";
       cell.responseText = responseText;
-      cell.score = score;
-      cell.passed = score >= 0.7;
+      cell.score = Math.round(score * 1000) / 1000;
+      cell.passed =
+        (reference === undefined || reference >= 0.7) && assertions.every((a) => a.passed);
+      if (assertions.length > 0) cell.assertions = assertions;
       cell.flowVersion = trace?.flow_version;
       cell.trace = trace === undefined ? undefined : sanitizeTraceForArchive(trace);
       cell.cost = traceCost(trace);

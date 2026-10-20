@@ -48,6 +48,7 @@ beforeEach(() => {
   delete process.env.MCP_TX_SECRET;
   delete process.env.MCP_TX_ACTOR_SECRET;
   delete process.env.APP_ENV;
+  delete process.env.ATF_PROFILE;
   delete process.env.TRANSACTION_SIGNING_ALG;
   delete process.env.TRANSACTION_SIGNING_KEY;
   delete process.env.INPUT_GUARDRAIL_MODEL_FAIL_MODE;
@@ -268,6 +269,61 @@ describe("loadConfig() — valid configurations", () => {
     ).toBe(false);
   });
 
+  // Betriebsprofil (ATF_PROFILE): plattformweiter Schalter, der APP_ENV
+  // überstimmt; unbekannte Werte brechen den Start ab statt die Prod-Gates
+  // stillschweigend abzuschalten.
+  test("ATF_PROFILE overrides APP_ENV", () => {
+    expect(
+      expectConfigSuccess({
+        ATF_PROFILE: "production",
+        APP_ENV: "development",
+      }).appEnv,
+    ).toBe("production");
+    expect(
+      expectConfigSuccess({
+        ATF_PROFILE: "development",
+        APP_ENV: "production",
+      }).appEnv,
+    ).toBe("development");
+  });
+
+  test("ATF_PROFILE drives production-dependent defaults", () => {
+    const cfg = expectConfigSuccess({
+      ATF_PROFILE: "production",
+      APP_ENV: "development",
+    });
+    expect(cfg.migrateOnStart).toBe(false);
+    expect(cfg.inputGuardrailModelFailMode).toBe("closed");
+  });
+
+  test("an unknown ATF_PROFILE value aborts startup and names the variable", () => {
+    const { stderrOutput } = expectConfigFailure({ ATF_PROFILE: "prod" });
+    const output = stderrOutput.join("\n");
+    expect(output).toContain("ATF_PROFILE");
+    expect(output).toContain("prod");
+  });
+
+  test("an unknown APP_ENV value aborts startup instead of falling back", () => {
+    const { stderrOutput } = expectConfigFailure({ APP_ENV: "productive" });
+    const output = stderrOutput.join("\n");
+    expect(output).toContain("APP_ENV");
+    expect(output).toContain("productive");
+  });
+
+  test("staging is a valid profile (warn mode, not production)", () => {
+    const cfg = expectConfigSuccess({ APP_ENV: "staging" });
+    expect(cfg.appEnv).toBe("staging");
+    // Warn-Modus: staging behandelt die Prod-Gates wie development.
+    expect(cfg.migrateOnStart).toBe(true);
+    expect(cfg.inputGuardrailModelFailMode).toBe("open");
+  });
+
+  test("ATF_PROFILE normalises case and whitespace", () => {
+    expect(expectConfigSuccess({ ATF_PROFILE: "  PRODUCTION " }).appEnv).toBe(
+      "production",
+    );
+  });
+
   // Requirement 7.6: classifier character budget for chunked classification.
   test("input guardrail max chars defaults to 8000 and parses overrides", () => {
     expect(expectConfigSuccess().inputGuardrailMaxChars).toBe(8000);
@@ -300,9 +356,15 @@ describe("loadConfig() — valid configurations", () => {
 
   test("LLM_HTTP_KEEP_ALIVE defaults to true and accepts false/0", () => {
     expect(expectConfigSuccess().llmHttpKeepAlive).toBe(true);
-    expect(expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "true" }).llmHttpKeepAlive).toBe(true);
-    expect(expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "false" }).llmHttpKeepAlive).toBe(false);
-    expect(expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "0" }).llmHttpKeepAlive).toBe(false);
+    expect(
+      expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "true" }).llmHttpKeepAlive,
+    ).toBe(true);
+    expect(
+      expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "false" }).llmHttpKeepAlive,
+    ).toBe(false);
+    expect(
+      expectConfigSuccess({ LLM_HTTP_KEEP_ALIVE: "0" }).llmHttpKeepAlive,
+    ).toBe(false);
   });
   test("rejects an invalid LLM stream fallback policy", () => {
     const { stderrOutput } = expectConfigFailure({
@@ -1129,5 +1191,17 @@ describe("loadConfig() — token exchange", () => {
       }),
     });
     expect(stderrOutput.join("")).toContain("MCP_SERVERS");
+  });
+});
+describe("COMPLIANCE_POLICY_REQUIRED (P1-Q2)", () => {
+  test("is off by default and reads true/1", () => {
+    delete process.env.COMPLIANCE_POLICY_REQUIRED;
+    expect(loadConfig().compliancePolicyRequired).toBe(false);
+    process.env.COMPLIANCE_POLICY_REQUIRED = "true";
+    expect(loadConfig().compliancePolicyRequired).toBe(true);
+    process.env.COMPLIANCE_POLICY_REQUIRED = "1";
+    expect(loadConfig().compliancePolicyRequired).toBe(true);
+    process.env.COMPLIANCE_POLICY_REQUIRED = "false";
+    expect(loadConfig().compliancePolicyRequired).toBe(false);
   });
 });

@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import type { OperationalProfile } from "@atf/security-kit";
 import type { ProviderKeys } from "../graph/provider-key-pool.js";
 import type {
   OperatorRole,
@@ -205,7 +206,13 @@ export interface AppConfig {
   pluginsSandbox?: boolean;
   pluginsSandboxTimeoutMs?: number;
   defaultLlm?: LlmConfig;
-  appEnv?: "development" | "production";
+  /**
+   * Effective operational profile (Betriebsprofil): `ATF_PROFILE` (explicit,
+   * platform-wide) wins over `APP_ENV`; unset means `development`. Only
+   * `production` enforces the production-readiness fatals — `staging` and
+   * `test` report them as warnings. See `@atf/security-kit` profile.ts.
+   */
+  appEnv?: OperationalProfile;
   monitoringTransport: "sse" | "websocket";
   mcpServers: McpServerConfig[];
   /** Controls whether breaking MCP schema drift is reported or rejected. */
@@ -271,6 +278,15 @@ export interface AppConfig {
    * `auditAnchorSecret` when unset — see `routes/explain.ts`.
    */
   evidenceBundleSecret?: string;
+  /**
+   * Ed25519 evidence key (PEM PKCS#8 or raw 32-byte base64 seed) signing the
+   * WHOLE evidence chain — audit anchors, Evidence Bundles, and Erasure
+   * Receipts (ADR 0030). When set it wins over the HMAC secrets
+   * (`AUDIT_ANCHOR_SECRET`, `EVIDENCE_BUNDLE_SECRET`), the public key is
+   * published at `/.well-known/atf-evidence-jwks.json`, and third parties can
+   * verify every artefact offline WITHOUT any shared secret.
+   */
+  evidenceSigningKey?: string;
   /** Optional path to a labeled PII-recall dataset — cited as DLP effectiveness evidence in the dossier. */
   piiRecallDataset?: string;
   /** Webhook fired when a flow's cost/quality SLO transitions to breached. */
@@ -318,6 +334,15 @@ export interface AppConfig {
   oidcDashboardUrl?: string;
   oidcAutoLogin?: boolean;
   redisUrl?: string;
+  /**
+   * Effective number of replicas this deployment runs (`REPLICAS`, default 1).
+   * The production gate uses it to flag per-replica state (rate limits, the
+   * GitOps webhook limiter, scheduled red-team runs) that would multiply or
+   * diverge across replicas without a shared store. Optional like the other
+   * config fields so hand-built test configs stay valid; `loadConfig()` always
+   * fills it (default 1) and the prod gate treats it as `?? 1`.
+   */
+  replicas?: number;
   databaseUrl?: string;
   databasePoolMax?: number;
   /**
@@ -474,6 +499,12 @@ export interface AppConfig {
   egressAllowPrivateHosts?: string[];
   /** Egress_Guard: optional destination allow-list (empty = any public host). */
   egressAllowedHosts?: string[];
+  /**
+   * Production refuses to start without a loaded compliance policy
+   * (`compliance-policy.yaml`): data-class residency and provider rules are
+   * otherwise silently unenforced. Default off.
+   */
+  compliancePolicyRequired?: boolean;
   /** Egress_Guard: maximum response body size in bytes (0 = unlimited). */
   egressMaxResponseBytes?: number;
   /** Egress_Guard: default timeout in ms for calls without a caller signal. */
@@ -485,6 +516,20 @@ export interface AppConfig {
   retrievalContextMode?: "spotlight" | "legacy";
   /** Write tools need approval after an injection finding; unset = on in production. */
   taintWriteToolsRequireApproval?: boolean;
+  /**
+   * When an execution becomes tainted: `on-finding` (default) after the
+   * injection scan flags content, `on-untrusted-source` as soon as content
+   * labelled `content_trust: "untrusted"` (Search results, Gate tool output)
+   * or a retrieved chunk reaches the model. The latter implies the approval
+   * rule for write tools even when TAINT_WRITE_TOOLS_REQUIRE_APPROVAL is unset.
+   */
+  taintMode?: "on-finding" | "on-untrusted-source";
+  /**
+   * Machine-readable AI disclosure on completions (EU AI Act Art. 50):
+   * `off` (default), `header` (`X-AI-Generated: true`) or `field`
+   * (`metadata.ai_generated: true`; a stream gets the header).
+   */
+  aiDisclosure?: "off" | "header" | "field";
   approvalGateEnabled?: boolean;
   approvalRequireTools?: string[];
   approvalTimeoutMs?: number;
@@ -833,7 +878,20 @@ export const EnvSchema = z.object({
     .min(1000)
     .max(300_000)
     .default(30_000),
-  APP_ENV: z.enum(["development", "production"]).default("development"),
+  /**
+   * Service-level environment. The platform-wide `ATF_PROFILE` overrides it;
+   * both share the closed value set (unknown values fail at startup so a typo
+   * like `prod` cannot silently disable the production-readiness gates).
+   */
+  APP_ENV: z
+    .enum(["development", "staging", "production", "test"])
+    .default("development"),
+  /**
+   * Explicit operational profile, shared with every other ATF service. Wins
+   * over `APP_ENV`. Distinct from `PROFILE` above, which selects a config
+   * *preset* (dev/secure/regulated/…) — an unrelated concept.
+   */
+  ATF_PROFILE: z.string().optional(),
   MONITORING_TRANSPORT: z.enum(["sse", "websocket"]).default("sse"),
   MCP_SCHEMA_COMPATIBILITY_MODE: z.enum(["report", "strict"]).default("report"),
   MCP_SERVERS: z
@@ -1013,6 +1071,12 @@ export const EnvSchema = z.object({
     .transform((raw): boolean => raw === "true" || raw === "1"),
   RECEIPT_SIGNING_KEY: z.string().min(16).optional(),
   EVIDENCE_BUNDLE_SECRET: z.string().min(16).optional(),
+  // Ed25519 evidence key (PEM PKCS#8 or base64 32-byte seed) for the whole
+  // evidence chain — audit anchors, Evidence Bundles, Erasure Receipts
+  // (ADR 0030). Preferred over the HMAC secrets above; the public key is
+  // published at /.well-known/atf-evidence-jwks.json for offline third-party
+  // verification.
+  EVIDENCE_SIGNING_KEY: z.string().min(16).optional(),
   PII_RECALL_DATASET: z.string().optional(),
   SLO_ALERT_WEBHOOK_URL: z.string().url().optional(),
   PROVIDER_REGIONS: z
@@ -1227,6 +1291,13 @@ export const EnvSchema = z.object({
     .optional()
     .transform((raw): boolean => raw === "true" || raw === "1"),
   REDIS_URL: z.string().optional(),
+  /**
+   * Number of replicas this deployment runs. Not a runtime knob itself — the
+   * production gate compares it against REDIS_URL / scheduled-job settings to
+   * flag state that would be per-replica (throttles, webhook rate limits,
+   * red-team schedules). Default 1 keeps single-container installs quiet.
+   */
+  REPLICAS: z.coerce.number().int().min(1).default(1),
   DATABASE_URL: z.string().optional(),
   DATABASE_POOL_MAX: z.coerce.number().int().min(1).max(1000).default(10),
   /**
@@ -1774,6 +1845,12 @@ export const EnvSchema = z.object({
         .map((s) => s.trim())
         .filter((s) => s.length > 0);
     }),
+  // `true`: a missing or invalid compliance-policy.yaml is a startup failure in
+  // production instead of a flow that is processed without residency rules.
+  COMPLIANCE_POLICY_REQUIRED: z
+    .string()
+    .optional()
+    .transform((raw): boolean => raw === "true" || raw === "1"),
   EGRESS_MAX_RESPONSE_BYTES: z.coerce
     .number()
     .int()
@@ -1822,6 +1899,24 @@ export const EnvSchema = z.object({
         ? undefined
         : raw === "true" || raw === "1",
     ),
+  /**
+   * When the taint rule starts: `on-finding` (default) — after the injection
+   * scan flags retrieved or tool text; `on-untrusted-source` — as soon as
+   * content that is labelled untrusted (Search `content_trust`, Gate
+   * `_meta["io.atf/content-trust"]`) or a retrieved chunk reaches the model, so
+   * write tools need approval after ANY read of external content, not only
+   * after a finding. Read-only tools stay unaffected. Opt-in: it adds approval
+   * prompts to flows that read and then write.
+   */
+  TAINT_MODE: z.enum(["on-finding", "on-untrusted-source"]).default("on-finding"),
+  /**
+   * Marks successful completions as AI-generated for downstream systems
+   * (EU AI Act Art. 50): `header` adds `X-AI-Generated: true` to
+   * `/v1/chat/completions` and `/v1/responses`; `field` adds
+   * `metadata.ai_generated: true` to the JSON body (a streamed response gets
+   * the header, it has no single body). Off by default.
+   */
+  AI_DISCLOSURE: z.enum(["off", "header", "field"]).default("off"),
   /** Enable human-in-the-loop approval for tool calls matching APPROVAL_REQUIRE_TOOLS or a node's own list. */
   APPROVAL_GATE_ENABLED: z
     .string()

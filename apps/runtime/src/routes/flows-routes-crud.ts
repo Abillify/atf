@@ -32,10 +32,13 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
     if (fc.store !== undefined) {
       const rec = await fc.store.get(id);
       if (rec !== undefined) {
-        // Not yet published online but live as a file: that file is what the
-        // draft would replace (for comparisons in the editor).
-        const fileBaseline =
-          rec.published === null ? fc.fileRegistry.getSource?.(id) : undefined;
+        // A same-id file flow is always reported alongside an online one:
+        // unpublished, it is the baseline the draft would replace; published,
+        // it is the file this online flow silently overrides (ADR 0034) —
+        // `shadowsFile` makes the override visible in the editor and API.
+        const fileBaseline = fc.fileRegistry.getSource?.(id);
+        const shadowsFile =
+          rec.published !== null && fileBaseline !== undefined;
         return ctx.json({
           id,
           source: "online",
@@ -43,6 +46,7 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
           version: rec.version,
           published: rec.published,
           draft: rec.draft,
+          ...(shadowsFile ? { shadowsFile: true } : {}),
           // Every named draft (default first), with its definition, so the
           // Studio can switch between drafts without a request per draft.
           drafts: rec.drafts.map((d) => ({
@@ -443,7 +447,10 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
         400,
       );
     }
-    const validation = validateFlow(fc.expandForValidation(source), fc.knownToolIds);
+    const validation = validateFlow(
+      fc.expandForValidation(source),
+      fc.knownToolIds,
+    );
     if (!validation.valid) {
       return ctx.json(
         {
@@ -456,6 +463,10 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
         400,
       );
     }
+    // Publishing over a same-id file flow takes precedence over it — record
+    // that in the audit trail and response so the override is never silent
+    // (ADR 0034).
+    const shadowsFile = fc.fileRegistry.get(id) !== undefined;
     const record = await fc.store.publish(id, actor.name, { draftId });
     await fc.dbSource?.refresh();
     // Regulierte Aktion (Req 1.4): the publish is only reported as successful
@@ -467,13 +478,21 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
           role: actor.role,
           action: "flows.publish",
           target: id,
-          details: { version: record.version, draftId },
+          details: {
+            version: record.version,
+            draftId,
+            ...(shadowsFile ? { shadowsFile: true } : {}),
+          },
         });
       } catch {
         return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
       }
     }
-    return ctx.json({ record, validation });
+    return ctx.json({
+      record,
+      validation,
+      ...(shadowsFile ? { shadowsFile: true } : {}),
+    });
   });
 
   // -------------------------------------------------------------------------
@@ -484,6 +503,9 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
     if (!actor) return fc.unauthorized(ctx);
     if (fc.store === undefined) return fc.requireStore(ctx);
     const id = ctx.req.param("id");
+    // Deleting the online flow reveals the same-id file flow again (it becomes
+    // the live version) — surface that in the audit trail and response.
+    const revealsFile = fc.fileRegistry.get(id) !== undefined;
     const ok = await fc.store.delete(id);
     await fc.dbSource?.refresh();
     if (!ok) {
@@ -505,11 +527,16 @@ export function registerFlowCrudRoutes(router: Hono, fc: FlowsContext): void {
           role: actor.role,
           action: "flows.delete",
           target: id,
+          details: revealsFile ? { revealsFile: true } : {},
         });
       } catch {
         return ctx.json(AUDIT_UNAVAILABLE_BODY, AUDIT_UNAVAILABLE_STATUS);
       }
     }
-    return ctx.json({ id, deleted: true });
+    return ctx.json({
+      id,
+      deleted: true,
+      ...(revealsFile ? { revealsFile: true } : {}),
+    });
   });
 }

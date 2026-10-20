@@ -362,3 +362,24 @@ describe("GET /health/ready — policy_stale (Req 7.7)", () => {
     expect(body.checks.policy_stale?.status).toBe("degraded");
   });
 });
+describe("auth: disabled signal (P0-1)", () => {
+  it("/health and /health/ready say so while AUTHN_MODE=disabled", async () => {
+    const app = new Hono().route(
+      "/",
+      createHealthRouter(makeFlowRegistry(["a"]), { database: makeDatabase(), authDisabled: true }),
+    );
+    expect(((await (await app.request("/health")).json()) as { auth?: string }).auth).toBe("disabled");
+    const ready = (await (await app.request("/health/ready")).json()) as ReadinessResponse;
+    expect(ready.auth).toBe("disabled");
+  });
+  it("adds nothing when authentication is on", async () => {
+    const app = new Hono().route(
+      "/",
+      createHealthRouter(makeFlowRegistry(["a"]), { database: makeDatabase(), authDisabled: false }),
+    );
+    expect(await (await app.request("/health")).json()).not.toHaveProperty("auth");
+    expect(await (await app.request("/health/ready")).json()).not.toHaveProperty("auth");
+    const plain = new Hono().route("/", createHealthRouter(makeFlowRegistry(["a"])));
+    expect(await (await plain.request("/health")).json()).not.toHaveProperty("auth");
+  });
+});

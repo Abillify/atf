@@ -24,6 +24,7 @@ import type { EvalReport } from "../eval/eval-runner.js";
 import type { AuditLog } from "../observability/audit-log.js";
 import type { Logger } from "../observability/logger.js";
 import type { EvalMatrixService, EvalMatrixTask } from "../eval/eval-matrix.js";
+import { parseTaskAssertions } from "../eval/assertion-schema.js";
 import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
@@ -98,6 +99,7 @@ export function createEvalRunsRouter(deps: EvalRunsRouterDeps): Hono {
             typeof flow === "string" && flow.trim() !== "" ? [flow.trim()] : []))]
         : [];
       const rawTasks = Array.isArray(body.tasks) ? body.tasks : [];
+      let assertionError: string | undefined;
       const tasks: EvalMatrixTask[] = rawTasks.flatMap((value, index) => {
         if (typeof value !== "object" || value === null) return [];
         const task = value as Record<string, unknown>;
@@ -106,13 +108,31 @@ export function createEvalRunsRouter(deps: EvalRunsRouterDeps): Hono {
         const id = typeof task.id === "string" && task.id.trim() !== ""
           ? task.id.trim()
           : `task-${index + 1}`;
-        return prompt === "" || expected === "" ? [] : [{ id, prompt, expected }];
+        // Structured assertions are additive: a task needs `expected`, `assert`, or both.
+        const parsed = parseTaskAssertions(task.assert);
+        if (!parsed.ok) {
+          assertionError ??= `task ${id}: ${parsed.message}`;
+          return [];
+        }
+        if (prompt === "" || (expected === "" && parsed.assertions.length === 0)) return [];
+        return [
+          {
+            id,
+            prompt,
+            ...(expected !== "" ? { expected } : {}),
+            ...(parsed.assertions.length > 0 ? { assert: parsed.assertions } : {}),
+          },
+        ];
       });
+      if (assertionError !== undefined) {
+        return ctx.json({ error: { message: assertionError, type: "invalid_request_error" } }, 400);
+      }
       if (name === "" || flows.length === 0 || tasks.length !== rawTasks.length || tasks.length === 0) {
         return ctx.json(
           {
             error: {
-              message: "name, at least one flow, and tasks with non-empty prompt/expected are required.",
+              message:
+                "name, at least one flow, and tasks with a non-empty prompt and an expected answer or structured assertions (assert) are required.",
               type: "invalid_request_error",
             },
           },
@@ -124,7 +144,12 @@ export function createEvalRunsRouter(deps: EvalRunsRouterDeps): Hono {
         tasks.length > 100 ||
         flows.length > 20 ||
         tasks.length * flows.length > 500 ||
-        tasks.some((task) => task.id.length > 200 || task.prompt.length > 20_000 || task.expected.length > 20_000)
+        tasks.some(
+          (task) =>
+            task.id.length > 200 ||
+            task.prompt.length > 20_000 ||
+            (task.expected?.length ?? 0) > 20_000,
+        )
       ) {
         return ctx.json(
           {

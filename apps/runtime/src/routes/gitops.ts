@@ -46,6 +46,14 @@ import { createInMemoryStore, type RateLimitStore } from "../middleware/rate-lim
 export interface GitopsRouterDeps {
   /** Callback to trigger a flow registry reload (wraps flowParserService.reload). */
   reloadFlows: () => Promise<void> | void;
+  /**
+   * Current ids of file flows that a DB-published (online) flow overrides.
+   * A git push reloads the FILES, but the composite registry keeps serving the
+   * online version for these ids — so the webhook reports which reloaded flows
+   * have no runtime effect instead of claiming blanket success (ADR 0034).
+   * Optional: without a flow editor there are no online flows to shadow.
+   */
+  shadowedFlowIds?: () => string[];
   /** Optional audit log for webhook receipt events. */
   auditLog?: AuditLog;
   logger?: Logger;
@@ -62,6 +70,14 @@ export interface GitopsRouterDeps {
    * Default: ["main", "master"].
    */
   triggerBranches?: string | string[];
+  /**
+   * Shared rate limit store — pass the one from `createHttpMiddleware` so the
+   * webhook budget is shared across replicas when REDIS_URL is configured.
+   * Defaults to a per-process in-memory store (tests, single-replica dev).
+   * No key collision with the `/v1/*` limiter: that one keys `ip:<addr>`,
+   * this route keys the bare address.
+   */
+  rateLimitStore?: RateLimitStore;
 }
 
 interface WebhookPayload {
@@ -196,7 +212,7 @@ export function createGitopsRouter(deps: GitopsRouterDeps): Hono {
   const router = new Hono();
   const { reloadFlows, auditLog, logger, webhookSecret } = deps;
   const requireSignature = deps.requireSignature ?? true;
-  const rateLimitStore = createInMemoryStore();
+  const rateLimitStore = deps.rateLimitStore ?? createInMemoryStore();
 
   const triggerBranches = new Set<string>(
     typeof deps.triggerBranches === "string"
@@ -292,21 +308,40 @@ export function createGitopsRouter(deps: GitopsRouterDeps): Hono {
     const shouldReload = branch !== undefined && triggerBranches.has(branch);
 
     let reloadedFlows: string[] = [];
+    let shadowedFlows: string[] = [];
     if (shouldReload) {
       try {
         await reloadFlows();
+        // After the rescan: which reloaded file flows are shadowed by an
+        // online (DB) flow? Those changes are live on disk but NOT served —
+        // report them so a no-effect push is visible (ADR 0034).
+        const shadowed = deps.shadowedFlowIds?.() ?? [];
+        shadowedFlows = shadowed;
         logger?.info("[GitOps] Flow registry reloaded via git webhook", {
           branch,
           repo,
           actor,
+          ...(shadowed.length > 0 ? { shadowedFlows: shadowed } : {}),
         });
+        if (shadowed.length > 0) {
+          logger?.warn(
+            "[GitOps] Reloaded file flows are overridden by online (DB) flows — the pushed changes are not live",
+            { flows: shadowed, count: shadowed.length },
+          );
+        }
         auditLog?.record({
           actor: actor ?? "git-webhook",
           role: "system",
           action: "gitops.reload",
           target: repo,
           outcome: "success",
-          details: { branch, commitCount, repo, ip: clientIp },
+          details: {
+            branch,
+            commitCount,
+            repo,
+            ip: clientIp,
+            ...(shadowed.length > 0 ? { shadowedFlows: shadowed } : {}),
+          },
         });
         reloadedFlows = ["*"]; // chokidar handles the actual file diff
       } catch (err) {
@@ -333,8 +368,11 @@ export function createGitopsRouter(deps: GitopsRouterDeps): Hono {
       repo,
       triggerBranches: [...triggerBranches],
       reloadedFlows,
+      ...(shadowedFlows.length > 0 ? { shadowedFlows } : {}),
       message: shouldReload
-        ? `Flow registry reload triggered for branch '${branch}'.`
+        ? shadowedFlows.length > 0
+          ? `Flow registry reload triggered for branch '${branch}'. ${shadowedFlows.length} reloaded flow(s) are overridden by online (DB) flows and are not live: ${shadowedFlows.join(", ")}.`
+          : `Flow registry reload triggered for branch '${branch}'.`
         : `Branch '${branch ?? "unknown"}' is not in the trigger list — no reload.`,
     });
   });

@@ -64,6 +64,11 @@ export interface HealthDetail {
    */
   audit?: DependencyCheck;
   /**
+   * Flow files that fail to load (P1-R3): `degraded` while any does.
+   * Informational only (never 503). Present only when a ledger is wired.
+   */
+  flow_load?: DependencyCheck;
+  /**
    * Tool-Authorization-Policy health (Req 7.7, platform-hardening):
    * `degraded` (`policy_stale: true`) when the last `tool-authz.json` reload
    * failed — the engine in effect is the last-known-good (or deny-all) policy,
@@ -78,6 +83,8 @@ export interface HealthDetail {
 export interface ReadinessResponse {
   status: "ready" | "not_ready";
   checks: HealthDetail;
+  /** Present (as `"disabled"`) only while `AUTHN_MODE=disabled` is in effect. */
+  auth?: "disabled";
 }
 
 export interface LivenessResponse {
@@ -208,6 +215,21 @@ export interface HealthRouterOptions {
    * Duck-typed on purpose — the health module must not depend on the loader.
    */
   toolAuthz?: { readonly policyStale?: boolean };
+  /**
+   * Flow files that currently fail to load (P1-R3). When provided,
+   * `/health/ready` reports a `flow_load` check: `degraded` with the file
+   * names while any flow file fails to load, `ok` otherwise. Informational
+   * (never 503): one broken file must not pull every replica out of rotation,
+   * but it must no longer be invisible. Duck-typed, like the others.
+   */
+  flowLoad?: () => ReadonlyArray<{ file: string; reason: string; since: string }>;
+  /**
+   * `AUTHN_MODE=disabled` is in effect: every endpoint answers without a
+   * credential. `/health` and `/health/ready` then carry `auth: "disabled"` so
+   * a probe, a dashboard or a person looking at the response cannot mistake an
+   * open instance for a protected one. Absent (the normal case) adds nothing.
+   */
+  authDisabled?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -228,6 +250,7 @@ export function createHealthRouter(
   // -------------------------------------------------------------------------
   router.get("/health", (ctx) => {
     const body: Record<string, unknown> = { status: "ok" };
+    if (options?.authDisabled === true) body.auth = "disabled";
     if (flowRegistry !== undefined) {
       const flows = flowRegistry.list();
       body.flows_loaded = flows.length;
@@ -303,10 +326,24 @@ export function createHealthRouter(
             }
           : { status: "ok", policy_stale: false };
 
+    const flowLoadFailures = options?.flowLoad?.() ?? [];
+    const flowLoadCheck: DependencyCheck | undefined =
+      options?.flowLoad === undefined
+        ? undefined
+        : flowLoadFailures.length > 0
+          ? {
+              status: "degraded",
+              reason: `${flowLoadFailures.length} flow file(s) fail to load: ${flowLoadFailures
+                .slice(0, 10)
+                .map((f) => f.file)
+                .join(", ")}${flowLoadFailures.length > 10 ? ", …" : ""} (see aiperator_flow_load_failures).`,
+            }
+          : { status: "ok" };
     const checks: HealthDetail = {
       database: dbCheck,
       redis: redisCheck,
       flows: flowsCheck,
+      ...(flowLoadCheck !== undefined ? { flow_load: flowLoadCheck } : {}),
       ...(auditCheck !== undefined ? { audit: auditCheck } : {}),
       ...(policyStaleCheck !== undefined
         ? { policy_stale: policyStaleCheck }
@@ -325,6 +362,7 @@ export function createHealthRouter(
     const body: ReadinessResponse = {
       status: notReady ? "not_ready" : "ready",
       checks,
+      ...(options?.authDisabled === true ? { auth: "disabled" as const } : {}),
     };
 
     return ctx.json(body, status);

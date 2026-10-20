@@ -35,6 +35,7 @@ function buildApp(opts: {
   webhookSecret?: string;
   requireSignature?: boolean;
   triggerBranches?: string | string[];
+  shadowedFlowIds?: () => string[];
 }): { app: Hono; reloadCalls: number } {
   let reloadCalls = 0;
   const app = new Hono();
@@ -52,6 +53,9 @@ function buildApp(opts: {
         : {}),
       ...(opts.triggerBranches !== undefined
         ? { triggerBranches: opts.triggerBranches }
+        : {}),
+      ...(opts.shadowedFlowIds !== undefined
+        ? { shadowedFlowIds: opts.shadowedFlowIds }
         : {}),
     }),
   );
@@ -166,6 +170,63 @@ describe("GitOps webhook — rate limiting (bounded, self-sweeping store)", () =
     });
     expect(res1.status).toBe(200);
     expect(res2.status).toBe(200);
+  });
+});
+
+describe("GitOps webhook — shadowed flows (ADR 0034)", () => {
+  test("a reload whose file flows are DB-overridden reports shadowedFlows", async () => {
+    const { app } = buildApp({
+      requireSignature: false,
+      triggerBranches: "main",
+      shadowedFlowIds: () => ["alpha", "beta"],
+    });
+    const res = await app.request("/webhooks/git", {
+      method: "POST",
+      body: JSON.stringify(pushPayload("main")),
+    });
+    expect(res.status).toBe(200);
+    const json = (await res.json()) as {
+      triggered: boolean;
+      reloadedFlows: string[];
+      shadowedFlows?: string[];
+      message: string;
+    };
+    expect(json.triggered).toBe(true);
+    expect(json.reloadedFlows).toEqual(["*"]);
+    expect(json.shadowedFlows).toEqual(["alpha", "beta"]);
+    expect(json.message).toContain("overridden by online (DB) flows");
+  });
+
+  test("shadowedFlows is absent when no reloaded flow is overridden", async () => {
+    const { app } = buildApp({
+      requireSignature: false,
+      triggerBranches: "main",
+      shadowedFlowIds: () => [],
+    });
+    const res = await app.request("/webhooks/git", {
+      method: "POST",
+      body: JSON.stringify(pushPayload("main")),
+    });
+    const json = (await res.json()) as { shadowedFlows?: string[] };
+    expect(json.shadowedFlows).toBeUndefined();
+  });
+
+  test("a non-trigger push never reports shadowed flows", async () => {
+    const { app } = buildApp({
+      requireSignature: false,
+      triggerBranches: "main",
+      shadowedFlowIds: () => ["alpha"],
+    });
+    const res = await app.request("/webhooks/git", {
+      method: "POST",
+      body: JSON.stringify(pushPayload("feature/x")),
+    });
+    const json = (await res.json()) as {
+      triggered: boolean;
+      shadowedFlows?: string[];
+    };
+    expect(json.triggered).toBe(false);
+    expect(json.shadowedFlows).toBeUndefined();
   });
 });
 

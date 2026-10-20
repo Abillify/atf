@@ -26,7 +26,19 @@ const def = (id: string, name = id): FlowDefinition => ({
 
 function fileRegistry(...flows: FlowDefinition[]): FlowRegistry {
   const m = new Map(flows.map((f) => [f.id, f]));
-  return { get: (id) => m.get(id), list: () => [...m.values()] };
+  return {
+    get: (id) => m.get(id),
+    list: () => [...m.values()],
+    getSource: (id) => {
+      const f = m.get(id);
+      return f === undefined
+        ? undefined
+        : {
+            definition: f as unknown as Record<string, unknown>,
+            fileName: `${id}.yaml`,
+          };
+    },
+  };
 }
 
 function app(deps: Parameters<typeof createFlowsRouter>[0]) {
@@ -40,6 +52,23 @@ const json = (body: unknown) => ({
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify(body),
 });
+
+type CapturedAuditEntry = {
+  action: string;
+  details?: Record<string, unknown>;
+};
+
+/** Audit stub collecting entries so tests can assert on audit details. */
+function capturingAuditLog(sink: CapturedAuditEntry[]) {
+  return {
+    record: (e: CapturedAuditEntry) => {
+      sink.push(e);
+    },
+    recordRequired: async (e: CapturedAuditEntry) => {
+      sink.push(e);
+    },
+  } as never;
+}
 
 describe("POST /flows/validate (Stage 1, always available)", () => {
   test("valid flow → valid: true", async () => {
@@ -122,6 +151,59 @@ describe("GET /flows + GET /flows/:id", () => {
     const a = app({ fileRegistry: fileRegistry() });
     const res = await a.request("/flows/ghost");
     expect(res.status).toBe(404);
+  });
+
+  // ADR 0034: a published online flow with a same-id file twin overrides the
+  // file — the detail response must say so and still expose the file baseline.
+  test("GET /flows/:id on a published online flow with a file twin reports shadowsFile + fileDefinition", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("twin", def("twin", "online"));
+    await store.publish("twin");
+    const a = app({
+      fileRegistry: fileRegistry(def("twin", "from-git")),
+      store,
+    });
+
+    const body = (await (await a.request("/flows/twin")).json()) as {
+      source: string;
+      shadowsFile?: boolean;
+      fileDefinition?: { name: string };
+    };
+    expect(body.source).toBe("online");
+    expect(body.shadowsFile).toBe(true);
+    expect(body.fileDefinition?.name).toBe("from-git");
+  });
+
+  test("GET /flows/:id on an unpublished online flow shows the file baseline without shadowsFile", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("twin", def("twin", "draft-copy"));
+    const a = app({
+      fileRegistry: fileRegistry(def("twin", "from-git")),
+      store,
+    });
+
+    const body = (await (await a.request("/flows/twin")).json()) as {
+      source: string;
+      shadowsFile?: boolean;
+      fileDefinition?: { name: string };
+    };
+    expect(body.source).toBe("online");
+    expect(body.shadowsFile).toBeUndefined();
+    expect(body.fileDefinition?.name).toBe("from-git");
+  });
+
+  test("GET /flows/:id on an online flow without a file twin has neither marker", async () => {
+    const store = new InMemoryFlowStore();
+    await store.saveDraft("solo", def("solo"));
+    await store.publish("solo");
+    const a = app({ fileRegistry: fileRegistry(), store });
+
+    const body = (await (await a.request("/flows/solo")).json()) as {
+      shadowsFile?: boolean;
+      fileDefinition?: unknown;
+    };
+    expect(body.shadowsFile).toBeUndefined();
+    expect(body.fileDefinition).toBeUndefined();
   });
 });
 
@@ -221,6 +303,91 @@ describe("online authoring lifecycle (Stage 3)", () => {
     };
     expect(rbBody.record.version).toBe(3);
     expect(rbBody.record.published.name).toBe("v1");
+  });
+});
+
+// ADR 0034: publish/rollback/delete over (or revealing) a same-id file flow
+// must be visible in the API response and the audit trail.
+describe("file-override visibility (ADR 0034)", () => {
+  test("publish over a file flow marks response + audit with shadowsFile", async () => {
+    const store = new InMemoryFlowStore();
+    const recorded: CapturedAuditEntry[] = [];
+    const a = app({
+      fileRegistry: fileRegistry(def("ovr", "from-git")),
+      store,
+      auditLog: capturingAuditLog(recorded),
+    });
+    await a.request("/flows/ovr/draft", {
+      ...json(def("ovr", "online")),
+      method: "PUT",
+    });
+    const pub = await a.request("/flows/ovr/publish", json({}));
+    expect(pub.status).toBe(200);
+    const body = (await pub.json()) as { shadowsFile?: boolean };
+    expect(body.shadowsFile).toBe(true);
+    const audit = recorded.find((e) => e.action === "flows.publish");
+    expect(audit?.details?.shadowsFile).toBe(true);
+  });
+
+  test("publish without a file twin omits shadowsFile", async () => {
+    const store = new InMemoryFlowStore();
+    const a = app({ fileRegistry: fileRegistry(), store });
+    await a.request("/flows/solo/draft", {
+      ...json(def("solo")),
+      method: "PUT",
+    });
+    const body = (await (await a.request("/flows/solo/publish", json({}))).json()) as {
+      shadowsFile?: boolean;
+    };
+    expect(body.shadowsFile).toBeUndefined();
+  });
+
+  test("delete of an online flow with a file twin reports revealsFile", async () => {
+    const store = new InMemoryFlowStore();
+    const recorded: CapturedAuditEntry[] = [];
+    await store.saveDraft("ovr", def("ovr", "online"));
+    await store.publish("ovr");
+    const a = app({
+      fileRegistry: fileRegistry(def("ovr", "from-git")),
+      store,
+      auditLog: capturingAuditLog(recorded),
+    });
+    const res = await a.request("/flows/ovr", { method: "DELETE" });
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      deleted: boolean;
+      revealsFile?: boolean;
+    };
+    expect(body.deleted).toBe(true);
+    expect(body.revealsFile).toBe(true);
+    const audit = recorded.find((e) => e.action === "flows.delete");
+    expect(audit?.details?.revealsFile).toBe(true);
+  });
+
+  test("rollback over a file flow marks response + audit with shadowsFile", async () => {
+    const store = new InMemoryFlowStore();
+    const recorded: CapturedAuditEntry[] = [];
+    const a = app({
+      fileRegistry: fileRegistry(def("ovr", "from-git")),
+      store,
+      auditLog: capturingAuditLog(recorded),
+    });
+    await a.request("/flows/ovr/draft", {
+      ...json(def("ovr", "v1")),
+      method: "PUT",
+    });
+    await a.request("/flows/ovr/publish", json({}));
+    await a.request("/flows/ovr/draft", {
+      ...json(def("ovr", "v2")),
+      method: "PUT",
+    });
+    await a.request("/flows/ovr/publish", json({}));
+    const rb = await a.request("/flows/ovr/rollback", json({ version: 1 }));
+    expect(rb.status).toBe(200);
+    const body = (await rb.json()) as { shadowsFile?: boolean };
+    expect(body.shadowsFile).toBe(true);
+    const audit = recorded.find((e) => e.action === "flows.rollback");
+    expect(audit?.details?.shadowsFile).toBe(true);
   });
 });
 

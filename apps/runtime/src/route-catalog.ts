@@ -21,6 +21,12 @@ import * as path from "node:path";
 
 const HTTP_METHODS = ["get", "post", "put", "delete", "patch", "all", "head", "options"] as const;
 const NEW_HONO_RE = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*new\s+Hono\b/;
+/**
+ * A router handed in as a parameter: `function registerXRoutes(router: Hono, …)`.
+ * Those modules never construct a Hono instance, so without this their routes
+ * (the whole `/flows/*` surface) were missing from the catalog.
+ */
+const HONO_PARAM_RE = /[(,]\s*([A-Za-z_$][\w$]*)\s*:\s*Hono\b/g;
 const SUB_MOUNT_RE = /\b([A-Za-z_$][\w$]*)\.route\(\s*"([^"]*)",\s*([A-Za-z_$][\w$]*)\s*[(,]/g;
 const REGISTER_CALL_RE = /\b(register[A-Za-z_$][\w$]*)\(\s*([A-Za-z_$][\w$]*)\s*,/g;
 const FACTORY_DEF_RE = /^export\s+(?:async\s+)?function\s+([A-Za-z_$][\w$]*Router)\b/gm;
@@ -209,6 +215,7 @@ export function buildRuntimeRouteCatalog(srcRoot: string): {
     for (const line of text.split("\n")) {
       const m = NEW_HONO_RE.exec(line);
       if (m) routerVars.add(m[1] as string);
+      for (const p of line.matchAll(HONO_PARAM_RE)) routerVars.add(p[1] as string);
     }
     if (routerVars.size === 0) return [];
 

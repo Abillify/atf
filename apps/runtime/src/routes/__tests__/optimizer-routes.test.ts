@@ -12,6 +12,8 @@
 import { describe, test, expect } from "bun:test";
 import { Hono } from "hono";
 import { createOptimizerRouter } from "../optimizer.js";
+import type { OperatorAuthorizer } from "../../middleware/operator-rbac.js";
+import type { AuditEntry, AuditLog } from "../../observability/audit-log.js";
 import type {
   FlowOptimizer,
   OptimizationRun,
@@ -209,5 +211,106 @@ describe("optimizer routes — operator auth gate", () => {
     });
     expect(allowed.status).toBe(200);
     expect(opt.runCalls).toHaveLength(0); // list, not run
+  });
+});
+
+describe("optimizer routes — audit actor never carries credential material", () => {
+  const SECRET = "sk-live-0123456789abcdefSECRET";
+
+  function auditedApp(
+    opt: FlowOptimizer,
+    withAuth: boolean,
+  ): { app: Hono; entries: AuditEntry[] } {
+    const entries: AuditEntry[] = [];
+    const auditLog: AuditLog = {
+      record: (e: AuditEntry) => {
+        entries.push(e);
+      },
+      recordRequired: async (e: AuditEntry) => {
+        entries.push(e);
+      },
+      list: async () => [],
+      verifyChain: async () => ({ valid: true, checked: 0 }),
+    } as unknown as AuditLog;
+    const a = new Hono();
+    a.route(
+      "/optimizer",
+      createOptimizerRouter({
+        optimizer: opt,
+        auditLog,
+        ...(withAuth
+          ? {
+              operatorAuth: {
+                rbacEnabled: true,
+                async authorize(authHeader?: string) {
+                  return authHeader === `Bearer ${SECRET}`
+                    ? {
+                        ok: true,
+                        actor: { name: "alice", role: "admin", via: "token" },
+                      }
+                    : { ok: false };
+                },
+              } as unknown as OperatorAuthorizer,
+            }
+          : {}),
+      }),
+    );
+    return { app: a, entries };
+  }
+
+  test("run: the audit actor is the resolved identity, not the bearer token", async () => {
+    const { app: a, entries } = auditedApp(makeFakeOptimizer(), true);
+    const res = await a.request("/optimizer/flow-1/run", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SECRET}`,
+      },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(200);
+    const entry = at(entries, 0);
+    expect(entry.action).toBe("optimizer.run");
+    expect(entry.actor).toBe("alice");
+    expect(JSON.stringify(entries)).not.toContain(SECRET.slice(0, 8));
+    expect(JSON.stringify(entries)).not.toContain("token:");
+  });
+
+  test("promote: the audit actor AND the promoter handed to the optimizer are the identity", async () => {
+    const promoters: string[] = [];
+    const opt = makeFakeOptimizer();
+    const promote = opt.promote.bind(opt);
+    opt.promote = async (runId, variantLabel, promotedBy) => {
+      promoters.push(String(promotedBy));
+      return promote(runId, variantLabel, promotedBy);
+    };
+    const { app: a, entries } = auditedApp(opt, true);
+    const res = await a.request("/optimizer/runs/opt-test-1/promote", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SECRET}`,
+      },
+      body: JSON.stringify({ variantLabel: "v1" }),
+    });
+    expect(res.status).toBe(200);
+    expect(at(entries, 0).actor).toBe("alice");
+    expect(promoters).toEqual(["alice"]);
+    expect(JSON.stringify([entries, promoters])).not.toContain(SECRET.slice(0, 8));
+  });
+
+  test("open plane: a presented token is never recorded either", async () => {
+    const { app: a, entries } = auditedApp(makeFakeOptimizer(), false);
+    await a.request("/optimizer/flow-1/run", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${SECRET}`,
+      },
+      body: JSON.stringify({}),
+    });
+    const entry = at(entries, 0);
+    expect(entry.actor).toBe("anonymous");
+    expect(JSON.stringify(entries)).not.toContain(SECRET.slice(0, 8));
   });
 });

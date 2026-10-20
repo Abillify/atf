@@ -97,14 +97,15 @@ function isStructuralEditLike(v: unknown): v is StructuralEdit {
   return nodesOk && edgesOk && (Array.isArray(e.nodes) || Array.isArray(e.edges));
 }
 
-function extractActor(authHeader: string | undefined): string {
-  if (authHeader === undefined || authHeader === "") return "operator";
-  const token = authHeader.startsWith("Bearer ")
-    ? authHeader.slice(7)
-    : authHeader;
-  // Best-effort: first 12 chars of token as a non-secret fingerprint.
-  return `token:${token.slice(0, 12)}…`;
-}
+/**
+ * Per-request audit actor, filled by the auth middleware from the authorizer's
+ * RESOLVED identity (token label / JWT subject: a display name, never a
+ * credential). The raw `Authorization` header must never reach the hash-chained
+ * audit log: it is readable via `GET /monitoring/audit` and exported to log
+ * shippers, and a chained row cannot be removed without breaking the chain.
+ * Keyed by the request object so concurrent requests cannot see each other.
+ */
+const resolvedActors = new WeakMap<Request, string>();
 
 export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
   const app = new Hono();
@@ -152,8 +153,14 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
         401,
       );
     }
+    resolvedActors.set(c.req.raw, result.actor?.name ?? "unknown");
     await next();
   });
+  /** Audit actor for this request: the resolved identity, never the token. */
+  const auditActor = (c: import("hono").Context): string =>
+    operatorAuth === undefined
+      ? "anonymous"
+      : (resolvedActors.get(c.req.raw) ?? "unknown");
 
   // -------------------------------------------------------------------------
   // GET /optimizer/routing-advice
@@ -364,7 +371,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
     }
 
     auditLog?.record({
-      actor: extractActor(c.req.header("Authorization")),
+      actor: auditActor(c),
       role: "operator",
       action: "optimizer.analyze",
       target: executionId,
@@ -453,7 +460,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
     };
 
     auditLog?.record({
-      actor: extractActor(c.req.header("Authorization")),
+      actor: auditActor(c),
       role: "operator",
       action: "optimizer.run",
       target: flowId,
@@ -553,7 +560,7 @@ export function createOptimizerRouter(deps: OptimizerRouterDeps): Hono {
       );
     }
 
-    const actor = extractActor(c.req.header("Authorization"));
+    const actor = auditActor(c);
     auditLog?.record({
       actor,
       role: "operator",

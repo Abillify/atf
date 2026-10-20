@@ -12,6 +12,11 @@
  */
 
 import { z } from "zod";
+import {
+  resolveOperationalProfile,
+  UnknownOperationalProfileError,
+  type ResolvedOperationalProfile,
+} from "@atf/security-kit";
 import type { AppConfig, McpServerConfig } from "./schema.js";
 import { EnvSchema, McpServerConfigSchema } from "./schema.js";
 import { applyProfile, type RawEnv } from "./profiles.js";
@@ -69,6 +74,27 @@ export function loadConfig(): AppConfig {
     process.stderr.write(`[Config] ${profileError}\n`);
     process.exit(1);
   }
+
+  // Resolve the effective operational profile (Betriebsprofil): the explicit,
+  // platform-wide ATF_PROFILE wins over the service variable APP_ENV. Unknown
+  // values fail startup — a typo like `prod` must never silently disable the
+  // production-readiness gates. This runs BEFORE the Zod parse so the error
+  // names the offending variable and value (and the valid set), instead of
+  // the generic enum-validation list a typo'd APP_ENV would produce.
+  let operationalProfile: ResolvedOperationalProfile;
+  try {
+    operationalProfile = resolveOperationalProfile(
+      mergedEnv as Record<string, string | undefined>,
+      ["APP_ENV"],
+    );
+  } catch (err) {
+    if (err instanceof UnknownOperationalProfileError) {
+      process.stderr.write(`[Config] ${err.message}\n`);
+      process.exit(1);
+    }
+    throw err;
+  }
+  const appEnv = operationalProfile.profile;
 
   const result = EnvSchema.safeParse(mergedEnv);
 
@@ -156,7 +182,7 @@ export function loadConfig(): AppConfig {
       : {}),
     pluginsSandbox: env.PLUGINS_SANDBOX,
     pluginsSandboxTimeoutMs: env.PLUGINS_SANDBOX_TIMEOUT_MS,
-    appEnv: env.APP_ENV,
+    appEnv,
     monitoringTransport: env.MONITORING_TRANSPORT,
     mcpServers,
     mcpSchemaCompatibilityMode: env.MCP_SCHEMA_COMPATIBILITY_MODE,
@@ -190,6 +216,9 @@ export function loadConfig(): AppConfig {
       ? { receiptSigningKey: env.RECEIPT_SIGNING_KEY }
       : {}),
     evidenceBundleSecret: env.EVIDENCE_BUNDLE_SECRET,
+    ...(env.EVIDENCE_SIGNING_KEY !== undefined
+      ? { evidenceSigningKey: env.EVIDENCE_SIGNING_KEY }
+      : {}),
     piiRecallDataset: env.PII_RECALL_DATASET,
     sloAlertWebhookUrl: env.SLO_ALERT_WEBHOOK_URL,
     providerRegions: env.PROVIDER_REGIONS,
@@ -220,11 +249,12 @@ export function loadConfig(): AppConfig {
     oidcDashboardUrl: env.OIDC_DASHBOARD_URL,
     oidcAutoLogin: env.OIDC_AUTO_LOGIN,
     redisUrl: env.REDIS_URL,
+    replicas: env.REPLICAS,
     databaseUrl: env.DATABASE_URL,
     databasePoolMax: env.DATABASE_POOL_MAX,
     // Requirement 12.4: dev keeps the convenient migrate-on-boot, production
     // defaults to dedicated migration Jobs (`bun run migrate`) instead.
-    migrateOnStart: env.MIGRATE_ON_START ?? env.APP_ENV !== "production",
+    migrateOnStart: env.MIGRATE_ON_START ?? appEnv !== "production",
     tenantRlsEnabled: env.TENANT_RLS_ENABLED,
     tenantRlsRequired: env.TENANT_RLS_REQUIRED,
     clusterStateOptOut: env.CLUSTER_STATE_OPT_OUT,
@@ -330,6 +360,7 @@ export function loadConfig(): AppConfig {
     toolEgressMode: env.TOOL_EGRESS_MODE,
     egressAllowPrivateHosts: env.EGRESS_ALLOW_PRIVATE_HOSTS,
     egressAllowedHosts: env.EGRESS_ALLOWED_HOSTS,
+    compliancePolicyRequired: env.COMPLIANCE_POLICY_REQUIRED,
     egressMaxResponseBytes: env.EGRESS_MAX_RESPONSE_BYTES,
     egressTimeoutMs: env.EGRESS_TIMEOUT_MS,
     toolOutputValidatorEnabled: env.TOOL_OUTPUT_VALIDATOR_ENABLED,
@@ -337,6 +368,8 @@ export function loadConfig(): AppConfig {
     toolOutputValidatorThreshold: env.TOOL_OUTPUT_VALIDATOR_THRESHOLD,
     retrievalContextMode: env.RETRIEVAL_CONTEXT_MODE,
     taintWriteToolsRequireApproval: env.TAINT_WRITE_TOOLS_REQUIRE_APPROVAL,
+    taintMode: env.TAINT_MODE,
+    aiDisclosure: env.AI_DISCLOSURE,
     approvalGateEnabled: env.APPROVAL_GATE_ENABLED,
     approvalRequireTools: env.APPROVAL_REQUIRE_TOOLS,
     approvalTimeoutMs: env.APPROVAL_TIMEOUT_MS,
@@ -403,7 +436,7 @@ export function loadConfig(): AppConfig {
     // Development (availability), fail-closed in Production (protection).
     inputGuardrailModelFailMode:
       env.INPUT_GUARDRAIL_MODEL_FAIL_MODE ??
-      (env.APP_ENV === "production" ? "closed" : "open"),
+      (appEnv === "production" ? "closed" : "open"),
     inputGuardrailMaxChars: env.INPUT_GUARDRAIL_MAX_CHARS,
     jobsEnabled: env.JOBS_ENABLED,
     jobsTtlSeconds: env.JOBS_TTL_SECONDS,

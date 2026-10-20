@@ -35,6 +35,7 @@ import {
   signEvidenceBundle,
   renderEvidenceBundleMarkdown,
 } from "../observability/evidence-bundle.js";
+import type { Ed25519EvidenceKey } from "../observability/evidence-key.js";
 import {
   createOperatorAuthorizer,
   type OperatorAuthorizer,
@@ -51,12 +52,19 @@ export interface ExplainRouterDeps {
   /** Optional audit-anchor service — its status is embedded in a signed bundle. */
   auditAnchor?: AuditAnchorService;
   /**
-   * Signing secret for `GET /monitoring/explain/:executionId/bundle`. Falls
+   * Ed25519 evidence key (ADR 0030). When set, bundles are signed with it
+   * (`algorithm: "ed25519"`) and third parties can verify offline via the
+   * published JWKS — no shared secret needed. Preferred over
+   * `evidenceBundleSecret`.
+   */
+  evidenceBundleKey?: Ed25519EvidenceKey;
+  /**
+   * HMAC secret for signing `GET /monitoring/explain/:executionId/bundle`. Falls
    * back to `AUDIT_ANCHOR_SECRET` when unset (see the route handler) so a
    * deployment that already anchors its audit chain does not need a SECOND
-   * secret just to sign evidence bundles — both use the exact same HMAC
-   * primitive. When neither is configured, the bundle endpoint is disabled
-   * (404) rather than silently signing with an empty/default secret.
+   * secret just to sign evidence bundles. When neither this nor
+   * `evidenceBundleKey` is configured, the bundle endpoint is disabled (404)
+   * rather than silently signing with an empty/default secret.
    */
   evidenceBundleSecret?: string;
 }
@@ -140,13 +148,21 @@ export function createExplainRouter(deps: ExplainRouterDeps): Hono {
     );
     if (!r.ok) return unauthorized(ctx);
 
-    const secret = deps.evidenceBundleSecret;
-    if (secret === undefined || secret.trim().length === 0) {
+    // Prefer the asymmetric Ed25519 evidence key (ADR 0030): bundles signed
+    // with it are verifiable by third parties via the published JWKS.
+    const signingKey: Ed25519EvidenceKey | string | undefined =
+      deps.evidenceBundleKey ??
+      (deps.evidenceBundleSecret !== undefined &&
+      deps.evidenceBundleSecret.trim().length > 0
+        ? deps.evidenceBundleSecret
+        : undefined);
+    if (signingKey === undefined) {
       return ctx.json(
         {
           error: {
             message:
-              "Evidence bundle signing is not configured. Set EVIDENCE_BUNDLE_SECRET " +
+              "Evidence bundle signing is not configured. Set EVIDENCE_SIGNING_KEY " +
+              "(recommended — Ed25519, third-party verifiable) or EVIDENCE_BUNDLE_SECRET " +
               "(or AUDIT_ANCHOR_SECRET, which it falls back to) to enable this endpoint.",
             type: "not_found_error",
           },
@@ -182,9 +198,11 @@ export function createExplainRouter(deps: ExplainRouterDeps): Hono {
     const auditAnchorStatus =
       deps.auditAnchor !== undefined ? deps.auditAnchor.status() : undefined;
     const bundle = buildEvidenceBundle(card, {
-      ...(auditAnchorStatus !== undefined ? { auditAnchor: auditAnchorStatus } : {}),
+      ...(auditAnchorStatus !== undefined
+        ? { auditAnchor: auditAnchorStatus }
+        : {}),
     });
-    const signed = signEvidenceBundle(bundle, secret);
+    const signed = signEvidenceBundle(bundle, signingKey);
 
     if (ctx.req.query("format") === "markdown") {
       const markdown = renderEvidenceBundleMarkdown(signed);

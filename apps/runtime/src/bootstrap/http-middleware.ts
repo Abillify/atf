@@ -35,6 +35,7 @@ import {
   postAuthRateLimitMiddleware,
   createStoreBackedRateLimitStore,
   createRedisRateLimitStore,
+  type RateLimitStore,
 } from "../middleware/rate-limit.js";
 import type { JwtVerifier } from "../middleware/jwt-verifier.js";
 import type { Logger } from "../observability/logger.js";
@@ -57,6 +58,12 @@ export interface HttpMiddlewareResult {
   apiKeyResolver:
     | ((rawKey: string) => ReturnType<typeof resolveApiKey>)
     | undefined;
+  /**
+   * The shared rate limit store (Redis-backed when REDIS_URL is set), handed
+   * to the GitOps webhook router so its per-IP budget is shared across
+   * replicas instead of one counter per process.
+   */
+  rateLimitStore: RateLimitStore | undefined;
 }
 
 export function createHttpMiddleware(
@@ -264,5 +271,5 @@ export function createHttpMiddleware(
     ),
   );
 
-  return { app, apiKeyResolver };
+  return { app, apiKeyResolver, rateLimitStore };
 }
