@@ -44,7 +44,13 @@ bun run test
 bun run test:contracts
 bun run build
 bun run check:budgets:ci         # bundle-size budgets
+gitleaks git . --config .gitleaks.toml --redact --no-banner   # secret scan over the full history, as CI runs it
 ```
+
+Reviewed false positives of the secret scan are listed by fingerprint in `.gitleaksignore`
+(`<commit>:<file>:<rule>:<line>`). Add an entry only after checking that the matched line is
+not a credential; never widen the allowlist in `.gitleaks.toml` for a single finding.
+
 CI also validates the example flows (`cli.ts validate … --require-version`), the Helm chart
 (`helm lint`, `kubeconform -strict`, rendered replica/profile/converter assertions), the
 Outpost and its Rust crates (`cargo test`, `cargo audit`, `cargo deny`), the Control end-to-end and

@@ -598,6 +598,9 @@ releases:
 - **Extract: `pages` was accepted and silently ignored.** The API stored the string as sent
   while the runner only read an object (`{to}`), so a request for a page range processed
   and billed the whole document. It is validated, normalised and applied now (see Added).
+- The secret-scanning job no longer fails on four reviewed false positives (type annotations
+  matched by the generic-api-key rule); they are listed by fingerprint in `.gitleaksignore`,
+  and `DEVELOPMENT.md` lists gitleaks as a local gate.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this
