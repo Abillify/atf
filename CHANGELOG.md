@@ -601,6 +601,9 @@ releases:
 - The secret-scanning job no longer fails on four reviewed false positives (type annotations
   matched by the generic-api-key rule); they are listed by fingerprint in `.gitleaksignore`,
   and `DEVELOPMENT.md` lists gitleaks as a local gate.
+- Flow files expand YAML merge keys (`<<: *anchor`); previously the key stayed literal and the
+  merged settings were silently missing. A merge key that cannot be expanded is now a load
+  error naming the file and the path.
 ### Migration
 
 Read [docs/UPGRADE.md](docs/UPGRADE.md) ("0.18 → next") before rolling this

@@ -16,6 +16,44 @@ import { parse as parseYaml } from "yaml";
 // Parse helpers
 // ---------------------------------------------------------------------------
 
+/** `<<` merge keys are expanded (YAML 1.1 semantics); without it they stay literal keys. */
+export const FLOW_YAML_PARSE_OPTIONS = { merge: true } as const;
+
+/** Maximum recursion depth of {@link assertNoLiteralMergeKeys}; deeper values are skipped. */
+const MERGE_KEY_SCAN_MAX_DEPTH = 64;
+
+/**
+ * Fails when a literal `"<<"` key survived parsing: with merge expansion on,
+ * a well-formed merge key is always replaced, so a remaining one means the
+ * value was neither a mapping nor a list of mappings (the same silent
+ * failure a JSON flow with a literal `"<<"` would cause).
+ */
+export function assertNoLiteralMergeKeys(
+  value: unknown,
+  filePath: string,
+): void {
+  const visit = (node: unknown, pointer: string, depth: number): void => {
+    if (depth > MERGE_KEY_SCAN_MAX_DEPTH) return;
+    if (Array.isArray(node)) {
+      for (let i = 0; i < node.length; i++) {
+        visit(node[i], `${pointer}/${i}`, depth + 1);
+      }
+      return;
+    }
+    if (node !== null && typeof node === "object") {
+      for (const [key, child] of Object.entries(node as Record<string, unknown>)) {
+        if (key === "<<") {
+          throw new Error(
+            `${path.basename(filePath)}: YAML merge key "<<" at ${pointer} was not expanded — use a mapping or a list of mappings as its value`,
+          );
+        }
+        visit(child, `${pointer}/${key}`, depth + 1);
+      }
+    }
+  };
+  visit(value, "", 0);
+}
+
 /**
  * Parses `content` according to the file extension of `filePath`.
  * - `.yaml` / `.yml` → YAML parser
@@ -23,10 +61,12 @@ import { parse as parseYaml } from "yaml";
  */
 function parseContent(filePath: string, content: string): unknown {
   const ext = path.extname(filePath).toLowerCase();
-  if (ext === ".yaml" || ext === ".yml") {
-    return parseYaml(content);
-  }
-  return JSON.parse(content);
+  const result =
+    ext === ".yaml" || ext === ".yml"
+      ? parseYaml(content, FLOW_YAML_PARSE_OPTIONS)
+      : JSON.parse(content);
+  assertNoLiteralMergeKeys(result, filePath);
+  return result;
 }
 
 /**

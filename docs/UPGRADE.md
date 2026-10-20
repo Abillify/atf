@@ -462,6 +462,10 @@ configuration and clients. Do these **before** rolling out:
     below): Runtime — a media store serving `show_figure` links, and the receipts
     transparency log, with `REPLICAS > 1`; Gate — `server.pagination.secret`
     unset with a paginated database tool and `MCPGATE_REPLICAS > 1`.
+23. **Flow files: YAML merge keys.** `<<` merge keys are now expanded. A flow that
+    relied on the old behaviour (merged keys silently missing) now receives those
+    keys. Run `bun run scripts/cli.ts validate <flows-dir>` in `apps/runtime`
+    before the upgrade and review flows that use `<<`.
 
 ### Not yet shared between replicas (roadmap)
 
