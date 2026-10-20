@@ -111,6 +111,11 @@ const structuralAllowlist = new Map<string, Set<string>>([
 		"apps/runtime/src/assistants/__tests__/proposal-scanner.test.ts",
 		new Set(["private key", "AWS access key id", "GitHub token"]),
 	],
+	[
+		// A deliberately malformed PEM header, to prove the parser rejects it.
+		"apps/runtime/src/observability/__tests__/evidence-key.test.ts",
+		new Set(["private key"]),
+	],
 ]);
 
 interface RedactionRuleSet {

@@ -93,13 +93,17 @@ jobs:
         with:
           bun-version: ${{ env.BUN_VERSION }}
       - run: bun install --frozen-lockfile
+      # The desktop outpost's Rust crates belong in the SBOM like the npm
+      # packages (CI generates the reference the same way).
+      - name: Fetch crate archives for the inventory
+        run: cargo fetch --locked --manifest-path apps/outpost-desktop/src-tauri/Cargo.toml
       - name: Generate workspace inventory
         run: >-
           bun run supply-chain --inventory-root "$GITHUB_WORKSPACE"
           --output-dir "$GITHUB_WORKSPACE/release/workspace-${{ matrix.platform }}-${GITHUB_SHA}"
           --platform "${{ matrix.platform }}" --assert-host-platform
           --artifact-kind workspace --artifact-name "workspace-${{ matrix.platform }}-${GITHUB_SHA}"
-          --git-sha "$GITHUB_SHA"
+          --git-sha "$GITHUB_SHA" --include-cargo
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: release-workspace-${{ matrix.platform }}-${{ github.sha }}
@@ -213,6 +217,9 @@ jobs:
     environment: release
     permissions:
       contents: write
+      # Keyless attestation of the bundle (GitHub artifact attestations).
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -241,6 +248,14 @@ jobs:
           cd ../..
           tar -czf "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz" -C staging/bundle .
           sha256sum "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz" > "atf-supply-chain-${GITHUB_REF_NAME}-${GITHUB_SHA}.tar.gz.sha256"
+      # The bundle is the evidence that backs the release; unsigned, a changed
+      # bundle would be indistinguishable from the original. The provenance
+      # attestation binds the tarball digest to this workflow run and commit
+      # (verify with `gh attestation verify <bundle> --repo Abillify/atf`).
+      - name: Attest supply-chain bundle provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: atf-supply-chain-${{ github.ref_name }}-${{ github.sha }}.tar.gz
       - name: Create immutable release entry and upload bundle
         env:
           GH_TOKEN: ${{ github.token }}

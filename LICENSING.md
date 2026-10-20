@@ -97,12 +97,18 @@ Dependency licenses are inventoried in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTI
 `bun run supply-chain:check` is fail-closed. It tokenizes and parses each declared SPDX expression
 using only license identifiers, parentheses, `AND`, and `OR`; `LicenseRef`, `WITH`, free-form
 names, unknown identifiers, malformed syntax, and missing assertions are rejected. After
-canonicalization, the complete expression must be exactly one of:
-
-- `Apache-2.0`, `MIT`, `MIT-0`, `0BSD`, `ISC`, `BSD-2-Clause`, `BSD-3-Clause`, `MPL-2.0`,
-  `LGPL-3.0-or-later`, or `CC-BY-4.0`;
-- `MIT AND ISC`, `MIT OR Apache-2.0`, `(AFL-2.1 OR BSD-3-Clause)`, or
-  `(MIT OR CC0-1.0)`.
+canonicalization, the complete expression must be exactly one entry of the allowlist
+(`ALLOWED_LICENSE_EXPRESSIONS` in `scripts/generate-supply-chain.ts` is authoritative; an
+expression not on it fails the check, however permissive its parts are):
+- single identifiers: `Apache-2.0`, `MIT`, `MIT-0`, `0BSD`, `ISC`, `BSD-2-Clause`,
+  `BSD-3-Clause`, `MPL-2.0`, `LGPL-3.0-or-later`, `CC-BY-4.0`, and, from the Rust dependency
+  graph of Outpost Desktop, `Zlib`, `Unicode-3.0`, `Unlicense` and `CDLA-Permissive-2.0`;
+- combinations: `MIT AND ISC`, `MIT OR Apache-2.0` (either operand order),
+  `(AFL-2.1 OR BSD-3-Clause)`, `(MIT OR CC0-1.0)`, plus the dual and triple licenses and the
+  `Unicode-3.0` pairing found in that Rust graph (for example `Apache-2.0 AND MIT`,
+  `0BSD OR MIT OR Apache-2.0`, `Unlicense OR MIT`, `(MIT OR Apache-2.0) AND Unicode-3.0`).
+  Adding a package whose expression is not listed means adding that exact expression, with a
+  matching license text, in a reviewed change.
 
 The canonical expression is used for policy evaluation and SBOM output. The denylist improves
 error diagnostics only; it cannot make an expression allowable. Every license identifier named in

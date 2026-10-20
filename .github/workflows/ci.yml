@@ -294,7 +294,8 @@ jobs:
         run: |
           for package in identity-contract transaction-contract evidence-contract \
                          schema-compatibility contract-adapter extract-contract \
-                         security-kit erasure-contract observability; do
+                         security-kit erasure-contract observability \
+                         canonical-json mcp-2026; do
             bun run --filter "@atf/$package" test
           done
       # Task 1.3: the egress-blockade property (Property 12) and the client
@@ -577,6 +578,43 @@ jobs:
           kubeconform -strict -summary /tmp/atf-autoscaling.yaml
           grep -q 'kind: HorizontalPodAutoscaler' /tmp/atf-autoscaling.yaml
 
+      # The chart exports the declared replica count (REPLICAS, Gate:
+      # MCPGATE_REPLICAS) so the production-readiness gates see the real
+      # topology, and ATF_PROFILE only when global.profile is set.
+      - name: Render declared replicas and profile
+        run: |
+          set -euo pipefail
+          set_common=(
+            --namespace atf
+            --set global.secrets.runtime=atf-runtime
+            --set global.secrets.gate=atf-gate
+            --set global.secrets.search=atf-search
+            --set global.secrets.extract=atf-extract
+            --set global.secrets.control=atf-control
+          )
+          # Default: no profile exported, replicaCount (2) declared everywhere.
+          helm template atf deploy/helm/atf "${set_common[@]}" > /tmp/atf-replicas-default.yaml
+          ! grep -q 'name: ATF_PROFILE' /tmp/atf-replicas-default.yaml
+          test "$(grep -A1 -E 'name: (MCPGATE_)?REPLICAS' /tmp/atf-replicas-default.yaml | grep -c 'value: "2"')" = 4
+          # Autoscaling declares the HPA ceiling; global.profile reaches the four services.
+          helm template atf deploy/helm/atf "${set_common[@]}" \
+            --set runtime.autoscaling.enabled=true \
+            --set search.autoscaling.enabled=true --set search.autoscaling.maxReplicas=7 \
+            --set global.profile=staging > /tmp/atf-replicas-hpa.yaml
+          kubeconform -strict -summary /tmp/atf-replicas-hpa.yaml
+          grep -A1 'name: REPLICAS' /tmp/atf-replicas-hpa.yaml | grep -q 'value: "6"'
+          grep -A1 'name: REPLICAS' /tmp/atf-replicas-hpa.yaml | grep -q 'value: "7"'
+          test "$(grep -A1 'name: ATF_PROFILE' /tmp/atf-replicas-hpa.yaml | grep -c 'value: "staging"')" = 4
+          # An unknown profile is rejected by the values schema, not by a crash-looping pod.
+          if helm template atf deploy/helm/atf "${set_common[@]}" --set global.profile=prod > /dev/null 2>&1; then
+            echo "global.profile=prod must be rejected"; exit 1
+          fi
+          # The Extract pod converts with an in-process LibreOffice, which the production gate
+          # refuses without an acknowledgement: the chart exports it by default, and only Extract.
+          test "$(grep -c 'name: CONVERTER_ALLOW_LOCAL_HTML' /tmp/atf-replicas-default.yaml)" = 1
+          helm template atf deploy/helm/atf "${set_common[@]}" \
+            --set extract.config.converterAllowLocalHtml=false > /tmp/atf-converter-off.yaml
+          ! grep -q 'CONVERTER_ALLOW_LOCAL_HTML' /tmp/atf-converter-off.yaml
       - name: Render service TLS variant and validate
         run: |
           set -euo pipefail

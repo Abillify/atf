@@ -47,8 +47,36 @@ updates:
     commit-message:
       prefix: "chore(ci)"
 
+  # Base images are pinned by digest everywhere; Dependabot moves tag and digest
+  # together. One entry per directory that holds a Dockerfile.
   - package-ecosystem: docker
     directory: /deploy/examples
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: docker
+    directory: /deploy/images
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(deps)"
+  - package-ecosystem: docker
+    directory: /apps/outpost
+    schedule:
+      interval: weekly
+      day: monday
+    labels: [dependencies]
+    commit-message:
+      prefix: "chore(deps)"
+  # The desktop outpost ships Rust crates (Tauri); the SBOM lists them
+  # (--include-cargo), so their updates are watched as well.
+  - package-ecosystem: cargo
+    directory: /apps/outpost-desktop/src-tauri
     schedule:
       interval: weekly
       day: monday
